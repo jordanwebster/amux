@@ -222,21 +222,111 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 }
 
 /// Remove an agent by exact name or UUID without prompting.
-pub async fn remove_agent(target: &str, config: &Config) -> Result<()> {
+pub async fn remove_agent(target: &str, force: bool, config: &Config) -> Result<()> {
     let rpc = require_running_client(config, None).await?;
-    remove_agent_with_client(target, &rpc).await?;
+    let report = remove_agent_with_client(target, force, &rpc).await?;
+    for child in &report.removed_children {
+        println!("Removed child {}.", removal_child_label(child));
+    }
+    for child in &report.unreachable_children {
+        println!(
+            "Child {} was unreachable and remains running.",
+            removal_child_label(child)
+        );
+    }
     println!("Deleted agent '{target}'.");
     Ok(())
 }
 
-async fn remove_agent_with_client(target: &str, rpc: &Client) -> Result<()> {
+async fn remove_agent_with_client(
+    target: &str,
+    force: bool,
+    rpc: &Client,
+) -> Result<amux::DeleteAgentSummary> {
     let agents = rpc.list_agents().await?;
-    delete_exact_agent(&agents, target, move |agent_id| async move {
-        rpc.delete_agent(agent_id)
-            .await
-            .map_err(|error| anyhow!("failed to delete agent '{target}': {error}"))
-    })
-    .await
+    let agent = resolve_remove_agent(&agents, target)?;
+    ensure_family_is_removable(&agents, agent, force)?;
+    rpc.delete_agent_with_summary(agent.id)
+        .await
+        .map_err(|error| anyhow!("failed to delete agent '{target}': {error}"))
+}
+
+fn family_descendants<'a>(agents: &'a [amux::Agent], root: &amux::Agent) -> Vec<&'a amux::Agent> {
+    let mut children: HashMap<AgentKey, Vec<&amux::Agent>> = HashMap::new();
+    for agent in agents {
+        if let Some(parent) = agent.parent {
+            children
+                .entry((parent.agent_id, parent.host_id))
+                .or_default()
+                .push(agent);
+        }
+    }
+    for group in children.values_mut() {
+        group.sort_by_key(|agent| display_name(agent));
+    }
+
+    let root = agent_key(root);
+    let mut seen = HashSet::from([root]);
+    let mut pending = vec![root];
+    let mut descendants = Vec::new();
+    while let Some(parent) = pending.pop() {
+        for child in children.get(&parent).into_iter().flatten().rev() {
+            let key = agent_key(child);
+            if seen.insert(key) {
+                descendants.push(*child);
+                pending.push(key);
+            }
+        }
+    }
+    descendants.sort_by_key(|agent| display_name(agent));
+    descendants
+}
+
+fn ensure_family_is_removable(
+    agents: &[amux::Agent],
+    root: &amux::Agent,
+    force: bool,
+) -> Result<()> {
+    if force {
+        return Ok(());
+    }
+    let working: Vec<_> = family_descendants(agents, root)
+        .into_iter()
+        .filter_map(|agent| {
+            agent.working_on.as_ref().map(|work| {
+                let task = clipped_working_on(&work.text);
+                if task.is_empty() {
+                    display_name(agent)
+                } else {
+                    format!("{} ({task})", display_name(agent))
+                }
+            })
+        })
+        .collect();
+    if working.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "refusing to delete '{}': child agents still working: {}; rerun with --force",
+            display_name(root),
+            working.join(", ")
+        ))
+    }
+}
+
+fn removal_child_label(agent: &amux::Agent) -> String {
+    let name = display_name(agent);
+    match &agent.working_on {
+        Some(work) => {
+            let task = clipped_working_on(&work.text);
+            if task.is_empty() {
+                format!("'{name}' [working]")
+            } else {
+                format!("'{name}' [working: {task}]")
+            }
+        }
+        None => format!("'{name}'"),
+    }
 }
 
 fn resolve_remove_agent<'a>(agents: &'a [amux::Agent], target: &str) -> Result<&'a amux::Agent> {
@@ -1171,6 +1261,51 @@ mod attach {
         assert!(lines[0].starts_with("  alpha ⋯2 - "));
         assert!(lines[1].starts_with("    beta - "));
         assert!(lines[2].starts_with("      gamma - "));
+    }
+
+    #[test]
+    fn a2a_rm_cascade_refuses_working_children_without_force() {
+        let parent = listed_agent(1, "parent");
+        let idle = child_agent(2, "idle-child", 1);
+        let mut working = child_agent(3, "working-child", 2);
+        working.working_on = Some(amux::WorkingOn {
+            text: "running the release suite".to_string(),
+            updated_at: chrono::Utc::now(),
+        });
+        let agents = [parent, idle, working];
+
+        let error = super::ensure_family_is_removable(&agents, &agents[0], false)
+            .expect_err("working descendants require an explicit force");
+        assert_eq!(
+            error.to_string(),
+            "refusing to delete 'parent': child agents still working: working-child (running the release suite); rerun with --force"
+        );
+        super::ensure_family_is_removable(&agents, &agents[0], true)
+            .expect("force permits the cascade");
+    }
+
+    #[test]
+    fn a2a_rm_cascade_lists_every_child_and_marks_working_ones() {
+        let parent = listed_agent(1, "parent");
+        let idle = child_agent(2, "idle-child", 1);
+        let mut working = child_agent(3, "working-child", 2);
+        working.working_on = Some(amux::WorkingOn {
+            text: "running the release suite".to_string(),
+            updated_at: chrono::Utc::now(),
+        });
+        let agents = [parent, idle, working];
+
+        let descendants = super::family_descendants(&agents, &agents[0]);
+        assert_eq!(
+            descendants
+                .iter()
+                .map(|agent| super::removal_child_label(agent))
+                .collect::<Vec<_>>(),
+            [
+                "'idle-child'".to_string(),
+                "'working-child' [working: running the release suite]".to_string(),
+            ]
+        );
     }
 
     #[tokio::test]

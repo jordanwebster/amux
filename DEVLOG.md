@@ -4655,3 +4655,12 @@ Each visible row also carries the agent's first-line work claim, bounded to a
 small column and stamped with its age; an unset claim stays absent. Missing
 parents and malformed loops remain visible instead of losing inventory, and
 duplicate names and multi-host labels keep their previous disambiguation.
+
+2026-08-23 — **Put an explicit guard around command-line family deletion.**
+`amux rm` now refuses to cascade while any descendant reports active work and
+names each blocking child and task; `--force` is the deliberate override for
+scripts and attended cleanup. A successful cascade reports every child the
+daemon removed and visibly marks those that had a work claim, while unreachable
+children are named as still running. The interactive fleet keeps its existing
+confirmation-only behavior because the person there is already reading the
+full cascade before choosing.

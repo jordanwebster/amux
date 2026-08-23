@@ -87,6 +87,10 @@ enum Commands {
     Rm {
         /// Exact agent name or UUID
         target: String,
+
+        /// Remove the family even when a child is still working
+        #[arg(long)]
+        force: bool,
     },
 
     /// List running agent sessions, folding child agents into their parent
@@ -413,7 +417,9 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             ensure_initialized(&mut config).await?;
             session_client::attach(name.as_deref(), &config).await?;
         }
-        Commands::Rm { target } => session_client::remove_agent(&target, &config).await?,
+        Commands::Rm { target, force } => {
+            session_client::remove_agent(&target, force, &config).await?
+        }
         Commands::List { all } => session_client::list_agents(all, &config).await?,
         Commands::Server { command } => match command {
             ServerCommands::Start {
@@ -1139,20 +1145,23 @@ mod tests {
     }
 
     #[test]
-    fn parses_rm_with_one_positional_target_and_no_command_flags() {
+    fn parses_rm_with_one_positional_target_and_force_flag() {
         let cli = Cli::try_parse_from(["amux", "rm", "exact-name"]).unwrap();
-        let Some(Commands::Rm { target }) = cli.command else {
+        let Some(Commands::Rm { target, force }) = cli.command else {
             panic!("expected rm command");
         };
         assert_eq!(target, "exact-name");
+        assert!(!force);
 
         let extra = Cli::try_parse_from(["amux", "rm", "exact-name", "extra"])
             .expect_err("rm accepts exactly one target");
         assert_eq!(extra.kind(), clap::error::ErrorKind::UnknownArgument);
 
-        let flag = Cli::try_parse_from(["amux", "rm", "exact-name", "--force"])
-            .expect_err("rm has no confirmation flags");
-        assert_eq!(flag.kind(), clap::error::ErrorKind::UnknownArgument);
+        let cli = Cli::try_parse_from(["amux", "rm", "exact-name", "--force"]).unwrap();
+        let Some(Commands::Rm { force, .. }) = cli.command else {
+            panic!("expected rm command");
+        };
+        assert!(force);
     }
 
     #[test]

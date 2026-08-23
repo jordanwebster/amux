@@ -39,6 +39,7 @@ mod method {
     pub(super) const CLIENT_SUBSCRIBE_AGENTS_NAME: &str = "/amux.v1.ClientService/SubscribeAgents";
     pub(super) const CLIENT_CREATE_NAME: &str = "/amux.v1.ClientService/CreateAgent";
     pub(super) const CLIENT_RENAME_NAME: &str = "/amux.v1.ClientService/RenameAgent";
+    pub(super) const CLIENT_DELETE_NAME: &str = "/amux.v1.ClientService/DeleteAgent";
     pub(super) const CLIENT_SEND_MESSAGE_NAME: &str = "/amux.v1.ClientService/SendMessage";
     pub(super) const CLIENT_SUBSCRIBE_SESSION_NAME: &str =
         "/amux.v1.ClientService/SubscribeSession";
@@ -85,6 +86,12 @@ pub enum ClientError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SuspendSummary {
     pub suspended_count: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeleteAgentSummary {
+    pub removed_children: Vec<Agent>,
+    pub unreachable_children: Vec<Agent>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -437,17 +444,40 @@ impl Client {
         &self,
         identifier: impl Into<AgentIdentifier>,
     ) -> Result<(), ClientError> {
+        self.delete_agent_with_summary(identifier).await.map(|_| ())
+    }
+
+    pub async fn delete_agent_with_summary(
+        &self,
+        identifier: impl Into<AgentIdentifier>,
+    ) -> Result<DeleteAgentSummary, ClientError> {
         self.ensure_open()?;
         let identifier = identifier.into();
-        self.inner
+        let response = self
+            .inner
             .lock()
             .await
             .delete_agent(wire::ClientDeleteAgentRequest {
                 agent: Some(agent_ref(identifier)),
             })
             .await
-            .map_err(status_to_client_error)?;
-        Ok(())
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let decode = |agents: Vec<wire::Agent>| {
+            agents
+                .into_iter()
+                .map(|agent| {
+                    crate::agents::agent_from_wire(agent).map_err(|error| ClientError::Decode {
+                        method: method::CLIENT_DELETE_NAME,
+                        message: error.to_string(),
+                    })
+                })
+                .collect::<Result<Vec<_>, ClientError>>()
+        };
+        Ok(DeleteAgentSummary {
+            removed_children: decode(response.removed_children)?,
+            unreachable_children: decode(response.unreachable_children)?,
+        })
     }
 
     pub async fn subscribe_session(

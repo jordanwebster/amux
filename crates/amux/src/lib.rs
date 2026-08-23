@@ -57,8 +57,9 @@ pub use agents::{
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
-    AgentEventStream, Client, ClientError, ConnectError, HostEventStream, PairingSecret,
-    PairingStart, PeerEntry, PeerReachability, ResumeSummary, SessionStream, SuspendSummary,
+    AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, HostEventStream,
+    PairingSecret, PairingStart, PeerEntry, PeerReachability, ResumeSummary, SessionStream,
+    SuspendSummary,
 };
 pub use config::{Config, ConfigError, Keybinds, LeaderKey, OpenMode, UiSettings};
 pub use debug::DebugFormat;
