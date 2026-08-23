@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Spawned Claude sessions do not inherit messaging secrets.**
+The child environment scrub now removes the Claude messaging token alongside
+the socket path, preventing a daemon launched from Claude from forwarding its
+parent session's credentials into a new managed session.
+
+---
+
 2026-08-23 — **External Claude sessions remain observation-only.**
 Claude delivery targets retain the session's readonly state and reject agent
 messages with `FailedPrecondition` before considering socket credentials or a
