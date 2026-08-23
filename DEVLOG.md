@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Operator acceptance script for agent-to-agent messaging.**
+`e2e-tests/a2a_acceptance.sh` walks a human through the one proof that needs
+both real harnesses under their own login: start a Claude parent, ask it to
+spawn a Codex child through the amux `spawn` tool, watch the family appear in
+`amux list --all`, and confirm the child's completion reached the parent. It
+drives the production boundary (typing into the parent) rather than any
+internal API, and records PASS/FAIL to an optional result file.
+
+---
+
 2026-08-23 — **DEVLOG follow-up for `4c45513` (`Graduate Codex dynamic tool
 capture`).** That chunk graduated the live Codex 0.148.0 C.11 dynamic-tool
 exchange, its provenance, and its structural fixture waiter. The capture
