@@ -57,7 +57,8 @@ available.
 starts the backend, waits up to 30 seconds for its delivery target to become
 live, then sends the initial prompt through the same message carrier used
 later. For managed Claude sessions, the `SessionStart` hook marks that
-transition; Codex uses its shared thread-attachment state. The readiness wait
+transition, as does transcript ingest reaching its `amux.transcript_ready`
+marker; Codex uses its shared thread-attachment state. The readiness wait
 is scoped to this initial delivery, so an ordinary send to an unavailable
 session fails immediately. The prompt arrives with parent provenance instead of
 masquerading as human input. If readiness or delivery fails, spawn removes the

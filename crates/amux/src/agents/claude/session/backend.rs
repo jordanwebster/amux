@@ -147,8 +147,13 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
+    use serde_json::json;
+    use tempfile::tempdir;
+
     use super::*;
-    use crate::agents::{AgentParent, AgentType, CreateAgentRequest, Delivery};
+    use crate::agents::{
+        AgentParent, AgentType, CreateAgentRequest, Delivery, DeliveryLiveness, HookEnvironment,
+    };
     use crate::envelope::{Envelope, EnvelopeKind, Sender};
 
     #[tokio::test]
@@ -194,6 +199,77 @@ mod tests {
                 .unwrap(),
             Delivery::Pty
         );
+        assert_eq!(
+            output.read().await.unwrap(),
+            format!("\x1b[200~{}\x1b[201~", crate::envelope::format(&envelope)).into_bytes()
+        );
+        assert_eq!(output.read().await.unwrap(), b"\r");
+    }
+
+    #[tokio::test]
+    async fn transcript_observation_without_session_start_enables_pty_delivery() {
+        let dir = tempdir().unwrap();
+        let transcript_path = dir.path().join("transcript.jsonl");
+        tokio::fs::write(&transcript_path, "").await.unwrap();
+
+        let recipient_id = Uuid::new_v4();
+        let pty = PtyHandle::test_echo();
+        let mut output = pty.subscribe_with_query(None).await.unwrap();
+        let mut session = ClaudeSession::new(
+            &CreateAgentRequest {
+                agent_id: recipient_id,
+                host_id: None,
+                name: Some("recipient".to_string()),
+                agent_type: AgentType::Claude,
+                working_dir: dir.path().to_path_buf(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
+            },
+            dir.path().to_path_buf(),
+            None,
+        );
+        session.pty = Some(pty);
+        session.transcript_ingest = Some(
+            crate::agents::claude::transcript_ingest::TranscriptIngest::with_delivery_ready(
+                StructuredLogSource::new(32),
+                session.delivery_ready.clone(),
+            ),
+        );
+        let target = session.delivery_target();
+
+        let payload = serde_json::to_vec(&json!({
+            "hook_event_name": "Notification",
+            "session_id": Uuid::new_v4(),
+            "transcript_path": transcript_path,
+            "cwd": dir.path(),
+            "message": "transcript observed",
+        }))
+        .unwrap();
+        session
+            .handle_hook_payload(&payload, &HookEnvironment::new())
+            .await
+            .unwrap();
+
+        target
+            .wait_until_live(Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert!(matches!(target.liveness().unwrap(), DeliveryLiveness::Live));
+
+        let envelope = Envelope {
+            id: Uuid::new_v4(),
+            context: None,
+            from: Sender::Human,
+            to: AgentParent {
+                agent_id: recipient_id,
+                host_id: Uuid::new_v4(),
+            },
+            kind: EnvelopeKind::Message,
+            text: "hello without SessionStart".to_string(),
+        };
+        assert_eq!(target.deliver(&envelope).await.unwrap(), Delivery::Pty);
         assert_eq!(
             output.read().await.unwrap(),
             format!("\x1b[200~{}\x1b[201~", crate::envelope::format(&envelope)).into_bytes()

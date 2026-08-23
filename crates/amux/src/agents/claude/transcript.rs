@@ -5,6 +5,8 @@
 //! amux does not interpret transcript semantics — that is the client's job.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
@@ -21,6 +23,7 @@ use crate::agents::StructuredLogSource;
 pub(super) struct TranscriptTailer {
     path: PathBuf,
     source: StructuredLogSource,
+    delivery_ready: Option<Arc<AtomicBool>>,
     shutdown_tx: watch::Sender<bool>,
 }
 
@@ -31,18 +34,32 @@ impl TranscriptTailer {
         Self {
             path,
             source,
+            delivery_ready: None,
             shutdown_tx,
         }
+    }
+
+    /// Create a tailer that marks a managed session ready once its transcript
+    /// has reached the live-tail boundary.
+    pub(super) fn with_delivery_ready(
+        path: PathBuf,
+        source: StructuredLogSource,
+        delivery_ready: Arc<AtomicBool>,
+    ) -> Self {
+        let mut tailer = Self::new(path, source);
+        tailer.delivery_ready = Some(delivery_ready);
+        tailer
     }
 
     /// Start tailing the transcript file in a background task.
     pub(super) fn start(&self) -> JoinHandle<()> {
         let path = self.path.clone();
         let source = self.source.clone();
+        let delivery_ready = self.delivery_ready.clone();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
-            if let Err(e) = tail_transcript(path, source, &mut shutdown_rx).await {
+            if let Err(e) = tail_transcript(path, source, delivery_ready, &mut shutdown_rx).await {
                 tracing::warn!(error = %e, "transcript tailer error");
             }
         })
@@ -57,6 +74,7 @@ impl TranscriptTailer {
 async fn tail_transcript(
     path: PathBuf,
     source: StructuredLogSource,
+    delivery_ready: Option<Arc<AtomicBool>>,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) -> std::io::Result<()> {
     while !path.exists() {
@@ -94,6 +112,9 @@ async fn tail_transcript(
     source
         .write(serde_json::json!({ "type": "amux.transcript_ready" }))
         .await;
+    if let Some(delivery_ready) = delivery_ready {
+        delivery_ready.store(true, Ordering::Release);
+    }
 
     // Live tail
     loop {

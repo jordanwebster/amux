@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -213,7 +213,9 @@ impl ClaudeSession {
         session.transcript_ingest = Some(TranscriptIngest::new(StructuredLogSource::new(
             STRUCTURED_LOG_RETENTION,
         )));
-        session.delivery_ready.store(true, Ordering::Release);
+        session
+            .delivery_ready
+            .store(true, std::sync::atomic::Ordering::Release);
         session
     }
 
@@ -269,8 +271,10 @@ impl ClaudeSession {
             CLAUDE_CHILD_SESSION_ENV_SCRUB,
             self.terminal_size,
         )?;
-        let transcript_ingest =
-            TranscriptIngest::new(StructuredLogSource::new(STRUCTURED_LOG_RETENTION));
+        let transcript_ingest = TranscriptIngest::with_delivery_ready(
+            StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
+            self.delivery_ready.clone(),
+        );
         let exit_ingest = transcript_ingest.clone();
         self.pty = Some(pty);
         self.transcript_ingest = Some(transcript_ingest);

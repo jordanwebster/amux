@@ -1,6 +1,7 @@
 //! Claude transcript-tailing lifecycle around a structured log sink.
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use serde::ser::SerializeMap;
@@ -14,6 +15,7 @@ use crate::debug::{DebugView, LossyPath};
 
 struct TranscriptIngestInner {
     source: StructuredLogSource,
+    delivery_ready: Option<Arc<AtomicBool>>,
     tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
     /// Held only briefly for read/replace — never held across an `await`,
     /// so a `std::sync::Mutex` is appropriate (and lets the debug
@@ -32,6 +34,21 @@ impl TranscriptIngest {
         Self {
             inner: Arc::new(TranscriptIngestInner {
                 source,
+                delivery_ready: None,
+                tailer: Mutex::new(None),
+                current_path: StdMutex::new(None),
+            }),
+        }
+    }
+
+    pub(super) fn with_delivery_ready(
+        source: StructuredLogSource,
+        delivery_ready: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(TranscriptIngestInner {
+                source,
+                delivery_ready: Some(delivery_ready),
                 tailer: Mutex::new(None),
                 current_path: StdMutex::new(None),
             }),
@@ -71,7 +88,14 @@ impl TranscriptIngest {
             *current_path = Some(path.clone());
         }
 
-        let tailer = TranscriptTailer::new(path, self.inner.source.clone());
+        let tailer = match &self.inner.delivery_ready {
+            Some(delivery_ready) => TranscriptTailer::with_delivery_ready(
+                path,
+                self.inner.source.clone(),
+                delivery_ready.clone(),
+            ),
+            None => TranscriptTailer::new(path, self.inner.source.clone()),
+        };
         let handle = tailer.start();
         let mut guard = self.inner.tailer.lock().await;
         *guard = Some((tailer, handle));

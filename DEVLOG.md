@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Managed Claude delivery accepts either startup signal.** A
+session becomes ready for messages when its `SessionStart` hook arrives or
+when transcript ingest reaches the live-tail boundary. A working PTY therefore
+remains reachable when the startup hook is missing but the transcript is
+observed, while spawn keeps its existing bounded wait.
+
+---
+
 2026-08-23 — **Kept readiness waits on the first spawned prompt.** The
 30-second liveness wait now travels only with spawn's initial delivery,
 including across a remote agent-service hop; ordinary sends and lifecycle
