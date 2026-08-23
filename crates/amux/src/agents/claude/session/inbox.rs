@@ -74,6 +74,7 @@ pub(super) struct ClaudeDeliveryTarget {
     pty_only: Arc<AtomicBool>,
     socket_delivery_state: Arc<SocketDeliveryState>,
     confirmation_tasks: Arc<tokio::sync::Mutex<JoinSet<()>>>,
+    confirmations_stopped: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
 }
 
@@ -87,6 +88,7 @@ impl ClaudeDeliveryTarget {
             pty_only: session.pty_only_delivery.clone(),
             socket_delivery_state: session.socket_delivery_state.clone(),
             confirmation_tasks: session.socket_confirmation_tasks.clone(),
+            confirmations_stopped: session.socket_confirmations_stopped.clone(),
             ready: session.delivery_ready.clone(),
         }
     }
@@ -166,6 +168,9 @@ impl ClaudeDeliveryTarget {
     ) {
         let target = self.clone();
         let mut tasks = self.confirmation_tasks.lock().await;
+        if self.confirmations_stopped.load(Ordering::Acquire) {
+            return;
+        }
         while tasks.try_join_next().is_some() {}
         tasks.spawn(async move {
             if Self::confirmation_received(rows, envelope.id).await {
@@ -284,7 +289,7 @@ mod tests {
     use tokio::net::UnixListener;
 
     use super::*;
-    use crate::agents::{AgentBackend, AgentParent, AgentType, CreateAgentRequest};
+    use crate::agents::{AgentBackend, AgentParent, AgentType, CreateAgentRequest, StopPolicy};
     use crate::envelope::{AgentSender, EnvelopeKind, Sender};
 
     fn test_envelope(recipient_id: Uuid, text: &str) -> Envelope {
@@ -596,5 +601,21 @@ mod tests {
         assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Socket);
         assert!(started.elapsed() < Duration::from_millis(100));
         server.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn session_stop_prevents_late_confirmation_work() {
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("claude.sock");
+        let (session, source) = session(socket_path);
+        let target = ClaudeDeliveryTarget::new(&session);
+        let (rows, _) = source.subscribe_with_query(None).await.unwrap();
+
+        session.stop(StopPolicy::Interrupt).await;
+        target
+            .spawn_confirmation(rows, test_envelope(session.agent_id, "too late"))
+            .await;
+
+        assert!(session.socket_confirmation_tasks.lock().await.is_empty());
     }
 }

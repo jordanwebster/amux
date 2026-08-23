@@ -100,6 +100,7 @@ pub(crate) struct ClaudeSession {
     pub(super) pty_only_delivery: Arc<AtomicBool>,
     pub(super) socket_delivery_state: Arc<SocketDeliveryState>,
     pub(super) socket_confirmation_tasks: Arc<tokio::sync::Mutex<JoinSet<()>>>,
+    pub(super) socket_confirmations_stopped: Arc<AtomicBool>,
     pub(super) delivery_ready: Arc<AtomicBool>,
     pub(super) parent: Option<AgentParent>,
     pub(super) name_source: LocalAgentNameSource,
@@ -136,6 +137,7 @@ impl ClaudeSession {
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
             socket_delivery_state: Arc::new(SocketDeliveryState::default()),
             socket_confirmation_tasks: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
+            socket_confirmations_stopped: Arc::new(AtomicBool::new(false)),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             parent: req.parent,
             name_source: if req.name.is_some() {
@@ -174,6 +176,7 @@ impl ClaudeSession {
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
             socket_delivery_state: Arc::new(SocketDeliveryState::default()),
             socket_confirmation_tasks: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
+            socket_confirmations_stopped: Arc::new(AtomicBool::new(false)),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             parent: req.parent,
             name_source,
@@ -210,6 +213,7 @@ impl ClaudeSession {
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
             socket_delivery_state: Arc::new(SocketDeliveryState::default()),
             socket_confirmation_tasks: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
+            socket_confirmations_stopped: Arc::new(AtomicBool::new(false)),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             parent: None,
             name_source: LocalAgentNameSource::Unset,
@@ -370,6 +374,8 @@ impl ClaudeSession {
         if let Some(abort) = &self.name_sniffer_abort {
             abort.abort();
         }
+        self.socket_confirmations_stopped
+            .store(true, std::sync::atomic::Ordering::Release);
         {
             let mut tasks = self.socket_confirmation_tasks.lock().await;
             tasks.abort_all();

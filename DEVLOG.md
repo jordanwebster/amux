@@ -4858,3 +4858,9 @@ waiting on another command. Transcript rows refresh the shared value when they
 report a different Claude version, so a running daemon learns upgrades from
 Claude itself and applies them to the next session. Probe failures remain a safe
 unknown and omit the messaging-socket argument.
+
+2026-08-23 — **Closed Claude confirmation work with its session.** Session
+shutdown now marks the background-confirmation owner closed before aborting and
+joining its tasks. A delivery target captured just before removal can therefore
+neither leave a new five-second waiter behind nor attempt a late PTY resend
+after shutdown has drained the session's work.
