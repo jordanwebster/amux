@@ -4,6 +4,10 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Suspended families resume intact.**
+Suspend snapshots now restore a child's parent edge and exact work-status
+timestamp when the daemon restarts, and resumed inventory republishes both.
+
 2026-08-23 — **Agent work status follows the task lifecycle.**
 Child creation derives a bounded task label from the initial prompt, explicit
 status changes publish timestamped fleet updates, and turn completion clears

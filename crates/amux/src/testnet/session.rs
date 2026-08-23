@@ -16,6 +16,7 @@ use crate::agent_tools::AgentToolRequest;
 use crate::agents::{AgentToolExecutor, TEST_ECHO_COMMAND, TEST_ECHO_V1};
 use crate::client::{Client, ClientError};
 use crate::protocol::ProtocolError;
+use crate::services::LocalAgentHost;
 use crate::{
     Agent, AgentParent, AgentType, CreateAgentRequest, SendInputRequest, SendMessageRequest,
     SubscribeSessionEvent,
@@ -345,6 +346,61 @@ impl Daemon {
                 .working_on
                 .is_none()
         );
+    }
+
+    /// Parks a parent and child through the production local-host suspend
+    /// seam, restarts the daemon runtime, resumes the saved sessions, and
+    /// verifies their relationship metadata through the client inventory.
+    pub async fn suspend_restart_preserves_family(&self, parent: &Agent, child: &Agent) {
+        let state_path = self.inner.data_dir.join("state.yaml");
+        let before = child
+            .working_on
+            .clone()
+            .expect("spawned child has work to preserve");
+        let parts = self
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        let suspended = parts
+            .agent_host
+            .prepare_suspend(state_path.clone())
+            .await
+            .expect("prepare suspend");
+        assert_eq!(suspended, 2);
+        parts.agent_host.commit_suspend().await;
+
+        self.restart().await;
+        let resumed_parts = self
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("daemon '{}' did not restart", self.name()));
+        let (resumed, failed) = resumed_parts
+            .agent_host
+            .resume(state_path)
+            .await
+            .expect("resume suspended agents");
+        assert_eq!((resumed, failed), (2, 0));
+        let resumed_client = self.admin_client().await;
+
+        eventually(
+            "resumed family metadata reaches the client inventory",
+            async || {
+                let Ok(listed) = resumed_client.list_agents().await else {
+                    return false;
+                };
+                let Some(resumed_parent) = listed.iter().find(|agent| agent.id == parent.id) else {
+                    return false;
+                };
+                let Some(resumed_child) = listed.iter().find(|agent| agent.id == child.id) else {
+                    return false;
+                };
+                resumed_parent.parent.is_none()
+                    && resumed_child.parent == child.parent
+                    && resumed_child.working_on.as_ref() == Some(&before)
+            },
+            self.failure_dump(),
+        )
+        .await;
     }
 
     /// A family deletion still removes its local root when a mirrored remote

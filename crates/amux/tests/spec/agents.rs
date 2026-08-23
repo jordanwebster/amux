@@ -221,3 +221,17 @@ async fn a2a_working_on() {
     let parent = host.spawn_echo_agent("parent").await;
     host.working_on_lifecycle(&parent).await;
 }
+
+/// A daemon restart through the suspend record retains the family edge and
+/// exact work-status timestamp, then republishes both in resumed inventory.
+#[tokio::test]
+async fn a2a_suspend_preserves() {
+    let net = TestNet::builder().daemon("host").start().await;
+    let [host] = net.daemons(["host"]);
+
+    let parent = host.spawn_echo_agent("parent").await;
+    let child = host
+        .spawn_echo_child_with_prompt(&parent, "child", "preserve this task")
+        .await;
+    host.suspend_restart_preserves_family(&parent, &child).await;
+}
