@@ -41,12 +41,14 @@ use crate::suspend::SuspendedAgent;
 /// The backend carrier that accepted an agent message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Delivery {
+    Socket,
     Pty,
 }
 
 impl Delivery {
     pub(crate) const fn carrier(self) -> &'static str {
         match self {
+            Self::Socket => "socket",
             Self::Pty => "pty",
         }
     }
@@ -59,6 +61,27 @@ pub(crate) enum DeliveryError {
     UnsupportedAgentType(&'static str),
     #[error("message delivery failed: {0}")]
     Failed(String),
+}
+
+/// An owned message-delivery endpoint detached from the session registry.
+///
+/// Native carriers may wait on backend-specific readiness or confirmation,
+/// so delivery must not retain the registry lock that protects mutable
+/// session metadata.
+#[async_trait]
+pub(crate) trait AgentDeliveryTarget: Send + Sync {
+    async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError>;
+}
+
+struct UnsupportedAgentDelivery {
+    agent_type: &'static str,
+}
+
+#[async_trait]
+impl AgentDeliveryTarget for UnsupportedAgentDelivery {
+    async fn deliver(&self, _envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
+        Err(DeliveryError::UnsupportedAgentType(self.agent_type))
+    }
 }
 
 /// An owned structured-input endpoint detached from the session registry lock.
@@ -132,10 +155,20 @@ pub(crate) trait AgentBackend: Send + Sync {
     fn log_source(&self) -> Option<StructuredLogSource>;
     fn pty_handle(&self) -> Result<Option<PtyHandle>>;
 
+    /// Snapshot the smallest owned target needed to deliver a message.
+    fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
+        Box::new(UnsupportedAgentDelivery {
+            agent_type: self.agent_type(),
+        })
+    }
+
     /// Deliver a daemon-authored envelope through this backend's native
-    /// input carrier.
-    async fn deliver(&self, _envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
-        Err(DeliveryError::UnsupportedAgentType(self.agent_type()))
+    /// input carrier. Runtime dispatch snapshots [`Self::delivery_target`]
+    /// directly so registry locks are released before an await; this method
+    /// remains the convenient backend-owned entry point for focused callers.
+    #[allow(dead_code)]
+    async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
+        self.delivery_target().deliver(envelope).await
     }
 
     /// Snapshot the smallest owned target needed to prepare a raw subscription.

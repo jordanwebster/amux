@@ -7,12 +7,12 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::ClaudeSession;
-use super::input::{paste_program, send_pty_program};
+use super::inbox::ClaudeDeliveryTarget;
 use crate::agents::claude::io;
 use crate::agents::{
-    AGENT_TYPE_CLAUDE, AgentBackend, AgentParent, Delivery, DeliveryError, HookEnvironment,
-    HookError, HookOutcome, LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy,
-    StructuredInput, StructuredLogSource, terminal_io_protocols,
+    AGENT_TYPE_CLAUDE, AgentBackend, AgentDeliveryTarget, AgentParent, HookEnvironment, HookError,
+    HookOutcome, LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredInput,
+    StructuredLogSource, terminal_io_protocols,
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
@@ -81,20 +81,8 @@ impl AgentBackend for ClaudeSession {
         Ok(self.pty.clone())
     }
 
-    async fn deliver(
-        &self,
-        envelope: &crate::envelope::Envelope,
-    ) -> std::result::Result<Delivery, DeliveryError> {
-        let pty = self
-            .pty
-            .as_ref()
-            .ok_or_else(|| DeliveryError::Failed("Claude PTY is unavailable".to_string()))?;
-        let program = paste_program(&crate::envelope::format(envelope))
-            .map_err(|error| DeliveryError::Failed(error.to_string()))?;
-        send_pty_program(pty, &program)
-            .await
-            .map_err(|error| DeliveryError::Failed(error.to_string()))?;
-        Ok(Delivery::Pty)
+    fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
+        Box::new(ClaudeDeliveryTarget::new(self))
     }
 
     fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {
@@ -150,7 +138,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::agents::{AgentParent, AgentType, CreateAgentRequest};
+    use crate::agents::{AgentParent, AgentType, CreateAgentRequest, Delivery};
     use crate::envelope::{Envelope, EnvelopeKind, Sender};
 
     #[tokio::test]

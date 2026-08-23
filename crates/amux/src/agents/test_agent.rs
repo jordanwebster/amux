@@ -14,8 +14,9 @@ use uuid::Uuid;
 
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agents::{
-    AGENT_TYPE_TEST_AGENT, AgentBackend, CreateAgentRequest, Delivery, DeliveryError,
-    LocalAgentNameSource, StopPolicy, StructuredLogSource, TerminalSize, terminal_io_protocols,
+    AGENT_TYPE_TEST_AGENT, AgentBackend, AgentDeliveryTarget, CreateAgentRequest, Delivery,
+    DeliveryError, LocalAgentNameSource, StopPolicy, StructuredLogSource, TerminalSize,
+    terminal_io_protocols,
 };
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
@@ -40,6 +41,27 @@ pub(crate) struct TestAgentSession {
     // Stored for deferred start()
     pub(super) terminal_size: Option<TerminalSize>,
     pub(crate) created_at: DateTime<Utc>,
+}
+
+struct TestAgentDeliveryTarget {
+    pty: Option<PtyHandle>,
+}
+
+#[async_trait]
+impl AgentDeliveryTarget for TestAgentDeliveryTarget {
+    async fn deliver(
+        &self,
+        envelope: &crate::envelope::Envelope,
+    ) -> std::result::Result<Delivery, DeliveryError> {
+        let pty = self
+            .pty
+            .as_ref()
+            .ok_or_else(|| DeliveryError::Failed("test agent PTY is unavailable".to_string()))?;
+        pty.send_input(crate::envelope::format(envelope).into_bytes())
+            .await
+            .map_err(|error| DeliveryError::Failed(error.to_string()))?;
+        Ok(Delivery::Pty)
+    }
 }
 
 impl TestAgentSession {
@@ -210,18 +232,10 @@ impl AgentBackend for TestAgentSession {
         Ok(self.pty.clone())
     }
 
-    async fn deliver(
-        &self,
-        envelope: &crate::envelope::Envelope,
-    ) -> std::result::Result<Delivery, DeliveryError> {
-        let pty = self
-            .pty
-            .as_ref()
-            .ok_or_else(|| DeliveryError::Failed("test agent PTY is unavailable".to_string()))?;
-        pty.send_input(crate::envelope::format(envelope).into_bytes())
-            .await
-            .map_err(|error| DeliveryError::Failed(error.to_string()))?;
-        Ok(Delivery::Pty)
+    fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
+        Box::new(TestAgentDeliveryTarget {
+            pty: self.pty.clone(),
+        })
     }
 
     fn suspended_state(&self) -> Result<crate::suspend::SuspendedAgent> {

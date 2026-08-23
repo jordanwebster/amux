@@ -335,13 +335,15 @@ impl LocalAgentHost for PtyAgentHost {
     }
 
     async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError> {
-        let state = self.state().read().await;
-        let session = state
-            .local_agents
-            .get(&envelope.to.agent_id)
-            .map(|context| &context.session)
-            .ok_or(ProtocolError::NoAgentFound)?;
-        match session.deliver(&envelope).await {
+        let delivery_target = {
+            let state = self.state().read().await;
+            state
+                .local_agents
+                .get(&envelope.to.agent_id)
+                .map(|context| context.session.delivery_target())
+                .ok_or(ProtocolError::NoAgentFound)?
+        };
+        match delivery_target.deliver(&envelope).await {
             Ok(delivery) => {
                 tracing::info!(
                     envelope_id = %envelope.id,

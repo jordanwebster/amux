@@ -4394,3 +4394,11 @@ complete credential pair on first observation and refresh it on every later
 hook, including duplicate deliveries, so token or socket rotation cannot leave
 the daemon using stale readiness state. Captured Stop-hook coverage pins the
 wire-to-session behavior without exposing the token through debug output.
+2026-08-23 — **Delivered Claude agent messages through the authenticated inbox.**
+Claude sessions now snapshot their socket credentials, transcript source, and
+PTY fallback before delivery, keeping the agent registry available while a
+message waits for confirmation. Agent-authored envelopes use Claude's native
+cross-session JSONL protocol and are accepted only after the envelope id
+appears in a peer-origin user row or queued-command attachment within five
+seconds. A failed or unconfirmed post permanently moves that session to the
+safe bracketed-paste carrier and resends the message once.

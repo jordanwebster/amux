@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -22,6 +24,7 @@ use crate::debug::DebugView;
 const STRUCTURED_LOG_RETENTION: usize = 1000;
 const CLAUDE_MESSAGING_SOCKET_MIN_VERSION: semver::Version = semver::Version::new(2, 1, 224);
 
+#[derive(Clone)]
 pub(super) struct ClaudeMessagingCredentials {
     pub(super) socket_path: PathBuf,
     pub(super) token: String,
@@ -90,6 +93,7 @@ pub(crate) struct ClaudeSession {
     pub(in crate::agents) args: Vec<String>,
     pub(super) runtime_dir: PathBuf,
     pub(super) messaging_credentials: Option<ClaudeMessagingCredentials>,
+    pub(super) pty_only_delivery: Arc<AtomicBool>,
     pub(super) parent: Option<AgentParent>,
     pub(super) name_source: LocalAgentNameSource,
     pub(super) name_sniffer_abort: Option<AbortHandle>,
@@ -117,6 +121,7 @@ impl ClaudeSession {
             args: req.args.clone(),
             runtime_dir,
             messaging_credentials: None,
+            pty_only_delivery: Arc::new(AtomicBool::new(false)),
             parent: req.parent,
             name_source: if req.name.is_some() {
                 LocalAgentNameSource::Amux
@@ -149,6 +154,7 @@ impl ClaudeSession {
             args: sanitize_resume_args(req.args.clone()),
             runtime_dir,
             messaging_credentials: None,
+            pty_only_delivery: Arc::new(AtomicBool::new(false)),
             parent: req.parent,
             name_source,
             name_sniffer_abort: None,
@@ -175,6 +181,7 @@ impl ClaudeSession {
             args: vec![],
             runtime_dir: std::env::temp_dir(),
             messaging_credentials: None,
+            pty_only_delivery: Arc::new(AtomicBool::new(false)),
             parent: None,
             name_source: LocalAgentNameSource::Unset,
             name_sniffer_abort: None,
@@ -387,6 +394,12 @@ impl Serialize for DebugView<'_, ClaudeSession> {
                 .is_some_and(|credentials| {
                     !credentials.socket_path.as_os_str().is_empty() && !credentials.token.is_empty()
                 }),
+        )?;
+        map.serialize_entry(
+            "pty_only_delivery",
+            &session
+                .pty_only_delivery
+                .load(std::sync::atomic::Ordering::Acquire),
         )?;
         if let Some(ingest) = &session.transcript_ingest {
             map.serialize_entry("transcript", &DebugView::new(ingest, self.verbose))?;

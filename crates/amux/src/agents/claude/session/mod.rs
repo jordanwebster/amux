@@ -15,6 +15,7 @@ use crate::agents::claude::hooks::{ClaudeHookKind, HookCommon, ParsedClaudeHook}
 mod backend;
 mod core;
 mod hooks;
+mod inbox;
 mod input;
 mod name_sniffer;
 
