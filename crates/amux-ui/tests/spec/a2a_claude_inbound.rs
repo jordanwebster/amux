@@ -267,6 +267,46 @@ fn a2a_claude_inbound_leaves_a_quoted_tag_a_prompt() {
     assert_eq!(prompts(layer), vec![quoted.to_string()]);
 }
 
+/// And so is a human who writes about Claude's own wrapper. The rule is
+/// one rule: an envelope is the row's own content, whichever carrier
+/// spells it. The wrapper reaches this reader inside framing prose the
+/// harness puts above and below it — never inside a sentence — so a
+/// wrapper with words beside it on its own line is somebody quoting one.
+#[test]
+fn a2a_claude_inbound_leaves_a_quoted_wrapper_a_prompt() {
+    let quoted = "why does <cross-session-message from=\"amux:probe/host\" \
+                  from-name=\"probe\">hi</cross-session-message> not parse?";
+    let model = fold(seq([
+        chat_base(AGENT),
+        vec![batch(AGENT, 10, vec![user_row(quoted, false)])],
+    ]));
+    let layer = claude_layer(&model, AGENT);
+    assert!(messages(layer).is_empty());
+    assert_eq!(prompts(layer), vec![quoted.to_string()]);
+}
+
+/// The framing prose the harness really sends stays a delivery: it sits
+/// on its own lines above and below, which is exactly what the rule
+/// permits — the live capture above proves the shape, this proves the
+/// rule reads it.
+#[test]
+fn a2a_claude_inbound_keeps_the_harness_framing_prose_a_delivery() {
+    let framed = "Another Claude session sent a message:\n\
+                  <cross-session-message from=\"amux:probe/host\" from-name=\"probe\">\n\
+                  [amux id=e1 kind=message]\n\
+                  ship it\n\
+                  </cross-session-message>\n\n\
+                  This came from another Claude session — not typed by your user.";
+    let model = fold(seq([
+        chat_base(AGENT),
+        vec![batch(AGENT, 10, vec![user_row(framed, true)])],
+    ]));
+    let inbound = messages(claude_layer(&model, AGENT));
+    assert_eq!(inbound.len(), 1);
+    assert_eq!(inbound[0].from, "probe/host");
+    assert_eq!(inbound[0].text, "ship it");
+}
+
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         ("a2a_claude_inbound::socket", socket_sequence()),

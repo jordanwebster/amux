@@ -73,6 +73,19 @@ deletion remains unscoped. Daemon coverage refuses siblings, top-level agents,
 and unknown targets before proving a direct child can still be stopped.
 
 ---
+2026-08-23 — **Both inbound carriers hold the same rule about quoting.**
+The generic `<amux …>` tag has always had to be the whole user row — a human
+quoting one mid-sentence is a human speaking — while Claude's own
+`<cross-session-message>` wrapper was accepted anywhere in the row, so a
+sentence containing one would have been folded as a delivery and attributed
+to another agent. The wrapper now has to occupy whole lines, which is what
+distinguishes the framing prose Claude wraps a real delivery in (a lead-in
+line above, peer instructions below) from a person writing about one. The
+prose itself is deliberately not pinned: it belongs to Claude, it moves with
+Claude's releases, and a reader that refused a reworded delivery would launder
+a peer's message into the human's voice — the one outcome the carriers exist
+to prevent.
+
 2026-08-23 — **A parent's banner names the loudest need, not the nearest.**
 `family_needs` handed back its descendants in tree order, and the parent's
 chat banner shows the first one and counts the rest — so a grandchild blocked

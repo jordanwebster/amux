@@ -32,13 +32,27 @@ const UNKNOWN_SENDER: &str = "unknown";
 
 /// Read a user row's text as an agent message, or decide it is not one.
 pub(crate) fn read(text: &str) -> Option<InboundMessage> {
-    // Claude wraps a delivered cross-session message in its own framing
-    // prose, so the envelope is looked for anywhere in the row.
-    if let Some(block) = enclosed(text, "<cross-session-message ", "</cross-session-message>") {
+    // Both carriers hold the same rule: the wrapper is the row's own
+    // content, never part of a sentence somebody wrote. A human quoting
+    // an envelope mid-sentence is a human speaking, and reading it as a
+    // delivery would put another agent's name on what they said.
+    //
+    // The generic tag has nothing around it, so it must BE the row.
+    // Claude's own wrapper arrives inside framing prose Claude adds — a
+    // lead-in line above it and a paragraph of peer instructions below —
+    // which is why the wrapper is looked for anywhere in the row rather
+    // than matched against the whole of it. What holds instead is the
+    // shape that prose has always had and a quoting sentence cannot: the
+    // wrapper occupies whole lines. Pinning the prose itself would be
+    // stricter and worse — it is Claude's, it changes with Claude's
+    // releases, and a version that reworded it would make this reader
+    // answer "not an envelope" to a real delivery, which is the one
+    // failure the carrier design exists to prevent.
+    if let Some(block) =
+        enclosed_in_whole_lines(text, "<cross-session-message ", "</cross-session-message>")
+    {
         return read_cross_session(block);
     }
-    // The generic tag has no such wrapper, and must BE the row: a human
-    // quoting an amux tag mid-sentence is a human speaking.
     let trimmed = text.trim();
     trimmed
         .starts_with("<amux ")
@@ -95,11 +109,18 @@ fn read_cross_session(block: &str) -> Option<InboundMessage> {
     })
 }
 
-/// The substring from `open` through the end of the first `close` after it.
-fn enclosed<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
+/// The substring from `open` through the end of the first `close` after
+/// it — but only when nothing else shares those two lines. Prose above and
+/// below is the carrier's framing and is dropped; prose beside it means a
+/// person wrote a sentence containing the tag, which is not a delivery.
+fn enclosed_in_whole_lines<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
     let start = haystack.find(open)?;
     let end = haystack[start..].find(close)? + start + close.len();
-    Some(&haystack[start..end])
+    let before = &haystack[..start];
+    let before = before.rsplit_once('\n').map_or(before, |(_, last)| last);
+    let after = &haystack[end..];
+    let after = after.split_once('\n').map_or(after, |(first, _)| first);
+    (before.trim().is_empty() && after.trim().is_empty()).then(|| &haystack[start..end])
 }
 
 /// An envelope's opening tag and its body, with the newlines the formatter
