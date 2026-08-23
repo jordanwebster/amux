@@ -80,6 +80,7 @@ enum Scenario {
     A2aPtyDelivery,
     A2aStopPayload,
     A2aMcpTools,
+    A2aSessionRegistry,
 }
 
 #[derive(Clone, Copy)]
@@ -228,6 +229,12 @@ const SCENARIOS: &[ScenarioSpec] = &[
         Scenario::A2aMcpTools,
         false,
     ),
+    scenario(
+        "a2a_session_registry",
+        "a2a/session-registry",
+        Scenario::A2aSessionRegistry,
+        false,
+    ),
 ];
 
 fn main() -> Result<()> {
@@ -248,7 +255,7 @@ fn main() -> Result<()> {
     }
     if scenario_names
         .iter()
-        .all(|name| name.starts_with("a2a_fixture_"))
+        .all(|name| name.starts_with("a2a_fixture_") || name == "a2a_version_gate_parser")
     {
         return Ok(());
     }
@@ -535,6 +542,7 @@ async fn run_scenario(
         Scenario::A2aPtyDelivery => a2a_pty_delivery(daemon, scratch, model).await,
         Scenario::A2aStopPayload => a2a_stop_payload(daemon, scratch, model).await,
         Scenario::A2aMcpTools => a2a_mcp_tools(daemon, scratch, model).await,
+        Scenario::A2aSessionRegistry => a2a_session_registry(daemon, scratch, model).await,
     }
     .with_context(|| format!("{name} structural assertion"))
 }
@@ -1080,6 +1088,142 @@ async fn a2a_mcp_tools(
             "transcript_tailer_recovered_from_stop": true,
             "stub_send_request": true,
         }
+    }))
+}
+
+fn collect_regular_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_regular_files(&entry.path(), files)?;
+        } else if file_type.is_file() {
+            files.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn session_registry_probe(
+    scratch: &Scratch,
+    session_name: &str,
+    socket: &Path,
+) -> Result<serde_json::Value> {
+    let home = std::env::var("HOME").context("HOME is required for Claude registry probe")?;
+    let roots = vec![
+        scratch.root.join("config"),
+        scratch.root.join("data"),
+        scratch.root.join("state"),
+        PathBuf::from(home).join(".claude/projects"),
+    ];
+    let socket = socket.display().to_string();
+    let mut files = Vec::new();
+    for root in &roots {
+        collect_regular_files(root, &mut files)?;
+    }
+    let mut matches = Vec::new();
+    let mut peer_protocol = None;
+    for path in &files {
+        let Ok(metadata) = path.metadata() else {
+            continue;
+        };
+        if metadata.len() > 16 * 1024 * 1024 {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if !(content.contains(session_name) || content.contains(&socket)) {
+            continue;
+        }
+        if content.contains("peerProtocol") && peer_protocol.is_none() {
+            for value in content
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            {
+                if let Some(found) = value.get("peerProtocol") {
+                    peer_protocol = Some(found.clone());
+                    break;
+                }
+            }
+        }
+        matches.push(path.display().to_string());
+    }
+    Ok(serde_json::json!({
+        "search_roots": roots.iter().map(|root| root.display().to_string()).collect::<Vec<_>>(),
+        "regular_files_searched": files.len(),
+        "matching_files": matches,
+        "peerProtocol": peer_protocol,
+    }))
+}
+
+/// `--name` must be observable from Claude's own session presentation. The
+/// probe records any matching durable session file (or its absence) and makes
+/// the version string the later argv gate's fixed parser corpus.
+async fn a2a_session_registry(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let name = "a2a-registry-probe";
+    let socket = scratch.root.join("sock/a2a-registry.sock");
+    let args = vec![
+        "--name".to_string(),
+        name.to_string(),
+        "--messaging-socket-path".to_string(),
+        socket.display().to_string(),
+        "--dangerously-skip-permissions".to_string(),
+    ];
+    let dir = scratch.project_dir("a2a_session_registry")?;
+    let mut session =
+        CaptureSession::open(daemon, scratch, "a2a_session_registry", dir, &args, model).await?;
+    session.prepare_for_first_prompt(READY_TIMEOUT).await?;
+    session
+        .send_prompt("Reply exactly A2A_REGISTRY_READY_21240 and nothing else.")
+        .await?;
+    let stop = session
+        .wait_for_row(0, TURN_TIMEOUT, "registry probe Stop hook", |row| {
+            row.row_type() == "hook.stop"
+        })
+        .await?;
+    let stop_row = session.snapshot().await[stop - 1].clone();
+    let transcript_path = stop_row
+        .json
+        .get("transcript_path")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("registry Stop hook has no transcript_path"))?
+        .to_string();
+    let terminal_name = session.raw_contains(name).await;
+    let mut registry = session_registry_probe(scratch, name, &socket)?;
+    registry["hook_transcript_path"] = serde_json::Value::String(transcript_path);
+    let registry_file_found = registry
+        .get("matching_files")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|files| {
+            files.iter().any(|file| {
+                file.as_str()
+                    .is_some_and(|file| file.contains(".claude/projects"))
+            })
+        });
+    if !terminal_name {
+        bail!("session listing assertion: terminal_name={terminal_name}");
+    }
+    let keys = session.close().await?;
+    Ok(serde_json::json!({
+        "keys": keys,
+        "assertions": {
+            "terminal_name": terminal_name,
+            "registry_file_found": registry_file_found,
+        },
+        "registry": registry,
     }))
 }
 

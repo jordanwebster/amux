@@ -805,6 +805,13 @@ impl CaptureSession {
         self.raw_screen.lock().await.len()
     }
 
+    /// Whether the live terminal byte stream contained `needle`. Capture
+    /// scenarios use this only for terminal-title/listing probes; transcript
+    /// rows remain the authority for conversation assertions.
+    pub async fn raw_contains(&self, needle: &str) -> bool {
+        self.raw_screen.lock().await.contains(needle)
+    }
+
     pub fn streams_open(&self) -> bool {
         !self.raw_closed.load(Ordering::SeqCst) && !self.rows_closed.load(Ordering::SeqCst)
     }

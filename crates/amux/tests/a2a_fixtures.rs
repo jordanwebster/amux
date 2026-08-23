@@ -4,6 +4,8 @@ const SOCKET_DELIVERY: &str = include_str!("fixtures/a2a/socket_delivery.jsonl")
 const PTY_DELIVERY: &str = include_str!("fixtures/a2a/pty_delivery.jsonl");
 const STOP_PAYLOAD: &str = include_str!("fixtures/a2a/stop_payload.jsonl");
 const MCP_TOOLS: &str = include_str!("fixtures/a2a/mcp_tools.jsonl");
+const SESSION_REGISTRY: &str = include_str!("fixtures/a2a/session_registry.jsonl");
+const SESSION_REGISTRY_META: &str = include_str!("fixtures/a2a/session_registry.meta.json");
 
 fn captured_io() -> Vec<Value> {
     include_str!("fixtures/codex_backend/a2a_tools.io.jsonl")
@@ -327,4 +329,53 @@ fn a2a_fixture_mcp_tools() {
         rows.iter()
             .all(|row| row.get("type").and_then(Value::as_str) != Some("hook.permission_request"))
     );
+}
+
+fn parse_claude_version(version: &str) -> (u16, u16, u16) {
+    let mut parts = version
+        .split_whitespace()
+        .next()
+        .expect("Claude version starts with a version number")
+        .split('.');
+    let parse = |part: Option<&str>| {
+        part.expect("version component")
+            .parse::<u16>()
+            .expect("numeric version")
+    };
+    (
+        parse(parts.next()),
+        parse(parts.next()),
+        parse(parts.next()),
+    )
+}
+
+#[test]
+fn a2a_version_gate_parser() {
+    let meta: Value = serde_json::from_str(SESSION_REGISTRY_META).expect("registry meta is JSON");
+    let version = meta
+        .get("claude_version")
+        .and_then(Value::as_str)
+        .expect("registry meta records claude --version stdout");
+    assert!(parse_claude_version(version) >= (2, 1, 224));
+    assert_eq!(
+        meta.pointer("/notes/assertions/terminal_name")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(
+        meta.pointer("/notes/registry/hook_transcript_path")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert!(meta.pointer("/notes/registry/peerProtocol").is_some());
+
+    let rows: Vec<Value> = SESSION_REGISTRY
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("registry capture row is JSON"))
+        .collect();
+    assert!(rows.iter().any(|row| {
+        row.get("type").and_then(Value::as_str) == Some("hook.stop")
+            && row.get("last_assistant_message").and_then(Value::as_str)
+                == Some("A2A_REGISTRY_READY_21240")
+    }));
 }

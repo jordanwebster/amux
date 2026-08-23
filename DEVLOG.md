@@ -4306,3 +4306,11 @@ Stop metadata was replayed through the normal hook seam, so the committed
 tool-use/result fixture is explicitly synthetic and `fidelity_risk: true`;
 the metadata preserves the live observation and the structural waiter pins
 the expected paired row shape.
+2026-08-23 — **Pinned Claude’s session-name and version probe.** The isolated
+registry capture starts a named, socket-enabled Claude 2.1.240 session and
+records the name in its terminal presentation, `claude --version`, the
+hook-reported transcript path pattern, and a full sweep of the scratch and
+Claude-project search roots. No durable Claude registry file or
+`peerProtocol` field was found in that live corpus, so the graduated metadata
+records both facts as `false`/`null`; the test-local gate parser consumes that
+captured version string and requires the socket-capable minimum.

@@ -1,0 +1,57 @@
+{
+  "captured_at": "2026-08-23T00:49:17.613339+00:00",
+  "claude_version": "2.1.240 (Claude Code)",
+  "failure": null,
+  "graduated_at": "2026-08-23T00:49:17.819284+00:00",
+  "graduated_from": "redacted capture run",
+  "harness": "cargo test -p amux --test capture -- a2a_session_registry",
+  "model": "haiku",
+  "notes": {
+    "assertions": {
+      "registry_file_found": false,
+      "terminal_name": true
+    },
+    "keys": [
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "external instructions dialog: Enter (allow checked-out AGENTS.md)",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Reply exactly A2A_REGISTRY_READY_21240 and nothing else.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Reply exactly A2A_REGISTRY_READY_21240 and nothing else.",
+        "seq_retries": 0
+      }
+    ],
+    "registry": {
+      "hook_transcript_path": "[HOME]/.claude/projects/[SCRATCH-SLUG]-projects-a2a-session-registry/cb7c4282-226f-4344-a31c-2033ebdf6eed.jsonl",
+      "matching_files": [
+        "[SCRATCH]/state/amux/amux.log"
+      ],
+      "peerProtocol": null,
+      "regular_files_searched": 720,
+      "search_roots": [
+        "[SCRATCH]/config",
+        "[SCRATCH]/data",
+        "[SCRATCH]/state",
+        "[HOME]/.claude/projects"
+      ]
+    }
+  },
+  "poisoned_daemon_env": true,
+  "requirement": "a2a/session-registry",
+  "scenario": "a2a_session_registry"
+}

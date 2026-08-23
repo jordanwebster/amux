@@ -1395,7 +1395,10 @@ fn main() -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    if names.iter().all(|name| name.starts_with("a2a_fixture_")) {
+    if names
+        .iter()
+        .all(|name| name.starts_with("a2a_fixture_") || name == "a2a_version_gate_parser")
+    {
         return Ok(());
     }
     let selected: Vec<&ScenarioSpec> = if names.iter().any(|name| name == "c-all") {
