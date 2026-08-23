@@ -9,8 +9,8 @@
 use amux_tui::view::{Mode, ViewState};
 use amux_tui::{FrameContext, Theme, render};
 use amux_ui::{
-    Agent, AgentId, Command, DisconnectReason, HostEntry, HostId, Model, Msg, OpId, ServerMsg,
-    StreamEntry, StreamMsg, update,
+    Agent, AgentId, AgentParent, Command, DisconnectReason, HostEntry, HostId, Model, Msg, OpId,
+    ServerMsg, StreamEntry, StreamMsg, WorkingOn, update,
 };
 use chrono::{DateTime, TimeDelta, Utc};
 use ratatui::Terminal;
@@ -250,22 +250,53 @@ fn fleet_model() -> Model {
 
 // --- rendering ------------------------------------------------------------
 
-fn render_frame(model: &Model, view: &ViewState, width: u16, height: u16) -> String {
+fn render_buffer(
+    model: &Model,
+    view: &ViewState,
+    width: u16,
+    height: u16,
+    theme: Theme,
+) -> ratatui::buffer::Buffer {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("terminal");
     let ctx = FrameContext {
         viewport: (width, height),
-        theme: Theme::default(),
+        theme,
         now: at(NOW),
     };
     terminal
         .draw(|frame| render(model, view, &ctx, frame))
         .expect("draw");
-    let buffer = terminal.backend().buffer().clone();
+    terminal.backend().buffer().clone()
+}
+
+fn render_frame(model: &Model, view: &ViewState, width: u16, height: u16) -> String {
+    let buffer = render_buffer(model, view, width, height, Theme::default());
     let mut out = String::new();
     for y in 0..buffer.area.height {
         for x in 0..buffer.area.width {
             out.push_str(buffer.cell((x, y)).expect("cell in area").symbol());
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// One class letter per cell: what the text goldens cannot see. Same
+/// classes the chat style goldens use.
+fn buffer_styles(buffer: &ratatui::buffer::Buffer) -> String {
+    let mut out = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            let style = buffer.cell((x, y)).expect("cell in area").style();
+            out.push(match style.fg {
+                Some(Color::Red) => 'r',
+                Some(Color::Yellow) => 'y',
+                Some(Color::Green) => 'g',
+                Some(Color::DarkGray) => 'a',
+                _ if style.add_modifier.contains(Modifier::DIM) => 'd',
+                _ => '.',
+            });
         }
         out.push('\n');
     }
@@ -641,4 +672,222 @@ fn badge_styles_and_offline_dim() {
         offline_name.style().add_modifier.contains(Modifier::DIM),
         "offline rows are dim"
     );
+}
+
+// --- families in the fleet -----------------------------------------------
+
+/// A child agent: the same row as any other, plus the edge its owning
+/// daemon recorded. Nothing else about a child is special.
+fn a_child(name: &str, agent_type: &str, on: &str, parent: &str) -> Agent {
+    Agent {
+        parent: Some(AgentParent {
+            agent_id: agent_id(parent),
+            host_id: host_id(on),
+        }),
+        ..an_agent(name, agent_type, on)
+    }
+}
+
+fn working_on(agent: &mut Agent, text: &str, said_at: i64) {
+    agent.working_on = Some(WorkingOn {
+        text: text.to_string(),
+        updated_at: at(said_at),
+    });
+}
+
+/// The canonical fleet plus one three-deep family under `refactor-tunnels`:
+/// a child asking for permission, a grandchild under it, and an idle
+/// sibling saying what it is on. The family's loudest attention is the
+/// grandchild's, which is the point — a folded row must show it.
+fn family_msgs() -> Vec<Msg> {
+    let mut msgs = fleet_msgs();
+    let mut lead = an_agent("refactor-tunnels", "claude", "nova");
+    working_on(&mut lead, "split the tunnel supervisor", NOW - 900);
+    msgs.push(agent_up(&lead));
+
+    let mut scribe = a_child("write-the-docs", "claude", "nova", "refactor-tunnels");
+    working_on(&mut scribe, "document the new handshake", NOW - 240);
+    msgs.push(agent_up(&scribe));
+
+    let mut runner = a_child("test-runner", "codex", "nova", "refactor-tunnels");
+    working_on(&mut runner, "run the tunnel suite end to end", NOW - 60);
+    msgs.push(agent_up(&runner));
+
+    msgs.push(agent_up(&a_child(
+        "flake-hunter",
+        "codex",
+        "nova",
+        "test-runner",
+    )));
+
+    msgs.extend(stream_rows(
+        "write-the-docs",
+        NOW - 300,
+        vec![ready_row(), prompt_row(5), stop_row()],
+    ));
+    msgs.extend(stream_rows(
+        "test-runner",
+        NOW - 30,
+        vec![ready_row(), prompt_row(6)],
+    ));
+    msgs.extend(stream_rows(
+        "flake-hunter",
+        NOW - 20,
+        vec![ready_row(), prompt_row(7), permission_row()],
+    ));
+    msgs
+}
+
+fn family_model() -> Model {
+    fold(family_msgs())
+}
+
+fn expanded_view(names: &[&str]) -> ViewState {
+    ViewState {
+        expanded: names.iter().map(|name| agent_id(name)).collect(),
+        ..view_default()
+    }
+}
+
+/// Folded: the family is ONE row wearing the loudest badge anywhere inside
+/// it and a `⋯3` marker for what it stands in for, and `working_on` shows
+/// with the age of the claim.
+#[test]
+fn a2a_fleet_family_folded() {
+    let rendered = render_frame(&family_model(), &view_default(), 80, 14);
+    assert_golden("a2a_fleet_family_folded", &rendered);
+}
+
+/// Open: the parent keeps its own badge, descendants indent one step per
+/// generation, and the family still occupies one place in the ranking.
+#[test]
+fn a2a_fleet_family_open() {
+    let view = expanded_view(&["refactor-tunnels"]);
+    let rendered = render_frame(&family_model(), &view, 80, 14);
+    assert_golden("a2a_fleet_family_open", &rendered);
+}
+
+/// 60 columns: `working_on` collapses first, the status word second, and
+/// the family marker survives both — it is structure, not decoration.
+#[test]
+fn a2a_fleet_family_60col() {
+    let view = expanded_view(&["refactor-tunnels"]);
+    let rendered = render_frame(&family_model(), &view, 60, 14);
+    assert_golden("a2a_fleet_family_60col", &rendered);
+}
+
+/// The fleet's styles are fixed rather than themed (see `Theme`), so these
+/// two goldens are the standing proof that a light terminal gets exactly
+/// the frame a dark one does — including the family badge.
+#[test]
+fn a2a_fleet_family_styles_dark() {
+    let view = expanded_view(&["refactor-tunnels"]);
+    let styles = buffer_styles(&render_buffer(&family_model(), &view, 80, 14, Theme::Dark));
+    assert_golden("a2a_fleet_family_styles_dark", &styles);
+}
+
+#[test]
+fn a2a_fleet_family_styles_light() {
+    let view = expanded_view(&["refactor-tunnels"]);
+    let styles = buffer_styles(&render_buffer(&family_model(), &view, 80, 14, Theme::Light));
+    assert_golden("a2a_fleet_family_styles_light", &styles);
+}
+
+/// The fold key opens the family under the cursor and shuts it again;
+/// shutting from a descendant leaves the cursor on the row that swallowed
+/// it, never on whatever slid into that index.
+#[test]
+fn a2a_fleet_fold_key_opens_and_shuts_the_family() {
+    let model = family_model();
+    let mut view = view_default();
+    let top = amux_tui::view::visible_rows(&model, &view)
+        .iter()
+        .position(|row| row.display_name() == "refactor-tunnels")
+        .expect("the folded family row");
+    view.selected = top;
+
+    amux_tui::keys::handle_key(&mut view, &model, press('z'), 20, at(NOW));
+    let open = amux_tui::view::visible_rows(&model, &view);
+    assert_eq!(open.len(), 8, "every descendant is a row while open");
+
+    // Put the cursor on the deepest descendant, then shut from there.
+    view.selected = open
+        .iter()
+        .position(|row| row.display_name() == "flake-hunter")
+        .expect("the grandchild is visible while open");
+    amux_tui::keys::handle_key(&mut view, &model, press('z'), 20, at(NOW));
+
+    let shut = amux_tui::view::visible_rows(&model, &view);
+    assert_eq!(shut.len(), 5, "the family is one row again");
+    assert_eq!(
+        shut[view.selected].display_name(),
+        "refactor-tunnels",
+        "the cursor follows the fold up to the row that swallowed it"
+    );
+}
+
+/// A filter searches every agent: nothing hides behind a fold from a name
+/// the human typed.
+#[test]
+fn a2a_fleet_filter_never_hides_behind_a_fold() {
+    let model = family_model();
+    let view = view_default();
+    assert!(
+        !amux_tui::view::visible_rows(&model, &view)
+            .iter()
+            .any(|row| row.display_name() == "flake-hunter"),
+        "the grandchild is folded away with nothing typed"
+    );
+
+    let filtered = ViewState {
+        filter: "flake".to_string(),
+        ..view_default()
+    };
+    let rows = amux_tui::view::visible_rows(&model, &filtered);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].display_name(), "flake-hunter");
+}
+
+/// An agent in no family has nothing to fold, and the key says so by
+/// changing nothing.
+#[test]
+fn a2a_fleet_fold_key_is_inert_on_a_childless_row() {
+    let model = family_model();
+    let mut view = view_default();
+    view.selected = amux_tui::view::visible_rows(&model, &view)
+        .iter()
+        .position(|row| row.display_name() == "docs-cleanup")
+        .expect("a childless row");
+    let before = amux_tui::view::visible_rows(&model, &view).len();
+    amux_tui::keys::handle_key(&mut view, &model, press('z'), 20, at(NOW));
+    assert_eq!(amux_tui::view::visible_rows(&model, &view).len(), before);
+    assert!(view.expanded.is_empty());
+}
+
+/// `working_on` renders with the age of the claim, and is absent — not
+/// filled with something invented — for an agent that never said.
+#[test]
+fn a2a_fleet_working_on_states_the_claim_and_its_age() {
+    let view = expanded_view(&["refactor-tunnels"]);
+    let rendered = render_frame(&family_model(), &view, 80, 14);
+    assert!(
+        rendered.contains("run the t… 1m"),
+        "the claim, clipped to the room left over, then how long ago it was made:\n{rendered}"
+    );
+    let silent = rendered
+        .lines()
+        .find(|line| line.contains("flake-hunter"))
+        .expect("the grandchild row");
+    let cell: String = silent.chars().skip(65).take(78 - 65).collect();
+    assert!(
+        cell.trim().is_empty(),
+        "an agent that said nothing gets an empty cell, not a guess: {cell:?}"
+    );
+}
+
+fn press(key: char) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char(key),
+        crossterm::event::KeyModifiers::NONE,
+    )
 }

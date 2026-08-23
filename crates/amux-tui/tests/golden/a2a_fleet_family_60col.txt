@@ -1,0 +1,14 @@
+┌ amux ────────────────────────────────────────────────────┐
+│ /                                            8 agents    │
+│                                                          │
+│ ▸ ⋯ refactor-tunnels      claude   nova       12s        │
+│   ✓   write-the-docs      claude   nova       5m         │
+│   ⋯   test-runner         codex    nova       30s        │
+│   !     flake-hunter      codex    nova       20s        │
+│   ! fix-auth-bug          claude   nova       2m         │
+│   ? migration-plan        claude   hetzner    45s        │
+│   ✓ nightly-refactor      codex    hetzner    3m         │
+│     docs-cleanup          claude   nova       1h         │
+│                                                          │
+│ ● connected · 3 hosts                                    │
+└──────────────────────────────────────────────────────────┘

@@ -3,7 +3,9 @@
 //! ViewState is exactly what `docs/UI.md` allows a renderer to keep: focus,
 //! scroll, drafts, navigation. Everything domain-shaped stays in the Model.
 
-use amux_ui::{AgentId, Command, FleetItem, Model};
+use std::collections::BTreeSet;
+
+use amux_ui::{AgentId, Attention, Command, FleetItem, Model};
 use chrono::{DateTime, TimeDelta, Utc};
 
 /// The chrome-wide guarded Ctrl+C (`docs/CHAT.md` §Keybindings) — ONE
@@ -153,6 +155,11 @@ pub struct ViewState {
     /// chrome (`docs/CHAT.md`). Opening from the fleet is Phase 6's
     /// binding work; [`ViewState::open_chat`] is the seam it invokes.
     pub chat: Option<crate::chat::ChatView>,
+    /// Which families are unfolded, by the id of the agent heading them.
+    /// Navigation state, so it lives here: a family the Model no longer
+    /// reports simply stops being consulted, and nothing has to be
+    /// cleaned up when one disappears.
+    pub expanded: BTreeSet<AgentId>,
 }
 
 impl Default for ViewState {
@@ -170,6 +177,7 @@ impl Default for ViewState {
             kitty: false,
             quit_guard: QuitGuard::default(),
             chat: None,
+            expanded: BTreeSet::new(),
         }
     }
 }
@@ -189,11 +197,57 @@ impl ViewState {
     pub fn close_chat(&mut self) {
         self.chat = None;
     }
+
+    /// Open or shut the family the given row belongs to. Shutting one from
+    /// a row that is about to disappear leaves the selection on the row
+    /// that swallowed it — the top row — so the cursor never lands
+    /// somewhere the keypress did not point at.
+    pub fn toggle_fold(&mut self, model: &Model, row: usize) -> bool {
+        let rows = visible_rows(model, self);
+        let Some(VisibleRow::Agent(agent)) = rows.get(row) else {
+            return false;
+        };
+        let Some(family) = agent.family else {
+            return false;
+        };
+        if !self.expanded.remove(&family) {
+            self.expanded.insert(family);
+            return true;
+        }
+        // The family is shut now: everything below its top row is gone.
+        self.selected = visible_rows(model, self)
+            .iter()
+            .position(|row| row.card().is_some_and(|card| card.agent.id == family))
+            .unwrap_or(self.selected);
+        true
+    }
+}
+
+/// What a folded family row stands in for: the agents it hides and the
+/// loudest attention among them, so one glance at a shut family says
+/// whether anything inside wants a person.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Folded {
+    pub hidden: usize,
+    pub attention: Attention,
+}
+
+/// One agent row of the fleet list, placed in its family.
+pub struct AgentRow<'a> {
+    pub card: &'a amux_ui::AgentCard,
+    /// The agent heading this row's family, when the row is in one at all
+    /// — its own id on a family's top row. `None` for an agent that has
+    /// neither a parent nor children: there is nothing to fold.
+    pub family: Option<AgentId>,
+    /// Generations below the family's top row; 0 on the top row itself.
+    pub depth: usize,
+    /// Set while this row's family is folded shut.
+    pub folded: Option<Folded>,
 }
 
 /// One visible row after filtering.
 pub enum VisibleRow<'a> {
-    Agent(&'a amux_ui::AgentCard),
+    Agent(AgentRow<'a>),
     PendingCreate {
         name: &'a str,
         agent_type: &'a amux_ui::AgentType,
@@ -202,41 +256,82 @@ pub enum VisibleRow<'a> {
 }
 
 impl VisibleRow<'_> {
+    /// The name the filter matches and the row leads with — the plain
+    /// agent name, never the folded row's `⋯N` marker, so typing a name
+    /// finds the agent whether or not its family is shut.
     pub fn display_name(&self) -> String {
         match self {
-            VisibleRow::Agent(card) => card.display_name(),
+            VisibleRow::Agent(row) => row.card.display_name(),
             VisibleRow::PendingCreate { name, .. } => (*name).to_string(),
+        }
+    }
+
+    pub fn card(&self) -> Option<&amux_ui::AgentCard> {
+        match self {
+            VisibleRow::Agent(row) => Some(row.card),
+            VisibleRow::PendingCreate { .. } => None,
         }
     }
 }
 
-/// The fleet after the view's filter: ranking comes from the Model, the
-/// filter is presentation.
+/// The fleet after the view's filter: ranking and family structure come
+/// from the Model, the fold and the filter are presentation.
 pub fn visible_rows<'a>(model: &'a Model, view: &ViewState) -> Vec<VisibleRow<'a>> {
     model
         .fleet()
         .into_iter()
-        .flat_map(fleet_item_rows)
+        .flat_map(|item| fleet_item_rows(item, view))
         .filter(|row| fuzzy_matches(&view.filter, &row.display_name()))
         .collect()
 }
 
-/// The rows one ranked fleet item contributes. A family currently spends
-/// its parent and every descendant as ordinary rows, keeping the list the
-/// flat one the chrome draws today; the collapsed presentation arrives with
-/// the family chrome.
-fn fleet_item_rows(item: FleetItem<'_>) -> Vec<VisibleRow<'_>> {
+/// The rows one ranked fleet item contributes. A family is one row while
+/// it is folded and its parent plus every descendant while it is open —
+/// and a filter opens every family, because a name typed into the filter
+/// must never miss an agent hiding behind a fold.
+fn fleet_item_rows<'a>(item: FleetItem<'a>, view: &ViewState) -> Vec<VisibleRow<'a>> {
     match item {
-        FleetItem::Agent(card) => vec![VisibleRow::Agent(card)],
+        FleetItem::Agent(card) => vec![VisibleRow::Agent(AgentRow {
+            card,
+            family: None,
+            depth: 0,
+            folded: None,
+        })],
         FleetItem::Family {
-            parent, children, ..
-        } => std::iter::once(VisibleRow::Agent(parent))
-            .chain(
-                children
-                    .into_iter()
-                    .map(|member| VisibleRow::Agent(member.card)),
-            )
-            .collect(),
+            parent,
+            children,
+            child_count,
+            highest_attention,
+        } => {
+            let top = parent.agent.id;
+            if !view.filter.is_empty() || view.expanded.contains(&top) {
+                std::iter::once(VisibleRow::Agent(AgentRow {
+                    card: parent,
+                    family: Some(top),
+                    depth: 0,
+                    folded: None,
+                }))
+                .chain(children.into_iter().map(|member| {
+                    VisibleRow::Agent(AgentRow {
+                        card: member.card,
+                        family: Some(top),
+                        depth: member.depth,
+                        folded: None,
+                    })
+                }))
+                .collect()
+            } else {
+                vec![VisibleRow::Agent(AgentRow {
+                    card: parent,
+                    family: Some(top),
+                    depth: 0,
+                    folded: Some(Folded {
+                        hidden: child_count,
+                        attention: highest_attention,
+                    }),
+                })]
+            }
+        }
         FleetItem::PendingCreate {
             name,
             agent_type,
@@ -248,6 +343,24 @@ fn fleet_item_rows(item: FleetItem<'_>) -> Vec<VisibleRow<'_>> {
             host,
         }],
     }
+}
+
+/// Every agent name the fleet holds, fold or no fold — the name generator
+/// must not hand out a name an unfolded family is already using.
+fn all_agent_names(model: &Model) -> Vec<String> {
+    model
+        .fleet()
+        .into_iter()
+        .flat_map(|item| match item {
+            FleetItem::Agent(card) => vec![card.display_name()],
+            FleetItem::Family {
+                parent, children, ..
+            } => std::iter::once(parent.display_name())
+                .chain(children.iter().map(|member| member.card.display_name()))
+                .collect(),
+            FleetItem::PendingCreate { name, .. } => vec![name.to_string()],
+        })
+        .collect()
 }
 
 /// Case-insensitive subsequence match — cheap, predictable fuzzy.
@@ -272,17 +385,7 @@ pub fn fuzzy_matches(filter: &str, candidate: &str) -> bool {
 /// not taken by a current display name or pending create. Deterministic
 /// from the Model.
 pub fn next_agent_name(model: &Model, agent_type: &amux_ui::AgentType) -> String {
-    let taken: Vec<String> = model
-        .fleet()
-        .into_iter()
-        .flat_map(|item| match item {
-            FleetItem::PendingCreate { name, .. } => vec![name.to_string()],
-            item => fleet_item_rows(item)
-                .iter()
-                .map(VisibleRow::display_name)
-                .collect(),
-        })
-        .collect();
+    let taken = all_agent_names(model);
     (1..)
         .map(|n| format!("{}-{n}", amux_ui::agent_type_label(agent_type)))
         .find(|candidate| !taken.iter().any(|name| name == candidate))

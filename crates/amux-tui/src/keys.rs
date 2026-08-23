@@ -205,6 +205,17 @@ pub fn handle_key(
                 }
                 None
             }
+            // `z` is vim's fold key: it opens or shuts the family the
+            // selected row belongs to. On a row that is in no family
+            // there is nothing to fold and the press does nothing — the
+            // help overlay says so.
+            KeyCode::Char('z') => {
+                if view.toggle_fold(model, view.selected) {
+                    let visible = visible_rows(model, view).len();
+                    view.clamp_selection(visible, list_rows);
+                }
+                None
+            }
             KeyCode::Char('?') => {
                 view.mode = Mode::Help;
                 None
@@ -226,7 +237,7 @@ fn move_selection(view: &mut ViewState, model: &Model, delta: isize, list_rows: 
 
 fn selected_agent<'a>(view: &ViewState, model: &'a Model) -> Option<&'a amux_ui::AgentCard> {
     match visible_rows(model, view).into_iter().nth(view.selected) {
-        Some(VisibleRow::Agent(card)) => Some(card),
+        Some(VisibleRow::Agent(row)) => Some(row.card),
         _ => None,
     }
 }

@@ -91,6 +91,7 @@ pub fn fleet_sections(eff: &Effective, default_open_mode: OpenMode) -> Vec<Secti
     fleet.extend([
         row("o", format!("open in {other}"), Tier::Plain),
         row("n", "new agent", Tier::Plain),
+        row("z", "open/shut a family", Tier::Plain),
         row("r", "rename selected", Tier::Plain),
         row("d", "delete selected", Tier::Plain),
         row("C-g", "debug dump", Tier::Plain),

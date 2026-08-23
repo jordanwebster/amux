@@ -7,6 +7,7 @@
 │   enter         open in raw attach                               │
 │   o             open in chat                                     │
 │   n             new agent                                        │
+│   z             open/shut a family                               │
 │   r             rename selected                                  │
 │   d             delete selected                                  │
 │   C-g           debug dump                                       │
@@ -15,7 +16,6 @@
 │                                                                  │
 │   C-a d         detach to shell                                  │
 │   C-a s         back to fleet                                    │
-│                                                                  │
 │                                                                  │
 │ ● connected · 3 hosts  any key to close                          │
 └──────────────────────────────────────────────────────────────────┘

@@ -4563,3 +4563,16 @@ reads in the fleet's words while anyone else's dynamic tools stay theirs.
 The envelope-kind vocabulary moved to the kernel, where amux's own wire
 facts belong; each layer keeps its own entry, since what a Claude transcript
 can recover and what the Codex daemon authored are different facts.
+2026-08-23 — **Folded families into one fleet row.** An agent that spawned
+others now occupies a single row wearing the loudest badge anywhere inside
+its family and a `⋯N` marker for what it stands in for, so a blocked
+grandchild pulls the whole family to the top of the list rather than hiding
+under an idle parent. `z` opens and shuts the family under the cursor;
+descendants indent one step per generation, and shutting from inside leaves
+the cursor on the row that swallowed it. A typed filter opens every family,
+because a name the human typed must never miss an agent behind a fold. The
+fleet also states what each agent says it is working on, clipped to the room
+left over and stamped with how long ago it said so — and left plainly empty
+for an agent that has said nothing. That column is the first to collapse on
+a narrow terminal, ahead of the status word: it elaborates where every other
+column answers.

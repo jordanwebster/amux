@@ -28,9 +28,18 @@ const HOST_WIDTH: usize = 10;
 const AGE_COL: usize = 48;
 const AGE_WIDTH: usize = 5;
 const STATUS_COL: usize = 54;
-/// The status-word column collapses first on narrow terminals: shown only
-/// when the full grid fits.
+/// The status word is the second column to collapse on narrow terminals:
+/// shown only when the full grid fits.
 const STATUS_MIN_FRAME_WIDTH: usize = 68;
+/// `working_on` sits past the widest status word (`permission`), and is
+/// the FIRST column to collapse — what an agent says it is doing is the
+/// most expendable cell on a cramped screen, because every other column
+/// answers a question this one only elaborates on.
+const WORKING_COL: usize = 65;
+/// Enough room past `WORKING_COL` for a clipped phrase and its age.
+const WORKING_MIN_FRAME_WIDTH: usize = 78;
+/// Indent per generation for an unfolded family's descendants.
+const FAMILY_INDENT: usize = 2;
 /// Header right block ("5 agents" / "1/5") is left-anchored here.
 const RIGHT_INFO_FROM_EDGE: usize = 13;
 /// Below this width the column grid cannot lay out (the right-info block
@@ -437,7 +446,14 @@ fn badge_for(model: &Model, card: &amux_ui::AgentCard) -> (&'static str, Style) 
     {
         return (" ", plain());
     }
-    match model.effective_attention(card) {
+    badge_glyph(model.effective_attention(card))
+}
+
+/// The badge an attention wears. A folded family's row wears the loudest
+/// one anywhere inside it, drawn from this same table — so a shut family
+/// and the child hiding in it never disagree about how loud it is.
+fn badge_glyph(attention: Attention) -> (&'static str, Style) {
+    match attention {
         Attention::Unknown => ("–", dim()),
         Attention::Idle => (" ", plain()),
         Attention::Working => ("⋯", dim()),
@@ -449,6 +465,20 @@ fn badge_for(model: &Model, card: &amux_ui::AgentCard) -> (&'static str, Style) 
     }
 }
 
+/// The `working_on` cell: what the agent last said it was doing, clipped
+/// to the room left over, then how long ago it said so. Empty when it has
+/// said nothing — silence reads as silence, not as an idle phrase.
+fn working_text(card: &amux_ui::AgentCard, now: DateTime<Utc>, budget: usize) -> Option<String> {
+    let working = card.working_on()?;
+    let age = format_relative_age(now, working.updated_at);
+    let room = budget.saturating_sub(age.chars().count() + 1);
+    if room < 2 {
+        return None;
+    }
+    let text = clip(working.text.lines().next().unwrap_or_default().trim(), room);
+    (!text.is_empty()).then(|| format!("{text} {age}"))
+}
+
 fn fleet_row_line(
     model: &Model,
     view: &ViewState,
@@ -458,29 +488,49 @@ fn fleet_row_line(
 ) -> Line<'static> {
     let width = ctx.viewport.0 as usize;
     let show_status = width >= STATUS_MIN_FRAME_WIDTH;
+    let show_working = width >= WORKING_MIN_FRAME_WIDTH;
     let renaming = matches!(
         (&view.mode, row),
-        (Mode::Rename { agent, .. }, VisibleRow::Agent(card)) if *agent == card.agent.id
+        (Mode::Rename { agent, .. }, VisibleRow::Agent(agent_row)) if *agent == agent_row.card.agent.id
     );
     let mut line = new_line();
     if selected && !renaming {
         push_span(&mut line, MARKER_COL, "▸", plain());
     }
     match row {
-        VisibleRow::Agent(card) => {
+        VisibleRow::Agent(agent_row) => {
+            let card = agent_row.card;
             let offline = !model.host_online(card.agent.host_id);
             let base = if offline { dim() } else { plain() };
-            let (badge, badge_style) = badge_for(model, card);
+            // A folded family wears the family's badge, not the parent's:
+            // the row is standing in for everyone behind it.
+            let (badge, badge_style) = match agent_row.folded {
+                Some(folded) => badge_glyph(folded.attention),
+                None => badge_for(model, card),
+            };
             if badge != " " {
                 push_span(&mut line, BADGE_COL, badge, badge_style);
             }
+            // Descendants indent one step per generation, and the `⋯N`
+            // marker on a folded row eats into the same name column, so a
+            // family never pushes the grid out of alignment.
+            let indent = agent_row.depth * FAMILY_INDENT;
+            let marker = agent_row
+                .folded
+                .map(|folded| format!(" ⋯{}", folded.hidden))
+                .unwrap_or_default();
+            let name_width = NAME_WIDTH.saturating_sub(indent + str_width(&marker));
             let name = match &view.mode {
                 Mode::Rename { agent, draft } if *agent == card.agent.id => {
-                    clip(&format!("{draft}▌"), NAME_WIDTH)
+                    clip(&format!("{draft}▌"), name_width)
                 }
-                _ => clip(&card.display_name(), NAME_WIDTH),
+                _ => clip(&card.display_name(), name_width),
             };
-            push_span(&mut line, NAME_COL, name, base);
+            push_span(&mut line, NAME_COL + indent, name, base);
+            if !marker.is_empty() {
+                line.spans
+                    .push(Span::styled(marker, base.add_modifier(Modifier::DIM)));
+            }
             push_span(
                 &mut line,
                 TYPE_COL,
@@ -503,6 +553,17 @@ fn fleet_row_line(
                     &mut line,
                     STATUS_COL,
                     model.status_label_for(card),
+                    base.add_modifier(Modifier::DIM),
+                );
+            }
+            if show_working
+                && let Some(text) =
+                    working_text(card, ctx.now, width.saturating_sub(2 + WORKING_COL))
+            {
+                push_span(
+                    &mut line,
+                    WORKING_COL,
+                    text,
                     base.add_modifier(Modifier::DIM),
                 );
             }
