@@ -65,13 +65,17 @@ impl ClaudeSession {
             })?;
         let is_unknown = hook.is_unknown();
         let is_session_end = hook.is_session_end();
+        let completion = hook.last_assistant_message().map(str::to_string);
         if is_unknown {
             tracing::warn!(agent_id = %self.agent_id, "received unknown Claude hook variant");
         }
-        self.handle_hook(hook).await;
+        let emitted = self.handle_hook(hook).await;
         Ok(match (is_unknown, self.readonly && is_session_end) {
             (true, _) => HookOutcome::Noop,
             (false, true) => HookOutcome::WithdrawSession,
+            (false, false) if emitted && completion.is_some() => HookOutcome::Completed {
+                text: completion.expect("completion presence checked above"),
+            },
             (false, false) => HookOutcome::KeepSession,
         })
     }
@@ -119,17 +123,17 @@ impl ClaudeSession {
     /// not emitted as structured output. Duplicate deliveries of one event
     /// (multiple hook registrations — see `HOOK_DEDUPE_WINDOW`) emit one
     /// structured row.
-    pub(crate) async fn handle_hook(&mut self, hook: ParsedClaudeHook) {
+    pub(crate) async fn handle_hook(&mut self, hook: ParsedClaudeHook) -> bool {
         self.sync_hook_metadata(&hook).await;
         if self.transcript_ingest.is_none() {
-            return;
+            return false;
         }
         // Internal-only kinds return; emitted kinds name their structured
         // `type` tag.
         let type_tag = match hook.kind {
             ClaudeHookKind::SessionStart => {
                 let Some(common) = hook.common else {
-                    return;
+                    return false;
                 };
                 tracing::debug!(
                     agent_id = %self.agent_id,
@@ -137,13 +141,13 @@ impl ClaudeSession {
                     transcript_path = common.transcript_path,
                     "session started"
                 );
-                return;
+                return false;
             }
             ClaudeHookKind::SessionEnd => {
                 tracing::debug!(agent_id = %self.agent_id, "session ended");
-                return;
+                return false;
             }
-            ClaudeHookKind::Unknown => return,
+            ClaudeHookKind::Unknown => return false,
             ClaudeHookKind::PermissionRequest => "hook.permission_request",
             ClaudeHookKind::Stop => "hook.stop",
             ClaudeHookKind::Notification => "hook.notification",
@@ -154,7 +158,7 @@ impl ClaudeSession {
                 hook = type_tag,
                 "suppressed duplicate hook delivery"
             );
-            return;
+            return false;
         }
         tracing::debug!(agent_id = %self.agent_id, hook = type_tag, "structured hook");
         let mut value = hook.raw;
@@ -164,6 +168,7 @@ impl ClaudeSession {
         if let Some(ingest) = &self.transcript_ingest {
             ingest.log_source().write(value).await;
         }
+        true
     }
 
     /// True when this payload is a re-delivery of the event just emitted:

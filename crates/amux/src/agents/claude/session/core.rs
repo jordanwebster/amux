@@ -14,7 +14,7 @@ use super::input::sanitize_resume_args;
 use super::name_sniffer::spawn_name_sniffer;
 use crate::agents::claude::transcript_ingest::TranscriptIngest;
 use crate::agents::{
-    CreateAgentRequest, LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy,
+    AgentParent, CreateAgentRequest, LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy,
     StructuredLogSource, TerminalSize, spawn_pty_agent,
 };
 use crate::debug::DebugView;
@@ -84,6 +84,7 @@ pub(crate) struct ClaudeSession {
     /// Extra arguments passed to the claude command
     pub(in crate::agents) args: Vec<String>,
     pub(super) runtime_dir: PathBuf,
+    pub(super) parent: Option<AgentParent>,
     pub(super) name_source: LocalAgentNameSource,
     pub(super) name_sniffer_abort: Option<AbortHandle>,
     pub(in crate::agents) created_at: DateTime<Utc>,
@@ -109,6 +110,7 @@ impl ClaudeSession {
             readonly: false,
             args: req.args.clone(),
             runtime_dir,
+            parent: req.parent,
             name_source: if req.name.is_some() {
                 LocalAgentNameSource::Amux
             } else {
@@ -139,6 +141,7 @@ impl ClaudeSession {
             readonly: false,
             args: sanitize_resume_args(req.args.clone()),
             runtime_dir,
+            parent: req.parent,
             name_source,
             name_sniffer_abort: None,
             created_at,
@@ -163,11 +166,22 @@ impl ClaudeSession {
             readonly: true,
             args: vec![],
             runtime_dir: std::env::temp_dir(),
+            parent: None,
             name_source: LocalAgentNameSource::Unset,
             name_sniffer_abort: None,
             created_at: Utc::now(),
             last_emitted_hook: None,
         }
+    }
+
+    #[cfg(feature = "testnet")]
+    pub(crate) fn scripted_for_testnet(req: &CreateAgentRequest, runtime_dir: PathBuf) -> Self {
+        let mut session = Self::new(req, runtime_dir);
+        session.pty = Some(PtyHandle::test_echo());
+        session.transcript_ingest = Some(TranscriptIngest::new(StructuredLogSource::new(
+            STRUCTURED_LOG_RETENTION,
+        )));
+        session
     }
 
     pub(in crate::agents) fn name_source(&self) -> LocalAgentNameSource {

@@ -272,6 +272,27 @@ impl ClientService {
         Ok(self.spawn_agent_event_task(rx))
     }
 
+    pub(crate) async fn attach_local_agent_messages(
+        &self,
+        ctx: AgentServiceCtx,
+    ) -> Result<tokio::task::JoinHandle<()>, ProtocolError> {
+        let mut rx = ctx.subscribe_outbound_envelopes().await?;
+        let service = self.clone();
+        Ok(tokio::spawn(async move {
+            while let Some(envelope) = rx.recv().await {
+                let envelope_id = envelope.id;
+                if let Err(error) = service.deliver_envelope(envelope).await {
+                    tracing::info!(
+                        %envelope_id,
+                        carrier = "none",
+                        error = %error,
+                        "agent lifecycle message delivery failed"
+                    );
+                }
+            }
+        }))
+    }
+
     pub(crate) async fn resolve_agent(&self, agent: AgentRef) -> Result<Agent, ProtocolError> {
         let state = self.state.read().await;
         match agent {
@@ -871,18 +892,7 @@ impl wire::client_service_server::ClientService for ClientService {
             kind: envelope::EnvelopeKind::Message,
             text: request.text,
         };
-        if !self.is_local_host(to.host_id) {
-            return self.remote_send_message(to.host_id, envelope).await;
-        }
-
-        let envelope_id = envelope.id;
-        self.local_agent_service()
-            .send_message(envelope)
-            .await
-            .map_err(protocol_status)?;
-        Ok(tonic::Response::new(wire::SendMessageResponse {
-            envelope_id: envelope_id.as_bytes().to_vec(),
-        }))
+        self.deliver_envelope(envelope).await
     }
 
     async fn set_agent_status(
@@ -1682,6 +1692,26 @@ fn has_shutdown_reason_metadata(status: &tonic::Status) -> bool {
 }
 
 impl ClientService {
+    async fn deliver_envelope(
+        &self,
+        envelope: envelope::Envelope,
+    ) -> TonicResult<wire::SendMessageResponse> {
+        if !self.is_local_host(envelope.to.host_id) {
+            return self
+                .remote_send_message(envelope.to.host_id, envelope)
+                .await;
+        }
+
+        let envelope_id = envelope.id;
+        self.local_agent_service()
+            .send_message(envelope)
+            .await
+            .map_err(protocol_status)?;
+        Ok(tonic::Response::new(wire::SendMessageResponse {
+            envelope_id: envelope_id.as_bytes().to_vec(),
+        }))
+    }
+
     /// Runs the one pairing wire protocol — `PairingService.Pair`, SPAKE2 —
     /// against `peer_host_id` over a cloud-routed pairing tunnel. The
     /// out-of-band `secret` is the typed PIN's digits or the QR's 256-bit

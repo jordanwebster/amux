@@ -60,6 +60,7 @@ pub(crate) trait LocalAgentHost: Send + Sync {
     async fn agent_events_snapshot(&self) -> (Vec<AgentEvent>, mpsc::Receiver<AgentEvent>);
     /// Live event subscription without a snapshot (for the client bridge).
     async fn subscribe_agent_events(&self) -> mpsc::Receiver<AgentEvent>;
+    async fn subscribe_outbound_envelopes(&self) -> mpsc::Receiver<Envelope>;
     async fn handle_hook(
         &self,
         agent_id: Uuid,
@@ -160,6 +161,12 @@ impl AgentServiceCtx {
             return Err(no_supported_agent_types());
         }
         Ok(self.require_host()?.agent_events_snapshot().await)
+    }
+
+    pub(crate) async fn subscribe_outbound_envelopes(
+        &self,
+    ) -> Result<mpsc::Receiver<Envelope>, ProtocolError> {
+        Ok(self.require_host()?.subscribe_outbound_envelopes().await)
     }
 
     pub(crate) async fn create(

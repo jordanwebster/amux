@@ -16,7 +16,7 @@ use crate::agents::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 use crate::client::{Client, ClientError};
 use crate::protocol::ProtocolError;
 use crate::{
-    Agent, AgentType, CreateAgentRequest, SendInputRequest, SendMessageRequest,
+    Agent, AgentParent, AgentType, CreateAgentRequest, SendInputRequest, SendMessageRequest,
     SubscribeSessionEvent,
 };
 
@@ -62,6 +62,87 @@ impl Daemon {
         agent
     }
 
+    /// Registers a process-free Claude child, delivers a scripted Stop hook,
+    /// and observes the resulting lifecycle messages in the parent's own echo
+    /// stream. `parent_owner` may be this daemon or a paired remote daemon.
+    pub async fn claude_completion_reaches_parent(
+        &self,
+        parent_owner: &Daemon,
+        parent: &Agent,
+        last_assistant_message: &str,
+    ) {
+        assert_eq!(parent.host_id, parent_owner.host_id());
+        let child_id = Uuid::new_v4();
+        let parts = self
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        let child = parts
+            .agent_host
+            .register_scripted_claude(CreateAgentRequest {
+                agent_id: child_id,
+                host_id: None,
+                name: Some("claude-child".to_string()),
+                agent_type: AgentType::Claude,
+                working_dir: std::env::temp_dir(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: Some(AgentParent {
+                    agent_id: parent.id,
+                    host_id: parent.host_id,
+                }),
+                initial_prompt: None,
+            })
+            .await
+            .unwrap_or_else(|error| panic!("register scripted Claude child: {error}"));
+
+        let parent_name = parent
+            .name
+            .as_deref()
+            .expect("the echo parent should have a name");
+        let client = parent_owner.admin_client().await;
+        let mut stream = client
+            .subscribe_session(crate::SubscribeSessionRequest {
+                agent: parent.id.into(),
+                io_protocol: TEST_ECHO_V1.to_string(),
+                args: None,
+            })
+            .await
+            .unwrap_or_else(|error| panic!("subscribe to echo parent '{parent_name}': {error}"));
+
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "hook_event_name": "Stop",
+            "session_id": Uuid::new_v4(),
+            "transcript_path": "/nonexistent/amux-scripted-claude.jsonl",
+            "cwd": std::env::temp_dir(),
+            "last_assistant_message": last_assistant_message,
+            "stop_hook_active": false,
+        }))
+        .expect("scripted Stop hook serializes");
+        parts
+            .agent_host
+            .deliver_scripted_hook(child_id, payload)
+            .await
+            .unwrap_or_else(|error| panic!("deliver scripted Stop hook: {error}"));
+
+        let completed = echoed_envelope(&mut stream, parent_name, "a completed message").await;
+        assert_parent_lifecycle_envelope(
+            &completed,
+            &child,
+            crate::envelope::EnvelopeKind::Completed,
+            last_assistant_message,
+        );
+
+        parts.agent_host.end_scripted_session(child_id).await;
+        let exited = echoed_envelope(&mut stream, parent_name, "an exited message").await;
+        assert_parent_lifecycle_envelope(
+            &exited,
+            &child,
+            crate::envelope::EnvelopeKind::Exited,
+            "",
+        );
+    }
+
     /// Asserts that the daemon rejects an agent-authored message when the
     /// claimed sender is not one of its live local agents. Sender identity is
     /// resolved before delivery, so the unavailable carrier implementation
@@ -96,7 +177,7 @@ impl Daemon {
     /// generic envelope unchanged.
     pub async fn human_message_is_echoed(&self, recipient: &str, text: &str) {
         let client = self.admin_client().await;
-        let stream = client
+        let mut stream = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: recipient.into(),
                 io_protocol: TEST_ECHO_V1.to_string(),
@@ -124,7 +205,7 @@ impl Daemon {
                 )
             });
 
-        let encoded = echoed_envelope(stream, recipient, "a human message").await;
+        let encoded = echoed_envelope(&mut stream, recipient, "a human message").await;
 
         assert!(
             encoded.starts_with("<amux "),
@@ -184,7 +265,7 @@ impl Daemon {
             .as_deref()
             .expect("the echo recipient should have a name");
         let client = recipient_owner.admin_client().await;
-        let stream = client
+        let mut stream = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: recipient.id.into(),
                 io_protocol: TEST_ECHO_V1.to_string(),
@@ -215,7 +296,7 @@ impl Daemon {
                 )
             });
 
-        let encoded = echoed_envelope(stream, recipient_name, "an agent message").await;
+        let encoded = echoed_envelope(&mut stream, recipient_name, "an agent message").await;
         let sender_name = sender
             .name
             .as_deref()
@@ -443,7 +524,7 @@ impl Daemon {
 }
 
 async fn echoed_envelope(
-    mut stream: crate::SessionStream,
+    stream: &mut crate::SessionStream,
     recipient: &str,
     description: &str,
 ) -> String {
@@ -487,6 +568,20 @@ async fn echoed_envelope(
             SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
         }
     }
+}
+
+fn assert_parent_lifecycle_envelope(
+    encoded: &str,
+    child: &Agent,
+    kind: crate::envelope::EnvelopeKind,
+    text: &str,
+) {
+    let parsed = crate::envelope::parse(encoded)
+        .unwrap_or_else(|error| panic!("parent lifecycle envelope did not parse: {error}"));
+    assert_eq!(parsed.from_id, Some(child.id));
+    assert_eq!(parsed.from_kind.as_deref(), Some("claude"));
+    assert_eq!(parsed.kind, kind);
+    assert_eq!(parsed.text, text);
 }
 
 /// A live routed echo session opened by [`Daemon::attach`]. Input sent with

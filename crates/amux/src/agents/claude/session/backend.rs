@@ -10,7 +10,7 @@ use super::ClaudeSession;
 use super::input::{paste_program, send_pty_program};
 use crate::agents::claude::io;
 use crate::agents::{
-    AGENT_TYPE_CLAUDE, AgentBackend, Delivery, DeliveryError, HookError, HookOutcome,
+    AGENT_TYPE_CLAUDE, AgentBackend, AgentParent, Delivery, DeliveryError, HookError, HookOutcome,
     LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredInput,
     StructuredLogSource, terminal_io_protocols,
 };
@@ -61,6 +61,10 @@ impl AgentBackend for ClaudeSession {
 
     fn agent_type(&self) -> &'static str {
         AGENT_TYPE_CLAUDE
+    }
+
+    fn parent(&self) -> Option<AgentParent> {
+        self.parent
     }
 
     fn io_protocols(&self) -> Vec<String> {
@@ -129,7 +133,7 @@ impl AgentBackend for ClaudeSession {
             created_at: self.created_at,
             args: self.args.clone(),
             session_id,
-            parent: None,
+            parent: self.parent,
             working_on: None,
         })
     }

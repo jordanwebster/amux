@@ -22,13 +22,15 @@ use super::{
     AgentServiceState, DebugAgent, LocalAgentHost, ResponseStream, SharedAgentServiceState,
     session_rpc,
 };
+#[cfg(feature = "testnet")]
+use crate::agents::claude::ClaudeSession;
 use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
     CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap, HookOutcome, RenameAgentRequest,
     SendInputRequest, SessionCloseReason, SessionEvent, SetAgentStatusRequest, StopPolicy,
     SubscribeSessionRequest, bootstrap_external_hook,
 };
-use crate::envelope::Envelope;
+use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use crate::protocol::{ProtocolError, wire};
 use crate::server::ShutdownReason;
 use crate::suspend;
@@ -84,6 +86,66 @@ impl PtyAgentHost {
     pub(crate) fn host_id(&self) -> Uuid {
         self.host_id
     }
+
+    #[cfg(feature = "testnet")]
+    pub(crate) async fn register_scripted_claude(
+        &self,
+        request: CreateAgentRequest,
+    ) -> Result<Agent, ProtocolError> {
+        let agent_id = request.agent_id;
+        let mut state = self.state.write().await;
+        let session: AgentSession = Box::new(ClaudeSession::scripted_for_testnet(
+            &request,
+            state.deps.runtime_dir.clone(),
+        ));
+        let agent = session.to_agent(self.host_id).into();
+        let announce = state
+            .register_local_agent_context(self.host_id, agent_id, session)
+            .map_err(|message| ProtocolError::ServerError { message })?;
+        state.local_agent_events.emit(announce);
+        Ok(agent)
+    }
+
+    #[cfg(feature = "testnet")]
+    pub(crate) async fn end_scripted_session(&self, agent_id: Uuid) {
+        self.event_tx
+            .send(SessionEvent::Ended { agent_id })
+            .await
+            .expect("scripted session event loop should be running");
+    }
+
+    #[cfg(feature = "testnet")]
+    pub(crate) async fn deliver_scripted_hook(
+        &self,
+        agent_id: Uuid,
+        payload: Vec<u8>,
+    ) -> Result<(), ProtocolError> {
+        <Self as LocalAgentHost>::handle_hook(self, agent_id, payload, false).await
+    }
+}
+
+fn parent_envelope(
+    session: &AgentSession,
+    host_id: Uuid,
+    kind: EnvelopeKind,
+    text: String,
+) -> Option<Envelope> {
+    Some(Envelope {
+        id: Uuid::new_v4(),
+        context: None,
+        from: Sender::Agent(AgentSender {
+            agent_id: session.agent_id(),
+            host_id,
+            name: session
+                .name()
+                .map(str::to_string)
+                .unwrap_or_else(|| session.agent_id().to_string()),
+            kind: session.agent_type().to_string(),
+        }),
+        to: session.parent()?,
+        kind,
+        text,
+    })
 }
 
 fn codex_private_socket_path(server_socket_path: &Path) -> io::Result<PathBuf> {
@@ -337,6 +399,10 @@ impl LocalAgentHost for PtyAgentHost {
         self.state().write().await.local_agent_events.subscribe()
     }
 
+    async fn subscribe_outbound_envelopes(&self) -> mpsc::Receiver<Envelope> {
+        self.state().write().await.outbound_envelopes.subscribe()
+    }
+
     async fn handle_hook(
         &self,
         agent_id: Uuid,
@@ -351,6 +417,14 @@ impl LocalAgentHost for PtyAgentHost {
             if let Some(session) = state.agent_session_mut(&agent_id) {
                 match session.handle_hook_payload(&payload).await {
                     Ok(HookOutcome::Noop | HookOutcome::KeepSession) => Ok(()),
+                    Ok(HookOutcome::Completed { text }) => {
+                        if let Some(envelope) =
+                            parent_envelope(session, self.host_id, EnvelopeKind::Completed, text)
+                        {
+                            state.outbound_envelopes.emit(envelope);
+                        }
+                        Ok(())
+                    }
                     Ok(HookOutcome::WithdrawSession) => {
                         session_to_stop = withdraw_agent(&mut state, agent_id);
                         Ok(())

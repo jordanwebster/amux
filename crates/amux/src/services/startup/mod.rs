@@ -604,6 +604,12 @@ pub(crate) async fn start_user_services(
                 tracing::warn!(error = %error, "failed to attach local agent events");
             }
         }
+        match client.attach_local_agent_messages(agent.clone()).await {
+            Ok(task) => parts.runtime.tasks.push(task),
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to attach local agent messages");
+            }
+        }
     }
 
     Ok(StartedUserServices {

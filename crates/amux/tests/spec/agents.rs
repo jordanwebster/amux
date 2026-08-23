@@ -100,3 +100,33 @@ async fn a2a_unreachable_recipient() {
         .unreachable_recipient_message_policy(&desktop, &sender, &recipient)
         .await;
 }
+
+/// Claude's Stop hook carries the child's final answer to a local parent;
+/// process death remains a distinct exited notification.
+#[tokio::test]
+async fn a2a_claude_completion_local() {
+    let net = TestNet::builder().daemon("host").start().await;
+    let [host] = net.daemons(["host"]);
+
+    let parent = host.spawn_echo_agent("parent").await;
+    host.claude_completion_reaches_parent(&host, &parent, "finished locally")
+        .await;
+}
+
+/// Completion uses the same authenticated peer routing as ordinary agent
+/// messages when the child's parent belongs to another paired host.
+#[tokio::test]
+async fn a2a_claude_completion_remote() {
+    let net = TestNet::builder()
+        .daemon("parent-host")
+        .daemon("child-host")
+        .paired("parent-host", "child-host", Via::Tcp)
+        .start()
+        .await;
+    let [parent_host, child_host] = net.daemons(["parent-host", "child-host"]);
+
+    let parent = parent_host.spawn_echo_agent("parent").await;
+    child_host
+        .claude_completion_reaches_parent(&parent_host, &parent, "finished remotely")
+        .await;
+}

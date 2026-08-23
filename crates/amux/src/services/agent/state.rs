@@ -12,6 +12,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::agents::{AgentDeps, AgentEvent, AgentRecord, AgentSession, SessionCloseReason};
+use crate::envelope::Envelope;
 use crate::routing::EventSource;
 use crate::server::ShutdownReason;
 
@@ -22,6 +23,7 @@ pub(crate) struct AgentServiceState {
     pub(crate) local_agent_events: EventSource<AgentEvent>,
     pub(crate) local_session_close_events: EventSource<(Uuid, SessionCloseReason)>,
     pub(crate) local_shutdown_events: EventSource<ShutdownReason>,
+    pub(crate) outbound_envelopes: EventSource<Envelope>,
     pub(crate) deps: AgentDeps,
 }
 
@@ -36,6 +38,7 @@ impl AgentServiceState {
             local_agent_events: EventSource::default(),
             local_session_close_events: EventSource::default(),
             local_shutdown_events: EventSource::default(),
+            outbound_envelopes: EventSource::default(),
             deps,
         }
     }

@@ -10,6 +10,7 @@ use crate::agents::{
     AgentEvent, AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest,
     SessionEvent, StopPolicy, agent_from_suspended, new_agent,
 };
+use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use crate::suspend::{SuspendedAgent, SuspendedServerState};
 
 /// Maximum local agents per user. Each agent holds a PTY and several tokio
@@ -36,6 +37,28 @@ async fn handle_session_event(
     match event {
         SessionEvent::Ended { agent_id } => {
             let mut state = agent_state.write().await;
+            let envelope = state.local_agents.get(&agent_id).and_then(|context| {
+                let session = &context.session;
+                Some(Envelope {
+                    id: Uuid::new_v4(),
+                    context: None,
+                    from: Sender::Agent(AgentSender {
+                        agent_id,
+                        host_id,
+                        name: session
+                            .name()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| agent_id.to_string()),
+                        kind: session.agent_type().to_string(),
+                    }),
+                    to: session.parent()?,
+                    kind: EnvelopeKind::Exited,
+                    text: String::new(),
+                })
+            });
+            if let Some(envelope) = envelope {
+                state.outbound_envelopes.emit(envelope);
+            }
             let _ = withdraw_agent(&mut state, agent_id);
         }
         SessionEvent::Created {

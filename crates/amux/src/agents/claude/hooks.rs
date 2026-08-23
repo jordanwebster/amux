@@ -60,6 +60,12 @@ impl ParsedClaudeHook {
     pub(crate) fn transcript_path(&self) -> Option<&str> {
         self.common.as_ref().map(|c| c.transcript_path.as_str())
     }
+
+    pub(crate) fn last_assistant_message(&self) -> Option<&str> {
+        (self.kind == ClaudeHookKind::Stop)
+            .then(|| self.raw.get("last_assistant_message")?.as_str())
+            .flatten()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

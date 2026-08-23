@@ -92,6 +92,7 @@ fn sever_registry(registry: &TrackedTcpConnections) {
 
 pub(crate) struct DaemonRuntime {
     pub(crate) services: StartedUserServices,
+    pub(crate) agent_host: Arc<PtyAgentHost>,
     pub(crate) trust: SharedTrustStore,
     reachability_tasks: Vec<JoinHandle<()>>,
     cloud_task: Option<JoinHandle<Result<(), tonic::Status>>>,
@@ -226,7 +227,8 @@ pub(crate) async fn start_daemon_runtime(
         inner.tcp_addr.map(|addr| addr.port()),
         inner.cloud.is_some(),
     );
-    let mut services = start_user_services(state, Some(PtyAgentHost::new(inner.host_id)), security)
+    let agent_host = PtyAgentHost::new(inner.host_id);
+    let mut services = start_user_services(state, Some(agent_host.clone()), security)
         .await
         .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
 
@@ -248,6 +250,7 @@ pub(crate) async fn start_daemon_runtime(
     let shutdown_task = Some(spawn_shutdown_handler(Arc::downgrade(inner), shutdown_rx));
     DaemonRuntime {
         services,
+        agent_host,
         trust,
         reachability_tasks,
         cloud_task: None,
@@ -328,6 +331,7 @@ async fn wait_for_stored_direct_peers(runtime: &DaemonRuntime) {
 /// assertions never hold the runtime lock across awaits.
 pub(crate) struct DaemonParts {
     pub(crate) client: ClientService,
+    pub(crate) agent_host: Arc<PtyAgentHost>,
     pub(crate) connections: Arc<ConnectionManager>,
     pub(crate) routing: Arc<RoutingCore>,
     pub(crate) tunnels: Arc<TunnelPool>,
@@ -895,6 +899,7 @@ impl Daemon {
         let runtime = guard.as_ref()?;
         Some(DaemonParts {
             client: runtime.services.client.clone(),
+            agent_host: runtime.agent_host.clone(),
             connections: runtime.services.connections.clone(),
             routing: runtime.services.routing.clone(),
             tunnels: runtime.services.tunnels.clone(),

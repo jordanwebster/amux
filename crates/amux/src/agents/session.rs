@@ -33,7 +33,7 @@ use super::{
     AgentRecord, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
     SessionEvent, StopPolicy, StructuredLogSource,
 };
-use crate::agents::{AgentType, CreateAgentRequest, terminal_io};
+use crate::agents::{AgentParent, AgentType, CreateAgentRequest, terminal_io};
 use crate::envelope::Envelope;
 use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
@@ -121,6 +121,10 @@ pub(crate) trait AgentBackend: Send + Sync {
     async fn stop(&self, policy: StopPolicy);
     fn agent_type(&self) -> &'static str;
 
+    fn parent(&self) -> Option<AgentParent> {
+        None
+    }
+
     /// Advertised I/O protocols; PTY-backed backends build on
     /// [`terminal_io_protocols`].
     fn io_protocols(&self) -> Vec<String>;
@@ -175,7 +179,7 @@ pub(crate) trait AgentBackend: Send + Sync {
             readonly: self.readonly(),
             args: self.args().to_vec(),
             created_at: self.created_at(),
-            parent: None,
+            parent: self.parent(),
             working_on: None,
         }
     }
@@ -224,7 +228,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             args,
             session_id,
             created_at,
-            parent: _,
+            parent,
             working_on: _,
         } => {
             let req = CreateAgentRequest {
@@ -235,7 +239,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 working_dir,
                 terminal_size,
                 args,
-                parent: None,
+                parent,
                 initial_prompt: None,
             };
             Box::new(ClaudeSession::from_suspended(

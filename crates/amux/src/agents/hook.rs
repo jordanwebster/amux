@@ -7,10 +7,11 @@ pub(crate) enum ExternalHookBootstrap {
     Register(crate::agents::AgentSession),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HookOutcome {
     Noop,
     KeepSession,
+    Completed { text: String },
     WithdrawSession,
 }
 

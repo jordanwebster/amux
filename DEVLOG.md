@@ -4371,3 +4371,11 @@ Unavailable response; a live local agent send is logged and dropped while
 returning its daemon-issued envelope id. The whole-daemon specification
 reproduces the route-loss window from a last-known remote agent observation and
 locks in both caller outcomes.
+2026-08-23 — **Routed Claude lifecycle results back to parent agents.** Claude
+sessions now retain their daemon-owned parent edge. An accepted Stop hook with
+`last_assistant_message` emits one authenticated `completed` envelope, while
+process end emits the distinct `exited` envelope before withdrawal. A local
+outbound bridge dispatches both through the same local or peer message carrier
+as ordinary agent sends. Whole-daemon specifications use an echo parent and a
+process-free scripted Claude session to prove local and direct-TCP delivery of
+both lifecycle signals.
