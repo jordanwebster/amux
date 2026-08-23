@@ -34,8 +34,24 @@ use super::{
     SessionEvent, StopPolicy, StructuredLogSource,
 };
 use crate::agents::{AgentType, CreateAgentRequest, terminal_io};
+use crate::envelope::Envelope;
 use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
+
+/// The backend carrier that accepted an agent message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Delivery {
+    Pty,
+}
+
+/// A backend could not accept an agent message.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DeliveryError {
+    #[error("{0} agents do not support message delivery")]
+    UnsupportedAgentType(&'static str),
+    #[error("message delivery failed: {0}")]
+    Failed(String),
+}
 
 /// An owned structured-input endpoint detached from the session registry lock.
 #[async_trait]
@@ -98,6 +114,12 @@ pub(crate) trait AgentBackend: Send + Sync {
 
     fn log_source(&self) -> Option<StructuredLogSource>;
     fn pty_handle(&self) -> Result<Option<PtyHandle>>;
+
+    /// Deliver a daemon-authored envelope through this backend's native
+    /// input carrier.
+    async fn deliver(&self, _envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
+        Err(DeliveryError::UnsupportedAgentType(self.agent_type()))
+    }
 
     /// Snapshot the smallest owned target needed to prepare a raw subscription.
     /// The default covers backends whose PTY already exists for the session.

@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agents::{
-    AGENT_TYPE_TEST_AGENT, AgentBackend, CreateAgentRequest, LocalAgentNameSource, StopPolicy,
-    StructuredLogSource, TerminalSize, terminal_io_protocols,
+    AGENT_TYPE_TEST_AGENT, AgentBackend, CreateAgentRequest, Delivery, DeliveryError,
+    LocalAgentNameSource, StopPolicy, StructuredLogSource, TerminalSize, terminal_io_protocols,
 };
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
@@ -208,6 +208,20 @@ impl AgentBackend for TestAgentSession {
 
     fn pty_handle(&self) -> Result<Option<PtyHandle>> {
         Ok(self.pty.clone())
+    }
+
+    async fn deliver(
+        &self,
+        envelope: &crate::envelope::Envelope,
+    ) -> std::result::Result<Delivery, DeliveryError> {
+        let pty = self
+            .pty
+            .as_ref()
+            .ok_or_else(|| DeliveryError::Failed("test agent PTY is unavailable".to_string()))?;
+        pty.send_input(crate::envelope::format(envelope).into_bytes())
+            .await
+            .map_err(|error| DeliveryError::Failed(error.to_string()))?;
+        Ok(Delivery::Pty)
     }
 
     fn suspended_state(&self) -> Result<crate::suspend::SuspendedAgent> {

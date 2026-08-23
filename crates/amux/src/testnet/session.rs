@@ -15,7 +15,9 @@ use super::assertions::{DEFAULT_TIMEOUT, eventually};
 use crate::agents::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 use crate::client::{Client, ClientError};
 use crate::protocol::ProtocolError;
-use crate::{AgentType, CreateAgentRequest, SendInputRequest, SubscribeSessionEvent};
+use crate::{
+    AgentType, CreateAgentRequest, SendInputRequest, SendMessageRequest, SubscribeSessionEvent,
+};
 
 /// Asserts a routed local-admin RPC was rejected with permission-denied.
 fn assert_permission_denied(rpc: &str, result: Result<(), ClientError>) {
@@ -85,6 +87,90 @@ impl Daemon {
             .await
             .expect_err("an unknown sender must be refused");
         assert_eq!(error.code(), tonic::Code::NotFound);
+    }
+
+    /// Sends a human-authored message through the local client service and
+    /// asserts that the recipient's own PTY output contains the authenticated
+    /// generic envelope unchanged.
+    pub async fn human_message_is_echoed(&self, recipient: &str, text: &str) {
+        let client = self.admin_client().await;
+        let mut stream = client
+            .subscribe_session(crate::SubscribeSessionRequest {
+                agent: recipient.into(),
+                io_protocol: TEST_ECHO_V1.to_string(),
+                args: None,
+            })
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "'{}' failed to subscribe to echo agent '{recipient}': {error}",
+                    self.name()
+                )
+            });
+        let envelope_id = client
+            .send_message(SendMessageRequest {
+                to: recipient.into(),
+                text: text.to_string(),
+                context: None,
+                from_agent_id: None,
+            })
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "'{}' failed to send a human message to '{recipient}': {error}",
+                    self.name()
+                )
+            });
+
+        let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
+        let closing = b"</amux>";
+        let mut seen = Vec::new();
+        let encoded = loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let event = match tokio::time::timeout(remaining, stream.recv()).await {
+                Ok(Ok(event)) => event,
+                Ok(Err(error)) => panic!(
+                    "echo stream for '{recipient}' ended before the message arrived: {error}"
+                ),
+                Err(_) => panic!(
+                    "'{recipient}' did not echo a human message within {DEFAULT_TIMEOUT:?} (saw {:?})",
+                    String::from_utf8_lossy(&seen)
+                ),
+            };
+            match event {
+                SubscribeSessionEvent::Output { payload } => {
+                    seen.extend_from_slice(&payload);
+                    if let Some(start) =
+                        seen.windows(closing.len()).position(|part| part == closing)
+                    {
+                        let end = start + closing.len();
+                        break std::str::from_utf8(&seen[..end])
+                            .expect("the formatted message envelope is UTF-8")
+                            .to_string();
+                    }
+                }
+                SubscribeSessionEvent::Closed { reason } => {
+                    panic!("echo stream for '{recipient}' closed before delivery: {reason:?}")
+                }
+                SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
+            }
+        };
+
+        assert!(
+            encoded.starts_with("<amux "),
+            "test delivery uses the generic tag"
+        );
+        assert!(
+            encoded.contains("from=\"human\""),
+            "the echoed tag carries human provenance"
+        );
+        let parsed = crate::envelope::parse(&encoded)
+            .unwrap_or_else(|error| panic!("echoed envelope did not parse: {error}"));
+        assert_eq!(parsed.id, envelope_id);
+        assert_eq!(parsed.from, "human");
+        assert_eq!(parsed.from_id, None);
+        assert_eq!(parsed.kind, crate::envelope::EnvelopeKind::Message);
+        assert_eq!(parsed.text, text);
     }
 
     /// Assertion: `agent_name` (eventually) appears in the inventory `other`

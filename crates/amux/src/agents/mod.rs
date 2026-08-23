@@ -39,8 +39,8 @@ pub(crate) use record::{AgentRecord, SessionEvent, StopPolicy};
 pub(crate) use session::CodexInput;
 #[cfg(feature = "local-agents")]
 pub(crate) use session::{
-    AgentBackend, AgentDeps, AgentSession, RawPtyTarget, StructuredInput, agent_from_suspended,
-    bootstrap_external_hook, new_agent, terminal_io_protocols,
+    AgentBackend, AgentDeps, AgentSession, Delivery, DeliveryError, RawPtyTarget, StructuredInput,
+    agent_from_suspended, bootstrap_external_hook, new_agent, terminal_io_protocols,
 };
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]

@@ -24,7 +24,7 @@ use super::{
 };
 use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
-    CreateAgentRpcRequest, ExternalHookBootstrap, HookOutcome, RenameAgentRequest,
+    CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap, HookOutcome, RenameAgentRequest,
     SendInputRequest, SessionCloseReason, SessionEvent, SetAgentStatusRequest, StopPolicy,
     SubscribeSessionRequest, bootstrap_external_hook,
 };
@@ -261,17 +261,17 @@ impl LocalAgentHost for PtyAgentHost {
     }
 
     async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError> {
-        if !self
-            .state()
-            .read()
+        let state = self.state().read().await;
+        let session = state
+            .local_agents
+            .get(&envelope.to.agent_id)
+            .map(|context| &context.session)
+            .ok_or(ProtocolError::NoAgentFound)?;
+        session
+            .deliver(&envelope)
             .await
-            .contains_agent_id(&envelope.to.agent_id)
-        {
-            return Err(ProtocolError::NoAgentFound);
-        }
-        Err(ProtocolError::Unimplemented {
-            message: "agent message delivery is not implemented".to_string(),
-        })
+            .map(|_| ())
+            .map_err(delivery_error_to_protocol)
     }
 
     async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<(), ProtocolError> {
@@ -462,6 +462,15 @@ impl LocalAgentHost for PtyAgentHost {
                 .then_with(|| a.record.id.as_u128().cmp(&b.record.id.as_u128()))
         });
         agents
+    }
+}
+
+fn delivery_error_to_protocol(error: DeliveryError) -> ProtocolError {
+    match error {
+        DeliveryError::UnsupportedAgentType(agent_type) => ProtocolError::Unimplemented {
+            message: format!("{agent_type} agent message delivery is not implemented"),
+        },
+        DeliveryError::Failed(message) => ProtocolError::ServerError { message },
     }
 }
 
