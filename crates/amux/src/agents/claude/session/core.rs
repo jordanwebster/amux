@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -19,6 +20,7 @@ use crate::agents::{
 use crate::debug::DebugView;
 
 const STRUCTURED_LOG_RETENTION: usize = 1000;
+const CLAUDE_MESSAGING_SOCKET_MIN_VERSION: semver::Version = semver::Version::new(2, 1, 224);
 
 /// Inherited environment variables scrubbed before spawning Claude Code.
 ///
@@ -81,6 +83,7 @@ pub(crate) struct ClaudeSession {
     pub(in crate::agents) readonly: bool,
     /// Extra arguments passed to the claude command
     pub(in crate::agents) args: Vec<String>,
+    pub(super) runtime_dir: PathBuf,
     pub(super) name_source: LocalAgentNameSource,
     pub(super) name_sniffer_abort: Option<AbortHandle>,
     pub(in crate::agents) created_at: DateTime<Utc>,
@@ -93,7 +96,7 @@ pub(crate) struct ClaudeSession {
 impl ClaudeSession {
     /// Create a new ClaudeSession from a CreateAgentRequest.
     /// Does not spawn the process — call [`start`] afterwards.
-    pub(in crate::agents) fn new(req: &CreateAgentRequest) -> Self {
+    pub(in crate::agents) fn new(req: &CreateAgentRequest, runtime_dir: PathBuf) -> Self {
         Self {
             agent_id: req.agent_id,
             name: req.name.clone(),
@@ -105,6 +108,7 @@ impl ClaudeSession {
             session_id: None,
             readonly: false,
             args: req.args.clone(),
+            runtime_dir,
             name_source: if req.name.is_some() {
                 LocalAgentNameSource::Amux
             } else {
@@ -121,6 +125,7 @@ impl ClaudeSession {
         name_source: LocalAgentNameSource,
         session_id: Uuid,
         created_at: DateTime<Utc>,
+        runtime_dir: PathBuf,
     ) -> Self {
         Self {
             agent_id: req.agent_id,
@@ -133,6 +138,7 @@ impl ClaudeSession {
             session_id: Some(session_id),
             readonly: false,
             args: sanitize_resume_args(req.args.clone()),
+            runtime_dir,
             name_source,
             name_sniffer_abort: None,
             created_at,
@@ -156,6 +162,7 @@ impl ClaudeSession {
             session_id: None,
             readonly: true,
             args: vec![],
+            runtime_dir: std::env::temp_dir(),
             name_source: LocalAgentNameSource::Unset,
             name_sniffer_abort: None,
             created_at: Utc::now(),
@@ -203,11 +210,8 @@ impl ClaudeSession {
     /// Extra args from creation are appended.
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         let env = claude_spawn_env(self.agent_id);
-        let mut args: Vec<String> = match self.session_id {
-            Some(id) => vec!["--resume".to_string(), id.to_string()],
-            None => vec![],
-        };
-        args.extend(self.args.iter().cloned());
+        let version = claude_version(&self.command);
+        let args = self.spawn_args(version.as_deref());
         let (pty, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
@@ -226,6 +230,30 @@ impl ClaudeSession {
             let _ = exit_handle.await;
             exit_ingest.close().await;
         }))
+    }
+
+    fn spawn_args(&self, version: Option<&str>) -> Vec<String> {
+        let mut args = match self.session_id {
+            Some(id) => vec!["--resume".to_string(), id.to_string()],
+            None => Vec::new(),
+        };
+        args.extend(without_managed_spawn_args(&self.args));
+        args.push("--name".to_string());
+        args.push(
+            self.name
+                .clone()
+                .unwrap_or_else(|| self.agent_id.to_string()),
+        );
+        if version.is_some_and(claude_supports_messaging_socket) {
+            args.push("--messaging-socket-path".to_string());
+            args.push(
+                self.runtime_dir
+                    .join(format!("amux-{}.sock", self.agent_id))
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+        args
     }
 
     /// Return the current structured output sequence number.
@@ -267,6 +295,57 @@ impl ClaudeSession {
     }
 }
 
+fn claude_version(command: &str) -> Option<String> {
+    match Command::new(command).arg("--version").output() {
+        Ok(output) if output.status.success() => match String::from_utf8(output.stdout) {
+            Ok(version) => Some(version),
+            Err(error) => {
+                tracing::warn!(%error, "claude version output was not UTF-8; using PTY delivery");
+                None
+            }
+        },
+        Ok(output) => {
+            tracing::warn!(status = %output.status, "claude version probe failed; using PTY delivery");
+            None
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not run claude version probe; using PTY delivery");
+            None
+        }
+    }
+}
+
+fn claude_supports_messaging_socket(version: &str) -> bool {
+    version
+        .split_whitespace()
+        .next()
+        .and_then(|version| semver::Version::parse(version).ok())
+        .is_some_and(|version| version >= CLAUDE_MESSAGING_SOCKET_MIN_VERSION)
+}
+
+fn without_managed_spawn_args(args: &[String]) -> Vec<String> {
+    let mut retained = Vec::with_capacity(args.len());
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--name" | "--messaging-socket-path" => {
+                index += 1;
+                if index < args.len() && !args[index].starts_with('-') {
+                    index += 1;
+                }
+            }
+            arg if arg.starts_with("--name=") || arg.starts_with("--messaging-socket-path=") => {
+                index += 1;
+            }
+            _ => {
+                retained.push(args[index].clone());
+                index += 1;
+            }
+        }
+    }
+    retained
+}
+
 impl Serialize for DebugView<'_, ClaudeSession> {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         let session = self.inner;
@@ -288,6 +367,91 @@ impl Serialize for DebugView<'_, ClaudeSession> {
 mod tests {
     use super::*;
     use crate::agents::pty::apply_env;
+    use crate::agents::{AgentType, CreateAgentRequest};
+
+    fn claude_request(agent_id: Uuid, name: Option<&str>, args: Vec<&str>) -> CreateAgentRequest {
+        CreateAgentRequest {
+            agent_id,
+            host_id: None,
+            name: name.map(str::to_string),
+            agent_type: AgentType::Claude,
+            working_dir: PathBuf::from("/work"),
+            terminal_size: None,
+            args: args.into_iter().map(str::to_string).collect(),
+            parent: None,
+            initial_prompt: None,
+        }
+    }
+
+    #[test]
+    fn a2a_claude_spawn_argv_version_gates_runtime_socket_and_owns_name() {
+        let meta: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/a2a/session_registry.meta.json"
+        ))
+        .unwrap();
+        let captured_version = meta["claude_version"].as_str().unwrap();
+        let agent_id = Uuid::new_v4();
+        let request = claude_request(
+            agent_id,
+            Some("reviewer"),
+            vec![
+                "--model",
+                "sonnet",
+                "--name",
+                "spoofed",
+                "--messaging-socket-path=/outside/runtime.sock",
+            ],
+        );
+        let runtime_dir = PathBuf::from("/runtime/amux");
+        let session = ClaudeSession::new(&request, runtime_dir.clone());
+
+        assert_eq!(
+            session.spawn_args(Some(captured_version)),
+            vec![
+                "--model".to_string(),
+                "sonnet".to_string(),
+                "--name".to_string(),
+                "reviewer".to_string(),
+                "--messaging-socket-path".to_string(),
+                runtime_dir
+                    .join(format!("amux-{agent_id}.sock"))
+                    .to_string_lossy()
+                    .into_owned(),
+            ]
+        );
+
+        let old_args = session.spawn_args(Some("2.1.223 (Claude Code)"));
+        assert_eq!(
+            old_args,
+            vec![
+                "--model".to_string(),
+                "sonnet".to_string(),
+                "--name".to_string(),
+                "reviewer".to_string(),
+            ]
+        );
+        assert!(!claude_supports_messaging_socket("not-a-version"));
+
+        let unnamed = ClaudeSession::new(&claude_request(agent_id, None, Vec::new()), runtime_dir);
+        assert_eq!(
+            unnamed.spawn_args(None),
+            vec!["--name".to_string(), agent_id.to_string()]
+        );
+    }
+
+    #[test]
+    fn a2a_claude_spawn_argv_scrubs_inherited_messaging_socket() {
+        let mut cmd = portable_pty::CommandBuilder::new("claude");
+        cmd.env("CLAUDE_CODE_MESSAGING_SOCKET", "/parent/session.sock");
+
+        apply_env(
+            &mut cmd,
+            &claude_spawn_env(Uuid::new_v4()),
+            CLAUDE_CHILD_SESSION_ENV_SCRUB,
+        );
+
+        assert_eq!(cmd.get_env("CLAUDE_CODE_MESSAGING_SOCKET"), None);
+    }
 
     /// The environment a spawned claude actually receives: every inherited
     /// Claude Code child-session marker is scrubbed, and the force-persistence

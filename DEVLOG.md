@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude sessions own their native name and inbox socket flags.**
+Every spawned Claude process receives the amux agent name, with the agent UUID
+as the unnamed fallback. Claude Code versions at or above 2.1.224 also receive
+a per-agent messaging socket beneath the daemon's configured runtime directory;
+older, malformed, and unavailable version probes stay on PTY delivery. Managed
+name/socket arguments cannot be overridden through extra argv, and inherited
+Claude messaging sockets remain scrubbed from the child environment.
+
 2026-08-23 — **Agent messages route across paired devices.** The whole-daemon
 specification now sends from a local live agent to a remote echo agent over
 both a direct TCP pairing and two cloud-only device links. In each topology,

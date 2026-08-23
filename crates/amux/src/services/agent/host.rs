@@ -57,7 +57,12 @@ impl PtyAgentHost {
         host_id: Uuid,
         server_socket_path: &Path,
     ) -> io::Result<Arc<Self>> {
-        let deps = AgentDeps::new(codex_private_socket_path(server_socket_path)?);
+        let runtime_dir = server_socket_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let deps = AgentDeps::new(runtime_dir, codex_private_socket_path(server_socket_path)?);
         let state = Arc::new(RwLock::new(AgentServiceState::new(deps)));
         let (event_tx, event_rx) = mpsc::channel(256);
         spawn_session_event_loop(state.clone(), event_rx, host_id);

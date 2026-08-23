@@ -564,6 +564,7 @@ mod tests {
     #[tokio::test]
     async fn resume_registration_failure_does_not_replace_existing_agent_session() {
         let agent_state = Arc::new(RwLock::new(AgentServiceState::new(AgentDeps::new(
+            std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
         ))));
         let (event_tx, _event_rx) = mpsc::channel(16);
@@ -611,6 +612,7 @@ mod tests {
     #[tokio::test]
     async fn prepare_suspend_failure_leaves_local_agents_registered() {
         let agent_state = Arc::new(RwLock::new(AgentServiceState::new(AgentDeps::new(
+            std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
         ))));
         let host_id = Uuid::new_v4();

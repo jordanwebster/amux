@@ -86,15 +86,20 @@ pub(crate) enum RawPtyTarget {
 /// Host-owned resources shared by agent backends.
 #[derive(Clone)]
 pub(crate) struct AgentDeps {
+    pub(crate) runtime_dir: std::path::PathBuf,
     #[cfg(unix)]
     pub(crate) codex_client: Arc<CodexClient>,
 }
 
 impl AgentDeps {
-    pub(crate) fn new(codex_private_socket: std::path::PathBuf) -> Self {
+    pub(crate) fn new(
+        runtime_dir: std::path::PathBuf,
+        codex_private_socket: std::path::PathBuf,
+    ) -> Self {
         #[cfg(not(unix))]
         let _ = codex_private_socket;
         Self {
+            runtime_dir,
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
         }
@@ -194,7 +199,7 @@ pub(crate) type AgentSession = Box<dyn AgentBackend>;
 
 pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<AgentSession> {
     match &req.agent_type {
-        AgentType::Claude => Ok(Box::new(ClaudeSession::new(req))),
+        AgentType::Claude => Ok(Box::new(ClaudeSession::new(req, deps.runtime_dir.clone()))),
         #[cfg(unix)]
         AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(req, deps.codex_client.clone()))),
         #[cfg(not(unix))]
@@ -238,6 +243,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 name_source.into(),
                 session_id,
                 created_at,
+                deps.runtime_dir.clone(),
             ))
         }
         #[cfg(unix)]
@@ -361,7 +367,10 @@ mod tests {
             working_on: None,
         };
 
-        let deps = AgentDeps::new(std::env::temp_dir().join("amux-test-codex.sock"));
+        let deps = AgentDeps::new(
+            std::env::temp_dir(),
+            std::env::temp_dir().join("amux-test-codex.sock"),
+        );
         let session = agent_from_suspended(sa, &deps);
 
         assert_eq!(
@@ -392,7 +401,10 @@ mod tests {
             parent: None,
             working_on: None,
         };
-        let deps = AgentDeps::new(std::env::temp_dir().join("amux-test-codex.sock"));
+        let deps = AgentDeps::new(
+            std::env::temp_dir(),
+            std::env::temp_dir().join("amux-test-codex.sock"),
+        );
 
         let session = agent_from_suspended(suspended, &deps);
         let restored = session.suspended_state().unwrap();
@@ -430,7 +442,7 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let mut session = ClaudeSession::new(&req);
+        let mut session = ClaudeSession::new(&req, std::env::temp_dir());
         session.session_id = Some(Uuid::new_v4());
 
         let suspended = session.suspended_state().unwrap();
