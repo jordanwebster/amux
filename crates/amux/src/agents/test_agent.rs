@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(any(test, feature = "testnet"))]
 use std::time::Duration;
 
 use anyhow::Result;

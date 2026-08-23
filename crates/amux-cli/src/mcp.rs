@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::client_common::require_running_client;
 
 const JSONRPC_VERSION: &str = "2.0";
-const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
+const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
 #[derive(Debug, Deserialize)]
 struct ToolCallParams {
@@ -125,15 +125,11 @@ async fn handle_line(line: &str, backend: &dyn ToolBackend) -> Option<Value> {
     })
 }
 
-fn initialize_response(id: Value, params: &Value) -> Value {
-    let protocol_version = params
-        .get("protocolVersion")
-        .and_then(Value::as_str)
-        .unwrap_or(DEFAULT_PROTOCOL_VERSION);
+fn initialize_response(id: Value, _params: &Value) -> Value {
     rpc_result(
         id,
         json!({
-            "protocolVersion": protocol_version,
+            "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": { "tools": { "listChanged": false } },
             "serverInfo": {
                 "name": "amux",
@@ -406,7 +402,10 @@ mod tests {
 
         let responses = response_lines(output);
         assert_eq!(responses.len(), 2);
-        assert_eq!(responses[0]["result"]["protocolVersion"], "2025-03-26");
+        assert_eq!(
+            responses[0]["result"]["protocolVersion"],
+            MCP_PROTOCOL_VERSION
+        );
         let tools = responses[1]["result"]["tools"].as_array().unwrap();
         assert_eq!(
             tools
