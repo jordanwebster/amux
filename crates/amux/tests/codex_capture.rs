@@ -659,17 +659,23 @@ fn main() -> anyhow::Result<()> {
                 Matcher::InputOk(input_id),
             )
             .await?;
-        let (cursor, _) = capture
+        let (cursor, completion) = capture
             .wait(
                 cursor,
                 Duration::from_secs(480),
                 "Claude child completion delivered to Codex parent",
-                Matcher::AgentMessageContains {
-                    kind: "completed",
-                    text: child_marker.to_string(),
-                },
+                Matcher::Type("amux.codex_message"),
             )
             .await?;
+        if completion.json.get("kind").and_then(Value::as_str) != Some("completed")
+            || !completion
+                .json
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains(child_marker))
+        {
+            bail!("roundtrip message was not the child's completion: {completion:?}");
+        }
         capture
             .wait(
                 cursor,

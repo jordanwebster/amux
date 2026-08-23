@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
 use std::future::Future;
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -347,6 +348,7 @@ fn resolve_remove_agent<'a>(agents: &'a [amux::Agent], target: &str) -> Result<&
     }
 }
 
+#[cfg(test)]
 async fn delete_exact_agent<Delete, DeleteFuture>(
     agents: &[amux::Agent],
     target: &str,

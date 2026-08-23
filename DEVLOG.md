@@ -4676,3 +4676,10 @@ C.15 scenario exercises the mirror image with a Claude child and structurally
 matches the synthesized completion row before accepting the parent's reply.
 Both scenarios verify the parent edge in live inventory and remain inert unless
 their scenario name, or the suite-wide selector, is explicitly requested.
+
+2026-08-23 — **Kept release and harness-only helpers out of one another's
+warning surface.** The legacy injectable delete helper now compiles only with
+the CLI tests that exercise it. The Codex round-trip scenario uses the shared
+row-type matcher and validates completion fields immediately afterward, so the
+same structure module remains warning-free when compiled by its offline waiter
+tests, where live-only matchers are intentionally never constructed.
