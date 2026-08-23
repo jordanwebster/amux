@@ -168,6 +168,14 @@ pub(crate) async fn create_agent_record(
             text,
             updated_at: chrono::Utc::now(),
         });
+    let spawn_deps = {
+        let deps = agent_state.read().await.deps.clone();
+        if matches!(&agent_type, AgentType::Claude) {
+            deps.for_claude_spawn()
+        } else {
+            deps
+        }
+    };
 
     let (agent_count, info) = {
         let mut state = agent_state.write().await;
@@ -188,7 +196,7 @@ pub(crate) async fn create_agent_record(
             return Err(CreateAgentError::AlreadyExists(a.clone()));
         }
 
-        let mut session = new_agent(&req, &state.deps)
+        let mut session = new_agent(&req, &spawn_deps)
             .map_err(|error| CreateAgentError::Start(error.to_string()))?;
         let exit_handle = session.start(event_tx).map_err(|error| {
             CreateAgentError::Start(format!("failed to start local agent {agent_id}: {error}"))
@@ -374,7 +382,12 @@ pub(crate) async fn resume_agents(
         let name = sa.name().map(String::from);
         tracing::info!(agent_id = %agent_id, name = ?name, "resuming agent");
 
-        let mut session = agent_from_suspended(sa, &deps);
+        let spawn_deps = if matches!(&sa, SuspendedAgent::Claude { .. }) {
+            deps.clone().for_claude_spawn()
+        } else {
+            deps.clone()
+        };
+        let mut session = agent_from_suspended(sa, &spawn_deps);
         match session.start(event_tx) {
             Ok(exit_handle) => {
                 let info = session.to_agent(host_id);

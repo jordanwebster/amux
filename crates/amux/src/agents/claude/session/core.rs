@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -23,7 +23,6 @@ use crate::debug::DebugView;
 
 const STRUCTURED_LOG_RETENTION: usize = 1000;
 const CLAUDE_MESSAGING_SOCKET_MIN_VERSION: semver::Version = semver::Version::new(2, 1, 224);
-static INSTALLED_CLAUDE_VERSION: OnceLock<Option<String>> = OnceLock::new();
 
 #[derive(Clone)]
 pub(super) struct ClaudeMessagingCredentials {
@@ -369,9 +368,7 @@ impl ClaudeSession {
 }
 
 pub(crate) fn installed_claude_version() -> Option<String> {
-    INSTALLED_CLAUDE_VERSION
-        .get_or_init(|| probe_claude_version("claude"))
-        .clone()
+    probe_claude_version("claude")
 }
 
 fn probe_claude_version(command: &str) -> Option<String> {
@@ -463,6 +460,9 @@ impl Serialize for DebugView<'_, ClaudeSession> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
     use crate::agents::pty::apply_env;
     use crate::agents::{AgentType, CreateAgentRequest};
@@ -582,6 +582,31 @@ mod tests {
                 "--allowedTools".to_string(),
                 "mcp__amux__*".to_string(),
             ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_version_probe_observes_binary_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let command = dir.path().join("claude");
+        let write_version = |version: &str| {
+            std::fs::write(&command, format!("#!/bin/sh\nprintf '%s\\n' '{version}'\n")).unwrap();
+            let mut permissions = std::fs::metadata(&command).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&command, permissions).unwrap();
+        };
+
+        write_version("2.1.223 (Claude Code)");
+        assert_eq!(
+            probe_claude_version(command.to_str().unwrap()).as_deref(),
+            Some("2.1.223 (Claude Code)\n")
+        );
+
+        write_version("2.1.224 (Claude Code)");
+        assert_eq!(
+            probe_claude_version(command.to_str().unwrap()).as_deref(),
+            Some("2.1.224 (Claude Code)\n")
         );
     }
 

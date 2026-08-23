@@ -204,13 +204,18 @@ impl AgentDeps {
         let _ = codex_private_socket;
         Self {
             runtime_dir,
-            // AgentDeps is built before AgentServiceState is placed behind its
-            // registry lock, so this process probe cannot stall registry work.
-            claude_version: super::claude::installed_claude_version(),
+            claude_version: None,
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
             agent_tools: AgentToolRouter::default(),
         }
+    }
+
+    /// Snapshot the installed Claude version for one process start. Callers
+    /// prepare this copy before taking the registry write lock.
+    pub(crate) fn for_claude_spawn(mut self) -> Self {
+        self.claude_version = super::claude::installed_claude_version();
+        self
     }
 }
 

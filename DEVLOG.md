@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude version discovery follows each process start.** The
+daemon now probes `claude --version` while preparing every new or resumed
+Claude process, before taking the agent registry write lock. Upgrades and
+downgrades during one daemon lifetime therefore update whether the messaging
+socket argument is passed.
+
+---
+
 2026-08-23 — **Managed Claude delivery accepts either startup signal.** A
 session becomes ready for messages when its `SessionStart` hook arrives or
 when transcript ingest reaches the live-tail boundary. A working PTY therefore
