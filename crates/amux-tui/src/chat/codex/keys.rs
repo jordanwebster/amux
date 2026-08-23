@@ -35,6 +35,14 @@ pub(crate) fn handle_chat_key(
             KeyCode::Char('n') => {
                 crate::chat::next_in_family(model, chat.agent).map(UiAction::OpenChat)
             }
+            // `<leader> m`: open or close the completion bodies (U4).
+            // A display toggle rather than a per-row affordance: the feed
+            // has no cursor to point at one row with, and a chord that
+            // does the same thing everywhere is teachable in one line.
+            KeyCode::Char('m') => {
+                chat.reports_open = !chat.reports_open;
+                None
+            }
             _ => None,
         };
     }
@@ -269,7 +277,7 @@ fn pause_at(chat: &mut View, model: &Model, top_line: usize) {
 
 fn page_up(chat: &mut View, model: &Model, viewport: (u16, u16)) {
     let (page, feed_h) = metrics(chat, model, viewport);
-    let total = render::feed_line_count(model, chat.agent, viewport.0 as usize);
+    let total = render::feed_line_count(model, chat, viewport.0 as usize);
     match chat.scroll {
         FeedScroll::Following => {
             let max_top = total.saturating_sub(feed_h);
@@ -288,7 +296,7 @@ fn page_down(chat: &mut View, model: &Model, viewport: (u16, u16)) {
         return;
     };
     let (page, feed_h) = metrics(chat, model, viewport);
-    let total = render::feed_line_count(model, chat.agent, viewport.0 as usize);
+    let total = render::feed_line_count(model, chat, viewport.0 as usize);
     let max_top = total.saturating_sub(feed_h);
     if top_line + page >= max_top {
         chat.scroll = FeedScroll::Following;
@@ -299,15 +307,14 @@ fn page_down(chat: &mut View, model: &Model, viewport: (u16, u16)) {
 
 fn jump_top(chat: &mut View, model: &Model, viewport: (u16, u16)) {
     let (_, feed_h) = metrics(chat, model, viewport);
-    if render::feed_line_count(model, chat.agent, viewport.0 as usize) > feed_h {
+    if render::feed_line_count(model, chat, viewport.0 as usize) > feed_h {
         pause_at(chat, model, 0);
     }
 }
 
 fn line_up(chat: &mut View, model: &Model, viewport: (u16, u16)) {
     let (_, feed_h) = metrics(chat, model, viewport);
-    let max_top =
-        render::feed_line_count(model, chat.agent, viewport.0 as usize).saturating_sub(feed_h);
+    let max_top = render::feed_line_count(model, chat, viewport.0 as usize).saturating_sub(feed_h);
     match chat.scroll {
         FeedScroll::Following if max_top > 0 => pause_at(chat, model, max_top - 1),
         FeedScroll::Paused { top_line, .. } => {
@@ -322,8 +329,7 @@ fn line_down(chat: &mut View, model: &Model, viewport: (u16, u16)) {
         return;
     };
     let (_, feed_h) = metrics(chat, model, viewport);
-    let max_top =
-        render::feed_line_count(model, chat.agent, viewport.0 as usize).saturating_sub(feed_h);
+    let max_top = render::feed_line_count(model, chat, viewport.0 as usize).saturating_sub(feed_h);
     if top_line + 1 >= max_top {
         chat.scroll = FeedScroll::Following;
     } else {

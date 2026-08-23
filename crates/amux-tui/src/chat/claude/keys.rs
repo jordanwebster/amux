@@ -62,6 +62,14 @@ pub fn handle_chat_key(
             KeyCode::Char('n') => {
                 crate::chat::next_in_family(model, chat.agent).map(UiAction::OpenChat)
             }
+            // `<leader> m`: open or close the completion bodies (U4).
+            // A display toggle rather than a per-row affordance: the feed
+            // has no cursor to point at one row with, and a chord that
+            // does the same thing everywhere is teachable in one line.
+            KeyCode::Char('m') => {
+                chat.reports_open = !chat.reports_open;
+                None
+            }
             _ => None,
         };
     }

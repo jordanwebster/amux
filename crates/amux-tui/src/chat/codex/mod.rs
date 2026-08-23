@@ -44,6 +44,11 @@ pub(crate) struct View {
     pub help: bool,
     /// Creation choices supplied by the CLI for the initial structured view.
     pub(crate) configuration_label: Option<String>,
+    /// Whether completions show their whole body (`<leader> m`). Closed
+    /// by default: a child's last message is a report, and a chat that
+    /// opens every report it receives stops being readable at the exact
+    /// moment several children finish at once.
+    pub reports_open: bool,
 }
 
 impl View {
@@ -64,6 +69,7 @@ impl View {
             kitty,
             help: false,
             configuration_label: None,
+            reports_open: false,
         }
     }
 

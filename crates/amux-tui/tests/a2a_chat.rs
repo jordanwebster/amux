@@ -95,6 +95,16 @@ fn a_host() -> HostEntry {
     }
 }
 
+/// A second host, known by name, so a message from another machine can
+/// be told from one nobody here can place.
+fn another_host() -> HostEntry {
+    HostEntry {
+        id: Uuid::from_u128(2),
+        name: "tessin".to_string(),
+        ..a_host()
+    }
+}
+
 fn agent_up(agent: &Agent) -> Msg {
     Msg::Server(ServerMsg::AgentUpserted {
         agent: agent.clone(),
@@ -172,6 +182,115 @@ fn stop_row() -> Value {
     json!({"type": "hook.stop"})
 }
 
+/// The generic `<amux …>` tag the paste carrier delivers, formatted exactly
+/// as the daemon's formatter writes it. Spelled out rather than imported:
+/// this crate consumes `amux-ui` only, and the agreement between the two
+/// spellings is asserted in the reducer specs, not here.
+fn amux_tag(kind: &str, from: &str, host: &str, text: &str) -> String {
+    format!(
+        "<amux id=\"00000000-0000-4000-8000-0000000000a1\" kind=\"{kind}\" \
+from=\"{from}/{host}\" \
+from-id=\"00000000-0000-0000-0000-0000000000b0\" from-kind=\"codex\">\n{text}\n</amux>"
+    )
+}
+
+/// The host every fixture agent lives on, as the wire spells it.
+const HERE: &str = "00000000-0000-0000-0000-000000000001";
+/// A second host this inventory knows by name.
+const THERE: &str = "00000000-0000-0000-0000-000000000002";
+
+/// An envelope arriving in a Claude transcript: an ordinary user row whose
+/// text is the tag.
+fn claude_message_row(n: u32, kind: &str, from: &str, text: &str) -> Value {
+    claude_message_row_from(n, kind, from, HERE, text)
+}
+
+fn claude_message_row_from(n: u32, kind: &str, from: &str, host: &str, text: &str) -> Value {
+    json!({
+        "type": "user",
+        "uuid": format!("dddddddd-0000-4000-8000-0000{n:08}"),
+        "sessionId": "22222222-2222-4222-8222-222222222222",
+        "timestamp": "2026-08-11T22:01:00.000Z",
+        "isMeta": false,
+        "origin": {"kind": "human"},
+        "promptSource": "typed",
+        "message": {"role": "user", "content": amux_tag(kind, from, host, text)},
+    })
+}
+
+/// The row the daemon writes into a Codex thread for the same envelope —
+/// the native thread shows nothing for an injected item.
+fn codex_message_row(kind: &str, from: &str, text: &str) -> Value {
+    codex_message_row_from(kind, from, HERE, text)
+}
+
+fn codex_message_row_from(kind: &str, from: &str, host: &str, text: &str) -> Value {
+    json!({
+        "type": "amux.codex_message",
+        "id": "00000000-0000-0000-0000-0000000000a1",
+        "kind": kind,
+        "from": format!("{from}/{host}"),
+        "from_id": "00000000-0000-0000-0000-0000000000b0",
+        "text": text,
+        "delivery": "inject_queued",
+    })
+}
+
+/// An outbound `send`, as Claude records the MCP tool call.
+fn claude_send_rows(n: u32, to: &str, text: &str) -> Vec<Value> {
+    vec![
+        json!({
+            "type": "assistant",
+            "uuid": format!("dddddddd-0000-4000-8000-0000{n:08}"),
+            "sessionId": "22222222-2222-4222-8222-222222222222",
+            "timestamp": "2026-08-11T22:02:00.000Z",
+            "message": {
+                "id": format!("msg_{n}"),
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_send1",
+                    "name": "mcp__amux__send",
+                    "input": {"to": to, "text": text},
+                }],
+                "stop_reason": "tool_use",
+            },
+        }),
+        json!({
+            "type": "user",
+            "uuid": format!("dddddddd-0000-4000-8000-0000{:08}", n + 1),
+            "sessionId": "22222222-2222-4222-8222-222222222222",
+            "timestamp": "2026-08-11T22:02:01.000Z",
+            "isMeta": false,
+            "message": {
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_send1",
+                    "content": "{\"id\":\"00000000-0000-4000-8000-0000000000a2\"}",
+                }],
+            },
+        }),
+    ]
+}
+
+/// An outbound `send` as Codex records it: a dynamic tool call amux
+/// itself registered on the thread — unnamespaced, which is how the fold
+/// tells amux's tools from anybody else's.
+fn codex_send_row(to: &str, text: &str) -> Value {
+    json!({
+        "type": "item/completed",
+        "item": {
+            "id": "dynamic-send",
+            "type": "dynamicToolCall",
+            "tool": "send",
+            "arguments": {"to": to, "text": text},
+            "success": true,
+            "status": "completed",
+        },
+    })
+}
+
 // --- the fixture family ---------------------------------------------------
 
 /// A Claude lead with three descendants: a Codex child blocked on a
@@ -183,6 +302,9 @@ fn family_msgs() -> Vec<Msg> {
             local_host_id: Some(host_id()),
         }),
         Msg::Server(ServerMsg::HostUpserted { host: a_host() }),
+        Msg::Server(ServerMsg::HostUpserted {
+            host: another_host(),
+        }),
         agent_up(&an_agent(LEAD, "claude", CLAUDE_PROTOCOL, None)),
         agent_up(&an_agent(RUNNER, "codex", CODEX_PROTOCOL, Some(LEAD))),
         agent_up(&an_agent(SCRIBE, "claude", CLAUDE_PROTOCOL, Some(LEAD))),
@@ -653,4 +775,253 @@ fn a2a_banner_in_a_codex_parents_chat() {
         "{banner}"
     );
     assert_surface("a2a_banner_codex", &model, &chat_on(&model, RUNNER), HEIGHT);
+}
+
+// --- message rows (U4) ----------------------------------------------------
+
+/// A child's last message: long enough that closing it hides something.
+const REPORT: &str = "migrated 14 call sites\n\nthe two in `legacy/` need a decision:\nthey pass the old shape through a macro.";
+
+/// The conversation an agent has with the fleet: one inbound message, one
+/// completion from a child, one exit, and one send going the other way.
+fn conversation_msgs() -> Vec<Msg> {
+    let mut msgs = family_msgs();
+    let mut rows = vec![
+        claude_message_row(
+            10,
+            "message",
+            "test-runner",
+            "the suite is green on the retry path",
+        ),
+        claude_message_row(11, "completed", "write-the-docs", REPORT),
+        claude_message_row(12, "exited", "flake-hunter", ""),
+    ];
+    rows.extend(claude_send_rows(
+        13,
+        "test-runner",
+        "rerun with --nocapture",
+    ));
+    msgs.push(batch(LEAD, NOW - 10, rows));
+
+    msgs.push(batch(
+        RUNNER,
+        NOW - 8,
+        vec![
+            codex_message_row("message", "refactor-tunnels", "rerun with --nocapture"),
+            codex_message_row("completed", "flake-hunter", REPORT),
+            codex_send_row("refactor-tunnels", "green, 0 flakes in 20 runs"),
+        ],
+    ));
+    msgs
+}
+
+fn conversation_model() -> Model {
+    fold(conversation_msgs())
+}
+
+fn frame_of(model: &Model, view: &ViewState) -> String {
+    buffer_text(&render_buffer(model, view, Theme::Dark, 40))
+}
+
+fn opened_reports(model: &Model, name: &str) -> ViewState {
+    let mut view = chat_on(model, name);
+    let chat = view.chat.as_mut().expect("an open chat");
+    amux_tui::chat::handle_chat_key(
+        chat,
+        model,
+        press(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        (WIDTH, 40),
+        at(NOW),
+    );
+    let chat = view.chat.as_mut().expect("an open chat");
+    amux_tui::chat::handle_chat_key(
+        chat,
+        model,
+        press(KeyCode::Char('m'), KeyModifiers::NONE),
+        (WIDTH, 40),
+        at(NOW),
+    );
+    view
+}
+
+/// Inbound: the sender, then everything they said. Somebody is talking to
+/// this agent, so nothing is held back.
+#[test]
+fn a2a_message_rows_show_an_inbound_message_whole() {
+    let model = conversation_model();
+    for name in [LEAD, RUNNER] {
+        let frame = frame_of(&model, &chat_on(&model, name));
+        assert!(
+            frame.contains("← "),
+            "one directional glyph marks it inbound:\n{frame}"
+        );
+        assert!(
+            frame.contains("rerun with --nocapture") || frame.contains("the suite is green"),
+            "the body renders in full:\n{frame}"
+        );
+    }
+}
+
+/// A completion wears a finished mark over a closed body: the first line,
+/// then what is behind the fold and the chord that opens it.
+#[test]
+fn a2a_message_rows_close_a_completion_and_say_what_is_behind_it() {
+    let model = conversation_model();
+    for name in [LEAD, RUNNER] {
+        let frame = frame_of(&model, &chat_on(&model, name));
+        assert!(frame.contains("✔ "), "the finished mark:\n{frame}");
+        assert!(frame.contains("migrated 14 call sites"), "{frame}");
+        assert!(
+            !frame.contains("through a macro"),
+            "the rest is behind the fold:\n{frame}"
+        );
+        assert!(
+            frame.contains("⌄ 2 more lines · C-a m"),
+            "what is hidden, and the key that shows it:\n{frame}"
+        );
+    }
+}
+
+/// The chord opens every completion in the chat and offers to close it
+/// again — one display state, not a per-row cursor the feed does not have.
+#[test]
+fn a2a_message_rows_open_every_completion_on_the_chord() {
+    let model = conversation_model();
+    for name in [LEAD, RUNNER] {
+        let frame = frame_of(&model, &opened_reports(&model, name));
+        assert!(
+            frame.contains("through a macro"),
+            "the whole report:\n{frame}"
+        );
+        assert!(frame.contains("⌃ close · C-a m"), "{frame}");
+    }
+}
+
+/// An exit offers nothing to open, because the envelope carries nothing:
+/// a fold marker over an empty body would be a promise about what is
+/// behind it.
+#[test]
+fn a2a_message_rows_render_an_exit_as_a_bare_notice() {
+    let model = conversation_model();
+    let frame = frame_of(&model, &chat_on(&model, LEAD));
+    let notice = frame
+        .lines()
+        .find(|line| line.contains("· flake-hunter"))
+        .expect("the exit row");
+    assert!(!notice.contains('⌄'), "nothing to open: {notice}");
+}
+
+/// Outbound: an ordinary tool row saying who it went to and what left —
+/// the other half of the conversation, in both chats, in the same shape.
+#[test]
+fn a2a_message_rows_show_a_send_as_its_target_and_a_summary() {
+    let model = conversation_model();
+    let claude = frame_of(&model, &chat_on(&model, LEAD));
+    assert!(
+        claude.contains("→ test-runner · rerun with --nocapture"),
+        "{claude}"
+    );
+    let codex = frame_of(&model, &chat_on(&model, RUNNER));
+    assert!(
+        codex.contains("→ refactor-tunnels · green, 0 flakes in 20 runs"),
+        "{codex}"
+    );
+    assert!(
+        !codex.contains("\"to\":"),
+        "a send is talk, not a JSON argument dump:\n{codex}"
+    );
+}
+
+/// amux's other tools keep the generic tool shape: spawning and stopping
+/// are work, not talk, and reading them as a conversation would be a lie.
+#[test]
+fn a2a_message_rows_leave_the_other_amux_tools_generic() {
+    let mut msgs = family_msgs();
+    msgs.push(batch(
+        RUNNER,
+        NOW - 8,
+        vec![json!({
+            "type": "item/completed",
+            "item": {
+                "id": "dynamic-spawn",
+                "type": "dynamicToolCall",
+                "tool": "spawn",
+                "arguments": {"kind": "codex", "prompt": "hunt the flake"},
+                "success": true,
+                "status": "completed",
+            },
+        })],
+    ));
+    let model = fold(msgs);
+    let frame = frame_of(&model, &chat_on(&model, RUNNER));
+    assert!(frame.contains("amux spawn · done"), "{frame}");
+    assert!(!frame.contains("→ "), "no direction to claim:\n{frame}");
+}
+
+#[test]
+fn a2a_message_rows_in_a_claude_chat() {
+    let model = conversation_model();
+    assert_surface(
+        "a2a_message_rows_claude",
+        &model,
+        &chat_on(&model, LEAD),
+        40,
+    );
+}
+
+#[test]
+fn a2a_message_rows_in_a_codex_chat() {
+    let model = conversation_model();
+    assert_surface(
+        "a2a_message_rows_codex",
+        &model,
+        &chat_on(&model, RUNNER),
+        40,
+    );
+}
+
+#[test]
+fn a2a_message_rows_opened_in_a_claude_chat() {
+    let model = conversation_model();
+    assert_surface(
+        "a2a_message_rows_claude_open",
+        &model,
+        &opened_reports(&model, LEAD),
+        40,
+    );
+}
+
+/// The sender marker is for a person to read: the name alone when the
+/// message came from this agent's own machine, the host named when it
+/// came from another one this inventory knows, and the address exactly as
+/// it arrived when nobody here can place the host.
+#[test]
+fn a2a_message_rows_name_the_sender_and_only_a_foreign_host() {
+    let mut msgs = family_msgs();
+    msgs.push(batch(
+        LEAD,
+        NOW - 10,
+        vec![
+            claude_message_row_from(20, "message", "test-runner", HERE, "same machine"),
+            claude_message_row_from(21, "message", "far-scout", THERE, "another machine"),
+            claude_message_row_from(
+                22,
+                "message",
+                "ghost",
+                "00000000-0000-0000-0000-0000000000ff",
+                "a host nobody here knows",
+            ),
+        ],
+    ));
+    let model = fold(msgs);
+    let frame = frame_of(&model, &chat_on(&model, LEAD));
+    assert!(
+        frame.contains("← test-runner\n") || frame.contains("← test-runner "),
+        "its own host adds nothing:\n{frame}"
+    );
+    assert!(frame.contains("← far-scout @ tessin"), "{frame}");
+    assert!(
+        frame.contains("ghost/00000000-0000-0000-0000-0000000000ff"),
+        "an address nobody can resolve is still where it came from:\n{frame}"
+    );
 }

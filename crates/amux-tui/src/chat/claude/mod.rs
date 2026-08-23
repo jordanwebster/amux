@@ -82,6 +82,11 @@ pub struct View {
     pub kitty: bool,
     /// The `?` help overlay is open (any key closes it).
     pub help: bool,
+    /// Whether completions show their whole body (`<leader> m`). Closed
+    /// by default: a child's last message is a report, and a chat that
+    /// opens every report it receives stops being readable at the exact
+    /// moment several children finish at once.
+    pub reports_open: bool,
 }
 
 impl View {
@@ -101,6 +106,7 @@ impl View {
             pending_leader: false,
             kitty,
             help: false,
+            reports_open: false,
         }
     }
 

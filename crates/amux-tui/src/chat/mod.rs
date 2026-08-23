@@ -6,7 +6,10 @@ pub(crate) mod claude;
 mod codex;
 mod layout;
 
-use amux_ui::{AgentId, Command, FamilyNeed, Model, OpId, StructuredProtocol, Why};
+use amux_ui::{
+    AgentId, AgentMessagePresentation, Command, FamilyNeed, Model, OpId, StructuredProtocol, Why,
+    message_digest,
+};
 use chrono::{DateTime, Utc};
 pub use claude::diff;
 use crossterm::event::KeyEvent;
@@ -179,6 +182,120 @@ pub(crate) fn build_chat_lines(
             crate::render::invariant_warning_line(ctx.viewport.0 as usize, ctx.theme.warn());
     }
     lines
+}
+
+/// Everything an agent-message row needs besides the message itself: who
+/// this chat belongs to (so a sender's host can be named only when it is
+/// somebody else's), whether completions are open, and the chord that
+/// changes that — the affordance has to name the key, so the two travel
+/// together.
+#[derive(Clone, Copy)]
+pub(crate) struct MessageView<'m> {
+    model: &'m Model,
+    agent: AgentId,
+    open: bool,
+    leader: char,
+}
+
+impl<'m> MessageView<'m> {
+    pub(crate) fn new(model: &'m Model, agent: AgentId, open: bool, leader: char) -> Self {
+        Self {
+            model,
+            agent,
+            open,
+            leader,
+        }
+    }
+
+    pub(crate) fn sender(&self, from: &str) -> String {
+        sender_marker(self.model, self.agent, from)
+    }
+
+    /// The rows a message's body makes (U4). An ordinary message shows
+    /// everything it said — someone is talking to this agent. A
+    /// completion is a report from a child and closes to its first line,
+    /// stating what is behind the fold and how to open it, because a chat
+    /// that unrolls every finished child's last message stops being
+    /// readable at the exact moment several of them finish. An exit says
+    /// what little the envelope carried and offers nothing to open,
+    /// because there is nothing there.
+    pub(crate) fn body(&self, presentation: AgentMessagePresentation, text: &str) -> MessageBody {
+        match presentation {
+            AgentMessagePresentation::Inbound => MessageBody {
+                text: text.to_string(),
+                affordance: None,
+            },
+            AgentMessagePresentation::Notice => MessageBody {
+                text: message_digest(text).head.to_string(),
+                affordance: None,
+            },
+            AgentMessagePresentation::Finished if self.open => MessageBody {
+                text: text.to_string(),
+                affordance: (message_digest(text).hidden_lines > 0)
+                    .then(|| format!("⌃ close · C-{} m", self.leader)),
+            },
+            AgentMessagePresentation::Finished => {
+                let digest = message_digest(text);
+                MessageBody {
+                    text: digest.head.to_string(),
+                    affordance: match digest.hidden_lines {
+                        0 => None,
+                        1 => Some(format!("⌄ 1 more line · C-{} m", self.leader)),
+                        n => Some(format!("⌄ {n} more lines · C-{} m", self.leader)),
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// A message body as it is being shown: what to render, and the one line
+/// that states what is not being rendered.
+pub(crate) struct MessageBody {
+    pub(crate) text: String,
+    pub(crate) affordance: Option<String>,
+}
+
+/// The directional glyph a message wears (U4): one per presentation, the
+/// same in both chats.
+pub(crate) fn message_glyph(
+    presentation: AgentMessagePresentation,
+    theme: crate::render::Theme,
+) -> (&'static str, ratatui::style::Style) {
+    match presentation {
+        AgentMessagePresentation::Finished => ("✔", theme.ok()),
+        AgentMessagePresentation::Notice => ("·", theme.muted()),
+        AgentMessagePresentation::Inbound => ("←", theme.emphasis()),
+    }
+}
+
+/// Who a message came from, in words (U4): the sender's name, and the
+/// host only when it is not this agent's own. The wire carries
+/// `name/<host uuid>` because that pair is the address a reply is sent
+/// to; a chat row is for a person, and a person reading their own
+/// machine's name in every row learns nothing from it.
+///
+/// A host this inventory cannot name is left exactly as it arrived. An
+/// address nobody here can resolve is still the truth about where the
+/// message came from, and shortening it to the half we recognise would
+/// be inventing agreement.
+pub(crate) fn sender_marker(model: &Model, agent: AgentId, from: &str) -> String {
+    let Some((name, host)) = from.rsplit_once('/') else {
+        return from.to_string();
+    };
+    let Ok(host) = host.parse::<amux_ui::HostId>() else {
+        return from.to_string();
+    };
+    if model
+        .agent(agent)
+        .is_some_and(|card| card.agent.host_id == host)
+    {
+        return name.to_string();
+    }
+    match model.host_name(host) {
+        Some(host_name) => format!("{name} @ {host_name}"),
+        None => from.to_string(),
+    }
 }
 
 /// The banner a child raises in its parent's chat (U1): who is waiting,

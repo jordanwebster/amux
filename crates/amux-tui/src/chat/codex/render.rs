@@ -2,20 +2,20 @@
 //! only from `amux_ui::codex::phase`; feed blocks format the layer's typed
 //! entries without reconstructing a second semantic model.
 
+use amux_ui::Model;
 use amux_ui::codex::{
     ApprovalResolution, Ask, AskContext, BoundaryEntry, CodexPhase, ErrorSeverity, FeedEntry,
     FeedEntryKind, ItemFinality, McpStartupEntry, McpStartupStatus, MessagePhase,
     NetworkPolicyAction, NetworkPolicyAmendment, PromptPart, PromptSource, TokenUsage, TurnStatus,
     WorkEntry, WorkKind, WorkOutcome, WorkState,
 };
-use amux_ui::{AgentId, AgentMessagePresentation, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde_json::Value;
 
 use super::View;
 use crate::chat::layout::{ChatLayout, FrameRows};
-use crate::chat::{FeedScroll, entry_watermark, family_banner};
+use crate::chat::{FeedScroll, MessageView, entry_watermark, family_banner, message_glyph};
 use crate::markdown;
 use crate::render::{
     FrameContext, Theme, blank_line, clip_to_width, finish_line, line_len, new_line, pad_to,
@@ -113,7 +113,7 @@ pub(crate) fn build_chat_lines(
     let (window, at_top) = if loading {
         (loading_band(theme, width, feed_h), false)
     } else {
-        let feed = feed_lines(model, chat.agent, theme, width);
+        let feed = feed_lines(model, chat, theme, width);
         let total = feed.len();
         let max_top = total.saturating_sub(feed_h);
         let (start, at_top) = match chat.scroll {
@@ -325,7 +325,7 @@ fn paused_rule(
         left.push_str(&format!(" · {new_entries} new"));
     }
     left.push_str(" · pgdn resume ");
-    let total = feed_line_count(model, chat.agent, width);
+    let total = feed_line_count(model, chat, width);
     let max_top = total.saturating_sub(feed_h);
     let percent = top_line
         .min(max_top)
@@ -700,25 +700,26 @@ fn panel_rule(width: usize, theme: Theme) -> Line<'static> {
     line
 }
 
-pub(crate) fn feed_line_count(model: &Model, agent: AgentId, width: usize) -> usize {
-    feed_lines(model, agent, Theme::default(), width).len()
+pub(crate) fn feed_line_count(model: &Model, chat: &View, width: usize) -> usize {
+    feed_lines(model, chat, Theme::default(), width).len()
 }
 
 pub(crate) fn feed_lines(
     model: &Model,
-    agent: AgentId,
+    chat: &View,
     theme: Theme,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let Some(layer) = model.codex(agent) else {
+    let Some(layer) = model.codex(chat.agent) else {
         return Vec::new();
     };
+    let reports = MessageView::new(model, chat.agent, chat.reports_open, chat.leader);
     let mut lines = Vec::new();
     for (index, entry) in layer.entries().enumerate() {
         if index > 0 {
             lines.push(new_line());
         }
-        lines.extend(entry_lines(entry, width, theme));
+        lines.extend(entry_lines(entry, width, theme, reports));
     }
     for line in &mut lines {
         finish_line(line, width);
@@ -726,7 +727,12 @@ pub(crate) fn feed_lines(
     lines
 }
 
-fn entry_lines(entry: &FeedEntry, width: usize, theme: Theme) -> Vec<Line<'static>> {
+fn entry_lines(
+    entry: &FeedEntry,
+    width: usize,
+    theme: Theme,
+    reports: MessageView<'_>,
+) -> Vec<Line<'static>> {
     match &entry.kind {
         FeedEntryKind::Prompt(prompt) => {
             let (glyph, prefix, style) = match prompt.source {
@@ -774,21 +780,20 @@ fn entry_lines(entry: &FeedEntry, width: usize, theme: Theme) -> Vec<Line<'stati
         // the kernel gives the message's kind, so this chat and every
         // other draw a completion the same way.
         FeedEntryKind::AgentMessage(message) => {
-            let presentation = message.kind.presentation();
-            let (glyph, glyph_style) = match presentation {
-                AgentMessagePresentation::Finished => ("✔", theme.ok()),
-                AgentMessagePresentation::Notice => ("·", theme.muted()),
-                AgentMessagePresentation::Inbound => ("←", theme.emphasis()),
-            };
-            let mut lines = glyph_text(glyph, &message.from, width, glyph_style, theme.muted());
-            let body = match presentation {
-                // A notice has no body to open, so its one line is
-                // whatever the envelope managed to say — usually nothing.
-                AgentMessagePresentation::Notice => amux_ui::message_digest(&message.text).head,
-                _ => message.text.as_str(),
-            };
-            if !body.is_empty() {
-                lines.extend(continuation(body, width, theme));
+            let (glyph, glyph_style) = message_glyph(message.kind.presentation(), theme);
+            let mut lines = glyph_text(
+                glyph,
+                &reports.sender(&message.from),
+                width,
+                glyph_style,
+                theme.muted(),
+            );
+            let body = reports.body(message.kind.presentation(), &message.text);
+            if !body.text.is_empty() {
+                lines.extend(continuation(&body.text, width, theme));
+            }
+            if let Some(affordance) = body.affordance {
+                lines.extend(continuation(&affordance, width, theme));
             }
             lines
         }
@@ -989,14 +994,18 @@ fn work_lines(work: &WorkEntry, width: usize, theme: Theme) -> Vec<Line<'static>
             arguments,
             success,
         } => {
-            let mut lines = glyph_text(
-                glyph,
-                &format!("amux {tool} · {state}"),
-                width,
-                glyph_style,
-                theme.text(),
-            );
-            lines.extend(continuation(&json_text(arguments), width, theme));
+            // U4: a send is the outbound half of a conversation — one
+            // directional glyph, who it went to, and a summary of what
+            // left. The other amux tools keep the generic tool shape:
+            // spawning and stopping are work, not talk.
+            let head = match (tool.as_str(), send_summary(arguments)) {
+                ("send", Some(summary)) => summary,
+                _ => format!("amux {tool} · {state}"),
+            };
+            let mut lines = glyph_text(glyph, &head, width, glyph_style, theme.text());
+            if tool != "send" {
+                lines.extend(continuation(&json_text(arguments), width, theme));
+            }
             if let Some(success) = success {
                 lines.extend(continuation(&format!("success {success}"), width, theme));
             }
@@ -1079,6 +1088,21 @@ fn work_lines(work: &WorkEntry, width: usize, theme: Theme) -> Vec<Line<'static>
         lines.extend(continuation("output preview truncated", width, theme));
     }
     lines
+}
+
+/// `→ name · what left`, from a send call's own arguments. `None` when
+/// the call did not name a recipient — an argument shape amux did not
+/// write is better shown raw than summarized into a claim.
+fn send_summary(arguments: &Value) -> Option<String> {
+    let to = arguments.get("to")?.as_str()?;
+    match arguments
+        .get("text")
+        .and_then(Value::as_str)
+        .and_then(|text| text.lines().find(|line| !line.trim().is_empty()))
+    {
+        Some(head) => Some(format!("→ {to} · {}", head.trim())),
+        None => Some(format!("→ {to}")),
+    }
 }
 
 fn work_state(state: &WorkState, theme: Theme) -> (&'static str, Style, String) {

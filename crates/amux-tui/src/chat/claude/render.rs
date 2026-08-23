@@ -9,17 +9,17 @@
 //! Every fact rendered here comes from the Model — magnitudes, phases,
 //! gates, counts — the code below formats and never decides.
 
+use amux_ui::Model;
 use amux_ui::claude::{
     ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, PromptEcho, SuccessFacts, ToolEntry,
     ToolInvocation, ToolOutcome, TurnDuration,
 };
-use amux_ui::{AgentId, AgentMessagePresentation, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::chat::claude::{View, ask_ui, entry_watermark, panel, reader};
 use crate::chat::layout::{ChatLayout, FrameRows};
-use crate::chat::{FeedScroll, family_banner, subagent_marker};
+use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
 use crate::composer::Composer;
 use crate::markdown;
 use crate::render::{
@@ -222,7 +222,7 @@ fn cont_width(width: usize) -> usize {
 
 /// Total feed display rows at this width — the key handler's scroll bound.
 pub(crate) fn feed_line_count(model: &Model, chat: &View, width: usize) -> usize {
-    feed_lines(model, chat.agent, Theme::default(), width).len()
+    feed_lines(model, chat, Theme::default(), width).len()
 }
 
 // --- the frame --------------------------------------------------------------
@@ -297,7 +297,7 @@ pub(crate) fn build_chat_lines(
     let (window, at_top) = if loading {
         (loading_band(theme, width, feed_h), false)
     } else {
-        let feed = feed_lines(model, chat.agent, theme, width);
+        let feed = feed_lines(model, chat, theme, width);
         let total = feed.len();
         let max_top = total.saturating_sub(feed_h);
         let (start, at_top) = match &chat.scroll {
@@ -739,16 +739,18 @@ struct Block {
 /// clipped, right-bordered) here, once.
 pub(crate) fn feed_lines(
     model: &Model,
-    agent: AgentId,
+    chat: &View,
     theme: Theme,
     width: usize,
 ) -> Vec<Line<'static>> {
+    let agent = chat.agent;
     let Some(layer) = model.claude(agent) else {
         return Vec::new();
     };
     // The plan reader affordance is a write-side binding; read-only chats
     // never advertise it (hints tell the truth, F1).
     let plan_hint = !model.agent(agent).is_some_and(|card| card.agent.readonly);
+    let reports = MessageView::new(model, agent, chat.reports_open, chat.leader);
     let mut blocks: Vec<Block> = Vec::new();
     for entry in layer.entries() {
         // B4's grouping fact: consecutive read/search one-liners join onto
@@ -761,7 +763,7 @@ pub(crate) fn feed_lines(
         {
             continue;
         }
-        blocks.push(entry_block(entry, theme, width, plan_hint));
+        blocks.push(entry_block(entry, theme, width, plan_hint, reports));
     }
     for echo in layer.pending_echoes() {
         blocks.push(echo_block(echo, theme, width));
@@ -824,7 +826,13 @@ fn echo_block(echo: &PromptEcho, theme: Theme, width: usize) -> Block {
     Block { lines, tool: false }
 }
 
-fn entry_block(entry: &FeedEntry, theme: Theme, width: usize, plan_hint: bool) -> Block {
+fn entry_block(
+    entry: &FeedEntry,
+    theme: Theme,
+    width: usize,
+    plan_hint: bool,
+    reports: MessageView<'_>,
+) -> Block {
     match &entry.kind {
         FeedEntryKind::Prompt(prompt) => Block {
             lines: glyph_block(
@@ -898,23 +906,26 @@ fn entry_block(entry: &FeedEntry, theme: Theme, width: usize, plan_hint: bool) -
         // the kernel gives the message's kind, so this chat and every
         // other draw a completion the same way.
         FeedEntryKind::AgentMessage(message) => {
-            let presentation = message.kind.presentation();
-            let (glyph, glyph_style) = match presentation {
-                AgentMessagePresentation::Finished => ("✔", theme.ok()),
-                AgentMessagePresentation::Notice => ("·", theme.muted()),
-                AgentMessagePresentation::Inbound => ("←", theme.emphasis()),
-            };
-            let mut rows = markdown::plain_rows(&message.from, text_width(width), theme.muted());
-            let body = match presentation {
-                // A notice has no body to open, so its one line is
-                // whatever the envelope managed to say — usually nothing.
-                AgentMessagePresentation::Notice => {
-                    amux_ui::message_digest(&message.text).head.to_string()
-                }
-                _ => message.text.clone(),
-            };
-            if !body.is_empty() {
-                rows.extend(markdown::plain_rows(&body, text_width(width), theme.text()));
+            let (glyph, glyph_style) = message_glyph(message.kind.presentation(), theme);
+            let mut rows = markdown::plain_rows(
+                &reports.sender(&message.from),
+                text_width(width),
+                theme.muted(),
+            );
+            let body = reports.body(message.kind.presentation(), &message.text);
+            if !body.text.is_empty() {
+                rows.extend(markdown::plain_rows(
+                    &body.text,
+                    text_width(width),
+                    theme.text(),
+                ));
+            }
+            if let Some(affordance) = body.affordance {
+                rows.extend(markdown::plain_rows(
+                    &affordance,
+                    text_width(width),
+                    theme.muted(),
+                ));
             }
             Block {
                 lines: glyph_block(glyph, glyph_style, rows),

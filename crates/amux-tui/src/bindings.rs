@@ -151,6 +151,11 @@ pub fn chat_sections(eff: &Effective) -> Vec<Section> {
             "next agent in this family",
             Tier::Plain,
         ),
+        row(
+            format!("{} m", eff.leader_label),
+            "open / close completions",
+            Tier::Plain,
+        ),
     ];
     let mut composer = vec![
         row("enter", "send", Tier::Plain),

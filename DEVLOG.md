@@ -4603,3 +4603,16 @@ row costs the feed a line rather than floating over it: covering a message to
 announce an ask trades one thing the human needs to read for another. The
 sticky diagnostic banner moved with the chrome rule it replaces, so a
 consistency warning can no longer hide a child who is waiting on a person.
+2026-08-23 — **Gave agent messages their shape in both chats.** An inbound
+message shows everything it said, because somebody is talking to this agent.
+A completion closes to its first line over a marker saying how many lines are
+behind the fold and which chord opens them — `<leader> m` opens and closes
+every completion in the chat, a display state rather than a per-row
+affordance, because the feed has no cursor to point at one row with. An exit
+offers nothing to open, because the envelope carries nothing. The sender
+marker names the agent, and its host only when the message came from another
+machine this inventory knows; an address nobody here can place stays exactly
+as it arrived rather than being shortened into a claim. Codex's outbound
+`send` now reads as the target and a summary, the way Claude's already did,
+while amux's other tools keep the generic tool shape: spawning and stopping
+are work, not talk.
