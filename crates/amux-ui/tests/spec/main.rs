@@ -55,3 +55,5 @@ mod claude_agreement; // Chapter 18 — Claude classification/projection agreeme
 mod a2a_fleet; // Chapter 19 — Families: parent edges folded into fleet rows
 
 mod a2a_claude_inbound; // Chapter 20 — Claude inbound: a message from another agent
+
+mod a2a_claude_send_row; // Chapter 21 — Claude outbound: sending to another agent

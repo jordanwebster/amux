@@ -4526,3 +4526,10 @@ harness set working is not reported idle. The reader is deliberately lenient
 about everything but the sender address, and its agreement with the daemon's
 formatter is asserted over both carriers rather than assumed. Claude peer
 messages that amux did not send, and humans quoting a tag, are left alone.
+2026-08-23 — **Gave an outbound agent message its own chat row.** A
+`mcp__amux__send` tool call now folds to a typed invocation carrying the
+recipient and the message, and renders as one directional glyph, the agent
+it went to, and a summary — the outbound half of a conversation rather than
+an MCP tool name beside a JSON blob. It stays an ordinary tool row in every
+other respect, so a send that failed still reads as a failure, and the other
+amux tools deliberately keep the generic shape.

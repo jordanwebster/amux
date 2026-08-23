@@ -1213,6 +1213,10 @@ fn extract_invocation(name: &str, input: &Value) -> ToolInvocation {
         "WebFetch" => ToolInvocation::Query {
             text: string_of(input, "url"),
         },
+        crate::claude::MCP_SEND_TOOL => ToolInvocation::AmuxSend {
+            to: string_of(input, "to"),
+            text: string_of(input, "text"),
+        },
         "Task" | "Agent" => ToolInvocation::Task {
             description: string_of(input, "description"),
             subagent_type: string_of(input, "subagent_type"),

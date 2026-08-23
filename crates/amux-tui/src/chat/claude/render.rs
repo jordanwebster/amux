@@ -1062,6 +1062,15 @@ fn tool_main_text(tool: &ToolEntry) -> String {
             }
             None => name.to_string(),
         },
+        // U4: one directional glyph and the target, then a summary of
+        // what left — the outbound half of a conversation, not a tool name.
+        (ToolInvocation::AmuxSend { to, text }, _) => {
+            let target = to.as_deref().unwrap_or("an agent");
+            match text.as_deref().and_then(|text| text.lines().next()) {
+                Some(head) => format!("→ {target} · {head}"),
+                None => format!("→ {target}"),
+            }
+        }
         (ToolInvocation::Query { text }, _) => match text {
             Some(text) => format!("{name} \"{text}\""),
             None => name.to_string(),

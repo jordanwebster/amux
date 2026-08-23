@@ -37,6 +37,11 @@ use crate::msg::OpId;
 /// The native structured protocol owned by this layer.
 pub const PROTOCOL: &str = "claude_pty_transcript_v1";
 
+/// The tool name Claude records for an amux message send. amux registers
+/// its tools with the MCP server named `amux`, and Claude prefixes every
+/// MCP tool the same way, so this is the name the transcript carries.
+pub(crate) const MCP_SEND_TOOL: &str = "mcp__amux__send";
+
 /// Claude-native client writes. This vocabulary stays deliberately
 /// asymmetric with every other agent layer.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -342,6 +347,14 @@ pub enum ToolInvocation {
     /// The read/search family beyond `Read`: Grep, Glob, WebSearch,
     /// WebFetch, ToolSearch — one line, one query-ish string.
     Query {
+        text: Option<String>,
+    },
+    /// An amux message sent to another agent (`mcp__amux__send`). The
+    /// only amux tool with its own row shape: the rest are ordinary tool
+    /// calls, but a message leaving for a named agent is the outbound half
+    /// of a conversation and reads as one.
+    AmuxSend {
+        to: Option<String>,
         text: Option<String>,
     },
     /// Subagent spawn (`Task` / `Agent`), B7.
