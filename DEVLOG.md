@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **A delete confirmation names the cascade.**
+Deleting an agent that started others takes its whole subtree, and a family
+is one row on screen, so the confirmation now lists every agent that would go
+— indented to its generation, flagged where one is mid-task and saying what it
+says it is doing, with a count of what a short viewport could not show. It
+does not block: an idle child costs no extra keystroke and a working one is
+flagged rather than refused, because the person is looking straight at the
+list. An agent that started nobody keeps the one-line prompt it always had.
+
 2026-08-23 — **A child's ask can be answered from its parent's chat.**
 The banner naming a waiting child now leads somewhere: one chord docks that
 child's own ask panel where the parent's composer sits, drawn by the child's

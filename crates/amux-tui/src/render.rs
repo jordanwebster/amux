@@ -5,8 +5,8 @@
 //! the alternate screen only and never writes terminal scrollback.
 
 use amux_ui::{
-    AgentPhase, Attention, Command, Connection, DisconnectReason, Model, Why, agent_type_label,
-    format_relative_age,
+    AgentId, AgentPhase, Attention, Command, Connection, DisconnectReason, Model, Why,
+    agent_type_label, format_relative_age,
 };
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
@@ -220,6 +220,9 @@ fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec
             list
         }
         ScreenState::Help => help_lines(view, width),
+        ScreenState::ConfirmDelete { agent } => {
+            confirm_delete_lines(model, ctx, agent, width, capacity)
+        }
         ScreenState::Message(message_lines) => centered_lines(&message_lines, width, capacity),
     };
     list_lines.truncate(capacity);
@@ -240,6 +243,13 @@ fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec
 enum ScreenState {
     Fleet,
     Help,
+    /// The cascade a delete would perform, listed before it happens (U6).
+    /// It takes the list area rather than the status line because a
+    /// folded family is exactly one row on screen and the whole point is
+    /// to show what that row was standing in for.
+    ConfirmDelete {
+        agent: AgentId,
+    },
     /// Full-screen message (chrome frame stays), centered in the list area.
     Message(Vec<(String, Style)>),
 }
@@ -273,6 +283,14 @@ fn screen_state(model: &Model, view: &ViewState, rows: &[VisibleRow<'_>]) -> Scr
             ]);
         }
         Connection::Connected { .. } => {}
+    }
+    // Deleting a family takes everything below it (row 9), so the
+    // confirmation names everything below it. An agent that started
+    // nobody keeps the one-line status prompt it has always had.
+    if let Mode::ConfirmDelete { agent, .. } = &view.mode
+        && !model.family_of(*agent).is_empty()
+    {
+        return ScreenState::ConfirmDelete { agent: *agent };
     }
     if !rows.is_empty() {
         return ScreenState::Fleet;
@@ -793,6 +811,140 @@ pub(crate) fn tier_mark(tier: crate::bindings::Tier) -> Option<&'static str> {
         crate::bindings::Tier::Ext => Some("terminal-dependent"),
         crate::bindings::Tier::Kitty => Some("kitty"),
     }
+}
+
+/// The cascade, before it happens (U6): who else goes, and which of them
+/// is mid-task. Deleting a parent takes its whole subtree, and a folded
+/// family is one row on screen — so a confirmation that named only the
+/// selected agent would be asking the human to approve something they
+/// cannot see.
+///
+/// Nothing here blocks. An idle child is listed and costs no extra
+/// keystroke, and a working one is flagged rather than refused: the
+/// person is looking straight at the list, which is a better guard than
+/// a second prompt. (The CLI, where nobody is looking, refuses instead.)
+fn confirm_delete_lines(
+    model: &Model,
+    ctx: &FrameContext,
+    agent: AgentId,
+    width: usize,
+    capacity: usize,
+) -> Vec<Line<'static>> {
+    let family = model.family_of(agent);
+    let name = model
+        .agent(agent)
+        .map(amux_ui::AgentCard::display_name)
+        .unwrap_or_else(|| "this agent".to_string());
+    let working = family
+        .iter()
+        .filter(|member| model.effective_attention(member.card) == Attention::Working)
+        .count();
+
+    let mut lines = vec![blank_line(width)];
+    let mut heading = new_line();
+    push_span(
+        &mut heading,
+        MARKER_COL,
+        "⚠",
+        Style::default().fg(Color::Yellow),
+    );
+    push_span(
+        &mut heading,
+        BADGE_COL,
+        match family.len() {
+            // "under", not "it started": the cascade recurses, so most of
+            // this list is somebody else's children.
+            1 => format!("deleting {name} also deletes the agent under it:"),
+            n => format!("deleting {name} also deletes the {n} agents under it:"),
+        },
+        plain(),
+    );
+    lines.push(heading);
+    lines.push(blank_line(width));
+
+    // Three rows are spent on chrome above and two on the tail; whatever
+    // is left goes to the list. A confirmation that quietly drops names
+    // is the one thing this screen must not do, so an elision counts what
+    // it hid.
+    let room = capacity.saturating_sub(5);
+    let shown = if family.len() > room {
+        room.saturating_sub(1)
+    } else {
+        family.len()
+    };
+    for member in family.iter().take(shown) {
+        lines.push(confirm_delete_row(model, ctx, member, width));
+    }
+    if shown < family.len() {
+        let mut more = new_line();
+        push_span(
+            &mut more,
+            NAME_COL,
+            format!("… and {} more", family.len() - shown),
+            dim(),
+        );
+        lines.push(more);
+    }
+
+    lines.push(blank_line(width));
+    let mut tail = new_line();
+    let (text, style) = match working {
+        0 => ("none of them is working".to_string(), dim()),
+        1 => (
+            "1 is working — deleting stops it".to_string(),
+            Style::default().fg(Color::Yellow),
+        ),
+        n => (
+            format!("{n} are working — deleting stops them"),
+            Style::default().fg(Color::Yellow),
+        ),
+    };
+    push_span(&mut tail, BADGE_COL, text, style);
+    lines.push(tail);
+    lines
+}
+
+/// One agent the cascade would take: indented to its generation like the
+/// fleet indents an open family, flagged when it is working, and saying
+/// what it says it is doing so the flag is actionable rather than
+/// alarming.
+fn confirm_delete_row(
+    model: &Model,
+    ctx: &FrameContext,
+    member: &amux_ui::FamilyMember<'_>,
+    width: usize,
+) -> Line<'static> {
+    let card = member.card;
+    let attention = model.effective_attention(card);
+    let indent = member.depth.saturating_sub(1) * FAMILY_INDENT;
+    let mut line = new_line();
+    if attention == Attention::Working {
+        push_span(
+            &mut line,
+            BADGE_COL + indent,
+            "●",
+            Style::default().fg(Color::Yellow),
+        );
+    }
+    push_span(&mut line, NAME_COL + indent, card.display_name(), plain());
+    let mut detail = format!(
+        " · {} · {}",
+        card.agent.agent_type,
+        model.status_label_for(card)
+    );
+    if let Some(claim) = card.working_on() {
+        detail.push_str(&format!(
+            " · {} {}",
+            claim.text,
+            format_relative_age(ctx.now, claim.updated_at)
+        ));
+    }
+    let room = width.saturating_sub(2 + line_len(&line));
+    line.spans.push(Span::styled(
+        clip_to_width(&detail, room).to_string(),
+        dim(),
+    ));
+    line
 }
 
 fn centered_lines(

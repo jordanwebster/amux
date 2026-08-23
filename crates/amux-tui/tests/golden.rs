@@ -6,7 +6,7 @@
 //! Regenerate with `UPDATE_GOLDENS=1 cargo test -p amux-tui --test golden`
 //! and review the diff like code.
 
-use amux_tui::view::{Mode, ViewState};
+use amux_tui::view::{Mode, UiAction, ViewState};
 use amux_tui::{FrameContext, Theme, render};
 use amux_ui::{
     Agent, AgentId, AgentParent, Command, DisconnectReason, HostEntry, HostId, Model, Msg, OpId,
@@ -890,4 +890,155 @@ fn press(key: char) -> crossterm::event::KeyEvent {
         crossterm::event::KeyCode::Char(key),
         crossterm::event::KeyModifiers::NONE,
     )
+}
+
+// --- deleting a family (U6) ----------------------------------------------
+
+/// Put the cursor on a row and press `d`.
+fn confirming_delete(model: &Model, name: &str) -> ViewState {
+    confirming_delete_in(model, view_default(), name)
+}
+
+fn confirming_delete_in(model: &Model, mut view: ViewState, name: &str) -> ViewState {
+    view.selected = amux_tui::view::visible_rows(model, &view)
+        .iter()
+        .position(|row| row.display_name() == name)
+        .unwrap_or_else(|| panic!("{name} is a visible row"));
+    amux_tui::keys::handle_key(&mut view, model, press('d'), 20, at(NOW));
+    view
+}
+
+/// The confirmation names the whole subtree, not the row the cursor was
+/// on: the family was ONE row on screen, and the delete takes everything
+/// that row was standing in for.
+#[test]
+fn a2a_delete_confirm_lists_the_whole_subtree() {
+    let model = family_model();
+    let view = confirming_delete(&model, "refactor-tunnels");
+    let rendered = render_frame(&model, &view, 80, 14);
+    assert!(
+        rendered.contains("deleting refactor-tunnels also deletes the 3 agents under it:"),
+        "{rendered}"
+    );
+    for name in ["write-the-docs", "test-runner", "flake-hunter"] {
+        assert!(rendered.contains(name), "{name} is named:\n{rendered}");
+    }
+    assert!(
+        rendered.contains("delete refactor-tunnels? y/n"),
+        "the prompt and its keys are where they have always been:\n{rendered}"
+    );
+}
+
+/// Which of them is mid-task is the fact worth having: it is flagged on
+/// the row and counted at the foot, with what it says it is doing, so the
+/// warning is actionable rather than merely alarming.
+#[test]
+fn a2a_delete_confirm_flags_the_working_ones() {
+    let model = family_model();
+    let view = confirming_delete(&model, "refactor-tunnels");
+    let rendered = render_frame(&model, &view, 80, 14);
+    let runner = rendered
+        .lines()
+        .find(|line| line.contains("test-runner"))
+        .expect("the working child's row");
+    assert!(runner.contains('●'), "flagged: {runner}");
+    assert!(runner.contains("working"), "and said so: {runner}");
+    assert!(
+        runner.contains("run the tunnel suite end to end"),
+        "with what it is on: {runner}"
+    );
+
+    let idle = rendered
+        .lines()
+        .find(|line| line.contains("write-the-docs"))
+        .expect("the idle child's row");
+    assert!(!idle.contains('●'), "an idle child carries no flag: {idle}");
+
+    assert!(
+        rendered.contains("1 is working — deleting stops it"),
+        "and the count is stated once, at the foot:\n{rendered}"
+    );
+}
+
+/// Listed, not blocking: idle children cost no extra keystroke, and the
+/// one `y` the confirmation has always taken still deletes.
+#[test]
+fn a2a_delete_confirm_does_not_block_on_idle_children() {
+    let model = family_model();
+    let mut view = confirming_delete(&model, "refactor-tunnels");
+    let action = amux_tui::keys::handle_key(&mut view, &model, press('y'), 20, at(NOW));
+    assert_eq!(
+        action,
+        Some(UiAction::Dispatch(Command::DeleteAgent {
+            agent: agent_id("refactor-tunnels")
+        })),
+        "one press, exactly as for an agent that started nobody"
+    );
+}
+
+/// A working child is flagged, never refused: the person is looking
+/// straight at the list, which is a better guard than a second prompt.
+#[test]
+fn a2a_delete_confirm_flags_a_working_child_without_refusing() {
+    let model = family_model();
+    let mut view =
+        confirming_delete_in(&model, expanded_view(&["refactor-tunnels"]), "test-runner");
+    let rendered = render_frame(&model, &view, 80, 14);
+    assert!(rendered.contains("flake-hunter"), "{rendered}");
+    let action = amux_tui::keys::handle_key(&mut view, &model, press('y'), 20, at(NOW));
+    assert_eq!(
+        action,
+        Some(UiAction::Dispatch(Command::DeleteAgent {
+            agent: agent_id("test-runner")
+        }))
+    );
+}
+
+/// Nothing changes for an agent that started nobody: no list, because
+/// there is nothing the human cannot already see.
+#[test]
+fn a2a_delete_confirm_keeps_the_fleet_for_a_childless_agent() {
+    let model = family_model();
+    let view = confirming_delete(&model, "docs-cleanup");
+    let rendered = render_frame(&model, &view, 80, 14);
+    assert!(rendered.contains("delete docs-cleanup? y/n"), "{rendered}");
+    assert!(
+        !rendered.contains("also deletes"),
+        "no cascade to describe:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("refactor-tunnels"),
+        "and the fleet is still on screen:\n{rendered}"
+    );
+}
+
+/// On a viewport too short for the list, the confirmation says how many
+/// names it could not show. Silently dropping one would be the single
+/// thing this screen must not do.
+#[test]
+fn a2a_delete_confirm_counts_what_it_could_not_show() {
+    let model = family_model();
+    let view = confirming_delete(&model, "refactor-tunnels");
+    let rendered = render_frame(&model, &view, 80, 13);
+    assert!(
+        rendered.contains("… and 2 more"),
+        "the elision counts what is behind it:\n{rendered}"
+    );
+}
+
+#[test]
+fn a2a_delete_confirm_frame() {
+    let model = family_model();
+    let view = confirming_delete(&model, "refactor-tunnels");
+    assert_golden("a2a_delete_confirm", &render_frame(&model, &view, 80, 14));
+}
+
+/// The flag and the warning are the only color on the screen; the rest of
+/// the list reads as list.
+#[test]
+fn a2a_delete_confirm_styles() {
+    let model = family_model();
+    let view = confirming_delete(&model, "refactor-tunnels");
+    let styles = buffer_styles(&render_buffer(&model, &view, 80, 14, Theme::Dark));
+    assert_golden("a2a_delete_confirm_styles", &styles);
 }

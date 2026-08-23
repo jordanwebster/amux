@@ -1,0 +1,14 @@
+┌ amux ────────────────────────────────────────────────────────────────────────┐
+│ /                                                                8 agents    │
+│                                                                              │
+│                                                                              │
+│ ⚠ deleting refactor-tunnels also deletes the 3 agents under it:              │
+│                                                                              │
+│     write-the-docs · claude · finished · document the new handshake 4m       │
+│   ● test-runner · codex · working · run the tunnel suite end to end 1m       │
+│       flake-hunter · codex · permission                                      │
+│                                                                              │
+│   1 is working — deleting stops it                                           │
+│                                                                              │
+│ ● delete refactor-tunnels? y/n                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
