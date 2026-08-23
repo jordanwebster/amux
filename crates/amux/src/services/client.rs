@@ -720,6 +720,20 @@ impl AgentToolExecutor for ClientService {
                 }))
             }
             AgentToolRequest::Stop { name } => {
+                let child = self
+                    .resolve_agent(AgentRef::Name(name.clone()))
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                if child.parent
+                    != Some(AgentParent {
+                        agent_id: caller_agent.id,
+                        host_id: caller_agent.host_id,
+                    })
+                {
+                    return Err(anyhow::anyhow!(
+                        "agent '{name}' is not a child of the calling agent"
+                    ));
+                }
                 <Self as wire::client_service_server::ClientService>::delete_agent(
                     self,
                     tonic::Request::new(wire::ClientDeleteAgentRequest {

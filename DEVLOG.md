@@ -4,6 +4,11 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Agent stop is scoped to direct children.**
+The model-facing stop tool now verifies the authenticated caller owns the
+target's parent edge. Stopping a child leaves its parent and unrelated agents
+untouched; human deletion remains unchanged.
+
 2026-08-23 — **Deleting an agent cascades through its family.**
 The client daemon walks mirrored parent relationships deepest-first, removes
 reachable local and remote descendants, and reports children whose owning host

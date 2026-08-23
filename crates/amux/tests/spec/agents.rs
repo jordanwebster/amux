@@ -193,3 +193,19 @@ async fn a2a_cascade_delete_reports_unreachable_children() {
         .cascade_delete_reports_unreachable(&parent, &child_host, &child)
         .await;
 }
+
+/// The model-facing stop verb is child-scoped: an unrelated agent and the
+/// child itself cannot use it to delete outside the caller's direct family.
+/// Removing the child leaves its parent alive.
+#[tokio::test]
+async fn a2a_stop_child() {
+    let net = TestNet::builder().daemon("host").start().await;
+    let [host] = net.daemons(["host"]);
+
+    let parent = host.spawn_echo_agent("parent").await;
+    let child = host.spawn_echo_child_on(&host, &parent, "child").await;
+    let unrelated = host.spawn_echo_agent("unrelated").await;
+
+    host.parent_alone_stops_child(&parent, &child, &unrelated)
+        .await;
+}
