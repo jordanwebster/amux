@@ -10,7 +10,7 @@ use amux_tui::view::{Mode, UiAction, ViewState};
 use amux_tui::{FrameContext, Theme, render};
 use amux_ui::{
     Agent, AgentId, AgentParent, Command, DisconnectReason, HostEntry, HostId, Model, Msg, OpId,
-    ServerMsg, StreamEntry, StreamMsg, WorkingOn, update,
+    ServerMsg, StreamCloseReason, StreamEntry, StreamMsg, WorkingOn, update,
 };
 use chrono::{DateTime, TimeDelta, Utc};
 use ratatui::Terminal;
@@ -883,6 +883,45 @@ fn a2a_fleet_working_on_states_the_claim_and_its_age() {
         cell.trim().is_empty(),
         "an agent that said nothing gets an empty cell, not a guess: {cell:?}"
     );
+}
+
+/// The family with `test-runner` dead of a Windows access violation, still
+/// wearing the work it claimed before it died: nobody cleared the claim,
+/// because nobody was left to clear it.
+fn exited_with_work_model() -> Model {
+    let mut msgs = family_msgs();
+    msgs.push(Msg::Stream {
+        agent: agent_id("test-runner"),
+        event: StreamMsg::Closed {
+            reason: StreamCloseReason::AgentExited {
+                exit_code: Some(-1_073_741_819),
+            },
+        },
+    });
+    fold(msgs)
+}
+
+/// The status cell holds a closed set of words on a good day and an
+/// operating system's exit code on a bad one. It is clipped to its column
+/// like every other cell on the row, so a long code cannot write itself
+/// over the work the agent claimed before it died.
+#[test]
+fn a2a_fleet_exited_status_stays_in_its_column() {
+    let view = expanded_view(&["refactor-tunnels"]);
+    let rendered = render_frame(&exited_with_work_model(), &view, 80, 14);
+    let row = rendered
+        .lines()
+        .find(|line| line.contains("test-runner"))
+        .expect("the exited row");
+    assert!(
+        row.contains("exited(-1…"),
+        "the code is clipped rather than allowed to run on: {row}"
+    );
+    assert!(
+        row.contains("run the t…"),
+        "and the work claim keeps its own column: {row}"
+    );
+    assert_golden("fleet_exited_with_work", &rendered);
 }
 
 fn press(key: char) -> crossterm::event::KeyEvent {

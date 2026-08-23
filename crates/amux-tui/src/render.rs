@@ -28,6 +28,12 @@ const HOST_WIDTH: usize = 10;
 const AGE_COL: usize = 48;
 const AGE_WIDTH: usize = 5;
 const STATUS_COL: usize = 54;
+/// Room for the longest word the column is designed around (`permission`),
+/// and one clear cell before `working_on`. Not every status word is one of
+/// that closed set: an exited agent states its code, and an operating
+/// system's abort code is long enough to run through the next column, so
+/// the cell is clipped like every other one on the row.
+const STATUS_WIDTH: usize = WORKING_COL - STATUS_COL - 1;
 /// The status word is the second column to collapse on narrow terminals:
 /// shown only when the full grid fits.
 const STATUS_MIN_FRAME_WIDTH: usize = 68;
@@ -570,7 +576,7 @@ fn fleet_row_line(
                 push_span(
                     &mut line,
                     STATUS_COL,
-                    model.status_label_for(card),
+                    clip(&model.status_label_for(card), STATUS_WIDTH),
                     base.add_modifier(Modifier::DIM),
                 );
             }

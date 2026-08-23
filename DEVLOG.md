@@ -73,6 +73,15 @@ deletion remains unscoped. Daemon coverage refuses siblings, top-level agents,
 and unknown targets before proving a direct child can still be stopped.
 
 ---
+2026-08-23 — **The fleet's status cell keeps to its column.**
+Every other cell on a fleet row is clipped to the width it was given; the
+status word was pushed out whole because the words it was designed around
+all fit. They are not the only words it emits — an exited agent states its
+exit code, and an operating system's abort code is long enough to overwrite
+the work-claim column that now sits beside it. Clipping it costs nothing on
+a normal row and keeps the grid aligned on the row where something went
+wrong, which is the row a person is reading most carefully.
+
 2026-08-23 — **Both inbound carriers hold the same rule about quoting.**
 The generic `<amux …>` tag has always had to be the whole user row — a human
 quoting one mid-sentence is a human speaking — while Claude's own
