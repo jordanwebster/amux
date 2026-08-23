@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 #[cfg(any(debug_assertions, test))]
 use super::TestAgentSession;
-use super::claude::ClaudeSession;
+use super::claude::{ClaudeSession, ClaudeVersionCache};
 #[cfg(unix)]
 use super::codex::{CodexClient, CodexRawPtyTarget, CodexSession};
 use super::{
@@ -189,7 +189,7 @@ pub(crate) enum RawPtyTarget {
 #[derive(Clone)]
 pub(crate) struct AgentDeps {
     pub(crate) runtime_dir: std::path::PathBuf,
-    pub(crate) claude_version: Option<String>,
+    pub(crate) claude_version_cache: ClaudeVersionCache,
     #[cfg(unix)]
     pub(crate) codex_client: Arc<CodexClient>,
     pub(crate) agent_tools: AgentToolRouter,
@@ -204,17 +204,17 @@ impl AgentDeps {
         let _ = codex_private_socket;
         Self {
             runtime_dir,
-            claude_version: None,
+            claude_version_cache: ClaudeVersionCache::default(),
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
             agent_tools: AgentToolRouter::default(),
         }
     }
 
-    /// Snapshot the installed Claude version for one process start. Callers
-    /// prepare this copy before taking the registry write lock.
-    pub(crate) fn for_claude_spawn(mut self) -> Self {
-        self.claude_version = super::claude::installed_claude_version();
+    /// Finish the daemon's one Claude version probe before taking the registry
+    /// write lock for this process start.
+    pub(crate) async fn for_claude_spawn(self) -> Self {
+        self.claude_version_cache.probe_once().await;
         self
     }
 }
@@ -337,7 +337,7 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
         AgentType::Claude => Ok(Box::new(ClaudeSession::new(
             req,
             deps.runtime_dir.clone(),
-            deps.claude_version.clone(),
+            deps.claude_version_cache.clone(),
         ))),
         #[cfg(unix)]
         AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(
@@ -387,7 +387,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 session_id,
                 created_at,
                 deps.runtime_dir.clone(),
-                deps.claude_version.clone(),
+                deps.claude_version_cache.clone(),
             ))
         }
         #[cfg(unix)]
@@ -461,8 +461,9 @@ pub(crate) async fn bootstrap_external_hook(
     agent_id: Uuid,
     payload: &[u8],
     env: &HookEnvironment,
+    claude_version_cache: ClaudeVersionCache,
 ) -> std::result::Result<ExternalHookBootstrap, HookError> {
-    ClaudeSession::bootstrap_external_hook(agent_id, payload, env)
+    ClaudeSession::bootstrap_external_hook(agent_id, payload, env, claude_version_cache)
         .await
         .map(|session| match session {
             Some(session) => ExternalHookBootstrap::Register(Box::new(session)),
@@ -588,7 +589,8 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let mut session = ClaudeSession::new(&req, std::env::temp_dir(), None);
+        let mut session =
+            ClaudeSession::new(&req, std::env::temp_dir(), ClaudeVersionCache::default());
         session.session_id = Some(Uuid::new_v4());
 
         let suspended = session.suspended_state().unwrap();

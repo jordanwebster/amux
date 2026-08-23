@@ -19,7 +19,7 @@ mod inbox;
 mod input;
 mod name_sniffer;
 
-pub(crate) use core::{ClaudeSession, installed_claude_version};
+pub(crate) use core::ClaudeSession;
 
 #[cfg(test)]
 use input::PtyInput;
@@ -74,7 +74,11 @@ mod tests {
         let session_id = Uuid::new_v4();
         let transcript_path_str = transcript_path.display().to_string();
         let cwd = dir.path().display().to_string();
-        let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
+        let mut session = ClaudeSession::new_readonly(
+            Uuid::new_v4(),
+            dir.path().to_path_buf(),
+            crate::agents::claude::ClaudeVersionCache::default(),
+        );
 
         session
             .handle_hook(ParsedClaudeHook::from_typed(
@@ -131,7 +135,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let session_id = Uuid::new_v4();
         let cwd = dir.path().display().to_string();
-        let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
+        let mut session = ClaudeSession::new_readonly(
+            Uuid::new_v4(),
+            dir.path().to_path_buf(),
+            crate::agents::claude::ClaudeVersionCache::default(),
+        );
 
         // Link transcript so the log source exists
         let transcript_path = dir.path().join("transcript.jsonl");
@@ -244,7 +252,11 @@ mod tests {
     async fn maybe_start_name_sniffer_runs_for_existing_provider_slug_name() {
         let agent_id = Uuid::new_v4();
         let dir = tempdir().unwrap();
-        let mut session = ClaudeSession::new_readonly(agent_id, dir.path().to_path_buf());
+        let mut session = ClaudeSession::new_readonly(
+            agent_id,
+            dir.path().to_path_buf(),
+            crate::agents::claude::ClaudeVersionCache::default(),
+        );
         session.set_name_and_source(
             Some("slug-derived-name".to_string()),
             LocalAgentNameSource::ProviderSlug,
@@ -278,7 +290,11 @@ mod tests {
     async fn maybe_start_name_sniffer_runs_for_existing_provider_name() {
         let agent_id = Uuid::new_v4();
         let dir = tempdir().unwrap();
-        let mut session = ClaudeSession::new_readonly(agent_id, dir.path().to_path_buf());
+        let mut session = ClaudeSession::new_readonly(
+            agent_id,
+            dir.path().to_path_buf(),
+            crate::agents::claude::ClaudeVersionCache::default(),
+        );
         session.set_name_and_source(
             Some("provider-name".to_string()),
             LocalAgentNameSource::ProviderName,

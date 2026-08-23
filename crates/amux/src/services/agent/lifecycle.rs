@@ -171,7 +171,7 @@ pub(crate) async fn create_agent_record(
     let spawn_deps = {
         let deps = agent_state.read().await.deps.clone();
         if matches!(&agent_type, AgentType::Claude) {
-            deps.for_claude_spawn()
+            deps.for_claude_spawn().await
         } else {
             deps
         }
@@ -383,7 +383,7 @@ pub(crate) async fn resume_agents(
         tracing::info!(agent_id = %agent_id, name = ?name, "resuming agent");
 
         let spawn_deps = if matches!(&sa, SuspendedAgent::Claude { .. }) {
-            deps.clone().for_claude_spawn()
+            deps.clone().for_claude_spawn().await
         } else {
             deps.clone()
         };

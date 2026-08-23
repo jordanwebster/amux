@@ -99,6 +99,7 @@ impl PtyAgentHost {
         let session: AgentSession = Box::new(ClaudeSession::scripted_for_testnet(
             &request,
             state.deps.runtime_dir.clone(),
+            state.deps.claude_version_cache.clone(),
         ));
         let agent = session.to_agent(self.host_id).into();
         let announce = state
@@ -439,7 +440,14 @@ impl LocalAgentHost for PtyAgentHost {
                 tracing::warn!(%agent_id, "hook target not found");
                 Err(ProtocolError::NoAgentFound)
             } else {
-                match bootstrap_external_hook(agent_id, &payload, &env).await {
+                match bootstrap_external_hook(
+                    agent_id,
+                    &payload,
+                    &env,
+                    state.deps.claude_version_cache.clone(),
+                )
+                .await
+                {
                     Ok(ExternalHookBootstrap::Noop) => Ok(()),
                     Ok(ExternalHookBootstrap::Register(session)) => {
                         match state.insert_registered_local_agent(self.host_id(), agent_id, session)

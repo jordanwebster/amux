@@ -4850,3 +4850,11 @@ socket message arrive still falls back permanently on its first miss; after a
 successful delivery, one miss resends only that envelope through the PTY and a
 second consecutive miss retires the socket. Every resend preserves the envelope
 id, and stopping the session cancels its outstanding confirmation work.
+
+2026-08-23 — **Made Claude version discovery a daemon resource.** The first
+Claude process start performs one asynchronous, ten-second-bounded version
+probe; every later create and resume uses that cache without launching or
+waiting on another command. Transcript rows refresh the shared value when they
+report a different Claude version, so a running daemon learns upgrades from
+Claude itself and applies them to the next session. Probe failures remain a safe
+unknown and omit the messaging-socket argument.

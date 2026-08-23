@@ -93,10 +93,15 @@ provider decides how its native session accepts input.
 
 Every spawned Claude session receives an amux-owned `--name`. Claude Code
 versions at or above 2.1.224 also receive a per-agent
-`--messaging-socket-path`. Hook calls forward only
-`CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`, allowing the
-session to refresh the credentials without exposing the rest of its
-environment. Externally started sessions discovered through hooks remain
+`--messaging-socket-path`. The daemon discovers the installed version once with
+an asynchronous `claude --version` probe bounded to ten seconds. A failed or
+timed-out probe leaves socket delivery disabled. Later process starts read the
+cached result without another probe; any transcript row reporting a different
+`version` refreshes the daemon cache for subsequent sessions. Hook calls
+forward only `CLAUDE_CODE_MESSAGING_SOCKET` and
+`CLAUDE_CODE_MESSAGING_TOKEN`, allowing the session to refresh the credentials
+without exposing the rest of its environment. Externally started sessions
+discovered through hooks remain
 transcript-only and readonly: they are never message delivery targets, even
 when their hooks expose live messaging credentials.
 

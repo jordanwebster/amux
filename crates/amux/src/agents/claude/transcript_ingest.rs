@@ -9,12 +9,14 @@ use serde::{Serialize, Serializer};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
+use super::ClaudeVersionCache;
 use super::transcript::TranscriptTailer;
 use crate::agents::StructuredLogSource;
 use crate::debug::{DebugView, LossyPath};
 
 struct TranscriptIngestInner {
     source: StructuredLogSource,
+    claude_version_cache: ClaudeVersionCache,
     delivery_ready: Option<Arc<AtomicBool>>,
     tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
     /// Held only briefly for read/replace — never held across an `await`,
@@ -30,10 +32,14 @@ pub(super) struct TranscriptIngest {
 }
 
 impl TranscriptIngest {
-    pub(super) fn new(source: StructuredLogSource) -> Self {
+    pub(super) fn new(
+        source: StructuredLogSource,
+        claude_version_cache: ClaudeVersionCache,
+    ) -> Self {
         Self {
             inner: Arc::new(TranscriptIngestInner {
                 source,
+                claude_version_cache,
                 delivery_ready: None,
                 tailer: Mutex::new(None),
                 current_path: StdMutex::new(None),
@@ -44,10 +50,12 @@ impl TranscriptIngest {
     pub(super) fn with_delivery_ready(
         source: StructuredLogSource,
         delivery_ready: Arc<AtomicBool>,
+        claude_version_cache: ClaudeVersionCache,
     ) -> Self {
         Self {
             inner: Arc::new(TranscriptIngestInner {
                 source,
+                claude_version_cache,
                 delivery_ready: Some(delivery_ready),
                 tailer: Mutex::new(None),
                 current_path: StdMutex::new(None),
@@ -93,8 +101,13 @@ impl TranscriptIngest {
                 path,
                 self.inner.source.clone(),
                 delivery_ready.clone(),
+                self.inner.claude_version_cache.clone(),
             ),
-            None => TranscriptTailer::new(path, self.inner.source.clone()),
+            None => TranscriptTailer::new(
+                path,
+                self.inner.source.clone(),
+                self.inner.claude_version_cache.clone(),
+            ),
         };
         let handle = tailer.start();
         let mut guard = self.inner.tailer.lock().await;
@@ -141,7 +154,10 @@ mod tests {
     use super::*;
 
     fn new_ingest() -> TranscriptIngest {
-        TranscriptIngest::new(StructuredLogSource::new(1000))
+        TranscriptIngest::new(
+            StructuredLogSource::new(1000),
+            ClaudeVersionCache::default(),
+        )
     }
 
     async fn assert_fixture_passes_through_ingest(name: &str, fixture: &str) {

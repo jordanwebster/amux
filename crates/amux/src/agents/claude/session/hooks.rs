@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::core::{ClaudeMessagingCredentials, ClaudeSession};
+use crate::agents::claude::ClaudeVersionCache;
 use crate::agents::claude::hooks::{ClaudeHookKind, ParsedClaudeHook};
 use crate::agents::{HookEnvironment, HookError, HookOutcome};
 
@@ -111,6 +112,7 @@ impl ClaudeSession {
         agent_id: Uuid,
         payload: &[u8],
         env: &HookEnvironment,
+        claude_version_cache: ClaudeVersionCache,
     ) -> std::result::Result<Option<Self>, HookError> {
         let hook =
             ParsedClaudeHook::parse_payload(payload).map_err(|e| HookError::InvalidPayload {
@@ -136,7 +138,7 @@ impl ClaudeSession {
             });
         }
 
-        let mut session = Self::new_readonly(agent_id, PathBuf::from(cwd));
+        let mut session = Self::new_readonly(agent_id, PathBuf::from(cwd), claude_version_cache);
         session.sync_messaging_credentials(env);
         session.handle_hook(hook).await;
         Ok(Some(session))
@@ -246,8 +248,11 @@ mod tests {
     /// not.
     #[tokio::test(start_paused = true)]
     async fn duplicate_hook_deliveries_emit_one_structured_row() {
-        let mut session =
-            ClaudeSession::new_readonly(Uuid::from_u128(1), PathBuf::from("/nonexistent"));
+        let mut session = ClaudeSession::new_readonly(
+            Uuid::from_u128(1),
+            PathBuf::from("/nonexistent"),
+            ClaudeVersionCache::default(),
+        );
         let log = session.log_source().expect("readonly session tails");
 
         session
@@ -285,8 +290,11 @@ mod tests {
     #[tokio::test]
     async fn a2a_hook_env_forward_stores_and_refreshes_messaging_credentials() {
         let payload = stop_fixture_payload();
-        let mut session =
-            ClaudeSession::new_readonly(Uuid::from_u128(1), PathBuf::from("/nonexistent"));
+        let mut session = ClaudeSession::new_readonly(
+            Uuid::from_u128(1),
+            PathBuf::from("/nonexistent"),
+            ClaudeVersionCache::default(),
+        );
         let mut first = HookEnvironment::from([
             (
                 MESSAGING_SOCKET_ENV.to_string(),

@@ -174,7 +174,7 @@ mod tests {
                 initial_prompt: None,
             },
             PathBuf::from("/runtime"),
-            None,
+            crate::agents::claude::ClaudeVersionCache::default(),
         );
         session.pty = Some(pty);
         session
@@ -228,13 +228,14 @@ mod tests {
                 initial_prompt: None,
             },
             dir.path().to_path_buf(),
-            None,
+            crate::agents::claude::ClaudeVersionCache::default(),
         );
         session.pty = Some(pty);
         session.transcript_ingest = Some(
             crate::agents::claude::transcript_ingest::TranscriptIngest::with_delivery_ready(
                 StructuredLogSource::new(32),
                 session.delivery_ready.clone(),
+                crate::agents::claude::ClaudeVersionCache::default(),
             ),
         );
         let target = session.delivery_target();

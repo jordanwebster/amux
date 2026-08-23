@@ -321,12 +321,16 @@ mod tests {
                 initial_prompt: None,
             },
             PathBuf::from("/runtime"),
-            None,
+            crate::agents::claude::ClaudeVersionCache::default(),
         );
         session.pty = Some(PtyHandle::test_echo());
         let source = StructuredLogSource::new(32);
-        session.transcript_ingest =
-            Some(crate::agents::claude::transcript_ingest::TranscriptIngest::new(source.clone()));
+        session.transcript_ingest = Some(
+            crate::agents::claude::transcript_ingest::TranscriptIngest::new(
+                source.clone(),
+                crate::agents::claude::ClaudeVersionCache::default(),
+            ),
+        );
         session.messaging_credentials = Some(ClaudeMessagingCredentials {
             socket_path,
             token: "socket-token".to_string(),

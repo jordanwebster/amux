@@ -14,6 +14,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::agents::StructuredLogSource;
+use crate::agents::claude::ClaudeVersionCache;
 
 // ============================================================================
 // TranscriptTailer
@@ -23,17 +24,23 @@ use crate::agents::StructuredLogSource;
 pub(super) struct TranscriptTailer {
     path: PathBuf,
     source: StructuredLogSource,
+    claude_version_cache: ClaudeVersionCache,
     delivery_ready: Option<Arc<AtomicBool>>,
     shutdown_tx: watch::Sender<bool>,
 }
 
 impl TranscriptTailer {
     /// Create a new TranscriptTailer for the given transcript path.
-    pub(super) fn new(path: PathBuf, source: StructuredLogSource) -> Self {
+    pub(super) fn new(
+        path: PathBuf,
+        source: StructuredLogSource,
+        claude_version_cache: ClaudeVersionCache,
+    ) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
         Self {
             path,
             source,
+            claude_version_cache,
             delivery_ready: None,
             shutdown_tx,
         }
@@ -45,8 +52,9 @@ impl TranscriptTailer {
         path: PathBuf,
         source: StructuredLogSource,
         delivery_ready: Arc<AtomicBool>,
+        claude_version_cache: ClaudeVersionCache,
     ) -> Self {
-        let mut tailer = Self::new(path, source);
+        let mut tailer = Self::new(path, source, claude_version_cache);
         tailer.delivery_ready = Some(delivery_ready);
         tailer
     }
@@ -55,11 +63,20 @@ impl TranscriptTailer {
     pub(super) fn start(&self) -> JoinHandle<()> {
         let path = self.path.clone();
         let source = self.source.clone();
+        let claude_version_cache = self.claude_version_cache.clone();
         let delivery_ready = self.delivery_ready.clone();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
-            if let Err(e) = tail_transcript(path, source, delivery_ready, &mut shutdown_rx).await {
+            if let Err(e) = tail_transcript(
+                path,
+                source,
+                delivery_ready,
+                claude_version_cache,
+                &mut shutdown_rx,
+            )
+            .await
+            {
                 tracing::warn!(error = %e, "transcript tailer error");
             }
         })
@@ -75,6 +92,7 @@ async fn tail_transcript(
     path: PathBuf,
     source: StructuredLogSource,
     delivery_ready: Option<Arc<AtomicBool>>,
+    claude_version_cache: ClaudeVersionCache,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) -> std::io::Result<()> {
     while !path.exists() {
@@ -100,6 +118,7 @@ async fn tail_transcript(
         if !trimmed.is_empty()
             && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
         {
+            claude_version_cache.observe_transcript_row(&value);
             source.write(value).await;
         }
     }
@@ -143,6 +162,7 @@ async fn tail_transcript(
             if !trimmed.is_empty()
                 && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
             {
+                claude_version_cache.observe_transcript_row(&value);
                 source.write(value).await;
             }
         }
@@ -244,7 +264,7 @@ mod tests {
         .unwrap();
 
         let source = StructuredLogSource::new(100);
-        let tailer = TranscriptTailer::new(path, source.clone());
+        let tailer = TranscriptTailer::new(path, source.clone(), ClaudeVersionCache::default());
         let handle = tailer.start();
 
         // Two transcript lines + one trailing transcript_ready marker.
@@ -280,7 +300,7 @@ mod tests {
         tokio::fs::write(&path, "").await.unwrap();
 
         let source = StructuredLogSource::new(100);
-        let tailer = TranscriptTailer::new(path, source.clone());
+        let tailer = TranscriptTailer::new(path, source.clone(), ClaudeVersionCache::default());
         let handle = tailer.start();
 
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -300,6 +320,35 @@ mod tests {
         assert_eq!(entry.payload["type"], "amux.transcript_ready");
         assert_eq!(entry.seq, 1);
 
+        tailer.stop();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn transcript_reported_version_supersedes_the_cached_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transcript.jsonl");
+        tokio::fs::write(
+            &path,
+            "{\"type\":\"user\",\"version\":\"2.1.224\",\"message\":{\"content\":\"hello\"}}\n",
+        )
+        .await
+        .unwrap();
+        let cache = ClaudeVersionCache::default();
+        cache.observe_transcript_row(&serde_json::json!({"version": "2.1.223"}));
+        let source = StructuredLogSource::new(100);
+        let tailer = TranscriptTailer::new(path, source.clone(), cache.clone());
+        let handle = tailer.start();
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while source.current_seq().await != 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(cache.current().as_deref(), Some("2.1.224"));
         tailer.stop();
         let _ = handle.await;
     }

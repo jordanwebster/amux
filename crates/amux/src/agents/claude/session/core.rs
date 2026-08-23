@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -15,6 +14,7 @@ use uuid::Uuid;
 use super::inbox::SocketDeliveryState;
 use super::input::sanitize_resume_args;
 use super::name_sniffer::spawn_name_sniffer;
+use crate::agents::claude::ClaudeVersionCache;
 use crate::agents::claude::transcript_ingest::TranscriptIngest;
 use crate::agents::{
     AgentParent, CreateAgentRequest, LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy,
@@ -95,7 +95,7 @@ pub(crate) struct ClaudeSession {
     /// Extra arguments passed to the claude command
     pub(in crate::agents) args: Vec<String>,
     pub(super) runtime_dir: PathBuf,
-    pub(super) claude_version: Option<String>,
+    pub(super) claude_version_cache: ClaudeVersionCache,
     pub(super) messaging_credentials: Option<ClaudeMessagingCredentials>,
     pub(super) pty_only_delivery: Arc<AtomicBool>,
     pub(super) socket_delivery_state: Arc<SocketDeliveryState>,
@@ -117,7 +117,7 @@ impl ClaudeSession {
     pub(in crate::agents) fn new(
         req: &CreateAgentRequest,
         runtime_dir: PathBuf,
-        claude_version: Option<String>,
+        claude_version_cache: ClaudeVersionCache,
     ) -> Self {
         Self {
             agent_id: req.agent_id,
@@ -131,7 +131,7 @@ impl ClaudeSession {
             readonly: false,
             args: req.args.clone(),
             runtime_dir,
-            claude_version,
+            claude_version_cache,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
             socket_delivery_state: Arc::new(SocketDeliveryState::default()),
@@ -155,7 +155,7 @@ impl ClaudeSession {
         session_id: Uuid,
         created_at: DateTime<Utc>,
         runtime_dir: PathBuf,
-        claude_version: Option<String>,
+        claude_version_cache: ClaudeVersionCache,
     ) -> Self {
         Self {
             agent_id: req.agent_id,
@@ -169,7 +169,7 @@ impl ClaudeSession {
             readonly: false,
             args: sanitize_resume_args(req.args.clone()),
             runtime_dir,
-            claude_version,
+            claude_version_cache,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
             socket_delivery_state: Arc::new(SocketDeliveryState::default()),
@@ -185,22 +185,27 @@ impl ClaudeSession {
 
     /// Create a readonly session for an externally-started Claude process.
     /// Has transcript ingest but no PTY.
-    pub(in crate::agents) fn new_readonly(agent_id: Uuid, working_dir: PathBuf) -> Self {
+    pub(in crate::agents) fn new_readonly(
+        agent_id: Uuid,
+        working_dir: PathBuf,
+        claude_version_cache: ClaudeVersionCache,
+    ) -> Self {
         Self {
             agent_id,
             name: None,
             command: "claude".to_string(),
             working_dir,
             pty: None,
-            transcript_ingest: Some(TranscriptIngest::new(StructuredLogSource::new(
-                STRUCTURED_LOG_RETENTION,
-            ))),
+            transcript_ingest: Some(TranscriptIngest::new(
+                StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
+                claude_version_cache.clone(),
+            )),
             terminal_size: None,
             session_id: None,
             readonly: true,
             args: vec![],
             runtime_dir: std::env::temp_dir(),
-            claude_version: None,
+            claude_version_cache,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
             socket_delivery_state: Arc::new(SocketDeliveryState::default()),
@@ -215,12 +220,17 @@ impl ClaudeSession {
     }
 
     #[cfg(feature = "testnet")]
-    pub(crate) fn scripted_for_testnet(req: &CreateAgentRequest, runtime_dir: PathBuf) -> Self {
-        let mut session = Self::new(req, runtime_dir, None);
+    pub(crate) fn scripted_for_testnet(
+        req: &CreateAgentRequest,
+        runtime_dir: PathBuf,
+        claude_version_cache: ClaudeVersionCache,
+    ) -> Self {
+        let mut session = Self::new(req, runtime_dir, claude_version_cache.clone());
         session.pty = Some(PtyHandle::test_echo());
-        session.transcript_ingest = Some(TranscriptIngest::new(StructuredLogSource::new(
-            STRUCTURED_LOG_RETENTION,
-        )));
+        session.transcript_ingest = Some(TranscriptIngest::new(
+            StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
+            claude_version_cache,
+        ));
         session
             .delivery_ready
             .store(true, std::sync::atomic::Ordering::Release);
@@ -269,7 +279,8 @@ impl ClaudeSession {
         let env = claude_spawn_env(self.agent_id);
         let amux_executable =
             std::env::current_exe().context("failed to determine the running amux executable")?;
-        let args = self.spawn_args(self.claude_version.as_deref(), &amux_executable)?;
+        let claude_version = self.claude_version_cache.current();
+        let args = self.spawn_args(claude_version.as_deref(), &amux_executable)?;
         let (pty, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
@@ -282,6 +293,7 @@ impl ClaudeSession {
         let transcript_ingest = TranscriptIngest::with_delivery_ready(
             StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
             self.delivery_ready.clone(),
+            self.claude_version_cache.clone(),
         );
         let exit_ingest = transcript_ingest.clone();
         self.pty = Some(pty);
@@ -381,30 +393,6 @@ impl ClaudeSession {
     }
 }
 
-pub(crate) fn installed_claude_version() -> Option<String> {
-    probe_claude_version("claude")
-}
-
-fn probe_claude_version(command: &str) -> Option<String> {
-    match Command::new(command).arg("--version").output() {
-        Ok(output) if output.status.success() => match String::from_utf8(output.stdout) {
-            Ok(version) => Some(version),
-            Err(error) => {
-                tracing::warn!(%error, "claude version output was not UTF-8; using PTY delivery");
-                None
-            }
-        },
-        Ok(output) => {
-            tracing::warn!(status = %output.status, "claude version probe failed; using PTY delivery");
-            None
-        }
-        Err(error) => {
-            tracing::warn!(%error, "could not run claude version probe; using PTY delivery");
-            None
-        }
-    }
-}
-
 fn claude_supports_messaging_socket(version: &str) -> bool {
     version
         .split_whitespace()
@@ -474,9 +462,6 @@ impl Serialize for DebugView<'_, ClaudeSession> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
-
     use super::*;
     use crate::agents::pty::apply_env;
     use crate::agents::{AgentType, CreateAgentRequest};
@@ -516,7 +501,8 @@ mod tests {
         );
         let runtime_dir = PathBuf::from("/runtime/amux");
         let amux_executable = PathBuf::from("/opt/amux/bin/amux");
-        let session = ClaudeSession::new(&request, runtime_dir.clone(), None);
+        let session =
+            ClaudeSession::new(&request, runtime_dir.clone(), ClaudeVersionCache::default());
 
         assert_eq!(
             session
@@ -576,7 +562,7 @@ mod tests {
         let unnamed = ClaudeSession::new(
             &claude_request(agent_id, None, Vec::new()),
             runtime_dir,
-            None,
+            ClaudeVersionCache::default(),
         );
         assert_eq!(
             unnamed.spawn_args(None, &amux_executable).unwrap(),
@@ -599,31 +585,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn claude_version_probe_observes_binary_changes() {
-        let dir = tempfile::tempdir().unwrap();
-        let command = dir.path().join("claude");
-        let write_version = |version: &str| {
-            std::fs::write(&command, format!("#!/bin/sh\nprintf '%s\\n' '{version}'\n")).unwrap();
-            let mut permissions = std::fs::metadata(&command).unwrap().permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&command, permissions).unwrap();
-        };
-
-        write_version("2.1.223 (Claude Code)");
-        assert_eq!(
-            probe_claude_version(command.to_str().unwrap()).as_deref(),
-            Some("2.1.223 (Claude Code)\n")
-        );
-
-        write_version("2.1.224 (Claude Code)");
-        assert_eq!(
-            probe_claude_version(command.to_str().unwrap()).as_deref(),
-            Some("2.1.224 (Claude Code)\n")
-        );
-    }
-
     #[test]
     fn a2a_claude_mcp_argv_uses_running_binary_and_owns_registration() {
         let agent_id = Uuid::from_u128(41);
@@ -636,7 +597,11 @@ mod tests {
                 "--allowedTools=mcp__spoofed__*",
             ],
         );
-        let session = ClaudeSession::new(&request, PathBuf::from("/runtime"), None);
+        let session = ClaudeSession::new(
+            &request,
+            PathBuf::from("/runtime"),
+            ClaudeVersionCache::default(),
+        );
         let executable = PathBuf::from("/Applications/amux/bin/amux");
         let args = session.spawn_args(None, &executable).unwrap();
 
