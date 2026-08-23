@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude can discover amux agent operations over stdio MCP.** The
+CLI has a hidden `mcp claude` plumbing command that negotiates JSON-RPC over
+newline-delimited stdio, advertises the `agents`, `send`, `spawn`, `stop`, and
+`status` tools with closed input schemas, and maps their calls onto the public
+daemon client. Tool results use MCP text content containing the documented JSON
+shapes; protocol tests cover discovery and every request mapping.
+
 2026-08-23 — **Claude agent messages have a safe PTY carrier.** Daemon-authored
 message envelopes are submitted through Claude's bracketed-paste program with
 the verified render delay and Enter terminator. The carrier shares the PTY

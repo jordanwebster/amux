@@ -2,6 +2,7 @@ mod auth;
 mod client_common;
 mod hooks;
 mod init;
+mod mcp;
 mod plugin;
 mod server_client;
 mod session_client;
@@ -166,6 +167,13 @@ enum Commands {
         provider: HooksProvider,
     },
 
+    /// Internal: Serve agent tools over the Model Context Protocol
+    #[command(hide = true)]
+    Mcp {
+        #[command(subcommand)]
+        provider: McpProvider,
+    },
+
     /// Update amux to the latest version
     Update,
 
@@ -277,6 +285,12 @@ impl From<CliDebugFormat> for DebugFormat {
 #[derive(Debug, Subcommand)]
 enum HooksProvider {
     /// Claude Code hooks
+    Claude,
+}
+
+#[derive(Debug, Subcommand)]
+enum McpProvider {
+    /// Claude Code stdio server
     Claude,
 }
 
@@ -567,6 +581,9 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             HooksProvider::Claude => {
                 hooks::handle_claude_hook(&config);
             }
+        },
+        Commands::Mcp { provider } => match provider {
+            McpProvider::Claude => mcp::serve_claude(&config).await?,
         },
     }
 
