@@ -19,11 +19,11 @@ use crate::client_common::require_running_client;
 const JSONRPC_VERSION: &str = "2.0";
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
 
-const AGENTS_DESCRIPTION: &str = "List the amux fleet and its current work.";
-const SEND_DESCRIPTION: &str = "Send a text message to another amux agent by name.";
-const SPAWN_DESCRIPTION: &str = "Create a Claude or Codex child agent with an initial prompt.";
-const STOP_DESCRIPTION: &str = "Stop an amux child agent by name.";
-const STATUS_DESCRIPTION: &str = "Set or clear your current amux work status.";
+const AGENTS_DESCRIPTION: &str = "List the amux fleet, including agent kinds, hosts, liveness, current work, parents, and which agent is you.";
+const SEND_DESCRIPTION: &str = "Send a text message to another amux agent by name. When a message comes from an `amux:` address, reply only with this tool, using the agent name from that address; Claude's native SendMessage cannot route that address. Use amux for cross-kind communication, such as Claude to Codex, and keep native Claude messaging for same-kind work.";
+const SPAWN_DESCRIPTION: &str = "Create a Claude or Codex child agent with an initial prompt. Use amux spawn for cross-kind delegation and keep Claude's native Agent tool for same-kind work. When cwd is omitted, the child inherits your working directory; it also inherits your permission mode or approval and sandbox policy.";
+const STOP_DESCRIPTION: &str = "Stop one of your amux child agents by name.";
+const STATUS_DESCRIPTION: &str = "Set or clear your current amux work status so agents and humans can find the right collaborator.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ToolRequest {
@@ -590,6 +590,20 @@ mod tests {
         assert_eq!(
             tools[4]["inputSchema"]["properties"]["working_on"]["type"],
             json!(["string", "null"])
+        );
+    }
+
+    #[test]
+    fn a2a_tool_descriptions_match_golden_fixture() {
+        let rendered = tool_definitions()
+            .into_iter()
+            .map(|tool| format!("{}\n{}\n", tool.name, tool.description))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(
+            rendered,
+            include_str!("../tests/fixtures/tool_descriptions.txt")
         );
     }
 

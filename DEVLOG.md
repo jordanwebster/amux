@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude's amux tools state their routing and inheritance rules.**
+The send description directs every reply to an `amux:` sender through amux and
+reserves the cross-kind path for Claude-to-Codex communication while leaving
+same-kind native tools available. Spawn states the same adoption boundary and
+the default working-directory and permission-policy inheritance. A checked text
+fixture pins all five model-facing descriptions against silent drift.
+
 2026-08-23 — **Every spawned Claude session receives the amux MCP tools.**
 Claude argv now registers the running amux executable as an inline stdio MCP
 server and pre-allows its tool namespace, while filtering caller-supplied
