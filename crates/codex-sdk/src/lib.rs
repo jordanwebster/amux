@@ -15,9 +15,9 @@ pub mod types;
 pub use approval::{ApprovalRequest, ApprovalResponse, RequestId};
 pub use config::{
     ApprovalPolicy, ApprovalsReviewer, CodexConfig, CollaborationMode, CollaborationModeKind,
-    CollaborationModeSettings, GranularApprovalPolicy, InputItem, NetworkAccess, Personality,
-    ReadOnlyAccess, ReasoningEffort, SandboxMode, SandboxPolicy, SummaryMode, ThreadConfig,
-    TurnConfig, TurnInput,
+    CollaborationModeSettings, FunctionDynamicToolSpec, GranularApprovalPolicy, InputItem,
+    NetworkAccess, Personality, ReadOnlyAccess, ReasoningEffort, SandboxMode, SandboxPolicy,
+    SummaryMode, ThreadConfig, TurnConfig, TurnInput,
 };
 #[cfg(unix)]
 pub use daemon::{

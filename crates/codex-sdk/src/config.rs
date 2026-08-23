@@ -69,9 +69,22 @@ pub struct ThreadConfig {
     pub ephemeral: Option<bool>,
     pub experimental_raw_events: Option<bool>,
     pub persist_extended_history: Option<bool>,
+    /// Experimental function tools made available for the lifetime of the thread.
+    pub dynamic_tools: Option<Vec<FunctionDynamicToolSpec>>,
     /// Escape hatch for experimental/new fields not yet in the typed API.
     /// Keys are camelCase wire names, values are arbitrary JSON.
     pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// A function tool registered when a thread is created.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionDynamicToolSpec {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
 }
 
 // ── TurnConfig ────────────────────────────────────────────────────
@@ -431,6 +444,7 @@ pub(crate) fn thread_config_to_params(config: &ThreadConfig) -> serde_json::Valu
     if let Some(value) = config.persist_extended_history {
         insert_json(&mut obj, "persistExtendedHistory", value);
     }
+    insert_serialized(&mut obj, "dynamicTools", config.dynamic_tools.as_ref());
     merge_config(serde_json::Value::Object(obj), &config.extra)
 }
 

@@ -83,6 +83,14 @@ impl Thread {
         self.start_turn_with(input, TurnConfig::default()).await
     }
 
+    /// Start a turn without adding another input item.
+    ///
+    /// This lets the app-server consume items previously appended with
+    /// [`Self::inject_items`].
+    pub async fn start_empty_turn(&self) -> Result<String, Error> {
+        self.start_turn(TurnInput::Items(Vec::new())).await
+    }
+
     /// Start a turn with explicit config.
     pub async fn start_turn_with(
         &self,
@@ -100,6 +108,20 @@ impl Thread {
             .request("turn/start", serde_json::Value::Object(params))
             .await?;
         Ok(start.turn.id)
+    }
+
+    /// Append raw Responses API items to the thread's model-visible history.
+    pub async fn inject_items(&self, items: Vec<serde_json::Value>) -> Result<(), Error> {
+        self.inner
+            .server
+            .request_unit(
+                "thread/inject_items",
+                serde_json::json!({
+                    "threadId": self.inner.thread_id,
+                    "items": items,
+                }),
+            )
+            .await
     }
 
     /// Steer an active turn with additional input.

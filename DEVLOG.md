@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **The Codex SDK exposes the captured agent-message carriers.**
+Thread creation accepts typed dynamic function tools and serializes them on the
+experimental `dynamicTools` field. Thread handles can append raw model-history
+items with `thread/inject_items` and start an empty-input turn to consume idle
+injections. Offline replays exercise the full dynamic-tool request/response
+exchange and the injected-message turn against the graduated Codex 0.148.0
+captures.
+
 2026-08-23 — **Claude's amux tools state their routing and inheritance rules.**
 The send description directs every reply to an `amux:` sender through amux and
 reserves the cross-kind path for Claude-to-Codex communication while leaving
