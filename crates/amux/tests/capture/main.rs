@@ -40,6 +40,8 @@ use std::time::Duration;
 use amux::claude_io::ClaudePtyTranscriptV1Action as Act;
 use anyhow::{Context, Result, bail};
 use harness::{CaptureSession, DaemonEnv, Scratch, ScratchDaemon, claude_version};
+use tokio::io::AsyncWriteExt as _;
+use tokio::net::UnixStream;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
 const TURN_TIMEOUT: Duration = Duration::from_secs(240);
@@ -74,6 +76,7 @@ enum Scenario {
     ExternalReadonly,
     PermissionMultiProbe,
     QuestionChatProbe,
+    A2aSocketDelivery,
 }
 
 #[derive(Clone, Copy)]
@@ -198,6 +201,12 @@ const SCENARIOS: &[ScenarioSpec] = &[
         "probe/question-chat-about-this",
         Scenario::QuestionChatProbe,
     ),
+    scenario(
+        "a2a_socket_delivery",
+        "a2a/socket-delivery",
+        Scenario::A2aSocketDelivery,
+        false,
+    ),
 ];
 
 fn main() -> Result<()> {
@@ -272,13 +281,17 @@ fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-v1")
 }
 
+fn a2a_fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/a2a")
+}
+
 fn semantics_markdown() -> &'static str {
     include_str!("../../../../docs/CLAUDE_TRANSCRIPT.md")
 }
 
 fn run_tooling(args: &[String]) -> Result<()> {
     let Some(command) = args.first().map(String::as_str) else {
-        bail!("tooling requires verify, drift, or graduate");
+        bail!("tooling requires verify, drift, graduate, or graduate-a2a");
     };
     let Some(run_dir) = args.get(1).map(structure::workspace_path) else {
         bail!("tooling {command} requires RUN_DIR");
@@ -288,18 +301,23 @@ fn run_tooling(args: &[String]) -> Result<()> {
             let report = taxonomy::write_report(&run_dir, &fixture_dir(), semantics_markdown())?;
             print!("{}", report.render());
         }
-        "verify" | "graduate" => {
+        "verify" | "graduate" | "graduate-a2a" => {
             let scenarios = tooling_scenarios(&run_dir, &args[2..])?;
             if command == "graduate" {
                 // `graduate` re-verifies internally before copying any bytes.
                 graduate::graduate(&run_dir, &fixture_dir(), &scenarios)?;
                 println!("graduated fixtures: {scenarios:?}");
+            } else if command == "graduate-a2a" {
+                graduate::graduate_a2a(&run_dir, &a2a_fixture_dir(), &scenarios)?;
+                println!("graduated A2A fixtures: {scenarios:?}");
             } else {
                 graduate::verify_run(&run_dir, &scenarios)?;
                 println!("verified fixture candidates: {scenarios:?}");
             }
         }
-        other => bail!("unknown tooling command '{other}' (expected verify, drift, graduate)"),
+        other => bail!(
+            "unknown tooling command '{other}' (expected verify, drift, graduate, graduate-a2a)"
+        ),
     }
     Ok(())
 }
@@ -492,6 +510,7 @@ async fn run_scenario(
         Scenario::ExternalReadonly => external_readonly(daemon, scratch).await,
         Scenario::PermissionMultiProbe => permission_multi_probe(daemon, scratch, model).await,
         Scenario::QuestionChatProbe => question_chat_probe(daemon, scratch, model).await,
+        Scenario::A2aSocketDelivery => a2a_socket_delivery(daemon, scratch, model).await,
     }
     .with_context(|| format!("{name} structural assertion"))
 }
@@ -512,9 +531,28 @@ async fn open(
     model: &str,
     first_prompt: &str,
 ) -> Result<(CaptureSession, usize)> {
+    open_with_args(
+        daemon,
+        scratch,
+        scenario,
+        extra_args.iter().map(|arg| (*arg).to_string()).collect(),
+        model,
+        first_prompt,
+    )
+    .await
+}
+
+async fn open_with_args(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    scenario: &str,
+    extra_args: Vec<String>,
+    model: &str,
+    first_prompt: &str,
+) -> Result<(CaptureSession, usize)> {
     let dir = scratch.project_dir(scenario)?;
     let mut session =
-        CaptureSession::open(daemon, scratch, scenario, dir, extra_args, model).await?;
+        CaptureSession::open(daemon, scratch, scenario, dir, &extra_args, model).await?;
     session.prepare_for_first_prompt(READY_TIMEOUT).await?;
     session.send_prompt(first_prompt).await?;
     let index = session.wait_for_transcript_ready(READY_TIMEOUT).await?;
@@ -604,6 +642,163 @@ async fn wait_for_turn_duration(session: &CaptureSession, from: usize) -> Result
             row.is_turn_duration()
         })
         .await
+}
+
+async fn messaging_credentials(scratch: &Scratch, scenario: &str) -> Result<(PathBuf, String)> {
+    let path = scratch
+        .projects
+        .join(scenario)
+        .join(".claude/messaging-env");
+    let deadline = std::time::Instant::now() + READY_TIMEOUT;
+    loop {
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            let mut socket = None;
+            let mut token = None;
+            for line in raw.lines() {
+                if let Some(value) = line.strip_prefix("CLAUDE_CODE_MESSAGING_SOCKET=") {
+                    socket = Some(PathBuf::from(value));
+                }
+                if let Some(value) = line.strip_prefix("CLAUDE_CODE_MESSAGING_TOKEN=") {
+                    token = Some(value.to_string());
+                }
+            }
+            if let (Some(socket), Some(token)) = (socket, token) {
+                return Ok((socket, token));
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            bail!(
+                "timed out waiting for hook-side messaging credentials at {}",
+                path.display()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+async fn inject_socket_message(socket: &Path, token: &str, marker: &str) -> Result<()> {
+    let mut stream = UnixStream::connect(socket)
+        .await
+        .with_context(|| format!("connect Claude messaging socket {}", socket.display()))?;
+    let envelope = format!(
+        "<cross-session-message from=\"amux:probe/host\" from-name=\"probe\" from-mode=\"prompting\">\n{marker}\n</cross-session-message>"
+    );
+    let auth = serde_json::json!({ "type": "auth", "token": token });
+    let message = serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": envelope },
+    });
+    stream.write_all(auth.to_string().as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    stream.write_all(message.to_string().as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    stream.shutdown().await?;
+    Ok(())
+}
+
+fn is_socket_queue_operation(row: &harness::Row, marker: &str) -> bool {
+    row.row_type() == "queue-operation"
+        && row
+            .json
+            .get("operation")
+            .and_then(serde_json::Value::as_str)
+            == Some("enqueue")
+        && row.json.to_string().contains(marker)
+}
+
+/// Native Claude inbox delivery when the recipient is idle and while it is
+/// executing a tool. The hook-side probe is the only source of the ephemeral
+/// socket token; neither it nor the socket path is retained in the fixture.
+/// Claude 2.1.240 records an enqueue `queue-operation` before the peer row;
+/// it does not emit the older `queued_command` attachment for this carrier.
+async fn a2a_socket_delivery(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let socket = scratch.root.join("sock/a2a-inbox.sock");
+    let args = vec![
+        "--name".to_string(),
+        "recipient".to_string(),
+        "--messaging-socket-path".to_string(),
+        socket.display().to_string(),
+        "--dangerously-skip-permissions".to_string(),
+    ];
+    let (mut session, index) = open_with_args(
+        daemon,
+        scratch,
+        "a2a_socket_delivery",
+        args,
+        model,
+        "Reply exactly READY and nothing else.",
+    )
+    .await?;
+    let index = wait_for_turn_duration(&session, index).await?;
+    let (observed_socket, token) = messaging_credentials(scratch, "a2a_socket_delivery").await?;
+    if observed_socket != socket {
+        bail!(
+            "hook-side socket path did not match spawn argument: observed={} expected={}",
+            observed_socket.display(),
+            socket.display()
+        );
+    }
+
+    let idle_marker = "A2A_SOCKET_IDLE_21240";
+    inject_socket_message(&observed_socket, &token, idle_marker).await?;
+    let idle = session
+        .wait_for_row(index, TURN_TIMEOUT, "idle socket native row", |row| {
+            row.json.to_string().contains(idle_marker)
+        })
+        .await?;
+
+    session
+        .send_prompt("Use the Bash tool to run exactly: sleep 3. Then reply exactly BUSY_DONE.")
+        .await?;
+    let busy_turn = session
+        .wait_for_row(idle, TURN_TIMEOUT, "Bash tool while busy", |row| {
+            row.is_tool_use("Bash")
+        })
+        .await?;
+    let busy_marker = "A2A_SOCKET_BUSY_21240";
+    inject_socket_message(&observed_socket, &token, busy_marker).await?;
+    let busy = session
+        .wait_for_row(busy_turn, TURN_TIMEOUT, "busy socket native row", |row| {
+            row.json.to_string().contains(busy_marker)
+        })
+        .await?;
+    wait_for_turn_duration(&session, busy).await?;
+
+    let rows = session.snapshot().await;
+    let native_idle = rows
+        .iter()
+        .any(|row| row.row_type() == "user" && row.json.to_string().contains(idle_marker));
+    let native_busy = rows
+        .iter()
+        .any(|row| row.row_type() == "user" && row.json.to_string().contains(busy_marker));
+    let queued_idle = rows
+        .iter()
+        .any(|row| is_socket_queue_operation(row, idle_marker));
+    let queued_busy = rows
+        .iter()
+        .any(|row| is_socket_queue_operation(row, busy_marker));
+    if !native_idle || !native_busy || !queued_idle || !queued_busy {
+        bail!(
+            "socket transcript rows: idle_native={native_idle} busy_native={native_busy} \
+             idle_queued={queued_idle} busy_queued={queued_busy}"
+        );
+    }
+    let keys = session.close().await?;
+    Ok(serde_json::json!({
+        "keys": keys,
+        "assertions": {
+            "hook_socket_matches_spawn": true,
+            "hook_token_present": true,
+            "idle_queue_operation": queued_idle,
+            "busy_queue_operation": queued_busy,
+            "idle_native_row": native_idle,
+            "busy_native_row": native_busy,
+        }
+    }))
 }
 
 fn question_tool_input(rows: &[harness::Row]) -> Option<&serde_json::Value> {

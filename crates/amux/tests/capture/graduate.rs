@@ -72,3 +72,36 @@ pub fn graduate(run_dir: &Path, fixture_dir: &Path, scenarios: &[String]) -> Res
     }
     Ok(())
 }
+
+/// Promote A2A carrier observations without pretending they are baseline
+/// chat-v1 fixtures. The short names are the durable public corpus names
+/// used by the implementation's structural waiters.
+pub fn graduate_a2a(run_dir: &Path, fixture_dir: &Path, scenarios: &[String]) -> Result<()> {
+    verify_run(run_dir, scenarios)?;
+    std::fs::create_dir_all(fixture_dir)?;
+    for scenario in scenarios {
+        let name = scenario.strip_prefix("a2a_").ok_or_else(|| {
+            anyhow::anyhow!("A2A fixture scenario must begin with a2a_: {scenario}")
+        })?;
+        let rows = std::fs::read(run_dir.join(format!("{scenario}.redacted.jsonl")))?;
+        let meta_path = run_dir.join(format!("{scenario}.meta.json"));
+        let mut meta: Value = serde_json::from_slice(&std::fs::read(&meta_path)?)?;
+        let object = meta
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("{} is not a JSON object", meta_path.display()))?;
+        object.insert(
+            "graduated_at".to_string(),
+            Value::String(chrono::Utc::now().to_rfc3339()),
+        );
+        object.insert(
+            "graduated_from".to_string(),
+            Value::String("redacted capture run".to_string()),
+        );
+        std::fs::write(fixture_dir.join(format!("{name}.jsonl")), rows)?;
+        std::fs::write(
+            fixture_dir.join(format!("{name}.meta.json")),
+            serde_json::to_string_pretty(&meta)?,
+        )?;
+    }
+    Ok(())
+}

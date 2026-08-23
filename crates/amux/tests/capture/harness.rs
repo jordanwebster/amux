@@ -309,6 +309,54 @@ impl Scratch {
         let dir = self.projects.join(scenario);
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("config.txt"), "VALUE=1\n")?;
+        // The user's globally installed amux plugin can lag the checked-out
+        // CLI. Put the repository's hook manifest in each disposable capture
+        // project so hooks exercise this binary's accepted command shape and
+        // report the live transcript path to the scratch daemon.
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../claude-plugin/hooks/hooks.json"))?;
+        let mut hooks = manifest
+            .get("hooks")
+            .cloned()
+            .ok_or_else(|| anyhow!("capture hook manifest has no hooks object"))?;
+        for entries in hooks
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("capture hook manifest hooks is not an object"))?
+            .values_mut()
+        {
+            for entry in entries
+                .as_array_mut()
+                .ok_or_else(|| anyhow!("capture hook entries are not an array"))?
+            {
+                for hook in entry
+                    .get_mut("hooks")
+                    .and_then(serde_json::Value::as_array_mut)
+                    .ok_or_else(|| anyhow!("capture hook entry has no hooks array"))?
+                {
+                    hook["command"] =
+                        serde_json::Value::String("./.claude/amux-capture-hook.sh".to_string());
+                }
+            }
+        }
+        let claude_dir = dir.join(".claude");
+        std::fs::create_dir_all(&claude_dir)?;
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({ "hooks": hooks }))?,
+        )?;
+        let hook_script = claude_dir.join("amux-capture-hook.sh");
+        std::fs::write(
+            &hook_script,
+            "#!/bin/sh\n\
+             env | grep '^CLAUDE_CODE_MESSAGING_' > .claude/messaging-env || true\n\
+             cat > .claude/last-hook.json\n\
+             exec amux hooks claude < .claude/last-hook.json\n",
+        )?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&hook_script, std::fs::Permissions::from_mode(0o700))?;
+        }
         let git = |args: &[&str]| {
             Command::new("git")
                 .args(args)
@@ -602,12 +650,12 @@ impl CaptureSession {
         scratch: &Scratch,
         scenario: &str,
         working_dir: PathBuf,
-        extra_args: &[&str],
+        extra_args: &[String],
         model: &str,
     ) -> Result<Self> {
         let agent_name = format!("cap-{scenario}");
         let mut args = vec!["--model".to_string(), model.to_string()];
-        args.extend(extra_args.iter().map(|s| s.to_string()));
+        args.extend(extra_args.iter().cloned());
         let agent_id = Uuid::new_v4();
         let agent = daemon
             .client

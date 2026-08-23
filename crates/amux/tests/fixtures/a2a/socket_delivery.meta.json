@@ -1,0 +1,56 @@
+{
+  "captured_at": "2026-08-23T00:11:34.652531+00:00",
+  "claude_version": "2.1.240 (Claude Code)",
+  "failure": null,
+  "graduated_at": "2026-08-23T00:12:15.005338+00:00",
+  "graduated_from": "redacted capture run",
+  "harness": "cargo test -p amux --test capture -- a2a_socket_delivery",
+  "model": "haiku",
+  "notes": {
+    "assertions": {
+      "busy_native_row": true,
+      "busy_queue_operation": true,
+      "hook_socket_matches_spawn": true,
+      "hook_token_present": true,
+      "idle_native_row": true,
+      "idle_queue_operation": true
+    },
+    "keys": [
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "external instructions dialog: Enter (allow checked-out AGENTS.md)",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Reply exactly READY and nothing else.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Reply exactly READY and nothing else.",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Use the Bash tool to run exactly: sleep 3. Then reply exactly BUSY_DONE.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Use the Bash tool to run exactly: sleep 3. Then reply exactly BUSY_DONE.",
+        "seq_retries": 0
+      }
+    ]
+  },
+  "poisoned_daemon_env": true,
+  "requirement": "a2a/socket-delivery",
+  "scenario": "a2a_socket_delivery"
+}

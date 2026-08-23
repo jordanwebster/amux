@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+const SOCKET_DELIVERY: &str = include_str!("fixtures/a2a/socket_delivery.jsonl");
+
 fn captured_io() -> Vec<Value> {
     include_str!("fixtures/codex_backend/a2a_tools.io.jsonl")
         .lines()
@@ -195,4 +197,40 @@ fn a2a_fixture_codex_last_message() {
                 == Some("C14_SECOND")
     });
     assert!(first < last && last < completed);
+}
+
+#[test]
+fn a2a_fixture_socket_delivery() {
+    let rows: Vec<Value> = SOCKET_DELIVERY
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("socket capture row is JSON"))
+        .collect();
+    for marker in ["A2A_SOCKET_IDLE_21240", "A2A_SOCKET_BUSY_21240"] {
+        let queued = rows.iter().position(|row| {
+            row.get("type").and_then(Value::as_str) == Some("queue-operation")
+                && row.get("operation").and_then(Value::as_str) == Some("enqueue")
+                && row
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .is_some_and(|content| {
+                        content.contains(marker) && content.starts_with("<cross-session-message ")
+                    })
+        });
+        let native = rows.iter().position(|row| {
+            row.get("type").and_then(Value::as_str) == Some("user")
+                && row.pointer("/origin/kind").and_then(Value::as_str) == Some("peer")
+                && row.pointer("/origin/name").and_then(Value::as_str) == Some("probe")
+                && row.pointer("/origin/fromMode").and_then(Value::as_str) == Some("prompting")
+                && row
+                    .pointer("/message/content")
+                    .and_then(Value::as_str)
+                    .is_some_and(|content| content.contains(marker))
+        });
+        assert!(queued.is_some(), "missing enqueue row for {marker}");
+        assert!(native.is_some(), "missing native peer row for {marker}");
+        assert!(
+            queued < native,
+            "socket queue must precede its native row for {marker}"
+        );
+    }
 }

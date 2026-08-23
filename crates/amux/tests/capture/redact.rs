@@ -30,6 +30,8 @@ use anyhow::{Result, bail};
 /// - `agent_listing_delta` — configured subagents, names + descriptions.
 /// - `deferred_tools_delta` — the MCP/connector tool inventory (tool ids
 ///   like `mcp__…`, incl. the user's Gmail/Calendar/etc. tools).
+/// - `mcp_instructions_delta` — an installed MCP server's private tool-use
+///   instructions, which Claude may attach lazily on a later turn.
 ///
 /// Plan-mode attachments (`plan_mode`, `plan_mode_exit`), permission facts
 /// (`command_permissions`), and turn/tool attachments stay: they are the
@@ -38,6 +40,7 @@ const CONFIG_ATTACHMENT_TYPES: &[&str] = &[
     "skill_listing",
     "agent_listing_delta",
     "deferred_tools_delta",
+    "mcp_instructions_delta",
 ];
 
 /// True if a raw transcript line is a config-bearing attachment row.
