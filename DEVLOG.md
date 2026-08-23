@@ -4655,6 +4655,9 @@ Each visible row also carries the agent's first-line work claim, bounded to a
 small column and stamped with its age; an unset claim stays absent. Missing
 parents and malformed loops remain visible instead of losing inventory, and
 duplicate names and multi-host labels keep their previous disambiguation.
+The CLI now declares its timestamp formatter as a shipped dependency as well
+as exercising it in tests, so release builds and test builds use the same
+dependency surface.
 
 2026-08-23 — **Put an explicit guard around command-line family deletion.**
 `amux rm` now refuses to cascade while any descendant reports active work and
