@@ -59,3 +59,5 @@ mod a2a_claude_inbound; // Chapter 20 — Claude inbound: a message from another
 mod a2a_claude_send_row; // Chapter 21 — Claude outbound: sending to another agent
 
 mod a2a_codex_inbound; // Chapter 22 — Codex inbound: agent messages and amux tools
+
+mod a2a_family_needs; // Chapter 23 — Family needs: a child's ask, composed into its parent

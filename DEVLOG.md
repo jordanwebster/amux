@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **A child's ask surfaces in its parent's chat.**
+The client answers which of an agent's descendants are waiting on the human,
+each named by the child's id and the layer that draws its ask, so a parent's
+chat can host the child's own prompt without any record being written into the
+parent's stream. The answer is re-derived from each child's current card and
+uses no attention reason the fleet did not already have: answering the ask
+anywhere empties the list with nothing to clear, and a child on an unreachable
+host asks for nobody.
+
 2026-08-23 — **Suspended families resume intact.**
 Suspend snapshots now restore a child's parent edge and exact work-status
 timestamp when the daemon restarts, and resumed inventory republishes both.

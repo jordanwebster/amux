@@ -455,6 +455,39 @@ pub struct FamilyMember<'a> {
     pub depth: usize,
 }
 
+/// A child asking for the human, addressed for its parent's chat.
+///
+/// Nothing is copied out of the child here. The ask itself stays where the
+/// child folded it, in the child's own layer, and a renderer draws it by
+/// asking that layer for it under the child's id — so the parent's chat
+/// decides where the ask is drawn while the child's layer decides what it
+/// looks like, and answering from either place is the same act.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FamilyNeed<'a> {
+    pub card: &'a AgentCard,
+    /// Generations below the parent, counted as [`FamilyMember`] counts
+    /// them: a grandchild's ask surfaces too, and says how far down it is.
+    pub depth: usize,
+    /// Why the human is wanted, in the same three-word vocabulary the
+    /// fleet badge uses. A message from another agent is not one of them:
+    /// only states that need a person raise attention at all.
+    pub why: Why,
+}
+
+impl FamilyNeed<'_> {
+    /// The child to address — the id a command carries and a layer is
+    /// looked up by.
+    pub fn agent(&self) -> AgentId {
+        self.card.agent.id
+    }
+
+    /// Which layer knows how to draw this ask, when the child advertises
+    /// one this build renders.
+    pub fn layer(&self) -> Option<StructuredProtocol> {
+        self.card.structured_protocol()
+    }
+}
+
 /// One row of the ranked fleet.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FleetItem<'a> {
@@ -706,6 +739,35 @@ impl Model {
         let topology = self.topology();
         let mut placed = std::collections::BTreeSet::new();
         self.descendants(&topology, agent, 1, &mut placed)
+    }
+
+    /// Which of an agent's descendants are asking for the human, in the
+    /// order the family ranks them.
+    ///
+    /// Composed, never synthesized: no record is written into the parent's
+    /// stream and no state is stored anywhere, so a child's ask reaches
+    /// its parent's chat by the same derivation that puts it on the fleet
+    /// badge — and leaves by that derivation too. Answering it in the
+    /// child's own view, or on another device, empties this list on the
+    /// next fold with nothing to clear.
+    ///
+    /// The parent's own asks are absent: those belong to its own chat,
+    /// which is already showing them.
+    pub fn family_needs(&self, parent: AgentId) -> Vec<FamilyNeed<'_>> {
+        self.family_of(parent)
+            .into_iter()
+            .filter_map(|member| match self.effective_attention(member.card) {
+                // Read-time policy applies here too: a child on an offline
+                // host degrades to Unknown, and a banner for an ask we can
+                // no longer see would be a promise the chat cannot keep.
+                Attention::NeedsYou { why } => Some(FamilyNeed {
+                    card: member.card,
+                    depth: member.depth,
+                    why,
+                }),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Direct-child edges of the current inventory, plus the agents no
