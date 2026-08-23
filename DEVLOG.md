@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **The A2A capture suite is clean under the workspace lint oracle.** The capture-only graduation helper explicitly tolerates being unused by integration-test targets that include its module without invoking promotion, and the dynamic-tool event matcher follows the workspace's current Clippy requirement without changing capture behavior.
+
 2026-08-23 — **Claude Stop hooks now have a current-version completion fixture.** The isolated 2.1.240 capture records `hook.stop` with the exact `last_assistant_message` from a completed turn, giving the completion path a redacted, structurally checked offline witness.
 
 2026-08-23 — **Claude 2.1.240 PTY delivery is captured for idle and busy turns.** A bracketed-paste `<amux …>` envelope lands byte-for-byte in an idle user row. During a Bash-backed active turn, Claude first records an enqueue operation and then a `queued_command` attachment carrying the same envelope, proving the fallback carrier is queued rather than dropped.

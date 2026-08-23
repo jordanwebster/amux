@@ -76,6 +76,7 @@ pub fn graduate(run_dir: &Path, fixture_dir: &Path, scenarios: &[String]) -> Res
 /// Promote A2A carrier observations without pretending they are baseline
 /// chat-v1 fixtures. The short names are the durable public corpus names
 /// used by the implementation's structural waiters.
+#[allow(dead_code)]
 pub fn graduate_a2a(run_dir: &Path, fixture_dir: &Path, scenarios: &[String]) -> Result<()> {
     verify_run(run_dir, scenarios)?;
     std::fs::create_dir_all(fixture_dir)?;

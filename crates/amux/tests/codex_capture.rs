@@ -692,20 +692,20 @@ fn main() -> anyhow::Result<()> {
                 .await
                 .context("wait for dynamic-tools event")??
                 .context("dynamic-tools event stream closed")?;
-            if let TurnEvent::ToolCallRequired(request) = event.event {
-                if request.tool == "send" {
-                    call = Some(request.arguments.clone());
-                    thread
-                        .respond_tool_call(
-                            request.request_id,
-                            DynamicToolCallResponse {
-                                content_items: vec![json!({"type": "inputText", "text": "sent"})],
-                                success: true,
-                            },
-                        )
-                        .await
-                        .context("respond to dynamic send tool call")?;
-                }
+            if let TurnEvent::ToolCallRequired(request) = event.event
+                && request.tool == "send"
+            {
+                call = Some(request.arguments.clone());
+                thread
+                    .respond_tool_call(
+                        request.request_id,
+                        DynamicToolCallResponse {
+                            content_items: vec![json!({"type": "inputText", "text": "sent"})],
+                            success: true,
+                        },
+                    )
+                    .await
+                    .context("respond to dynamic send tool call")?;
             }
             if event.method == "turn/completed" && event.turn_id.as_deref() == Some(&turn_id) {
                 completed = true;
