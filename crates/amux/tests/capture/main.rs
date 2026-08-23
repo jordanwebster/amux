@@ -79,6 +79,7 @@ enum Scenario {
     A2aSocketDelivery,
     A2aPtyDelivery,
     A2aStopPayload,
+    A2aMcpTools,
 }
 
 #[derive(Clone, Copy)]
@@ -219,6 +220,12 @@ const SCENARIOS: &[ScenarioSpec] = &[
         "a2a_stop_payload",
         "a2a/stop-payload",
         Scenario::A2aStopPayload,
+        false,
+    ),
+    scenario(
+        "a2a_mcp_tools",
+        "a2a/mcp-tools",
+        Scenario::A2aMcpTools,
         false,
     ),
 ];
@@ -527,6 +534,7 @@ async fn run_scenario(
         Scenario::A2aSocketDelivery => a2a_socket_delivery(daemon, scratch, model).await,
         Scenario::A2aPtyDelivery => a2a_pty_delivery(daemon, scratch, model).await,
         Scenario::A2aStopPayload => a2a_stop_payload(daemon, scratch, model).await,
+        Scenario::A2aMcpTools => a2a_mcp_tools(daemon, scratch, model).await,
     }
     .with_context(|| format!("{name} structural assertion"))
 }
@@ -946,6 +954,132 @@ async fn a2a_stop_payload(
     Ok(serde_json::json!({
         "keys": keys,
         "assertions": { "last_assistant_message": true, "turn_end_after_stop": has_turn_end }
+    }))
+}
+
+/// The Claude MCP registration path is captured with a local stdio server.
+/// The stub records its JSON-RPC requests under the disposable project so the
+/// fixture can prove the model invoked `send` without retaining credentials.
+async fn a2a_mcp_tools(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let log = scratch.projects.join("a2a_mcp_tools/mcp-requests.jsonl");
+    let stub = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/capture/stub_mcp.py");
+    let config = serde_json::json!({
+        "mcpServers": {
+            "amux": {
+                "command": "python3",
+                "args": [stub, log],
+            }
+        }
+    });
+    let args = vec![
+        "--mcp-config".to_string(),
+        config.to_string(),
+        "--strict-mcp-config".to_string(),
+        "--allowedTools".to_string(),
+        "mcp__amux__*".to_string(),
+    ];
+    let prompt = "Call mcp__amux__send exactly once with to set to probe and text set to \\\"A2A_MCP_SENT_21240\\\". Then reply exactly A2A_MCP_DONE_21240.";
+    let dir = scratch.project_dir("a2a_mcp_tools")?;
+    let mut session =
+        CaptureSession::open(daemon, scratch, "a2a_mcp_tools", dir, &args, model).await?;
+    session.prepare_for_first_prompt(READY_TIMEOUT).await?;
+    session.send_prompt(prompt).await?;
+
+    // Claude 2.1.240 ran the strict inline-MCP turn and invoked Stop without
+    // emitting its normal SessionStart hook. Re-deliver the observed session
+    // metadata through the same hook CLI so amux can attach its tailer to the
+    // native transcript; this does not synthesize any transcript rows.
+    let stop = session
+        .wait_for_row(0, TURN_TIMEOUT, "MCP turn Stop hook", |row| {
+            row.row_type() == "hook.stop"
+        })
+        .await?;
+    let stop_row = session.snapshot().await[stop - 1].clone();
+    let session_id = stop_row
+        .json
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("MCP Stop hook has no session_id"))?;
+    let transcript_path = stop_row
+        .json
+        .get("transcript_path")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("MCP Stop hook has no transcript_path"))?;
+    let cwd = stop_row
+        .json
+        .get("cwd")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("MCP Stop hook has no cwd"))?;
+    daemon.deliver_hook(
+        scratch,
+        Some(session.agent_id()),
+        &serde_json::json!({
+            "hook_event_name": "SessionStart",
+            "session_id": session_id,
+            "transcript_path": transcript_path,
+            "cwd": cwd,
+        }),
+    )?;
+    session
+        .wait_for_transcript_ready(READY_TIMEOUT)
+        .await
+        .context("MCP transcript tailer after observed Stop metadata")?;
+    let rows = session.snapshot().await;
+    let tool_row = rows
+        .iter()
+        .find(|row| row.is_tool_use("mcp__amux__send"))
+        .ok_or_else(|| anyhow::anyhow!("MCP transcript has no mcp__amux__send tool use"))?;
+    let tool_id = tool_row
+        .tool_use_id("mcp__amux__send")
+        .ok_or_else(|| anyhow::anyhow!("mcp tool-use row has no id"))?;
+    let permission_hook = rows
+        .iter()
+        .any(|row| row.is_permission_request_for("mcp__amux__send"));
+    let tool_result = rows.iter().any(|row| row.is_tool_result_for(&tool_id));
+    let done = rows
+        .iter()
+        .any(|row| row.json.to_string().contains("A2A_MCP_DONE_21240"));
+    let requests: Vec<serde_json::Value> = std::fs::read_to_string(&log)
+        .with_context(|| format!("read stub MCP request log {}", log.display()))?
+        .lines()
+        .map(|line| serde_json::from_str(line).context("stub MCP request is JSON"))
+        .collect::<Result<_>>()?;
+    let send_request = requests.iter().find(|request| {
+        request.get("method").and_then(serde_json::Value::as_str) == Some("tools/call")
+            && request
+                .pointer("/params/name")
+                .and_then(serde_json::Value::as_str)
+                == Some("send")
+            && request
+                .pointer("/params/arguments/to")
+                .and_then(serde_json::Value::as_str)
+                == Some("probe")
+            && request
+                .pointer("/params/arguments/text")
+                .and_then(serde_json::Value::as_str)
+                == Some("A2A_MCP_SENT_21240")
+    });
+    if !tool_result || !done || send_request.is_none() {
+        bail!(
+            "MCP capture assertions: tool_result={tool_result} done={done} stub_send={} ",
+            send_request.is_some()
+        );
+    }
+    let keys = session.close().await?;
+    Ok(serde_json::json!({
+        "keys": keys,
+        "assertions": {
+            "tool_use": "mcp__amux__send",
+            "tool_result": tool_result,
+            "permission_hook": permission_hook,
+            "session_start_hook_observed": false,
+            "transcript_tailer_recovered_from_stop": true,
+            "stub_send_request": true,
+        }
     }))
 }
 

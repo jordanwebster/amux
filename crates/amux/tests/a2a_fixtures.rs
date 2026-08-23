@@ -3,6 +3,7 @@ use serde_json::Value;
 const SOCKET_DELIVERY: &str = include_str!("fixtures/a2a/socket_delivery.jsonl");
 const PTY_DELIVERY: &str = include_str!("fixtures/a2a/pty_delivery.jsonl");
 const STOP_PAYLOAD: &str = include_str!("fixtures/a2a/stop_payload.jsonl");
+const MCP_TOOLS: &str = include_str!("fixtures/a2a/mcp_tools.jsonl");
 
 fn captured_io() -> Vec<Value> {
     include_str!("fixtures/codex_backend/a2a_tools.io.jsonl")
@@ -281,4 +282,49 @@ fn a2a_fixture_stop_payload() {
                 == Some("STOP_PAYLOAD_21240")
     });
     assert!(stop.is_some());
+}
+
+#[test]
+fn a2a_fixture_mcp_tools() {
+    let rows: Vec<Value> = MCP_TOOLS
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("MCP capture row is JSON"))
+        .collect();
+    let tool_use = rows.iter().position(|row| {
+        row.get("type").and_then(Value::as_str) == Some("assistant")
+            && row
+                .pointer("/message/content/0/type")
+                .and_then(Value::as_str)
+                == Some("tool_use")
+            && row
+                .pointer("/message/content/0/name")
+                .and_then(Value::as_str)
+                == Some("mcp__amux__send")
+            && row
+                .pointer("/message/content/0/input/to")
+                .and_then(Value::as_str)
+                == Some("probe")
+            && row
+                .pointer("/message/content/0/input/text")
+                .and_then(Value::as_str)
+                == Some("A2A_MCP_SENT_21240")
+    });
+    let tool_result = rows.iter().position(|row| {
+        row.get("type").and_then(Value::as_str) == Some("user")
+            && row
+                .pointer("/message/content/0/type")
+                .and_then(Value::as_str)
+                == Some("tool_result")
+            && row
+                .pointer("/message/content/0/tool_use_id")
+                .and_then(Value::as_str)
+                == Some("toolu_a2a_mcp_send")
+    });
+    assert!(tool_use.is_some(), "fixture has mcp__amux__send tool_use");
+    assert!(tool_result.is_some(), "fixture has paired tool_result");
+    assert!(tool_use < tool_result);
+    assert!(
+        rows.iter()
+            .all(|row| row.get("type").and_then(Value::as_str) != Some("hook.permission_request"))
+    );
 }

@@ -1,0 +1,23 @@
+{
+  "scenario": "a2a_mcp_tools",
+  "requirement": "a2a/mcp-tools",
+  "captured_at": "2026-08-23T00:38:36Z",
+  "claude_version": "2.1.240 (Claude Code)",
+  "model": "haiku",
+  "harness": "cargo test -p amux --test capture -- a2a_mcp_tools",
+  "graduated_at": "2026-08-23T00:38:36Z",
+  "graduated_from": "synthetic fixture constrained by live MCP request log",
+  "failure": null,
+  "fidelity_risk": true,
+  "notes": {
+    "live_assertions": {
+      "stub_tools_call": "send",
+      "stub_send_to": "probe",
+      "stub_send_text": "A2A_MCP_SENT_21240",
+      "permission_hook_observed": false,
+      "assistant_completed": "A2A_MCP_DONE_21240",
+      "structured_transcript_rows_persisted": false
+    },
+    "fixture_shape": "synthetic assistant tool_use and paired user tool_result; Claude 2.1.240 did not persist a transcript for the strict inline-MCP session after two live runs"
+  }
+}

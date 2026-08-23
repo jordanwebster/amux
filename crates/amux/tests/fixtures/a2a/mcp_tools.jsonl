@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_a2a_mcp_send","name":"mcp__amux__send","input":{"to":"probe","text":"A2A_MCP_SENT_21240"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_a2a_mcp_send","content":"{\"id\":\"a2a-mcp-capture\"}","is_error":false}]}}

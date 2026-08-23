@@ -4295,3 +4295,14 @@ The initial PTY-multiplexer prototype; milestone 1 with the e2e testing
 framework; TCP transport and remote subscriptions; hooks, structured
 logs, and the dashboard; link-based stack routing — the design whose
 relay statefulness the rework finally resolved by routing on host ids.
+2026-08-23 — **Recorded the Claude MCP registration probe.** The opt-in A2A
+capture now starts Claude 2.1.240 in default permission mode with a strict
+inline MCP configuration and an isolated stdio stub exposing the five amux
+tool schemas. The live model called `send` with the requested arguments,
+completed without a permission hook, and the stub retained the exact
+JSON-RPC request only inside the disposable project. Claude did not persist
+the strict-MCP transcript on either live run, including after the observed
+Stop metadata was replayed through the normal hook seam, so the committed
+tool-use/result fixture is explicitly synthetic and `fidelity_risk: true`;
+the metadata preserves the live observation and the structural waiter pins
+the expected paired row shape.

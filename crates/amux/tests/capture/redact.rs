@@ -208,11 +208,25 @@ fn verify(redacted: &str, scratch_root: &Path) -> Result<()> {
         }
     }
     // Tool-inventory / skill-listing content must not leak through any other
-    // row shape either. `mcp__` is the MCP tool-id prefix (none of the
-    // scenarios legitimately invoke an MCP tool); the field names are the
-    // structural signatures of the stripped listings.
+    // row shape either. The A2A fixture intentionally retains its local
+    // `mcp__amux__…` call, but every other MCP tool id remains private
+    // configuration and is rejected. The field names are the structural
+    // signatures of the stripped listings.
+    let mut remaining = redacted;
+    while let Some(index) = remaining.find("mcp__") {
+        let tail = &remaining[index..];
+        let name_len = tail
+            .bytes()
+            .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+            .count();
+        let name = &tail[..name_len];
+        if !name.starts_with("mcp__amux__") {
+            violations.push(format!("tool/skill-inventory MCP tool '{name}' present"));
+            break;
+        }
+        remaining = &tail[name_len..];
+    }
     for marker in [
-        "mcp__",
         "skill_listing",
         "agent_listing_delta",
         "deferred_tools_delta",
