@@ -140,7 +140,10 @@ pub(crate) trait AgentBackend: Send + Sync {
     fn readonly(&self) -> bool;
     fn args(&self) -> &[String];
     fn created_at(&self) -> DateTime<Utc>;
-    fn start(&mut self) -> Result<tokio::task::JoinHandle<()>>;
+    fn start(
+        &mut self,
+        event_tx: &mpsc::Sender<SessionEvent>,
+    ) -> Result<tokio::task::JoinHandle<()>>;
     async fn stop(&self, policy: StopPolicy);
     fn agent_type(&self) -> &'static str;
 
@@ -295,7 +298,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             thread_id,
             daemon_mode,
             created_at,
-            parent: _,
+            parent,
             working_on: _,
         } => {
             let req = CreateAgentRequest {
@@ -311,7 +314,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 working_dir,
                 terminal_size: None,
                 args: Vec::new(),
-                parent: None,
+                parent,
                 initial_prompt: None,
             };
             Box::new(CodexSession::from_suspended(

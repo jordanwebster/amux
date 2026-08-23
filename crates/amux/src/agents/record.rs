@@ -86,6 +86,8 @@ impl From<AgentRecord> for Agent {
 pub(crate) enum SessionEvent {
     /// Session ended (agent exited)
     Ended { agent_id: Uuid },
+    /// A turn completed with an assistant message for the agent's parent.
+    Completed { agent_id: Uuid, text: String },
     /// Session created (for post-creation side effects like fork detection)
     Created {
         agent_id: Uuid,

@@ -15,8 +15,8 @@ use uuid::Uuid;
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agents::{
     AGENT_TYPE_TEST_AGENT, AgentBackend, AgentDeliveryTarget, CreateAgentRequest, Delivery,
-    DeliveryError, LocalAgentNameSource, StopPolicy, StructuredLogSource, TerminalSize,
-    terminal_io_protocols,
+    DeliveryError, LocalAgentNameSource, SessionEvent, StopPolicy, StructuredLogSource,
+    TerminalSize, terminal_io_protocols,
 };
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
@@ -199,7 +199,10 @@ impl AgentBackend for TestAgentSession {
         self.created_at
     }
 
-    fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+    fn start(
+        &mut self,
+        _event_tx: &tokio::sync::mpsc::Sender<SessionEvent>,
+    ) -> Result<tokio::task::JoinHandle<()>> {
         TestAgentSession::start(self)
     }
 

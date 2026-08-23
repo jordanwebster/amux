@@ -51,7 +51,10 @@ impl AgentBackend for ClaudeSession {
         self.created_at
     }
 
-    fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+    fn start(
+        &mut self,
+        _event_tx: &mpsc::Sender<SessionEvent>,
+    ) -> Result<tokio::task::JoinHandle<()>> {
         ClaudeSession::start(self)
     }
 

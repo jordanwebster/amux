@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use super::lifecycle::{
     CreateAgentError, RenameAgentError, commit_server_suspend, create_agent_record,
-    delete_local_agent, prepare_server_suspend, rename_local_agent_record, resume_agents,
-    shutdown_server, spawn_session_event_loop, withdraw_agent,
+    delete_local_agent, parent_envelope, prepare_server_suspend, rename_local_agent_record,
+    resume_agents, shutdown_server, spawn_session_event_loop, withdraw_agent,
 };
 use super::{
     AgentServiceState, DebugAgent, LocalAgentHost, ResponseStream, SharedAgentServiceState,
@@ -30,7 +30,7 @@ use crate::agents::{
     RenameAgentRequest, SendInputRequest, SessionCloseReason, SessionEvent, SetAgentStatusRequest,
     StopPolicy, SubscribeSessionRequest, bootstrap_external_hook,
 };
-use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
+use crate::envelope::{Envelope, EnvelopeKind};
 use crate::protocol::{ProtocolError, wire};
 use crate::server::ShutdownReason;
 use crate::suspend;
@@ -129,30 +129,6 @@ impl PtyAgentHost {
         )
         .await
     }
-}
-
-fn parent_envelope(
-    session: &AgentSession,
-    host_id: Uuid,
-    kind: EnvelopeKind,
-    text: String,
-) -> Option<Envelope> {
-    Some(Envelope {
-        id: Uuid::new_v4(),
-        context: None,
-        from: Sender::Agent(AgentSender {
-            agent_id: session.agent_id(),
-            host_id,
-            name: session
-                .name()
-                .map(str::to_string)
-                .unwrap_or_else(|| session.agent_id().to_string()),
-            kind: session.agent_type().to_string(),
-        }),
-        to: session.parent()?,
-        kind,
-        text,
-    })
 }
 
 fn codex_private_socket_path(server_socket_path: &Path) -> io::Result<PathBuf> {

@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use codex_sdk::{
     AccountReadParams, ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallResponse,
-    Error as CodexError, InputItem, RequestId, Thread, ThreadConfig, ThreadEvent, TurnEvent,
-    connect_daemon, connect_socket, daemon_socket_path, ensure_daemon_with_fallback,
+    Error as CodexError, InputItem, RequestId, Thread, ThreadConfig, ThreadEvent, ThreadItem,
+    TurnEvent, connect_daemon, connect_socket, daemon_socket_path, ensure_daemon_with_fallback,
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
@@ -19,8 +19,9 @@ use uuid::Uuid;
 use super::CODEX_RAW_THREAD_NOT_READY;
 use super::io::{self, CodexSdkV1Input};
 use crate::agents::{
-    AGENT_TYPE_CODEX, AgentBackend, CodexInput, CreateAgentRequest, LocalAgentNameSource,
-    PtyHandle, RawPtyTarget, StopPolicy, StructuredLogSource, spawn_pty_agent,
+    AGENT_TYPE_CODEX, AgentBackend, AgentParent, CodexInput, CreateAgentRequest,
+    LocalAgentNameSource, PtyHandle, RawPtyTarget, SessionEvent, StopPolicy, StructuredLogSource,
+    spawn_pty_agent,
 };
 use crate::suspend::SuspendedAgent;
 
@@ -254,8 +255,21 @@ struct CodexAttached {
     daemon_mode: Option<String>,
     live: Option<CodexLive>,
     active_turn_id: Option<String>,
+    last_agent_messages: HashMap<String, String>,
     pending: HashMap<RequestId, PendingRequestKind>,
     applied_name_generation: Option<u64>,
+}
+
+#[derive(Clone)]
+struct CodexCompletionSink {
+    agent_id: Uuid,
+    event_tx: tokio::sync::mpsc::Sender<SessionEvent>,
+}
+
+struct CodexIngestOptions {
+    thread_config: ThreadConfig,
+    thread_id: Option<String>,
+    completion_sink: Option<CodexCompletionSink>,
 }
 
 struct CodexPty {
@@ -483,6 +497,7 @@ pub(crate) struct CodexSession {
     model: Option<String>,
     approval_policy: Option<String>,
     sandbox_policy: Option<String>,
+    parent: Option<AgentParent>,
     resume_thread_id: Option<String>,
     created_at: DateTime<Utc>,
     log_source: StructuredLogSource,
@@ -517,6 +532,7 @@ impl CodexSession {
             model,
             approval_policy,
             sandbox_policy,
+            parent: req.parent,
             resume_thread_id,
             created_at: Utc::now(),
             log_source: codex_log_source(),
@@ -585,20 +601,28 @@ impl CodexSession {
         })
     }
 
-    fn start_task(&self, stop_rx: watch::Receiver<bool>) -> Result<tokio::task::JoinHandle<()>> {
+    fn start_task(
+        &self,
+        stop_rx: watch::Receiver<bool>,
+        event_tx: &tokio::sync::mpsc::Sender<SessionEvent>,
+    ) -> Result<tokio::task::JoinHandle<()>> {
         let thread_config = self.thread_config()?;
         let shared_client = self.shared_client.clone();
         let runtime = self.runtime.clone();
         let log_source = self.log_source.clone();
         let resume_thread_id = self.resume_thread_id.clone();
         let agent_id = self.agent_id;
+        let completion_sink = self.completion_sink(event_tx);
         let handle = tokio::spawn(run_ingest_supervisor(
             agent_id,
             shared_client,
             runtime.clone(),
             log_source,
-            thread_config,
-            resume_thread_id,
+            CodexIngestOptions {
+                thread_config,
+                thread_id: resume_thread_id,
+                completion_sink,
+            },
             stop_rx,
         ));
         runtime
@@ -606,6 +630,16 @@ impl CodexSession {
             .unwrap_or_else(|poison| poison.into_inner())
             .ingest_abort = Some(handle.abort_handle());
         Ok(handle)
+    }
+
+    fn completion_sink(
+        &self,
+        event_tx: &tokio::sync::mpsc::Sender<SessionEvent>,
+    ) -> Option<CodexCompletionSink> {
+        self.parent.map(|_| CodexCompletionSink {
+            agent_id: self.agent_id,
+            event_tx: event_tx.clone(),
+        })
     }
 
     fn input_target(&self) -> CodexInputTarget {
@@ -748,10 +782,14 @@ async fn run_ingest_supervisor(
     shared_client: Arc<CodexClient>,
     runtime: Arc<StdMutex<CodexRuntime>>,
     log_source: StructuredLogSource,
-    thread_config: ThreadConfig,
-    mut thread_id: Option<String>,
+    options: CodexIngestOptions,
     mut stop_rx: watch::Receiver<bool>,
 ) {
+    let CodexIngestOptions {
+        thread_config,
+        mut thread_id,
+        completion_sink,
+    } = options;
     let mut initial_persisted_resume_pending = thread_id.is_some();
     let mut retry = 0_usize;
     let mut ambiguous_started_thread_id = None;
@@ -854,6 +892,7 @@ async fn run_ingest_supervisor(
                     socket_path: connection.socket_path.clone(),
                 }),
                 active_turn_id: None,
+                last_agent_messages: HashMap::new(),
                 pending: HashMap::new(),
                 applied_name_generation,
             });
@@ -876,7 +915,12 @@ async fn run_ingest_supervisor(
                     }
                 }
                 next = events.next() => match next {
-                    Ok(Some(event)) => ingest_event(&runtime, &log_source, event).await,
+                    Ok(Some(event)) => ingest_event(
+                        &runtime,
+                        &log_source,
+                        completion_sink.as_ref(),
+                        event,
+                    ).await,
                     Ok(None) => break Some("connection_lost"),
                     Err(CodexError::ThreadQueueOverflow(_)) => break Some("queue_overflow"),
                     Err(_) => break Some("event_stream_error"),
@@ -1258,6 +1302,7 @@ fn mark_disconnected(
     };
     attached.live = None;
     attached.active_turn_id = None;
+    attached.last_agent_messages.clear();
     attached.pending.drain().map(|(id, _)| id).collect()
 }
 
@@ -1288,6 +1333,7 @@ fn raw_row(event: &ThreadEvent) -> Value {
 async fn ingest_event(
     runtime: &Arc<StdMutex<CodexRuntime>>,
     log_source: &StructuredLogSource,
+    completion_sink: Option<&CodexCompletionSink>,
     event: ThreadEvent,
 ) {
     log_source.write(raw_row(&event)).await;
@@ -1297,12 +1343,36 @@ async fn ingest_event(
                 attached.active_turn_id = Some(turn.id.clone());
             });
         }
+        TurnEvent::ItemCompleted(ThreadItem::AgentMessage { text, .. }) => {
+            if let Some(turn_id) = event.turn_id.as_ref() {
+                update_attached(runtime, |attached| {
+                    attached
+                        .last_agent_messages
+                        .insert(turn_id.clone(), text.clone());
+                });
+            }
+        }
         TurnEvent::TurnCompleted { turn } => {
-            update_attached(runtime, |attached| {
-                if attached.active_turn_id.as_deref() == Some(&turn.id) {
-                    attached.active_turn_id = None;
-                }
-            });
+            let last_message = {
+                let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
+                state.attached.as_mut().and_then(|attached| {
+                    if attached.active_turn_id.as_deref() == Some(&turn.id) {
+                        attached.active_turn_id = None;
+                    }
+                    attached.last_agent_messages.remove(&turn.id)
+                })
+            };
+            if let Some(text) = last_message
+                && let Some(sink) = completion_sink
+            {
+                let _ = sink
+                    .event_tx
+                    .send(SessionEvent::Completed {
+                        agent_id: sink.agent_id,
+                        text,
+                    })
+                    .await;
+            }
         }
         TurnEvent::ApprovalRequired(request) => {
             let request_id = request.request_id();
@@ -1573,12 +1643,15 @@ impl AgentBackend for CodexSession {
         self.created_at
     }
 
-    fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+    fn start(
+        &mut self,
+        event_tx: &tokio::sync::mpsc::Sender<SessionEvent>,
+    ) -> Result<tokio::task::JoinHandle<()>> {
         if self.started {
             return Err(anyhow!("Codex session {} already started", self.agent_id));
         }
         self.started = true;
-        self.start_task(self.stop_tx.subscribe())
+        self.start_task(self.stop_tx.subscribe(), event_tx)
     }
 
     async fn stop(&self, _policy: StopPolicy) {
@@ -1612,6 +1685,10 @@ impl AgentBackend for CodexSession {
 
     fn agent_type(&self) -> &'static str {
         AGENT_TYPE_CODEX
+    }
+
+    fn parent(&self) -> Option<AgentParent> {
+        self.parent
     }
 
     fn io_protocols(&self) -> Vec<String> {
@@ -1671,7 +1748,7 @@ impl AgentBackend for CodexSession {
             thread_id,
             daemon_mode,
             created_at: self.created_at,
-            parent: None,
+            parent: self.parent,
             working_on: None,
         })
     }
@@ -1697,7 +1774,7 @@ impl AgentBackend for CodexSession {
 mod tests {
     use futures_util::{SinkExt, StreamExt};
     use replay_support::{
-        ReplayAdvance, ReplayOptions, load_script, replay_transport_with_controller,
+        IoDirection, ReplayAdvance, ReplayOptions, load_script, replay_transport_with_controller,
     };
     use tokio::io::{
         AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf, duplex, split,
@@ -2166,6 +2243,7 @@ mod tests {
                     socket_path: PathBuf::from("/tmp/missing-test-codex.sock"),
                 }),
                 active_turn_id: None,
+                last_agent_messages: HashMap::new(),
                 pending: HashMap::new(),
                 applied_name_generation: None,
             });
@@ -2261,6 +2339,7 @@ mod tests {
                     socket_path: PathBuf::from("/tmp/test.sock"),
                 }),
                 active_turn_id: None,
+                last_agent_messages: HashMap::new(),
                 pending: HashMap::new(),
                 applied_name_generation: materialized.applied_name_generation,
             });
@@ -2301,6 +2380,7 @@ mod tests {
                     socket_path: PathBuf::from("/tmp/test.sock"),
                 }),
                 active_turn_id: None,
+                last_agent_messages: HashMap::new(),
                 pending: HashMap::new(),
                 applied_name_generation: Some(0),
             }),
@@ -2452,8 +2532,11 @@ mod tests {
             shared.clone(),
             runtime.clone(),
             source,
-            ThreadConfig::default(),
-            None,
+            CodexIngestOptions {
+                thread_config: ThreadConfig::default(),
+                thread_id: None,
+                completion_sink: None,
+            },
             stop_rx,
         ));
 
@@ -2568,6 +2651,7 @@ mod tests {
                 daemon_mode: Some("spawned-private".into()),
                 live: None,
                 active_turn_id: None,
+                last_agent_messages: HashMap::new(),
                 pending: HashMap::new(),
                 applied_name_generation: Some(0),
             });
@@ -2673,6 +2757,7 @@ mod tests {
                 daemon_mode: Some("test".into()),
                 live: None,
                 active_turn_id: Some("turn-1".into()),
+                last_agent_messages: HashMap::new(),
                 pending: HashMap::from([
                     (RequestId::Integer(1), PendingRequestKind::Approval),
                     (
@@ -2719,6 +2804,7 @@ mod tests {
                 daemon_mode: Some("test".into()),
                 live: None,
                 active_turn_id: None,
+                last_agent_messages: HashMap::new(),
                 pending: HashMap::new(),
                 applied_name_generation: Some(0),
             }),
@@ -2858,6 +2944,7 @@ mod tests {
                     socket_path: PathBuf::from("/tmp/test-codex.sock"),
                 }),
                 active_turn_id: None,
+                last_agent_messages: HashMap::new(),
                 pending: HashMap::new(),
                 applied_name_generation: Some(0),
             }),
@@ -2894,7 +2981,7 @@ mod tests {
         source: &StructuredLogSource,
     ) -> ThreadEvent {
         let event = events.next().await.unwrap().expect("fixture event");
-        ingest_event(runtime, source, event.clone()).await;
+        ingest_event(runtime, source, None, event.clone()).await;
         event
     }
 
@@ -2911,9 +2998,115 @@ mod tests {
                 socket_path: PathBuf::from("/tmp/test-codex.sock"),
             }),
             active_turn_id: None,
+            last_agent_messages: HashMap::new(),
             pending: HashMap::new(),
             applied_name_generation: Some(0),
         });
+    }
+
+    #[tokio::test]
+    async fn a2a_codex_completion_replays_last_agent_message() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/codex_backend/a2a_last_message.io.jsonl");
+        let mut script = load_script(fixture);
+        let initialize = script
+            .iter_mut()
+            .find(|event| event.direction == IoDirection::Write)
+            .expect("fixture has initialize request");
+        let mut initialize_value: Value =
+            serde_json::from_str(&initialize.line).expect("initialize request is JSON");
+        initialize_value["params"]["clientInfo"]["title"] = Value::Null;
+        initialize.line = initialize_value.to_string();
+        let (reader, writer, controller) =
+            replay_transport_with_controller(script, ReplayOptions::default());
+        let driver = tokio::spawn(async move {
+            while let ReplayAdvance::Advanced { .. } | ReplayAdvance::BlockedOnWrite =
+                controller.advance_one().await
+            {
+                tokio::task::yield_now().await;
+            }
+        });
+        let client = tokio::time::timeout(
+            Duration::from_secs(2),
+            Codex::from_io(
+                reader,
+                writer,
+                CodexConfig {
+                    client_name: "amux-a2a-capture".into(),
+                    client_version: "0.1.0".into(),
+                    ..CodexConfig::default()
+                },
+            ),
+        )
+        .await
+        .expect("initialize replay timed out")
+        .expect("initialize replay failed");
+        let thread = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.start_thread(ThreadConfig {
+                cwd: Some("[SCRATCH]/project".into()),
+                model: Some("gpt-5.6-sol".into()),
+                ..ThreadConfig::default()
+            }),
+        )
+        .await
+        .expect("thread/start replay timed out")
+        .expect("thread/start replay failed");
+        let mut events = thread.events().await.expect("thread events");
+
+        let mut session = session();
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(4);
+        assert!(session.completion_sink(&event_tx).is_none());
+        session.parent = Some(AgentParent {
+            agent_id: Uuid::from_u128(2),
+            host_id: Uuid::from_u128(3),
+        });
+        attach_runtime(&session.runtime, &client, &thread);
+        let source = StructuredLogSource::new(64);
+        let completion_sink = session
+            .completion_sink(&event_tx)
+            .expect("parent agent has a completion sink");
+
+        thread
+            .start_turn(
+                "Send two separate assistant messages in this turn: first exactly C14_FIRST in commentary, then exactly C14_SECOND as the final answer.",
+            )
+            .await
+            .expect("turn/start replay failed");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let event = events.next().await.expect("thread event").expect("event");
+                let turn_completed = matches!(&event.event, TurnEvent::TurnCompleted { .. });
+                ingest_event(&session.runtime, &source, Some(&completion_sink), event).await;
+                if turn_completed {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("completion replay timed out");
+
+        assert!(matches!(
+            event_rx.recv().await,
+            Some(SessionEvent::Completed { agent_id, text })
+                if agent_id == session.agent_id && text == "C14_SECOND"
+        ));
+        assert!(
+            event_rx.try_recv().is_err(),
+            "completion emitted more than once"
+        );
+        {
+            let state = session.runtime.lock().unwrap();
+            let attached = state.attached.as_ref().expect("attached runtime");
+            assert!(attached.active_turn_id.is_none());
+            assert!(attached.last_agent_messages.is_empty());
+        }
+
+        tokio::time::timeout(Duration::from_secs(2), driver)
+            .await
+            .expect("replay driver timed out")
+            .expect("replay driver failed");
+        client.close().await;
     }
 
     fn project_row(row: &Value) -> Value {

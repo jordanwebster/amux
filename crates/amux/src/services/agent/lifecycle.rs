@@ -35,26 +35,24 @@ async fn handle_session_event(
     event: SessionEvent,
 ) {
     match event {
+        SessionEvent::Completed { agent_id, text } => {
+            let mut state = agent_state.write().await;
+            let envelope = state.local_agents.get(&agent_id).and_then(|context| {
+                parent_envelope(&context.session, host_id, EnvelopeKind::Completed, text)
+            });
+            if let Some(envelope) = envelope {
+                state.outbound_envelopes.emit(envelope);
+            }
+        }
         SessionEvent::Ended { agent_id } => {
             let mut state = agent_state.write().await;
             let envelope = state.local_agents.get(&agent_id).and_then(|context| {
-                let session = &context.session;
-                Some(Envelope {
-                    id: Uuid::new_v4(),
-                    context: None,
-                    from: Sender::Agent(AgentSender {
-                        agent_id,
-                        host_id,
-                        name: session
-                            .name()
-                            .map(str::to_string)
-                            .unwrap_or_else(|| agent_id.to_string()),
-                        kind: session.agent_type().to_string(),
-                    }),
-                    to: session.parent()?,
-                    kind: EnvelopeKind::Exited,
-                    text: String::new(),
-                })
+                parent_envelope(
+                    &context.session,
+                    host_id,
+                    EnvelopeKind::Exited,
+                    String::new(),
+                )
             });
             if let Some(envelope) = envelope {
                 state.outbound_envelopes.emit(envelope);
@@ -115,6 +113,30 @@ async fn handle_session_event(
     }
 }
 
+pub(super) fn parent_envelope(
+    session: &AgentSession,
+    host_id: Uuid,
+    kind: EnvelopeKind,
+    text: String,
+) -> Option<Envelope> {
+    Some(Envelope {
+        id: Uuid::new_v4(),
+        context: None,
+        from: Sender::Agent(AgentSender {
+            agent_id: session.agent_id(),
+            host_id,
+            name: session
+                .name()
+                .map(str::to_string)
+                .unwrap_or_else(|| session.agent_id().to_string()),
+            kind: session.agent_type().to_string(),
+        }),
+        to: session.parent()?,
+        kind,
+        text,
+    })
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum CreateAgentError {
     #[error("agent limit reached ({max} max)")]
@@ -159,7 +181,7 @@ pub(crate) async fn create_agent_record(
 
         let mut session = new_agent(&req, &state.deps)
             .map_err(|error| CreateAgentError::Start(error.to_string()))?;
-        let exit_handle = session.start().map_err(|error| {
+        let exit_handle = session.start(event_tx).map_err(|error| {
             CreateAgentError::Start(format!("failed to start local agent {agent_id}: {error}"))
         })?;
         let info = session.to_agent(host_id);
@@ -312,7 +334,7 @@ pub(crate) async fn resume_agents(
         tracing::info!(agent_id = %agent_id, name = ?name, "resuming agent");
 
         let mut session = agent_from_suspended(sa, &deps);
-        match session.start() {
+        match session.start(event_tx) {
             Ok(exit_handle) => {
                 let info = session.to_agent(host_id);
                 let mut session = Some(session);

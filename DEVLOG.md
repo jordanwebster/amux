@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Codex child turns report their final assistant message to the
+parent.** Codex event ingestion retains the latest completed agent-message text
+for each active turn. When that turn completes, child sessions publish the text
+through the daemon's session-event path as a completed envelope addressed to
+their recorded parent; standalone sessions publish nothing. An offline replay
+of the captured two-message Codex 0.148.0 turn proves the final answer wins over
+earlier commentary and is emitted exactly once.
+
 2026-08-23 — **The Codex SDK exposes the captured agent-message carriers.**
 Thread creation accepts typed dynamic function tools and serializes them on the
 experimental `dynamicTools` field. Thread handles can append raw model-history
