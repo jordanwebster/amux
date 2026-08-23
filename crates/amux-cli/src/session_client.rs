@@ -12,6 +12,7 @@ use amux::{
     SubscribeSessionRequest, TerminalSize,
 };
 use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
 use crossterm::terminal;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -324,63 +325,193 @@ pub(crate) async fn attach_for_ui(
     })
 }
 
-/// List all running agents
-pub async fn list_agents(config: &Config) -> Result<()> {
+/// List running agents, folding children into their family unless requested.
+pub async fn list_agents(all: bool, config: &Config) -> Result<()> {
     let rpc = require_running_client(config, Some("amux list")).await?;
-    let mut agents = rpc.list_agents().await?;
+    let agents = rpc.list_agents().await?;
     if agents.is_empty() {
         println!("No agents running.");
     } else {
-        agents.sort_by(|a, b| {
-            let a_id = a.id.to_string();
-            let b_id = b.id.to_string();
-            let a_name = a.name.as_deref().unwrap_or(&a_id);
-            let b_name = b.name.as_deref().unwrap_or(&b_id);
-            a_name.cmp(b_name)
-        });
-        let multiple_hosts = agents
-            .iter()
-            .map(|agent| agent.host_id)
-            .collect::<HashSet<_>>()
-            .len()
-            > 1;
-        let mut name_counts = HashMap::new();
-        for agent in &agents {
-            if let Some(name) = &agent.name {
-                *name_counts.entry(name.clone()).or_insert(0usize) += 1;
-            }
-        }
         println!("Running agents:");
-        for agent in agents {
-            let agent_id_str = agent.id.to_string();
-            let display_name = agent.name.as_deref().unwrap_or(&agent_id_str);
-            let name_is_ambiguous = agent
-                .name
-                .as_ref()
-                .and_then(|name| name_counts.get(name))
-                .is_some_and(|count| *count > 1);
-            let mut labels = Vec::new();
-            if name_is_ambiguous {
-                labels.push(format!("id {}", agent.id));
-            }
-            if multiple_hosts {
-                labels.push(format!("host {}", short_uuid(agent.host_id)));
-            }
-            if labels.is_empty() {
-                println!("  {} - {}", display_name, agent.working_dir.display());
-            } else {
-                println!(
-                    "  {} ({}) - {}",
-                    display_name,
-                    labels.join(", "),
-                    agent.working_dir.display()
-                );
-            }
+        for line in agent_list_lines(&agents, all, Utc::now()) {
+            println!("{line}");
         }
     }
 
     print_update_banner(&config.state_path);
     Ok(())
+}
+
+type AgentKey = (Uuid, Uuid);
+
+fn agent_key(agent: &amux::Agent) -> AgentKey {
+    (agent.id, agent.host_id)
+}
+
+fn display_name(agent: &amux::Agent) -> String {
+    agent.name.clone().unwrap_or_else(|| agent.id.to_string())
+}
+
+fn sort_agent_indexes(indexes: &mut [usize], agents: &[amux::Agent]) {
+    indexes.sort_by(|left, right| {
+        display_name(&agents[*left])
+            .cmp(&display_name(&agents[*right]))
+            .then_with(|| agent_key(&agents[*left]).cmp(&agent_key(&agents[*right])))
+    });
+}
+
+fn descendant_count(
+    root: AgentKey,
+    children: &HashMap<AgentKey, Vec<usize>>,
+    agents: &[amux::Agent],
+) -> usize {
+    let mut seen = HashSet::from([root]);
+    let mut pending = vec![root];
+    let mut count = 0;
+    while let Some(parent) = pending.pop() {
+        for index in children.get(&parent).into_iter().flatten() {
+            let child = agent_key(&agents[*index]);
+            if seen.insert(child) {
+                count += 1;
+                pending.push(child);
+            }
+        }
+    }
+    count
+}
+
+fn clipped_working_on(text: &str) -> String {
+    const WIDTH: usize = 40;
+    let text = text.lines().next().unwrap_or_default().trim();
+    if text.chars().count() <= WIDTH {
+        return text.to_string();
+    }
+    let mut clipped: String = text.chars().take(WIDTH.saturating_sub(1)).collect();
+    clipped.push('…');
+    clipped
+}
+
+struct ListRender<'a> {
+    agents: &'a [amux::Agent],
+    children: HashMap<AgentKey, Vec<usize>>,
+    name_counts: HashMap<String, usize>,
+    multiple_hosts: bool,
+    all: bool,
+    now: DateTime<Utc>,
+    visited: HashSet<AgentKey>,
+    lines: Vec<String>,
+}
+
+impl ListRender<'_> {
+    fn push(&mut self, index: usize, depth: usize) {
+        let agent = &self.agents[index];
+        let key = agent_key(agent);
+        if !self.visited.insert(key) {
+            return;
+        }
+
+        let mut labels = Vec::new();
+        if agent
+            .name
+            .as_ref()
+            .and_then(|name| self.name_counts.get(name))
+            .is_some_and(|count| *count > 1)
+        {
+            labels.push(format!("id {}", agent.id));
+        }
+        if self.multiple_hosts {
+            labels.push(format!("host {}", short_uuid(agent.host_id)));
+        }
+        let label = if labels.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", labels.join(", "))
+        };
+        let child_count = descendant_count(key, &self.children, self.agents);
+        let family = (depth == 0 && child_count > 0).then(|| format!(" ⋯{child_count}"));
+        let working = agent.working_on.as_ref().and_then(|working| {
+            let text = clipped_working_on(&working.text);
+            (!text.is_empty()).then(|| {
+                format!(
+                    " · {text} {}",
+                    amux_ui::format_relative_age(self.now, working.updated_at)
+                )
+            })
+        });
+        self.lines.push(format!(
+            "{}{}{}{} - {}{}",
+            "  ".repeat(depth + 1),
+            display_name(agent),
+            family.unwrap_or_default(),
+            label,
+            agent.working_dir.display(),
+            working.unwrap_or_default()
+        ));
+
+        if self.all {
+            let child_indexes = self.children.get(&key).cloned().unwrap_or_default();
+            for child in child_indexes {
+                self.push(child, depth + 1);
+            }
+        } else {
+            let mut pending = vec![key];
+            while let Some(parent) = pending.pop() {
+                for child in self.children.get(&parent).into_iter().flatten() {
+                    let child = agent_key(&self.agents[*child]);
+                    if self.visited.insert(child) {
+                        pending.push(child);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn agent_list_lines(agents: &[amux::Agent], all: bool, now: DateTime<Utc>) -> Vec<String> {
+    let known: HashSet<_> = agents.iter().map(agent_key).collect();
+    let mut children: HashMap<AgentKey, Vec<usize>> = HashMap::new();
+    let mut roots = Vec::new();
+    let mut name_counts = HashMap::new();
+    for (index, agent) in agents.iter().enumerate() {
+        if let Some(name) = &agent.name {
+            *name_counts.entry(name.clone()).or_insert(0) += 1;
+        }
+        match agent.parent.map(|parent| (parent.agent_id, parent.host_id)) {
+            Some(parent) if known.contains(&parent) && parent != agent_key(agent) => {
+                children.entry(parent).or_default().push(index);
+            }
+            _ => roots.push(index),
+        }
+    }
+    sort_agent_indexes(&mut roots, agents);
+    for indexes in children.values_mut() {
+        sort_agent_indexes(indexes, agents);
+    }
+
+    let mut render = ListRender {
+        agents,
+        children,
+        name_counts,
+        multiple_hosts: agents
+            .iter()
+            .map(|agent| agent.host_id)
+            .collect::<HashSet<_>>()
+            .len()
+            > 1,
+        all,
+        now,
+        visited: HashSet::new(),
+        lines: Vec::new(),
+    };
+    for root in roots {
+        render.push(root, 0);
+    }
+    let mut remainder: Vec<_> = (0..agents.len()).collect();
+    sort_agent_indexes(&mut remainder, agents);
+    for index in remainder {
+        render.push(index, 0);
+    }
+    render.lines
 }
 
 fn short_uuid(id: Uuid) -> String {
@@ -982,6 +1113,64 @@ mod attach {
             parent: None,
             working_on: None,
         }
+    }
+
+    fn child_agent(id: u128, name: &str, parent: u128) -> amux::Agent {
+        let mut agent = listed_agent(id, name);
+        agent.parent = Some(amux::AgentParent {
+            agent_id: Uuid::from_u128(parent),
+            host_id: Uuid::from_u128(99),
+        });
+        agent
+    }
+
+    #[test]
+    fn a2a_list_collapses_families_and_states_current_work() {
+        use chrono::TimeZone as _;
+
+        let now = chrono::Utc.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+        let mut parent = listed_agent(1, "alpha");
+        parent.working_on = Some(amux::WorkingOn {
+            text: "coordinating the release\nprivate detail".to_string(),
+            updated_at: now - chrono::Duration::minutes(2),
+        });
+        let agents = [
+            parent,
+            child_agent(2, "beta", 1),
+            child_agent(3, "gamma", 2),
+            listed_agent(4, "solo"),
+        ];
+
+        let lines = super::agent_list_lines(&agents, false, now);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0],
+            format!(
+                "  alpha ⋯2 - {} · coordinating the release 2m",
+                std::env::temp_dir().display()
+            )
+        );
+        assert_eq!(
+            lines[1],
+            format!("  solo - {}", std::env::temp_dir().display())
+        );
+        assert!(!lines.iter().any(|line| line.contains("private detail")));
+    }
+
+    #[test]
+    fn a2a_list_all_indents_every_generation() {
+        let now = chrono::Utc::now();
+        let agents = [
+            child_agent(3, "gamma", 2),
+            listed_agent(1, "alpha"),
+            child_agent(2, "beta", 1),
+        ];
+
+        let lines = super::agent_list_lines(&agents, true, now);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].starts_with("  alpha ⋯2 - "));
+        assert!(lines[1].starts_with("    beta - "));
+        assert!(lines[2].starts_with("      gamma - "));
     }
 
     #[tokio::test]

@@ -4647,3 +4647,11 @@ as it arrived rather than being shortened into a claim. Codex's outbound
 `send` now reads as the target and a summary, the way Claude's already did,
 while amux's other tools keep the generic tool shape: spawning and stopping
 are work, not talk.
+
+2026-08-23 — **Made the command-line fleet family-aware.** `amux list` now
+shows one row per family with a count of the hidden descendants, while
+`amux list --all` expands the same stable tree and indents every generation.
+Each visible row also carries the agent's first-line work claim, bounded to a
+small column and stamped with its age; an unset claim stays absent. Missing
+parents and malformed loops remain visible instead of losing inventory, and
+duplicate names and multi-host labels keep their previous disambiguation.

@@ -89,9 +89,13 @@ enum Commands {
         target: String,
     },
 
-    /// List all running agent sessions
+    /// List running agent sessions, folding child agents into their parent
     #[command(alias = "ls")]
-    List,
+    List {
+        /// Show child agents, indented beneath their parent
+        #[arg(long)]
+        all: bool,
+    },
 
     /// Manage the amux server lifecycle
     Server {
@@ -410,7 +414,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             session_client::attach(name.as_deref(), &config).await?;
         }
         Commands::Rm { target } => session_client::remove_agent(&target, &config).await?,
-        Commands::List => session_client::list_agents(&config).await?,
+        Commands::List { all } => session_client::list_agents(all, &config).await?,
         Commands::Server { command } => match command {
             ServerCommands::Start {
                 cloud, foreground, ..
@@ -1149,6 +1153,21 @@ mod tests {
         let flag = Cli::try_parse_from(["amux", "rm", "exact-name", "--force"])
             .expect_err("rm has no confirmation flags");
         assert_eq!(flag.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn list_all_is_an_explicit_opt_in() {
+        let cli = Cli::try_parse_from(["amux", "list"]).unwrap();
+        let Some(Commands::List { all }) = cli.command else {
+            panic!("expected list command");
+        };
+        assert!(!all);
+
+        let cli = Cli::try_parse_from(["amux", "list", "--all"]).unwrap();
+        let Some(Commands::List { all }) = cli.command else {
+            panic!("expected list command");
+        };
+        assert!(all);
     }
 
     #[test]
