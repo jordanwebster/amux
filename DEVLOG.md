@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude agent messages have a safe PTY carrier.** Daemon-authored
+message envelopes are submitted through Claude's bracketed-paste program with
+the verified render delay and Enter terminator. The carrier shares the PTY
+program executor with structured input, normalizes carriage returns exactly as
+the composer does, and refuses escape, tab, NUL, and other unsupported control
+characters before writing any bytes.
+
 2026-08-23 — **Claude sessions own their native name and inbox socket flags.**
 Every spawned Claude process receives the amux agent name, with the agent UUID
 as the unnamed fallback. Claude Code versions at or above 2.1.224 also receive

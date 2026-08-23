@@ -7,10 +7,12 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::ClaudeSession;
+use super::input::{paste_program, send_pty_program};
 use crate::agents::claude::io;
 use crate::agents::{
-    AGENT_TYPE_CLAUDE, AgentBackend, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
-    SessionEvent, StopPolicy, StructuredInput, StructuredLogSource, terminal_io_protocols,
+    AGENT_TYPE_CLAUDE, AgentBackend, Delivery, DeliveryError, HookError, HookOutcome,
+    LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredInput,
+    StructuredLogSource, terminal_io_protocols,
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
@@ -75,6 +77,22 @@ impl AgentBackend for ClaudeSession {
         Ok(self.pty.clone())
     }
 
+    async fn deliver(
+        &self,
+        envelope: &crate::envelope::Envelope,
+    ) -> std::result::Result<Delivery, DeliveryError> {
+        let pty = self
+            .pty
+            .as_ref()
+            .ok_or_else(|| DeliveryError::Failed("Claude PTY is unavailable".to_string()))?;
+        let program = paste_program(&crate::envelope::format(envelope))
+            .map_err(|error| DeliveryError::Failed(error.to_string()))?;
+        send_pty_program(pty, &program)
+            .await
+            .map_err(|error| DeliveryError::Failed(error.to_string()))?;
+        Ok(Delivery::Pty)
+    }
+
     fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {
         Some(Box::new(self.structured_input_target()))
     }
@@ -118,5 +136,61 @@ impl AgentBackend for ClaudeSession {
 
     fn debug_json(&self, verbose: bool) -> serde_json::Result<serde_json::Value> {
         serde_json::to_value(DebugView::new(self, verbose))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::agents::{AgentParent, AgentType, CreateAgentRequest};
+    use crate::envelope::{Envelope, EnvelopeKind, Sender};
+
+    #[tokio::test]
+    async fn a2a_pty_carrier_delivers_the_tagged_envelope_program() {
+        let recipient_id = Uuid::new_v4();
+        let pty = PtyHandle::test_echo();
+        let mut output = pty.subscribe_with_query(None).await.unwrap();
+        let mut session = ClaudeSession::new(
+            &CreateAgentRequest {
+                agent_id: recipient_id,
+                host_id: None,
+                name: Some("recipient".to_string()),
+                agent_type: AgentType::Claude,
+                working_dir: PathBuf::from("/work"),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
+            },
+            PathBuf::from("/runtime"),
+        );
+        session.pty = Some(pty);
+        let envelope = Envelope {
+            id: Uuid::new_v4(),
+            context: None,
+            from: Sender::Human,
+            to: AgentParent {
+                agent_id: recipient_id,
+                host_id: Uuid::new_v4(),
+            },
+            kind: EnvelopeKind::Message,
+            text: "hello from the fleet".to_string(),
+        };
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), session.deliver(&envelope))
+                .await
+                .unwrap()
+                .unwrap(),
+            Delivery::Pty
+        );
+        assert_eq!(
+            output.read().await.unwrap(),
+            format!("\x1b[200~{}\x1b[201~", crate::envelope::format(&envelope)).into_bytes()
+        );
+        assert_eq!(output.read().await.unwrap(), b"\r");
     }
 }

@@ -8,11 +8,58 @@ use super::core::ClaudeSession;
 use crate::agents::{PtyHandle, StructuredInput, StructuredLogSource};
 use crate::protocol::ProtocolError;
 
+const PASTE_BEGIN: &[u8] = b"\x1b[200~";
+const PASTE_END: &[u8] = b"\x1b[201~";
+const ENTER: &[u8] = b"\r";
+const AFTER_PASTE_MS: u32 = 400;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) enum PtyInput {
     Bytes(Vec<u8>),
     Delay(u32),
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub(super) enum PasteProgramError {
+    #[error("pasted agent messages must not contain control characters other than newlines")]
+    ControlCharacter,
+}
+
+/// Encode text as the same bracketed-paste submission used by the structured
+/// Claude composer: paste block, a short render delay, then Enter. Rejecting
+/// control characters keeps an embedded escape byte from ending the paste and
+/// turning the remainder into live terminal input.
+pub(super) fn paste_program(text: &str) -> Result<Vec<PtyInput>, PasteProgramError> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    if text
+        .chars()
+        .any(|character| character.is_control() && character != '\n')
+    {
+        return Err(PasteProgramError::ControlCharacter);
+    }
+
+    let mut paste = Vec::with_capacity(PASTE_BEGIN.len() + text.len() + PASTE_END.len());
+    paste.extend_from_slice(PASTE_BEGIN);
+    paste.extend_from_slice(text.as_bytes());
+    paste.extend_from_slice(PASTE_END);
+    Ok(vec![
+        PtyInput::Bytes(paste),
+        PtyInput::Delay(AFTER_PASTE_MS),
+        PtyInput::Bytes(ENTER.to_vec()),
+    ])
+}
+
+pub(super) async fn send_pty_program(pty: &PtyHandle, actions: &[PtyInput]) -> anyhow::Result<()> {
+    for action in actions {
+        match action {
+            PtyInput::Bytes(bytes) => pty.send_input(bytes.clone()).await?,
+            PtyInput::Delay(ms) => {
+                tokio::time::sleep(Duration::from_millis(u64::from((*ms).min(5000)))).await;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn sanitize_resume_args(args: Vec<String>) -> Vec<String> {
@@ -102,22 +149,11 @@ impl StructuredInput for ClaudeStructuredInputTarget {
             "structured input accepted"
         );
 
-        for action in &actions {
-            match action {
-                PtyInput::Bytes(bytes) => {
-                    pty.send_input(bytes.clone()).await.map_err(|e| {
-                        ProtocolError::ServerError {
-                            message: e.to_string(),
-                        }
-                    })?;
-                }
-                PtyInput::Delay(ms) => {
-                    let clamped = (*ms).min(5000);
-                    tokio::time::sleep(Duration::from_millis(u64::from(clamped))).await;
-                }
-            }
-        }
-        Ok(())
+        send_pty_program(pty, &actions)
+            .await
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })
     }
 }
 
@@ -127,6 +163,35 @@ impl ClaudeSession {
             readonly: self.readonly,
             log_source: self.log_source(),
             pty: self.pty.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a2a_pty_carrier_encodes_paste_block_delay_and_enter() {
+        assert_eq!(
+            paste_program("<amux from=\"human\">\r\nhello\r</amux>").unwrap(),
+            vec![
+                PtyInput::Bytes(
+                    b"\x1b[200~<amux from=\"human\">\nhello\n</amux>\x1b[201~".to_vec()
+                ),
+                PtyInput::Delay(400),
+                PtyInput::Bytes(b"\r".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a2a_pty_carrier_refuses_control_bytes() {
+        for text in ["tab\there", "escape\x1b[201~rest", "nul\0rest"] {
+            assert_eq!(
+                paste_program(text),
+                Err(PasteProgramError::ControlCharacter)
+            );
         }
     }
 }
