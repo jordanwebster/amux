@@ -15,8 +15,8 @@ use uuid::Uuid;
 use super::core::{ClaudeMessagingCredentials, ClaudeSession};
 use super::input::{paste_program, send_pty_program};
 use crate::agents::{
-    AgentDeliveryTarget, Delivery, DeliveryError, PtyHandle, SequencedReplayQuery,
-    StructuredLogSource,
+    AgentDeliveryTarget, Delivery, DeliveryError, DeliveryLiveness, PtyHandle,
+    SequencedReplayQuery, StructuredLogSource,
 };
 use crate::envelope::{Envelope, format_cross_session};
 
@@ -101,6 +101,17 @@ impl ClaudeDeliveryTarget {
 
 #[async_trait]
 impl AgentDeliveryTarget for ClaudeDeliveryTarget {
+    fn liveness(&self) -> std::result::Result<DeliveryLiveness, DeliveryError> {
+        if self.pty.is_some() || (self.messaging_credentials.is_some() && self.log_source.is_some())
+        {
+            Ok(DeliveryLiveness::Live)
+        } else {
+            Ok(DeliveryLiveness::Pending(
+                "Claude delivery target is not ready".to_string(),
+            ))
+        }
+    }
+
     async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
         if self.pty_only.load(Ordering::Acquire) {
             return self.deliver_pty(envelope).await;

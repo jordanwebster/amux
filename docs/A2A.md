@@ -54,12 +54,14 @@ available.
 ## Spawning and lifecycle
 
 `spawn` creates the child record with the authenticated caller as its parent,
-starts the backend, then sends the initial prompt through the same message
-carrier used later. The prompt therefore arrives with parent provenance
-instead of masquerading as human input. With no explicit `cwd`, the child
-inherits the parent's working directory. Claude children inherit only the
-parent's permission-mode arguments; Codex children inherit approval and
-sandbox policy.
+starts the backend, waits up to 30 seconds for its delivery target to become
+live, then sends the initial prompt through the same message carrier used
+later. The prompt therefore arrives with parent provenance instead of
+masquerading as human input. If readiness or delivery fails, spawn removes the
+new child and reports failure rather than leaving an orphan. With no explicit
+`cwd`, the child inherits the parent's working directory. Claude children
+inherit only the parent's permission-mode arguments; Codex children inherit
+approval and sandbox policy.
 
 When a child turn ends, its last assistant message is sent to the parent as a
 `completed` envelope. Claude supplies the text through the `Stop` hook; Codex

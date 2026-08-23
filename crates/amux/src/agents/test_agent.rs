@@ -4,6 +4,9 @@
 //! (typically `test-agent`) without Claude-specific environment or hooks.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -15,8 +18,8 @@ use uuid::Uuid;
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agents::{
     AGENT_TYPE_TEST_AGENT, AgentBackend, AgentDeliveryTarget, AgentParent, CreateAgentRequest,
-    Delivery, DeliveryError, LocalAgentNameSource, SessionEvent, StopPolicy, StructuredLogSource,
-    TerminalSize, terminal_io_protocols,
+    Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource, SessionEvent, StopPolicy,
+    StructuredLogSource, TerminalSize, terminal_io_protocols,
 };
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
@@ -27,6 +30,9 @@ const STRUCTURED_LOG_RETENTION: usize = 1000;
 #[cfg(any(test, feature = "testnet"))]
 pub(crate) mod io {
     pub(crate) const TEST_ECHO_COMMAND: &str = "__amux_test_echo__";
+    pub(crate) const TEST_DELAYED_DELIVERY_COMMAND: &str = "__amux_test_delayed_delivery__";
+    pub(crate) const TEST_FAILED_DELIVERY_COMMAND: &str = "__amux_test_failed_delivery__";
+    pub(crate) const TEST_UNAVAILABLE_DELIVERY_COMMAND: &str = "__amux_test_unavailable_delivery__";
     pub(crate) const TEST_ECHO_V1: &str = "test_echo_v1";
 }
 
@@ -38,6 +44,7 @@ pub(crate) struct TestAgentSession {
     pub(super) parent: Option<AgentParent>,
     pub(super) pty: Option<PtyHandle>,
     log_source: Option<StructuredLogSource>,
+    delivery_ready: Arc<AtomicBool>,
 
     // Stored for deferred start()
     pub(super) terminal_size: Option<TerminalSize>,
@@ -46,14 +53,30 @@ pub(crate) struct TestAgentSession {
 
 struct TestAgentDeliveryTarget {
     pty: Option<PtyHandle>,
+    ready: Arc<AtomicBool>,
 }
 
 #[async_trait]
 impl AgentDeliveryTarget for TestAgentDeliveryTarget {
+    fn liveness(&self) -> std::result::Result<DeliveryLiveness, DeliveryError> {
+        if self.ready.load(Ordering::Acquire) {
+            Ok(DeliveryLiveness::Live)
+        } else {
+            Ok(DeliveryLiveness::Pending(
+                "test agent delivery target is not ready".to_string(),
+            ))
+        }
+    }
+
     async fn deliver(
         &self,
         envelope: &crate::envelope::Envelope,
     ) -> std::result::Result<Delivery, DeliveryError> {
+        if !self.ready.load(Ordering::Acquire) {
+            return Err(DeliveryError::Failed(
+                "test agent delivery target is not ready".to_string(),
+            ));
+        }
         let pty = self
             .pty
             .as_ref()
@@ -77,6 +100,7 @@ impl TestAgentSession {
             parent: req.parent,
             pty: None,
             log_source: None,
+            delivery_ready: Arc::new(AtomicBool::new(false)),
             terminal_size: req.terminal_size,
             created_at: Utc::now(),
         }
@@ -92,6 +116,7 @@ impl TestAgentSession {
             parent: None,
             pty: Some(PtyHandle::test_echo()),
             log_source: None,
+            delivery_ready: Arc::new(AtomicBool::new(true)),
             terminal_size: None,
             created_at: Utc::now(),
         }
@@ -110,6 +135,7 @@ impl TestAgentSession {
             parent: req.parent,
             pty: None,
             log_source: None,
+            delivery_ready: Arc::new(AtomicBool::new(false)),
             terminal_size: req.terminal_size,
             created_at,
         }
@@ -121,6 +147,26 @@ impl TestAgentSession {
         #[cfg(any(test, feature = "testnet"))]
         if self.command == io::TEST_ECHO_COMMAND {
             self.pty = Some(PtyHandle::test_echo());
+            self.delivery_ready.store(true, Ordering::Release);
+            return Ok(tokio::spawn(std::future::pending::<()>()));
+        }
+        #[cfg(any(test, feature = "testnet"))]
+        if self.command == io::TEST_DELAYED_DELIVERY_COMMAND {
+            self.pty = Some(PtyHandle::test_echo());
+            let ready = self.delivery_ready.clone();
+            return Ok(tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                ready.store(true, Ordering::Release);
+                std::future::pending::<()>().await;
+            }));
+        }
+        #[cfg(any(test, feature = "testnet"))]
+        if self.command == io::TEST_UNAVAILABLE_DELIVERY_COMMAND {
+            return Ok(tokio::spawn(std::future::pending::<()>()));
+        }
+        #[cfg(any(test, feature = "testnet"))]
+        if self.command == io::TEST_FAILED_DELIVERY_COMMAND {
+            self.delivery_ready.store(true, Ordering::Release);
             return Ok(tokio::spawn(std::future::pending::<()>()));
         }
 
@@ -136,6 +182,7 @@ impl TestAgentSession {
         let log_source = StructuredLogSource::new(STRUCTURED_LOG_RETENTION);
         let exit_log_source = log_source.clone();
         self.pty = Some(pty);
+        self.delivery_ready.store(true, Ordering::Release);
         self.log_source = Some(log_source);
         Ok(tokio::spawn(async move {
             let _ = exit_handle.await;
@@ -246,6 +293,7 @@ impl AgentBackend for TestAgentSession {
     fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
         Box::new(TestAgentDeliveryTarget {
             pty: self.pty.clone(),
+            ready: self.delivery_ready.clone(),
         })
     }
 
@@ -292,6 +340,7 @@ mod tests {
             parent: None,
             pty: None,
             log_source: Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION)),
+            delivery_ready: Arc::new(AtomicBool::new(false)),
             terminal_size: None,
             created_at: Utc::now(),
         };

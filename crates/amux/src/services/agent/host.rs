@@ -8,6 +8,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::{RwLock, mpsc};
@@ -336,6 +337,10 @@ impl LocalAgentHost for PtyAgentHost {
                 .map(|context| context.session.delivery_target())
                 .ok_or(ProtocolError::NoAgentFound)?
         };
+        delivery_target
+            .wait_until_live(Duration::from_secs(30))
+            .await
+            .map_err(delivery_error_to_protocol)?;
         match delivery_target.deliver(&envelope).await {
             Ok(delivery) => {
                 tracing::info!(
@@ -569,6 +574,7 @@ fn delivery_error_to_protocol(error: DeliveryError) -> ProtocolError {
         DeliveryError::UnsupportedAgentType(agent_type) => ProtocolError::Unimplemented {
             message: format!("{agent_type} agent message delivery is not implemented"),
         },
+        DeliveryError::FailedPrecondition(message) => ProtocolError::FailedPrecondition { message },
         DeliveryError::Failed(message) => ProtocolError::ServerError { message },
     }
 }

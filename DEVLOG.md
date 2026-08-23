@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Spawn delivers the first prompt or removes the child.**
+Message targets expose backend liveness, and delivery waits for up to 30
+seconds before sending. This covers Codex's interval between record creation
+and thread attachment. If readiness or the first delivery fails,
+`ClientService` stops and withdraws the new child before returning the error,
+so a failed spawn does not leave an orphan. A delayed test backend proves the
+wait path; permanently unavailable and live-but-rejecting backends prove both
+rollback paths.
+
+---
+
 2026-08-23 — **Every model-facing stop is enforced at the daemon boundary.**
 Claude MCP now carries its authenticated agent id into deletion, and
 `ClientService` accepts that delete only when the target records the caller as

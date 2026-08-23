@@ -22,8 +22,8 @@ use super::io::{self, CodexSdkV1Input};
 use crate::agent_tools;
 use crate::agents::{
     AGENT_TYPE_CODEX, AgentBackend, AgentDeliveryTarget, AgentParent, AgentToolRouter, CodexInput,
-    CreateAgentRequest, Delivery, DeliveryError, LocalAgentNameSource, PtyHandle, RawPtyTarget,
-    SessionEvent, SpawnInheritance, StopPolicy, StructuredLogSource, spawn_pty_agent,
+    CreateAgentRequest, Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource, PtyHandle,
+    RawPtyTarget, SessionEvent, SpawnInheritance, StopPolicy, StructuredLogSource, spawn_pty_agent,
 };
 use crate::envelope::{Envelope, Sender};
 use crate::suspend::SuspendedAgent;
@@ -1596,6 +1596,22 @@ impl CodexDeliveryTarget {
 
 #[async_trait]
 impl AgentDeliveryTarget for CodexDeliveryTarget {
+    fn liveness(&self) -> std::result::Result<DeliveryLiveness, DeliveryError> {
+        let state = self
+            .runtime
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        match state.attached.as_ref() {
+            Some(attached) if attached.live.is_some() => Ok(DeliveryLiveness::Live),
+            Some(_) => Ok(DeliveryLiveness::Pending(
+                "Codex thread is read-only until reconnect succeeds".to_string(),
+            )),
+            None => Ok(DeliveryLiveness::Pending(
+                "Codex thread is not attached".to_string(),
+            )),
+        }
+    }
+
     async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
         self.deliver_envelope(envelope)
             .await

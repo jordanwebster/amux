@@ -15,6 +15,7 @@
 
 use std::path::Path;
 use std::sync::{Arc, RwLock as StdRwLock};
+use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -73,8 +74,15 @@ impl Delivery {
 pub(crate) enum DeliveryError {
     #[error("{0} agents do not support message delivery")]
     UnsupportedAgentType(&'static str),
+    #[error("message delivery is not available: {0}")]
+    FailedPrecondition(String),
     #[error("message delivery failed: {0}")]
     Failed(String),
+}
+
+pub(crate) enum DeliveryLiveness {
+    Live,
+    Pending(String),
 }
 
 /// An owned message-delivery endpoint detached from the session registry.
@@ -84,6 +92,26 @@ pub(crate) enum DeliveryError {
 /// session metadata.
 #[async_trait]
 pub(crate) trait AgentDeliveryTarget: Send + Sync {
+    fn liveness(&self) -> std::result::Result<DeliveryLiveness, DeliveryError>;
+
+    async fn wait_until_live(&self, timeout: Duration) -> std::result::Result<(), DeliveryError> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            match self.liveness()? {
+                DeliveryLiveness::Live => return Ok(()),
+                DeliveryLiveness::Pending(reason) if tokio::time::Instant::now() >= deadline => {
+                    return Err(DeliveryError::FailedPrecondition(format!(
+                        "{reason}; did not become ready within {}s",
+                        timeout.as_secs()
+                    )));
+                }
+                DeliveryLiveness::Pending(_) => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+        }
+    }
+
     async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError>;
 }
 
@@ -93,6 +121,10 @@ struct UnsupportedAgentDelivery {
 
 #[async_trait]
 impl AgentDeliveryTarget for UnsupportedAgentDelivery {
+    fn liveness(&self) -> std::result::Result<DeliveryLiveness, DeliveryError> {
+        Err(DeliveryError::UnsupportedAgentType(self.agent_type))
+    }
+
     async fn deliver(&self, _envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
         Err(DeliveryError::UnsupportedAgentType(self.agent_type))
     }

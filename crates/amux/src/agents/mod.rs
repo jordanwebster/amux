@@ -40,12 +40,16 @@ pub(crate) use session::CodexInput;
 #[cfg(feature = "local-agents")]
 pub(crate) use session::{
     AgentBackend, AgentDeliveryTarget, AgentDeps, AgentSession, AgentToolExecutor, AgentToolRouter,
-    Delivery, DeliveryError, RawPtyTarget, SpawnInheritance, StructuredInput, agent_from_suspended,
-    bootstrap_external_hook, new_agent, terminal_io_protocols,
+    Delivery, DeliveryError, DeliveryLiveness, RawPtyTarget, SpawnInheritance, StructuredInput,
+    agent_from_suspended, bootstrap_external_hook, new_agent, terminal_io_protocols,
 };
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 pub(crate) use test_agent::TestAgentSession;
+#[cfg(all(feature = "local-agents", test))]
+pub(crate) use test_agent::io::{
+    TEST_DELAYED_DELIVERY_COMMAND, TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
+};
 #[cfg(all(feature = "local-agents", any(test, feature = "testnet")))]
 pub(crate) use test_agent::io::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 pub(crate) use types::AGENT_TYPE_CLAUDE;

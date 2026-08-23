@@ -974,23 +974,38 @@ impl wire::client_service_server::ClientService for ClientService {
                 response.get_ref().agent.clone(),
                 "CreateAgentResponse.agent",
             )?;
-            self.deliver_envelope(envelope::Envelope {
-                id: Uuid::new_v4(),
-                context: None,
-                from: envelope::Sender::Agent(envelope::AgentSender {
-                    agent_id: parent.id,
-                    host_id: parent.host_id,
-                    name: parent.name.unwrap_or_else(|| parent.id.to_string()),
-                    kind: parent.agent_type,
-                }),
-                to: AgentParent {
-                    agent_id: child.id,
-                    host_id: child.host_id,
-                },
-                kind: envelope::EnvelopeKind::Message,
-                text,
-            })
-            .await?;
+            let delivery = self
+                .deliver_envelope(envelope::Envelope {
+                    id: Uuid::new_v4(),
+                    context: None,
+                    from: envelope::Sender::Agent(envelope::AgentSender {
+                        agent_id: parent.id,
+                        host_id: parent.host_id,
+                        name: parent.name.unwrap_or_else(|| parent.id.to_string()),
+                        kind: parent.agent_type,
+                    }),
+                    to: AgentParent {
+                        agent_id: child.id,
+                        host_id: child.host_id,
+                    },
+                    kind: envelope::EnvelopeKind::Message,
+                    text,
+                })
+                .await;
+            if let Err(delivery_error) = delivery {
+                if let Err(cleanup_error) = self.delete_resolved_agent(&child).await {
+                    return Err(tonic::Status::new(
+                        delivery_error.code(),
+                        format!(
+                            "{}; failed to remove undeliverable child '{}': {}",
+                            delivery_error.message(),
+                            child.name.as_deref().unwrap_or("unnamed agent"),
+                            cleanup_error.message()
+                        ),
+                    ));
+                }
+                return Err(delivery_error);
+            }
         }
 
         Ok(response)
@@ -2783,7 +2798,10 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::agents::{AGENT_TYPE_CLAUDE, TEST_ECHO_COMMAND, TEST_ECHO_V1};
+    use crate::agents::{
+        AGENT_TYPE_CLAUDE, TEST_DELAYED_DELIVERY_COMMAND, TEST_ECHO_COMMAND, TEST_ECHO_V1,
+        TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
+    };
     use crate::config::Config;
     use crate::identity::DeviceIdentity;
     use crate::routing::{
@@ -3300,6 +3318,26 @@ mod tests {
                 },
             )),
         }
+    }
+
+    fn child_with_initial_prompt(
+        agent_id: Uuid,
+        name: &str,
+        parent_id: Uuid,
+        command: &str,
+    ) -> wire::ClientCreateAgentRequest {
+        let mut request = test_agent_create_request(agent_id, name, None);
+        request.parent = Some(wire::AgentParent {
+            agent_id: parent_id.as_bytes().to_vec(),
+            host_id: Uuid::from_u128(1).as_bytes().to_vec(),
+        });
+        request.initial_prompt = Some("inspect delivery readiness".to_string());
+        let Some(wire::client_create_agent_request::Agent::TestAgent(config)) = &mut request.agent
+        else {
+            unreachable!("test agent helper always builds a test agent")
+        };
+        config.command = command.to_string();
+        request
     }
 
     fn test_agent_service_create_request(agent_id: Uuid, name: &str) -> wire::CreateAgentRequest {
@@ -4662,6 +4700,70 @@ mod tests {
         assert!(remaining.iter().any(|agent| agent.id == caller_id));
         assert!(remaining.iter().any(|agent| agent.id == sibling_id));
         assert!(!remaining.iter().any(|agent| agent.id == child_id));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn spawn_waits_for_delayed_delivery_and_removes_an_undeliverable_child() {
+        let service = client_service_for_tests();
+        let parent_id = Uuid::from_u128(150);
+        let delayed_id = Uuid::from_u128(151);
+        let unavailable_id = Uuid::from_u128(152);
+        let failed_delivery_id = Uuid::from_u128(153);
+
+        <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(test_agent_create_request(parent_id, "parent", None)),
+        )
+        .await
+        .unwrap();
+
+        let started = tokio::time::Instant::now();
+        <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(child_with_initial_prompt(
+                delayed_id,
+                "delayed",
+                parent_id,
+                TEST_DELAYED_DELIVERY_COMMAND,
+            )),
+        )
+        .await
+        .expect("spawn should wait for a delivery target that becomes live");
+        assert!(started.elapsed() >= Duration::from_millis(150));
+
+        let error = <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(child_with_initial_prompt(
+                unavailable_id,
+                "unavailable",
+                parent_id,
+                TEST_UNAVAILABLE_DELIVERY_COMMAND,
+            )),
+        )
+        .await
+        .expect_err("spawn must fail when its delivery target never becomes live");
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert!(error.message().contains("did not become ready within 30s"));
+
+        let error = <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(child_with_initial_prompt(
+                failed_delivery_id,
+                "failed-delivery",
+                parent_id,
+                TEST_FAILED_DELIVERY_COMMAND,
+            )),
+        )
+        .await
+        .expect_err("spawn must roll back when a live target rejects delivery");
+        assert_eq!(error.code(), tonic::Code::Internal);
+        assert!(error.message().contains("test agent PTY is unavailable"));
+
+        let agents = service.list_agents().await;
+        assert!(agents.iter().any(|agent| agent.id == parent_id));
+        assert!(agents.iter().any(|agent| agent.id == delayed_id));
+        assert!(!agents.iter().any(|agent| agent.id == unavailable_id));
+        assert!(!agents.iter().any(|agent| agent.id == failed_delivery_id));
     }
 
     #[tokio::test]
