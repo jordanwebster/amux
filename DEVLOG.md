@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **DEVLOG follow-up for `4c45513` (`Graduate Codex dynamic tool
+capture`).** That chunk graduated the live Codex 0.148.0 C.11 dynamic-tool
+exchange, its provenance, and its structural fixture waiter. The capture
+shows `dynamicTools` registration, a model-issued `send` call, and the
+structured response that completed the turn.
+
 2026-08-23 — **Documented agent messaging as one end-to-end contract.**
 The documentation map now points to one owner for the message envelope,
 model-facing tools, Claude and Codex carriers, parent/child lifecycle, routing
