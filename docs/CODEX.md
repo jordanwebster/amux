@@ -125,7 +125,7 @@ to support. Two paths that can disagree is one too many.
 ## The row vocabulary (frozen)
 
 The structured plane carries **verbatim upstream rows** —
-`{"type": "<upstream method>", ...params}`, unmodified — plus exactly six
+`{"type": "<upstream method>", ...params}`, unmodified — plus exactly seven
 rows amux synthesizes. The synthesized set is closed; adding to it is a
 protocol change.
 
@@ -137,6 +137,7 @@ protocol change.
 | `amux.codex_approval_required{request_id, availableDecisions}` | an approval is outstanding — `availableDecisions` is wire-verbatim |
 | `amux.codex_approval_resolved{request_id, reason}` | it is no longer outstanding, and why |
 | `amux.input_result{input_id, ok\|error{message}}` | the fate of one submitted input |
+| `amux.codex_message{id, kind, from, from_id?, context?, text, delivery}` | a daemon-authored agent message accepted by the Codex carrier; `delivery` is `inject_queued`, `inject_started`, or fallback `turn_started` |
 
 `amux.codex_approval_resolved.reason` is one of `answered`,
 `response_failed`, `answered_elsewhere`, `connection_lost`,
@@ -303,7 +304,7 @@ Three tiers, in increasing cost:
    waiters, driven offline from redacted rows captured off real failing
    runs. No codex process, no credentials, no network.
 3. **`crates/amux/tests/codex_capture.rs`** — the **C suite**: opt-in,
-   real codex, ten scenarios (C.1–C.10) covering create+pong, approval
+   real codex, fourteen scenarios (C.1–C.14) covering create+pong, approval
    allow and deny *with filesystem assertions*, interrupt and reuse,
    suspend/resume across a server restart (including the first post-restart
    `resumed:true`, stable thread identity, and remembered context), real
@@ -312,7 +313,8 @@ Three tiers, in increasing cost:
    raw attach on an *unnamed* agent — the product default, and the one
    parameter a hardcoded fixture hid for the whole of P9 — including
    final-detach teardown and fresh raw reattach, plus unnamed zero-turn
-   suspend/resume.
+   suspend/resume. C.11–C.14 pin dynamic tools, idle and busy injected
+   messages, and the final-assistant-message ordering at turn completion.
 
 C.9 proves its independently checked process facts: final-detach process-group
 exit, a newly created raw process on reattach, and survival of the original

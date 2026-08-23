@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **The Codex structured row vocabulary includes agent messages.**
+The closed taxonomy now names the daemon-synthesized message row and its
+authenticated provenance, envelope context, body, and carrier fields. The
+backend projection fixture retains that complete shape instead of treating it
+as an unknown type, and the maintained real-Codex suite documentation covers
+the four carrier scenarios already registered as C.11–C.14.
+
 2026-08-23 — **Agent messages enter Codex through its native thread API.**
 Delivery appends a daemon-authored user message to the managed thread, starts
 an empty turn when the thread is idle, and leaves an active turn running when

@@ -3672,8 +3672,38 @@ mod tests {
                 "request_id": row["request_id"],
                 "reason": row["reason"],
             }),
+            Some("amux.codex_message") => json!({
+                "type": row_type,
+                "id": row["id"],
+                "kind": row["kind"],
+                "from": row["from"],
+                "from_id": row["from_id"],
+                "context": row["context"],
+                "text": row["text"],
+                "delivery": row["delivery"],
+            }),
             _ => json!({"type": row_type}),
         }
+    }
+
+    #[test]
+    fn a2a_codex_row_vocab_projects_message_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/codex_backend/rows.jsonl");
+        let expected = std::fs::read_to_string(fixture)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|row| row["type"] == "amux.codex_message")
+            .expect("fixture contains the synthesized message row");
+
+        assert_eq!(
+            project_row(&codex_message_row(
+                &delivery_envelope(),
+                Delivery::InjectQueued
+            )),
+            expected
+        );
     }
 
     #[tokio::test]
@@ -3780,6 +3810,12 @@ mod tests {
         attach_runtime(&runtime, &client, &resumed);
         source.write(json!({"type": "amux.codex_ready"})).await;
         next_ingested(&mut resumed_events, &runtime, &source).await;
+        source
+            .write(codex_message_row(
+                &delivery_envelope(),
+                Delivery::InjectQueued,
+            ))
+            .await;
         driver.await.unwrap();
 
         let expected: Vec<Value> = std::fs::read_to_string(fixture.join("rows.jsonl"))

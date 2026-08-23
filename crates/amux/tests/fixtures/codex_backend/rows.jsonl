@@ -21,3 +21,4 @@
 {"type":"turn/completed"}
 {"type":"amux.codex_ready"}
 {"type":"item/completed"}
+{"type":"amux.codex_message","id":"00000000-0000-0000-0000-000000000029","kind":"message","from":"sender/00000000-0000-0000-0000-00000000002c","from_id":"00000000-0000-0000-0000-00000000002b","context":"00000000-0000-0000-0000-00000000002a","text":"hello from another agent","delivery":"inject_queued"}
