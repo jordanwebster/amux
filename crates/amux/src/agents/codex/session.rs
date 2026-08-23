@@ -21,10 +21,11 @@ use super::CODEX_RAW_THREAD_NOT_READY;
 use super::io::{self, CodexSdkV1Input};
 use crate::agent_tools;
 use crate::agents::{
-    AGENT_TYPE_CODEX, AgentBackend, AgentParent, AgentToolRouter, CodexInput, CreateAgentRequest,
-    LocalAgentNameSource, PtyHandle, RawPtyTarget, SessionEvent, StopPolicy, StructuredLogSource,
-    spawn_pty_agent,
+    AGENT_TYPE_CODEX, AgentBackend, AgentDeliveryTarget, AgentParent, AgentToolRouter, CodexInput,
+    CreateAgentRequest, Delivery, DeliveryError, LocalAgentNameSource, PtyHandle, RawPtyTarget,
+    SessionEvent, StopPolicy, StructuredLogSource, spawn_pty_agent,
 };
+use crate::envelope::{Envelope, Sender};
 use crate::suspend::SuspendedAgent;
 
 // Codex streams are delta-heavy and this is their sole elastic/replay buffer.
@@ -1532,6 +1533,96 @@ struct CodexInputTarget {
     log_source: StructuredLogSource,
 }
 
+struct CodexDeliveryTarget {
+    runtime: Arc<StdMutex<CodexRuntime>>,
+    log_source: StructuredLogSource,
+}
+
+impl CodexDeliveryTarget {
+    fn live_and_active(&self) -> Result<(CodexLive, bool)> {
+        let state = self
+            .runtime
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let attached = state
+            .attached
+            .as_ref()
+            .ok_or_else(|| anyhow!("Codex thread is not attached"))?;
+        let live = attached
+            .live
+            .clone()
+            .ok_or_else(|| anyhow!("Codex thread is read-only until reconnect succeeds"))?;
+        Ok((live, attached.active_turn_id.is_some()))
+    }
+
+    async fn deliver_envelope(&self, envelope: &Envelope) -> Result<Delivery> {
+        let text = crate::envelope::format(envelope);
+        let (live, active) = self.live_and_active()?;
+        let item = json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}],
+        });
+
+        let delivery = match live.thread.inject_items(vec![item]).await {
+            Ok(()) if active => Delivery::InjectQueued,
+            Ok(()) => {
+                let turn_id = live.thread.start_empty_turn().await?;
+                update_attached(&self.runtime, |attached| {
+                    attached.active_turn_id = Some(turn_id);
+                });
+                Delivery::InjectStarted
+            }
+            Err(inject_error) => {
+                tracing::warn!(
+                    %inject_error,
+                    envelope_id = %envelope.id,
+                    "Codex message injection failed; starting a visible turn"
+                );
+                let turn_id = live.thread.start_turn(text).await?;
+                update_attached(&self.runtime, |attached| {
+                    attached.active_turn_id = Some(turn_id);
+                });
+                Delivery::TurnStarted
+            }
+        };
+
+        self.log_source
+            .write(codex_message_row(envelope, delivery))
+            .await;
+        Ok(delivery)
+    }
+}
+
+#[async_trait]
+impl AgentDeliveryTarget for CodexDeliveryTarget {
+    async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
+        self.deliver_envelope(envelope)
+            .await
+            .map_err(|error| DeliveryError::Failed(error.to_string()))
+    }
+}
+
+fn codex_message_row(envelope: &Envelope, delivery: Delivery) -> Value {
+    let (from, from_id) = match &envelope.from {
+        Sender::Agent(agent) => (
+            format!("{}/{}", agent.name, agent.host_id),
+            Some(agent.agent_id),
+        ),
+        Sender::Human => ("human".to_string(), None),
+    };
+    json!({
+        "type": "amux.codex_message",
+        "id": envelope.id,
+        "kind": envelope.kind,
+        "from": from,
+        "from_id": from_id,
+        "context": envelope.context,
+        "text": envelope.text,
+        "delivery": delivery.carrier(),
+    })
+}
+
 impl CodexInputTarget {
     fn live(&self) -> Result<CodexLive> {
         self.runtime
@@ -1793,6 +1884,13 @@ impl AgentBackend for CodexSession {
         Some(self.log_source.clone())
     }
 
+    fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
+        Box::new(CodexDeliveryTarget {
+            runtime: self.runtime.clone(),
+            log_source: self.log_source.clone(),
+        })
+    }
+
     fn pty_handle(&self) -> Result<Option<PtyHandle>> {
         Ok(self.cached_pty())
     }
@@ -1877,6 +1975,7 @@ mod tests {
     use super::*;
     use crate::agent_tools::AgentToolRequest;
     use crate::agents::{AgentToolExecutor, AgentType};
+    use crate::envelope::{AgentSender, EnvelopeKind};
 
     #[derive(Default)]
     struct RecordingToolExecutor {
@@ -2061,6 +2160,111 @@ mod tests {
         start.await.unwrap()
     }
 
+    fn delivery_envelope() -> Envelope {
+        Envelope {
+            id: Uuid::from_u128(41),
+            context: Some(Uuid::from_u128(42)),
+            from: Sender::Agent(AgentSender {
+                agent_id: Uuid::from_u128(43),
+                host_id: Uuid::from_u128(44),
+                name: "sender".into(),
+                kind: "claude".into(),
+            }),
+            to: AgentParent {
+                agent_id: Uuid::from_u128(1),
+                host_id: Uuid::from_u128(45),
+            },
+            kind: EnvelopeKind::Message,
+            text: "hello from another agent".into(),
+        }
+    }
+
+    async fn start_delivery_replay(
+        fixture: &str,
+        injected_text: &str,
+    ) -> (Codex, Thread, tokio::task::JoinHandle<()>) {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/codex_backend")
+            .join(fixture);
+        let mut script = load_script(fixture);
+        for event in script
+            .iter_mut()
+            .filter(|event| event.direction == IoDirection::Write)
+        {
+            let mut request: Value = serde_json::from_str(&event.line).expect("request is JSON");
+            match request["method"].as_str() {
+                Some("initialize") => {
+                    request["params"]["clientInfo"]["title"] = Value::Null;
+                    event.line = request.to_string();
+                }
+                Some("thread/inject_items") => {
+                    request["params"]["items"][0]["content"][0]["text"] =
+                        Value::String(injected_text.to_string());
+                    event.line = request.to_string();
+                }
+                _ => {}
+            }
+        }
+        let (reader, writer, controller) =
+            replay_transport_with_controller(script, ReplayOptions::default());
+        let driver = tokio::spawn(async move {
+            while let ReplayAdvance::Advanced { .. } | ReplayAdvance::BlockedOnWrite =
+                controller.advance_one().await
+            {
+                tokio::task::yield_now().await;
+            }
+        });
+        let client = tokio::time::timeout(
+            Duration::from_secs(2),
+            Codex::from_io(
+                reader,
+                writer,
+                CodexConfig {
+                    client_name: "amux-a2a-capture".into(),
+                    client_version: "0.1.0".into(),
+                    ..CodexConfig::default()
+                },
+            ),
+        )
+        .await
+        .expect("initialize replay timed out")
+        .expect("initialize replay failed");
+        let thread = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.start_thread(ThreadConfig {
+                cwd: Some("[SCRATCH]/project".into()),
+                model: Some("gpt-5.6-sol".into()),
+                ..ThreadConfig::default()
+            }),
+        )
+        .await
+        .expect("thread/start replay timed out")
+        .expect("thread/start replay failed");
+        (client, thread, driver)
+    }
+
+    async fn assert_delivery_row(session: &CodexSession, delivery: Delivery) {
+        let (mut rows, count) = session
+            .log_source
+            .subscribe_with_query(None)
+            .await
+            .expect("structured log subscription");
+        assert_eq!(count, 1);
+        assert_eq!(
+            rows.read().await.expect("delivery row").payload,
+            json!({
+                "type": "amux.codex_message",
+                "id": Uuid::from_u128(41),
+                "kind": "message",
+                "from": format!("sender/{}", Uuid::from_u128(44)),
+                "from_id": Uuid::from_u128(43),
+                "context": Uuid::from_u128(42),
+                "text": "hello from another agent",
+                "delivery": delivery.carrier(),
+            })
+        );
+    }
+
     #[tokio::test]
     async fn a2a_codex_tool_call_registers_executes_and_answers() {
         let (client, mut reader, mut writer) = mock_codex().await;
@@ -2150,6 +2354,134 @@ mod tests {
                 }
             )]
         );
+        client.close().await;
+    }
+
+    #[tokio::test]
+    async fn a2a_codex_deliver_idle_injects_then_starts_empty_turn() {
+        let envelope = delivery_envelope();
+        let tagged = crate::envelope::format(&envelope);
+        let (client, thread, driver) =
+            start_delivery_replay("a2a_inject_idle.io.jsonl", &tagged).await;
+        let session = session();
+        attach_runtime(&session.runtime, &client, &thread);
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), session.deliver(&envelope))
+                .await
+                .expect("delivery replay timed out")
+                .expect("delivery failed"),
+            Delivery::InjectStarted
+        );
+        assert!(
+            session
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .attached
+                .as_ref()
+                .expect("attached runtime")
+                .active_turn_id
+                .is_some()
+        );
+        assert_delivery_row(&session, Delivery::InjectStarted).await;
+
+        tokio::time::timeout(Duration::from_secs(2), driver)
+            .await
+            .expect("replay driver timed out")
+            .expect("replay driver failed");
+        client.close().await;
+    }
+
+    #[tokio::test]
+    async fn a2a_codex_deliver_busy_injects_without_starting_another_turn() {
+        let envelope = delivery_envelope();
+        let tagged = crate::envelope::format(&envelope);
+        let (client, thread, driver) =
+            start_delivery_replay("a2a_inject_busy.io.jsonl", &tagged).await;
+        let session = session();
+        attach_runtime(&session.runtime, &client, &thread);
+        let active_turn = thread
+            .start_turn("Think carefully for a moment, then reply exactly C13_INITIAL.")
+            .await
+            .expect("initial turn/start replay failed");
+        update_attached(&session.runtime, |attached| {
+            attached.active_turn_id = Some(active_turn.clone());
+        });
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), session.deliver(&envelope))
+                .await
+                .expect("delivery replay timed out")
+                .expect("delivery failed"),
+            Delivery::InjectQueued
+        );
+        assert_eq!(
+            session
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .attached
+                .as_ref()
+                .expect("attached runtime")
+                .active_turn_id
+                .as_deref(),
+            Some(active_turn.as_str())
+        );
+        assert_delivery_row(&session, Delivery::InjectQueued).await;
+
+        tokio::time::timeout(Duration::from_secs(2), driver)
+            .await
+            .expect("replay driver timed out")
+            .expect("replay driver failed");
+        client.close().await;
+    }
+
+    #[tokio::test]
+    async fn a2a_codex_deliver_falls_back_to_a_visible_turn() {
+        let (client, mut reader, mut writer) = mock_codex().await;
+        let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
+        let session = session();
+        attach_runtime(&session.runtime, &client, &thread);
+        let envelope = delivery_envelope();
+        let tagged = crate::envelope::format(&envelope);
+        let delivery = tokio::spawn({
+            let target = session.delivery_target();
+            let envelope = envelope.clone();
+            async move { target.deliver(&envelope).await }
+        });
+
+        let inject = read_request(&mut reader).await;
+        assert_eq!(inject["method"], "thread/inject_items");
+        assert_eq!(inject["params"]["items"][0]["content"][0]["text"], tagged);
+        write_rpc_error(&mut writer, &inject, "injection unavailable").await;
+        let fallback = read_request(&mut reader).await;
+        assert_eq!(fallback["method"], "turn/start");
+        assert_eq!(fallback["params"]["input"][0]["text"], tagged);
+        write_response(
+            &mut writer,
+            &fallback,
+            json!({"turn": {"id": "fallback-turn"}}),
+        )
+        .await;
+
+        assert_eq!(
+            delivery.await.expect("delivery task panicked").unwrap(),
+            Delivery::TurnStarted
+        );
+        assert_eq!(
+            session
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .attached
+                .as_ref()
+                .expect("attached runtime")
+                .active_turn_id
+                .as_deref(),
+            Some("fallback-turn")
+        );
+        assert_delivery_row(&session, Delivery::TurnStarted).await;
         client.close().await;
     }
 

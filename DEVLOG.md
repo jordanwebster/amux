@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Agent messages enter Codex through its native thread API.**
+Delivery appends a daemon-authored user message to the managed thread, starts
+an empty turn when the thread is idle, and leaves an active turn running when
+it is busy. If injection is unavailable, the backend starts a visible turn
+with the same tagged text. Every accepted message also emits an
+`amux.codex_message` row with its authenticated provenance and carrier, so the
+native transcript remains the source of delivery history.
+
 2026-08-23 — **Codex threads execute the shared amux agent tools in-process.**
 Every managed thread registers the same five schemas and model-facing
 descriptions as the Claude MCP server. Dynamic tool calls are parsed through

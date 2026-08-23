@@ -43,6 +43,9 @@ use crate::suspend::SuspendedAgent;
 pub(crate) enum Delivery {
     Socket,
     Pty,
+    InjectQueued,
+    InjectStarted,
+    TurnStarted,
 }
 
 impl Delivery {
@@ -50,6 +53,9 @@ impl Delivery {
         match self {
             Self::Socket => "socket",
             Self::Pty => "pty",
+            Self::InjectQueued => "inject_queued",
+            Self::InjectStarted => "inject_started",
+            Self::TurnStarted => "turn_started",
         }
     }
 }
