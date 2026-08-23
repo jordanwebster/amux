@@ -236,12 +236,13 @@ impl Server {
         update_reporter: Option<Arc<dyn UpdateReporter>>,
         as_cloud_relay: bool,
     ) -> Result<Self> {
+        let data_dir = config.data_dir.clone();
         Self::with_config_and_credentials_in_data_dir(
             config,
             credentials,
             update_reporter,
             as_cloud_relay,
-            &crate::default_data_dir(),
+            &data_dir,
         )
     }
 

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde_yaml::{Mapping, Value};
 
 use crate::config::Config;
-use crate::identity::{IdentityError, ensure_default_device_files};
+use crate::identity::{IdentityError, ensure_device_files_in};
 use crate::state::State;
 
 #[derive(Debug, Clone, Default)]
@@ -73,16 +73,17 @@ pub fn prevent_idle_sleep_supported() -> bool {
     crate::sleep_inhibitor::supported()
 }
 
-/// True when the data-dir identity/trust files already exist and validate.
-pub fn device_identity_ready() -> bool {
-    crate::identity::default_device_files_ready()
+/// True when the identity/trust files in `config.data_dir` already exist and
+/// validate.
+pub fn device_identity_ready(config: &Config) -> bool {
+    crate::identity::device_files_ready_in(&config.data_dir)
 }
 
 /// The host id of this device's stored identity, if initialized. Read-only:
 /// clients use it to recognize the local host in inventory (the wire does
 /// not mark the local host).
-pub fn local_host_id() -> Option<crate::HostId> {
-    local_host_id_in(&crate::paths::default_data_dir())
+pub fn local_host_id(config: &Config) -> Option<crate::HostId> {
+    local_host_id_in(&config.data_dir)
 }
 
 /// See [`local_host_id`]; explicit data dir for tests and embedding.
@@ -91,16 +92,15 @@ pub fn local_host_id_in(data_dir: &Path) -> Option<crate::HostId> {
 }
 
 /// Ensure the device identity and trust-store files from
-/// `docs/ARCHITECTURE.md` exist in the data directory.
-pub fn ensure_device_identity() -> Result<(), SetupError> {
-    ensure_default_device_files()?;
+/// `docs/ARCHITECTURE.md` exist in `config.data_dir`.
+pub fn ensure_device_identity(config: &Config) -> Result<(), SetupError> {
+    ensure_device_files_in(&config.data_dir)?;
     Ok(())
 }
 
 /// Read Claude plugin setup state persisted for Claude Code integration.
-pub fn claude_plugin_setup_state() -> ClaudePluginSetupState {
-    let state_path = State::default_path();
-    State::load(&state_path)
+pub fn claude_plugin_setup_state(config: &Config) -> ClaudePluginSetupState {
+    State::load(&config.state_path)
         .ok()
         .map(|s| ClaudePluginSetupState {
             applied_plugin_version: s.claude.applied_plugin_version,
@@ -112,11 +112,11 @@ pub fn claude_plugin_setup_state() -> ClaudePluginSetupState {
 /// Persist the Claude plugin version and marketplace path last successfully
 /// applied to Claude Code.
 pub fn set_claude_plugin_setup_state(
+    config: &Config,
     version: &str,
     marketplace_path: &Path,
 ) -> Result<(), SetupError> {
-    let state_path = State::default_path();
-    State::update(&state_path, |s| {
+    State::update(&config.state_path, |s| {
         s.claude.applied_plugin_version = Some(version.to_string());
         s.claude.applied_marketplace_path = Some(marketplace_path.to_path_buf());
     })

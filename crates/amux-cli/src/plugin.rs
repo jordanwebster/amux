@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use amux::{default_data_dir, setup};
+use amux::{Config, setup};
 use serde::Deserialize;
 
 const MARKETPLACE_NAME: &str = "amux";
@@ -50,9 +50,9 @@ struct ClaudePluginPaths {
 }
 
 impl ClaudePluginPaths {
-    fn default() -> Self {
+    fn in_data_dir(data_dir: &Path) -> Self {
         Self {
-            root_dir: default_data_dir().join(MATERIALIZED_MARKETPLACE_DIR),
+            root_dir: data_dir.join(MATERIALIZED_MARKETPLACE_DIR),
         }
     }
 
@@ -75,10 +75,10 @@ struct ClaudePlugin {
 }
 
 impl ClaudePlugin {
-    fn load() -> Result<Self, String> {
-        let state = setup::claude_plugin_setup_state();
+    fn load(config: &Config) -> Result<Self, String> {
+        let state = setup::claude_plugin_setup_state(config);
         Self::from_paths(
-            ClaudePluginPaths::default(),
+            ClaudePluginPaths::in_data_dir(&config.data_dir),
             state.applied_plugin_version,
             state.applied_marketplace_path,
         )
@@ -149,8 +149,8 @@ impl ClaudePlugin {
         Ok(())
     }
 
-    fn set_applied_state(&mut self, version: &str) -> Result<(), String> {
-        setup::set_claude_plugin_setup_state(version, &self.paths.root_dir)
+    fn set_applied_state(&mut self, config: &Config, version: &str) -> Result<(), String> {
+        setup::set_claude_plugin_setup_state(config, version, &self.paths.root_dir)
             .map_err(|e| format!("failed to save plugin state: {e}"))?;
         self.applied_version = Some(version.to_string());
         self.applied_marketplace_path = Some(self.paths.root_dir.clone());
@@ -170,8 +170,15 @@ struct PluginManifest {
     version: String,
 }
 
-/// Ensure the Claude Code amux plugin is installed and up to date.
-pub async fn ensure_plugin_installed() {
+/// Ensure the Claude Code amux plugin is installed and up to date, unless
+/// this instance is configured to leave Claude Code's plugin registration
+/// alone (`claude.manage_plugin: false`).
+pub async fn ensure_plugin_installed(config: &Config) {
+    if !config.claude.manage_plugin {
+        tracing::debug!("claude.manage_plugin is false; skipping Claude Code plugin setup");
+        return;
+    }
+
     let expected_version = match bundled_plugin_version() {
         Ok(version) => version,
         Err(e) => {
@@ -180,7 +187,7 @@ pub async fn ensure_plugin_installed() {
         }
     };
 
-    let mut plugin = match ClaudePlugin::load() {
+    let mut plugin = match ClaudePlugin::load(config) {
         Ok(plugin) => plugin,
         Err(e) => {
             eprintln!("error: failed to prepare Claude Code plugin: {e}");
@@ -211,7 +218,7 @@ pub async fn ensure_plugin_installed() {
 
     match result {
         Ok(()) => {
-            if let Err(e) = plugin.set_applied_state(expected_version) {
+            if let Err(e) = plugin.set_applied_state(config, expected_version) {
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }

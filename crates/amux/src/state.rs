@@ -13,8 +13,6 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::paths::default_state_path;
-
 #[derive(Debug, Error)]
 pub(crate) enum StateError {
     #[error("IO error: {0}")]
@@ -42,12 +40,6 @@ pub(crate) struct ClaudeState {
 }
 
 impl State {
-    /// Default state path: `$XDG_STATE_HOME/amux/state.yaml`,
-    /// falling back to `~/.local/state/amux/state.yaml`.
-    pub(crate) fn default_path() -> PathBuf {
-        default_state_path()
-    }
-
     /// Load state with shared lock (allows concurrent reads)
     pub(crate) fn load(path: &Path) -> Result<Self, StateError> {
         if !path.exists() {

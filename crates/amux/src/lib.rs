@@ -57,7 +57,7 @@ pub use client::{
     AgentEventStream, Client, ClientError, ConnectError, HostEventStream, PairingSecret,
     PairingStart, PeerEntry, PeerReachability, ResumeSummary, SessionStream, SuspendSummary,
 };
-pub use config::{Config, ConfigError, Keybinds, LeaderKey, OpenMode, UiSettings};
+pub use config::{ClaudeSettings, Config, ConfigError, Keybinds, LeaderKey, OpenMode, UiSettings};
 pub use debug::DebugFormat;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{

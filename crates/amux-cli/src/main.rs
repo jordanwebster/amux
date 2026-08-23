@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use amux::{AgentType, Config, DebugFormat, PairingSecret, PairingStart, default_data_dir, setup};
+use amux::{AgentType, Config, DebugFormat, PairingSecret, PairingStart, setup};
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -40,8 +40,10 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Path to config file (YAML format)
-    #[arg(long, global = true)]
+    /// Path to config file (YAML format). Also read from `AMUX_CONFIG`, so
+    /// processes that cannot be given flags (Claude Code's `amux hooks claude`
+    /// hook, daemons spawned by a wrapper) still find the right instance.
+    #[arg(long, global = true, env = "AMUX_CONFIG")]
     config: Option<PathBuf>,
 }
 
@@ -380,7 +382,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                     check_update_required(&config);
                     match &agent_type {
                         AgentType::Claude => {
-                            plugin::ensure_plugin_installed().await;
+                            plugin::ensure_plugin_installed(&config).await;
                         }
                         AgentType::Codex { .. } => {}
                         #[cfg(any(debug_assertions, test))]
@@ -469,7 +471,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                                 .await?;
                         let pin = prompt_pairing_pin()?;
                         let peer = amux::pair_via_pin_direct_tcp(
-                            default_data_dir(),
+                            config.data_dir.clone(),
                             &config.host_name,
                             addr,
                             &pin,
@@ -492,7 +494,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 let client =
                     client_common::require_running_client(&config, Some(&retry_command)).await?;
                 let peer = amux::pair_via_ssh_target(
-                    default_data_dir(),
+                    config.data_dir.clone(),
                     &config.host_name,
                     target,
                     &client,
@@ -551,7 +553,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         #[cfg(unix)]
         Commands::PairRecv => {
             let client = client_common::require_running_client(&config, None).await?;
-            amux::pair_via_ssh_responder_stdio(default_data_dir(), &config.host_name, &client)
+            amux::pair_via_ssh_responder_stdio(config.data_dir.clone(), &config.host_name, &client)
                 .await?;
         }
         #[cfg(unix)]
@@ -1030,6 +1032,35 @@ fn load_config(input_path: Option<PathBuf>) -> Result<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The config flag doubles as `AMUX_CONFIG`. Checked through the clap
+    /// command model rather than by setting the variable, which would race
+    /// with other tests in the same process.
+    #[test]
+    fn config_flag_reads_amux_config_env() {
+        let command = Cli::command();
+        let arg = command
+            .get_arguments()
+            .find(|arg| arg.get_id() == "config")
+            .expect("--config arg");
+        assert_eq!(arg.get_env(), Some(std::ffi::OsStr::new("AMUX_CONFIG")));
+        assert!(arg.is_global_set());
+    }
+
+    /// The Claude Code hook is the literal `amux hooks claude` with no
+    /// flags; it reaches the right instance only through the global arg.
+    #[test]
+    fn config_flag_is_accepted_after_hooks_subcommand() {
+        let cli =
+            Cli::try_parse_from(["amux", "hooks", "claude", "--config", "/x/cfg.yaml"]).unwrap();
+        assert_eq!(cli.config, Some(PathBuf::from("/x/cfg.yaml")));
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Hooks {
+                provider: HooksProvider::Claude
+            })
+        ));
+    }
 
     #[test]
     fn parses_codex_agent_type() {
