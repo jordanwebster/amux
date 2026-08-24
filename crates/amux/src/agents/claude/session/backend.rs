@@ -175,6 +175,7 @@ mod tests {
             },
             PathBuf::from("/runtime"),
             crate::agents::claude::ClaudeVersionCache::default(),
+            crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
         );
         session.pty = Some(pty);
         session
@@ -229,6 +230,7 @@ mod tests {
             },
             dir.path().to_path_buf(),
             crate::agents::claude::ClaudeVersionCache::default(),
+            crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
         );
         session.pty = Some(pty);
         session.transcript_ingest = Some(

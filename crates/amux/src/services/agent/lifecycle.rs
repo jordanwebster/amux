@@ -667,6 +667,7 @@ mod tests {
         let agent_state = Arc::new(RwLock::new(AgentServiceState::new(AgentDeps::new(
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
+            crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
         ))));
         let (event_tx, _event_rx) = mpsc::channel(16);
         let host_id = Uuid::new_v4();
@@ -715,6 +716,7 @@ mod tests {
         let agent_state = Arc::new(RwLock::new(AgentServiceState::new(AgentDeps::new(
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
+            crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
         ))));
         let host_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();

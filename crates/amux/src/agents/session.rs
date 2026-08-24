@@ -13,7 +13,8 @@
 //! ([`AgentRecord`], [`SessionEvent`], [`StopPolicy`]) live in
 //! [`super::record`] and stay compiled in every build.
 
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Duration;
 
@@ -36,6 +37,7 @@ use super::{
 };
 use crate::agent_tools::AgentToolRequest;
 use crate::agents::{AgentParent, AgentType, CreateAgentRequest, terminal_io};
+use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
@@ -172,6 +174,119 @@ pub(crate) enum RawPtyTarget {
     Codex(CodexRawPtyTarget),
 }
 
+/// Effective configuration provenance frozen when the daemon starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum McpConfigSource {
+    File(PathBuf),
+    TrueDefault,
+}
+
+/// Immutable daemon-owned route used by every managed agent session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct McpLaunchRoute {
+    executable: PathBuf,
+    config_source: McpConfigSource,
+    socket_path: PathBuf,
+    host_id: Uuid,
+}
+
+impl McpLaunchRoute {
+    pub(crate) fn for_current_process(config: &Config, host_id: Uuid) -> io::Result<Self> {
+        Self::new(
+            std::env::current_exe()?,
+            config.path.clone(),
+            config.socket_path.clone(),
+            host_id,
+        )
+    }
+
+    pub(crate) fn new(
+        executable: PathBuf,
+        config_path: Option<PathBuf>,
+        socket_path: PathBuf,
+        host_id: Uuid,
+    ) -> io::Result<Self> {
+        let config_source = match config_path {
+            Some(path) => McpConfigSource::File(path),
+            None => McpConfigSource::TrueDefault,
+        };
+        let route = Self {
+            executable,
+            config_source,
+            socket_path,
+            host_id,
+        };
+        route.validate()?;
+        Ok(route)
+    }
+
+    pub(crate) fn validate(&self) -> io::Result<()> {
+        validate_route_path(&self.executable, "amux executable", true)?;
+        validate_route_path(&self.socket_path, "daemon socket", false)?;
+        if let McpConfigSource::File(path) = &self.config_source {
+            validate_route_path(path, "amux config", true)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn executable(&self) -> &Path {
+        &self.executable
+    }
+
+    pub(crate) fn config_path(&self) -> Option<&Path> {
+        match &self.config_source {
+            McpConfigSource::File(path) => Some(path),
+            McpConfigSource::TrueDefault => None,
+        }
+    }
+
+    pub(crate) fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
+
+    pub(crate) fn host_id(&self) -> Uuid {
+        self.host_id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_true_default(&self) -> bool {
+        matches!(self.config_source, McpConfigSource::TrueDefault)
+    }
+}
+
+fn validate_route_path(path: &Path, label: &str, must_be_file: bool) -> io::Result<()> {
+    if !path.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} path must be absolute: {}", path.display()),
+        ));
+    }
+    path.to_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} path is not valid UTF-8: {}", path.display()),
+        )
+    })?;
+    if must_be_file && !path.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{label} path does not exist: {}", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn mcp_launch_route_for_tests(host_id: Uuid) -> McpLaunchRoute {
+    McpLaunchRoute::new(
+        std::env::current_exe().expect("test executable path"),
+        None,
+        std::env::temp_dir().join(format!("amux-test-{host_id}.sock")),
+        host_id,
+    )
+    .expect("test MCP launch route")
+}
+
 /// Host-owned resources shared by agent backends.
 #[derive(Clone)]
 pub(crate) struct AgentDeps {
@@ -180,12 +295,14 @@ pub(crate) struct AgentDeps {
     #[cfg(unix)]
     pub(crate) codex_client: Arc<CodexClient>,
     pub(crate) agent_tools: AgentToolRouter,
+    pub(crate) mcp_launch_route: McpLaunchRoute,
 }
 
 impl AgentDeps {
     pub(crate) fn new(
         runtime_dir: std::path::PathBuf,
         codex_private_socket: std::path::PathBuf,
+        mcp_launch_route: McpLaunchRoute,
     ) -> Self {
         #[cfg(not(unix))]
         let _ = codex_private_socket;
@@ -195,6 +312,7 @@ impl AgentDeps {
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
             agent_tools: AgentToolRouter::default(),
+            mcp_launch_route,
         }
     }
 
@@ -325,12 +443,14 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
             req,
             deps.runtime_dir.clone(),
             deps.claude_version_cache.clone(),
+            deps.mcp_launch_route.clone(),
         ))),
         #[cfg(unix)]
         AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(
             req,
             deps.codex_client.clone(),
             deps.agent_tools.clone(),
+            deps.mcp_launch_route.clone(),
         ))),
         #[cfg(not(unix))]
         AgentType::Codex { .. } => Err(anyhow::anyhow!(
@@ -375,6 +495,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 created_at,
                 deps.runtime_dir.clone(),
                 deps.claude_version_cache.clone(),
+                deps.mcp_launch_route.clone(),
             ))
         }
         #[cfg(unix)]
@@ -411,6 +532,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 &req,
                 deps.codex_client.clone(),
                 deps.agent_tools.clone(),
+                deps.mcp_launch_route.clone(),
                 daemon_mode,
                 created_at,
             ))
@@ -465,6 +587,59 @@ mod tests {
     use crate::agents::{AgentType, CreateAgentRequest};
     use crate::suspend::SuspendedLocalAgentNameSource;
 
+    #[test]
+    fn managed_mcp_route_requires_absolute_existing_launch_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("amux");
+        let config = dir.path().join("amux.yaml");
+        let socket = dir.path().join("amux.sock");
+        std::fs::write(&executable, b"test executable").unwrap();
+        std::fs::write(&config, b"host_name: test\n").unwrap();
+        let host_id = Uuid::from_u128(50);
+
+        let route = McpLaunchRoute::new(
+            executable.clone(),
+            Some(config.clone()),
+            socket.clone(),
+            host_id,
+        )
+        .unwrap();
+        assert_eq!(route.executable(), executable);
+        assert_eq!(route.config_path(), Some(config.as_path()));
+        assert_eq!(route.socket_path(), socket);
+        assert_eq!(route.host_id(), host_id);
+        assert!(!route.is_true_default());
+
+        assert!(
+            McpLaunchRoute::new(
+                PathBuf::from("relative-amux"),
+                None,
+                socket.clone(),
+                host_id,
+            )
+            .is_err()
+        );
+        assert!(
+            McpLaunchRoute::new(
+                executable.clone(),
+                None,
+                PathBuf::from("relative.sock"),
+                host_id,
+            )
+            .is_err()
+        );
+
+        std::fs::remove_file(&executable).unwrap();
+        assert!(route.validate().is_err());
+    }
+
+    #[test]
+    fn managed_mcp_route_tags_the_true_default_config_explicitly() {
+        let route = mcp_launch_route_for_tests(Uuid::from_u128(51));
+        assert!(route.is_true_default());
+        assert_eq!(route.config_path(), None);
+    }
+
     #[tokio::test]
     async fn test_agent_has_no_structured_input() {
         let session = TestAgentSession::echo_for_tests(Uuid::new_v4(), None);
@@ -503,6 +678,7 @@ mod tests {
         let deps = AgentDeps::new(
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
+            mcp_launch_route_for_tests(Uuid::new_v4()),
         );
         let session = agent_from_suspended(sa, &deps);
 
@@ -537,6 +713,7 @@ mod tests {
         let deps = AgentDeps::new(
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
+            mcp_launch_route_for_tests(Uuid::new_v4()),
         );
 
         let session = agent_from_suspended(suspended, &deps);
@@ -575,8 +752,12 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let mut session =
-            ClaudeSession::new(&req, std::env::temp_dir(), ClaudeVersionCache::default());
+        let mut session = ClaudeSession::new(
+            &req,
+            std::env::temp_dir(),
+            ClaudeVersionCache::default(),
+            mcp_launch_route_for_tests(Uuid::new_v4()),
+        );
         session.session_id = Some(Uuid::new_v4());
 
         let suspended = session.suspended_state().unwrap();

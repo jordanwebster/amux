@@ -3,6 +3,8 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
+#[cfg(feature = "local-agents")]
+use crate::agents::McpLaunchRoute;
 use crate::auth::CredentialProvider;
 use crate::auth::jwt::JwtValidator;
 use crate::config::Config;
@@ -43,16 +45,17 @@ pub(crate) struct ServerState {
 /// loop, so it must be called from within a tokio runtime.
 fn new_local_agent_host(
     host_id: Uuid,
-    socket_path: &std::path::Path,
+    config: &Config,
 ) -> std::io::Result<Option<Arc<dyn LocalAgentHost>>> {
     #[cfg(feature = "local-agents")]
     {
-        PtyAgentHost::new_with_socket_path(host_id, socket_path)
+        let route = McpLaunchRoute::for_current_process(config, host_id)?;
+        PtyAgentHost::new_with_mcp_launch_route(route)
             .map(|host| Some(host as Arc<dyn LocalAgentHost>))
     }
     #[cfg(not(feature = "local-agents"))]
     {
-        let _ = (host_id, socket_path);
+        let _ = (host_id, config);
         Ok(None)
     }
 }
@@ -126,8 +129,7 @@ pub(crate) async fn ensure_local_agent_host(
     let mut guard = state.write().await;
     if guard.local_agent_host.is_none() {
         let host_id = guard.host_id;
-        let socket_path = guard.config.socket_path.clone();
-        guard.local_agent_host = new_local_agent_host(host_id, &socket_path)?;
+        guard.local_agent_host = new_local_agent_host(host_id, &guard.config)?;
     }
     Ok(guard.local_agent_host.clone())
 }

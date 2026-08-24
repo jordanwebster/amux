@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Managed sessions keep the daemon's exact MCP route.** The
+daemon now freezes its running executable, effective file-backed config (or an
+explicit true-default source), configured socket, and local host identity in
+agent dependencies. Fresh and suspended Claude and Codex sessions receive the
+same immutable route; managed Claude launches use it directly, and vanished or
+non-absolute route facts fail before a session starts.
+
+---
+
 2026-08-24 — **Agent MCP calls reconnect without replaying mutations.** The
 generic `amux mcp agent` server now validates an injected agent/host pair and
 an exact configured socket before serving tools. It preflights the daemon at

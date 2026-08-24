@@ -28,9 +28,9 @@ use crate::agents::claude::ClaudeSession;
 use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentToolExecutor, AgentType, CreateAgentConfig,
     CreateAgentRequest, CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap,
-    HookEnvironment, HookOutcome, RenameAgentRequest, SendInputRequest, SessionCloseReason,
-    SessionEvent, SetAgentStatusRequest, SpawnInheritance, StopPolicy, SubscribeSessionRequest,
-    bootstrap_external_hook,
+    HookEnvironment, HookOutcome, McpLaunchRoute, RenameAgentRequest, SendInputRequest,
+    SessionCloseReason, SessionEvent, SetAgentStatusRequest, SpawnInheritance, StopPolicy,
+    SubscribeSessionRequest, bootstrap_external_hook,
 };
 use crate::envelope::{Envelope, EnvelopeKind};
 use crate::protocol::{ProtocolError, wire};
@@ -48,7 +48,10 @@ impl PtyAgentHost {
     /// Build a host against the default configured socket path.
     #[cfg(any(test, feature = "testnet"))]
     pub(crate) fn new(host_id: Uuid) -> Arc<Self> {
-        Self::new_with_socket_path(host_id, &crate::config::Config::default().socket_path)
+        let config = crate::config::Config::default();
+        let route = McpLaunchRoute::for_current_process(&config, host_id)
+            .expect("default managed MCP route should be usable");
+        Self::new_with_mcp_launch_route(route)
             .expect("default Codex private socket path should be usable")
     }
 
@@ -57,16 +60,19 @@ impl PtyAgentHost {
     /// The private Codex fallback socket lives beside the configured amux
     /// socket; its short filename preserves as much `SUN_LEN` headroom as
     /// possible.
-    pub(crate) fn new_with_socket_path(
-        host_id: Uuid,
-        server_socket_path: &Path,
-    ) -> io::Result<Arc<Self>> {
+    pub(crate) fn new_with_mcp_launch_route(route: McpLaunchRoute) -> io::Result<Arc<Self>> {
+        let server_socket_path = route.socket_path().to_path_buf();
         let runtime_dir = server_socket_path
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
-        let deps = AgentDeps::new(runtime_dir, codex_private_socket_path(server_socket_path)?);
+        let host_id = route.host_id();
+        let deps = AgentDeps::new(
+            runtime_dir,
+            codex_private_socket_path(&server_socket_path)?,
+            route,
+        );
         let state = Arc::new(RwLock::new(AgentServiceState::new(deps)));
         let (event_tx, event_rx) = mpsc::channel(256);
         spawn_session_event_loop(state.clone(), event_rx, host_id);
@@ -100,6 +106,7 @@ impl PtyAgentHost {
             &request,
             state.deps.runtime_dir.clone(),
             state.deps.claude_version_cache.clone(),
+            state.deps.mcp_launch_route.clone(),
         ));
         let agent = session.to_agent(self.host_id).into();
         let announce = state
@@ -736,6 +743,23 @@ mod socket_tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    #[tokio::test]
+    async fn managed_host_propagates_the_exact_route_into_agent_dependencies() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("amux");
+        let config = temp.path().join("amux.yaml");
+        let socket = temp.path().join("custom.sock");
+        std::fs::write(&executable, b"test executable").unwrap();
+        std::fs::write(&config, b"host_name: test\n").unwrap();
+        let route =
+            McpLaunchRoute::new(executable, Some(config), socket, Uuid::from_u128(80)).unwrap();
+
+        let host = PtyAgentHost::new_with_mcp_launch_route(route.clone()).unwrap();
+
+        assert_eq!(host.host_id(), route.host_id());
+        assert_eq!(host.state().read().await.deps.mcp_launch_route, route);
+    }
 
     #[test]
     fn private_codex_socket_follows_configured_server_socket_dir() {

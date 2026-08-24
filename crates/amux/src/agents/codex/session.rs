@@ -22,8 +22,9 @@ use super::io::{self, CodexSdkV1Input};
 use crate::agent_tools;
 use crate::agents::{
     AGENT_TYPE_CODEX, AgentBackend, AgentDeliveryTarget, AgentParent, AgentToolRouter, CodexInput,
-    CreateAgentRequest, Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource, PtyHandle,
-    RawPtyTarget, SessionEvent, SpawnInheritance, StopPolicy, StructuredLogSource, spawn_pty_agent,
+    CreateAgentRequest, Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource,
+    McpLaunchRoute, PtyHandle, RawPtyTarget, SessionEvent, SpawnInheritance, StopPolicy,
+    StructuredLogSource, spawn_pty_agent,
 };
 use crate::envelope::{Envelope, Sender};
 use crate::suspend::SuspendedAgent;
@@ -513,6 +514,7 @@ pub(crate) struct CodexSession {
     log_source: StructuredLogSource,
     shared_client: Arc<CodexClient>,
     agent_tools: AgentToolRouter,
+    mcp_launch_route: McpLaunchRoute,
     runtime: Arc<StdMutex<CodexRuntime>>,
     raw_pty_preparation: Arc<Mutex<()>>,
     stop_tx: watch::Sender<bool>,
@@ -524,6 +526,7 @@ impl CodexSession {
         req: &CreateAgentRequest,
         shared_client: Arc<CodexClient>,
         agent_tools: AgentToolRouter,
+        mcp_launch_route: McpLaunchRoute,
     ) -> Self {
         let (model, approval_policy, sandbox_policy, resume_thread_id) = match &req.agent_type {
             crate::agents::AgentType::Codex {
@@ -553,6 +556,7 @@ impl CodexSession {
             log_source: codex_log_source(),
             shared_client,
             agent_tools,
+            mcp_launch_route,
             runtime: Arc::new(StdMutex::new(CodexRuntime {
                 desired_name: req.name.clone(),
                 desired_name_generation: 0,
@@ -574,10 +578,11 @@ impl CodexSession {
         req: &CreateAgentRequest,
         shared_client: Arc<CodexClient>,
         agent_tools: AgentToolRouter,
+        mcp_launch_route: McpLaunchRoute,
         daemon_mode: Option<String>,
         created_at: DateTime<Utc>,
     ) -> Self {
-        let session = Self::new(req, shared_client, agent_tools);
+        let session = Self::new(req, shared_client, agent_tools, mcp_launch_route);
         {
             let mut runtime = session
                 .runtime
@@ -592,6 +597,9 @@ impl CodexSession {
     }
 
     fn thread_config(&self) -> Result<ThreadConfig> {
+        self.mcp_launch_route
+            .validate()
+            .context("managed Codex MCP launch route is no longer valid")?;
         let cwd = self
             .working_dir
             .to_str()
@@ -2017,8 +2025,8 @@ mod tests {
         }
     }
 
-    fn session() -> CodexSession {
-        let req = CreateAgentRequest {
+    fn session_request() -> CreateAgentRequest {
+        CreateAgentRequest {
             agent_id: Uuid::from_u128(1),
             host_id: None,
             name: Some("named".into()),
@@ -2033,12 +2041,40 @@ mod tests {
             args: Vec::new(),
             parent: None,
             initial_prompt: None,
-        };
+        }
+    }
+
+    fn session() -> CodexSession {
+        let req = session_request();
         CodexSession::new(
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
             AgentToolRouter::default(),
+            crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(10)),
         )
+    }
+
+    #[test]
+    fn managed_codex_fresh_and_suspended_sessions_keep_the_exact_mcp_route() {
+        let request = session_request();
+        let route = crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(12));
+        let fresh = CodexSession::new(
+            &request,
+            Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
+            AgentToolRouter::default(),
+            route.clone(),
+        );
+        let suspended = CodexSession::from_suspended(
+            &request,
+            Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
+            AgentToolRouter::default(),
+            route.clone(),
+            Some("spawned-private".to_string()),
+            Utc::now(),
+        );
+
+        assert_eq!(fresh.mcp_launch_route, route);
+        assert_eq!(suspended.mcp_launch_route, route);
     }
 
     type MockReader = BufReader<ReadHalf<DuplexStream>>;
@@ -3252,6 +3288,7 @@ mod tests {
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
             AgentToolRouter::default(),
+            crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(11)),
         );
 
         let suspended = session.suspended_state().unwrap();

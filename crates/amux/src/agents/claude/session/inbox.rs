@@ -293,6 +293,7 @@ mod tests {
             },
             PathBuf::from("/runtime"),
             crate::agents::claude::ClaudeVersionCache::default(),
+            crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
         );
         session.pty = Some(PtyHandle::test_echo());
         let source = StructuredLogSource::new(32);

@@ -16,8 +16,8 @@ use super::name_sniffer::spawn_name_sniffer;
 use crate::agents::claude::ClaudeVersionCache;
 use crate::agents::claude::transcript_ingest::TranscriptIngest;
 use crate::agents::{
-    AgentParent, CreateAgentRequest, LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy,
-    StructuredLogSource, TerminalSize, spawn_pty_agent,
+    AgentParent, CreateAgentRequest, LocalAgentNameSource, McpLaunchRoute, PtyHandle, SessionEvent,
+    StopPolicy, StructuredLogSource, TerminalSize, spawn_pty_agent,
 };
 use crate::debug::DebugView;
 
@@ -95,6 +95,7 @@ pub(crate) struct ClaudeSession {
     pub(in crate::agents) args: Vec<String>,
     pub(super) runtime_dir: PathBuf,
     pub(super) claude_version_cache: ClaudeVersionCache,
+    pub(super) mcp_launch_route: Option<McpLaunchRoute>,
     pub(super) messaging_credentials: Option<ClaudeMessagingCredentials>,
     pub(super) pty_only_delivery: Arc<AtomicBool>,
     pub(super) delivery_ready: Arc<AtomicBool>,
@@ -115,6 +116,7 @@ impl ClaudeSession {
         req: &CreateAgentRequest,
         runtime_dir: PathBuf,
         claude_version_cache: ClaudeVersionCache,
+        mcp_launch_route: McpLaunchRoute,
     ) -> Self {
         Self {
             agent_id: req.agent_id,
@@ -129,6 +131,7 @@ impl ClaudeSession {
             args: req.args.clone(),
             runtime_dir,
             claude_version_cache,
+            mcp_launch_route: Some(mcp_launch_route),
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
             delivery_ready: Arc::new(AtomicBool::new(false)),
@@ -151,6 +154,7 @@ impl ClaudeSession {
         created_at: DateTime<Utc>,
         runtime_dir: PathBuf,
         claude_version_cache: ClaudeVersionCache,
+        mcp_launch_route: McpLaunchRoute,
     ) -> Self {
         Self {
             agent_id: req.agent_id,
@@ -165,6 +169,7 @@ impl ClaudeSession {
             args: sanitize_resume_args(req.args.clone()),
             runtime_dir,
             claude_version_cache,
+            mcp_launch_route: Some(mcp_launch_route),
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
             delivery_ready: Arc::new(AtomicBool::new(false)),
@@ -201,6 +206,7 @@ impl ClaudeSession {
             args: vec![],
             runtime_dir: std::env::temp_dir(),
             claude_version_cache,
+            mcp_launch_route: None,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
             delivery_ready: Arc::new(AtomicBool::new(false)),
@@ -217,8 +223,14 @@ impl ClaudeSession {
         req: &CreateAgentRequest,
         runtime_dir: PathBuf,
         claude_version_cache: ClaudeVersionCache,
+        mcp_launch_route: McpLaunchRoute,
     ) -> Self {
-        let mut session = Self::new(req, runtime_dir, claude_version_cache.clone());
+        let mut session = Self::new(
+            req,
+            runtime_dir,
+            claude_version_cache.clone(),
+            mcp_launch_route,
+        );
         session.pty = Some(PtyHandle::test_echo());
         session.transcript_ingest = Some(TranscriptIngest::new(
             StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
@@ -270,10 +282,8 @@ impl ClaudeSession {
     /// Extra args from creation are appended.
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         let env = claude_spawn_env(self.agent_id);
-        let amux_executable =
-            std::env::current_exe().context("failed to determine the running amux executable")?;
         let claude_version = self.claude_version_cache.current();
-        let args = self.spawn_args(claude_version.as_deref(), &amux_executable)?;
+        let args = self.spawn_args(claude_version.as_deref())?;
         let (pty, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
@@ -302,11 +312,7 @@ impl ClaudeSession {
         }))
     }
 
-    fn spawn_args(
-        &self,
-        version: Option<&str>,
-        amux_executable: &std::path::Path,
-    ) -> Result<Vec<String>> {
+    fn spawn_args(&self, version: Option<&str>) -> Result<Vec<String>> {
         let mut args = match self.session_id {
             Some(id) => vec!["--resume".to_string(), id.to_string()],
             None => Vec::new(),
@@ -327,16 +333,48 @@ impl ClaudeSession {
                     .into_owned(),
             );
         }
-        let amux_executable = amux_executable
+        let route = self
+            .mcp_launch_route
+            .as_ref()
+            .context("managed Claude session is missing its MCP launch route")?;
+        route
+            .validate()
+            .context("managed Claude MCP launch route is no longer valid")?;
+        let amux_executable = route
+            .executable()
             .to_str()
             .context("the running amux executable path is not valid UTF-8")?;
+        let socket_path = route
+            .socket_path()
+            .to_str()
+            .context("the daemon socket path is not valid UTF-8")?;
+        let mut mcp_env = serde_json::Map::from_iter([
+            (
+                "AMUX_AGENT_ID".to_string(),
+                serde_json::Value::String(self.agent_id.to_string()),
+            ),
+            (
+                "AMUX_HOST_ID".to_string(),
+                serde_json::Value::String(route.host_id().to_string()),
+            ),
+        ]);
+        if let Some(config_path) = route.config_path() {
+            let config_path = config_path
+                .to_str()
+                .context("the amux config path is not valid UTF-8")?;
+            mcp_env.insert(
+                "AMUX_CONFIG".to_string(),
+                serde_json::Value::String(config_path.to_string()),
+            );
+        }
         args.push("--mcp-config".to_string());
         args.push(
             serde_json::json!({
                 "mcpServers": {
                     "amux": {
                         "command": amux_executable,
-                        "args": ["mcp", "agent"]
+                        "args": ["mcp", "agent", "--socket-path", socket_path],
+                        "env": mcp_env
                     }
                 }
             })
@@ -457,7 +495,53 @@ impl Serialize for DebugView<'_, ClaudeSession> {
 mod tests {
     use super::*;
     use crate::agents::pty::apply_env;
-    use crate::agents::{AgentType, CreateAgentRequest};
+    use crate::agents::{AgentType, CreateAgentRequest, McpLaunchRoute};
+
+    fn test_route(host_id: Uuid) -> McpLaunchRoute {
+        crate::agents::mcp_launch_route_for_tests(host_id)
+    }
+
+    fn expected_mcp_config(route: &McpLaunchRoute, agent_id: Uuid) -> String {
+        let mut env = serde_json::Map::from_iter([
+            (
+                "AMUX_AGENT_ID".to_string(),
+                serde_json::Value::String(agent_id.to_string()),
+            ),
+            (
+                "AMUX_HOST_ID".to_string(),
+                serde_json::Value::String(route.host_id().to_string()),
+            ),
+        ]);
+        if let Some(config_path) = route.config_path() {
+            env.insert(
+                "AMUX_CONFIG".to_string(),
+                serde_json::Value::String(config_path.to_str().unwrap().to_string()),
+            );
+        }
+        serde_json::json!({
+            "mcpServers": {
+                "amux": {
+                    "command": route.executable().to_str().unwrap(),
+                    "args": [
+                        "mcp",
+                        "agent",
+                        "--socket-path",
+                        route.socket_path().to_str().unwrap()
+                    ],
+                    "env": env
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn mcp_config_arg(args: &[String]) -> serde_json::Value {
+        let index = args
+            .iter()
+            .position(|arg| arg == "--mcp-config")
+            .expect("managed MCP config argument");
+        serde_json::from_str(&args[index + 1]).unwrap()
+    }
 
     fn claude_request(agent_id: Uuid, name: Option<&str>, args: Vec<&str>) -> CreateAgentRequest {
         CreateAgentRequest {
@@ -493,14 +577,16 @@ mod tests {
             ],
         );
         let runtime_dir = PathBuf::from("/runtime/amux");
-        let amux_executable = PathBuf::from("/opt/amux/bin/amux");
-        let session =
-            ClaudeSession::new(&request, runtime_dir.clone(), ClaudeVersionCache::default());
+        let route = test_route(Uuid::from_u128(70));
+        let session = ClaudeSession::new(
+            &request,
+            runtime_dir.clone(),
+            ClaudeVersionCache::default(),
+            route.clone(),
+        );
 
         assert_eq!(
-            session
-                .spawn_args(Some(captured_version), &amux_executable)
-                .unwrap(),
+            session.spawn_args(Some(captured_version)).unwrap(),
             vec![
                 "--model".to_string(),
                 "sonnet".to_string(),
@@ -512,23 +598,13 @@ mod tests {
                     .to_string_lossy()
                     .into_owned(),
                 "--mcp-config".to_string(),
-                serde_json::json!({
-                    "mcpServers": {
-                        "amux": {
-                            "command": "/opt/amux/bin/amux",
-                            "args": ["mcp", "agent"]
-                        }
-                    }
-                })
-                .to_string(),
+                expected_mcp_config(&route, agent_id),
                 "--allowedTools".to_string(),
                 "mcp__amux__*".to_string(),
             ]
         );
 
-        let old_args = session
-            .spawn_args(Some("2.1.223 (Claude Code)"), &amux_executable)
-            .unwrap();
+        let old_args = session.spawn_args(Some("2.1.223 (Claude Code)")).unwrap();
         assert_eq!(
             old_args,
             vec![
@@ -537,15 +613,7 @@ mod tests {
                 "--name".to_string(),
                 "reviewer".to_string(),
                 "--mcp-config".to_string(),
-                serde_json::json!({
-                    "mcpServers": {
-                        "amux": {
-                            "command": "/opt/amux/bin/amux",
-                            "args": ["mcp", "agent"]
-                        }
-                    }
-                })
-                .to_string(),
+                expected_mcp_config(&route, agent_id),
                 "--allowedTools".to_string(),
                 "mcp__amux__*".to_string(),
             ]
@@ -556,22 +624,15 @@ mod tests {
             &claude_request(agent_id, None, Vec::new()),
             runtime_dir,
             ClaudeVersionCache::default(),
+            route.clone(),
         );
         assert_eq!(
-            unnamed.spawn_args(None, &amux_executable).unwrap(),
+            unnamed.spawn_args(None).unwrap(),
             vec![
                 "--name".to_string(),
                 agent_id.to_string(),
                 "--mcp-config".to_string(),
-                serde_json::json!({
-                    "mcpServers": {
-                        "amux": {
-                            "command": "/opt/amux/bin/amux",
-                            "args": ["mcp", "agent"]
-                        }
-                    }
-                })
-                .to_string(),
+                expected_mcp_config(&route, agent_id),
                 "--allowedTools".to_string(),
                 "mcp__amux__*".to_string(),
             ]
@@ -594,9 +655,10 @@ mod tests {
             &request,
             PathBuf::from("/runtime"),
             ClaudeVersionCache::default(),
+            test_route(Uuid::from_u128(71)),
         );
-        let executable = PathBuf::from("/Applications/amux/bin/amux");
-        let args = session.spawn_args(None, &executable).unwrap();
+        let route = session.mcp_launch_route.as_ref().unwrap();
+        let args = session.spawn_args(None).unwrap();
 
         assert_eq!(
             args,
@@ -604,18 +666,65 @@ mod tests {
                 "--name".to_string(),
                 "builder".to_string(),
                 "--mcp-config".to_string(),
-                serde_json::json!({
-                    "mcpServers": {
-                        "amux": {
-                            "command": "/Applications/amux/bin/amux",
-                            "args": ["mcp", "agent"]
-                        }
-                    }
-                })
-                .to_string(),
+                expected_mcp_config(route, agent_id),
                 "--allowedTools".to_string(),
                 "mcp__amux__*".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn managed_claude_fresh_and_suspended_sessions_keep_the_exact_mcp_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("amux");
+        let config = dir.path().join("amux.yaml");
+        let socket = dir.path().join("custom.sock");
+        std::fs::write(&executable, b"test executable").unwrap();
+        std::fs::write(&config, b"host_name: test\n").unwrap();
+        let host_id = Uuid::from_u128(72);
+        let agent_id = Uuid::from_u128(73);
+        let route = McpLaunchRoute::new(
+            executable.clone(),
+            Some(config.clone()),
+            socket.clone(),
+            host_id,
+        )
+        .unwrap();
+        let request = claude_request(agent_id, Some("builder"), Vec::new());
+        let fresh = ClaudeSession::new(
+            &request,
+            dir.path().join("runtime"),
+            ClaudeVersionCache::default(),
+            route.clone(),
+        );
+        let suspended = ClaudeSession::from_suspended(
+            &request,
+            LocalAgentNameSource::Amux,
+            Uuid::from_u128(74),
+            Utc::now(),
+            dir.path().join("runtime"),
+            ClaudeVersionCache::default(),
+            route,
+        );
+
+        let fresh_config = mcp_config_arg(&fresh.spawn_args(None).unwrap());
+        let suspended_config = mcp_config_arg(&suspended.spawn_args(None).unwrap());
+        assert_eq!(fresh_config, suspended_config);
+        assert_eq!(
+            fresh_config["mcpServers"]["amux"]["command"],
+            executable.to_str().unwrap()
+        );
+        assert_eq!(
+            fresh_config["mcpServers"]["amux"]["args"],
+            serde_json::json!(["mcp", "agent", "--socket-path", socket])
+        );
+        assert_eq!(
+            fresh_config["mcpServers"]["amux"]["env"],
+            serde_json::json!({
+                "AMUX_AGENT_ID": agent_id,
+                "AMUX_CONFIG": config,
+                "AMUX_HOST_ID": host_id,
+            })
         );
     }
 
