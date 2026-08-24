@@ -309,35 +309,24 @@ impl Scratch {
         let dir = self.projects.join(scenario);
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("config.txt"), "VALUE=1\n")?;
-        // The user's globally installed amux plugin can lag the checked-out
-        // CLI. Put the repository's hook manifest in each disposable capture
-        // project so hooks exercise this binary's accepted command shape and
-        // report the live transcript path to the scratch daemon.
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../../../../claude-plugin/hooks/hooks.json"))?;
-        let mut hooks = manifest
-            .get("hooks")
-            .cloned()
-            .ok_or_else(|| anyhow!("capture hook manifest has no hooks object"))?;
-        for entries in hooks
-            .as_object_mut()
-            .ok_or_else(|| anyhow!("capture hook manifest hooks is not an object"))?
-            .values_mut()
-        {
-            for entry in entries
-                .as_array_mut()
-                .ok_or_else(|| anyhow!("capture hook entries are not an array"))?
-            {
-                for hook in entry
-                    .get_mut("hooks")
-                    .and_then(serde_json::Value::as_array_mut)
-                    .ok_or_else(|| anyhow!("capture hook entry has no hooks array"))?
-                {
-                    hook["command"] =
-                        serde_json::Value::String("./.claude/amux-capture-hook.sh".to_string());
-                }
-            }
-        }
+        // The capture project owns an observable synchronous hook beside the
+        // managed launch's asynchronous hook. Both exercise the same daemon
+        // seam while this one also records the raw event and messaging env.
+        let registration = || {
+            serde_json::json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "./.claude/amux-capture-hook.sh"
+                }]
+            }])
+        };
+        let hooks = serde_json::json!({
+            "SessionStart": registration(),
+            "SessionEnd": registration(),
+            "PermissionRequest": registration(),
+            "Stop": registration(),
+            "Notification": registration()
+        });
         let claude_dir = dir.join(".claude");
         std::fs::create_dir_all(&claude_dir)?;
         std::fs::write(

@@ -18,8 +18,6 @@ state_path: $WT_ROOT/.wt/amux/state/state.yaml
 data_dir: $WT_ROOT/.wt/amux/data
 enable_cloud_mode: false
 prevent_idle_sleep: false
-claude:
-  manage_plugin: false
 """
 
 # The workspace's default-members is amux-cli only; CI covers the whole

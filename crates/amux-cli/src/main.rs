@@ -1,9 +1,9 @@
 mod auth;
+mod claude_cleanup;
 mod client_common;
 mod hooks;
 mod init;
 mod mcp;
-mod plugin;
 mod server_client;
 mod session_client;
 mod ui;
@@ -42,8 +42,8 @@ struct Cli {
     command: Option<Commands>,
 
     /// Path to config file (YAML format). Also read from `AMUX_CONFIG`, so
-    /// processes that cannot be given flags (Claude Code's `amux hooks claude`
-    /// hook, daemons spawned by a wrapper) still find the right instance.
+    /// managed Claude hooks and daemons spawned by a wrapper find the same
+    /// instance without adding a config flag to their command.
     #[arg(long, global = true, env = "AMUX_CONFIG")]
     config: Option<PathBuf>,
 }
@@ -415,14 +415,11 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                     )?;
                     ensure_initialized(&mut config).await?;
                     check_update_required(&config);
-                    match &agent_type {
-                        AgentType::Claude => {
-                            plugin::ensure_plugin_installed(&config).await;
-                        }
-                        AgentType::Codex { .. } => {}
-                        #[cfg(any(debug_assertions, test))]
-                        AgentType::TestAgent { .. } => {}
-                    };
+                    if matches!(&agent_type, AgentType::Claude) {
+                        claude_cleanup::ensure_legacy_plugin_removed(&config)
+                            .await
+                            .context("failed to remove retired Claude Code plugin")?;
+                    }
                     session_client::new_agent(name.as_deref(), agent_type, args, &config).await
                 },
             )
@@ -1108,8 +1105,8 @@ mod tests {
         assert!(arg.is_global_set());
     }
 
-    /// The Claude Code hook is the literal `amux hooks claude` with no
-    /// flags; it reaches the right instance only through the global arg.
+    /// The managed Claude hook has no config flag; it reaches the right
+    /// instance through the inherited global argument environment.
     #[test]
     fn config_flag_is_accepted_after_hooks_subcommand() {
         let cli =

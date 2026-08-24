@@ -12,13 +12,10 @@ use crate::agents::{HookEnvironment, HookError, HookOutcome};
 const MESSAGING_SOCKET_ENV: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
 const MESSAGING_TOKEN_ENV: &str = "CLAUDE_CODE_MESSAGING_TOKEN";
 
-/// Hook delivery is at-least-once by construction: any number of scopes —
-/// user settings.json, project settings, the amux plugin — may register
-/// `amux hooks claude`, and Claude Code runs *every* registration for every
-/// event (observed live: a legacy user-settings entry beside the plugin's
-/// registration fired twice per event, recorded by the transcript's own
-/// `stop_hook_summary` rows as `hookCount: 2`). Each registration delivers
-/// the identical stdin JSON to the same daemon.
+/// Hook delivery is at-least-once by construction: user and project settings
+/// may repeat the managed registration, and Claude Code runs every
+/// registration for every event. Each registration delivers the identical
+/// stdin JSON to the same daemon.
 ///
 /// The daemon is the seam where deliveries become stream facts, so it emits
 /// each fact once: a payload byte-identical to the previously emitted one
@@ -238,12 +235,11 @@ mod tests {
         .expect("payload serializes")
     }
 
-    /// Hook delivery is at-least-once — multiple registrations (a user
-    /// settings.json entry beside the plugin's) each run `amux hooks
-    /// claude` for the same event with identical stdin. The daemon emits
-    /// the fact once: byte-identical payloads within the dedupe window
-    /// collapse; distinct payloads and re-deliveries past the window do
-    /// not.
+    /// Hook delivery is at-least-once — user or project settings can repeat
+    /// the managed registration and run the hook for the same event with
+    /// identical stdin. The daemon emits the fact once: byte-identical
+    /// payloads within the dedupe window collapse; distinct payloads and
+    /// re-deliveries past the window do not.
     #[tokio::test(start_paused = true)]
     async fn duplicate_hook_deliveries_emit_one_structured_row() {
         let mut session =

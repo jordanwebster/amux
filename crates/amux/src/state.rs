@@ -7,7 +7,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -33,10 +33,9 @@ pub(crate) struct State {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub(crate) struct ClaudeState {
-    /// Plugin version last successfully applied to Claude Code.
-    pub(crate) applied_plugin_version: Option<String>,
-    /// Marketplace source path last successfully applied to Claude Code.
-    pub(crate) applied_marketplace_path: Option<PathBuf>,
+    /// Whether the retired user-global Claude plugin and marketplace were
+    /// removed after upgrading to the command-line-only integration.
+    pub(crate) legacy_plugin_cleanup_completed: bool,
 }
 
 impl State {
@@ -106,7 +105,7 @@ mod tests {
     #[test]
     fn test_state_default() {
         let state = State::default();
-        assert!(state.claude.applied_plugin_version.is_none());
+        assert!(!state.claude.legacy_plugin_cleanup_completed);
     }
 
     #[test]
@@ -114,7 +113,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("state.yaml");
         let state = State::load(&path).unwrap();
-        assert!(state.claude.applied_plugin_version.is_none());
+        assert!(!state.claude.legacy_plugin_cleanup_completed);
     }
 
     #[test]
@@ -123,14 +122,11 @@ mod tests {
         let path = temp.path().join("state.yaml");
 
         State::update(&path, |s| {
-            s.claude.applied_plugin_version = Some("1.0.0".to_string());
+            s.claude.legacy_plugin_cleanup_completed = true;
         })
         .unwrap();
 
         let loaded = State::load(&path).unwrap();
-        assert_eq!(
-            loaded.claude.applied_plugin_version.as_deref(),
-            Some("1.0.0")
-        );
+        assert!(loaded.claude.legacy_plugin_cleanup_completed);
     }
 }

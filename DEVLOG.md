@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **The user-global Claude plugin is retired.** The bundled plugin,
+marketplace, materializer, updater, and `claude.manage_plugin` switch are gone.
+Entering managed Claude through `amux new claude` or the fleet now performs a
+one-time upgrade cleanup: it uninstalls `amux@amux`, removes the `amux`
+marketplace registration, deletes materialized marketplace trees from the
+active and default data directories, and records completion only after every
+step succeeds. Managed launch settings also disable that exact retired plugin
+id, so a stale installation cannot restore the ambient-PATH MCP route while
+cleanup is pending. The cleanup is inert on machines that never materialized
+the plugin and does not make Codex-only commands depend on Claude Code.
+
+---
+
 2026-08-24 — **Managed Claude launch arguments now compose with user
 configuration.** Black-box probes against Claude Code 2.1.241 confirmed that
 repeated `--mcp-config` and `--allowedTools` flags accumulate and that

@@ -163,26 +163,6 @@ pub struct UiSettings {
     pub default_open_mode: OpenMode,
 }
 
-/// Claude Code integration configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ClaudeSettings {
-    /// Whether `amux new claude` registers and updates the amux plugin in the
-    /// user's Claude Code installation. Plugin registration is user-scoped
-    /// (one marketplace binding per user), so an amux instance that shares a
-    /// machine with another should leave it to the primary instance; the
-    /// registered plugin's hook resolves `amux` via `PATH` either way.
-    pub manage_plugin: bool,
-}
-
-impl Default for ClaudeSettings {
-    fn default() -> Self {
-        Self {
-            manage_plugin: true,
-        }
-    }
-}
-
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -207,8 +187,7 @@ pub struct Config {
     #[serde(default = "default_state_path")]
     pub state_path: PathBuf,
 
-    /// Data directory: device identity, trust store, and the materialized
-    /// Claude Code marketplace.
+    /// Data directory for device identity, trust, and runtime artifacts.
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
 
@@ -237,10 +216,6 @@ pub struct Config {
     #[serde(default)]
     pub ui: UiSettings,
 
-    /// Claude Code integration configuration
-    #[serde(default)]
-    pub claude: ClaudeSettings,
-
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -259,7 +234,6 @@ impl Default for Config {
             minimum_client_versions: HashMap::new(),
             keybinds: Keybinds::default(),
             ui: UiSettings::default(),
-            claude: ClaudeSettings::default(),
             path: None,
         }
     }
@@ -373,28 +347,9 @@ mod tests {
     }
 
     #[test]
-    fn claude_manage_plugin_defaults_to_true() {
-        assert!(Config::default().claude.manage_plugin);
-        let config: Config = serde_yaml::from_str("tcp_port: 9999\n").unwrap();
-        assert!(config.claude.manage_plugin);
-        let config: Config = serde_yaml::from_str("claude: {}\n").unwrap();
-        assert!(config.claude.manage_plugin);
-    }
-
-    #[test]
-    fn claude_manage_plugin_yaml_roundtrip() {
-        let yaml = "claude:\n  manage_plugin: false\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert!(!config.claude.manage_plugin);
-
-        let serialized = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
-        assert!(!parsed.claude.manage_plugin);
-    }
-
-    #[test]
-    fn unknown_claude_field_is_rejected() {
-        let error = serde_yaml::from_str::<Config>("claude:\n  hooks: false\n").unwrap_err();
+    fn retired_claude_plugin_config_is_rejected() {
+        let error =
+            serde_yaml::from_str::<Config>("claude:\n  manage_plugin: false\n").unwrap_err();
         assert!(error.to_string().contains("unknown field"));
     }
 

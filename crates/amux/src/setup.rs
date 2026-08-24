@@ -7,12 +7,6 @@ use crate::config::Config;
 use crate::identity::{IdentityError, ensure_device_files_in};
 use crate::state::State;
 
-#[derive(Debug, Clone, Default)]
-pub struct ClaudePluginSetupState {
-    pub applied_plugin_version: Option<String>,
-    pub applied_marketplace_path: Option<PathBuf>,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
     #[error("state error: {0}")]
@@ -98,27 +92,17 @@ pub fn ensure_device_identity(config: &Config) -> Result<(), SetupError> {
     Ok(())
 }
 
-/// Read Claude plugin setup state persisted for Claude Code integration.
-pub fn claude_plugin_setup_state(config: &Config) -> ClaudePluginSetupState {
+/// Whether the retired user-global Claude plugin has been removed.
+pub fn legacy_claude_plugin_cleanup_completed(config: &Config) -> bool {
     State::load(&config.state_path)
         .ok()
-        .map(|s| ClaudePluginSetupState {
-            applied_plugin_version: s.claude.applied_plugin_version,
-            applied_marketplace_path: s.claude.applied_marketplace_path,
-        })
-        .unwrap_or_default()
+        .is_some_and(|state| state.claude.legacy_plugin_cleanup_completed)
 }
 
-/// Persist the Claude plugin version and marketplace path last successfully
-/// applied to Claude Code.
-pub fn set_claude_plugin_setup_state(
-    config: &Config,
-    version: &str,
-    marketplace_path: &Path,
-) -> Result<(), SetupError> {
+/// Record successful removal of the retired user-global Claude plugin.
+pub fn set_legacy_claude_plugin_cleanup_completed(config: &Config) -> Result<(), SetupError> {
     State::update(&config.state_path, |s| {
-        s.claude.applied_plugin_version = Some(version.to_string());
-        s.claude.applied_marketplace_path = Some(marketplace_path.to_path_buf());
+        s.claude.legacy_plugin_cleanup_completed = true;
     })
     .map_err(|e| SetupError::State(e.to_string()))?;
     Ok(())
