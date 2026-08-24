@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **The retired plugin's tombstones are gone.** Two mechanisms
+existed to suppress a plugin that no longer ships: an upgrade migration that
+uninstalled `amux@amux` and recursively removed its materialized marketplace,
+and a per-session `enabledPlugins: {"amux@amux": false}` written into every
+managed Claude session's settings. The migration had a population of one and
+has run; the per-session override outlived it and additionally overrode a
+user's own value for a plugin reference amux no longer owns. Both are removed,
+and managed settings now carry hooks alone. `state.yaml` went with them — the
+`State` struct existed only to record that the migration had completed, so the
+module, its file locking, and the orphaned `fs2` dependency are deleted.
+`config.state_path` stays: suspend/resume still anchors `suspended.yaml`
+beside it.
+
+---
+
 2026-08-24 — **Legacy Claude marketplace cleanup now fails closed on unsafe
 state paths.** The migration accepts the retired `applied_marketplace_path`
 only when it is absolute, ends in `claude-marketplace`, and either names a

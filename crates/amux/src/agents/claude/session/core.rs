@@ -572,9 +572,6 @@ fn managed_hook_settings(amux_executable: &str) -> serde_json::Value {
         }])
     };
     serde_json::json!({
-        "enabledPlugins": {
-            "amux@amux": false
-        },
         "hooks": {
             "SessionStart": registration(),
             "SessionEnd": registration(),
@@ -861,7 +858,7 @@ mod tests {
         let args = session.spawn_args(None).unwrap();
         let settings = settings_arg(&args);
         assert_eq!(settings["env"]["USER_SETTING"], "kept");
-        assert_eq!(settings["enabledPlugins"]["amux@amux"], false);
+        assert_eq!(settings["enabledPlugins"]["amux@amux"], true);
         assert_eq!(settings["enabledPlugins"]["user@plugins"], true);
         assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 2);
         assert_eq!(

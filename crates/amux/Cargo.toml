@@ -45,7 +45,6 @@ curve25519-dalek = { workspace = true }
 rcgen = { workspace = true }
 jsonwebtoken = { workspace = true }
 reqwest = { workspace = true }
-fs2 = { workspace = true }
 socket2 = { workspace = true }
 chrono = { workspace = true }
 semver = { workspace = true }

@@ -414,11 +414,6 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                     )?;
                     ensure_initialized(&mut config).await?;
                     check_update_required(&config);
-                    if matches!(&agent_type, AgentType::Claude) {
-                        amux::setup::ensure_legacy_claude_plugin_removed(&config)
-                            .await
-                            .context("failed to remove retired Claude Code plugin")?;
-                    }
                     session_client::new_agent(name.as_deref(), agent_type, args, &config).await
                 },
             )

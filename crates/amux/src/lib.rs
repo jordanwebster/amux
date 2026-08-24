@@ -36,7 +36,6 @@ mod server;
 mod services;
 pub mod setup;
 mod sleep_inhibitor;
-mod state;
 mod subscription;
 mod suspend;
 #[cfg(feature = "testnet")]

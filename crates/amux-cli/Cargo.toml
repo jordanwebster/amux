@@ -25,7 +25,6 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
-fs2 = { workspace = true }
 async-trait = { workspace = true }
 semver = { workspace = true }
 sha2 = { workspace = true }
