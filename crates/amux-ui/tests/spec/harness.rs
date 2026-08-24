@@ -366,35 +366,6 @@ pub fn codex_fixture_rows() -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// The `codex_sdk_v1` rows a graduated Codex capture produces, projected
-/// from the recorded wire exactly as the daemon projects a live one: the
-/// notification's method becomes the row's `type` and its params become the
-/// rest. Reading the capture rather than a transcription of it keeps the
-/// spec anchored to what Codex actually sent.
-pub fn codex_capture_rows(fixture: &str) -> Vec<serde_json::Value> {
-    let raw = match fixture {
-        "a2a_tools" => {
-            include_str!("../../../amux/tests/fixtures/codex_backend/a2a_tools.io.jsonl")
-        }
-        other => panic!("unknown codex capture {other}"),
-    };
-    raw.lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|entry| entry.get("dir").and_then(serde_json::Value::as_str) == Some("stdout"))
-        .filter_map(|entry| {
-            let message: serde_json::Value =
-                serde_json::from_str(entry.get("line")?.as_str()?).ok()?;
-            let method = message.get("method")?.as_str()?.to_string();
-            let mut row = match message.get("params") {
-                Some(serde_json::Value::Object(params)) => params.clone(),
-                _ => serde_json::Map::new(),
-            };
-            row.insert("type".to_string(), serde_json::Value::String(method));
-            Some(serde_json::Value::Object(row))
-        })
-        .collect()
-}
-
 pub fn codex_base(agent: &str) -> Vec<Msg> {
     seq([
         vec![

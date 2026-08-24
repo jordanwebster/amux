@@ -554,18 +554,53 @@ fn fold_mcp_item(
     item_id: &str,
     finality: ItemFinality,
 ) {
-    let entry = work_entry(
-        item_id,
-        WorkKind::McpTool {
-            server: str_or(item, "server", "").to_string(),
-            tool: str_or(item, "tool", "").to_string(),
-            arguments: item.get("arguments").cloned().unwrap_or(Value::Null),
-            result: item.get("result").filter(|v| !v.is_null()).cloned(),
-            error: item.get("error").filter(|v| !v.is_null()).cloned(),
-        },
-        work_state(item, finality),
-    );
+    let entry = work_entry(item_id, mcp_tool_kind(item), work_state(item, finality));
     upsert_work(layer, seq, item_id, entry, finality);
+}
+
+/// MCP tool facts. amux serves its own agent tools over an MCP server it
+/// names and owns, so a call is ours when both the server and the tool name
+/// are ours; the tool list comes from the definitions the daemon exposes
+/// rather than a copy of it, so a tool added there cannot quietly start
+/// reading as somebody else's. Any other server stays generic even when it
+/// happens to offer a tool by one of those names.
+fn mcp_tool_kind(item: &Value) -> WorkKind {
+    let server = str_or(item, "server", "").to_string();
+    let tool = str_or(item, "tool", "").to_string();
+    let arguments = item.get("arguments").cloned().unwrap_or(Value::Null);
+    let error = item.get("error").filter(|value| !value.is_null()).cloned();
+    if server == amux::agent_tools::MCP_SERVER_NAME
+        && amux::agent_tools::definitions()
+            .iter()
+            .any(|definition| definition.name == tool)
+    {
+        return WorkKind::AmuxTool {
+            tool,
+            arguments,
+            success: mcp_tool_success(item, error.as_ref()),
+        };
+    }
+    WorkKind::McpTool {
+        server,
+        tool,
+        arguments,
+        result: item.get("result").filter(|value| !value.is_null()).cloned(),
+        error,
+    }
+}
+
+/// Whether an amux MCP call has landed, and how. A stated error settles it
+/// as a failure whatever the status claims; otherwise only the terminal
+/// spellings decide, and a call still in progress has no answer yet.
+fn mcp_tool_success(item: &Value, error: Option<&Value>) -> Option<bool> {
+    if error.is_some() {
+        return Some(false);
+    }
+    match item.get("status").and_then(Value::as_str) {
+        Some("completed") => Some(true),
+        Some("failed") => Some(false),
+        _ => None,
+    }
 }
 
 /// A message another agent sent this one. The native thread shows nothing
@@ -1272,32 +1307,16 @@ fn command_kind(value: &Value) -> WorkKind {
 }
 
 /// Dynamic tool facts, likewise shared by the item body and the raw
-/// `item/tool/call` request that precedes an approval.
+/// `item/tool/call` request that precedes an approval. Every dynamic call is
+/// somebody else's: amux serves its own tools over MCP and registers no
+/// dynamic tool, so a dynamic call by one of amux's names belongs to whoever
+/// registered it and is read as theirs.
 fn dynamic_tool_kind(value: &Value) -> WorkKind {
-    let tool = str_or(value, "tool", "").to_string();
-    let namespace = string(value, "namespace");
-    let arguments = value.get("arguments").cloned().unwrap_or(Value::Null);
-    let success = value.get("success").and_then(Value::as_bool);
-    // amux registers its agent tools as this thread's dynamic tools, in no
-    // namespace, so an unnamespaced call by one of those names is ours. The
-    // list comes from the registrar rather than a copy of it, so a tool
-    // added there cannot quietly start reading as somebody else's.
-    if namespace.is_none()
-        && amux::agent_tools::definitions()
-            .iter()
-            .any(|definition| definition.name == tool)
-    {
-        return WorkKind::AmuxTool {
-            tool,
-            arguments,
-            success,
-        };
-    }
     WorkKind::DynamicTool {
-        tool,
-        namespace,
-        arguments,
-        success,
+        tool: str_or(value, "tool", "").to_string(),
+        namespace: string(value, "namespace"),
+        arguments: value.get("arguments").cloned().unwrap_or(Value::Null),
+        success: value.get("success").and_then(Value::as_bool),
     }
 }
 

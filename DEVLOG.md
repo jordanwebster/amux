@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Codex chat reads amux tool calls off the MCP route.** The chat
+layer now recognises amux's own agent tools by the server amux runs for the
+thread plus a name from the shared definitions, so a managed call renders as
+the fleet's own work while it runs, when it completes, and when it fails — a
+stated error counts as a failure whatever the status claims. Dynamic tool
+calls are now uniformly somebody else's, because amux registers none; one
+that borrows an amux tool name is credited to whoever registered it rather
+than to the fleet. The chapter's tool coverage is built from the reported
+item shape instead of the withdrawn dynamic-tool capture, so all three
+outcomes are visible rather than only the one a recorded turn took.
+
+---
+
 2026-08-24 — **Agent tools use only the public daemon route.** Removed the
 late-bound in-process agent-tool router, its startup binding, and the duplicate
 `ClientService` executor. MCP calls now reach inventory, messaging, creation,

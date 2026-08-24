@@ -274,11 +274,11 @@ pub enum WorkKind {
         arguments: Value,
         success: Option<bool>,
     },
-    /// One of amux's own agent tools, reached through the same dynamic-tool
-    /// carrier. Separated from `DynamicTool` because these are the fleet
-    /// acting on itself — spawning, stopping and messaging agents the human
-    /// can see — and reading them as anonymous dynamic calls would bury the
-    /// only work a chat can explain in the fleet's own words.
+    /// One of amux's own agent tools, reached through the MCP server amux
+    /// runs for the thread. Separated from `McpTool` because these are the
+    /// fleet acting on itself — spawning, stopping and messaging agents the
+    /// human can see — and reading them as calls to some anonymous server
+    /// would bury the only work a chat can explain in the fleet's own words.
     AmuxTool {
         tool: String,
         arguments: Value,
