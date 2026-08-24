@@ -176,10 +176,11 @@ async fn ensure_legacy_claude_plugin_removed_with(
     if !materialized_paths.contains(&default_path) {
         materialized_paths.push(default_path);
     }
-    if let Some(path) = prior_marketplace_path
-        && !materialized_paths.contains(&path)
-    {
-        materialized_paths.push(path);
+    if let Some(path) = prior_marketplace_path {
+        validate_legacy_marketplace_path(&path)?;
+        if !materialized_paths.contains(&path) {
+            materialized_paths.push(path);
+        }
     }
     let materialized = materialized_paths
         .iter()
@@ -249,6 +250,47 @@ fn remove_materialized_marketplace(path: &Path) -> AnyResult<()> {
         fs::remove_file(path)
     }
     .with_context(|| format!("failed to remove {}", path.display()))
+}
+
+fn validate_legacy_marketplace_path(path: &Path) -> AnyResult<()> {
+    if !path.is_absolute() {
+        bail!(
+            "legacy Claude marketplace path is not absolute: {}; remove the retired marketplace manually and clear applied_marketplace_path from the state file",
+            path.display()
+        );
+    }
+    if path.file_name().and_then(|name| name.to_str()) != Some(LEGACY_MARKETPLACE_DIR) {
+        bail!(
+            "legacy Claude marketplace path has unexpected final component: {}; refusing to remove it",
+            path.display()
+        );
+    }
+
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to inspect {}", path.display()));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if !metadata.file_type().is_dir() {
+        bail!(
+            "legacy Claude marketplace path is not a directory or symlink: {}; refusing to remove it",
+            path.display()
+        );
+    }
+    let has_retired_plugin_files = path.join("claude-plugin/.mcp.json").is_file()
+        || path.join(".claude-plugin/marketplace.json").is_file();
+    if !has_retired_plugin_files {
+        bail!(
+            "legacy Claude marketplace path has no retired amux plugin files: {}; refusing to remove it",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn write_config_bool(config: &Config, key: &str, value: Option<bool>) -> Result<(), SetupError> {
@@ -555,6 +597,73 @@ mod tests {
         assert!(persisted.contains("legacy_plugin_cleanup_completed: true"));
         assert!(!persisted.contains("applied_marketplace_path"));
         assert_eq!(runner.calls.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn upgrade_cleanup_refuses_relative_legacy_marketplace_path() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            state_path: dir.path().join("state.yaml"),
+            data_dir: dir.path().join("new-data"),
+            ..Config::default()
+        };
+        fs::write(
+            &config.state_path,
+            "claude:\n  applied_marketplace_path: old-data/claude-marketplace\n",
+        )
+        .unwrap();
+        let runner = FakeClaudeCommandRunner::new(&[]);
+
+        let error = ensure_legacy_claude_plugin_removed_with(
+            &config,
+            &runner,
+            &dir.path().join("default-data"),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("is not absolute"));
+        assert!(runner.calls.lock().unwrap().is_empty());
+        assert!(!legacy_claude_plugin_cleanup_completed(&config));
+    }
+
+    #[tokio::test]
+    async fn upgrade_cleanup_refuses_unrecognized_legacy_marketplace_directory() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            state_path: dir.path().join("state.yaml"),
+            data_dir: dir.path().join("new-data"),
+            ..Config::default()
+        };
+        let unrelated = dir.path().join("old-data/claude-marketplace");
+        fs::create_dir_all(&unrelated).unwrap();
+        let preserved = unrelated.join("keep.txt");
+        fs::write(&preserved, "not an amux marketplace").unwrap();
+        fs::write(
+            &config.state_path,
+            format!(
+                "claude:\n  applied_marketplace_path: {}\n",
+                unrelated.display()
+            ),
+        )
+        .unwrap();
+        let runner = FakeClaudeCommandRunner::new(&[]);
+
+        let error = ensure_legacy_claude_plugin_removed_with(
+            &config,
+            &runner,
+            &dir.path().join("default-data"),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("no retired amux plugin files"));
+        assert_eq!(
+            fs::read_to_string(preserved).unwrap(),
+            "not an amux marketplace"
+        );
+        assert!(runner.calls.lock().unwrap().is_empty());
+        assert!(!legacy_claude_plugin_cleanup_completed(&config));
     }
 
     #[tokio::test]

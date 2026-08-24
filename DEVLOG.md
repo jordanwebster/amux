@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Legacy Claude marketplace cleanup now fails closed on unsafe
+state paths.** The migration accepts the retired `applied_marketplace_path`
+only when it is absolute, ends in `claude-marketplace`, and either names a
+symlink (unlinked without following it) or contains a recognizable retired
+plugin manifest. Relative, malformed, regular-file, and unrelated-directory
+targets stop cleanup without deleting data or recording completion.
+
+---
+
 2026-08-24 — **Retired Claude plugin cleanup now covers every local creation
 route and every previously recorded marketplace.** Cleanup moved from CLI-only
 entry points to local agent-host initialization, before daemon, embedded,
@@ -33,7 +42,8 @@ active and default data directories, and records completion only after every
 step succeeds. Managed launch settings also disable that exact retired plugin
 id, so a stale installation cannot restore the ambient-PATH MCP route while
 cleanup is pending. The cleanup is inert on machines that never materialized
-the plugin and does not make Codex-only commands depend on Claude Code.
+the plugin; when retired artifacts exist, every local host startup waits for
+Claude Code to remove their user-scoped registration before proceeding.
 
 ---
 
