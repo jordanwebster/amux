@@ -7,10 +7,9 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use codex_sdk::{
-    AccountReadParams, ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallRequest,
-    DynamicToolCallResponse, Error as CodexError, FunctionDynamicToolSpec, InputItem, RequestId,
-    Thread, ThreadConfig, ThreadEvent, ThreadItem, TurnEvent, connect_daemon, connect_socket,
-    daemon_socket_path, ensure_daemon_with_fallback,
+    AccountReadParams, ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallResponse,
+    Error as CodexError, InputItem, RequestId, Thread, ThreadConfig, ThreadEvent, ThreadItem,
+    TurnEvent, connect_daemon, connect_socket, daemon_socket_path, ensure_daemon_with_fallback,
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
@@ -274,13 +273,6 @@ struct CodexIngestOptions {
     thread_config: ThreadConfig,
     thread_id: Option<String>,
     completion_sink: Option<CodexCompletionSink>,
-    tool_sink: CodexToolSink,
-}
-
-#[derive(Clone)]
-struct CodexToolSink {
-    agent_id: Uuid,
-    router: AgentToolRouter,
 }
 
 struct CodexPty {
@@ -513,7 +505,6 @@ pub(crate) struct CodexSession {
     created_at: DateTime<Utc>,
     log_source: StructuredLogSource,
     shared_client: Arc<CodexClient>,
-    agent_tools: AgentToolRouter,
     mcp_launch_route: McpLaunchRoute,
     runtime: Arc<StdMutex<CodexRuntime>>,
     raw_pty_preparation: Arc<Mutex<()>>,
@@ -525,7 +516,7 @@ impl CodexSession {
     pub(crate) fn new(
         req: &CreateAgentRequest,
         shared_client: Arc<CodexClient>,
-        agent_tools: AgentToolRouter,
+        _agent_tools: AgentToolRouter,
         mcp_launch_route: McpLaunchRoute,
     ) -> Self {
         let (model, approval_policy, sandbox_policy, resume_thread_id) = match &req.agent_type {
@@ -555,7 +546,6 @@ impl CodexSession {
             created_at: Utc::now(),
             log_source: codex_log_source(),
             shared_client,
-            agent_tools,
             mcp_launch_route,
             runtime: Arc::new(StdMutex::new(CodexRuntime {
                 desired_name: req.name.clone(),
@@ -617,22 +607,65 @@ impl CodexSession {
             .map(|value| serde_json::from_value(Value::String(value.clone())))
             .transpose()
             .context("invalid Codex sandbox_policy")?;
+        let executable = self
+            .mcp_launch_route
+            .executable()
+            .to_str()
+            .context("the running amux executable path is not valid UTF-8")?;
+        let socket_path = self
+            .mcp_launch_route
+            .socket_path()
+            .to_str()
+            .context("the daemon socket path is not valid UTF-8")?;
+        let mut environment = serde_json::Map::from_iter([
+            (
+                "AMUX_AGENT_ID".to_string(),
+                Value::String(self.agent_id.to_string()),
+            ),
+            (
+                "AMUX_HOST_ID".to_string(),
+                Value::String(self.mcp_launch_route.host_id().to_string()),
+            ),
+        ]);
+        if let Some(config_path) = self.mcp_launch_route.config_path() {
+            environment.insert(
+                "AMUX_CONFIG".to_string(),
+                Value::String(
+                    config_path
+                        .to_str()
+                        .context("the amux config path is not valid UTF-8")?
+                        .to_string(),
+                ),
+            );
+        }
+        let enabled_tools = agent_tools::definitions()
+            .into_iter()
+            .map(|tool| Value::String(tool.name.to_string()))
+            .collect::<Vec<_>>();
+        let config = json!({
+            "mcp_servers": {
+                "amux": {
+                    "command": executable,
+                    "args": ["mcp", "agent", "--socket-path", socket_path],
+                    "env": environment,
+                    "enabled": true,
+                    "required": true,
+                    "startup_timeout_sec": 10,
+                    "tool_timeout_sec": 60,
+                    "default_tools_approval_mode": "approve",
+                    "enabled_tools": enabled_tools,
+                }
+            }
+        });
+        let Value::Object(config) = config else {
+            unreachable!("managed Codex MCP config is an object")
+        };
         Ok(ThreadConfig {
             cwd: Some(cwd),
             model: self.model.clone(),
             approval_policy,
             sandbox,
-            dynamic_tools: Some(
-                agent_tools::definitions()
-                    .into_iter()
-                    .map(|tool| FunctionDynamicToolSpec {
-                        name: tool.name.to_string(),
-                        description: tool.description.to_string(),
-                        input_schema: tool.input_schema,
-                        defer_loading: None,
-                    })
-                    .collect(),
-            ),
+            config: Some(config),
             ..ThreadConfig::default()
         })
     }
@@ -658,10 +691,6 @@ impl CodexSession {
                 thread_config,
                 thread_id: resume_thread_id,
                 completion_sink,
-                tool_sink: CodexToolSink {
-                    agent_id,
-                    router: self.agent_tools.clone(),
-                },
             },
             stop_rx,
         ));
@@ -829,7 +858,6 @@ async fn run_ingest_supervisor(
         thread_config,
         mut thread_id,
         completion_sink,
-        tool_sink,
     } = options;
     let mut initial_persisted_resume_pending = thread_id.is_some();
     let mut retry = 0_usize;
@@ -960,7 +988,6 @@ async fn run_ingest_supervisor(
                         &runtime,
                         &log_source,
                         completion_sink.as_ref(),
-                        Some(&tool_sink),
                         event,
                     ).await,
                     Ok(None) => break Some("connection_lost"),
@@ -1376,7 +1403,6 @@ async fn ingest_event(
     runtime: &Arc<StdMutex<CodexRuntime>>,
     log_source: &StructuredLogSource,
     completion_sink: Option<&CodexCompletionSink>,
-    tool_sink: Option<&CodexToolSink>,
     event: ThreadEvent,
 ) {
     log_source.write(raw_row(&event)).await;
@@ -1423,16 +1449,12 @@ async fn ingest_event(
             write_approval_ask(log_source, &event, &request_id).await;
         }
         TurnEvent::ToolCallRequired(request) => {
-            if let Some(tool_sink) = tool_sink {
-                execute_dynamic_tool(runtime, tool_sink, request).await;
-            } else {
-                insert_pending(
-                    runtime,
-                    request.request_id.clone(),
-                    PendingRequestKind::ToolCall,
-                );
-                write_approval_ask(log_source, &event, &request.request_id).await;
-            }
+            insert_pending(
+                runtime,
+                request.request_id.clone(),
+                PendingRequestKind::ToolCall,
+            );
+            write_approval_ask(log_source, &event, &request.request_id).await;
         }
         TurnEvent::ApprovalResolved { request_id } => {
             let removed = runtime
@@ -1446,59 +1468,6 @@ async fn ingest_event(
             }
         }
         _ => {}
-    }
-}
-
-async fn execute_dynamic_tool(
-    runtime: &Arc<StdMutex<CodexRuntime>>,
-    sink: &CodexToolSink,
-    request: &DynamicToolCallRequest,
-) {
-    let live = {
-        let state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
-        state.attached.as_ref().and_then(|attached| {
-            (attached.thread_id == request.thread_id)
-                .then(|| attached.live.clone())
-                .flatten()
-        })
-    };
-    let Some(live) = live else {
-        tracing::warn!(
-            agent_id = %sink.agent_id,
-            thread_id = %request.thread_id,
-            tool = %request.tool,
-            "cannot answer Codex tool call for a detached thread"
-        );
-        return;
-    };
-
-    let result = match agent_tools::parse_call(&request.tool, request.arguments.clone()) {
-        Ok(request) => sink.router.execute(sink.agent_id, request).await,
-        Err(error) => Err(error),
-    };
-    let (success, text) = match result {
-        Ok(output) => (
-            true,
-            serde_json::to_string(&output).expect("JSON values always serialize"),
-        ),
-        Err(error) => (false, format!("{error:#}")),
-    };
-    let response = DynamicToolCallResponse {
-        content_items: vec![json!({"type": "inputText", "text": text})],
-        success,
-    };
-    if let Err(error) = live
-        .thread
-        .respond_tool_call(request.request_id.clone(), response)
-        .await
-    {
-        tracing::warn!(
-            agent_id = %sink.agent_id,
-            thread_id = %request.thread_id,
-            tool = %request.tool,
-            %error,
-            "failed to answer Codex tool call"
-        );
     }
 }
 
@@ -2054,6 +2023,58 @@ mod tests {
         )
     }
 
+    fn file_backed_session() -> (tempfile::TempDir, CodexSession, Value) {
+        let temporary = tempfile::tempdir_in("/tmp").unwrap();
+        let config_path = temporary.path().join("amux.yaml");
+        std::fs::write(&config_path, "socket_path: daemon.sock\n").unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let socket_path = temporary.path().join("daemon.sock");
+        let host_id = Uuid::from_u128(12);
+        let route = McpLaunchRoute::new(
+            executable.clone(),
+            Some(config_path.clone()),
+            socket_path.clone(),
+            host_id,
+        )
+        .unwrap();
+        let request = session_request();
+        let session = CodexSession::new(
+            &request,
+            Arc::new(CodexClient::new(temporary.path().join("codex.sock"))),
+            AgentToolRouter::default(),
+            route,
+        );
+        let expected = json!({
+            "mcp_servers": {
+                "amux": {
+                    "command": executable.to_str().unwrap(),
+                    "args": ["mcp", "agent", "--socket-path", socket_path.to_str().unwrap()],
+                    "env": {
+                        "AMUX_AGENT_ID": request.agent_id,
+                        "AMUX_HOST_ID": host_id,
+                        "AMUX_CONFIG": config_path.to_str().unwrap(),
+                    },
+                    "enabled": true,
+                    "required": true,
+                    "startup_timeout_sec": 10,
+                    "tool_timeout_sec": 60,
+                    "default_tools_approval_mode": "approve",
+                    "enabled_tools": ["agents", "send", "spawn", "stop", "status"],
+                }
+            }
+        });
+        (temporary, session, expected)
+    }
+
+    fn assert_managed_thread_request(request: &Value, method: &str, expected_config: &Value) {
+        assert_eq!(request["method"], method);
+        assert_eq!(&request["params"]["config"], expected_config);
+        assert!(
+            request["params"].get("dynamicTools").is_none(),
+            "amux-owned Codex threads must not register dynamic tools"
+        );
+    }
+
     #[test]
     fn managed_codex_fresh_and_suspended_sessions_keep_the_exact_mcp_route() {
         let request = session_request();
@@ -2075,6 +2096,37 @@ mod tests {
 
         assert_eq!(fresh.mcp_launch_route, route);
         assert_eq!(suspended.mcp_launch_route, route);
+    }
+
+    #[test]
+    fn a2a_codex_thread_config_owns_the_required_definition_derived_mcp_policy() {
+        let (_temporary, session, expected) = file_backed_session();
+        let config = session.thread_config().unwrap();
+
+        assert_eq!(config.config.as_ref(), expected.as_object());
+        assert!(config.dynamic_tools.is_none());
+        let names = agent_tools::definitions()
+            .into_iter()
+            .map(|tool| Value::String(tool.name.to_string()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            config.config.as_ref().unwrap()["mcp_servers"]["amux"]["enabled_tools"],
+            Value::Array(names)
+        );
+    }
+
+    #[test]
+    fn a2a_codex_true_default_mcp_route_omits_only_amux_config() {
+        let session = session();
+        let config = session.thread_config().unwrap();
+        let environment = &config.config.as_ref().unwrap()["mcp_servers"]["amux"]["env"];
+
+        assert!(environment.get("AMUX_CONFIG").is_none());
+        assert_eq!(environment["AMUX_AGENT_ID"], session.agent_id.to_string());
+        assert_eq!(
+            environment["AMUX_HOST_ID"],
+            session.mcp_launch_route.host_id().to_string()
+        );
     }
 
     type MockReader = BufReader<ReadHalf<DuplexStream>>;
@@ -2326,11 +2378,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a2a_codex_tool_call_registers_executes_and_answers() {
+    async fn a2a_codex_dynamic_tool_requests_remain_generic_and_are_never_executed() {
         let (client, mut reader, mut writer) = mock_codex().await;
-        let session = session();
         let executor = Arc::new(RecordingToolExecutor::default());
-        session.agent_tools.bind(executor.clone());
+        let router = AgentToolRouter::default();
+        router.bind(executor.clone());
+        let request = session_request();
+        let session = CodexSession::new(
+            &request,
+            Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
+            router,
+            crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(10)),
+        );
 
         let starting_client = client.clone();
         let config = session.thread_config().unwrap();
@@ -2338,13 +2397,11 @@ mod tests {
             tokio::spawn(async move { starting_client.start_thread(config).await.unwrap() });
         let request = read_request(&mut reader).await;
         assert_eq!(request["method"], "thread/start");
-        let tools = request["params"]["dynamicTools"].as_array().unwrap();
-        assert_eq!(
-            tools
-                .iter()
-                .map(|tool| tool["name"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            ["agents", "send", "spawn", "stop", "status"]
+        assert!(request["params"].get("dynamicTools").is_none());
+        assert!(
+            request["params"]
+                .pointer("/config/mcp_servers/amux")
+                .is_some()
         );
         write_response(&mut writer, &request, thread_session("thread-1", None)).await;
         let thread = start.await.unwrap();
@@ -2373,46 +2430,33 @@ mod tests {
             .await
             .unwrap();
         let event = events.next().await.unwrap().unwrap();
-        let sink = CodexToolSink {
-            agent_id: session.agent_id,
-            router: session.agent_tools.clone(),
-        };
-        ingest_event(
-            &session.runtime,
-            &session.log_source,
-            None,
-            Some(&sink),
-            event,
-        )
-        .await;
+        ingest_event(&session.runtime, &session.log_source, None, event).await;
 
-        let response = read_request(&mut reader).await;
-        assert_eq!(response["id"], 77);
-        assert_eq!(response["result"]["success"], true);
-        assert_eq!(response["result"]["contentItems"][0]["type"], "inputText");
-        assert_eq!(
-            serde_json::from_str::<Value>(
-                response["result"]["contentItems"][0]["text"]
-                    .as_str()
-                    .unwrap()
-            )
-            .unwrap(),
-            json!({"id": Uuid::from_u128(90)})
-        );
-        assert_eq!(
+        assert!(
             executor
                 .calls
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
-                .as_slice(),
-            [(
-                session.agent_id,
-                AgentToolRequest::Send {
-                    to: "peer".into(),
-                    text: "hello".into(),
-                    context: None,
-                }
-            )]
+                .is_empty(),
+            "the retired amux callback path executed a generic dynamic request"
+        );
+        assert!(matches!(
+            session
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .attached
+                .as_ref()
+                .unwrap()
+                .pending
+                .get(&RequestId::Integer(77)),
+            Some(PendingRequestKind::ToolCall)
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), read_request(&mut reader))
+                .await
+                .is_err(),
+            "the retired amux callback path answered the dynamic request"
         );
         client.close().await;
     }
@@ -3097,6 +3141,94 @@ mod tests {
         }));
     }
 
+    #[tokio::test]
+    async fn a2a_codex_required_mcp_config_survives_start_resume_and_reconnect() {
+        let (_temporary, session, expected_config) = file_backed_session();
+        let thread_config = session.thread_config().unwrap();
+        let (initial_client, mut initial_reader, mut initial_writer) = mock_codex().await;
+        let shared = Arc::new(CodexClient::new(PathBuf::from("/tmp/test-codex.sock")));
+        install_test_connection(
+            &shared,
+            initial_client.clone(),
+            Path::new("/tmp/initial.sock"),
+        )
+        .await;
+
+        let start = tokio::spawn({
+            let shared = shared.clone();
+            let thread_config = thread_config.clone();
+            async move {
+                attach_thread(&shared, &thread_config, None, None)
+                    .await
+                    .unwrap()
+            }
+        });
+        let start_request = read_request(&mut initial_reader).await;
+        assert_managed_thread_request(&start_request, "thread/start", &expected_config);
+        write_response(
+            &mut initial_writer,
+            &start_request,
+            thread_session("thread-managed", None),
+        )
+        .await;
+        let (_, started, provenance) = start.await.unwrap();
+        assert_eq!(started.id(), "thread-managed");
+        assert_eq!(provenance, AttachmentProvenance::Started);
+
+        let cold_resume = tokio::spawn({
+            let shared = shared.clone();
+            let thread_config = thread_config.clone();
+            async move {
+                attach_thread(&shared, &thread_config, Some("thread-managed"), None)
+                    .await
+                    .unwrap()
+            }
+        });
+        let resume_request = read_request(&mut initial_reader).await;
+        assert_managed_thread_request(&resume_request, "thread/resume", &expected_config);
+        assert_eq!(resume_request["params"]["threadId"], "thread-managed");
+        write_response(
+            &mut initial_writer,
+            &resume_request,
+            thread_session("thread-managed", Some("named")),
+        )
+        .await;
+        let (_, resumed, provenance) = cold_resume.await.unwrap();
+        assert_eq!(resumed.id(), "thread-managed");
+        assert_eq!(provenance, AttachmentProvenance::Resumed);
+
+        initial_client.clone().close().await;
+        let (reconnected_client, mut reconnected_reader, mut reconnected_writer) =
+            mock_codex().await;
+        install_test_connection(
+            &shared,
+            reconnected_client.clone(),
+            Path::new("/tmp/reconnected.sock"),
+        )
+        .await;
+        let reconnect = tokio::spawn({
+            let shared = shared.clone();
+            async move {
+                attach_thread(&shared, &thread_config, Some("thread-managed"), None)
+                    .await
+                    .unwrap()
+            }
+        });
+        let reconnect_request = read_request(&mut reconnected_reader).await;
+        assert_managed_thread_request(&reconnect_request, "thread/resume", &expected_config);
+        assert_eq!(reconnect_request["params"]["threadId"], "thread-managed");
+        write_response(
+            &mut reconnected_writer,
+            &reconnect_request,
+            thread_session("thread-managed", Some("named")),
+        )
+        .await;
+        let (_, reconnected, provenance) = reconnect.await.unwrap();
+        assert_eq!(reconnected.id(), "thread-managed");
+        assert_eq!(provenance, AttachmentProvenance::Resumed);
+        reconnected_client.close().await;
+    }
+
     async fn bootstrap_naming_transport_loss_recovers(candidate_resumes: bool) {
         let (initial_client, mut initial_reader, mut initial_writer) = mock_codex().await;
         let (fresh_client, mut fresh_reader, mut fresh_writer) = mock_codex().await;
@@ -3129,10 +3261,6 @@ mod tests {
                 thread_config: ThreadConfig::default(),
                 thread_id: None,
                 completion_sink: None,
-                tool_sink: CodexToolSink {
-                    agent_id: Uuid::from_u128(1),
-                    router: AgentToolRouter::default(),
-                },
             },
             stop_rx,
         ));
@@ -3580,7 +3708,7 @@ mod tests {
         source: &StructuredLogSource,
     ) -> ThreadEvent {
         let event = events.next().await.unwrap().expect("fixture event");
-        ingest_event(runtime, source, None, None, event.clone()).await;
+        ingest_event(runtime, source, None, event.clone()).await;
         event
     }
 
@@ -3676,14 +3804,7 @@ mod tests {
             loop {
                 let event = events.next().await.expect("thread event").expect("event");
                 let turn_completed = matches!(&event.event, TurnEvent::TurnCompleted { .. });
-                ingest_event(
-                    &session.runtime,
-                    &source,
-                    Some(&completion_sink),
-                    None,
-                    event,
-                )
-                .await;
+                ingest_event(&session.runtime, &source, Some(&completion_sink), event).await;
                 if turn_completed {
                     break;
                 }

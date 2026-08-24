@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Managed Codex tools now use session-scoped MCP.** Every managed
+Codex start, cold resume, and reconnect now receives the daemon's frozen
+executable, config, socket, and identity route as a required `amux` stdio MCP
+server. The five-tool allowlist comes from the shared definitions and keeps
+automatic approval, while amux no longer registers or executes those tools
+through Codex's dynamic callback path.
+
+---
+
 2026-08-24 — **Managed sessions keep the daemon's exact MCP route.** The
 daemon now freezes its running executable, effective file-backed config (or an
 explicit true-default source), configured socket, and local host identity in
