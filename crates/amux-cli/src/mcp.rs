@@ -421,15 +421,21 @@ impl ToolBackend for ClientBackend {
                         initial_prompt: managed_prompt,
                     })
                     .await?;
-                if caller.is_none() {
-                    client
-                        .send_message(send_request(None, agent.id.to_string(), prompt, None))
-                        .await?;
-                }
-                Ok(json!({
+                let mut result = json!({
                     "name": display_agent_name(&agent),
                     "id": agent.id
-                }))
+                });
+                if caller.is_none()
+                    && let Err(error) = client
+                        .send_message(send_request(None, agent.id.to_string(), prompt, None))
+                        .await
+                {
+                    result["initial_prompt_delivery"] = json!({
+                        "status": "uncertain",
+                        "error": format!("{error:#}")
+                    });
+                }
+                Ok(result)
             }
             ToolRequest::Stop { name } => {
                 let (target, caller) = stop_request(caller, name)?;
@@ -929,7 +935,7 @@ mod tests {
             identity: None,
         };
 
-        backend
+        let result = backend
             .call(ToolRequest::Spawn {
                 kind: SpawnKind::Codex,
                 prompt: "inspect this".to_string(),
@@ -939,12 +945,58 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(result["name"], "spawned");
+        assert!(Uuid::parse_str(result["id"].as_str().unwrap()).is_ok());
+        assert!(result.get("initial_prompt_delivery").is_none());
         assert_eq!(daemon.create_calls.load(Ordering::SeqCst), 1);
         assert_eq!(daemon.send_calls.load(Ordering::SeqCst), 1);
         assert_eq!(
             *daemon.standalone_spawn_shape.lock().unwrap(),
             Some((None, None))
         );
+    }
+
+    #[tokio::test]
+    async fn a2a_mcp_standalone_spawn_reports_uncertain_delivery_without_inviting_a_retry() {
+        let daemon = Arc::new(FakeDaemon::new(Vec::new()));
+        daemon.fail_send.store(true, Ordering::SeqCst);
+        let backend = ClientBackend {
+            connector: Arc::new(FakeConnector::new(daemon.clone(), 0)),
+            identity: None,
+        };
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "spawn",
+                "arguments": {
+                    "kind": "codex",
+                    "prompt": "inspect this",
+                    "name": "probe",
+                    "cwd": "/work"
+                }
+            }
+        })
+        .to_string();
+
+        let response = handle_line(&request, &backend).await.unwrap();
+        let result: Value =
+            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(result["name"], "spawned");
+        assert!(Uuid::parse_str(result["id"].as_str().unwrap()).is_ok());
+        assert_eq!(result["initial_prompt_delivery"]["status"], "uncertain");
+        assert!(
+            result["initial_prompt_delivery"]["error"]
+                .as_str()
+                .unwrap()
+                .contains("response lost after mutation")
+        );
+        assert_eq!(daemon.create_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(daemon.send_calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

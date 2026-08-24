@@ -70,9 +70,10 @@ const CLAUDE_CHILD_SESSION_ENV_SCRUB: &[&str] = &[
 /// scrub: claude's own suppression check honors it unconditionally, so
 /// transcripts persist even if a future Claude Code version grows a new
 /// child-session marker the scrub list does not yet know about.
-fn claude_spawn_env(agent_id: Uuid) -> [(&'static str, String); 2] {
+fn claude_spawn_env(agent_id: Uuid, host_id: Uuid) -> [(&'static str, String); 3] {
     [
         ("AMUX_AGENT_ID", agent_id.to_string()),
+        ("AMUX_HOST_ID", host_id.to_string()),
         ("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE", "1".to_string()),
     ]
 }
@@ -281,9 +282,14 @@ impl ClaudeSession {
     /// when the process exits. If `session_id` is set, passes `--resume <id>`.
     /// Extra args from creation are appended.
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
-        let env = claude_spawn_env(self.agent_id);
         let claude_version = self.claude_version_cache.current();
         let args = self.spawn_args(claude_version.as_deref())?;
+        let host_id = self
+            .mcp_launch_route
+            .as_ref()
+            .context("managed Claude session is missing its MCP launch route")?
+            .host_id();
+        let env = claude_spawn_env(self.agent_id, host_id);
         let (pty, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
@@ -736,7 +742,7 @@ mod tests {
 
         apply_env(
             &mut cmd,
-            &claude_spawn_env(Uuid::new_v4()),
+            &claude_spawn_env(Uuid::new_v4(), Uuid::new_v4()),
             CLAUDE_CHILD_SESSION_ENV_SCRUB,
         );
 
@@ -746,13 +752,15 @@ mod tests {
 
     /// The environment a spawned claude actually receives: every inherited
     /// Claude Code child-session marker is scrubbed, and the force-persistence
-    /// var plus the agent id are set. Guards against the "Transcript saving is
-    /// off — inherited CLAUDE_CODE_CHILD_SESSION marker" failure, where a
-    /// daemon whose ancestry includes a Claude session poisoned every claude
-    /// it spawned and the structured transcript stream had no rows to tail.
+    /// var plus the complete amux identity pair are set. Guards against the
+    /// "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker"
+    /// failure, where a daemon whose ancestry includes a Claude session
+    /// poisoned every claude it spawned and the structured transcript stream
+    /// had no rows to tail.
     #[test]
     fn spawned_claude_env_scrubs_child_session_markers_and_forces_persistence() {
         let agent_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
         let mut cmd = portable_pty::CommandBuilder::new("claude");
         // Simulate a daemon started from inside a Claude session: the full
         // marker set observed via `ps eww` on such a daemon.
@@ -764,7 +772,7 @@ mod tests {
 
         apply_env(
             &mut cmd,
-            &claude_spawn_env(agent_id),
+            &claude_spawn_env(agent_id, host_id),
             CLAUDE_CHILD_SESSION_ENV_SCRUB,
         );
 
@@ -779,6 +787,10 @@ mod tests {
         assert_eq!(
             cmd.get_env("AMUX_AGENT_ID").and_then(|v| v.to_str()),
             Some(agent_id.to_string().as_str())
+        );
+        assert_eq!(
+            cmd.get_env("AMUX_HOST_ID").and_then(|v| v.to_str()),
+            Some(host_id.to_string().as_str())
         );
         assert_eq!(
             cmd.get_env("CLAUDE_CONFIG_DIR").and_then(|v| v.to_str()),

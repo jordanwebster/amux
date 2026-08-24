@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Closed the managed identity and standalone spawn ambiguity.**
+Managed Claude processes now inherit both their agent and host identity, so the
+bundled environment-routed MCP server cannot start with a rejected partial
+pair. A standalone spawn whose separate prompt delivery cannot be confirmed
+returns the created agent with an explicit uncertain-delivery result instead of
+an error that invites a duplicate retry; deterministic tests cover both seams.
+
+---
+
 2026-08-24 — **Generated MCP routes are proven isolated end to end.** A
 two-daemon integration test now launches each managed MCP server through its
 own absolute executable, file-backed config, socket, host identity, and agent

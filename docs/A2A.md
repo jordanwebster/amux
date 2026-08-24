@@ -54,7 +54,7 @@ environment's `PATH` and `AMUX_CONFIG`.
 |---|---|---|---|
 | `agents` | `{}` | fleet rows | List names, kinds, hosts, liveness, work, parent, and the caller marker. |
 | `send` | `{to, text, context?}` | `{id}` | Send text to an agent by name. Replies to an `amux:` address must use this tool. |
-| `spawn` | `{kind, prompt, name?, cwd?}` | `{name, id}` | Create a Claude or Codex child and deliver its initial prompt. |
+| `spawn` | `{kind, prompt, name?, cwd?}` | `{name, id, initial_prompt_delivery?}` | Create a Claude or Codex child and deliver its initial prompt. |
 | `stop` | `{name}` | `{}` | Stop a direct child of the caller. |
 | `status` | `{working_on: string|null}` | `{}` | Set or clear the caller's current work. |
 
@@ -77,6 +77,13 @@ new child and reports failure rather than leaving an orphan. With no explicit
 `cwd`, the child inherits the parent's working directory. Claude children
 inherit only the parent's permission-mode arguments; Codex children inherit
 approval and sandbox policy.
+
+Standalone plugin use has no authenticated parent, so it creates an orphan and
+delivers the prompt as a second daemon mutation. If that delivery cannot be
+confirmed, `spawn` still returns success with the created agent's name and id
+plus `initial_prompt_delivery: {status: "uncertain", error}`. The agent may
+already have received the prompt; callers must inspect that agent instead of
+retrying `spawn` and creating a duplicate.
 
 When a child turn ends, its last assistant message is sent to the parent as a
 `completed` envelope. Claude supplies the text through the `Stop` hook; Codex
