@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use amux::agent_tools::{
@@ -45,17 +45,83 @@ trait ToolBackend: Send + Sync {
     async fn call(&self, request: ToolRequest) -> Result<Value>;
 }
 
-struct ClientBackend {
-    client: Client,
-    caller: Option<Uuid>,
+#[async_trait]
+trait DaemonApi: Send + Sync {
+    async fn list_agents(&self) -> Result<Vec<Agent>>;
+    async fn list_hosts(&self) -> Result<Vec<amux::HostEntry>>;
+    async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid>;
+    async fn create_agent(&self, request: CreateAgentRequest) -> Result<Agent>;
+    async fn delete_child_agent(&self, target: AgentIdentifier, caller: Uuid) -> Result<()>;
+    async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<()>;
 }
 
-pub(super) async fn serve_claude(config: &Config) -> Result<()> {
-    let client = require_running_client(config, None).await?;
+#[async_trait]
+impl DaemonApi for Client {
+    async fn list_agents(&self) -> Result<Vec<Agent>> {
+        Ok(Client::list_agents(self).await?)
+    }
+
+    async fn list_hosts(&self) -> Result<Vec<amux::HostEntry>> {
+        Ok(Client::list_hosts(self).await?)
+    }
+
+    async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid> {
+        Ok(Client::send_message(self, request).await?)
+    }
+
+    async fn create_agent(&self, request: CreateAgentRequest) -> Result<Agent> {
+        Ok(Client::create_agent(self, request).await?)
+    }
+
+    async fn delete_child_agent(&self, target: AgentIdentifier, caller: Uuid) -> Result<()> {
+        Ok(Client::delete_child_agent(self, target, caller).await?)
+    }
+
+    async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<()> {
+        Ok(Client::set_agent_status(self, request).await?)
+    }
+}
+
+#[async_trait]
+trait ClientConnector: Send + Sync {
+    async fn connect(&self) -> Result<Arc<dyn DaemonApi>>;
+}
+
+struct ConfigConnector {
+    config: Config,
+}
+
+#[async_trait]
+impl ClientConnector for ConfigConnector {
+    async fn connect(&self) -> Result<Arc<dyn DaemonApi>> {
+        Ok(Arc::new(require_running_client(&self.config, None).await?))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ManagedIdentity {
+    agent_id: Uuid,
+    host_id: Uuid,
+}
+
+struct ClientBackend {
+    connector: Arc<dyn ClientConnector>,
+    identity: Option<ManagedIdentity>,
+}
+
+pub(super) async fn serve_agent(config: &Config, socket_path: Option<&Path>) -> Result<()> {
+    validate_route(config, socket_path)?;
+    let identity = identity_from_env(
+        std::env::var_os("AMUX_AGENT_ID"),
+        std::env::var_os("AMUX_HOST_ID"),
+    )?;
     let backend = Arc::new(ClientBackend {
-        client,
-        caller: caller_from_env(std::env::var_os("AMUX_AGENT_ID"))?,
+        connector: Arc::new(ConfigConnector {
+            config: config.clone(),
+        }),
+        identity,
     });
+    backend.preflight().await?;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     serve(stdin.lock(), stdout.lock(), backend).await
@@ -175,16 +241,62 @@ fn empty_object() -> Value {
     json!({})
 }
 
-fn caller_from_env(value: Option<OsString>) -> Result<Option<Uuid>> {
-    let Some(value) = value else {
-        return Ok(None);
+fn validate_route(config: &Config, socket_path: Option<&Path>) -> Result<()> {
+    if let Some(config_path) = config.path.as_deref() {
+        if !config_path.is_absolute() {
+            return Err(anyhow!("AMUX_CONFIG must resolve to an absolute path"));
+        }
+        config_path
+            .to_str()
+            .ok_or_else(|| anyhow!("AMUX_CONFIG is not valid UTF-8"))?;
+        if !config_path.is_file() {
+            return Err(anyhow!(
+                "AMUX_CONFIG no longer exists: {}",
+                config_path.display()
+            ));
+        }
+    }
+
+    let Some(socket_path) = socket_path else {
+        return Ok(());
     };
+    if !socket_path.is_absolute() {
+        return Err(anyhow!("--socket-path must be absolute"));
+    }
+    socket_path
+        .to_str()
+        .ok_or_else(|| anyhow!("--socket-path is not valid UTF-8"))?;
+    if config.socket_path != socket_path {
+        return Err(anyhow!(
+            "configured socket {} does not match --socket-path {}",
+            config.socket_path.display(),
+            socket_path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn uuid_from_env(name: &str, value: OsString) -> Result<Uuid> {
     let value = value
         .into_string()
-        .map_err(|_| anyhow!("AMUX_AGENT_ID is not valid UTF-8"))?;
-    Uuid::parse_str(&value)
-        .map(Some)
-        .context("AMUX_AGENT_ID is not a valid UUID")
+        .map_err(|_| anyhow!("{name} is not valid UTF-8"))?;
+    Uuid::parse_str(&value).with_context(|| format!("{name} is not a valid UUID"))
+}
+
+fn identity_from_env(
+    agent_id: Option<OsString>,
+    host_id: Option<OsString>,
+) -> Result<Option<ManagedIdentity>> {
+    match (agent_id, host_id) {
+        (None, None) => Ok(None),
+        (Some(agent_id), Some(host_id)) => Ok(Some(ManagedIdentity {
+            agent_id: uuid_from_env("AMUX_AGENT_ID", agent_id)?,
+            host_id: uuid_from_env("AMUX_HOST_ID", host_id)?,
+        })),
+        _ => Err(anyhow!(
+            "AMUX_AGENT_ID and AMUX_HOST_ID must either both be set or both be absent"
+        )),
+    }
 }
 
 fn caller_parent(
@@ -229,15 +341,35 @@ fn stop_request(caller: Option<Uuid>, name: String) -> Result<(AgentIdentifier, 
     Ok((AgentIdentifier::from(name), caller))
 }
 
+async fn validate_identity(client: &dyn DaemonApi, identity: ManagedIdentity) -> Result<()> {
+    let agents = client.list_agents().await?;
+    let agent = agents
+        .iter()
+        .find(|agent| agent.id == identity.agent_id)
+        .ok_or_else(|| anyhow!("amux agent identity is not present in the fleet"))?;
+    if agent.host_id != identity.host_id {
+        return Err(anyhow!(
+            "amux agent identity belongs to host {}, not injected host {}",
+            agent.host_id,
+            identity.host_id
+        ));
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl ToolBackend for ClientBackend {
     async fn call(&self, request: ToolRequest) -> Result<Value> {
+        let client = self.connector.connect().await?;
+        if let Some(identity) = self.identity {
+            validate_identity(client.as_ref(), identity).await?;
+        }
+        let caller = self.identity.map(|identity| identity.agent_id);
         match request {
-            ToolRequest::Agents => self.list_agents().await,
+            ToolRequest::Agents => self.list_agents(client.as_ref()).await,
             ToolRequest::Send { to, text, context } => {
-                let id = self
-                    .client
-                    .send_message(send_request(self.caller, to, text, context))
+                let id = client
+                    .send_message(send_request(caller, to, text, context))
                     .await?;
                 Ok(json!({ "id": id }))
             }
@@ -247,16 +379,17 @@ impl ToolBackend for ClientBackend {
                 name,
                 cwd,
             } => {
-                let fleet = if self.caller.is_some() {
-                    self.client.list_agents().await?
+                let fleet = if caller.is_some() {
+                    client.list_agents().await?
                 } else {
                     Vec::new()
                 };
                 let caller_agent = self
-                    .caller
+                    .identity
+                    .map(|identity| identity.agent_id)
                     .and_then(|caller| fleet.iter().find(|agent| agent.id == caller));
                 let working_dir = spawn_working_dir(cwd, caller_agent)?;
-                let parent = caller_parent(self.caller, |caller| {
+                let parent = caller_parent(caller, |caller| {
                     fleet
                         .iter()
                         .find(|agent| agent.id == caller)
@@ -277,8 +410,8 @@ impl ToolBackend for ClientBackend {
                         Vec::new(),
                     ),
                 };
-                let agent = self
-                    .client
+                let managed_prompt = parent.is_some().then_some(prompt.clone());
+                let agent = client
                     .create_agent(CreateAgentRequest {
                         agent_id: Uuid::new_v4(),
                         host_id: None,
@@ -288,22 +421,27 @@ impl ToolBackend for ClientBackend {
                         terminal_size: None,
                         args,
                         parent,
-                        initial_prompt: Some(prompt),
+                        initial_prompt: managed_prompt,
                     })
                     .await?;
+                if caller.is_none() {
+                    client
+                        .send_message(send_request(None, agent.id.to_string(), prompt, None))
+                        .await?;
+                }
                 Ok(json!({
                     "name": display_agent_name(&agent),
                     "id": agent.id
                 }))
             }
             ToolRequest::Stop { name } => {
-                let (target, caller) = stop_request(self.caller, name)?;
-                self.client.delete_child_agent(target, caller).await?;
+                let (target, caller) = stop_request(caller, name)?;
+                client.delete_child_agent(target, caller).await?;
                 Ok(json!({}))
             }
             ToolRequest::Status { working_on } => {
-                self.client
-                    .set_agent_status(status_request(self.caller, working_on)?)
+                client
+                    .set_agent_status(status_request(caller, working_on)?)
                     .await?;
                 Ok(json!({}))
             }
@@ -320,9 +458,17 @@ fn spawn_working_dir(cwd: Option<PathBuf>, caller: Option<&Agent>) -> Result<Pat
 }
 
 impl ClientBackend {
-    async fn list_agents(&self) -> Result<Value> {
-        let agents = self.client.list_agents().await?;
-        let hosts = self.client.list_hosts().await?;
+    async fn preflight(&self) -> Result<()> {
+        let client = self.connector.connect().await?;
+        if let Some(identity) = self.identity {
+            validate_identity(client.as_ref(), identity).await?;
+        }
+        Ok(())
+    }
+
+    async fn list_agents(&self, client: &dyn DaemonApi) -> Result<Value> {
+        let agents = client.list_agents().await?;
+        let hosts = client.list_hosts().await?;
         let hosts: HashMap<_, _> = hosts.into_iter().map(|host| (host.id, host)).collect();
         let names: HashMap<_, _> = agents
             .iter()
@@ -341,7 +487,7 @@ impl ClientBackend {
                     "parent": agent.parent.map(|parent| {
                         names.get(&parent.agent_id).cloned().unwrap_or_else(|| parent.agent_id.to_string())
                     }),
-                    "you": self.caller == Some(agent.id)
+                    "you": self.identity.is_some_and(|identity| identity.agent_id == agent.id)
                 })
             })
             .collect();
@@ -356,12 +502,131 @@ fn display_agent_name(agent: &Agent) -> String {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::*;
 
     #[derive(Default)]
     struct RecordingBackend {
         calls: Mutex<Vec<ToolRequest>>,
+    }
+
+    struct FakeDaemon {
+        agents: Vec<Agent>,
+        hosts: Vec<amux::HostEntry>,
+        fail_send: AtomicBool,
+        send_calls: AtomicUsize,
+        create_calls: AtomicUsize,
+        standalone_spawn_shape: Mutex<Option<(Option<AgentParent>, Option<String>)>>,
+    }
+
+    impl FakeDaemon {
+        fn new(agents: Vec<Agent>) -> Self {
+            let hosts = agents
+                .iter()
+                .map(|agent| amux::HostEntry {
+                    id: agent.host_id,
+                    name: format!("host-{}", agent.host_id),
+                    online: true,
+                    version: Some("test".to_string()),
+                    capabilities: Some(amux::Capabilities::default()),
+                    trust_status: amux::HostTrustStatus::Trusted,
+                    last_dial_error: None,
+                })
+                .collect();
+            Self {
+                agents,
+                hosts,
+                fail_send: AtomicBool::new(false),
+                send_calls: AtomicUsize::new(0),
+                create_calls: AtomicUsize::new(0),
+                standalone_spawn_shape: Mutex::new(None),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl DaemonApi for FakeDaemon {
+        async fn list_agents(&self) -> Result<Vec<Agent>> {
+            Ok(self.agents.clone())
+        }
+
+        async fn list_hosts(&self) -> Result<Vec<amux::HostEntry>> {
+            Ok(self.hosts.clone())
+        }
+
+        async fn send_message(&self, _request: SendMessageRequest) -> Result<Uuid> {
+            self.send_calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail_send.load(Ordering::SeqCst) {
+                Err(anyhow!("response lost after mutation"))
+            } else {
+                Ok(Uuid::from_u128(301))
+            }
+        }
+
+        async fn create_agent(&self, request: CreateAgentRequest) -> Result<Agent> {
+            self.create_calls.fetch_add(1, Ordering::SeqCst);
+            *self.standalone_spawn_shape.lock().unwrap() =
+                Some((request.parent, request.initial_prompt));
+            Ok(test_agent(
+                request.agent_id,
+                Uuid::from_u128(302),
+                "spawned",
+            ))
+        }
+
+        async fn delete_child_agent(&self, _target: AgentIdentifier, _caller: Uuid) -> Result<()> {
+            Ok(())
+        }
+
+        async fn set_agent_status(&self, _request: SetAgentStatusRequest) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct FakeConnector {
+        daemon: Arc<FakeDaemon>,
+        fail_first: usize,
+        connects: AtomicUsize,
+    }
+
+    impl FakeConnector {
+        fn new(daemon: Arc<FakeDaemon>, fail_first: usize) -> Self {
+            Self {
+                daemon,
+                fail_first,
+                connects: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ClientConnector for FakeConnector {
+        async fn connect(&self) -> Result<Arc<dyn DaemonApi>> {
+            let attempt = self.connects.fetch_add(1, Ordering::SeqCst);
+            if attempt < self.fail_first {
+                Err(anyhow!("daemon unavailable"))
+            } else {
+                Ok(self.daemon.clone())
+            }
+        }
+    }
+
+    fn test_agent(id: Uuid, host_id: Uuid, name: &str) -> Agent {
+        Agent {
+            id,
+            host_id,
+            name: Some(name.to_string()),
+            command: "test".to_string(),
+            working_dir: PathBuf::from("/work"),
+            agent_type: "test".to_string(),
+            io_protocols: Vec::new(),
+            readonly: false,
+            args: Vec::new(),
+            created_at: chrono::Utc::now(),
+            parent: None,
+            working_on: None,
+        }
     }
 
     #[async_trait]
@@ -505,12 +770,26 @@ mod tests {
         let host = Uuid::from_u128(102);
         let context = Uuid::from_u128(103);
 
-        assert_eq!(caller_from_env(None).unwrap(), None);
+        assert_eq!(identity_from_env(None, None).unwrap(), None);
         assert_eq!(
-            caller_from_env(Some(OsString::from(caller.to_string()))).unwrap(),
-            Some(caller)
+            identity_from_env(
+                Some(OsString::from(caller.to_string())),
+                Some(OsString::from(host.to_string()))
+            )
+            .unwrap(),
+            Some(ManagedIdentity {
+                agent_id: caller,
+                host_id: host,
+            })
         );
-        assert!(caller_from_env(Some(OsString::from("not-a-uuid"))).is_err());
+        assert!(identity_from_env(Some(OsString::from(caller.to_string())), None).is_err());
+        assert!(
+            identity_from_env(
+                Some(OsString::from("not-a-uuid")),
+                Some(OsString::from(host.to_string()))
+            )
+            .is_err()
+        );
 
         let send = send_request(
             Some(caller),
@@ -542,6 +821,162 @@ mod tests {
         assert_eq!(status.agent, AgentIdentifier::Id(caller));
         assert_eq!(status.working_on.as_deref(), Some("reviewing"));
         assert!(status_request(None, None).is_err());
+    }
+
+    #[tokio::test]
+    async fn a2a_mcp_managed_identity_preflight_rejects_stale_and_cross_host_pairs() {
+        let agent_id = Uuid::from_u128(401);
+        let host_id = Uuid::from_u128(402);
+        let daemon = Arc::new(FakeDaemon::new(vec![test_agent(
+            agent_id, host_id, "caller",
+        )]));
+
+        let matching = ClientBackend {
+            connector: Arc::new(FakeConnector::new(daemon.clone(), 0)),
+            identity: Some(ManagedIdentity { agent_id, host_id }),
+        };
+        matching.preflight().await.unwrap();
+
+        let stale = ClientBackend {
+            connector: Arc::new(FakeConnector::new(daemon.clone(), 0)),
+            identity: Some(ManagedIdentity {
+                agent_id: Uuid::from_u128(499),
+                host_id,
+            }),
+        };
+        assert!(
+            stale
+                .preflight()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("not present")
+        );
+
+        let crossed = ClientBackend {
+            connector: Arc::new(FakeConnector::new(daemon, 0)),
+            identity: Some(ManagedIdentity {
+                agent_id,
+                host_id: Uuid::from_u128(498),
+            }),
+        };
+        assert!(
+            crossed
+                .preflight()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("not injected host")
+        );
+    }
+
+    #[tokio::test]
+    async fn a2a_mcp_each_call_reconnects_and_the_next_call_recovers() {
+        let daemon = Arc::new(FakeDaemon::new(Vec::new()));
+        let connector = Arc::new(FakeConnector::new(daemon, 1));
+        let backend = ClientBackend {
+            connector: connector.clone(),
+            identity: None,
+        };
+
+        assert!(backend.call(ToolRequest::Agents).await.is_err());
+        assert_eq!(
+            backend.call(ToolRequest::Agents).await.unwrap(),
+            Value::Array(Vec::new())
+        );
+        assert_eq!(connector.connects.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a2a_mcp_startup_preflight_fails_closed_when_the_daemon_is_unavailable() {
+        let daemon = Arc::new(FakeDaemon::new(Vec::new()));
+        let connector = Arc::new(FakeConnector::new(daemon, 1));
+        let backend = ClientBackend {
+            connector: connector.clone(),
+            identity: None,
+        };
+
+        assert!(backend.preflight().await.is_err());
+        assert_eq!(connector.connects.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a2a_mcp_ambiguous_mutation_is_not_retried_in_the_same_call() {
+        let daemon = Arc::new(FakeDaemon::new(Vec::new()));
+        daemon.fail_send.store(true, Ordering::SeqCst);
+        let connector = Arc::new(FakeConnector::new(daemon.clone(), 0));
+        let backend = ClientBackend {
+            connector: connector.clone(),
+            identity: None,
+        };
+
+        let error = backend
+            .call(ToolRequest::Send {
+                to: "worker".to_string(),
+                text: "do it once".to_string(),
+                context: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("response lost after mutation"));
+        assert_eq!(connector.connects.load(Ordering::SeqCst), 1);
+        assert_eq!(daemon.send_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a2a_mcp_standalone_spawn_creates_an_orphan_then_delivers_the_prompt() {
+        let daemon = Arc::new(FakeDaemon::new(Vec::new()));
+        let backend = ClientBackend {
+            connector: Arc::new(FakeConnector::new(daemon.clone(), 0)),
+            identity: None,
+        };
+
+        backend
+            .call(ToolRequest::Spawn {
+                kind: SpawnKind::Codex,
+                prompt: "inspect this".to_string(),
+                name: Some("probe".to_string()),
+                cwd: Some(PathBuf::from("/work")),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(daemon.create_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(daemon.send_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *daemon.standalone_spawn_shape.lock().unwrap(),
+            Some((None, None))
+        );
+    }
+
+    #[test]
+    fn a2a_mcp_explicit_socket_must_be_absolute_and_match_loaded_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("amux.yaml");
+        std::fs::write(&config_path, "host_name: test\n").unwrap();
+        let socket = dir.path().join("amux.sock");
+        let config = Config {
+            socket_path: socket.clone(),
+            path: Some(config_path),
+            ..Config::default()
+        };
+
+        validate_route(&config, Some(&socket)).unwrap();
+        assert!(validate_route(&config, Some(Path::new("relative.sock"))).is_err());
+        assert!(
+            validate_route(&config, Some(&dir.path().join("other.sock")))
+                .unwrap_err()
+                .to_string()
+                .contains("does not match")
+        );
+        std::fs::remove_file(config.path.as_ref().unwrap()).unwrap();
+        assert!(
+            validate_route(&config, Some(&socket))
+                .unwrap_err()
+                .to_string()
+                .contains("no longer exists")
+        );
     }
 
     #[test]

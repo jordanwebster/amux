@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Agent MCP calls reconnect without replaying mutations.** The
+generic `amux mcp agent` server now validates an injected agent/host pair and
+an exact configured socket before serving tools. It preflights the daemon at
+startup, opens a fresh connection for every call, and returns an interrupted
+mutation as an error without retrying it; a later call can reconnect after a
+daemon restart. Config paths survive stdin daemon handoff, and both managed
+and bundled Claude launches use the generic command.
+
+---
+
 2026-08-24 — **Current Codex MCP startup behavior replays offline.** A reduced,
 version-pinned capture now anchors session-scoped MCP configuration on fresh
 start and cold resume, allowlist filtering, explicit child environment

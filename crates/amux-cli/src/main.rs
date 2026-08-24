@@ -226,6 +226,10 @@ enum ServerCommands {
         /// Read config from stdin (YAML format). Used by CLI daemon spawning.
         #[arg(long, hide = true)]
         config_from_stdin: bool,
+
+        /// Preserve the source path of config serialized over stdin.
+        #[arg(long, hide = true, requires = "config_from_stdin")]
+        config_path: Option<PathBuf>,
     },
 
     /// Shut down the server and all running agent sessions
@@ -300,8 +304,12 @@ enum HooksProvider {
 
 #[derive(Debug, Subcommand)]
 enum McpProvider {
-    /// Claude Code stdio server
-    Claude,
+    /// Agent-tool stdio server
+    Agent {
+        /// Exact daemon endpoint selected by the managed session.
+        #[arg(long)]
+        socket_path: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -340,6 +348,7 @@ async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
             ServerCommands::Start {
                 cloud,
                 config_from_stdin: true,
+                config_path,
                 ..
             },
     } = command
@@ -351,8 +360,12 @@ async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
     std::io::stdin()
         .read_to_string(&mut input)
         .context("failed to read config from stdin")?;
-    let config: Config =
+    let mut config: Config =
         serde_yaml::from_str(&input).context("failed to parse config from stdin")?;
+    config.path = config_path
+        .as_deref()
+        .map(normalize_config_path)
+        .transpose()?;
     config
         .validate(*cloud)
         .map_err(|e| anyhow!("invalid config: {e}"))?;
@@ -595,7 +608,9 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             }
         },
         Commands::Mcp { provider } => match provider {
-            McpProvider::Claude => mcp::serve_claude(&config).await?,
+            McpProvider::Agent { socket_path } => {
+                mcp::serve_agent(&config, socket_path.as_deref()).await?
+            }
         },
     }
 
@@ -1050,10 +1065,29 @@ fn load_config(input_path: Option<PathBuf>) -> Result<Config> {
 
     // Load config from file or use defaults
     Ok(match &config_path {
-        Some(path) => Config::from_file(path)
-            .map_err(|e| anyhow!("failed to load config from {:?}: {}", path, e))?,
+        Some(path) => {
+            let path = normalize_config_path(path)?;
+            Config::from_file(&path)
+                .map_err(|e| anyhow!("failed to load config from {:?}: {}", path, e))?
+        }
         None => Config::new(),
     })
+}
+
+fn normalize_config_path(path: &std::path::Path) -> Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("failed to determine the current directory for --config")?
+            .join(path)
+    };
+    let normalized = std::fs::canonicalize(&absolute)
+        .with_context(|| format!("failed to resolve config path {}", absolute.display()))?;
+    normalized
+        .to_str()
+        .ok_or_else(|| anyhow!("config path is not valid UTF-8: {}", normalized.display()))?;
+    Ok(normalized)
 }
 
 #[cfg(test)]
@@ -1087,6 +1121,59 @@ mod tests {
                 provider: HooksProvider::Claude
             })
         ));
+    }
+
+    #[test]
+    fn mcp_agent_parses_an_exact_socket_and_rejects_the_retired_provider_name() {
+        let cli = Cli::try_parse_from([
+            "amux",
+            "mcp",
+            "agent",
+            "--socket-path",
+            "/runtime/amux.sock",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Mcp {
+                provider: McpProvider::Agent { socket_path: Some(ref path) }
+            }) if path == std::path::Path::new("/runtime/amux.sock")
+        ));
+        assert!(Cli::try_parse_from(["amux", "mcp", "claude"]).is_err());
+    }
+
+    #[test]
+    fn stdin_server_config_accepts_only_explicit_source_metadata() {
+        let cli = Cli::try_parse_from([
+            "amux",
+            "server",
+            "start",
+            "--foreground",
+            "--config-from-stdin",
+            "--config-path",
+            "/checkout/amux.yaml",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Server {
+                command: ServerCommands::Start {
+                    config_from_stdin: true,
+                    config_path: Some(ref path),
+                    ..
+                }
+            }) if path == std::path::Path::new("/checkout/amux.yaml")
+        ));
+        assert!(
+            Cli::try_parse_from([
+                "amux",
+                "server",
+                "start",
+                "--config-path",
+                "/checkout/amux.yaml",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

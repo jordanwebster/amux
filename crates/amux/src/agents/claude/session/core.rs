@@ -336,7 +336,7 @@ impl ClaudeSession {
                 "mcpServers": {
                     "amux": {
                         "command": amux_executable,
-                        "args": ["mcp", "claude"]
+                        "args": ["mcp", "agent"]
                     }
                 }
             })
@@ -516,7 +516,7 @@ mod tests {
                     "mcpServers": {
                         "amux": {
                             "command": "/opt/amux/bin/amux",
-                            "args": ["mcp", "claude"]
+                            "args": ["mcp", "agent"]
                         }
                     }
                 })
@@ -541,7 +541,7 @@ mod tests {
                     "mcpServers": {
                         "amux": {
                             "command": "/opt/amux/bin/amux",
-                            "args": ["mcp", "claude"]
+                            "args": ["mcp", "agent"]
                         }
                     }
                 })
@@ -567,7 +567,7 @@ mod tests {
                     "mcpServers": {
                         "amux": {
                             "command": "/opt/amux/bin/amux",
-                            "args": ["mcp", "claude"]
+                            "args": ["mcp", "agent"]
                         }
                     }
                 })
@@ -608,7 +608,7 @@ mod tests {
                     "mcpServers": {
                         "amux": {
                             "command": "/Applications/amux/bin/amux",
-                            "args": ["mcp", "claude"]
+                            "args": ["mcp", "agent"]
                         }
                     }
                 })

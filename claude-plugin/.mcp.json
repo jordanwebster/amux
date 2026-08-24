@@ -2,7 +2,7 @@
   "mcpServers": {
     "amux": {
       "command": "amux",
-      "args": ["mcp", "claude"]
+      "args": ["mcp", "agent"]
     }
   }
 }

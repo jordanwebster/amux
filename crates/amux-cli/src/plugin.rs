@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn bundled_manifest_has_version() {
-        assert_eq!(bundled_plugin_version().unwrap(), "1.1.0");
+        assert_eq!(bundled_plugin_version().unwrap(), "1.2.0");
     }
 
     #[test]
@@ -402,7 +402,7 @@ mod tests {
         .unwrap();
         plugin.materialize_bundle().unwrap();
 
-        assert_eq!(plugin.materialized_version.as_deref(), Some("1.1.0"));
+        assert_eq!(plugin.materialized_version.as_deref(), Some("1.2.0"));
         assert_eq!(
             fs::read_to_string(paths.resolve(".claude-plugin/marketplace.json")).unwrap(),
             BUNDLED_MARKETPLACE_MANIFEST
@@ -429,11 +429,11 @@ mod tests {
 
         let plugin = ClaudePlugin::from_paths(
             paths,
-            Some("1.1.0".to_string()),
+            Some("1.2.0".to_string()),
             Some(temp.path().join("elsewhere")),
         )
         .unwrap();
-        assert!(!plugin.is_current("1.1.0"));
+        assert!(!plugin.is_current("1.2.0"));
     }
 
     #[test]
@@ -448,12 +448,12 @@ mod tests {
 
         let plugin = ClaudePlugin::from_paths(
             paths,
-            Some("1.1.0".to_string()),
+            Some("1.2.0".to_string()),
             Some(temp.path().join("claude-marketplace")),
         )
         .unwrap();
 
-        assert!(plugin.needs_materialization("1.1.0"));
+        assert!(plugin.needs_materialization("1.2.0"));
     }
 
     #[test]
@@ -465,13 +465,13 @@ mod tests {
 
         let mut plugin = ClaudePlugin::from_paths(
             paths.clone(),
-            Some("1.1.0".to_string()),
+            Some("1.2.0".to_string()),
             Some(temp.path().join("old-marketplace")),
         )
         .unwrap();
         plugin.materialize_bundle().unwrap();
 
-        assert_eq!(plugin.required_action("1.1.0"), Some(PluginAction::Rebind));
+        assert_eq!(plugin.required_action("1.2.0"), Some(PluginAction::Rebind));
     }
 
     #[test]
@@ -489,6 +489,6 @@ mod tests {
 
         plugin.materialize_bundle().unwrap();
 
-        assert_eq!(plugin.required_action("1.1.0"), Some(PluginAction::Update));
+        assert_eq!(plugin.required_action("1.2.0"), Some(PluginAction::Update));
     }
 }

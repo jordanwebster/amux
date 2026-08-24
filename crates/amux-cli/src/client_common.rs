@@ -67,7 +67,12 @@ async fn spawn_daemon_and_connect(
     let config_yaml =
         serde_yaml::to_string(config).context("failed to serialize config for daemon")?;
     let startup_stderr_path = startup_stderr_path(config);
-    let mut cmd = daemon_command(executable, cloud, Some(&startup_stderr_path));
+    let mut cmd = daemon_command(
+        executable,
+        cloud,
+        config.path.as_deref(),
+        Some(&startup_stderr_path),
+    );
     let mut child = cmd
         .spawn()
         .with_context(|| format!("failed to start server via {}", executable.display()))?;
@@ -85,6 +90,7 @@ async fn spawn_daemon_and_connect(
 fn daemon_command(
     executable: &Path,
     cloud: bool,
+    config_path: Option<&Path>,
     startup_stderr_path: Option<&Path>,
 ) -> std::process::Command {
     let mut cmd = std::process::Command::new(executable);
@@ -99,6 +105,9 @@ fn daemon_command(
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(stderr);
+    if let Some(config_path) = config_path {
+        cmd.arg("--config-path").arg(config_path);
+    }
     if cloud {
         cmd.arg("--cloud");
     }
@@ -310,7 +319,7 @@ pub(super) fn print_update_banner(state_path: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_startup_diagnostics, server_not_running_message};
+    use super::{daemon_command, format_startup_diagnostics, server_not_running_message};
 
     #[test]
     fn server_not_running_message_can_include_retry_command() {
@@ -330,6 +339,31 @@ mod tests {
         assert_eq!(
             format_startup_diagnostics("\nError: startup failed\n"),
             Some("Error: startup failed".to_string())
+        );
+    }
+
+    #[test]
+    fn daemon_stdin_handoff_preserves_the_loaded_config_path() {
+        let command = daemon_command(
+            std::path::Path::new("/opt/amux/bin/amux"),
+            false,
+            Some(std::path::Path::new("/checkout/amux.yaml")),
+            None,
+        );
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            [
+                "server",
+                "start",
+                "--foreground",
+                "--config-from-stdin",
+                "--config-path",
+                "/checkout/amux.yaml",
+            ]
         );
     }
 }
