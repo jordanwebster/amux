@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Managed Claude launch arguments now compose with user
+configuration.** Black-box probes against Claude Code 2.1.241 confirmed that
+repeated `--mcp-config` and `--allowedTools` flags accumulate and that
+`--settings` adds to ordinary settings. Managed launches therefore preserve
+user MCP servers and allow rules, reserve only the amux-owned name and
+messaging socket flags, and emit one deep-merged settings object. That object
+registers SessionStart, SessionEnd, PermissionRequest, Stop, and Notification
+hooks through the same absolute amux executable pinned by the session's MCP
+route. Tests cover preserved user routes and permissions, JSON- and file-backed
+settings, concatenated hook arrays, and the absolute hook command.
+
+---
+
 2026-08-24 — **Closed the managed identity and standalone spawn ambiguity.**
 Managed Claude processes now inherit both their agent and host identity, so the
 bundled environment-routed MCP server cannot start with a rejected partial

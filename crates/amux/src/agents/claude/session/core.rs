@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -323,7 +323,9 @@ impl ClaudeSession {
             Some(id) => vec!["--resume".to_string(), id.to_string()],
             None => Vec::new(),
         };
-        args.extend(without_managed_spawn_args(&self.args));
+        let mut user_args = without_managed_spawn_args(&self.args);
+        let user_settings = take_settings_args(&mut user_args)?;
+        args.extend(user_args);
         args.push("--name".to_string());
         args.push(
             self.name
@@ -388,6 +390,12 @@ impl ClaudeSession {
         );
         args.push("--allowedTools".to_string());
         args.push("mcp__amux__*".to_string());
+        args.push("--settings".to_string());
+        args.push(merged_settings(
+            &self.working_dir,
+            user_settings,
+            amux_executable,
+        )?);
         Ok(args)
     }
 
@@ -443,17 +451,13 @@ fn without_managed_spawn_args(args: &[String]) -> Vec<String> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--name" | "--messaging-socket-path" | "--mcp-config" | "--allowedTools" => {
+            "--name" | "--messaging-socket-path" => {
                 index += 1;
                 if index < args.len() && !args[index].starts_with('-') {
                     index += 1;
                 }
             }
-            arg if arg.starts_with("--name=")
-                || arg.starts_with("--messaging-socket-path=")
-                || arg.starts_with("--mcp-config=")
-                || arg.starts_with("--allowedTools=") =>
-            {
+            arg if arg.starts_with("--name=") || arg.starts_with("--messaging-socket-path=") => {
                 index += 1;
             }
             _ => {
@@ -463,6 +467,119 @@ fn without_managed_spawn_args(args: &[String]) -> Vec<String> {
         }
     }
     retained
+}
+
+fn take_settings_args(args: &mut Vec<String>) -> Result<Vec<String>> {
+    let mut retained = Vec::with_capacity(args.len());
+    let mut settings = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--settings" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .context("Claude --settings requires a JSON string or file path")?;
+                settings.push(value.clone());
+                index += 2;
+            }
+            arg if arg.starts_with("--settings=") => {
+                settings.push(arg["--settings=".len()..].to_string());
+                index += 1;
+            }
+            _ => {
+                retained.push(args[index].clone());
+                index += 1;
+            }
+        }
+    }
+    *args = retained;
+    Ok(settings)
+}
+
+fn merged_settings(
+    working_dir: &Path,
+    user_settings: Vec<String>,
+    amux_executable: &str,
+) -> Result<String> {
+    let mut merged = serde_json::Value::Object(serde_json::Map::new());
+    for source in user_settings {
+        let value = read_settings(working_dir, &source)?;
+        deep_merge(&mut merged, value);
+    }
+    deep_merge(&mut merged, managed_hook_settings(amux_executable));
+    Ok(merged.to_string())
+}
+
+fn read_settings(working_dir: &Path, source: &str) -> Result<serde_json::Value> {
+    let value: serde_json::Value = match serde_json::from_str(source) {
+        Ok(value) => value,
+        Err(json_error) => {
+            let path = Path::new(source);
+            let path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                working_dir.join(path)
+            };
+            let contents = std::fs::read_to_string(&path).with_context(|| {
+                format!(
+                    "Claude --settings value is neither JSON ({json_error}) nor a readable file at {}",
+                    path.display()
+                )
+            })?;
+            serde_json::from_str(&contents).with_context(|| {
+                format!(
+                    "failed to parse Claude settings file {} as JSON",
+                    path.display()
+                )
+            })?
+        }
+    };
+    if !value.is_object() {
+        anyhow::bail!("Claude --settings must contain a JSON object");
+    }
+    Ok(value)
+}
+
+fn deep_merge(destination: &mut serde_json::Value, addition: serde_json::Value) {
+    match (destination, addition) {
+        (serde_json::Value::Object(destination), serde_json::Value::Object(addition)) => {
+            for (key, value) in addition {
+                match destination.get_mut(&key) {
+                    Some(existing) => deep_merge(existing, value),
+                    None => {
+                        destination.insert(key, value);
+                    }
+                }
+            }
+        }
+        (serde_json::Value::Array(destination), serde_json::Value::Array(mut addition)) => {
+            destination.append(&mut addition);
+        }
+        (destination, addition) => *destination = addition,
+    }
+}
+
+fn managed_hook_settings(amux_executable: &str) -> serde_json::Value {
+    let command = format!("{} hooks claude", shell_words::quote(amux_executable));
+    let registration = || {
+        serde_json::json!([{
+            "hooks": [{
+                "type": "command",
+                "command": command.clone(),
+                "async": true
+            }]
+        }])
+    };
+    serde_json::json!({
+        "hooks": {
+            "SessionStart": registration(),
+            "SessionEnd": registration(),
+            "PermissionRequest": registration(),
+            "Stop": registration(),
+            "Notification": registration()
+        }
+    })
 }
 
 impl Serialize for DebugView<'_, ClaudeSession> {
@@ -541,6 +658,20 @@ mod tests {
         .to_string()
     }
 
+    fn expected_hook_settings(route: &McpLaunchRoute) -> String {
+        managed_hook_settings(route.executable().to_str().unwrap()).to_string()
+    }
+
+    fn settings_arg(args: &[String]) -> serde_json::Value {
+        let indexes = args
+            .iter()
+            .enumerate()
+            .filter_map(|(index, arg)| (arg == "--settings").then_some(index))
+            .collect::<Vec<_>>();
+        assert_eq!(indexes.len(), 1, "managed launch emits one settings value");
+        serde_json::from_str(&args[indexes[0] + 1]).unwrap()
+    }
+
     fn mcp_config_arg(args: &[String]) -> serde_json::Value {
         let index = args
             .iter()
@@ -607,6 +738,8 @@ mod tests {
                 expected_mcp_config(&route, agent_id),
                 "--allowedTools".to_string(),
                 "mcp__amux__*".to_string(),
+                "--settings".to_string(),
+                expected_hook_settings(&route),
             ]
         );
 
@@ -622,6 +755,8 @@ mod tests {
                 expected_mcp_config(&route, agent_id),
                 "--allowedTools".to_string(),
                 "mcp__amux__*".to_string(),
+                "--settings".to_string(),
+                expected_hook_settings(&route),
             ]
         );
         assert!(!claude_supports_messaging_socket("not-a-version"));
@@ -641,12 +776,14 @@ mod tests {
                 expected_mcp_config(&route, agent_id),
                 "--allowedTools".to_string(),
                 "mcp__amux__*".to_string(),
+                "--settings".to_string(),
+                expected_hook_settings(&route),
             ]
         );
     }
 
     #[test]
-    fn a2a_claude_mcp_argv_uses_running_binary_and_owns_registration() {
+    fn a2a_claude_mcp_argv_preserves_user_routes_and_allowed_tools() {
         let agent_id = Uuid::from_u128(41);
         let request = claude_request(
             agent_id,
@@ -669,14 +806,83 @@ mod tests {
         assert_eq!(
             args,
             vec![
+                "--mcp-config".to_string(),
+                "{\"mcpServers\":{\"spoofed\":{}}}".to_string(),
+                "--allowedTools=mcp__spoofed__*".to_string(),
                 "--name".to_string(),
                 "builder".to_string(),
                 "--mcp-config".to_string(),
                 expected_mcp_config(route, agent_id),
                 "--allowedTools".to_string(),
                 "mcp__amux__*".to_string(),
+                "--settings".to_string(),
+                expected_hook_settings(route),
             ]
         );
+    }
+
+    #[test]
+    fn a2a_claude_settings_merge_user_hooks_with_pinned_managed_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("user-settings.json"),
+            serde_json::json!({
+                "env": {"USER_SETTING": "kept"},
+                "hooks": {
+                    "Stop": [{"hooks": [{"type": "command", "command": "user stop"}]}]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let agent_id = Uuid::from_u128(42);
+        let mut request = claude_request(
+            agent_id,
+            Some("builder"),
+            vec![
+                "--settings",
+                "user-settings.json",
+                "--settings={\"hooks\":{\"Notification\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"user notify\"}]}]}}",
+            ],
+        );
+        request.working_dir = dir.path().to_path_buf();
+        let route = test_route(Uuid::from_u128(75));
+        let session = ClaudeSession::new(
+            &request,
+            dir.path().join("runtime"),
+            ClaudeVersionCache::default(),
+            route.clone(),
+        );
+
+        let args = session.spawn_args(None).unwrap();
+        let settings = settings_arg(&args);
+        assert_eq!(settings["env"]["USER_SETTING"], "kept");
+        assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            settings["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "user stop"
+        );
+        assert_eq!(
+            settings["hooks"]["Notification"].as_array().unwrap().len(),
+            2
+        );
+        let expected_command = format!(
+            "{} hooks claude",
+            shell_words::quote(route.executable().to_str().unwrap())
+        );
+        for event in [
+            "SessionStart",
+            "SessionEnd",
+            "PermissionRequest",
+            "Stop",
+            "Notification",
+        ] {
+            let registrations = settings["hooks"][event].as_array().unwrap();
+            let managed = registrations.last().unwrap();
+            assert_eq!(managed["hooks"][0]["command"], expected_command);
+            assert_eq!(managed["hooks"][0]["async"], true);
+        }
+        assert!(route.executable().is_absolute());
     }
 
     #[test]
