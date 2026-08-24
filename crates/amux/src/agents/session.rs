@@ -15,7 +15,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock as StdRwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -30,12 +30,11 @@ use super::TestAgentSession;
 use super::claude::{ClaudeSession, ClaudeVersionCache};
 #[cfg(unix)]
 use super::codex::{CodexClient, CodexRawPtyTarget, CodexSession};
-use super::types::{AgentToolExecutor, SpawnInheritance};
+use super::types::SpawnInheritance;
 use super::{
     AgentRecord, ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome,
     LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredLogSource,
 };
-use crate::agent_tools::AgentToolRequest;
 use crate::agents::{AgentParent, AgentType, CreateAgentRequest, terminal_io};
 use crate::config::Config;
 use crate::envelope::Envelope;
@@ -138,33 +137,6 @@ pub(crate) trait StructuredInput: Send + Sync {
 #[async_trait]
 pub(crate) trait CodexInput: Send + Sync {
     async fn send(&self, input_id: Vec<u8>, input: super::codex::io::CodexSdkV1Input);
-}
-
-/// Late-bound executor shared by sessions created before ClientService starts.
-#[derive(Clone, Default)]
-pub(crate) struct AgentToolRouter {
-    executor: Arc<StdRwLock<Option<Arc<dyn AgentToolExecutor>>>>,
-}
-
-impl AgentToolRouter {
-    pub(crate) fn bind(&self, executor: Arc<dyn AgentToolExecutor>) {
-        *self
-            .executor
-            .write()
-            .unwrap_or_else(|poison| poison.into_inner()) = Some(executor);
-    }
-
-    pub(crate) async fn execute(&self, caller: Uuid, request: AgentToolRequest) -> Result<Value> {
-        let executor = self
-            .executor
-            .read()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clone()
-            .ok_or_else(|| {
-                anyhow::anyhow!("agent tools are unavailable until startup completes")
-            })?;
-        executor.execute(caller, request).await
-    }
 }
 
 /// An owned raw-PTY preparation target detached from the session registry.
@@ -294,7 +266,6 @@ pub(crate) struct AgentDeps {
     pub(crate) claude_version_cache: ClaudeVersionCache,
     #[cfg(unix)]
     pub(crate) codex_client: Arc<CodexClient>,
-    pub(crate) agent_tools: AgentToolRouter,
     pub(crate) mcp_launch_route: McpLaunchRoute,
 }
 
@@ -311,7 +282,6 @@ impl AgentDeps {
             claude_version_cache: ClaudeVersionCache::default(),
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
-            agent_tools: AgentToolRouter::default(),
             mcp_launch_route,
         }
     }
@@ -449,7 +419,6 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
         AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(
             req,
             deps.codex_client.clone(),
-            deps.agent_tools.clone(),
             deps.mcp_launch_route.clone(),
         ))),
         #[cfg(not(unix))]
@@ -531,7 +500,6 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             Box::new(CodexSession::from_suspended(
                 &req,
                 deps.codex_client.clone(),
-                deps.agent_tools.clone(),
                 deps.mcp_launch_route.clone(),
                 daemon_mode,
                 created_at,

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use amux::agent_tools::{
-    AgentSpawnKind as SpawnKind, AgentToolRequest as ToolRequest, claude_permission_args,
-    definitions as tool_definitions, parse_call as parse_tool_call,
+    AgentSpawnKind as SpawnKind, AgentToolRequest as ToolRequest, definitions as tool_definitions,
+    parse_call as parse_tool_call,
 };
 use amux::{
     Agent, AgentIdentifier, AgentParent, AgentType, Client, Config, CreateAgentRequest,
@@ -395,11 +395,8 @@ impl ToolBackend for ClientBackend {
                         .find(|agent| agent.id == caller)
                         .map(|agent| agent.host_id)
                 })?;
-                let caller_args = caller_agent
-                    .map(|agent| agent.args.as_slice())
-                    .unwrap_or(&[]);
                 let (agent_type, args) = match kind {
-                    SpawnKind::Claude => (AgentType::Claude, claude_permission_args(caller_args)),
+                    SpawnKind::Claude => (AgentType::Claude, Vec::new()),
                     SpawnKind::Codex => (
                         AgentType::Codex {
                             model: None,

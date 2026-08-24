@@ -20,7 +20,7 @@ use super::CODEX_RAW_THREAD_NOT_READY;
 use super::io::{self, CodexSdkV1Input};
 use crate::agent_tools;
 use crate::agents::{
-    AGENT_TYPE_CODEX, AgentBackend, AgentDeliveryTarget, AgentParent, AgentToolRouter, CodexInput,
+    AGENT_TYPE_CODEX, AgentBackend, AgentDeliveryTarget, AgentParent, CodexInput,
     CreateAgentRequest, Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource,
     McpLaunchRoute, PtyHandle, RawPtyTarget, SessionEvent, SpawnInheritance, StopPolicy,
     StructuredLogSource, spawn_pty_agent,
@@ -516,7 +516,6 @@ impl CodexSession {
     pub(crate) fn new(
         req: &CreateAgentRequest,
         shared_client: Arc<CodexClient>,
-        _agent_tools: AgentToolRouter,
         mcp_launch_route: McpLaunchRoute,
     ) -> Self {
         let (model, approval_policy, sandbox_policy, resume_thread_id) = match &req.agent_type {
@@ -567,12 +566,11 @@ impl CodexSession {
     pub(crate) fn from_suspended(
         req: &CreateAgentRequest,
         shared_client: Arc<CodexClient>,
-        agent_tools: AgentToolRouter,
         mcp_launch_route: McpLaunchRoute,
         daemon_mode: Option<String>,
         created_at: DateTime<Utc>,
     ) -> Self {
-        let session = Self::new(req, shared_client, agent_tools, mcp_launch_route);
+        let session = Self::new(req, shared_client, mcp_launch_route);
         {
             let mut runtime = session
                 .runtime
@@ -1974,25 +1972,8 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message;
 
     use super::*;
-    use crate::agent_tools::AgentToolRequest;
-    use crate::agents::{AgentToolExecutor, AgentType};
+    use crate::agents::AgentType;
     use crate::envelope::{AgentSender, EnvelopeKind};
-
-    #[derive(Default)]
-    struct RecordingToolExecutor {
-        calls: StdMutex<Vec<(Uuid, AgentToolRequest)>>,
-    }
-
-    #[async_trait]
-    impl AgentToolExecutor for RecordingToolExecutor {
-        async fn execute(&self, caller: Uuid, request: AgentToolRequest) -> Result<Value> {
-            self.calls
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .push((caller, request));
-            Ok(json!({"id": Uuid::from_u128(90)}))
-        }
-    }
 
     fn session_request() -> CreateAgentRequest {
         CreateAgentRequest {
@@ -2018,7 +1999,6 @@ mod tests {
         CodexSession::new(
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
-            AgentToolRouter::default(),
             crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(10)),
         )
     }
@@ -2041,7 +2021,6 @@ mod tests {
         let session = CodexSession::new(
             &request,
             Arc::new(CodexClient::new(temporary.path().join("codex.sock"))),
-            AgentToolRouter::default(),
             route,
         );
         let expected = json!({
@@ -2082,13 +2061,11 @@ mod tests {
         let fresh = CodexSession::new(
             &request,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
-            AgentToolRouter::default(),
             route.clone(),
         );
         let suspended = CodexSession::from_suspended(
             &request,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
-            AgentToolRouter::default(),
             route.clone(),
             Some("spawned-private".to_string()),
             Utc::now(),
@@ -2380,14 +2357,10 @@ mod tests {
     #[tokio::test]
     async fn a2a_codex_dynamic_tool_requests_remain_generic_and_are_never_executed() {
         let (client, mut reader, mut writer) = mock_codex().await;
-        let executor = Arc::new(RecordingToolExecutor::default());
-        let router = AgentToolRouter::default();
-        router.bind(executor.clone());
         let request = session_request();
         let session = CodexSession::new(
             &request,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
-            router,
             crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(10)),
         );
 
@@ -2432,14 +2405,6 @@ mod tests {
         let event = events.next().await.unwrap().unwrap();
         ingest_event(&session.runtime, &session.log_source, None, event).await;
 
-        assert!(
-            executor
-                .calls
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .is_empty(),
-            "the retired amux callback path executed a generic dynamic request"
-        );
         assert!(matches!(
             session
                 .runtime
@@ -3415,7 +3380,6 @@ mod tests {
         let session = CodexSession::new(
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
-            AgentToolRouter::default(),
             crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(11)),
         );
 

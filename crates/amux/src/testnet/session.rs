@@ -12,8 +12,7 @@ use uuid::Uuid;
 
 use super::Daemon;
 use super::assertions::{DEFAULT_TIMEOUT, eventually};
-use crate::agent_tools::AgentToolRequest;
-use crate::agents::{AgentToolExecutor, TEST_ECHO_COMMAND, TEST_ECHO_V1};
+use crate::agents::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 use crate::client::{Client, ClientError};
 use crate::protocol::ProtocolError;
 use crate::services::LocalAgentHost;
@@ -210,21 +209,12 @@ impl Daemon {
     /// Exercises the model-facing stop authority: only the recorded parent
     /// may stop a child, and stopping the child does not remove its parent.
     pub async fn parent_alone_stops_child(&self, parent: &Agent, child: &Agent, unrelated: &Agent) {
-        let parts = self
-            .try_parts()
-            .await
-            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        let client = self.admin_client().await;
         let child_name = child.name.clone().expect("child has a name");
         let parent_name = parent.name.clone().expect("parent has a name");
 
-        let unrelated_error = parts
-            .client
-            .execute(
-                unrelated.id,
-                AgentToolRequest::Stop {
-                    name: child_name.clone(),
-                },
-            )
+        let unrelated_error = client
+            .delete_child_agent(child_name.clone(), unrelated.id)
             .await
             .expect_err("an unrelated agent must not stop the child");
         assert!(
@@ -233,9 +223,8 @@ impl Daemon {
                 .contains("is not a child of the calling agent")
         );
 
-        let child_error = parts
-            .client
-            .execute(child.id, AgentToolRequest::Stop { name: parent_name })
+        let child_error = client
+            .delete_child_agent(parent_name, child.id)
             .await
             .expect_err("a child must not stop its parent");
         assert!(
@@ -244,13 +233,12 @@ impl Daemon {
                 .contains("is not a child of the calling agent")
         );
 
-        parts
-            .client
-            .execute(parent.id, AgentToolRequest::Stop { name: child_name })
+        client
+            .delete_child_agent(child_name, parent.id)
             .await
             .expect("the recorded parent stops its child");
 
-        let agents = parts.client.list_agents().await;
+        let agents = client.list_agents().await.expect("list agents after stop");
         assert!(agents.iter().any(|agent| agent.id == parent.id));
         assert!(!agents.iter().any(|agent| agent.id == child.id));
         assert!(agents.iter().any(|agent| agent.id == unrelated.id));

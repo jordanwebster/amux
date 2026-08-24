@@ -545,12 +545,6 @@ pub(crate) async fn start_user_services(
         pair_mode.clone(),
         reachability_links.clone(),
     );
-    if let Some(agent_host) = agent_host.as_ref() {
-        agent_host
-            .bind_agent_tool_executor(Arc::new(client.clone()))
-            .await;
-    }
-
     client
         .apply_host_event(HostReachabilityEvent::Added {
             host: parts.runtime.local_host.clone(),

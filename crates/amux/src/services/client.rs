@@ -15,11 +15,10 @@ use tokio::sync::{RwLock, mpsc, oneshot};
 use tonic::transport::Channel;
 use uuid::Uuid;
 
-use crate::agent_tools::{AgentSpawnKind, AgentToolRequest};
 use crate::agents::{
-    Agent, AgentEvent, AgentToolExecutor, CreateAgentConfig, CreateAgentRpcRequest,
-    SendInputRequest, SessionInputEvent, SetAgentStatusRequest, SpawnInheritance,
-    SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
+    Agent, AgentEvent, CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest,
+    SessionInputEvent, SetAgentStatusRequest, SpawnInheritance, SubscribeSessionEvent,
+    SubscribeSessionRequest, TerminalSize,
 };
 use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
@@ -655,177 +654,6 @@ impl ClientService {
     }
 }
 
-#[async_trait::async_trait]
-impl AgentToolExecutor for ClientService {
-    async fn execute(
-        &self,
-        caller: Uuid,
-        request: AgentToolRequest,
-    ) -> anyhow::Result<serde_json::Value> {
-        let caller_agent = self
-            .resolve_agent(AgentRef::Id(caller))
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if !self.is_local_host(caller_agent.host_id) {
-            return Err(anyhow::anyhow!("agent tool caller is not hosted locally"));
-        }
-
-        match request {
-            AgentToolRequest::Agents => self.agent_tool_fleet(caller).await,
-            AgentToolRequest::Send { to, text, context } => {
-                let response = <Self as wire::client_service_server::ClientService>::send_message(
-                    self,
-                    tonic::Request::new(wire::ClientSendMessageRequest {
-                        to: Some(crate::client::agent_ref(crate::AgentIdentifier::from(to))),
-                        text,
-                        context: context.map(|id| id.as_bytes().to_vec()),
-                        from_agent_id: Some(caller.as_bytes().to_vec()),
-                    }),
-                )
-                .await
-                .map_err(tool_status)?
-                .into_inner();
-                let id = Uuid::from_slice(&response.envelope_id)
-                    .map_err(|error| anyhow::anyhow!("invalid envelope id: {error}"))?;
-                Ok(serde_json::json!({ "id": id }))
-            }
-            AgentToolRequest::Spawn {
-                kind,
-                prompt,
-                name,
-                cwd,
-            } => {
-                let inheritance = self
-                    .local_agent_service()
-                    .spawn_inheritance(caller)
-                    .await
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                let request =
-                    build_spawn_request(&caller_agent, inheritance, kind, prompt, name, cwd);
-                let request = crate::client::client_create_request_to_wire(request)
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                let response = <Self as wire::client_service_server::ClientService>::create_agent(
-                    self,
-                    tonic::Request::new(request),
-                )
-                .await
-                .map_err(tool_status)?
-                .into_inner();
-                let agent = response
-                    .agent
-                    .ok_or_else(|| anyhow::anyhow!("CreateAgent returned no agent"))?;
-                let id = Uuid::from_slice(&agent.agent_id)
-                    .map_err(|error| anyhow::anyhow!("invalid created agent id: {error}"))?;
-                Ok(serde_json::json!({
-                    "name": agent.name.unwrap_or_else(|| id.to_string()),
-                    "id": id,
-                }))
-            }
-            AgentToolRequest::Stop { name } => {
-                <Self as wire::client_service_server::ClientService>::delete_agent(
-                    self,
-                    tonic::Request::new(wire::ClientDeleteAgentRequest {
-                        agent: Some(crate::client::agent_ref(crate::AgentIdentifier::from(name))),
-                        caller_agent_id: Some(caller.as_bytes().to_vec()),
-                    }),
-                )
-                .await
-                .map_err(tool_status)?;
-                Ok(serde_json::json!({}))
-            }
-            AgentToolRequest::Status { working_on } => {
-                <Self as wire::client_service_server::ClientService>::set_agent_status(
-                    self,
-                    tonic::Request::new(wire::ClientSetAgentStatusRequest {
-                        agent: Some(crate::client::agent_ref(crate::AgentIdentifier::Id(caller))),
-                        working_on,
-                    }),
-                )
-                .await
-                .map_err(tool_status)?;
-                Ok(serde_json::json!({}))
-            }
-        }
-    }
-}
-
-fn build_spawn_request(
-    caller: &Agent,
-    inheritance: SpawnInheritance,
-    kind: AgentSpawnKind,
-    prompt: String,
-    name: Option<String>,
-    cwd: Option<PathBuf>,
-) -> crate::CreateAgentRequest {
-    let (agent_type, args) = match kind {
-        AgentSpawnKind::Claude => (crate::AgentType::Claude, inheritance.claude_permission_args),
-        AgentSpawnKind::Codex => (
-            crate::AgentType::Codex {
-                model: None,
-                approval_policy: inheritance.codex_approval_policy,
-                sandbox_policy: inheritance.codex_sandbox_policy,
-                resume_thread_id: None,
-            },
-            Vec::new(),
-        ),
-    };
-    crate::CreateAgentRequest {
-        agent_id: Uuid::new_v4(),
-        host_id: None,
-        name,
-        agent_type,
-        working_dir: cwd.unwrap_or_else(|| caller.working_dir.clone()),
-        terminal_size: None,
-        args,
-        parent: Some(crate::AgentParent {
-            agent_id: caller.id,
-            host_id: caller.host_id,
-        }),
-        initial_prompt: Some(prompt),
-    }
-}
-
-impl ClientService {
-    async fn agent_tool_fleet(&self, caller: Uuid) -> anyhow::Result<serde_json::Value> {
-        let agents = self.list_agents().await;
-        let hosts = self
-            .host_entries_for_online_hosts(self.hosts_snapshot().await, true)
-            .await;
-        let hosts: HashMap<_, _> = hosts.into_iter().map(|host| (host.id, host)).collect();
-        let names: HashMap<_, _> = agents
-            .iter()
-            .map(|agent| (agent.id, agent_tool_display_name(agent)))
-            .collect();
-        Ok(serde_json::Value::Array(
-            agents
-                .iter()
-                .map(|agent| {
-                    let host = hosts.get(&agent.host_id);
-                    serde_json::json!({
-                        "name": agent_tool_display_name(agent),
-                        "kind": agent.agent_type,
-                        "host": host.map(|host| host.name.clone()).unwrap_or_else(|| agent.host_id.to_string()),
-                        "alive": host.is_some_and(|host| host.online),
-                        "working_on": agent.working_on.as_ref().map(|work| work.text.clone()),
-                        "parent": agent.parent.map(|parent| {
-                            names.get(&parent.agent_id).cloned().unwrap_or_else(|| parent.agent_id.to_string())
-                        }),
-                        "you": caller == agent.id,
-                    })
-                })
-                .collect(),
-        ))
-    }
-}
-
-fn agent_tool_display_name(agent: &Agent) -> String {
-    agent.name.clone().unwrap_or_else(|| agent.id.to_string())
-}
-
-fn tool_status(status: tonic::Status) -> anyhow::Error {
-    anyhow::anyhow!("{}: {}", status.code(), status.message())
-}
-
 #[tonic::async_trait]
 impl wire::client_service_server::ClientService for ClientService {
     async fn list_hosts(
@@ -923,7 +751,7 @@ impl wire::client_service_server::ClientService for ClientService {
         request: tonic::Request<wire::ClientCreateAgentRequest>,
     ) -> TonicResult<wire::CreateAgentResponse> {
         let caller = audit_caller(&request);
-        let request = request.into_inner();
+        let mut request = request.into_inner();
         let parent = request
             .parent
             .clone()
@@ -949,6 +777,14 @@ impl wire::client_service_server::ClientService for ClientService {
             }
             None => None,
         };
+        if let Some(parent) = parent_agent.as_ref() {
+            let inheritance = self
+                .local_agent_service()
+                .spawn_inheritance(parent.id)
+                .await
+                .map_err(protocol_status)?;
+            apply_spawn_inheritance(&mut request, inheritance)?;
+        }
         let requested_agent_type = client_create_agent_type(&request)?;
         let response = if let Some(host_id) =
             optional_uuid_from_bytes("CreateAgentRequest.host_id", request.host_id.as_deref())?
@@ -1533,6 +1369,28 @@ impl wire::client_service_server::ClientService for ClientService {
             .map_err(protocol_status)?;
         Ok(tonic::Response::new(wire::HandleHookResponse {}))
     }
+}
+
+fn apply_spawn_inheritance(
+    request: &mut wire::ClientCreateAgentRequest,
+    inheritance: SpawnInheritance,
+) -> Result<(), tonic::Status> {
+    match request.agent.as_mut() {
+        Some(wire::client_create_agent_request::Agent::Claude(config)) => {
+            config.args = inheritance.claude_permission_args;
+        }
+        Some(wire::client_create_agent_request::Agent::Codex(config)) => {
+            config.approval_policy = inheritance.codex_approval_policy;
+            config.sandbox_policy = inheritance.codex_sandbox_policy;
+        }
+        Some(wire::client_create_agent_request::Agent::TestAgent(_)) => {}
+        None => {
+            return Err(tonic::Status::invalid_argument(
+                "ClientCreateAgentRequest.agent is required",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn host_snapshot_to_wire(hosts: Vec<HostEntry>) -> Vec<wire::SubscribeHostsResponse> {
@@ -2894,55 +2752,80 @@ mod tests {
     }
 
     #[test]
-    fn a2a_spawn_inherit_claude_permission_mode() {
+    fn public_create_rpc_applies_claude_parent_permission_inheritance() {
         let mut caller = agent(1, 2, "parent");
         caller.agent_type = AGENT_TYPE_CLAUDE.to_string();
         caller.working_dir = PathBuf::from("/parent/work");
-        let request = build_spawn_request(
-            &caller,
+        let mut request = crate::client::client_create_request_to_wire(crate::CreateAgentRequest {
+            agent_id: Uuid::from_u128(10),
+            host_id: None,
+            name: Some("child".to_string()),
+            agent_type: crate::AgentType::Claude,
+            working_dir: caller.working_dir.clone(),
+            terminal_size: None,
+            args: vec!["--model".to_string(), "sonnet".to_string()],
+            parent: Some(crate::AgentParent {
+                agent_id: caller.id,
+                host_id: caller.host_id,
+            }),
+            initial_prompt: Some("review this".to_string()),
+        })
+        .unwrap();
+        apply_spawn_inheritance(
+            &mut request,
             SpawnInheritance {
                 claude_permission_args: vec!["--permission-mode".to_string(), "plan".to_string()],
                 ..SpawnInheritance::default()
             },
-            AgentSpawnKind::Claude,
-            "review this".to_string(),
-            Some("child".to_string()),
-            None,
-        );
+        )
+        .unwrap();
 
-        assert!(matches!(request.agent_type, crate::AgentType::Claude));
-        assert_eq!(request.args, ["--permission-mode", "plan"]);
-        assert_eq!(request.working_dir, PathBuf::from("/parent/work"));
-        assert_eq!(request.parent.unwrap().agent_id, caller.id);
+        let Some(wire::client_create_agent_request::Agent::Claude(config)) = request.agent else {
+            panic!("expected Claude create config");
+        };
+        assert_eq!(config.args, ["--permission-mode", "plan"]);
+        assert_eq!(request.parent.unwrap().agent_id, caller.id.as_bytes());
     }
 
     #[test]
-    fn a2a_spawn_inherit_codex_approval_and_sandbox() {
+    fn public_create_rpc_applies_codex_parent_policy_inheritance() {
         let mut caller = agent(3, 4, "parent");
         caller.agent_type = crate::agents::AGENT_TYPE_CODEX.to_string();
-        let request = build_spawn_request(
-            &caller,
+        let mut request = crate::client::client_create_request_to_wire(crate::CreateAgentRequest {
+            agent_id: Uuid::from_u128(11),
+            host_id: None,
+            name: None,
+            agent_type: crate::AgentType::Codex {
+                model: None,
+                approval_policy: Some("never".to_string()),
+                sandbox_policy: Some("read-only".to_string()),
+                resume_thread_id: None,
+            },
+            working_dir: PathBuf::from("/override"),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: Some(crate::AgentParent {
+                agent_id: caller.id,
+                host_id: caller.host_id,
+            }),
+            initial_prompt: Some("run checks".to_string()),
+        })
+        .unwrap();
+        apply_spawn_inheritance(
+            &mut request,
             SpawnInheritance {
                 codex_approval_policy: Some("on-request".to_string()),
                 codex_sandbox_policy: Some("workspace-write".to_string()),
                 ..SpawnInheritance::default()
             },
-            AgentSpawnKind::Codex,
-            "run checks".to_string(),
-            None,
-            Some(PathBuf::from("/override")),
-        );
+        )
+        .unwrap();
 
-        assert!(matches!(
-            request.agent_type,
-            crate::AgentType::Codex {
-                approval_policy: Some(ref approval),
-                sandbox_policy: Some(ref sandbox),
-                ..
-            } if approval == "on-request" && sandbox == "workspace-write"
-        ));
-        assert_eq!(request.working_dir, PathBuf::from("/override"));
-        assert!(request.args.is_empty());
+        let Some(wire::client_create_agent_request::Agent::Codex(config)) = request.agent else {
+            panic!("expected Codex create config");
+        };
+        assert_eq!(config.approval_policy.as_deref(), Some("on-request"));
+        assert_eq!(config.sandbox_policy.as_deref(), Some("workspace-write"));
     }
 
     #[test]

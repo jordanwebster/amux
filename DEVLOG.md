@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Agent tools use only the public daemon route.** Removed the
+late-bound in-process agent-tool router, its startup binding, and the duplicate
+`ClientService` executor. MCP calls now reach inventory, messaging, creation,
+status, and child-scoped deletion exclusively through the public client/RPC
+surface; parent permission and sandbox inheritance is applied by that public
+create route, and authority tests exercise the same route used in production.
+
+---
+
 2026-08-24 — **Managed Codex tools now use session-scoped MCP.** Every managed
 Codex start, cold resume, and reconnect now receives the daemon's frozen
 executable, config, socket, and identity route as a required `amux` stdio MCP

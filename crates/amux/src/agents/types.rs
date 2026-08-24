@@ -1,14 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::Result;
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
-
-use crate::agent_tools::AgentToolRequest;
 
 /// Environment variables forwarded from an agent's hook invocation.
 pub(crate) type HookEnvironment = HashMap<String, String>;
@@ -19,16 +14,6 @@ pub(crate) struct SpawnInheritance {
     pub(crate) claude_permission_args: Vec<String>,
     pub(crate) codex_approval_policy: Option<String>,
     pub(crate) codex_sandbox_policy: Option<String>,
-}
-
-/// In-process route from a model-facing tool call to ClientService.
-///
-/// Defined beside the other agent vocabulary rather than with the session
-/// runtime because the seam a client-only build holds — an absent local agent
-/// host — still has to name it.
-#[async_trait]
-pub(crate) trait AgentToolExecutor: Send + Sync {
-    async fn execute(&self, caller: Uuid, request: AgentToolRequest) -> Result<Value>;
 }
 
 pub(crate) const AGENT_TYPE_CLAUDE: &str = "claude";

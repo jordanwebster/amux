@@ -41,9 +41,9 @@ pub(crate) use session::CodexInput;
 pub(crate) use session::mcp_launch_route_for_tests;
 #[cfg(feature = "local-agents")]
 pub(crate) use session::{
-    AgentBackend, AgentDeliveryTarget, AgentDeps, AgentSession, AgentToolRouter, Delivery,
-    DeliveryError, DeliveryLiveness, McpLaunchRoute, RawPtyTarget, StructuredInput,
-    agent_from_suspended, bootstrap_external_hook, new_agent, terminal_io_protocols,
+    AgentBackend, AgentDeliveryTarget, AgentDeps, AgentSession, Delivery, DeliveryError,
+    DeliveryLiveness, McpLaunchRoute, RawPtyTarget, StructuredInput, agent_from_suspended,
+    bootstrap_external_hook, new_agent, terminal_io_protocols,
 };
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
@@ -58,7 +58,7 @@ pub(crate) use test_agent::io::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 pub(crate) use types::AGENT_TYPE_CODEX;
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 pub(crate) use types::AGENT_TYPE_TEST_AGENT;
-pub(crate) use types::{AGENT_TYPE_CLAUDE, AgentToolExecutor, HookEnvironment, SpawnInheritance};
+pub(crate) use types::{AGENT_TYPE_CLAUDE, HookEnvironment, SpawnInheritance};
 pub use types::{
     Agent, AgentParent, AgentType, CreateAgentRequest, RenameAgentRequest, TerminalSize, WorkingOn,
 };
