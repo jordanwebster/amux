@@ -15,3 +15,13 @@ and paths/content were scrubbed. The added 0.147 notification messages in the
 third fixture come from the schema generated locally from `codex-cli 0.147.0`
 on 2026-08-13. These anchors are intentionally small and will be superseded by
 amux-recorded fixtures in P5b.
+
+`a2a_dynamic_tools/io.jsonl` is the retained SDK replay anchor for the generic
+upstream dynamic-tool API. It is a reduced projection of a 2026-08-22 capture
+from `codex-cli 0.148.0`, produced by the bounded command `timeout 600 cargo
+test -p amux --test codex_capture -- c11_dynamic_tools` with an isolated Codex
+home and synthetic prompt. Volatile notifications were omitted, identifiers
+and paths were normalized, and request order, the `send` arguments
+`to=probe`/`text=C11_SENT`, successful response, and turn completion were
+preserved. amux no longer uses this transport for its own tools; the fixture
+remains here because the SDK still supports and tests the generic protocol.

@@ -274,18 +274,20 @@ fn claude_send_rows(n: u32, to: &str, text: &str) -> Vec<Value> {
     ]
 }
 
-/// An outbound `send` as Codex records it: a dynamic tool call amux
-/// itself registered on the thread — unnamespaced, which is how the fold
-/// tells amux's tools from anybody else's.
+/// An outbound `send` as Codex records it: an MCP call against the server
+/// amux owns for the thread. Both the server and registered tool name are
+/// needed to distinguish amux's work from somebody else's.
 fn codex_send_row(to: &str, text: &str) -> Value {
     json!({
         "type": "item/completed",
         "item": {
-            "id": "dynamic-send",
-            "type": "dynamicToolCall",
+            "id": "mcp-send",
+            "type": "mcpToolCall",
+            // This consumer does not link the daemon crate; the reducer specs
+            // assert this wire spelling against the shared server constant.
+            "server": "amux",
             "tool": "send",
             "arguments": {"to": to, "text": text},
-            "success": true,
             "status": "completed",
         },
     })
@@ -1008,8 +1010,8 @@ fn a2a_message_rows_show_a_send_as_its_target_and_a_summary() {
     );
 }
 
-/// amux's other tools keep the generic tool shape: spawning and stopping
-/// are work, not talk, and reading them as a conversation would be a lie.
+/// Dynamic calls stay generic even when they borrow the name of an amux
+/// tool: amux registers none, so the name alone cannot claim the work.
 #[test]
 fn a2a_message_rows_leave_the_other_amux_tools_generic() {
     let mut msgs = family_msgs();
@@ -1030,7 +1032,7 @@ fn a2a_message_rows_leave_the_other_amux_tools_generic() {
     ));
     let model = fold(msgs);
     let frame = frame_of(&model, &chat_on(&model, RUNNER));
-    assert!(frame.contains("amux spawn · done"), "{frame}");
+    assert!(frame.contains("tool spawn · done"), "{frame}");
     assert!(!frame.contains("→ "), "no direction to claim:\n{frame}");
 }
 

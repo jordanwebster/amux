@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Regression fixtures follow their owning transports.** The
+generic Codex SDK dynamic-tool replay now owns its retained capture projection
+instead of reaching into the withdrawn amux integration fixture. Codex chat scenarios now
+emit amux `send` work as an `mcpToolCall` on the `amux` server and keep every
+`dynamicToolCall` generic, bringing the conversation assertions and full-frame
+goldens back into agreement with the session-scoped MCP classifier.
+
+---
+
 2026-08-24 — **Agent-tool documentation follows the session-scoped MCP
 route.** The agent, Codex, and architecture guides now describe the generic
 `amux mcp agent` endpoint, the exact executable/config/socket route managed

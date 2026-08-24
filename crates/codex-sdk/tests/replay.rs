@@ -15,6 +15,13 @@ fn amux_fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn sdk_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(name)
+        .join("io.jsonl")
+}
+
 fn sdk_compatible_script(path: PathBuf) -> Vec<replay_support::IoEvent> {
     let mut script = load_script(path);
     let initialize = script
@@ -52,11 +59,7 @@ async fn replay_script(
 }
 
 async fn replay(name: &str) -> (Codex, tokio::task::JoinHandle<()>) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("fixtures")
-        .join(name)
-        .join("io.jsonl");
-    replay_script(load_script(path), CodexConfig::default()).await
+    replay_script(load_script(sdk_fixture(name)), CodexConfig::default()).await
 }
 
 #[tokio::test]
@@ -115,7 +118,7 @@ async fn parses_added_thread_notifications_and_emitted_timestamp() {
 
 #[tokio::test]
 async fn a2a_dynamic_tools_replay_matches_graduated_capture() {
-    let script = sdk_compatible_script(amux_fixture("a2a_tools.io.jsonl"));
+    let script = sdk_compatible_script(sdk_fixture("a2a_dynamic_tools"));
     let (codex, driver) = replay_script(script, CodexConfig::default()).await;
     let thread = codex
         .start_thread(ThreadConfig {
