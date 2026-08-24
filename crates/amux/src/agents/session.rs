@@ -578,6 +578,11 @@ mod tests {
         assert_eq!(route.host_id(), host_id);
         assert!(!route.is_true_default());
 
+        std::fs::write(&executable, b"replacement executable bytes").unwrap();
+        route
+            .validate()
+            .expect("route validity is based on the exact path, not a content or build pin");
+
         assert!(
             McpLaunchRoute::new(
                 PathBuf::from("relative-amux"),

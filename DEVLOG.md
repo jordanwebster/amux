@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Generated MCP routes are proven isolated end to end.** A
+two-daemon integration test now launches each managed MCP server through its
+own absolute executable, file-backed config, socket, host identity, and agent
+identity. It proves tool side effects cannot cross instances or be redirected
+by ambient `PATH`, while missing executables/configs and crossed config/socket
+pairs fail closed. Route validation also records the intended absence of an
+executable content or build pin.
+
+---
+
 2026-08-24 — **Regression fixtures follow their owning transports.** The
 generic Codex SDK dynamic-tool replay now owns its retained capture projection
 instead of reaching into the withdrawn amux integration fixture. Codex chat scenarios now
