@@ -33,7 +33,7 @@ async fn run_inner(
     initial_chat: Option<amux::AgentId>,
     initial_chat_configuration: Option<String>,
 ) -> Result<()> {
-    crate::claude_cleanup::ensure_legacy_plugin_removed(&config).await?;
+    amux::setup::ensure_legacy_claude_plugin_removed(&config).await?;
     if init::needs_init(&config) {
         init::run_init(&mut config, InitContext::implicit(), false).await?;
     }

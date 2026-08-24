@@ -1,5 +1,4 @@
 mod auth;
-mod claude_cleanup;
 mod client_common;
 mod hooks;
 mod init;
@@ -416,7 +415,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                     ensure_initialized(&mut config).await?;
                     check_update_required(&config);
                     if matches!(&agent_type, AgentType::Claude) {
-                        claude_cleanup::ensure_legacy_plugin_removed(&config)
+                        amux::setup::ensure_legacy_claude_plugin_removed(&config)
                             .await
                             .context("failed to remove retired Claude Code plugin")?;
                     }

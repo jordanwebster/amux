@@ -56,9 +56,11 @@ on the managed launch. User settings supplied as JSON or a file are deep-merged
 into that object, with hook arrays concatenated. Every hook command uses the
 same absolute amux executable as the MCP route. amux installs no Claude plugin:
 sessions started outside amux therefore receive neither the amux tools nor
-amux-managed hooks. On the first managed Claude entry after upgrading, amux
-removes the retired `amux@amux` user plugin and its materialized marketplace;
-managed settings also disable that exact retired id until cleanup completes.
+amux-managed hooks. On the first local daemon or embedded-client startup after
+upgrading, before the local agent host can accept creation requests, amux
+removes the retired `amux@amux` user plugin and every known materialized
+marketplace (including the path recorded by an older custom-data-dir install).
+Managed settings also disable that exact retired id.
 
 | tool | input | result | meaning |
 |---|---|---|---|

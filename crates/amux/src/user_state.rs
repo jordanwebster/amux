@@ -128,6 +128,10 @@ pub(crate) async fn ensure_local_agent_host(
 ) -> std::io::Result<Option<Arc<dyn LocalAgentHost>>> {
     let mut guard = state.write().await;
     if guard.local_agent_host.is_none() {
+        #[cfg(feature = "local-agents")]
+        crate::setup::ensure_legacy_claude_plugin_removed(&guard.config)
+            .await
+            .map_err(std::io::Error::other)?;
         let host_id = guard.host_id;
         guard.local_agent_host = new_local_agent_host(host_id, &guard.config)?;
     }

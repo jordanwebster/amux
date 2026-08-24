@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Retired Claude plugin cleanup now covers every local creation
+route and every previously recorded marketplace.** Cleanup moved from CLI-only
+entry points to local agent-host initialization, before daemon, embedded,
+service, API, or MCP callers can create a managed session. The upgrade reader
+retains the former `applied_marketplace_path` just long enough to remove a
+materialized marketplace from an old custom data directory, then drops the
+legacy state. Direct CLI and fleet entry points keep their earlier eager check.
+
+---
+
 2026-08-24 — **The A2A contract now describes command-line-only Claude
 integration.** The guide documents the absolute MCP and hook routes, additive
 user MCP and allow-list flags, deep-merged hook settings, the deliberate choice

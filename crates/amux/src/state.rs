@@ -7,7 +7,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -33,6 +33,11 @@ pub(crate) struct State {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub(crate) struct ClaudeState {
+    /// Marketplace path written by releases that managed the retired plugin.
+    /// Deserialize the legacy key so cleanup can find a marketplace created
+    /// under a data directory that is no longer active.
+    #[serde(rename = "applied_marketplace_path", skip_serializing)]
+    pub(crate) legacy_marketplace_path: Option<PathBuf>,
     /// Whether the retired user-global Claude plugin and marketplace were
     /// removed after upgrading to the command-line-only integration.
     pub(crate) legacy_plugin_cleanup_completed: bool,
@@ -128,5 +133,27 @@ mod tests {
 
         let loaded = State::load(&path).unwrap();
         assert!(loaded.claude.legacy_plugin_cleanup_completed);
+    }
+
+    #[test]
+    fn legacy_marketplace_path_is_read_but_not_rewritten() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("state.yaml");
+        fs::write(
+            &path,
+            "claude:\n  applied_plugin_version: 0.3.0\n  applied_marketplace_path: /old/amux/claude-marketplace\n",
+        )
+        .unwrap();
+
+        let loaded = State::load(&path).unwrap();
+        assert_eq!(
+            loaded.claude.legacy_marketplace_path,
+            Some(PathBuf::from("/old/amux/claude-marketplace"))
+        );
+
+        State::update(&path, |_| {}).unwrap();
+        let persisted = fs::read_to_string(path).unwrap();
+        assert!(!persisted.contains("applied_marketplace_path"));
+        assert!(!persisted.contains("applied_plugin_version"));
     }
 }
