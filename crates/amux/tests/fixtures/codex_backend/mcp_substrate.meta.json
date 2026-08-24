@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-24",
+  "source": {
+    "codex_version": "codex-cli 0.149.0",
+    "codex_source_commit": "aec653daa9873bf44517a623fd033722737817a8",
+    "amux_commit": "c4b69f4b9d21114b559c152643cf9e72d7176af6",
+    "command": ["timeout", "180", "python3", "-B", "capture.py", "<capture-dir>"],
+    "timeout_seconds": 180,
+    "isolated_codex_home": true,
+    "credentials_copied": false,
+    "model_turns": 0,
+    "scenario_count": 3,
+    "redacted_capture_sha256": "7573d594a28e987a38c7693db4629cad29ef3607f546e6946b76ad15f3c8f356"
+  },
+  "derived": {
+    "artifact": "mcp_substrate.jsonl",
+    "sha256": "40657550df1b745e855805a67a248eb752168c78b23d902e5cfd83a30b0d068c",
+    "role": "minimal structural projection for deterministic offline replay",
+    "declared_normalizations": [
+      "isolated temporary root to <ISOLATED_ROOT>",
+      "machine-specific Python executable to <ABSOLUTE_STUB_PYTHON>",
+      "volatile IDs, timestamps, platform details, and duplicate envelopes omitted"
+    ],
+    "preserved_facts": [
+      "request order",
+      "complete session-scoped MCP config",
+      "absolute child execution and explicit AMUX_CONFIG",
+      "starting and ready status spellings",
+      "five-tool allowlist filtering",
+      "required-server startup failure"
+    ]
+  }
+}

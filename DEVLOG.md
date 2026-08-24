@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Current Codex MCP startup behavior replays offline.** A reduced,
+version-pinned capture now anchors session-scoped MCP configuration on fresh
+start and cold resume, allowlist filtering, explicit child environment
+delivery, startup status spelling, and required-server failure. The replay is
+fully offline and replaces the obsolete dynamic-tool fixture as the product's
+current Codex integration oracle.
+
+---
+
 2026-08-23 — **Codex dynamic-tool approval asks are retired.** amux answers
 managed dynamic tool calls itself through the owning agent's daemon identity,
 so these calls no longer surface as approval asks. The reserved client-side

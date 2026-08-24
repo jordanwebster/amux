@@ -6,11 +6,12 @@ const STOP_PAYLOAD: &str = include_str!("fixtures/a2a/stop_payload.jsonl");
 const MCP_TOOLS: &str = include_str!("fixtures/a2a/mcp_tools.jsonl");
 const SESSION_REGISTRY: &str = include_str!("fixtures/a2a/session_registry.jsonl");
 const SESSION_REGISTRY_META: &str = include_str!("fixtures/a2a/session_registry.meta.json");
+const CODEX_MCP_SUBSTRATE: &str = include_str!("fixtures/codex_backend/mcp_substrate.jsonl");
 
-fn captured_io() -> Vec<Value> {
-    include_str!("fixtures/codex_backend/a2a_tools.io.jsonl")
+fn codex_mcp_substrate() -> Vec<Value> {
+    CODEX_MCP_SUBSTRATE
         .lines()
-        .map(|line| serde_json::from_str(line).expect("capture IO line is JSON"))
+        .map(|line| serde_json::from_str(line).expect("Codex MCP substrate row is JSON"))
         .collect()
 }
 
@@ -24,60 +25,143 @@ fn rpc_line(row: &Value) -> Value {
 }
 
 #[test]
-fn a2a_fixture_codex_tools() {
-    let rows = captured_io();
-    let rpc: Vec<_> = rows.iter().map(rpc_line).collect();
-    let start = rpc
+fn a2a_fixture_codex_mcp_substrate_replays_offline() {
+    let rows = codex_mcp_substrate();
+    let capture = rows
         .iter()
-        .find(|line| line.get("method").and_then(Value::as_str) == Some("thread/start"))
-        .expect("captured thread/start");
-    let tools = start
-        .pointer("/params/dynamicTools")
-        .and_then(Value::as_array)
-        .expect("thread/start carries dynamicTools");
-    assert!(tools.iter().any(|tool| {
-        tool.get("name").and_then(Value::as_str) == Some("send")
-            && tool.pointer("/inputSchema/type").and_then(Value::as_str) == Some("object")
-    }));
+        .find(|row| row.get("type").and_then(Value::as_str) == Some("capture"))
+        .expect("capture provenance row");
+    assert_eq!(
+        capture.get("codex_version").and_then(Value::as_str),
+        Some("codex-cli 0.149.0")
+    );
+    assert_eq!(
+        capture.get("codex_source_commit").and_then(Value::as_str),
+        Some("aec653daa9873bf44517a623fd033722737817a8")
+    );
+    assert_eq!(capture.get("isolated_codex_home"), Some(&Value::Bool(true)));
+    assert_eq!(capture.get("model_turns"), Some(&Value::from(0)));
 
-    let call_at = rpc
+    let start_at = rows
         .iter()
         .position(|line| {
-            line.get("method").and_then(Value::as_str) == Some("item/tool/call")
-                && line.pointer("/params/tool").and_then(Value::as_str) == Some("send")
+            line.get("type").and_then(Value::as_str) == Some("request")
+                && line.get("method").and_then(Value::as_str) == Some("thread/start")
         })
-        .expect("captured dynamic send tool call");
+        .expect("captured thread/start request");
+    let start_config = rows[start_at]
+        .pointer("/config/mcp_servers/amux")
+        .expect("thread/start carries the amux MCP config");
     assert_eq!(
-        rpc[call_at]
-            .pointer("/params/arguments/to")
-            .and_then(Value::as_str),
-        Some("probe")
+        start_config.get("command").and_then(Value::as_str),
+        Some("<ABSOLUTE_STUB_PYTHON>")
     );
     assert_eq!(
-        rpc[call_at]
-            .pointer("/params/arguments/text")
+        start_config
+            .pointer("/env/AMUX_CONFIG")
             .and_then(Value::as_str),
-        Some("C11_SENT")
+        Some("/absolute/capture/amux.yaml")
     );
-    let response = rpc
+    assert_eq!(start_config.get("enabled"), Some(&Value::Bool(true)));
+    assert_eq!(start_config.get("required"), Some(&Value::Bool(true)));
+    assert_eq!(
+        start_config
+            .get("default_tools_approval_mode")
+            .and_then(Value::as_str),
+        Some("approve")
+    );
+    assert_eq!(
+        start_config.get("startup_timeout_sec"),
+        Some(&Value::from(10))
+    );
+    assert_eq!(start_config.get("tool_timeout_sec"), Some(&Value::from(60)));
+    assert_eq!(
+        start_config.get("enabled_tools"),
+        Some(&serde_json::json!([
+            "agents", "send", "spawn", "stop", "status"
+        ]))
+    );
+
+    let start_exec_at = rows
         .iter()
-        .skip(call_at + 1)
-        .find(|line| line.get("id") == Some(&Value::from(0)))
-        .expect("captured response to dynamic tool call");
+        .position(|row| {
+            row.get("type").and_then(Value::as_str) == Some("stub_exec")
+                && row.get("request").and_then(Value::as_str) == Some("thread/start")
+        })
+        .expect("captured absolute MCP child execution");
     assert_eq!(
-        response.pointer("/result/success").and_then(Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        response
-            .pointer("/result/contentItems/0/type")
+        rows[start_exec_at]
+            .pointer("/env/AMUX_CONFIG")
             .and_then(Value::as_str),
-        Some("inputText")
+        Some("/absolute/capture/amux.yaml")
     );
-    assert!(rpc.iter().skip(call_at + 1).any(|line| {
-        line.get("method").and_then(Value::as_str) == Some("turn/completed")
-            && line.pointer("/params/turn/status").and_then(Value::as_str) == Some("completed")
-    }));
+    let start_ready_at = rows
+        .iter()
+        .position(|row| {
+            row.get("type").and_then(Value::as_str) == Some("startup_status")
+                && row.get("request").and_then(Value::as_str) == Some("thread/start")
+        })
+        .expect("captured start status sequence");
+    assert_eq!(
+        rows[start_ready_at].get("statuses"),
+        Some(&serde_json::json!(["starting", "ready"]))
+    );
+    let inventory = rows
+        .iter()
+        .find(|row| row.get("type").and_then(Value::as_str) == Some("tool_inventory"))
+        .expect("captured filtered tool inventory");
+    assert_eq!(
+        inventory.get("stub_tools"),
+        Some(&serde_json::json!([
+            "agents", "send", "spawn", "stop", "status", "extra"
+        ]))
+    );
+    assert_eq!(
+        inventory.get("exposed_tools"),
+        start_config.get("enabled_tools")
+    );
+    assert!(start_at < start_exec_at && start_exec_at < start_ready_at);
+
+    let resume_at = rows
+        .iter()
+        .position(|row| {
+            row.get("type").and_then(Value::as_str) == Some("request")
+                && row.get("method").and_then(Value::as_str) == Some("thread/resume")
+        })
+        .expect("captured cold thread/resume request");
+    assert_eq!(
+        rows[resume_at].pointer("/config/mcp_servers/amux"),
+        Some(start_config)
+    );
+    let resume_ready_at = rows
+        .iter()
+        .position(|row| {
+            row.get("type").and_then(Value::as_str) == Some("startup_status")
+                && row.get("request").and_then(Value::as_str) == Some("thread/resume")
+        })
+        .expect("captured resume status sequence");
+    assert_eq!(
+        rows[resume_ready_at].get("statuses"),
+        Some(&serde_json::json!(["starting", "ready"]))
+    );
+    assert!(start_ready_at < resume_at && resume_at < resume_ready_at);
+
+    let failure = rows
+        .iter()
+        .find(|row| row.get("type").and_then(Value::as_str) == Some("required_failure"))
+        .expect("captured required-server startup failure");
+    assert_eq!(
+        failure
+            .pointer("/config/mcp_servers/amux/command")
+            .and_then(Value::as_str),
+        Some("/definitely/missing/amux-capture")
+    );
+    assert!(
+        failure
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error.contains("required MCP servers failed to initialize: amux"))
+    );
 }
 
 fn captured_a2a_io(name: &str) -> Vec<Value> {
