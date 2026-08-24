@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **Agent-tool documentation follows the session-scoped MCP
+route.** The agent, Codex, and architecture guides now describe the generic
+`amux mcp agent` endpoint, the exact executable/config/socket route managed
+sessions receive, required five-tool policy, injected identity checks,
+connection recovery without same-call retries, and the boundary around
+already-live vanilla Codex threads. Obsolete descriptions of amux-owned Codex
+dynamic tools and the provider-specific MCP command are removed, while
+unrelated upstream dynamic calls remain documented as generic work.
+
+---
+
 2026-08-24 — **Codex chat reads amux tool calls off the MCP route.** The chat
 layer now recognises amux's own agent tools by the server amux runs for the
 thread plus a name from the shared definitions, so a managed call renders as

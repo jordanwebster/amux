@@ -1,6 +1,6 @@
 # The amux system architecture
 
-**Status**: current (2026-06-11). This document describes the system —
+**Status**: current (2026-08-24). This document describes the system —
 processes, servers, trust machinery, service surfaces, and internal
 layering. Its companion, [`PROTOCOL.md`](./PROTOCOL.md), owns the wire:
 links, frames, tunnels, the routing rules, and the pairing flow. When this
@@ -24,7 +24,7 @@ Around the daemon sit its clients and consumers:
   are protocol plumbing rather than user surface: `amux relay` bridges its
   stdin/stdout to the local socket (the receiving end of an SSH link),
   `amux pair-recv` runs the responder side of an SSH pairing identity
-  exchange, and `amux mcp claude` serves the agent tools over stdio MCP.
+  exchange, and `amux mcp agent` serves the agent tools over stdio MCP.
   [`A2A.md`](./A2A.md) owns that tool contract.
 - **UI runtime** (`crates/amux-ui`): a reactive client library over the
   same `ClientService` surface, for embedding in apps.

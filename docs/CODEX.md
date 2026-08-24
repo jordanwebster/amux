@@ -123,6 +123,34 @@ earlier version had a second, simpler connection path for the preflight
 alone; it aborted in precisely the configurations the backend was built
 to support. Two paths that can disagree is one too many.
 
+## Agent tools use thread-scoped MCP
+
+Every thread amux owns receives one required stdio MCP server named `amux` in
+the request-local config used for `thread/start` and cold `thread/resume`.
+Reconnect reuses the same config. The server exposes exactly `agents`, `send`,
+`spawn`, `stop`, and `status`; the allowlist is derived from the shared tool
+definitions, automatic approval is enabled, startup is bounded to 10 seconds,
+and each call is bounded to 60 seconds. No persistent Codex configuration is
+read-modified-written.
+
+The route is captured by the daemon that created the session. It names the
+absolute running amux executable, passes `mcp agent --socket-path` with the
+exact absolute daemon socket, and injects the owning agent and host UUIDs. When
+the daemon loaded a config file, its normalized absolute path is also supplied
+as `AMUX_CONFIG`; a true-default configuration is explicitly distinguished and
+omits that variable. A vanished or relative route, a config/socket mismatch,
+an unreachable daemon, or a stale or cross-host identity fails required-server
+startup before any tool is exposed.
+
+The server preflights once, then opens a fresh daemon connection for every tool
+call. If a connection or RPC is interrupted, that call returns an MCP error and
+is not retried because its mutation may already have happened; the next call
+gets a new connection and can recover after a daemon restart. A raw TUI which
+joins an already-running amux-owned thread shares this MCP runtime. amux does
+not claim that it can inject the route into a vanilla thread while another
+client already owns that live thread; a later cold resume under amux ownership
+is the supported boundary.
+
 ## The row vocabulary (frozen)
 
 The structured plane carries **verbatim upstream rows** —
@@ -144,10 +172,10 @@ Agent delivery uses `thread/inject_items`. An idle thread then receives an
 empty-input `turn/start`; a busy thread keeps its active turn and queues the
 injected message. If injection fails, amux starts a visible turn with the same
 tagged text. The synthesized row above is the recipient-side record because
-the native Codex transcript does not expose injected items. Managed threads
-also receive the shared `agents`, `send`, `spawn`, `stop`, and `status`
-definitions as dynamic tools; calls execute through the owning agent's daemon
-identity and are answered as dynamic-tool results.
+the native Codex transcript does not expose injected items. Agent-tool calls
+arrive as `mcpToolCall` rows from server `amux`. A registered tool on that
+server is presented as amux fleet work; calls from another MCP server and every
+`dynamicToolCall` remain generic upstream work.
 
 `amux.codex_approval_resolved.reason` is one of `answered`,
 `response_failed`, `answered_elsewhere`, `connection_lost`,
@@ -281,10 +309,11 @@ commands”, and network-policy amendments become
 show only a bounded, control-sanitized kind and scalar detail, never raw
 serialized JSON; object choices remain unavailable in structured V1.
 
-Dynamic tool calls are answered by amux itself through the owning agent's
-daemon identity. They no longer become approval asks, so the structured
-client's dynamic-tool approval rendering is retired; its reserved path remains
-in place for a separate client-side follow-up.
+amux's own agent tools are preapproved in the thread-scoped MCP policy and do
+not become approval asks. amux registers no Codex dynamic tools. If another
+integration produces an `item/tool/call` or `dynamicToolCall`, the structured
+client keeps it generic and preserves its ordinary approval path rather than
+attributing it to amux.
 
 `item/tool/requestUserInput` is the one known **unanswerable**
 obligation. Answering it needs free-form content the frozen input shape
@@ -305,16 +334,20 @@ is absent.
 
 ## Testing
 
-Three tiers, in increasing cost:
+Four tiers, in increasing cost:
 
 1. **`crates/amux-ui/tests/spec/`** — pure reducer folds, no clock, no
    IO. Every registered sequence is swept for invariant violations after
    every Msg.
-2. **`crates/amux/tests/codex_capture_waiters.rs`** — the structural
+2. **`crates/amux/tests/a2a_fixtures.rs`** — offline replay of the reduced,
+   version-pinned Codex MCP startup capture: fresh start, cold resume,
+   required-server success and failure, exact child environment, tool policy,
+   and startup status.
+3. **`crates/amux/tests/codex_capture_waiters.rs`** — the structural
    waiters, driven offline from redacted rows captured off real failing
    runs. No codex process, no credentials, no network.
-3. **`crates/amux/tests/codex_capture.rs`** — the **C suite**: opt-in,
-   real codex, fourteen scenarios (C.1–C.14) covering create+pong, approval
+4. **`crates/amux/tests/codex_capture.rs`** — the **C suite**: opt-in,
+   real codex, fifteen scenarios (C.1–C.15) covering create+pong, approval
    allow and deny *with filesystem assertions*, interrupt and reuse,
    suspend/resume across a server restart (including the first post-restart
    `resumed:true`, stable thread identity, and remembered context), real
@@ -323,8 +356,10 @@ Three tiers, in increasing cost:
    raw attach on an *unnamed* agent — the product default, and the one
    parameter a hardcoded fixture hid for the whole of P9 — including
    final-detach teardown and fresh raw reattach, plus unnamed zero-turn
-   suspend/resume. C.11–C.14 pin dynamic tools, idle and busy injected
-   messages, and the final-assistant-message ordering at turn completion.
+   suspend/resume. C.11 independently pins Codex's generic upstream
+   `dynamicTools` protocol (which amux does not register), C.12–C.14 pin idle
+   and busy injected messages plus final-assistant-message ordering at turn
+   completion, and C.15 covers a cross-kind child completion round trip.
 
 C.9 proves its independently checked process facts: final-detach process-group
 exit, a newly created raw process on reattach, and survival of the original

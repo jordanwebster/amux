@@ -1,6 +1,6 @@
 # Agent-to-agent messaging and families
 
-**Status**: implemented (2026-08-23). This document owns amux's
+**Status**: implemented (2026-08-24). This document owns amux's
 agent-to-agent message envelope, provider carriers, model-facing tools, and
 parent/child lifecycle. [`PROTOCOL.md`](./PROTOCOL.md) owns the links and
 tunnels that carry remote calls; [`ARCHITECTURE.md`](./ARCHITECTURE.md) owns
@@ -34,10 +34,21 @@ daemon suspend/resume.
 
 ## The five agent tools
 
-Claude receives the tools from the hidden `amux mcp claude` stdio server;
-Codex receives the same definitions as per-thread dynamic tools. The caller's
-identity comes from the carrier (`AMUX_AGENT_ID` for Claude, the owning Codex
-thread for Codex), never from tool arguments.
+Managed Claude and Codex sessions receive the same definitions from an
+amux-owned stdio MCP server. Its hidden CLI spelling is `amux mcp agent`.
+The daemon launches that server with the owning agent and host identities in
+`AMUX_AGENT_ID` and `AMUX_HOST_ID`; neither identity is accepted as a tool
+argument.
+
+Managed launches freeze the daemon's exact executable, effective file-backed
+config when one exists, and socket rather than relying on a pre-existing
+provider process's environment. Codex installs that route in the thread-local
+configuration for start, cold resume, and reconnect, marks the server required,
+allowlists exactly these five tools, and preapproves them. It does not edit the
+user's persistent Codex configuration. The bundled Claude plugin is the one
+exception to absolute command selection: because a static plugin cannot know
+which checkout will invoke it, it uses literal `amux` with the invoking
+environment's `PATH` and `AMUX_CONFIG`.
 
 | tool | input | result | meaning |
 |---|---|---|---|
@@ -74,9 +85,9 @@ session ends, the parent instead receives an `exited` envelope with an empty
 body. Completion leaves the child alive and idle so a later message can start
 another turn.
 
-Model-facing stopping is lineage-scoped in `ClientService`: Claude's MCP
-server and Codex's dynamic tool attach the calling agent id, and the daemon
-accepts the delete only when the target is that caller's direct child. Human
+Model-facing stopping is lineage-scoped in `ClientService`: the MCP server
+attaches the authenticated calling agent id, and the daemon accepts the delete
+only when the target is that caller's direct child. Human
 deletion remains an unscoped administrative action. Deleting
 a parent cascades through all descendants, including agents on paired hosts.
 Reachable descendants are removed deepest-first. Descendants on an unreachable
@@ -184,6 +195,14 @@ and lifecycle relationships. If a recipient host is unreachable, a human send
 returns `Unavailable`; an agent send is logged and dropped so model-facing
 messaging remains fire-and-forget. Delivery logs include the envelope id and
 carrier.
+
+The MCP server fails before exposing tools when its file-backed config and
+explicit socket disagree, the daemon is unavailable, or an injected identity
+is partial, stale, or belongs to another host. After that preflight it opens a
+fresh daemon connection for every call, so a server process can recover on the
+next call after a daemon restart. An interrupted call returns an error and is
+never retried in place: a lost response cannot prove that a mutating operation
+did not already take effect.
 
 ## Clients and command line
 
