@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-24 — **The A2A contract now describes command-line-only Claude
+integration.** The guide documents the absolute MCP and hook routes, additive
+user MCP and allow-list flags, deep-merged hook settings, the deliberate choice
+not to use `--strict-mcp-config`, upgrade cleanup of the retired plugin, and the
+accepted boundary that Claude sessions started outside amux receive no amux
+tools or managed hooks. The former ambient-PATH exception and standalone
+plugin spawn behavior are removed.
+
+---
+
 2026-08-24 — **The user-global Claude plugin is retired.** The bundled plugin,
 marketplace, materializer, updater, and `claude.manage_plugin` switch are gone.
 Entering managed Claude through `amux new claude` or the fleet now performs a

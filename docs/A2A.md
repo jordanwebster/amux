@@ -44,11 +44,21 @@ Managed launches freeze the daemon's exact executable, effective file-backed
 config when one exists, and socket rather than relying on a pre-existing
 provider process's environment. Codex installs that route in the thread-local
 configuration for start, cold resume, and reconnect, marks the server required,
-allowlists exactly these five tools, and preapproves them. It does not edit the
-user's persistent Codex configuration. The bundled Claude plugin is the one
-exception to absolute command selection: because a static plugin cannot know
-which checkout will invoke it, it uses literal `amux` with the invoking
-environment's `PATH` and `AMUX_CONFIG`.
+allowlists exactly these five tools, and preapproves them. Claude appends the
+same route through `--mcp-config` and preapproves `mcp__amux__*` through
+`--allowedTools`. Repeated values for both flags accumulate, so user-supplied
+MCP servers and allow rules remain active; amux deliberately does not use
+`--strict-mcp-config`, which would suppress the user's other configured
+servers. Neither provider path edits persistent user configuration.
+
+Claude's five lifecycle hooks arrive through an additive `--settings` object
+on the managed launch. User settings supplied as JSON or a file are deep-merged
+into that object, with hook arrays concatenated. Every hook command uses the
+same absolute amux executable as the MCP route. amux installs no Claude plugin:
+sessions started outside amux therefore receive neither the amux tools nor
+amux-managed hooks. On the first managed Claude entry after upgrading, amux
+removes the retired `amux@amux` user plugin and its materialized marketplace;
+managed settings also disable that exact retired id until cleanup completes.
 
 | tool | input | result | meaning |
 |---|---|---|---|
@@ -77,13 +87,6 @@ new child and reports failure rather than leaving an orphan. With no explicit
 `cwd`, the child inherits the parent's working directory. Claude children
 inherit only the parent's permission-mode arguments; Codex children inherit
 approval and sandbox policy.
-
-Standalone plugin use has no authenticated parent, so it creates an orphan and
-delivers the prompt as a second daemon mutation. If that delivery cannot be
-confirmed, `spawn` still returns success with the created agent's name and id
-plus `initial_prompt_delivery: {status: "uncertain", error}`. The agent may
-already have received the prompt; callers must inspect that agent instead of
-retrying `spawn` and creating a duplicate.
 
 When a child turn ends, its last assistant message is sent to the parent as a
 `completed` envelope. Claude supplies the text through the `Stop` hook; Codex
@@ -119,13 +122,14 @@ daemon started that reports a different `version` refreshes the cache for
 subsequent sessions — including filling in a version the probe could not
 determine, which re-enables socket delivery from the next session on.
 Externally started sessions never feed the cache: the binary a user ran by
-hand says nothing about the one the daemon launches. Hook calls
+hand says nothing about the one the daemon launches. Managed hook calls
 forward only `CLAUDE_CODE_MESSAGING_SOCKET` and
 `CLAUDE_CODE_MESSAGING_TOKEN`, allowing the session to refresh the credentials
-without exposing the rest of its environment. Externally started sessions
-discovered through hooks remain
-transcript-only and readonly: they are never message delivery targets, even
-when their hooks expose live messaging credentials.
+without exposing the rest of its environment. amux does not register hooks for
+externally started sessions. If a user independently registers the hook
+command, any external session it discovers remains transcript-only and
+readonly: it is never a message delivery target, even when its hook exposes
+live messaging credentials.
 
 For an agent sender with a ready socket, amux posts Claude's native
 `<cross-session-message>` wrapper. The body begins with an amux header carrying
