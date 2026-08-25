@@ -33,8 +33,10 @@ const RELATIVE_JITTER_RATIO: f64 = 0.25;
 const ABSOLUTE_JITTER_MAX: Duration = Duration::from_secs(5);
 const BACKOFF_RESET_AFTER_ESTABLISHED: Duration = Duration::from_secs(30);
 const CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Entitlement can change while the daemon is idle, so it probes periodically without churning.
-const SUBSCRIPTION_RECHECK_INTERVAL: Duration = Duration::from_secs(120);
+/// Entitlement can change while the daemon is idle, so it probes periodically.
+/// The probe is one cheap token fetch; a short interval keeps a fresh
+/// purchase on the phone from looking broken while the desktop catches up.
+const SUBSCRIPTION_RECHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 pub(crate) fn establish_cloud_connection(
     config: Config,
@@ -471,8 +473,9 @@ mod tests {
     }
 
     #[test]
-    fn subscription_recheck_uses_fixed_calm_interval() {
-        assert_eq!(SUBSCRIPTION_RECHECK_INTERVAL, Duration::from_secs(120));
+    fn subscription_recheck_is_prompt_but_not_a_hot_loop() {
+        assert!(SUBSCRIPTION_RECHECK_INTERVAL >= Duration::from_secs(1));
+        assert!(SUBSCRIPTION_RECHECK_INTERVAL <= Duration::from_secs(30));
     }
 
     #[tokio::test]

@@ -139,8 +139,25 @@ enum Commands {
 
         /// Pair through SSH and store the target for future SSH runtime links
         #[cfg(unix)]
-        #[arg(long = "via-ssh", value_name = "TARGET", conflicts_with_all = ["qr", "listen", "connect"])]
+        #[arg(long = "via-ssh", value_name = "TARGET", conflicts_with_all = ["qr", "listen", "connect", "demo"])]
         via_ssh: Option<String>,
+
+        /// Hold a reusable fixed PIN open for unattended demos (returns immediately;
+        /// the daemon keeps the session until it expires or `amux pair --cancel`)
+        #[arg(long, requires_all = ["pin", "for"], conflicts_with_all = ["qr", "listen", "connect", "cancel"])]
+        demo: bool,
+
+        /// Six-digit PIN for `--demo`
+        #[arg(long, value_name = "DIGITS", requires = "demo")]
+        pin: Option<String>,
+
+        /// How long the `--demo` PIN stays valid, e.g. `30d`, `12h`, `45m`
+        #[arg(long = "for", value_name = "DURATION", requires = "demo", value_parser = parse_pairing_duration)]
+        r#for: Option<Duration>,
+
+        /// End any active pairing session on this daemon
+        #[arg(long, conflicts_with_all = ["qr", "listen", "connect", "demo"])]
+        cancel: bool,
     },
 
     /// Show trusted peers
@@ -462,8 +479,37 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             connect,
             #[cfg(unix)]
             via_ssh,
+            demo,
+            pin,
+            r#for,
+            cancel,
         } => {
             validate_pair_qr_link_usage(link, cfg!(debug_assertions))?;
+            if cancel {
+                ensure_initialized(&mut config).await?;
+                let client = client_common::require_running_client(&config, None).await?;
+                client.cancel_pairing().await?;
+                println!("Pairing mode cancelled.");
+                return Ok(());
+            }
+            if demo {
+                let (Some(pin), Some(ttl)) = (pin, r#for) else {
+                    unreachable!("clap enforces --pin and --for with --demo");
+                };
+                ensure_initialized(&mut config).await?;
+                let client = client_common::require_running_client(
+                    &config,
+                    Some("amux pair --demo --pin <DIGITS> --for <DURATION>"),
+                )
+                .await?;
+                let pairing = client.start_demo_pin_pairing(pin, ttl).await?;
+                print_pairing_start(&pairing, false)?;
+                println!(
+                    "Demo pairing: this PIN pairs any device that presents it, repeatedly, \
+                     until it expires or `amux pair --cancel`. It does not survive a daemon restart."
+                );
+                return Ok(());
+            }
             if let Some(connect_target) = connect {
                 match parse_pair_connect_target(connect_target) {
                     PairConnectTarget::Picker => {
@@ -725,6 +771,45 @@ fn prompt_pairing_pin() -> Result<String> {
     Ok(pin.trim().to_string())
 }
 
+fn format_pairing_ttl(seconds: u64) -> String {
+    match seconds {
+        s if s % 86_400 == 0 && s >= 86_400 => format!("{} days", s / 86_400),
+        s if s % 3_600 == 0 && s >= 3_600 => format!("{} hours", s / 3_600),
+        s if s % 60 == 0 && s >= 60 => format!("{} minutes", s / 60),
+        s => format!("{s} seconds"),
+    }
+}
+
+/// Parse `30d` / `12h` / `45m` / `90s` (a bare number is seconds).
+fn parse_pairing_duration(input: &str) -> Result<Duration, String> {
+    let input = input.trim();
+    let (digits, unit) = match input.find(|c: char| !c.is_ascii_digit()) {
+        Some(index) => input.split_at(index),
+        None => (input, "s"),
+    };
+    let value: u64 = digits
+        .parse()
+        .map_err(|_| format!("invalid duration `{input}`: expected e.g. 30d, 12h, 45m"))?;
+    let multiplier = match unit.trim() {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3_600,
+        "d" => 86_400,
+        other => {
+            return Err(format!(
+                "invalid duration unit `{other}`: use s, m, h, or d"
+            ));
+        }
+    };
+    let seconds = value
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("duration `{input}` is too large"))?;
+    if seconds == 0 {
+        return Err("duration must be positive".to_string());
+    }
+    Ok(Duration::from_secs(seconds))
+}
+
 fn pair_start_retry_command(qr: bool, listen: bool) -> &'static str {
     if qr {
         "amux pair --qr"
@@ -842,7 +927,10 @@ fn print_pairing_start(pairing: &PairingStart, print_link: bool) -> Result<()> {
             }
         }
     }
-    println!("Pairing mode active for {} seconds.", pairing.ttl_seconds);
+    println!(
+        "Pairing mode active for {}.",
+        format_pairing_ttl(pairing.ttl_seconds)
+    );
     Ok(())
 }
 
@@ -1294,6 +1382,50 @@ mod tests {
             configure_agent_type(AgentType::Claude, Some("gpt-5.4".to_string()), None, None)
                 .unwrap_err();
         assert!(error.to_string().contains("require agent type `codex`"));
+    }
+
+    #[test]
+    fn pair_demo_requires_pin_and_duration() {
+        assert!(Cli::try_parse_from(["amux", "pair", "--demo"]).is_err());
+        assert!(Cli::try_parse_from(["amux", "pair", "--demo", "--pin", "123456"]).is_err());
+        assert!(Cli::try_parse_from(["amux", "pair", "--pin", "123456", "--for", "1d"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "amux", "pair", "--demo", "--pin", "123456", "--for", "30d", "--qr"
+            ])
+            .is_err()
+        );
+        let cli =
+            Cli::try_parse_from(["amux", "pair", "--demo", "--pin", "123456", "--for", "30d"])
+                .unwrap();
+        match cli.command {
+            Some(Commands::Pair {
+                demo, pin, r#for, ..
+            }) => {
+                assert!(demo);
+                assert_eq!(pin.as_deref(), Some("123456"));
+                assert_eq!(r#for, Some(Duration::from_secs(30 * 86_400)));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pairing_duration_parses_units_and_rejects_garbage() {
+        assert_eq!(
+            parse_pairing_duration("45m"),
+            Ok(Duration::from_secs(2_700))
+        );
+        assert_eq!(
+            parse_pairing_duration("12h"),
+            Ok(Duration::from_secs(43_200))
+        );
+        assert_eq!(parse_pairing_duration("90"), Ok(Duration::from_secs(90)));
+        assert!(parse_pairing_duration("0d").is_err());
+        assert!(parse_pairing_duration("3w").is_err());
+        assert!(parse_pairing_duration("abc").is_err());
+        assert_eq!(format_pairing_ttl(30 * 86_400), "30 days");
+        assert_eq!(format_pairing_ttl(300), "5 minutes");
     }
 
     #[test]

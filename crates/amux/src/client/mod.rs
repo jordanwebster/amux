@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -723,24 +724,42 @@ impl Client {
     }
 
     pub async fn start_pin_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Pin, false)
+        self.start_pairing(wire::start_pairing_request::Mode::Pin, false, None)
             .await
     }
 
     pub async fn start_lan_pin_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Pin, true)
+        self.start_pairing(wire::start_pairing_request::Mode::Pin, true, None)
             .await
     }
 
     pub async fn start_qr_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Qr, false)
+        self.start_pairing(wire::start_pairing_request::Mode::Qr, false, None)
             .await
+    }
+
+    /// Start a reusable fixed-PIN pairing session that outlives this call.
+    pub async fn start_demo_pin_pairing(
+        &self,
+        pin: String,
+        ttl: Duration,
+    ) -> Result<PairingStart, ClientError> {
+        self.start_pairing(
+            wire::start_pairing_request::Mode::Pin,
+            false,
+            Some(wire::DemoPairing {
+                pin,
+                ttl_seconds: ttl.as_secs(),
+            }),
+        )
+        .await
     }
 
     async fn start_pairing(
         &self,
         mode: wire::start_pairing_request::Mode,
         require_lan_direct: bool,
+        demo: Option<wire::DemoPairing>,
     ) -> Result<PairingStart, ClientError> {
         self.ensure_open()?;
         let response = self
@@ -750,6 +769,7 @@ impl Client {
             .start_pairing(wire::StartPairingRequest {
                 mode: mode as i32,
                 require_lan_direct,
+                demo,
             })
             .await
             .map_err(status_to_client_error)?

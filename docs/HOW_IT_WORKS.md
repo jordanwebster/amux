@@ -32,6 +32,14 @@ For QR pairing, `amux pair --qr` renders a production `amux://pair?...`
 deep link in the terminal QR. Development builds can also print that link
 with `amux pair --qr --link` for simulator testing.
 
+For unattended demos — an app reviewer who will never see your screen —
+`amux pair --demo --pin 123456 --for 30d` holds an operator-chosen PIN open
+for a fixed period. It is the same SPAKE2 exchange, but the PIN is reusable:
+success does not consume it and mistyped attempts do not lock it out. The
+command returns immediately; the daemon keeps the session until it expires,
+`amux pair --cancel`, or a daemon restart. Treat the PIN as a shared secret
+for that window and only use it on a throwaway machine.
+
 What pairing produces is small and local: each device **pins the other's
 public key** in its own trust store, like remembering a face. From then
 on, all trust decisions are made against that pinned key — on your

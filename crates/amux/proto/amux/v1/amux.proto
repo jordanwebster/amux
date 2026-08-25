@@ -792,6 +792,15 @@ message StartPairingRequest {
 
   Mode mode = 1;
   bool require_lan_direct = 2;
+  // Operator-chosen reusable PIN for unattended demos. When set, `mode`
+  // must be PIN; the session lasts `ttl_seconds` instead of the one-shot
+  // window and is neither consumed by success nor locked out by failures.
+  optional DemoPairing demo = 3;
+}
+
+message DemoPairing {
+  string pin = 1;
+  uint64 ttl_seconds = 2;
 }
 
 message StartPairingResponse {

@@ -40,6 +40,11 @@ struct PairSecret {
     failed_attempts: u8,
     in_flight_attempts: u8,
     reserved: bool,
+    /// A demo secret survives successes and failures until it expires or is
+    /// cancelled: it exists so an operator can hand a fixed PIN to someone
+    /// (an app reviewer) who has no access to this machine and may pair more
+    /// than once. Concurrent attempts still serialise through `reserved`.
+    reusable: bool,
 }
 
 #[derive(Debug)]
@@ -112,6 +117,25 @@ impl PairMode {
                 failed_attempts: 0,
                 in_flight_attempts: 0,
                 reserved: false,
+                reusable: false,
+            },
+            ttl,
+        )
+    }
+
+    /// Start a reusable fixed-PIN session for unattended demos. Unlike
+    /// one-shot sessions the PIN is chosen by the operator, is not consumed
+    /// by success, and is not locked out by failed attempts.
+    pub(crate) fn start_demo_pin(&self, pin: String, ttl: Duration) -> Result<(), PairModeError> {
+        validate_pin(&pin)?;
+        self.start_session(
+            PairSecret {
+                value: pin.into_bytes(),
+                method: "demo",
+                failed_attempts: 0,
+                in_flight_attempts: 0,
+                reserved: false,
+                reusable: true,
             },
             ttl,
         )
@@ -129,6 +153,7 @@ impl PairMode {
                 failed_attempts: 0,
                 in_flight_attempts: 0,
                 reserved: false,
+                reusable: false,
             },
             ttl,
         )
@@ -144,10 +169,11 @@ impl PairMode {
         if secret.reserved {
             return Err(PairModeError::NotActive);
         }
-        if secret
-            .failed_attempts
-            .saturating_add(secret.in_flight_attempts)
-            >= PAIR_ATTEMPT_LIMIT
+        if !secret.reusable
+            && secret
+                .failed_attempts
+                .saturating_add(secret.in_flight_attempts)
+                >= PAIR_ATTEMPT_LIMIT
         {
             return Err(PairModeError::NotActive);
         }
@@ -181,7 +207,7 @@ impl PairMode {
         }
         secret.in_flight_attempts = secret.in_flight_attempts.saturating_sub(1);
         secret.failed_attempts = secret.failed_attempts.saturating_add(1);
-        if secret.failed_attempts >= PAIR_ATTEMPT_LIMIT {
+        if !secret.reusable && secret.failed_attempts >= PAIR_ATTEMPT_LIMIT {
             state.session = None;
         }
         attempt.active = false;
@@ -222,7 +248,7 @@ impl PairMode {
         commit: &mut PairModeCommit,
     ) -> Result<(), PairModeError> {
         let mut state = self.state.lock().expect("pair mode mutex poisoned");
-        let Some(session) = state.session.as_ref() else {
+        let Some(session) = state.session.as_mut() else {
             return Err(PairModeError::NotActive);
         };
         if session.id != commit.session_id {
@@ -231,7 +257,11 @@ impl PairMode {
         if !session.secret.reserved {
             return Err(PairModeError::NotActive);
         }
-        state.session = None;
+        if session.secret.reusable {
+            session.secret.reserved = false;
+        } else {
+            state.session = None;
+        }
         commit.active = false;
         Ok(())
     }
@@ -538,5 +568,43 @@ mod tests {
 
         assert_eq!(pin.len(), 6);
         assert!(pin.bytes().all(|byte| byte.is_ascii_digit()));
+    }
+
+    #[test]
+    fn demo_pin_survives_success_and_failures() {
+        let pair_mode = PairMode::new();
+        pair_mode
+            .start_demo_pin("123456".to_string(), Duration::from_secs(60))
+            .unwrap();
+
+        for _ in 0..(PAIR_ATTEMPT_LIMIT + 2) {
+            let mut attempt = pair_mode.begin_attempt().unwrap();
+            pair_mode.record_failure(&mut attempt).unwrap();
+        }
+        assert!(pair_mode.is_active(), "demo PIN must not lock out");
+
+        for _ in 0..2 {
+            let mut attempt = pair_mode.begin_attempt().unwrap();
+            assert_eq!(attempt.secret(), b"123456");
+            let mut commit = pair_mode.begin_commit(&mut attempt).unwrap();
+            pair_mode.complete_success(&mut commit).unwrap();
+        }
+        assert!(pair_mode.is_active(), "demo PIN must not be consumed");
+        assert!(pair_mode.cancel());
+        assert!(!pair_mode.is_active());
+    }
+
+    #[test]
+    fn demo_pin_rejects_bad_format_and_expires() {
+        let pair_mode = PairMode::new();
+        assert_eq!(
+            pair_mode.start_demo_pin("12345".to_string(), Duration::from_secs(60)),
+            Err(PairModeError::InvalidPinFormat)
+        );
+        pair_mode
+            .start_demo_pin("123456".to_string(), Duration::from_millis(1))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(!pair_mode.is_active());
     }
 }

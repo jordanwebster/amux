@@ -1178,6 +1178,11 @@ impl wire::client_service_server::ClientService for ClientService {
                 request.mode
             ))
         })?;
+        if request.demo.is_some() && mode != wire::start_pairing_request::Mode::Pin {
+            return Err(tonic::Status::invalid_argument(
+                "demo pairing requires PIN mode",
+            ));
+        }
         let (name, tcp_port, cloud_url, cloud_enabled) = {
             let state = self.server_state.read().await;
             (
@@ -1202,10 +1207,39 @@ impl wire::client_service_server::ClientService for ClientService {
                 "QR pairing requires cloud mode",
             ));
         }
-        let method = pairing_mode_name(mode);
-        let secret = start_pairing_secret(&self.pair_mode, mode).inspect_err(|error| {
-            audit::pairing_failure(method, error);
-        })?;
+        let (method, ttl, secret) = if let Some(demo) = request.demo {
+            if demo.ttl_seconds == 0 || demo.ttl_seconds > DEMO_PAIR_MODE_MAX_TTL.as_secs() {
+                return Err(tonic::Status::invalid_argument(format!(
+                    "demo pairing ttl must be between 1 second and {} days",
+                    DEMO_PAIR_MODE_MAX_TTL.as_secs() / 86_400
+                )));
+            }
+            let ttl = std::time::Duration::from_secs(demo.ttl_seconds);
+            self.pair_mode
+                .start_demo_pin(demo.pin.clone(), ttl)
+                .map_err(|error| match error {
+                    PairModeError::InvalidPinFormat => {
+                        tonic::Status::invalid_argument("PIN must be six decimal digits")
+                    }
+                    other => pair_mode_admin_status(other),
+                })
+                .inspect_err(|error| audit::pairing_failure("demo", error))?;
+            tracing::warn!(
+                ttl_seconds = demo.ttl_seconds,
+                "demo pairing active: a reusable fixed PIN pairs any device that presents it"
+            );
+            (
+                "demo",
+                ttl,
+                wire::start_pairing_response::Secret::Pin(demo.pin),
+            )
+        } else {
+            let method = pairing_mode_name(mode);
+            let secret = start_pairing_secret(&self.pair_mode, mode).inspect_err(|error| {
+                audit::pairing_failure(method, error);
+            })?;
+            (method, PAIR_MODE_TTL, secret)
+        };
         audit::pairing_start(method);
         Ok(tonic::Response::new(wire::StartPairingResponse {
             identity: Some(wire::PairingIdentity {
@@ -1213,7 +1247,7 @@ impl wire::client_service_server::ClientService for ClientService {
                 pubkey: self.pairing_trust.local_pubkey.clone(),
                 name,
             }),
-            ttl_seconds: PAIR_MODE_TTL.as_secs(),
+            ttl_seconds: ttl.as_secs(),
             tcp_port: tcp_port.map(u32::from),
             cloud_url,
             secret: Some(secret),
@@ -2530,6 +2564,9 @@ fn suspend_reason_from_wire(reason: i32) -> Result<ShutdownReason, tonic::Status
         wire::SuspendReason::Update => Ok(ShutdownReason::Updating),
     }
 }
+
+/// Demo sessions are a standing shared secret; bound how long one can live.
+const DEMO_PAIR_MODE_MAX_TTL: std::time::Duration = std::time::Duration::from_secs(90 * 86_400);
 
 fn start_pairing_secret(
     pair_mode: &PairMode,
@@ -5181,6 +5218,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tonic_start_pairing_demo_validates_and_reports_its_ttl() {
+        let data_dir = TempDir::new().unwrap();
+        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
+        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
+        let service =
+            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
+        let request = |mode: wire::start_pairing_request::Mode, pin: &str, ttl_seconds: u64| {
+            let mut request = tonic::Request::new(wire::StartPairingRequest {
+                mode: mode as i32,
+                require_lan_direct: false,
+                demo: Some(wire::DemoPairing {
+                    pin: pin.to_string(),
+                    ttl_seconds,
+                }),
+            });
+            request.extensions_mut().insert(BoxedGrpcConnectInfo {
+                auth: BoxedGrpcAuth::LocalTrusted,
+            });
+            request
+        };
+        let start = |request| {
+            <ClientService as wire::client_service_server::ClientService>::start_pairing(
+                &service, request,
+            )
+        };
+
+        let error = start(request(wire::start_pairing_request::Mode::Qr, "123456", 60))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        let error = start(request(wire::start_pairing_request::Mode::Pin, "12345", 60))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        let error = start(request(
+            wire::start_pairing_request::Mode::Pin,
+            "123456",
+            DEMO_PAIR_MODE_MAX_TTL.as_secs() + 1,
+        ))
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert!(!service.pair_mode.is_active());
+
+        let response = start(request(
+            wire::start_pairing_request::Mode::Pin,
+            "123456",
+            3_600,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+        assert_eq!(response.ttl_seconds, 3_600);
+        assert_eq!(
+            response.secret,
+            Some(wire::start_pairing_response::Secret::Pin(
+                "123456".to_string()
+            ))
+        );
+        assert!(service.pair_mode.is_active());
+    }
+
+    #[tokio::test]
     async fn tonic_start_pairing_arms_pin_and_qr_modes_for_local_clients() {
         let data_dir = TempDir::new().unwrap();
         let local = DeviceIdentity::for_test(Uuid::from_u128(1));
@@ -5191,6 +5291,7 @@ mod tests {
         let mut pin_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin as i32,
             require_lan_direct: false,
+            demo: None,
         });
         pin_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
@@ -5233,6 +5334,7 @@ mod tests {
         let mut duplicate_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Qr as i32,
             require_lan_direct: false,
+            demo: None,
         });
         duplicate_request
             .extensions_mut()
@@ -5266,6 +5368,7 @@ mod tests {
         let mut qr_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Qr as i32,
             require_lan_direct: false,
+            demo: None,
         });
         qr_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
@@ -5295,6 +5398,7 @@ mod tests {
         let mut qr_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Qr as i32,
             require_lan_direct: false,
+            demo: None,
         });
         qr_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
@@ -5310,6 +5414,7 @@ mod tests {
         let mut lan_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin as i32,
             require_lan_direct: true,
+            demo: None,
         });
         lan_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
@@ -5331,6 +5436,7 @@ mod tests {
         let mut bad_name_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin as i32,
             require_lan_direct: true,
+            demo: None,
         });
         bad_name_request
             .extensions_mut()
@@ -5350,6 +5456,7 @@ mod tests {
         let mut lan_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin as i32,
             require_lan_direct: true,
+            demo: None,
         });
         lan_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
@@ -5378,6 +5485,7 @@ mod tests {
         let mut start_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin as i32,
             require_lan_direct: false,
+            demo: None,
         });
         start_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::TlsTrusted { peer: remote },

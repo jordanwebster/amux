@@ -4,6 +4,25 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-25 — **Unattended demo pairing for app review.** Pairing was
+deliberately one-shot, five-minute, five-attempt — which is right for
+people who are in the room, and impossible for an App Store reviewer who
+must pair a sandbox phone with a demo machine nobody attends. `amux pair
+--demo --pin <6 digits> --for <30d>` starts a reusable fixed-PIN session on
+the daemon and returns to the shell: the same SPAKE2 flow on the wire, but
+the secret is operator-chosen, survives success (a reviewer may reinstall
+or pair a second device), and is not locked out by failures (a typo must
+not brick the review). Concurrent attempts still serialise through the
+existing `reserved` flag, the TTL is capped at 90 days, the session is
+in-memory only (a restart drops it), and every start logs a warning. `amux
+pair --cancel` ends any session. The cloud subscription recheck dropped
+from 120 s to 5 s for the same review: a sandbox purchase entitles the
+account for ~30 min and the desktop must show up before the reviewer gives
+up; the probe is a single token fetch, so the cost is negligible, and the
+interval can be raised again after approval.
+
+---
+
 2026-08-25 — **CI is green again after three unrelated breakages.** A newer
 stable rustc lints unused `use Trait as _;` imports, so three trait imports in
 test modules (`identity.rs`, `pairing/ssh.rs`, `services/client.rs`) failed
