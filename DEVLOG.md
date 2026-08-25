@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-25 — **E2E expectations follow the pairing banner's new wording.**
+Demo pairing made the banner's TTL human-readable, because `2592000
+seconds` is not a duration anyone can read; five E2E scripts wait on the
+banner byte-for-byte and still expected `300 seconds`. They now expect
+`5 minutes`. The scripts assert on exact terminal output by design, so any
+copy change to a command's banner lands here too — the local suite catches
+it in one run (`cargo run -p e2e-runner -- run`), and it was missed before
+pushing v0.6.0.
+
+---
+
 2026-08-25 — **Unattended demo pairing for app review.** Pairing was
 deliberately one-shot, five-minute, five-attempt — which is right for
 people who are in the room, and impossible for an App Store reviewer who

@@ -64,7 +64,7 @@ Server started.
 @TpairA
 > amux pair
 @@capture pairing_pin Pairing PIN:
-Pairing mode active for 300 seconds.
+Pairing mode active for 5 minutes.
 
 @TpairB
 > amux pair --connect host-a

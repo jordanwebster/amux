@@ -42,7 +42,7 @@ Server started.
 > amux pair --listen
 @@capture pairing_pin Pairing PIN:
 LAN direct listener: tcp_port $server_a.tcp_port
-Pairing mode active for 300 seconds.
+Pairing mode active for 5 minutes.
 
 @TpairB
 > amux pair --connect 127.0.0.1:$server_a.tcp_port
