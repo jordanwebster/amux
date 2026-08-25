@@ -15,7 +15,10 @@ a PTY and a Unix socket and cannot run there at all. The target runs with
 `harness = false`, so gating the whole crate on `cfg(unix)` deleted the `main`
 it must provide; the socket-injection helper alone is Unix-only now, with a
 Windows stub that bails, which keeps the rest of the suite compile-checked on
-every platform. The `bare_help` E2E expectation had drifted from the real
+every platform. Behind it sat a third Windows break of the same shape: a
+client test names Codex's agent-type constant, which is only exported on Unix
+because the backend is, so the test now carries the platform gate its subject
+already had. The `bare_help` E2E expectation had drifted from the real
 `--help` output after `list` gained child-agent folding and `--config` gained
 its `AMUX_CONFIG` note.
 

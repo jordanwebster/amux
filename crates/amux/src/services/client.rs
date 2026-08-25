@@ -2786,6 +2786,9 @@ mod tests {
         assert_eq!(request.parent.unwrap().agent_id, caller.id.as_bytes());
     }
 
+    // Codex is a Unix-only backend, so the constant naming its agent type is
+    // not compiled elsewhere.
+    #[cfg(unix)]
     #[test]
     fn public_create_rpc_applies_codex_parent_policy_inheritance() {
         let mut caller = agent(3, 4, "parent");
