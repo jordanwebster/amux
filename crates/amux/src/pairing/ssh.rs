@@ -370,7 +370,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::AsyncWriteExt as _;
 
     use super::*;
 

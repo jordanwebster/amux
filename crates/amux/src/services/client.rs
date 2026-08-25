@@ -2675,7 +2675,6 @@ mod tests {
     use std::time::Duration;
 
     use chrono::{TimeZone, Utc};
-    use futures_util::StreamExt as _;
     use serde_json::json;
     use tempfile::TempDir;
     use tokio::task::JoinHandle;

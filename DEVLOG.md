@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-25 — **CI is green again after three unrelated breakages.** A newer
+stable rustc lints unused `use Trait as _;` imports, so three trait imports in
+test modules (`identity.rs`, `pairing/ssh.rs`, `services/client.rs`) failed
+clippy under `-D warnings` while still compiling silently on older local
+toolchains — a class of drift that only ever appears in CI. The `capture`
+suite gained an unconditional `tokio::net::UnixStream` import when Claude
+socket delivery landed, breaking the Windows test job for a suite that drives
+a PTY and a Unix socket and cannot run there at all; it is now `#![cfg(unix)]`
+at the crate root. The `bare_help` E2E expectation had drifted from the real
+`--help` output after `list` gained child-agent folding and `--config` gained
+its `AMUX_CONFIG` note.
+
+---
+
 2026-08-24 — **The retired plugin's tombstones are gone.** Two mechanisms
 existed to suppress a plugin that no longer ships: an upgrade migration that
 uninstalled `amux@amux` and recursively removed its materialized marketplace,

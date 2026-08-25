@@ -28,6 +28,11 @@
 //! A failure always prints the assertion and this capture path. Taxonomy
 //! drift is written beside the run as data and never changes its exit code.
 
+// The suite drives Claude through a PTY and talks to its Unix messaging
+// socket, neither of which exists on Windows; the whole target compiles away
+// there rather than breaking the Windows test job.
+#![cfg(unix)]
+
 mod graduate;
 mod harness;
 mod redact;

@@ -634,7 +634,6 @@ mod tests {
 
     use chrono::{DateTime, Utc};
     use rustls::pki_types::{CertificateDer, UnixTime};
-    use rustls::server::danger::ClientCertVerifier as _;
     use tempfile::TempDir;
 
     use super::*;
