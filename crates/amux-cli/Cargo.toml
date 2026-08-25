@@ -1,6 +1,6 @@
 [package]
 name = "amux-cli"
-version = "0.4.0"
+version = "0.5.0"
 edition.workspace = true
 description = "Agent multiplexer - CLI binary"
 
