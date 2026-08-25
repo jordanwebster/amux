@@ -18,7 +18,9 @@ Windows stub that bails, which keeps the rest of the suite compile-checked on
 every platform. Behind it sat a third Windows break of the same shape: a
 client test names Codex's agent-type constant, which is only exported on Unix
 because the backend is, so the test now carries the platform gate its subject
-already had. The `bare_help` E2E expectation had drifted from the real
+already had. Behind *that* sat a fourth: the MCP tool-description golden is
+compared byte-for-byte against an LF-joined string, and Windows checkout
+translates it to CRLF, so it joins the TUI golden frames in `.gitattributes`. The `bare_help` E2E expectation had drifted from the real
 `--help` output after `list` gained child-agent folding and `--config` gained
 its `AMUX_CONFIG` note.
 

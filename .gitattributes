@@ -2,3 +2,4 @@
 # rendered strings, so checkout must never translate their line endings
 # (Windows runners default to autocrlf).
 crates/amux-tui/tests/golden/*.txt text eol=lf
+crates/amux-cli/tests/fixtures/*.txt text eol=lf
