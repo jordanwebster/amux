@@ -11,8 +11,11 @@ clippy under `-D warnings` while still compiling silently on older local
 toolchains — a class of drift that only ever appears in CI. The `capture`
 suite gained an unconditional `tokio::net::UnixStream` import when Claude
 socket delivery landed, breaking the Windows test job for a suite that drives
-a PTY and a Unix socket and cannot run there at all; it is now `#![cfg(unix)]`
-at the crate root. The `bare_help` E2E expectation had drifted from the real
+a PTY and a Unix socket and cannot run there at all. The target runs with
+`harness = false`, so gating the whole crate on `cfg(unix)` deleted the `main`
+it must provide; the socket-injection helper alone is Unix-only now, with a
+Windows stub that bails, which keeps the rest of the suite compile-checked on
+every platform. The `bare_help` E2E expectation had drifted from the real
 `--help` output after `list` gained child-agent folding and `--config` gained
 its `AMUX_CONFIG` note.
 

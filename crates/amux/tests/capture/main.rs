@@ -28,11 +28,6 @@
 //! A failure always prints the assertion and this capture path. Taxonomy
 //! drift is written beside the run as data and never changes its exit code.
 
-// The suite drives Claude through a PTY and talks to its Unix messaging
-// socket, neither of which exists on Windows; the whole target compiles away
-// there rather than breaking the Windows test job.
-#![cfg(unix)]
-
 mod graduate;
 mod harness;
 mod redact;
@@ -45,8 +40,6 @@ use std::time::Duration;
 use amux::claude_io::ClaudePtyTranscriptV1Action as Act;
 use anyhow::{Context, Result, bail};
 use harness::{CaptureSession, DaemonEnv, Scratch, ScratchDaemon, claude_version};
-use tokio::io::AsyncWriteExt as _;
-use tokio::net::UnixStream;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
 const TURN_TIMEOUT: Duration = Duration::from_secs(240);
@@ -722,7 +715,14 @@ async fn messaging_credentials(scratch: &Scratch, scenario: &str) -> Result<(Pat
     }
 }
 
+// Claude's messaging socket is a Unix domain socket, so the injection this
+// helper performs has no Windows equivalent. The scenarios that call it only
+// run against a real Claude on Unix; the stub keeps the target compiling.
+#[cfg(unix)]
 async fn inject_socket_message(socket: &Path, token: &str, marker: &str) -> Result<()> {
+    use tokio::io::AsyncWriteExt as _;
+    use tokio::net::UnixStream;
+
     let mut stream = UnixStream::connect(socket)
         .await
         .with_context(|| format!("connect Claude messaging socket {}", socket.display()))?;
@@ -740,6 +740,11 @@ async fn inject_socket_message(socket: &Path, token: &str, marker: &str) -> Resu
     stream.write_all(b"\n").await?;
     stream.shutdown().await?;
     Ok(())
+}
+
+#[cfg(not(unix))]
+async fn inject_socket_message(_socket: &Path, _token: &str, _marker: &str) -> Result<()> {
+    bail!("Claude messaging socket injection requires a Unix platform")
 }
 
 fn is_socket_queue_operation(row: &harness::Row, marker: &str) -> bool {
