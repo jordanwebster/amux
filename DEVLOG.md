@@ -5722,3 +5722,11 @@ sessions, checks byte-repeatable PNG output, captures the paint, theme-loader,
 and OSC 52 test transcripts, and recursively verifies the resulting evidence
 tree. The wrapper keeps Cargo artifacts local when a checkout's shared build
 directory is unavailable.
+
+2026-08-30 — **Passed the full TUI release gate and recorded its boundary.**
+The workspace all-target suite passes, and dedicated runs preserve the five
+deliberately width-declaring goldens. Release rendering at 1,000 entries and
+120×40 measured 1.273 ms for Claude and 1.759 ms for Codex, comfortably below
+the 8 ms budget. The complete evidence replay verifies 91 PNG entries across
+10 sets, while the merge-base diff confirms `crates/amux-ui/src` stayed
+untouched.
