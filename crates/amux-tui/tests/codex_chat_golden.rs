@@ -12,7 +12,6 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::style::{Color, Modifier};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -154,24 +153,12 @@ fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
     out
 }
 
-fn buffer_styles(buffer: &ratatui::buffer::Buffer) -> String {
+fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
     let mut out = String::new();
     for y in 0..buffer.area.height {
         for x in 0..buffer.area.width {
             let style = buffer.cell((x, y)).expect("cell").style();
-            let class = match style.fg {
-                Some(Color::Red) => 'r',
-                Some(Color::Yellow) => 'y',
-                Some(Color::Green) => 'g',
-                Some(Color::Cyan) => 'c',
-                Some(Color::Blue) => 'B',
-                Some(Color::DarkGray) => 'a',
-                _ if style.add_modifier.contains(Modifier::BOLD) => 'b',
-                _ if style.add_modifier.contains(Modifier::ITALIC) => 'i',
-                _ if style.add_modifier.contains(Modifier::DIM) => 'd',
-                _ => '.',
-            };
-            out.push(class);
+            out.push(theme.classify(style));
         }
         out.push('\n');
     }
@@ -188,7 +175,7 @@ fn assert_surface(name: &str, model: &Model) {
         let rendered = format!(
             "--- text ---\n{}--- styles ---\n{}",
             buffer_text(&buffer),
-            buffer_styles(&buffer)
+            buffer_styles(&buffer, theme)
         );
         let golden_name = format!("codex_chat_{name}_{theme_name}");
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

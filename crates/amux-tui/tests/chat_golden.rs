@@ -21,7 +21,6 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::style::{Color, Modifier};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -490,34 +489,14 @@ fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
     out
 }
 
-/// One char per cell classifying its style: fg color first (r/y/g/c/B/a),
-/// then modifiers (b bold, i italic, d dim), '.' plain — the semantic-token
-/// surface text goldens cannot see.
-fn buffer_styles(buffer: &ratatui::buffer::Buffer) -> String {
+/// One char per cell classifying its semantic token application — the surface
+/// text goldens cannot see.
+fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
     let mut out = String::new();
     for y in 0..buffer.area.height {
         for x in 0..buffer.area.width {
             let style = buffer.cell((x, y)).expect("cell in area").style();
-            let class = match style.fg {
-                Some(Color::Red) => 'r',
-                Some(Color::Yellow) => 'y',
-                Some(Color::Green) => 'g',
-                Some(Color::Cyan) => 'c',
-                Some(Color::Blue) => 'B',
-                Some(Color::DarkGray) => 'a',
-                _ => {
-                    if style.add_modifier.contains(Modifier::BOLD) {
-                        'b'
-                    } else if style.add_modifier.contains(Modifier::ITALIC) {
-                        'i'
-                    } else if style.add_modifier.contains(Modifier::DIM) {
-                        'd'
-                    } else {
-                        '.'
-                    }
-                }
-            };
-            out.push(class);
+            out.push(theme.classify(style));
         }
         out.push('\n');
     }
@@ -1710,17 +1689,19 @@ fn chat_reader_diff_numbered() {
 
 #[test]
 fn chat_reader_diff_styles_dark() {
+    let theme = Theme::default();
     assert_golden(
         "chat_reader_diff_styles_dark",
-        &buffer_styles(&diff_body_buffer(Theme::default())),
+        &buffer_styles(&diff_body_buffer(theme), theme),
     );
 }
 
 #[test]
 fn chat_reader_diff_styles_light() {
+    let theme = Theme::light(ColorMode::TrueColor);
     assert_golden(
         "chat_reader_diff_styles_light",
-        &buffer_styles(&diff_body_buffer(Theme::light(ColorMode::TrueColor))),
+        &buffer_styles(&diff_body_buffer(theme), theme),
     );
 }
 
@@ -1832,14 +1813,11 @@ fn chat_readonly_reader() {
 fn chat_ask_permission_styles_dark() {
     let model = fold(edit_ask_msgs());
     let view = reconciled_view(&model);
-    let styles = buffer_styles(&render_buffer(
-        &model,
-        &view,
-        80,
-        24,
-        Theme::default(),
-        WORKING_NOW,
-    ));
+    let theme = Theme::default();
+    let styles = buffer_styles(
+        &render_buffer(&model, &view, 80, 24, theme, WORKING_NOW),
+        theme,
+    );
     assert_golden("chat_ask_permission_styles_dark", &styles);
 }
 
@@ -1847,14 +1825,11 @@ fn chat_ask_permission_styles_dark() {
 fn chat_ask_permission_styles_light() {
     let model = fold(edit_ask_msgs());
     let view = reconciled_view(&model);
-    let styles = buffer_styles(&render_buffer(
-        &model,
-        &view,
-        80,
-        24,
-        Theme::light(ColorMode::TrueColor),
-        WORKING_NOW,
-    ));
+    let theme = Theme::light(ColorMode::TrueColor);
+    let styles = buffer_styles(
+        &render_buffer(&model, &view, 80, 24, theme, WORKING_NOW),
+        theme,
+    );
     assert_golden("chat_ask_permission_styles_light", &styles);
 }
 
@@ -1862,27 +1837,21 @@ fn chat_ask_permission_styles_light() {
 
 #[test]
 fn chat_idle_styles_dark() {
-    let styles = buffer_styles(&render_buffer(
-        &idle_model(),
-        &chat_view(),
-        80,
-        20,
-        Theme::default(),
-        IDLE_NOW,
-    ));
+    let theme = Theme::default();
+    let styles = buffer_styles(
+        &render_buffer(&idle_model(), &chat_view(), 80, 20, theme, IDLE_NOW),
+        theme,
+    );
     assert_golden("chat_idle_styles_dark", &styles);
 }
 
 #[test]
 fn chat_idle_styles_light() {
-    let styles = buffer_styles(&render_buffer(
-        &idle_model(),
-        &chat_view(),
-        80,
-        20,
-        Theme::light(ColorMode::TrueColor),
-        IDLE_NOW,
-    ));
+    let theme = Theme::light(ColorMode::TrueColor);
+    let styles = buffer_styles(
+        &render_buffer(&idle_model(), &chat_view(), 80, 20, theme, IDLE_NOW),
+        theme,
+    );
     assert_golden("chat_idle_styles_light", &styles);
 }
 
@@ -1907,14 +1876,11 @@ fn chat_markdown_styles_dark() {
         ],
     ));
     let model = fold(msgs);
-    let styles = buffer_styles(&render_buffer(
-        &model,
-        &chat_view(),
-        80,
-        18,
-        Theme::default(),
-        IDLE_NOW,
-    ));
+    let theme = Theme::default();
+    let styles = buffer_styles(
+        &render_buffer(&model, &chat_view(), 80, 18, theme, IDLE_NOW),
+        theme,
+    );
     assert_golden("chat_markdown_styles_dark", &styles);
 }
 
@@ -1939,14 +1905,11 @@ fn chat_markdown_styles_light() {
         ],
     ));
     let model = fold(msgs);
-    let styles = buffer_styles(&render_buffer(
-        &model,
-        &chat_view(),
-        80,
-        18,
-        Theme::light(ColorMode::TrueColor),
-        IDLE_NOW,
-    ));
+    let theme = Theme::light(ColorMode::TrueColor);
+    let styles = buffer_styles(
+        &render_buffer(&model, &chat_view(), 80, 18, theme, IDLE_NOW),
+        theme,
+    );
     assert_golden("chat_markdown_styles_light", &styles);
 }
 

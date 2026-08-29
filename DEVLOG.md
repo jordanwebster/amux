@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Chat style goldens classify semantic theme tokens.** The
+Claude, Codex, and agent-family golden harnesses now ask the rendered theme to
+classify every cell instead of inferring meaning from the old named ANSI
+colours. Their regenerated maps therefore lock token intent in both truecolor
+palettes and mark remaining legacy literal styles explicitly until the shared
+painters migrate them.
+
+---
+
 2026-08-25 — **E2E expectations follow the pairing banner's new wording.**
 Demo pairing made the banner's TTL human-readable, because `2592000
 seconds` is not a duration anyone can read; five E2E scripts wait on the
