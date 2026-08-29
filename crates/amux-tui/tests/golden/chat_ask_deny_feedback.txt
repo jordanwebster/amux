@@ -5,7 +5,6 @@
                                                                                 
     permission — Edit sync/config.rs (+4 -1)                                    
                                                                                 
-     @@ -1,5 +1,8 @@                                                            
       pub struct RetryConfig {                                                  
      -    pub max_attempts: u8,                                                 
      +    pub max_attempts: u8,        // capped at 6                           
@@ -13,7 +12,8 @@
      +    pub retry_budget: u32,                                                
      +    pub on_exhausted: Behavior,                                           
           pub base_delay: Duration,                                             
-      ⋮ +2 more lines · f full diff                                             
+          pub max_delay: Duration,                                              
+      ⋮ +1 more lines · f full diff                                             
       Deny — tell the agent why (optional)                                      
                                                                                 
     › use a u16 instead▌                                                        

@@ -1,5 +1,6 @@
   fix-auth · claude @ mbp                                      chat · needs you 
                                                                                 
+                                                                                
   ~ thought for 6s                                                              
                                                                                 
     The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
@@ -11,7 +12,6 @@
                                                                                 
     permission — Edit sync/config.rs (+1 -1)                                    
                                                                                 
-     @@ -1,1 +1,1 @@                                                            
      -a                                                                         
      +b                                                                         
                                                                                 

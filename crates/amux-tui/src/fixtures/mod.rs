@@ -719,8 +719,7 @@ mod tests {
             "api error (server_error)",         // an error
             "─ turn · 1m 2s",                   // the turn rule
             "permission — Edit sync/config.rs", // the docked ask panel
-            "@@ -1,1 +1,1 @@",                  // its unified diff
-            "-    pub max_attempts: u8,",
+            "-    pub max_attempts: u8,",       // its unified diff
             "+    pub max_attempts: u16,",
         ] {
             assert!(
@@ -728,6 +727,10 @@ mod tests {
                 "the gallery no longer shows {marker:?}:\n{frame}"
             );
         }
+        assert!(
+            !frame.contains("@@ -"),
+            "an ask-time diff is snippet-relative and may state no file position:\n{frame}"
+        );
     }
 
     /// The Codex page carries what a Claude session cannot say at all,

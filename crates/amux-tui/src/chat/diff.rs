@@ -29,26 +29,40 @@ pub(crate) struct DiffRow {
 pub(crate) fn diff_rows_from_claude(artifact: &DiffArtifact) -> Vec<DiffRow> {
     let numbered = artifact.numbering == DiffNumbering::Absolute;
     let mut rows = Vec::new();
-    for hunk in &artifact.hunks {
-        let old_count = hunk
-            .lines
-            .iter()
-            .filter(|line| matches!(line.as_bytes().first(), Some(b' ' | b'-')))
-            .count();
-        let new_count = hunk
-            .lines
-            .iter()
-            .filter(|line| matches!(line.as_bytes().first(), Some(b' ' | b'+')))
-            .count();
-        rows.push(DiffRow {
-            old: None,
-            new: None,
-            kind: DiffRowKind::Meta,
-            text: format!(
-                "@@ -{},{} +{},{} @@",
-                hunk.old_start, old_count, hunk.new_start, new_count
-            ),
-        });
+    for (index, hunk) in artifact.hunks.iter().enumerate() {
+        // A numberless artifact's starts are snippet-relative, so a
+        // "@@ -1,5 +1,8 @@" built from them would state a position in the
+        // file that nobody measured. Such a diff opens with no header at
+        // all, and pays a bare "@@" only where one hunk gives way to the
+        // next — the boundary is real even when the coordinates are not.
+        if numbered {
+            let old_count = hunk
+                .lines
+                .iter()
+                .filter(|line| matches!(line.as_bytes().first(), Some(b' ' | b'-')))
+                .count();
+            let new_count = hunk
+                .lines
+                .iter()
+                .filter(|line| matches!(line.as_bytes().first(), Some(b' ' | b'+')))
+                .count();
+            rows.push(DiffRow {
+                old: None,
+                new: None,
+                kind: DiffRowKind::Meta,
+                text: format!(
+                    "@@ -{},{} +{},{} @@",
+                    hunk.old_start, old_count, hunk.new_start, new_count
+                ),
+            });
+        } else if index > 0 {
+            rows.push(DiffRow {
+                old: None,
+                new: None,
+                kind: DiffRowKind::Meta,
+                text: "@@".into(),
+            });
+        }
 
         let mut old = hunk.old_start;
         let mut new = hunk.new_start;
@@ -230,19 +244,62 @@ mod tests {
     }
 
     #[test]
-    fn claude_numberless_artifact_keeps_relative_numbers_out_of_the_gutter() {
+    fn claude_numberless_artifact_states_no_position_anywhere() {
         let rows = diff_rows_from_claude(&artifact(
             DiffNumbering::None,
-            vec![DiffHunk {
-                old_start: 1,
-                new_start: 1,
-                lines: vec![" old".into(), "+new".into()],
-            }],
+            vec![
+                DiffHunk {
+                    old_start: 1,
+                    new_start: 1,
+                    lines: vec![" old".into(), "+new".into()],
+                },
+                DiffHunk {
+                    old_start: 9,
+                    new_start: 12,
+                    lines: vec!["-gone".into()],
+                },
+            ],
         ));
-        assert_eq!(rows[1].old, None);
-        assert_eq!(rows[1].new, None);
-        assert_eq!(rows[2].old, None);
-        assert_eq!(rows[2].new, None);
+
+        assert!(
+            rows.iter()
+                .all(|row| row.old.is_none() && row.new.is_none()),
+            "a snippet-relative artifact numbered a gutter: {rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .all(|row| !row.text.contains('-') || !row.text.contains('+')),
+            "a snippet-relative artifact printed a range header: {rows:?}"
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.text.as_str()).collect::<Vec<_>>(),
+            vec![" old", "+new", "@@", "-gone"],
+            "the only header a numberless diff pays for is the hunk boundary"
+        );
+    }
+
+    #[test]
+    fn claude_numbered_artifact_opens_every_hunk_with_its_header() {
+        let rows = diff_rows_from_claude(&artifact(
+            DiffNumbering::Absolute,
+            vec![
+                DiffHunk {
+                    old_start: 4,
+                    new_start: 6,
+                    lines: vec![" kept".into(), "+added".into()],
+                },
+                DiffHunk {
+                    old_start: 30,
+                    new_start: 33,
+                    lines: vec!["-gone".into()],
+                },
+            ],
+        ));
+
+        assert_eq!(rows[0].text, "@@ -4,1 +6,2 @@");
+        assert_eq!(rows[0].kind, DiffRowKind::Meta);
+        assert_eq!(rows[3].text, "@@ -30,1 +33,0 @@");
+        assert_eq!(rows[3].kind, DiffRowKind::Meta);
     }
 
     #[test]

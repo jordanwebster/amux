@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **An ask-time diff no longer states a position it does not know.**
+Claude sends a permission diff as a snippet whose hunk starts are relative to
+the snippet, not to the file; amux-ui records them as never-rendered. The chat
+was still building a "@@ -1,5 +1,8 @@" header out of them, printing file
+coordinates that were pure invention. A numberless artifact now opens with no
+header at all and pays a bare "@@" only where one hunk gives way to the next,
+which is the one thing the snippet does say. A numbered artifact is unchanged
+and still opens every hunk with its ranges. The freed row goes back to the
+preview, so each docked ask shows one more line of code than before.
+
+---
+
 2026-08-29 — **The shared chat geometry and component gallery are locked.**
 The Claude and Codex gallery pages, plus both halves of the exploration pair,
 now have separate 120x40 text and semantic-style goldens in the dark and light

@@ -1,5 +1,6 @@
   fix-auth · claude @ mbp                                      chat · needs you 
                                                                                 
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
                                                                                 
   ✔ Read sync/config.rs                                                         
                                                                                 
@@ -8,7 +9,6 @@
                                                                                 
     permission — Edit sync/config.rs (+2 -1)                                    
                                                                                 
-     @@ -1,4 +1,5 @@                                                            
       pub struct RetryConfig {                                                  
      -    pub max_attempts: u8,                                                 
      +    pub max_attempts: u8,        // capped at 6                           

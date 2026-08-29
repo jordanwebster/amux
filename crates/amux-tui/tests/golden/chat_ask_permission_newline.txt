@@ -1,5 +1,6 @@
   fix-auth · claude @ mbp                                      chat · needs you 
                                                                                 
+                                                                                
     The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
                                                                                 
   ✔ Read sync/config.rs                                                         
@@ -9,7 +10,6 @@
                                                                                 
     permission — Edit sync/.env (+1 -1)                                         
                                                                                 
-     @@ -1,1 +1,1 @@                                                            
      -VALUE=1                                                                   
      \ No newline at end of file                                                
      +VALUE=1                                                                   
