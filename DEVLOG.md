@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The alternate-screen feed owns the mouse wheel.** Entering
+the TUI now enables terminal mouse capture alongside bracketed paste, and
+every orderly, panic, and Unix signal restore disables mouse and paste modes
+before showing the cursor and leaving the alternate screen. A byte-exact test
+keeps the signal handler's async-safe sequence synchronized with crossterm's
+orderly restore path.
+
+Mouse events remain deliberately narrow: the fleet ignores them, while a chat
+accepts wheel motion only over the feed rows in its current shared geometry.
+Each notch requests three rows through the same `FeedViewport` reducer as the
+keyboard; a clamped event returns unchanged and does not repaint. Headers,
+overlays, activity and composer rows ignore the wheel, as do clicks and drags,
+leaving Shift-modified native selection to the terminal emulator.
+
+---
+
 2026-08-29 — **One viewport reducer owns both chat pagers.** Claude and Codex
 now keep one `FeedViewport` beside their native view instead of duplicating
 sticky-bottom state and paging arithmetic inside each adapter. Their key paths

@@ -86,6 +86,10 @@ impl View {
             .is_some_and(|card| card.agent.readonly)
     }
 
+    pub(crate) fn overlay_open(&self) -> bool {
+        self.help
+    }
+
     pub(crate) fn reconcile(&mut self, model: &Model) {
         if let Some(pending) = &self.pending_send
             && let Some(finished) = model.finished_op(pending.op)

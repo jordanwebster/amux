@@ -122,6 +122,10 @@ impl View {
         self.send_failure.as_deref()
     }
 
+    pub(crate) fn overlay_open(&self) -> bool {
+        self.help || self.reader.is_some()
+    }
+
     /// The runtime edge minted an op for a dispatched command: remember
     /// prompt sends so the failed-op fact can resurface the draft, and
     /// ask answers so a synchronous refusal can be stated. Called by the

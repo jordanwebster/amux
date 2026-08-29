@@ -17,7 +17,7 @@ use amux_ui::{
     StructuredProtocol, Why, message_digest,
 };
 use chrono::{DateTime, Utc};
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyEvent, MouseEvent, MouseEventKind};
 use frame::{FeedMetrics, FrameSpacing, compose_chat_frame, feed_metrics};
 use ratatui::text::Line;
 use viewport::{FeedViewport, apply_scroll};
@@ -236,6 +236,58 @@ pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
         AgentChatView::Claude(view) => claude::handle_chat_paste(view, model, text),
         AgentChatView::Codex(view) => codex::handle_chat_paste(view, model, text),
     }
+}
+
+/// Route wheel motion over the feed through the same reducer as paging.
+/// Mouse buttons, motion, and wheel events over any other chat region are
+/// deliberately inert; native selection remains the terminal's Shift
+/// override while capture is enabled.
+pub fn handle_chat_mouse(
+    chat: &mut ChatView,
+    model: &Model,
+    event: MouseEvent,
+    size: (u16, u16),
+) -> bool {
+    let intent = match event.kind {
+        MouseEventKind::ScrollUp => viewport::ScrollIntent::Rows(-3),
+        MouseEventKind::ScrollDown => viewport::ScrollIntent::Rows(3),
+        _ => return false,
+    };
+    let (geometry, overlay_open) = match &chat.inner {
+        AgentChatView::Claude(view) => (
+            claude::geometry(
+                model,
+                view,
+                size,
+                matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
+            ),
+            view.overlay_open(),
+        ),
+        AgentChatView::Codex(view) => (
+            codex::geometry(
+                model,
+                view,
+                size,
+                matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
+            ),
+            view.overlay_open(),
+        ),
+    };
+    let row = event.row as usize;
+    if overlay_open
+        || row < geometry.feed_top
+        || row >= geometry.feed_top.saturating_add(geometry.feed_rows)
+    {
+        return false;
+    }
+
+    let metrics = chat.metrics_for(model, size, Utc::now());
+    apply_scroll(
+        &mut chat.viewport,
+        &metrics,
+        intent,
+        entry_watermark(model, chat.agent),
+    )
 }
 
 pub(crate) fn build_chat_lines(
@@ -565,7 +617,9 @@ mod tests {
         OpId, SendGate, ServerMsg, StreamEntry, StreamMsg, StructuredProtocol, update,
     };
     use chrono::{DateTime, TimeDelta};
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use serde_json::json;
     use uuid::Uuid;
 
@@ -727,6 +781,76 @@ mod tests {
                 ctx.now,
             );
             assert_eq!(chat.viewport.scroll, FeedScroll::Following);
+        }
+    }
+
+    #[test]
+    fn mouse_wheel_routes_three_rows_through_both_chat_viewports() {
+        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+            let wire = match protocol {
+                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
+                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
+            };
+            let (model, agent) = model_with_protocol(wire);
+            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
+            chat.feed_metrics.replace(Some(super::CachedFeedMetrics {
+                viewport: (120, 40),
+                metrics: super::frame::FeedMetrics {
+                    total_rows: 100,
+                    feed_rows: 20,
+                    max_top: 80,
+                    ranges: Vec::new(),
+                },
+            }));
+            let event = |kind, row| MouseEvent {
+                kind,
+                column: 5,
+                row,
+                modifiers: KeyModifiers::NONE,
+            };
+
+            assert!(!super::handle_chat_mouse(
+                &mut chat,
+                &model,
+                event(MouseEventKind::ScrollUp, 0),
+                (120, 40),
+            ));
+            assert!(!super::handle_chat_mouse(
+                &mut chat,
+                &model,
+                event(MouseEventKind::Down(MouseButton::Left), 5),
+                (120, 40),
+            ));
+            assert!(!super::handle_chat_mouse(
+                &mut chat,
+                &model,
+                event(MouseEventKind::Drag(MouseButton::Left), 5),
+                (120, 40),
+            ));
+
+            assert!(super::handle_chat_mouse(
+                &mut chat,
+                &model,
+                event(MouseEventKind::ScrollUp, 5),
+                (120, 40),
+            ));
+            assert!(matches!(
+                chat.viewport.scroll,
+                FeedScroll::Paused { top_line: 77, .. }
+            ));
+            assert!(super::handle_chat_mouse(
+                &mut chat,
+                &model,
+                event(MouseEventKind::ScrollDown, 5),
+                (120, 40),
+            ));
+            assert_eq!(chat.viewport.scroll, FeedScroll::Following);
+            assert!(!super::handle_chat_mouse(
+                &mut chat,
+                &model,
+                event(MouseEventKind::ScrollDown, 5),
+                (120, 40),
+            ));
         }
     }
 

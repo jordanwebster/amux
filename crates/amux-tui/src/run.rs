@@ -249,6 +249,21 @@ async fn chrome_session(
                         dirty = true;
                     }
                 }
+                Some(Ok(Event::Mouse(mouse))) => {
+                    // The fleet deliberately ignores the mouse. An open
+                    // chat accepts wheel motion only over its feed and
+                    // reports whether the shared viewport actually moved,
+                    // so a clamped wheel event costs no repaint.
+                    if let Some(chat) = view.chat.as_mut() {
+                        let size = terminal.size()?;
+                        dirty |= crate::chat::handle_chat_mouse(
+                            chat,
+                            runtime.model(),
+                            mouse,
+                            (size.width, size.height),
+                        );
+                    }
+                }
                 Some(Ok(Event::Resize(..))) => {
                     dirty = true;
                 }

@@ -12,8 +12,8 @@ use std::sync::{Once, OnceLock};
 
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
-    DisableBracketedPaste, EnableBracketedPaste, KeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -43,19 +43,32 @@ pub(crate) fn kitty_active() -> bool {
 }
 
 /// Bytes that put the terminal into chrome mode (alternate screen, hidden
-/// cursor, bracketed paste — without it a pasted CR would arrive as Enter
-/// and submit a partial prompt). Raw mode is termios, not bytes, and is
-/// handled by the guard.
+/// cursor, bracketed paste, and mouse capture. Bracketed paste prevents a
+/// pasted CR from submitting a partial prompt; mouse capture lets the
+/// alternate-screen feed own wheel events. Raw mode is termios, not bytes,
+/// and is handled by the guard.
 pub fn write_enter_chrome(out: &mut impl Write) -> io::Result<()> {
-    crossterm::execute!(out, EnterAlternateScreen, Hide, EnableBracketedPaste)
+    crossterm::execute!(
+        out,
+        EnterAlternateScreen,
+        Hide,
+        EnableBracketedPaste,
+        EnableMouseCapture
+    )
 }
 
-/// Bytes that restore the terminal from chrome mode: leave the alternate
-/// screen, show the cursor, disable bracketed paste. Every exit path —
-/// orderly, error, panic, signal — must emit these (the terminal-hygiene
-/// set, `docs/UI.md`).
+/// Bytes that restore the terminal from chrome mode. Input modes are
+/// disabled before the alternate screen is left, then the cursor is shown.
+/// Every exit path — orderly, error, panic, signal — must emit these (the
+/// terminal-hygiene set, `docs/UI.md`).
 pub fn write_restore(out: &mut impl Write) -> io::Result<()> {
-    crossterm::execute!(out, LeaveAlternateScreen, Show, DisableBracketedPaste)
+    crossterm::execute!(
+        out,
+        DisableMouseCapture,
+        DisableBracketedPaste,
+        Show,
+        LeaveAlternateScreen
+    )
 }
 
 fn restore_now() {
@@ -167,11 +180,12 @@ mod signal_restore {
     /// Pop keyboard-enhancement flags (before leaving the alternate
     /// screen — kitty keeps per-screen stacks; a pop with nothing pushed
     /// is a no-op, and unknown-CSI-tolerant terminals ignore it), then
-    /// leave alternate screen + show cursor + disable bracketed paste,
+    /// disable mouse capture and bracketed paste, show the cursor, then
+    /// leave the alternate screen,
     /// mirroring [`super::restore_now`] (locked to crossterm's actual
     /// bytes by a unit test below). Deliberately unconditional, like the
     /// rest of this handler.
-    pub(super) const RESTORE_BYTES: &[u8] = b"\x1b[<1u\x1b[?1049l\x1b[?25h\x1b[?2004l";
+    pub(super) const RESTORE_BYTES: &[u8] = b"\x1b[<1u\x1b[?1006l\x1b[?1015l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?2004l\x1b[?25h\x1b[?1049l";
 
     pub(super) fn install() {
         INSTALL.call_once(|| {
@@ -209,10 +223,20 @@ mod tests {
     /// what the orderly restore path (crossterm) actually emits: the
     /// keyboard-enhancement pop, then `write_restore`.
     #[test]
-    fn signal_restore_bytes_match_write_restore() {
+    fn signal_restore_bytes_match_mouse_aware_write_restore() {
         let mut out: Vec<u8> = Vec::new();
         crossterm::execute!(out, PopKeyboardEnhancementFlags).expect("write to vec");
         write_restore(&mut out).expect("write to vec");
         assert_eq!(out, signal_restore::RESTORE_BYTES);
+    }
+
+    #[test]
+    fn enter_chrome_enables_mouse_capture() {
+        let mut out = Vec::new();
+        write_enter_chrome(&mut out).expect("write to vec");
+        assert_eq!(
+            out,
+            b"\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1015h\x1b[?1006h"
+        );
     }
 }
