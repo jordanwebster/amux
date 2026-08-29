@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Local flight and handoff artifacts no longer enter commits.**
+The repository now ignores `.autopilot/`, including its runtime logs and visual
+evidence, and the `.handoff/` proof bundle created at landing. Existing flight
+files were removed from the index without removing the working copies the
+running flight still needs.
+
+---
+
 2026-08-29 — **Claude exploration runs now fold at the native entry seam.**
 The chat adapter walks Claude's own `FeedEntryKind` values and collapses two or
 more consecutively grouped Read and Query tools under the first entry's stable

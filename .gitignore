@@ -26,3 +26,9 @@ notes/
 findings.jsonl
 overnight_cleanup.py
 .worktrees
+
+# Unattended-flight state and its eventual local handoff proof are workspace
+# artifacts, not source inputs.
+.autopilot/
+.handoff
+.handoff/
