@@ -20,7 +20,7 @@ use amux_ui::claude::{DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
 use ratatui::style::Style;
 use ratatui::text::Line;
 
-use crate::render::{Theme, clip_to_width, new_line, push_span};
+use crate::render::{Theme, clip_to_width, push_span};
 
 /// Left margin before the gutter (inside the border cell).
 const MARGIN: usize = 2;
@@ -165,7 +165,7 @@ fn row_lines(row: &Row, gutter: usize, width: usize, theme: Theme) -> Vec<Line<'
         } else {
             rest.split_at(head.len())
         };
-        let mut line = new_line();
+        let mut line = Line::default();
         if first {
             if let Some(number) = row.number {
                 push_span(
@@ -194,7 +194,7 @@ fn row_lines(row: &Row, gutter: usize, width: usize, theme: Theme) -> Vec<Line<'
 
 /// The `⋮` gap row between hunks, indented into the gutter.
 fn gap_line(gutter: usize, theme: Theme) -> Line<'static> {
-    let mut line = new_line();
+    let mut line = Line::default();
     let col = if gutter > 0 {
         // Indented into the number gutter, right-aligned.
         1 + MARGIN + gutter - 1
@@ -209,7 +209,7 @@ fn gap_line(gutter: usize, theme: Theme) -> Line<'static> {
 /// The remainder line: `⋮ +K more lines · <affordance>` — always states
 /// the arithmetic (K = diff rows not shown).
 fn remainder_line(hidden: usize, affordance: &str, theme: Theme) -> Line<'static> {
-    let mut line = new_line();
+    let mut line = Line::default();
     push_span(
         &mut line,
         1 + MARGIN + 1,
@@ -233,60 +233,6 @@ pub fn reader_rows(artifact: &DiffArtifact, width: usize, theme: Theme) -> Vec<L
             lines.extend(row_lines(&row, gutter, width, theme));
         }
     }
-    lines
-}
-
-/// The docked panel's diff preview (diff-rendering §4.2): at most `budget`
-/// screen rows from the FIRST hunk, cut with the remainder line. Context
-/// is not stripped to make the budget — but a hunk opening with the full
-/// three context rows when the budget is tight drops to one leading
-/// context row, keeping the ± rows on screen.
-pub(crate) fn diff_preview(
-    artifact: &DiffArtifact,
-    width: usize,
-    theme: Theme,
-    budget: usize,
-    affordance: &str,
-) -> Vec<Line<'static>> {
-    let budget = budget.max(1);
-    let numbered = artifact.numbering == DiffNumbering::Absolute;
-    let gutter = gutter_width(artifact);
-    let total = artifact.line_count();
-    let Some(first_hunk) = artifact.hunks.first() else {
-        return Vec::new();
-    };
-
-    // The whole artifact fits: no cut, full context.
-    if artifact.hunks.len() == 1 {
-        let mut lines = Vec::new();
-        for row in hunk_rows(first_hunk, numbered) {
-            lines.extend(row_lines(&row, gutter, width, theme));
-        }
-        if lines.len() <= budget {
-            return lines;
-        }
-    }
-
-    // Tight budget: drop leading context beyond one row, then emit whole
-    // diff rows (wraps counted) while they fit above the remainder line.
-    let rows = hunk_rows(first_hunk, numbered);
-    let leading_context = rows
-        .iter()
-        .take_while(|row| matches!(row.style_kind, RowKind::Context))
-        .count();
-    let skip = leading_context.saturating_sub(1);
-
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut shown = 0usize;
-    for row in rows.iter().skip(skip) {
-        let wrapped = row_lines(row, gutter, width, theme);
-        if lines.len() + wrapped.len() > budget.saturating_sub(1) {
-            break;
-        }
-        lines.extend(wrapped);
-        shown += 1;
-    }
-    lines.push(remainder_line(total - shown, affordance, theme));
     lines
 }
 
@@ -403,11 +349,11 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                "│  14    ctx",
-                "│  15  - old line",
-                "│  15  + new line",
-                "│  16  + extra",
-                "│  17    tail",
+                "   14    ctx",
+                "   15  - old line",
+                "   15  + new line",
+                "   16  + extra",
+                "   17    tail",
             ],
             "15 - / 15 + describe one position in two file versions"
         );
@@ -422,7 +368,7 @@ mod tests {
             DiffNumbering::None,
         );
         let rows = text_of(&reader_rows(&a, 40, Theme::default()));
-        assert_eq!(rows, vec!["│      ctx", "│    - old", "│    + new"]);
+        assert_eq!(rows, vec!["       ctx", "     - old", "     + new"]);
     }
 
     /// Long lines wrap with a blank gutter — the number column never lies
@@ -434,9 +380,9 @@ mod tests {
             DiffNumbering::Absolute,
         );
         let rows = text_of(&reader_rows(&a, 20, Theme::default()));
-        assert_eq!(rows[0], "│  9  + abcdefghijk");
-        assert_eq!(rows[1], "│       lmnopqrstuv");
-        assert_eq!(rows[2], "│       wxyz");
+        assert_eq!(rows[0], "   9  + abcdefghijk");
+        assert_eq!(rows[1], "        lmnopqrstuv");
+        assert_eq!(rows[2], "        wxyz");
     }
 
     /// A `⋮` gap separates hunks in the reader; the gutter width comes
@@ -454,71 +400,25 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                "│    2    a",
-                "│    3  - b",
-                "│    3  + B",
-                "│    ⋮",
-                "│  140    y",
-                "│  141  + z",
+                "     2    a",
+                "     3  - b",
+                "     3  + B",
+                "     ⋮",
+                "   140    y",
+                "   141  + z",
             ]
         );
     }
 
-    /// The preview cut states the arithmetic and drops leading context to
-    /// one row when the budget is tight (diff-rendering §4.2).
+    /// A single hunk renders every row it has, context included.
     #[test]
-    fn the_preview_drops_leading_context_and_states_the_remainder() {
-        let a = artifact(
-            vec![hunk(
-                1,
-                1,
-                &[
-                    " c1", " c2", " c3", "-old", "+new", "+more", " t1", " t2", " t3",
-                ],
-            )],
-            DiffNumbering::None,
-        );
-        let lines = diff_preview(&a, 60, Theme::default(), 5, "f full diff");
-        let rows = text_of(&lines);
-        assert_eq!(
-            rows,
-            vec![
-                "│      c3",
-                "│    - old",
-                "│    + new",
-                "│    + more",
-                "│   ⋮  +5 more lines · f full diff",
-            ],
-            "one leading context row kept; K counts every row not shown"
-        );
-    }
-
-    /// A whole single-hunk diff inside the budget renders uncut with its
-    /// full context.
-    #[test]
-    fn a_small_preview_renders_whole() {
+    fn a_single_hunk_renders_every_row() {
         let a = artifact(
             vec![hunk(1, 1, &[" c1", "-old", "+new", " c2"])],
             DiffNumbering::None,
         );
-        let lines = diff_preview(&a, 60, Theme::default(), PREVIEW_BUDGET, "f full diff");
-        assert_eq!(lines.len(), 4, "no remainder, nothing hidden");
-    }
-
-    /// Multi-hunk previews show the first hunk only; the remainder counts
-    /// the other hunks' rows too.
-    #[test]
-    fn a_multi_hunk_preview_counts_hidden_hunks() {
-        let a = artifact(
-            vec![hunk(1, 1, &["-a", "+b"]), hunk(9, 9, &[" c", "+d", " e"])],
-            DiffNumbering::None,
-        );
-        let lines = diff_preview(&a, 60, Theme::default(), PREVIEW_BUDGET, "f full diff");
-        let rows = text_of(&lines);
-        assert_eq!(
-            rows.last().expect("remainder"),
-            "│   ⋮  +3 more lines · f full diff"
-        );
+        let lines = reader_rows(&a, 60, Theme::default());
+        assert_eq!(lines.len(), 4, "every row of the hunk, nothing hidden");
     }
 
     /// New-file blocks: numberless `+` rows in the panel, numbered in the
@@ -530,17 +430,17 @@ mod tests {
         assert_eq!(
             panel,
             vec![
-                "│    + use std::time::Duration;",
-                "│   ⋮  +2 more lines · f full view",
+                "     + use std::time::Duration;",
+                "    ⋮  +2 more lines · f full view",
             ]
         );
         let reader = text_of(&new_file_rows(content, 60, Theme::default(), true));
         assert_eq!(
             reader,
             vec![
-                "│  1  + use std::time::Duration;",
-                "│  2  + ",
-                "│  3  + pub struct RetryPolicy;",
+                "   1  + use std::time::Duration;",
+                "   2  + ",
+                "   3  + pub struct RetryPolicy;",
             ]
         );
     }
@@ -554,7 +454,7 @@ mod tests {
             DiffNumbering::Absolute,
         );
         let rows = text_of(&reader_rows(&a, 60, Theme::default()));
-        assert_eq!(rows, vec!["│      \\ No newline at end of file"]);
+        assert_eq!(rows, vec!["       \\ No newline at end of file"]);
     }
 
     /// Magnitude headers: counts for facts and estimates alike, semantics

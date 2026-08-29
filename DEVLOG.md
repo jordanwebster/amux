@@ -4,6 +4,26 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The Claude chat now draws through the shared frame.**
+The Claude adapter no longer builds its own bordered frame. It walks its own
+fold of exploration runs, formats each entry's words, and hands the shared
+shell finished blocks painted by the one painter kit both chats use: user
+prompts on the accent surface, folded read/search runs, landed edits as file
+changes, plan previews with the reader affordance, answered questions as plain
+facts, turn and compaction rules, subagent and agent-message rows, and the
+composer as a filled block rather than a bordered strip. Docked asks became
+panel parts — a title, body rows, action rows and hints — so the panel painter
+owns the surface and the gaps; a permission ask's diff is converted once by the
+shared diff rows and shown above the answers. The `?` overlay and the reader
+lost their borders with the rest of the screen, and the diagnostic banner the
+kernel raises now takes the gap row under the header instead of a chrome rule
+that no longer exists. Behaviour that moved rather than changed: the paused row
+temporarily states only that following is paused — the new-entry count and the
+reading position return with the rest of the interaction wording. Nothing under
+`crates/amux-ui` changed.
+
+---
+
 2026-08-29 — **Local flight and handoff artifacts no longer enter commits.**
 The repository now ignores `.autopilot/`, including its runtime logs and visual
 evidence, and the `.handoff/` proof bundle created at landing. Existing flight

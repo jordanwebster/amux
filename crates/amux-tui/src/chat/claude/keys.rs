@@ -675,8 +675,7 @@ fn readonly_key(
 /// Scroll bounds under the paused layout (the paused rule takes a row, so
 /// paging targets that geometry).
 fn scroll_metrics(chat: &View, model: &Model, viewport: (u16, u16)) -> (usize, usize) {
-    let layout = render::layout(model, chat, viewport);
-    let feed_h = layout.feed_height_when_paused().max(1);
+    let feed_h = render::feed_rows_when_paused(model, chat, viewport).max(1);
     let page = feed_h.saturating_sub(1).max(1);
     (page, feed_h)
 }
@@ -2085,17 +2084,17 @@ mod tests {
         let mut chat = open_chat(&model);
         handle_chat_key(&mut chat, &model, ctrl('t'), VIEWPORT, t(0));
         // Resolved reader: tail is the one hint row, so at 80x20 the body
-        // shows 14 rows of the 30-line plan — max top is 16.
+        // shows 15 rows of the 30-line plan — max top is 15.
         handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT, t(0));
         assert_eq!(
             chat.reader.as_ref().expect("reader open").scroll,
-            16,
+            15,
             "End lands exactly on the render clamp"
         );
         handle_chat_key(&mut chat, &model, press(KeyCode::Up), VIEWPORT, t(0));
         assert_eq!(
             chat.reader.as_ref().expect("reader open").scroll,
-            15,
+            14,
             "one Up moves immediately — no dead presses"
         );
     }

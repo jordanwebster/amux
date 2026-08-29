@@ -1,6 +1,4 @@
- fix-auth · claude @ mbp                                          chat · idle   
-                                                                                
-──────────────────────────────────────────────────────────────────────────────  
+  fix-auth · claude @ mbp                                           chat · idle 
                                                                                 
                                                                                 
                                                                                 
@@ -10,7 +8,9 @@
                                                                                 
                                                                                 
                                                                                 
- › Type a message▌                                                              
                                                                                 
-   enter send · ctrl+j newline · ? help                                         
                                                                                 
+                                                                                
+▎   Type a message▌                                                             
+                                                                                
+    enter send · ctrl+j newline · ? help                                        

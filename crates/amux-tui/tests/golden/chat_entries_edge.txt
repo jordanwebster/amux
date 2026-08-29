@@ -1,26 +1,26 @@
- fix-auth · claude @ mbp                                       chat · errored   
+  fix-auth · claude @ mbp                                        chat · errored 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
- ~ thought for 3s · redacted                                                    
                                                                                 
- ✗ interrupted                                                                  
+  ~ thought for 3s · redacted                                                   
                                                                                 
- ─ turn · ~6s ────────────────────────────────────────────────────────────────  
+  ✗ interrupted                                                                 
                                                                                 
- ~ thought                                                                      
+  ─ turn · ~6s ─────────────────────────────────────────────────────────────────
                                                                                 
- ✗ api error (server_error)                                                     
-   └ API error — upstream 529                                                   
+  ~ thought                                                                     
                                                                                 
- · unrecognized row (progress)                                                  
+  ✗ api error (server_error)                                                    
+    API error — upstream 529                                                    
                                                                                 
- ✔ Background task finished: tests are green                                    
+  ⚠ unrecognized row                                                            
+    └ progress                                                                  
                                                                                 
- ─ compacted (manual) · 31.6k → 1.8k tok ─────────────────────────────────────  
+  ✔ Background task finished: tests are green                                   
                                                                                 
-   The session added retry with backoff and began the migration.                
+  ─ compacted (manual) · 31.6k → 1.8k tok ──────────────────────────────────────
                                                                                 
- › Type a message▌                                                              
+    The session added retry with backoff and began the migration.               
                                                                                 
-   enter send · ctrl+j newline · ? help                          mode default   
+▎   Type a message▌                                                             
                                                                                 
+    enter send · ctrl+j newline · ? help                           mode default 

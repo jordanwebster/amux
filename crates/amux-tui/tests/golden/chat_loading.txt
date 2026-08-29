@@ -1,16 +1,16 @@
- fix-auth · claude @ mbp                                     chat · replaying   
+  fix-auth · claude @ mbp                                      chat · replaying 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
-                                                                                
-                                                                                
-                                                                                
-                            ⟳ loading transcript…                               
+  ⟳ loading session…                                                            
                                                                                 
                                                                                 
                                                                                 
                                                                                 
                                                                                 
- › Type a message▌                                                              
                                                                                 
-   send gated while replaying · ? help                                          
                                                                                 
+                                                                                
+                                                                                
+                                                                                
+▎   Type a message▌                                                             
+                                                                                
+    send gated while replaying · ? help                                         

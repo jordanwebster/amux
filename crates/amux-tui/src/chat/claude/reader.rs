@@ -13,7 +13,7 @@ use ratatui::text::{Line, Span};
 use crate::chat::claude::ask_ui::{AskStage, AskUi};
 use crate::chat::claude::{View, diff, panel};
 use crate::markdown;
-use crate::render::{Theme, blank_line, finish_line, new_line, push_right, push_span};
+use crate::render::{Theme, push_right, push_span};
 
 /// Fullscreen reader ViewState: what is being read and where the viewport
 /// sits. The artifact itself is resolved from the Model at render — a
@@ -155,7 +155,7 @@ fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'stat
             markdown::markdown_rows(markdown_source, width.saturating_sub(3).max(1), theme)
                 .into_iter()
                 .map(|spans| {
-                    let mut line = new_line();
+                    let mut line = Line::default();
                     push_span(&mut line, 2, "", theme.text());
                     line.spans.extend(spans);
                     line
@@ -165,6 +165,17 @@ fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'stat
         Body::Diff(artifact) => diff::reader_rows(artifact, width, theme),
         Body::NewFile(content) => diff::new_file_rows(content, width, theme, true),
     }
+}
+
+/// A dim rule across the whole screen: the overlays' one boundary
+/// between a title, a body and the keys that act on it.
+pub(crate) fn rule_line(width: usize, theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    line.spans.push(Span::styled(
+        "─".repeat(width),
+        theme.muted(),
+    ));
+    line
 }
 
 /// The reader frame, replacing the whole chat frame while open; `None`
@@ -182,8 +193,8 @@ pub(crate) fn reader_frame(
     let total = body.len();
     let tail = reader_tail(model, &resolved, chat, width, theme);
 
-    // Frame rows: top, title, rule, body, rule, tail, bottom.
-    let body_h = height.saturating_sub(5 + tail.len()).max(1);
+    // Frame rows: title, the gap under it, two rules, and the tail.
+    let body_h = height.saturating_sub(4 + tail.len()).max(1);
     let start = chat
         .reader
         .as_ref()
@@ -201,28 +212,17 @@ pub(crate) fn reader_frame(
         width,
         theme,
     ));
-    content.push(panel::rule_line(width, theme));
+    content.push(Line::default());
+    content.push(rule_line(width, theme));
     let mut window: Vec<Line<'static>> = body.into_iter().skip(start).take(body_h).collect();
     while window.len() < body_h {
-        window.push(new_line());
+        window.push(Line::default());
     }
     content.extend(window);
-    content.push(panel::rule_line(width, theme));
+    content.push(rule_line(width, theme));
     content.extend(tail);
-    for line in &mut content {
-        finish_line(line, width);
-    }
-
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
-    lines.push(top_border(width, theme));
-    lines.extend(content);
-    // Degenerate heights: the bottom border keeps the last row.
-    lines.truncate(height.saturating_sub(1));
-    while lines.len() + 1 < height {
-        lines.push(blank_line(width));
-    }
-    lines.push(crate::render::bottom_border(width));
-    Some(lines)
+    content.truncate(height);
+    Some(content)
 }
 
 /// The rows below the body: the writable ask's action rows / feedback
@@ -248,7 +248,7 @@ fn reader_tail(
             && let Some(ui) = ui
             && ui.stage == AskStage::PlanFeedback
         {
-            let mut label = new_line();
+            let mut label = Line::default();
             push_span(
                 &mut label,
                 4,
@@ -256,7 +256,7 @@ fn reader_tail(
                 theme.text(),
             );
             tail.push(label);
-            let mut line = new_line();
+            let mut line = Line::default();
             push_span(&mut line, 2, "›", theme.text());
             push_span(
                 &mut line,
@@ -265,25 +265,25 @@ fn reader_tail(
                 theme.text(),
             );
             tail.push(line);
-            tail.push(new_line());
+            tail.push(Line::default());
             tail.extend(hint("enter request changes · esc back (keeps text)", theme));
         } else {
             let cursor = ui.map(AskUi::menu_cursor).unwrap_or(0);
             if plan_review {
-                tail.extend(panel::plan_actions(Some(cursor), width, theme));
-                tail.push(new_line());
+                tail.extend(indented(panel::plan_actions(Some(cursor), width, theme)));
+                tail.push(Line::default());
                 tail.extend(hint(
                     "↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)",
                     theme,
                 ));
             } else if let AskKind::Permission { suggestions, .. } = &ask.kind {
-                tail.extend(panel::permission_actions(
+                tail.extend(indented(panel::permission_actions(
                     suggestions,
                     Some(cursor),
                     width,
                     theme,
-                ));
-                tail.push(new_line());
+                )));
+                tail.push(Line::default());
                 tail.extend(hint(
                     "j/k scroll · g/G top/bottom · 1-3 select · enter confirm · esc back",
                     theme,
@@ -324,7 +324,7 @@ pub(crate) fn scroll_metrics(
     // Layout is theme-independent (tokens change styles, never cells).
     let tail = reader_tail(model, &resolved, chat, width, Theme::default());
     let total = body_lines(&resolved.body, width, Theme::default()).len();
-    let body_h = height.saturating_sub(5 + tail.len()).max(1);
+    let body_h = height.saturating_sub(4 + tail.len()).max(1);
     Some((body_h, total.saturating_sub(body_h)))
 }
 
@@ -343,20 +343,24 @@ pub(crate) fn answer_actionable(model: &Model, chat: &View) -> bool {
         })
 }
 
+/// The ask actions are formatted for the inside of a panel, where the
+/// painter supplies the indent; the reader has no panel, so it supplies
+/// its own and the two lists line up with the body above them.
+fn indented(rows: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    rows.into_iter()
+        .map(|mut line| {
+            line.spans.insert(0, Span::raw("  "));
+            line
+        })
+        .collect()
+}
+
 fn hint(text: &str, theme: Theme) -> Vec<Line<'static>> {
-    let mut line = new_line();
+    let mut line = Line::default();
     push_span(&mut line, 4, text.to_string(), theme.muted());
     vec![line]
 }
 
-fn top_border(width: usize, theme: Theme) -> Line<'static> {
-    let mut text = String::from("┌");
-    while text.chars().count() < width - 1 {
-        text.push('─');
-    }
-    text.push('┐');
-    Line::from(Span::styled(text, theme.muted()))
-}
 
 fn title_line(
     title: &str,
@@ -366,7 +370,7 @@ fn title_line(
     width: usize,
     theme: Theme,
 ) -> Line<'static> {
-    let mut line = new_line();
+    let mut line = Line::default();
     push_span(&mut line, 2, title.to_string(), theme.text());
     let position = if total == 0 {
         "lines 0-0/0".to_string()

@@ -19,15 +19,57 @@ use crate::chat::claude::ask_ui::{self, AskStage, AskUi, QuestionDraft, Question
 use crate::chat::claude::diff;
 use crate::composer::Composer;
 use crate::markdown;
-use crate::render::{Theme, line_len, new_line, push_right, push_span, str_width};
+use crate::render::{Theme, line_len, push_span, str_width};
+use crate::view::QuitGuard;
 
-/// Column grid shared with the feed: glyphs at 2, text at 4.
-const GLYPH_COL: usize = 2;
-const TEXT_COL: usize = 4;
+/// Column grid inside the panel, measured from the column the panel's
+/// tint starts its text at: a row's own glyph on the left, its text two
+/// cells in. The painter adds the frame indent, so nothing here knows
+/// where the panel sits on the screen.
+const GLYPH_COL: usize = 0;
+const TEXT_COL: usize = 2;
 
 /// The plan's docked preview length (C3: truncated plan; the reader has
 /// the whole).
 const PLAN_PREVIEW_LINES: usize = 6;
+
+/// What an ask asks, formatted but not yet painted: the painter owns the
+/// surface, the gaps and the frame indent; this owns the words.
+pub(crate) struct AskPanel {
+    pub(crate) title: String,
+    pub(crate) body: Vec<Line<'static>>,
+    pub(crate) actions: Vec<Line<'static>>,
+    pub(crate) hints: String,
+}
+
+impl AskPanel {
+    /// The queue is stated in the title because the panel has one title
+    /// row and no right margin of its own: an ask that is one of several
+    /// says so where its name is.
+    fn titled(title: String, ask_count: usize) -> Self {
+        Self {
+            title: match ask_count {
+                0 | 1 => title,
+                count => format!("{title} · 1 of {count}"),
+            },
+            body: Vec::new(),
+            actions: Vec::new(),
+            hints: String::new(),
+        }
+    }
+
+    /// The armed guard replaces the hints entirely, in warning colour, so
+    /// it lands as the last action row rather than as hint text.
+    fn hinted(mut self, hints: &str, armed: bool, theme: Theme) -> Self {
+        if armed {
+            self.actions.push(blank());
+            self.actions.push(armed_quit_row(theme));
+        } else {
+            self.hints = hints.to_string();
+        }
+        self
+    }
+}
 
 #[derive(Clone, Copy)]
 struct PanelContext {
@@ -36,50 +78,23 @@ struct PanelContext {
     quit_guard_armed: bool,
 }
 
-/// A dim interior rule — the takeover boundary above the panel (C1).
-pub(crate) fn rule_line(width: usize, theme: Theme) -> Line<'static> {
-    let mut line = new_line();
-    line.spans.push(Span::styled(
-        "─".repeat(width.saturating_sub(2)),
-        theme.muted(),
-    ));
-    line
-}
-
 fn blank() -> Line<'static> {
-    new_line()
+    Line::default()
 }
 
-/// Wrapped dim hint rows at the text column (panel hint lines may wrap to
-/// a second row — the C4 wireframe does).
-fn hint_lines(
-    text: &str,
-    width: usize,
-    theme: Theme,
-    quit_guard_armed: bool,
-) -> Vec<Line<'static>> {
-    if quit_guard_armed {
-        return vec![super::render::armed_quit_line(theme)];
-    }
-    markdown::plain_rows(
-        text,
-        width.saturating_sub(TEXT_COL + 1).max(1),
-        theme.muted(),
-    )
-    .into_iter()
-    .map(|spans| {
-        let mut line = new_line();
-        push_span(&mut line, TEXT_COL, "", theme.muted());
-        line.spans.extend(spans);
-        line
-    })
-    .collect()
+/// The armed quit guard's hint, as a panel row: it replaces the hints
+/// wherever they live, and it has to keep the warning colour a plain
+/// hint string could not carry.
+fn armed_quit_row(theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(&mut line, TEXT_COL, QuitGuard::HINT, theme.warn());
+    line
 }
 
 /// A one-line text field: `› text▌` (the panel's deny/feedback/Other
 /// stages).
 fn field_line(field: &Composer, theme: Theme) -> Line<'static> {
-    let mut line = new_line();
+    let mut line = Line::default();
     push_span(&mut line, GLYPH_COL, "›", theme.text());
     push_span(
         &mut line,
@@ -178,42 +193,18 @@ fn answer_summary(answer: &AskAnswer, theme: Theme) -> (&'static str, Style, &'s
 
 // --- shared pieces -----------------------------------------------------------
 
-/// `⚠ permission — <identity>` with the honest `(1 of N)` on the right
-/// when asks queue (C1).
-fn header_line(
-    glyph: &str,
-    glyph_style: Style,
-    title: &str,
-    ask_count: usize,
-    width: usize,
-    theme: Theme,
-) -> Line<'static> {
-    let mut line = new_line();
-    push_span(&mut line, GLYPH_COL, glyph.to_string(), glyph_style);
-    push_span(&mut line, TEXT_COL, title.to_string(), theme.text());
-    if ask_count > 1 {
-        push_right(
-            &mut line,
-            format!("(1 of {ask_count})"),
-            width,
-            theme.muted(),
-        );
-    }
-    line
-}
-
 /// The stated failure line (SendFailed resurfacing, or a synchronous
 /// refusal the reducer reported).
 fn failure_line(message: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
     markdown::plain_rows(
         message,
-        width.saturating_sub(TEXT_COL + 1).max(1),
+        width.saturating_sub(TEXT_COL).max(1),
         theme.text(),
     )
     .into_iter()
     .enumerate()
     .map(|(index, spans)| {
-        let mut line = new_line();
+        let mut line = Line::default();
         if index == 0 {
             push_span(&mut line, GLYPH_COL, "✗", theme.error());
         }
@@ -244,14 +235,14 @@ fn action_lines(
         .iter()
         .enumerate()
         .map(|(index, (label, description))| {
-            let mut line = new_line();
+            let mut line = Line::default();
             if cursor == Some(index) {
                 push_span(&mut line, GLYPH_COL, "›", theme.text());
             }
             push_span(&mut line, TEXT_COL, format!("{}.", index + 1), theme.text());
             push_span(&mut line, label_col, (*label).to_string(), theme.text());
             if let Some(description) = description
-                && desc_col + str_width(description) < width.saturating_sub(1)
+                && desc_col + str_width(description) < width
             {
                 push_span(
                     &mut line,
@@ -312,14 +303,10 @@ pub(crate) fn permission_actions(
 /// Edit, the `+` block for Write, `$ command` for Bash, the plan preview
 /// for plan review, a compact typed line otherwise.
 fn body_lines(ask: &Ask, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    match &ask.artifact {
-        Some(AskArtifact::Diff(artifact)) => {
-            return diff::diff_preview(artifact, width, theme, diff::PREVIEW_BUDGET, "f full diff");
-        }
-        Some(AskArtifact::NewFile { content }) => {
-            return diff::new_file_preview(content, width, theme, diff::PREVIEW_BUDGET);
-        }
-        None => {}
+    // A diff artifact is not the panel's to place: the adapter puts its
+    // rows above these, through the shared diff rows both chats use.
+    if let Some(AskArtifact::NewFile { content }) = &ask.artifact {
+        return diff::new_file_preview(content, width, theme, diff::PREVIEW_BUDGET);
     }
     let AskKind::Permission { invocation, .. } = &ask.kind else {
         return Vec::new();
@@ -330,13 +317,13 @@ fn body_lines(ask: &Ask, width: usize, theme: Theme) -> Vec<Line<'static>> {
             let mut lines = Vec::new();
             for (index, row) in markdown::plain_rows(
                 command,
-                width.saturating_sub(TEXT_COL + 2 + 1).max(1),
+                width.saturating_sub(TEXT_COL + 2).max(1),
                 theme.code(),
             )
             .into_iter()
             .enumerate()
             {
-                let mut line = new_line();
+                let mut line = Line::default();
                 if index == 0 {
                     push_span(&mut line, TEXT_COL, "$", theme.muted());
                 }
@@ -354,17 +341,17 @@ fn body_lines(ask: &Ask, width: usize, theme: Theme) -> Vec<Line<'static>> {
             for text in plan.lines().take(PLAN_PREVIEW_LINES) {
                 for spans in markdown::plain_rows(
                     text,
-                    width.saturating_sub(TEXT_COL + 1).max(1),
+                    width.saturating_sub(TEXT_COL).max(1),
                     theme.muted(),
                 ) {
-                    let mut line = new_line();
+                    let mut line = Line::default();
                     push_span(&mut line, TEXT_COL, "", theme.muted());
                     line.spans.extend(spans);
                     lines.push(line);
                 }
             }
             if total > PLAN_PREVIEW_LINES {
-                let mut line = new_line();
+                let mut line = Line::default();
                 push_span(
                     &mut line,
                     GLYPH_COL + 2,
@@ -387,10 +374,10 @@ fn body_lines(ask: &Ask, width: usize, theme: Theme) -> Vec<Line<'static>> {
 
 // --- the panel ---------------------------------------------------------------
 
-/// The docked panel for the current ask head (writable chats): rule,
-/// header, body, actions, hints — replacing the composer block. The
-/// caller guarantees an ask heads the queue.
-pub(crate) fn panel_lines(
+/// The current ask head as panel parts (writable chats): what is being
+/// asked, what it is about, the answers on offer and the keys that give
+/// them. The caller guarantees an ask heads the queue.
+pub(crate) fn ask_panel(
     ask: &Ask,
     ask_count: usize,
     ui: Option<&AskUi>,
@@ -398,7 +385,7 @@ pub(crate) fn panel_lines(
     width: usize,
     theme: Theme,
     quit_guard_armed: bool,
-) -> Vec<Line<'static>> {
+) -> AskPanel {
     let ctx = PanelContext {
         width,
         theme,
@@ -407,26 +394,19 @@ pub(crate) fn panel_lines(
     // The optimistic collapse (C5): a dim pending marker holds the
     // collapsed entry until the transcript confirms.
     if let AskState::AnsweredOptimistic { answer, .. } = &ask.state {
-        let (glyph, glyph_style, summary) = answer_summary(answer, theme);
-        let mut lines = vec![rule_line(width, theme)];
-        let mut line = new_line();
-        push_span(&mut line, GLYPH_COL, glyph.to_string(), glyph_style);
-        push_span(
-            &mut line,
-            TEXT_COL,
-            format!("{summary} — {}", ask_identity(ask)),
-            theme.text(),
-        );
-        line.spans.push(Span::styled(" · sending…", theme.muted()));
-        lines.push(line);
-        lines.push(blank());
-        lines.extend(hint_lines(
+        let (glyph, _, summary) = answer_summary(answer, theme);
+        return AskPanel::titled(
+            format!(
+                "{glyph} {summary} — {} · sending…",
+                ask_identity(ask)
+            ),
+            ask_count,
+        )
+        .hinted(
             "answer sent — awaiting confirmation",
-            width,
-            theme,
             quit_guard_armed,
-        ));
-        return lines;
+            theme,
+        );
     }
 
     // A stale panel state for a different ask renders as a fresh one
@@ -466,57 +446,41 @@ fn permission_panel(
     failed: Option<&str>,
     ask_count: usize,
     ctx: PanelContext,
-) -> Vec<Line<'static>> {
+) -> AskPanel {
     let PanelContext {
         width,
         theme,
         quit_guard_armed,
     } = ctx;
-    let mut lines = vec![
-        rule_line(width, theme),
-        header_line(
-            "⚠",
-            theme.warn(),
-            &format!("permission — {}", ask_identity(ask)),
-            ask_count,
-            width,
-            theme,
-        ),
-    ];
+    let mut panel = AskPanel::titled(
+        format!("permission — {}", ask_identity(ask)),
+        ask_count,
+    );
     if let Some(message) = failed {
-        lines.extend(failure_line(message, width, theme));
+        panel.body.extend(failure_line(message, width, theme));
     }
-    lines.push(blank());
     match &ui.stage {
         AskStage::DenyFeedback => {
-            let mut label = new_line();
+            let mut label = Line::default();
             push_span(
                 &mut label,
                 TEXT_COL,
                 "Deny — tell the agent why (optional)",
                 theme.text(),
             );
-            lines.push(label);
-            lines.push(blank());
-            lines.push(field_line(&ui.deny_feedback, theme));
-            lines.push(blank());
-            lines.extend(hint_lines(
+            panel.body.push(label);
+            panel.actions.push(field_line(&ui.deny_feedback, theme));
+            panel.hinted(
                 "enter deny (empty = plain deny) · esc back (never answers)",
-                width,
-                theme,
                 quit_guard_armed,
-            ));
+                theme,
+            )
         }
         _ => {
-            let cursor = ui.menu_cursor();
-            let body = body_lines(ask, width, theme);
-            let has_body = !body.is_empty();
-            lines.extend(body);
-            if has_body {
-                lines.push(blank());
-            }
-            lines.extend(permission_actions(suggestions, Some(cursor), width, theme));
-            lines.push(blank());
+            panel.body.extend(body_lines(ask, width, theme));
+            panel
+                .actions
+                .extend(permission_actions(suggestions, Some(ui.menu_cursor()), width, theme));
             let f_hint = if ask_ui::has_readable(ask) {
                 match &ask.artifact {
                     Some(AskArtifact::NewFile { .. }) => " · f full view",
@@ -525,15 +489,13 @@ fn permission_panel(
             } else {
                 ""
             };
-            lines.extend(hint_lines(
+            panel.hinted(
                 &format!("1-3/↑↓ select · enter confirm{f_hint} · esc back (never answers)"),
-                width,
-                theme,
                 quit_guard_armed,
-            ));
+                theme,
+            )
         }
     }
-    lines
 }
 
 /// The unverified-shape panel (C2): the menu claude renders is generated
@@ -545,40 +507,28 @@ fn refusal_panel(
     refusal: &str,
     ask_count: usize,
     ctx: PanelContext,
-) -> Vec<Line<'static>> {
+) -> AskPanel {
     let PanelContext {
         width,
         theme,
         quit_guard_armed,
     } = ctx;
-    let mut lines = vec![
-        rule_line(width, theme),
-        header_line(
-            "⚠",
-            theme.warn(),
-            &format!("permission — {}", ask_identity(ask)),
-            ask_count,
-            width,
-            theme,
-        ),
-        blank(),
-    ];
-    lines.extend(body_lines(ask, width, theme));
-    lines.push(blank());
-    lines.extend(failure_line(refusal, width, theme));
-    lines.push(blank());
+    let mut panel = AskPanel::titled(
+        format!("permission — {}", ask_identity(ask)),
+        ask_count,
+    );
+    panel.body.extend(body_lines(ask, width, theme));
+    panel.actions.extend(failure_line(refusal, width, theme));
     let f_hint = if ask_ui::has_readable(ask) {
         "f full diff · "
     } else {
         ""
     };
-    lines.extend(hint_lines(
+    panel.hinted(
         &format!("answer from the raw attach · {f_hint}ctrl+x interrupt"),
-        width,
-        theme,
         quit_guard_armed,
-    ));
-    lines
+        theme,
+    )
 }
 
 fn plan_panel(
@@ -587,55 +537,45 @@ fn plan_panel(
     failed: Option<&str>,
     ask_count: usize,
     ctx: PanelContext,
-) -> Vec<Line<'static>> {
+) -> AskPanel {
     let PanelContext {
         width,
         theme,
         quit_guard_armed,
     } = ctx;
-    let mut lines = vec![
-        rule_line(width, theme),
-        header_line("⚠", theme.warn(), "plan review", ask_count, width, theme),
-    ];
+    let mut panel = AskPanel::titled("plan review".to_string(), ask_count);
     if let Some(message) = failed {
-        lines.extend(failure_line(message, width, theme));
+        panel.body.extend(failure_line(message, width, theme));
     }
-    lines.push(blank());
     match &ui.stage {
         AskStage::PlanFeedback => {
-            let mut label = new_line();
+            let mut label = Line::default();
             push_span(
                 &mut label,
                 TEXT_COL,
                 "Request changes — tell the agent what to change (required)",
                 theme.text(),
             );
-            lines.push(label);
-            lines.push(blank());
-            lines.push(field_line(&ui.plan_feedback, theme));
-            lines.push(blank());
-            lines.extend(hint_lines(
+            panel.body.push(label);
+            panel.actions.push(field_line(&ui.plan_feedback, theme));
+            panel.hinted(
                 "enter request changes · esc back (keeps text)",
-                width,
-                theme,
                 quit_guard_armed,
-            ));
+                theme,
+            )
         }
         _ => {
-            let cursor = ui.menu_cursor();
-            lines.extend(body_lines(ask, width, theme));
-            lines.push(blank());
-            lines.extend(plan_actions(Some(cursor), width, theme));
-            lines.push(blank());
-            lines.extend(hint_lines(
+            panel.body.extend(body_lines(ask, width, theme));
+            panel
+                .actions
+                .extend(plan_actions(Some(ui.menu_cursor()), width, theme));
+            panel.hinted(
                 "1-3/↑↓ select · enter confirm · f full plan · esc back (never answers)",
-                width,
-                theme,
                 quit_guard_armed,
-            ));
+                theme,
+            )
         }
     }
-    lines
 }
 
 // --- the question form (C4) --------------------------------------------------
@@ -646,7 +586,7 @@ fn question_panel(
     failed: Option<&str>,
     ask_count: usize,
     ctx: PanelContext,
-) -> Vec<Line<'static>> {
+) -> AskPanel {
     let PanelContext {
         width,
         theme,
@@ -659,29 +599,35 @@ fn question_panel(
     };
     let tabbed = ask_ui::tabbed(questions);
 
-    let mut lines = vec![rule_line(width, theme)];
-    lines.push(question_header(
-        questions, form, tabbed, ask_count, width, theme,
-    ));
-    if let Some(message) = failed {
-        lines.extend(failure_line(message, width, theme));
+    let title = if questions.len() > 1 {
+        "questions"
+    } else {
+        "question"
+    };
+    let mut panel = AskPanel::titled(title.to_string(), ask_count);
+    // The tab strip is a body row, not part of the title: each tab
+    // carries its own colour — current, answered, unanswered — and a
+    // title is one word in one style.
+    if tabbed {
+        panel.body.push(tab_strip(questions, form, theme));
     }
-    lines.push(blank());
+    if let Some(message) = failed {
+        panel.body.extend(failure_line(message, width, theme));
+    }
 
     if form.on_submit_tab(questions) {
-        lines.extend(review_lines(questions, form, width, theme));
-        lines.push(blank());
-        lines.extend(hint_lines(
+        panel
+            .actions
+            .extend(review_lines(questions, form, width, theme));
+        return panel.hinted(
             "enter submit · tab/←→ questions · esc back (never answers)",
-            width,
-            theme,
             quit_guard_armed,
-        ));
-        return lines;
+            theme,
+        );
     }
 
     let Some(question) = questions.get(form.tab) else {
-        return lines;
+        return panel;
     };
     let draft = &form.drafts[form.tab];
 
@@ -696,17 +642,17 @@ fn question_panel(
     }
     for spans in markdown::plain_rows(
         &question_text,
-        width.saturating_sub(TEXT_COL + 1).max(1),
+        width.saturating_sub(TEXT_COL).max(1),
         theme.text(),
     ) {
-        let mut line = new_line();
+        let mut line = Line::default();
         push_span(&mut line, TEXT_COL, "", theme.text());
         line.spans.extend(spans);
-        lines.push(line);
+        panel.body.push(line);
     }
-    lines.push(blank());
-    lines.extend(option_lines(question, draft, form, width, theme));
-    lines.push(blank());
+    panel
+        .actions
+        .extend(option_lines(question, draft, form, width, theme));
 
     let count = question.options.len() + 1;
     let hint = if form.editing_other {
@@ -722,64 +668,39 @@ fn question_panel(
     } else {
         format!("1-{count}/↑↓ select · enter confirm · esc back (never answers)")
     };
-    lines.extend(hint_lines(&hint, width, theme, quit_guard_armed));
-    lines
+    panel.hinted(&hint, quit_guard_armed, theme)
 }
 
-/// `? questions   [storage*] [rollout] [submit]` — the current tab is
-/// starred, answered tabs brighten, unanswered ones stay dim (C4).
-fn question_header(
-    questions: &[QuestionFact],
-    form: &QuestionUi,
-    tabbed: bool,
-    ask_count: usize,
-    width: usize,
-    theme: Theme,
-) -> Line<'static> {
-    let mut line = new_line();
-    push_span(&mut line, GLYPH_COL, "?", theme.warn());
-    let title = if questions.len() > 1 {
-        "questions"
-    } else {
-        "question"
-    };
-    push_span(&mut line, TEXT_COL, title, theme.text());
-    if tabbed {
-        let mut col = line_len(&line) + 2;
-        for (index, question) in questions.iter().enumerate() {
-            let label = question
-                .header
-                .clone()
-                .unwrap_or_else(|| format!("q{}", index + 1));
-            let current = form.tab == index;
-            let star = if current { "*" } else { "" };
-            let style = if current {
-                theme.warn()
-            } else if ask_ui::answered(&form.drafts[index]) {
-                theme.text()
-            } else {
-                theme.muted()
-            };
-            push_span(&mut line, col + 1, format!("[{label}{star}]"), style);
-            col = line_len(&line);
-        }
-        let submit_current = form.tab >= questions.len();
-        let star = if submit_current { "*" } else { "" };
-        let style = if submit_current {
+/// `[storage*] [rollout] [submit]` — the current tab is starred,
+/// answered tabs brighten, unanswered ones stay dim (C4).
+fn tab_strip(questions: &[QuestionFact], form: &QuestionUi, theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    let mut col = TEXT_COL;
+    for (index, question) in questions.iter().enumerate() {
+        let label = question
+            .header
+            .clone()
+            .unwrap_or_else(|| format!("q{}", index + 1));
+        let current = form.tab == index;
+        let star = if current { "*" } else { "" };
+        let style = if current {
             theme.warn()
+        } else if ask_ui::answered(&form.drafts[index]) {
+            theme.text()
         } else {
             theme.muted()
         };
-        push_span(&mut line, col + 1, format!("[submit{star}]"), style);
+        push_span(&mut line, col, format!("[{label}{star}]"), style);
+        col = line_len(&line) + 1;
     }
-    if ask_count > 1 {
-        push_right(
-            &mut line,
-            format!("(1 of {ask_count})"),
-            width,
-            theme.muted(),
-        );
-    }
+    let submit_current = form.tab >= questions.len();
+    let star = if submit_current { "*" } else { "" };
+    let style = if submit_current {
+        theme.warn()
+    } else {
+        theme.muted()
+    };
+    push_span(&mut line, col, format!("[submit{star}]"), style);
     line
 }
 
@@ -821,7 +742,7 @@ fn option_lines(
         } else {
             draft.selected.contains(&index)
         };
-        let mut line = new_line();
+        let mut line = Line::default();
         if form.cursor == index {
             push_span(&mut line, GLYPH_COL, "›", theme.text());
         }
@@ -861,7 +782,7 @@ fn option_lines(
                 question.options[index].description.clone()
             };
             if let Some(description) = description
-                && desc_col + str_width(&description) < width.saturating_sub(1)
+                && desc_col + str_width(&description) < width
             {
                 push_span(&mut line, desc_col, description, theme.muted());
             }
@@ -887,7 +808,7 @@ fn review_lines(
             .clone()
             .or_else(|| question.question.clone())
             .unwrap_or_else(|| format!("q{}", index + 1));
-        let mut line = new_line();
+        let mut line = Line::default();
         if ask_ui::answered(draft) {
             let mut parts: Vec<String> = draft
                 .selected
@@ -900,7 +821,7 @@ fn review_lines(
             }
             push_span(&mut line, TEXT_COL, format!("{name} — "), theme.text());
             let answer = parts.join(", ");
-            let room = width.saturating_sub(line_len(&line) + 1).max(1);
+            let room = width.saturating_sub(line_len(&line)).max(1);
             let mut spans = markdown::plain_rows(&answer, room, theme.muted())
                 .into_iter()
                 .next()
@@ -919,13 +840,13 @@ fn review_lines(
 
 /// The read-only ask fact panel: what the agent is asking, the identical
 /// preview, and the honest wait — read affordances only, no action row.
-pub(crate) fn readonly_panel_lines(
+pub(crate) fn readonly_ask_panel(
     ask: &Ask,
     ask_count: usize,
     width: usize,
     theme: Theme,
-) -> Vec<Line<'static>> {
-    let (glyph, glyph_style, title, read_hint) = match &ask.kind {
+) -> AskPanel {
+    let (title, read_hint) = match &ask.kind {
         AskKind::Question { questions } => {
             let text = questions
                 .first()
@@ -937,21 +858,15 @@ pub(crate) fn readonly_panel_lines(
                 })
                 .unwrap_or_default();
             (
-                "?",
-                theme.warn(),
                 format!("the agent is asking a question — {text}"),
                 None,
             )
         }
         AskKind::Permission { .. } if ask_ui::is_plan(ask) => (
-            "⚠",
-            theme.warn(),
             "the agent is asking for plan approval".to_string(),
             Some("f read the plan"),
         ),
         AskKind::Permission { .. } => (
-            "⚠",
-            theme.warn(),
             format!("the agent is asking permission — {}", ask_identity(ask)),
             ask.artifact.as_ref().map(|artifact| match artifact {
                 AskArtifact::Diff(_) => "f read the diff",
@@ -959,16 +874,13 @@ pub(crate) fn readonly_panel_lines(
             }),
         ),
     };
-    let mut lines = vec![
-        rule_line(width, theme),
-        header_line(glyph, glyph_style, &title, ask_count, width, theme),
-    ];
-    lines.extend(body_lines(ask, width, theme));
+    let mut panel = AskPanel::titled(title, ask_count);
+    panel.body.extend(body_lines(ask, width, theme));
     let mut wait = String::from("waiting for a writable client");
     if let Some(hint) = read_hint {
         wait.push_str(" · ");
         wait.push_str(hint);
     }
-    lines.extend(hint_lines(&wait, width, theme, false));
-    lines
+    panel.hints = wait;
+    panel
 }

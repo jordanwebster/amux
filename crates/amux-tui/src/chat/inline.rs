@@ -176,7 +176,14 @@ pub(crate) fn panel_lines(
     quit_guard_armed: bool,
 ) -> Vec<Line<'static>> {
     let child = inline.child;
-    let mut lines = match &inline.ui {
+    // Without the attribution the human would be looking at an ask panel
+    // in a chat and have every reason to read it as this agent's, so
+    // whose ask it is and how to leave lead every one of these panels.
+    let name = model
+        .agent(child)
+        .map(|card| card.display_name())
+        .unwrap_or_else(|| "a subagent".to_string());
+    match &inline.ui {
         Ui::Claude(ui) => {
             let Some(ask) = model.claude(child).and_then(|layer| layer.ask_head()) else {
                 return Vec::new();
@@ -185,13 +192,26 @@ pub(crate) fn panel_lines(
                 .claude(child)
                 .map(|layer| layer.ask_count())
                 .unwrap_or(1);
-            panel::panel_lines(ask, count, Some(ui), None, width, theme, quit_guard_armed)
+            let mut parts = panel::ask_panel(
+                ask,
+                count,
+                Some(ui),
+                None,
+                crate::chat::blocks::panel_body_width(width),
+                theme,
+                quit_guard_armed,
+            );
+            parts.title = format!("answering {name} — {}", parts.title);
+            if !parts.hints.is_empty() {
+                parts.hints.push_str(" · esc back");
+            }
+            crate::chat::claude::ask_panel_lines(ask, parts, theme, width)
         }
         Ui::Codex { cursor } => {
             let Some(ask) = model.codex(child).and_then(|layer| layer.ask_head()) else {
                 return Vec::new();
             };
-            approval_panel(
+            let mut lines = approval_panel(
                 model,
                 ApprovalView {
                     agent: child,
@@ -201,22 +221,18 @@ pub(crate) fn panel_lines(
                 ask,
                 width,
                 theme,
-            )
+            );
+            // The Codex layer still opens its panel with the plain
+            // takeover rule; replacing it costs no rows and puts the
+            // attribution exactly where the boundary already is.
+            let attribution = attribution_rule(&name, width, theme);
+            match lines.first_mut() {
+                Some(first) => *first = attribution,
+                None => lines.push(attribution),
+            }
+            lines
         }
-    };
-    // Both layers open their panel with the same plain takeover rule
-    // (C1). Replacing it costs no rows and puts the attribution exactly
-    // where the boundary already is.
-    let name = model
-        .agent(child)
-        .map(|card| card.display_name())
-        .unwrap_or_else(|| "a subagent".to_string());
-    let attribution = attribution_rule(&name, width, theme);
-    match lines.first_mut() {
-        Some(first) => *first = attribution,
-        None => lines.push(attribution),
     }
-    lines
 }
 
 /// `─ answering test-runner ────────────────── esc back ─`

@@ -1,20 +1,20 @@
- fix-auth · claude @ mbp                                     chat · needs you   
+  fix-auth · claude @ mbp                                      chat · needs you 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
                                                                                 
- ✔ Read sync/config.rs                                                          
- ▸ Bash cargo check -p amux-sync                                                
-   └ running                                                                    
-──────────────────────────────────────────────────────────────────────────────  
- ? questions   [storage*] [rollout] [submit]                                    
+  ✔ Read sync/config.rs                                                         
                                                                                 
-   Which stores should the migration cover? (select all that apply)             
+  ▸ Bash cargo check -p amux-sync                                               
+    └ running                                                                   
                                                                                 
-   1. [x] trust store       pairing + relay trust records                       
-   2. [ ] session index     bounded tail metadata                               
- › 3. [x] recorder dumps    panic-hook recordings                               
-   4. [ ] Other…            type your own answer                                
+    questions                                                                   
                                                                                 
-   1-4/↑↓ select · space toggle · tab next question · enter advance · esc back  
-   (never answers)                                                              
+      [storage*] [rollout] [submit]                                             
+      Which stores should the migration cover? (select all that apply)          
                                                                                 
+      1. [x] trust store       pairing + relay trust records                    
+      2. [ ] session index     bounded tail metadata                            
+    › 3. [x] recorder dumps    panic-hook recordings                            
+      4. [ ] Other…            type your own answer                             
+    1-4/↑↓ select · space toggle · tab next question · enter advance · esc back 
+    (never answers)                                                             

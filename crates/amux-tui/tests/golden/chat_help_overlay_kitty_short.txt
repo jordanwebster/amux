@@ -1,24 +1,24 @@
- keys                                                                           
+  keys                                                                          
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
- chat                                                                           
-     ctrl+x                    interrupt the agent                              
-     esc                       back one stage (never answers)                   
-     pgup/pgdn                 scroll the feed                                  
-     ctrl+home/end             feed oldest / newest · terminal-dependent        
-     ctrl+t                    read accepted plans (←/→ steps)                  
-     ctrl+c                    clear field; empty: press twice to quit          
-     C-a s                     back to fleet                                    
-     C-a d                     detach to shell                                  
+────────────────────────────────────────────────────────────────────────────────
+  chat                                                                          
+      ctrl+x                    interrupt the agent                             
+      esc                       back one stage (never answers)                  
+      pgup/pgdn                 scroll the feed                                 
+      ctrl+home/end             feed oldest / newest · terminal-dependent       
+      ctrl+t                    read accepted plans (←/→ steps)                 
+      ctrl+c                    clear field; empty: press twice to quit         
+      C-a s                     back to fleet                                   
+      C-a d                     detach to shell                                 
                                                                                 
- composer                                                                       
-     enter                     send                                             
-     ctrl+j                    newline                                          
-     shift+enter               newline · kitty                                  
-     shift+tab                 cycle permission mode                            
-     home/end · ctrl+b/f/p/n   motion                                           
-     ctrl+←/→                  word motion · terminal-dependent                 
- ⋮ more — a taller terminal shows the full list                                 
-──────────────────────────────────────────────────────────────────────────────  
-   any key to close                                                             
-                                                                                
+  composer                                                                      
+      enter                     send                                            
+      ctrl+j                    newline                                         
+      shift+enter               newline · kitty                                 
+      shift+tab                 cycle permission mode                           
+      home/end · ctrl+b/f/p/n   motion                                          
+      ctrl+←/→                  word motion · terminal-dependent                
+      ctrl+w/u/k                kill word / to line start / end                 
+  ⋮ more — a taller terminal shows the full list                                
+────────────────────────────────────────────────────────────────────────────────
+    any key to close                                                            

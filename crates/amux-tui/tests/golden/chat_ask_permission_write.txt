@@ -1,24 +1,24 @@
- fix-auth · claude @ mbp                                     chat · needs you   
+  fix-auth · claude @ mbp                                      chat · needs you 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
- ✔ Read sync/config.rs                                                          
- ▸ Bash cargo check -p amux-sync                                                
-   └ running                                                                    
-──────────────────────────────────────────────────────────────────────────────  
- ⚠ permission — Write sync/retry.rs (12 lines)                                  
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
                                                                                 
-    + use std::time::Duration;                                                  
-    +                                                                           
-    + pub struct RetryPolicy {                                                  
-    +     pub max_attempts: u8,                                                 
-    +     pub base_delay: Duration,                                             
-    +     pub jitter_ms: u16,                                                   
-    +     pub cap: Duration,                                                    
-   ⋮  +5 more lines · f full view                                               
+  ✔ Read sync/config.rs                                                         
                                                                                 
- › 1. Allow once                                                                
-   2. Always allow access to /work from this project                            
-   3. Deny — tell the agent why (optional)                                      
+  ▸ Bash cargo check -p amux-sync                                               
+    └ running                                                                   
                                                                                 
-   1-3/↑↓ select · enter confirm · f full view · esc back (never answers)       
+    permission — Write sync/retry.rs (12 lines)                                 
                                                                                 
+         + use std::time::Duration;                                             
+         +                                                                      
+         + pub struct RetryPolicy {                                             
+         +     pub max_attempts: u8,                                            
+         +     pub base_delay: Duration,                                        
+         +     pub jitter_ms: u16,                                              
+         +     pub cap: Duration,                                               
+        ⋮  +5 more lines · f full view                                          
+                                                                                
+    › 1. Allow once                                                             
+      2. Always allow access to /work from this project                         
+      3. Deny — tell the agent why (optional)                                   
+    1-3/↑↓ select · enter confirm · f full view · esc back (never answers)      

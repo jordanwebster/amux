@@ -668,11 +668,14 @@ pub(crate) fn paint_ask_panel(
         lines.extend(actions.into_iter().map(|line| tinted(line, surface, width)));
     }
     if !hints.is_empty() {
-        lines.push(tinted(
-            Line::from(Span::styled(hints.to_string(), theme.muted())),
-            surface,
-            width,
-        ));
+        // Hints wrap rather than clip: a hint cut in half at the right
+        // edge names a key the reader cannot finish reading, which is
+        // worse than the row it costs.
+        lines.extend(
+            markdown::plain_rows(hints, panel_body_width(width), theme.muted())
+                .into_iter()
+                .map(|spans| tinted(Line::from(spans), surface, width)),
+        );
     }
     block(key, lines)
 }
@@ -693,47 +696,69 @@ pub(crate) fn paint_unified_diff(
     width: usize,
 ) -> PaintedBlock {
     let surface = theme.panel();
-    let digits = rows
-        .iter()
-        .flat_map(|row| [row.old, row.new])
-        .flatten()
-        .map(|number| number.to_string().len())
-        .max()
-        .unwrap_or(1)
-        .max(2);
-    let gutter = digits * 2 + 1;
-
     let mut lines = vec![tinted(
         Line::from(Span::styled(title.to_string(), theme.muted())),
         surface,
         width,
     )];
-    for row in rows {
-        let style = match row.kind {
-            DiffRowKind::Meta => theme.diff_meta(),
-            DiffRowKind::Context => theme.diff_context(),
-            DiffRowKind::Added => theme.diff_added(),
-            DiffRowKind::Removed => theme.diff_removed(),
-        };
-        let numbers = format!(
-            "{:>digits$} {:>digits$}",
-            row.old.map(|n| n.to_string()).unwrap_or_default(),
-            row.new.map(|n| n.to_string()).unwrap_or_default(),
-        );
-        let mut line = Line::default();
-        line.spans.push(Span::raw(" ".repeat(PANEL_COL)));
-        line.spans
-            .push(Span::styled(" ".repeat(TEXT_COL - PANEL_COL), surface));
-        line.spans.push(Span::styled(numbers, theme.gutter()));
-        let room = width.saturating_sub(TEXT_COL + gutter + 1);
-        line.spans.push(Span::styled(
-            format!(" {}", clip_to_width(&row.text, room)),
-            style,
-        ));
-        fill(&mut line, width, style);
-        lines.push(line);
-    }
+    lines.extend(
+        diff_body_rows(rows, theme, panel_body_width(width))
+            .into_iter()
+            .map(|line| tinted(line, surface, width)),
+    );
     block(key, lines)
+}
+
+/// The cells a panel's own rows may fill: everything right of the column
+/// its tint starts at. Adapters formatting panel bodies measure with it.
+pub(crate) fn panel_body_width(width: usize) -> usize {
+    width.saturating_sub(TEXT_COL)
+}
+
+/// The rows of a unified diff at a panel's text column, before the panel
+/// tint: the numbered gutter, then the row itself carrying its own
+/// class colour to the right edge. `paint_unified_diff` tints them under
+/// a title; an ask panel puts the same rows inside its own body, where
+/// the diff has to sit above the answers rather than below them.
+pub(crate) fn diff_body_rows(rows: &[DiffRow], theme: Theme, width: usize) -> Vec<Line<'static>> {
+    // A diff whose rows carry no numbers gets no gutter: an empty column
+    // of nothing pushes the code right for a gutter that will never say
+    // anything.
+    let widest = rows
+        .iter()
+        .flat_map(|row| [row.old, row.new])
+        .flatten()
+        .map(|number| number.to_string().len())
+        .max();
+    let digits = widest.unwrap_or(0).max(2);
+    let gutter = widest.map(|_| digits * 2 + 1).unwrap_or(0);
+
+    rows.iter()
+        .map(|row| {
+            let style = match row.kind {
+                DiffRowKind::Meta => theme.diff_meta(),
+                DiffRowKind::Context => theme.diff_context(),
+                DiffRowKind::Added => theme.diff_added(),
+                DiffRowKind::Removed => theme.diff_removed(),
+            };
+            let mut line = Line::default();
+            if gutter > 0 {
+                let numbers = format!(
+                    "{:>digits$} {:>digits$}",
+                    row.old.map(|n| n.to_string()).unwrap_or_default(),
+                    row.new.map(|n| n.to_string()).unwrap_or_default(),
+                );
+                line.spans.push(Span::styled(numbers, theme.gutter()));
+            }
+            let room = width.saturating_sub(gutter + 1);
+            line.spans.push(Span::styled(
+                format!(" {}", clip_to_width(&row.text, room)),
+                style,
+            ));
+            fill(&mut line, width, style);
+            line
+        })
+        .collect()
 }
 
 fn plural(count: usize, one: &str, many: &str) -> String {

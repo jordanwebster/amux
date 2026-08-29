@@ -1,18 +1,18 @@
- fix-auth · claude @ mbp                                     chat · needs you   
+  fix-auth · claude @ mbp                                      chat · needs you 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
- ~ thought for 6s                                                               
+  ~ thought for 6s                                                              
                                                                                 
-   The cap belongs in RetryConfig; I'll thread it through SyncOptions.          
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
                                                                                 
- ✔ Read sync/config.rs                                                          
- ▸ Bash cargo check -p amux-sync                                                
-   └ running                                                                    
-──────────────────────────────────────────────────────────────────────────────  
- ? questions   [storage] [rollout] [submit*]                                    
+  ✔ Read sync/config.rs                                                         
                                                                                 
-   storage — trust store                                                        
-   rollout — unanswered                                                         
+  ▸ Bash cargo check -p amux-sync                                               
+    └ running                                                                   
                                                                                 
-   enter submit · tab/←→ questions · esc back (never answers)                   
+    questions                                                                   
                                                                                 
+      [storage] [rollout] [submit*]                                             
+                                                                                
+      storage — trust store                                                     
+      rollout — unanswered                                                      
+    enter submit · tab/←→ questions · esc back (never answers)                  

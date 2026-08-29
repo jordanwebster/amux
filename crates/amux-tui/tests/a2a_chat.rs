@@ -610,8 +610,21 @@ fn a2a_header_marker_key_is_inert_outside_a_family() {
 /// The banner's row is the one under the header — read it there rather
 /// than by searching for the glyph, which an ask panel also wears.
 fn banner_of(model: &Model, view: &ViewState) -> Option<String> {
+    // The banner is the row under the header. The Claude screen composes
+    // itself through the shared shell and puts it at row 1; the Codex
+    // screen still draws a native frame the shell folds in, which leaves
+    // its banner one row lower.
+    let protocol = view
+        .chat
+        .as_ref()
+        .and_then(|chat| model.agent(chat.agent))
+        .and_then(|card| card.structured_protocol());
+    let row = match protocol {
+        Some(amux_ui::StructuredProtocol::Claude) => 1,
+        _ => 2,
+    };
     let frame = buffer_text(&render_buffer(model, view, Theme::default(), HEIGHT));
-    let row = frame.lines().nth(2)?.trim_matches(['│', ' ']).to_string();
+    let row = frame.lines().nth(row)?.trim_matches(['│', ' ']).to_string();
     row.starts_with('⚠').then_some(row)
 }
 

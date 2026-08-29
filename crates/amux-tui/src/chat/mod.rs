@@ -169,22 +169,27 @@ pub(crate) fn build_chat_lines(
     chat: &ChatView,
     ctx: &FrameContext,
 ) -> Vec<Line<'static>> {
-    let mut lines = match &chat.inner {
+    match &chat.inner {
+        // The Claude screen composes itself through the shared shell and
+        // places its own diagnostic banner; nothing is left for this seam
+        // to patch.
         AgentChatView::Claude(view) => claude::build_chat_lines(model, view, ctx),
-        AgentChatView::Codex(view) => codex::build_chat_lines(model, view, ctx),
-    };
-    // Every native frame reserves a row for a chrome rule under the
-    // header — the row after the child-ask banner when there is one.
-    // Replace THAT row with the sticky diagnostic banner, without
-    // changing any row accounting and without covering a child who is
-    // waiting on a person; provider renderers consume the Model fact but
-    // never inspect invariants.
-    let rule = 2 + usize::from(family_banner(model, chat.agent).is_some());
-    if model.has_invariant_warning() && lines.len() > rule {
-        lines[rule] =
-            crate::render::invariant_warning_line(ctx.viewport.0 as usize, ctx.theme.warn());
+        AgentChatView::Codex(view) => {
+            let mut lines = codex::build_chat_lines(model, view, ctx);
+            // The native frame reserves a row for a chrome rule under the
+            // header — the row after the child-ask banner when there is
+            // one. Replace THAT row with the sticky diagnostic banner,
+            // without changing any row accounting and without covering a
+            // child who is waiting on a person; provider renderers
+            // consume the Model fact but never inspect invariants.
+            let rule = 2 + usize::from(family_banner(model, chat.agent).is_some());
+            if model.has_invariant_warning() && lines.len() > rule {
+                lines[rule] =
+                    crate::render::invariant_warning_line(ctx.viewport.0 as usize, ctx.theme.warn());
+            }
+            frame::compose_opaque_chat_frame(lines, ctx.theme, ctx.viewport)
+        }
     }
-    frame::compose_opaque_chat_frame(lines, ctx.theme, ctx.viewport)
 }
 
 /// Everything an agent-message row needs besides the message itself: who

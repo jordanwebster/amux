@@ -1,41 +1,44 @@
-//! The chat frame renderer: a pure function of (Model, View,
-//! FrameContext), composing with the chrome's line helpers.
+//! The Claude chat's adapter onto the shared frame: it walks Claude's own
+//! feed kinds, formats their words, and hands the shell finished blocks.
 //!
-//! Visual language fixed by `docs/CHAT.md` §Wireframes: user lines
-//! prefixed `› `, assistant text at a two-column indent, tool lines
-//! glyphed by outcome (`✔`/`▸`/`✗`) with dim `└` continuations, markers
-//! and boundaries as dim `─` rules, header `agent · type @ host … chat ·
-//! <phase>`, one footer hint line with the permission mode on the right.
-//! Every fact rendered here comes from the Model — magnitudes, phases,
-//! gates, counts — the code below formats and never decides.
+//! Nothing here draws. Every row comes from the painter kit in
+//! `chat::blocks`, so the Claude and Codex screens cannot drift apart:
+//! this file decides what a block *is* — which entries fold into one
+//! exploration run, what a tool line says, which ask is docked — and the
+//! kit decides how it looks. Every fact rendered here comes from the
+//! Model; the code below formats and never decides.
+
+use std::collections::HashMap;
 
 use amux_ui::Model;
 use amux_ui::claude::{
-    ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, PromptEcho, SuccessFacts, ToolEntry,
-    ToolInvocation, ToolOutcome, TurnDuration,
+    Ask, AskArtifact, ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, SuccessFacts,
+    ToolEntry, ToolInvocation, ToolOutcome, TurnDuration,
 };
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::chat::claude::{View, ask_ui, entry_watermark, panel, reader};
-use crate::chat::frame::{ChatLayout, FrameRows};
-use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
-use crate::composer::Composer;
-use crate::markdown;
-use crate::render::{
-    FrameContext, Theme, blank_line, finish_line, line_len, new_line, pad_to, push_span, str_width,
+use crate::chat::blocks::{
+    self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant,
+    paint_compaction_rule, paint_composer_block, paint_error, paint_exploration_run,
+    paint_file_change, paint_header, paint_plan, paint_subagent, paint_thinking, paint_tool_line,
+    paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
+use crate::chat::claude::runs::{ClaudeItem, fold_runs};
+use crate::chat::claude::{View, ask_ui, panel, reader};
+use crate::chat::diff::diff_rows_from_claude;
+use crate::chat::frame::{
+    BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintedBlock, chat_geometry,
+    compose_chat_frame,
+};
+use crate::chat::viewport::FeedViewport;
+use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
+use crate::render::{FrameContext, Theme, line_len, push_span, str_width};
 use crate::view::QuitGuard;
 
-/// Column grid from the wireframes: glyphs (`›`, `✔`, `~`, `─`) at 2,
-/// entry text at 4, `└` continuation text at 6.
-const GLYPH_COL: usize = 2;
-const TEXT_COL: usize = 4;
-const CONT_COL: usize = 6;
-
-/// Below these, the chat frame cannot lay out (7 static chrome rows + up
-/// to 2 working/paused rows + a 1-row composer need 10); degrade to the
-/// chrome's too-small notice.
+/// Below these, the chat frame cannot lay out (header, a feed row, the
+/// gaps and a one-row composer); degrade to the chrome's too-small
+/// notice.
 const MIN_WIDTH: usize = 24;
 const MIN_HEIGHT: usize = 10;
 
@@ -47,191 +50,71 @@ const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
 /// lines").
 const PLAN_PREVIEW_LINES: usize = 6;
 
-// --- layout -----------------------------------------------------------------
+/// Diff rows a docked ask shows before it states the remainder and names
+/// the reader.
+const DIFF_PREVIEW_ROWS: usize = 8;
 
-pub(crate) fn layout(model: &Model, chat: &View, viewport: (u16, u16)) -> ChatLayout {
-    let width = viewport.0 as usize;
-    let height = viewport.1 as usize;
-    let working = matches!(
-        amux_ui::claude::phase(model, chat.agent),
-        ChatPhase::Working
-    );
-    let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
-    let banner = family_banner(model, chat.agent).is_some();
-    // Layout is theme-independent (tokens change styles, never cells —
-    // test-locked), so the count renders with the default theme.
-    let bottom = bottom_lines(
-        model,
-        chat,
-        Theme::default(),
-        width,
-        FrameRows {
-            height,
-            working,
-            paused,
-            banner,
-        },
-    );
-    ChatLayout {
-        height,
-        bottom_rows: bottom.len(),
-        working,
-        paused,
-        banner,
-    }
-}
-
-/// Everything below the feed and the working/paused rows, above the
-/// bottom border — finished lines. Three shapes: the read-only block
-/// (F1), the docked ask panel (C1 — the ask takes over the composer
-/// area), or the composer block. Clamped so the frame always fits: the
-/// block keeps its tail (actions and hints beat body rows) on short
-/// viewports.
-fn bottom_lines(
-    model: &Model,
-    chat: &View,
-    theme: Theme,
-    width: usize,
-    rows: FrameRows,
-) -> Vec<Line<'static>> {
-    let max_rows = rows.bottom_max();
-    let readonly = chat.read_only(model);
-    let head = chat.ask_head(model);
-
-    let mut lines: Vec<Line<'static>> = if readonly {
-        readonly_bottom(model, chat, theme, width)
-    } else if let Some(inline) = chat.inline_ask.as_ref().filter(|_| head.is_none()) {
-        // U2: a child's ask docks where the composer is, exactly as this
-        // chat's own ask would. This chat's own ask comes first — and
-        // reconcile drops a guest the moment one arrives, so the filter
-        // is a belt on top of that brace, never a state that persists.
-        crate::chat::inline::panel_lines(model, inline, width, theme, chat.quit_guard.is_armed())
-    } else if let Some(ask) = head {
-        let count = model
-            .claude(chat.agent)
-            .map(|layer| layer.ask_count())
-            .unwrap_or(1);
-        panel::panel_lines(
-            ask,
-            count,
-            chat.ask_ui.as_ref(),
-            chat.ask_failure.as_deref(),
-            width,
-            theme,
-            chat.quit_guard.is_armed(),
-        )
-    } else {
-        // The composer block: blank, the auto-growing composer (one to
-        // six rows, never past the viewport's budget — the footer and
-        // border survive every height), blank, footer.
-        let budget = max_rows.saturating_sub(3).max(1);
-        let (rows, _) = composer_display_rows(&chat.composer, text_width(width));
-        let composer_rows = rows.len().clamp(1, budget.min(6));
-        let mut lines = vec![blank_line(width)];
-        lines.extend(composer_lines(chat, theme, width, composer_rows));
-        lines.push(blank_line(width));
-        lines.push(footer_line(model, chat, theme, width));
-        return lines;
-    };
-
-    // The read-only shape ends with one unwrapped footer row. Interactive
-    // panels replace their complete wrapped hint range at the source,
-    // before the row budget is clamped, so no continuation fragments can
-    // survive above the armed message.
-    if readonly
-        && chat.quit_guard.is_armed()
-        && let Some(last) = lines.last_mut()
-    {
-        *last = armed_quit_line(theme);
-    }
-    for line in &mut lines {
-        finish_line(line, width);
-    }
-    if lines.len() > max_rows {
-        // Keep the tail: the hint and action rows survive, body rows give
-        // way (mirrors the feed giving way to the composer).
-        lines.drain(..lines.len() - max_rows);
-    }
-    lines
-}
-
-/// `? help` joins the footer hints exactly when `?` opens the overlay —
-/// composer focus, empty draft (with anything typed, `?` types; a hint
-/// would lie, P10).
-fn help_hinted(chat: &View, hints: String) -> String {
-    if chat.composer.is_empty() {
-        format!("{hints} · ? help")
-    } else {
-        hints
-    }
-}
-
-/// The armed quit guard's replacement hint row (`docs/CHAT.md`
-/// §Keybindings): it replaces the hint line — wherever that line lives
-/// (composer footer, panel hints, read-only footer, reader tail) — in
-/// warning color. Left open; callers finish it.
-pub(crate) fn armed_quit_line(theme: Theme) -> Line<'static> {
-    let mut line = new_line();
-    push_span(&mut line, TEXT_COL, QuitGuard::HINT, theme.warn());
-    line
-}
-
-/// The read-only chat's bottom block (F1): the ask fact panel when one
-/// pends, the `⊘ read-only` statement where the composer would be, and
-/// the pager hints.
-fn readonly_bottom(model: &Model, chat: &View, theme: Theme, width: usize) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    if let Some(ask) = chat.ask_head(model) {
-        let count = model
-            .claude(chat.agent)
-            .map(|layer| layer.ask_count())
-            .unwrap_or(1);
-        lines.extend(panel::readonly_panel_lines(ask, count, width, theme));
-    }
-    lines.push(new_line());
-    let mut marker = new_line();
-    push_span(
-        &mut marker,
-        GLYPH_COL,
-        "⊘ read-only — you are observing this session",
-        theme.muted(),
-    );
-    lines.push(marker);
-    lines.push(new_line());
-    let mut hints = String::from("pgup/pgdn scroll");
-    if let Some(ask) = chat.ask_head(model)
-        && ask_ui::has_readable(ask)
-    {
-        hints.push_str(match &ask.artifact {
-            Some(amux_ui::claude::AskArtifact::Diff(_)) => " · f view diff",
-            Some(amux_ui::claude::AskArtifact::NewFile { .. }) => " · f view file",
-            None => " · f view plan",
-        });
-    }
-    hints.push_str(" · q back to fleet");
-    let mut footer = new_line();
-    push_span(&mut footer, TEXT_COL, hints, theme.muted());
-    lines.push(footer);
-    lines
-}
-
-/// Cells available to content at TEXT_COL — feed text and the composer
-/// share the column — inside the right border's one-cell margin.
-fn text_width(width: usize) -> usize {
-    width.saturating_sub(TEXT_COL + 1).max(1)
-}
-
-/// Cells available to `└` continuation text at CONT_COL.
-fn cont_width(width: usize) -> usize {
-    width.saturating_sub(CONT_COL + 1).max(1)
-}
-
-/// Total feed display rows at this width — the key handler's scroll bound.
-pub(crate) fn feed_line_count(model: &Model, chat: &View, width: usize) -> usize {
-    feed_lines(model, chat, Theme::default(), width).len()
-}
+/// Synthetic keys for the blocks no entry owns. Pending echoes count
+/// down from the top of the space so they can never collide with an
+/// entry id, which counts up from zero.
+const ECHO_KEY_BASE: u64 = u64::MAX;
 
 // --- the frame --------------------------------------------------------------
+
+/// Everything the shared shell needs to draw this chat: one header, the
+/// feed as painted blocks, the liveness row, the bottom block, and the
+/// overlay that replaces all of it when a reader or the key list is open.
+pub(crate) fn claude_frame_parts(
+    model: &Model,
+    chat: &View,
+    ctx: &FrameContext,
+) -> ChatFrameParts {
+    let width = ctx.viewport.0 as usize;
+    let height = ctx.viewport.1 as usize;
+    let theme = ctx.theme;
+    let readonly = chat.read_only(model);
+    let phase = amux_ui::claude::phase(model, chat.agent);
+    let banner = family_banner(model, chat.agent).map(|banner| {
+        family_banner_line(
+            &banner.row(banner_answerable(model, chat, &banner), chat.leader),
+            theme,
+        )
+    });
+
+    // The `?` overlay and the fullscreen reader each replace the whole
+    // frame while open (any key closes the overlay; the reader falls back
+    // to the chat when its source no longer resolves).
+    let overlay = if chat.help {
+        Some(help_overlay(model, chat, theme, width, height))
+    } else if chat.reader.is_some() {
+        reader::reader_frame(model, chat, theme, width, height)
+    } else {
+        None
+    };
+
+    let bottom = bottom_block(model, chat, theme, width, height);
+    let working = matches!(phase, ChatPhase::Working);
+    let loading = matches!(phase, ChatPhase::Replaying);
+
+    ChatFrameParts {
+        header: header_row(model, chat, theme, phase, width, readonly),
+        banner,
+        feed: FeedBlocks {
+            blocks: if loading {
+                Vec::new()
+            } else {
+                feed_blocks(model, chat, theme, width)
+            },
+            history_truncated: model
+                .claude(chat.agent)
+                .is_some_and(|layer| layer.history_truncated()),
+            loading,
+        },
+        activity: working.then(|| working_row(model, chat, ctx, readonly)),
+        bottom,
+        overlay,
+    }
+}
 
 pub(crate) fn build_chat_lines(
     model: &Model,
@@ -243,229 +126,80 @@ pub(crate) fn build_chat_lines(
     if width < MIN_WIDTH || height < MIN_HEIGHT {
         return vec![Line::from("amux: terminal too small")];
     }
-    let theme = ctx.theme;
-    let readonly = chat.read_only(model);
+    let parts = claude_frame_parts(model, chat, ctx);
+    let overlaid = parts.overlay.is_some();
+    let banner = parts.banner.is_some();
+    let viewport = FeedViewport {
+        scroll: chat.scroll.clone(),
+        ..FeedViewport::following()
+    };
+    let mut lines = compose_chat_frame(parts, &viewport, ctx.theme, ctx.viewport);
 
-    // The `?` overlay replaces the whole frame while open (any key
-    // closes it).
-    if chat.help {
-        return help_frame(model, chat, theme, width, height);
+    // The sticky diagnostic: the kernel says its own state stopped adding
+    // up, and the chat says so under the header without moving anything.
+    // It takes the gap row rather than a row of its own, so a warning
+    // costs the feed nothing, and it stays off the overlays, whose rows
+    // are all content.
+    let row = 1 + usize::from(banner);
+    if !overlaid && model.has_invariant_warning() && lines.len() > row {
+        lines[row] = crate::render::invariant_warning_line(width, ctx.theme.warn());
     }
+    lines
+}
 
-    // The fullscreen reader replaces the whole frame while open (falling
-    // back to the chat when its source no longer resolves).
-    if chat.reader.is_some()
-        && let Some(frame) = reader::reader_frame(model, chat, theme, width, height)
-    {
-        return frame;
-    }
+// --- geometry the key handler shares ----------------------------------------
 
+fn spacing() -> FrameSpacing {
+    FrameSpacing::DEFAULT
+}
+
+/// The frame budget at this viewport, under the given pause state.
+fn geometry(model: &Model, chat: &View, viewport: (u16, u16), paused: bool) -> ChatGeometry {
+    let theme = Theme::default();
+    let width = viewport.0 as usize;
+    let height = viewport.1 as usize;
     let working = matches!(
         amux_ui::claude::phase(model, chat.agent),
         ChatPhase::Working
     );
-    let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
-    let banner = family_banner(model, chat.agent);
-    let bottom = bottom_lines(
-        model,
-        chat,
-        theme,
-        width,
-        FrameRows {
-            height,
-            working,
-            paused,
-            banner: banner.is_some(),
-        },
-    );
-    let layout = ChatLayout {
-        height,
-        bottom_rows: bottom.len(),
+    // Geometry is theme-independent (tokens change styles, never cells —
+    // test-locked), so the bottom's row count comes from the default
+    // theme.
+    let bottom = bottom_block(model, chat, theme, width, height);
+    chat_geometry(
+        viewport,
+        spacing(),
+        family_banner(model, chat.agent).is_some(),
         working,
         paused,
-        banner: banner.is_some(),
-    };
-    let phase = amux_ui::claude::phase(model, chat.agent);
-    let feed_h = layout.feed_height();
-
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
-    lines.push(top_border(width, theme));
-    lines.push(header_line(model, chat, theme, phase, width, readonly));
-    // U1: a child's ask reaches its parent directly under the header,
-    // above the conversation it is interrupting.
-    if let Some(banner) = &banner {
-        lines.push(family_banner_line(
-            &banner.row(banner_answerable(model, chat, banner), chat.leader),
-            width,
-            theme,
-        ));
-    }
-
-    // The feed viewport: everything before `transcript_ready` is replay —
-    // the loading band is visually distinct from an empty chat (B10).
-    let loading = matches!(phase, ChatPhase::Replaying);
-    let (window, at_top) = if loading {
-        (loading_band(theme, width, feed_h), false)
-    } else {
-        let feed = feed_lines(model, chat, theme, width);
-        let total = feed.len();
-        let max_top = total.saturating_sub(feed_h);
-        let (start, at_top) = match &chat.scroll {
-            FeedScroll::Following => (max_top, total <= feed_h),
-            FeedScroll::Paused { top_line, .. } => {
-                // Clamp a stale anchor against the Model at render — never
-                // assert against it.
-                let top = (*top_line).min(max_top);
-                (top, top == 0)
-            }
-        };
-        let mut window: Vec<Line<'static>> = feed.into_iter().skip(start).take(feed_h).collect();
-        while window.len() < feed_h {
-            window.push(blank_line(width));
-        }
-        (window, at_top)
-    };
-
-    // The rule row under the header carries the honest history boundary
-    // when the feed's very first line is in view (B9): a statement, not an
-    // apology.
-    let truncated = model
-        .claude(chat.agent)
-        .is_some_and(|layer| layer.history_truncated());
-    if truncated && at_top {
-        lines.push(chrome_rule(width, theme, "─ earlier history unavailable "));
-    } else {
-        lines.push(chrome_rule(width, theme, ""));
-    }
-    lines.extend(window);
-
-    // Reserved row above the working line (the queued-input preview door,
-    // deferred): the paused rule occupies it when scrolled back. During
-    // the loading band there is no feed for the rule to describe — the
-    // row stays blank so the frame's row accounting holds.
-    match &chat.scroll {
-        FeedScroll::Paused {
-            entry_watermark: mark,
-            top_line,
-        } if !loading => {
-            lines.push(paused_rule(
-                model, chat, theme, width, feed_h, *mark, *top_line,
-            ));
-        }
-        FeedScroll::Paused { .. } => lines.push(blank_line(width)),
-        FeedScroll::Following if layout.working => lines.push(blank_line(width)),
-        FeedScroll::Following => {}
-    }
-    if layout.working {
-        lines.push(working_line(model, chat, ctx, width, readonly));
-    }
-
-    lines.extend(bottom);
-    lines.push(crate::render::bottom_border(width));
-    lines.truncate(height);
-    lines
+        bottom.len(),
+    )
 }
 
-/// The `?` overlay: the chat's full effective key list with tier
-/// annotations, from the one binding table (`crate::bindings`) — kitty
-/// rows appear only when probed, ext rows are marked terminal-dependent.
-/// Fullscreen like the reader; any key closes. On short viewports the
-/// tail gives way and a `⋮` row states the cut honestly.
-fn help_frame(
-    model: &Model,
-    chat: &View,
-    theme: Theme,
-    width: usize,
-    height: usize,
-) -> Vec<Line<'static>> {
-    let sections = crate::bindings::chat_sections(
-        &crate::bindings::Effective::new(chat.kitty, chat.leader),
-        crate::chat::family_keys(model, chat.agent),
+/// Feed rows under the paused layout — the paused rule takes a row, so
+/// paging targets that geometry.
+pub(crate) fn feed_rows_when_paused(model: &Model, chat: &View, viewport: (u16, u16)) -> usize {
+    geometry(model, chat, viewport, true).feed_rows
+}
+
+/// Total feed display rows at this width — the key handler's scroll
+/// bound. Blocks are separated by the frame's own gap, and the honest
+/// boundary rows above them scroll with the feed, so both count.
+pub(crate) fn feed_line_count(model: &Model, chat: &View, width: usize) -> usize {
+    let theme = Theme::default();
+    let blocks = feed_blocks(model, chat, theme, width);
+    let gaps = spacing().block_gap * blocks.len().saturating_sub(1);
+    let boundary = usize::from(
+        model
+            .claude(chat.agent)
+            .is_some_and(|layer| layer.history_truncated()),
     );
-    // One aligned action column across every section.
-    let key_col = TEXT_COL
-        + 2
-        + sections
-            .iter()
-            .flat_map(|section| &section.bindings)
-            .map(|binding| str_width(&binding.keys))
-            .max()
-            .unwrap_or(0)
-        + 3;
-
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    for (index, section) in sections.iter().enumerate() {
-        if index > 0 {
-            rows.push(new_line());
-        }
-        let mut title = new_line();
-        push_span(&mut title, GLYPH_COL, section.title, theme.muted());
-        rows.push(title);
-        for binding in &section.bindings {
-            let mut line = new_line();
-            push_span(&mut line, TEXT_COL + 2, binding.keys.clone(), theme.text());
-            push_span(&mut line, key_col, binding.action.clone(), theme.muted());
-            if let Some(mark) = crate::render::tier_mark(binding.tier) {
-                line.spans
-                    .push(Span::styled(format!(" · {mark}"), theme.muted()));
-            }
-            rows.push(line);
-        }
-    }
-
-    // Fixed chrome is six rows: top border, title, two rules, hint, and
-    // bottom border. The body consumes every remaining viewport row.
-    let body_h = height.saturating_sub(6).max(1);
-    if rows.len() > body_h {
-        rows.truncate(body_h.saturating_sub(1));
-        let mut more = new_line();
-        push_span(
-            &mut more,
-            GLYPH_COL,
-            "⋮ more — a taller terminal shows the full list",
-            theme.muted(),
-        );
-        rows.push(more);
-    }
-    while rows.len() < body_h {
-        rows.push(new_line());
-    }
-
-    let mut title = new_line();
-    push_span(&mut title, GLYPH_COL, "keys", theme.text());
-    let hint = if chat.quit_guard.is_armed() {
-        armed_quit_line(theme)
-    } else {
-        let mut line = new_line();
-        push_span(&mut line, TEXT_COL, "any key to close", theme.muted());
-        line
-    };
-
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
-    lines.push(top_border(width, theme));
-    lines.push(title);
-    lines.push(chrome_rule(width, theme, ""));
-    lines.extend(rows);
-    lines.push(chrome_rule(width, theme, ""));
-    lines.push(hint);
-    for line in lines.iter_mut().skip(1) {
-        finish_line(line, width);
-    }
-    lines.truncate(height.saturating_sub(1));
-    lines.push(crate::render::bottom_border(width));
-    lines
+    boundary + gaps + blocks.iter().map(|block| block.lines.len()).sum::<usize>()
 }
 
-fn top_border(width: usize, theme: Theme) -> Line<'static> {
-    let mut text = String::from("┌");
-    while text.chars().count() < width - 1 {
-        text.push('─');
-    }
-    text.push('┐');
-    Line::from(Span::styled(text, theme.muted()))
-}
+// --- the header and the rows around the feed --------------------------------
 
-fn header_line(
+fn header_row(
     model: &Model,
     chat: &View,
     theme: Theme,
@@ -473,22 +207,16 @@ fn header_line(
     width: usize,
     readonly: bool,
 ) -> Line<'static> {
-    let mut line = new_line();
-    if let Some(card) = model.agent(chat.agent) {
-        let host = model
-            .host_name(card.agent.host_id)
-            .unwrap_or("?")
-            .to_string();
-        push_span(&mut line, GLYPH_COL, card.display_name(), theme.text());
-        line.spans.push(Span::styled(
-            format!(" · {} @ {host}", card.agent.agent_type),
-            theme.muted(),
-        ));
-        line.spans.push(Span::styled(
+    let name = match model.agent(chat.agent) {
+        Some(card) => format!(
+            "{} · {} @ {}{}",
+            card.display_name(),
+            card.agent.agent_type,
+            model.host_name(card.agent.host_id).unwrap_or("?"),
             subagent_marker(model, chat.agent),
-            theme.muted(),
-        ));
-    }
+        ),
+        None => String::new(),
+    };
     let (word, style) = phase_word(phase, theme);
     // Read-only chats say so in the header, and "needs you" becomes
     // "needs owner" — the observer is not the you who can answer (F1).
@@ -497,17 +225,12 @@ fn header_line(
     } else {
         word
     };
-    let left = if readonly {
+    let right = if readonly {
         "chat · read-only · "
     } else {
         "chat · "
     };
-    let right_len = left.chars().count() + word.chars().count();
-    let col = (width.saturating_sub(2 + right_len)).max(line_len(&line) + 1);
-    push_span(&mut line, col, left, theme.muted());
-    line.spans.push(Span::styled(word, style));
-    finish_line(&mut line, width);
-    line
+    paint_header(&name, (&word, style), right, theme, width)
 }
 
 /// Whether this banner's chord would do anything from here: the child
@@ -519,11 +242,10 @@ fn banner_answerable(model: &Model, chat: &View, banner: &crate::chat::FamilyBan
 /// The child-ask banner (U1): one warning row naming who is waiting and
 /// for what. It is derived per frame from the child's own card, so it
 /// leaves the moment the ask is answered — anywhere.
-fn family_banner_line(text: &str, width: usize, theme: Theme) -> Line<'static> {
-    let mut line = new_line();
-    push_span(&mut line, GLYPH_COL, "⚠", theme.warn());
-    push_span(&mut line, TEXT_COL, text.to_string(), theme.warn());
-    finish_line(&mut line, width);
+fn family_banner_line(text: &str, theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(&mut line, blocks::GLYPH_COL, "⚠", theme.warn());
+    push_span(&mut line, blocks::TEXT_COL, text.to_string(), theme.warn());
     line
 }
 
@@ -538,100 +260,24 @@ fn phase_word(phase: ChatPhase, theme: Theme) -> (String, Style) {
     }
 }
 
-/// A full-interior dim rule, optionally titled (`─ earlier history
-/// unavailable ─…`). Chrome rules run border to border, unlike feed rules
-/// which respect the one-space margin.
-fn chrome_rule(width: usize, theme: Theme, title: &str) -> Line<'static> {
-    let mut line = new_line();
-    let mut text = title.to_string();
-    while 1 + text.chars().count() < width - 1 {
-        text.push('─');
-    }
-    line.spans.push(Span::styled(text, theme.muted()));
-    finish_line(&mut line, width);
-    line
-}
-
-fn loading_band(theme: Theme, width: usize, feed_h: usize) -> Vec<Line<'static>> {
-    let mut rows = Vec::with_capacity(feed_h);
-    let band_at = feed_h.saturating_sub(1) / 2;
-    for i in 0..feed_h {
-        if i == band_at {
-            let text = "⟳ loading transcript…";
-            let col = width.saturating_sub(text.chars().count()) / 2;
-            let mut line = new_line();
-            push_span(&mut line, col.max(GLYPH_COL), text, theme.muted());
-            finish_line(&mut line, width);
-            rows.push(line);
-        } else {
-            rows.push(blank_line(width));
-        }
-    }
-    rows
-}
-
-/// `─ ↓ following paused · N new entries · pgdn to resume ──… NN% ──` —
-/// the honesty indicator (scrolled-back frame), with the reading position.
-fn paused_rule(
-    model: &Model,
-    chat: &View,
-    theme: Theme,
-    width: usize,
-    feed_h: usize,
-    watermark: u64,
-    top_line: usize,
-) -> Line<'static> {
-    let new_entries = entry_watermark(model, chat.agent).saturating_sub(watermark);
-    let mut left = String::from("─ ↓ following paused");
-    if new_entries > 0 {
-        let plural = if new_entries == 1 { "y" } else { "ies" };
-        left.push_str(&format!(" · {new_entries} new entr{plural}"));
-    }
-    left.push_str(" · pgdn to resume ");
-    let total = feed_line_count(model, chat, width);
-    let max_top = total.saturating_sub(feed_h);
-    let percent = top_line
-        .min(max_top)
-        .saturating_mul(100)
-        .checked_div(max_top)
-        .unwrap_or(100);
-    let right = format!(" {percent}% ────");
-    let interior = width.saturating_sub(2);
-    let fill = interior.saturating_sub(left.chars().count() + right.chars().count());
-    let mut text = left;
-    text.extend(std::iter::repeat_n('─', fill));
-    text.push_str(&right);
-    let mut line = new_line();
-    line.spans.push(Span::styled(text, theme.muted()));
-    finish_line(&mut line, width);
-    line
-}
-
 /// `◐ working · 24s · ctrl+x interrupt` (D5). Elapsed ticks locally from
 /// the prompt row's timestamp; the authoritative duration replaces it in
-/// the turn marker at close. The token count is omitted: the layer folds
-/// no usage facts yet (recorded in the phase report). Read-only chats
-/// show the same liveness without the interrupt hint — interrupt is a
-/// write affordance, absent not disabled (F1).
-fn working_line(
-    model: &Model,
-    chat: &View,
-    ctx: &FrameContext,
-    width: usize,
-    readonly: bool,
-) -> Line<'static> {
+/// the turn marker at close. Read-only chats show the same liveness
+/// without the interrupt hint — interrupt is a write affordance, absent
+/// not disabled (F1).
+fn working_row(model: &Model, chat: &View, ctx: &FrameContext, readonly: bool) -> Line<'static> {
     let theme = ctx.theme;
     let elapsed = model
         .claude(chat.agent)
         .and_then(|layer| layer.prompt_at())
         .map(|at| (ctx.now - at).num_seconds().max(0) as u64);
     let spinner = SPINNER[elapsed.unwrap_or(0) as usize % SPINNER.len()];
-    let mut line = new_line();
     let mut label = format!("{spinner} working");
     if let Some(secs) = elapsed {
         label.push_str(&format!(" · {}", fmt_secs(secs)));
     }
-    push_span(&mut line, GLYPH_COL, label, theme.text());
+    let mut line = Line::default();
+    push_span(&mut line, blocks::GLYPH_COL, label, theme.text());
     // A docked child ask owns Ctrl+X while it is on screen — it
     // interrupts the agent whose ask that is — so the working line stops
     // claiming it here: a hint that would do something else than it says
@@ -640,78 +286,237 @@ fn working_line(
         line.spans
             .push(Span::styled(" · ctrl+x interrupt", theme.muted()));
     }
-    finish_line(&mut line, width);
     line
 }
 
-// --- composer ---------------------------------------------------------------
-
-/// The draft (cursor glyph inserted) as hard-wrapped display rows, plus
-/// the row holding the cursor — the auto-grow and windowing base. Rows
-/// wrap by display cells at grapheme boundaries (CJK/emoji are two cells,
-/// combining marks zero); cursor tracking stays char-indexed because the
-/// `▌` glyph is a real char in the display string.
-fn composer_display_rows(composer: &Composer, width: usize) -> (Vec<String>, usize) {
-    composer.display_rows(width)
+/// The armed quit guard's replacement hint row (`docs/CHAT.md`
+/// §Keybindings): it replaces the hint line — wherever that line lives —
+/// in warning color.
+pub(crate) fn armed_quit_line(theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(&mut line, blocks::TEXT_COL, QuitGuard::HINT, theme.warn());
+    line
 }
 
-fn composer_lines(
+// --- the bottom block -------------------------------------------------------
+
+/// Everything below the feed: the read-only statement, a docked ask —
+/// this chat's own or a child's — or the composer the person types in.
+fn bottom_block(
+    model: &Model,
     chat: &View,
     theme: Theme,
     width: usize,
-    visible_rows: usize,
+    height: usize,
 ) -> Vec<Line<'static>> {
-    if chat.composer.is_empty() {
-        // Empty chat/composer: the placeholder, dim, cursor after it —
-        // the wireframes' empty state.
-        let mut line = new_line();
-        push_span(&mut line, GLYPH_COL, "›", theme.text());
-        push_span(&mut line, TEXT_COL, "Type a message", theme.muted());
-        line.spans.push(Span::styled("▌", theme.text()));
-        finish_line(&mut line, width);
-        return vec![line];
-    }
-    let (rows, cursor_row) = composer_display_rows(&chat.composer, text_width(width));
-    // Auto-grow one to six rows; past six, the window follows the cursor.
-    let start = if rows.len() <= visible_rows {
-        0
+    let head = chat.ask_head(model);
+    let mut lines = if chat.read_only(model) {
+        readonly_bottom(model, chat, theme, width)
+    } else if let Some(inline) = chat.inline_ask.as_ref().filter(|_| head.is_none()) {
+        // U2: a child's ask docks where the composer is, exactly as this
+        // chat's own ask would. This chat's own ask comes first — and
+        // reconcile drops a guest the moment one arrives, so the filter
+        // is a belt on top of that brace, never a state that persists.
+        crate::chat::inline::panel_lines(model, inline, width, theme, chat.quit_guard.is_armed())
+    } else if let Some(ask) = head {
+        let count = model
+            .claude(chat.agent)
+            .map(|layer| layer.ask_count())
+            .unwrap_or(1);
+        ask_panel_lines(
+            ask,
+            panel::ask_panel(
+                ask,
+                count,
+                chat.ask_ui.as_ref(),
+                chat.ask_failure.as_deref(),
+                blocks::panel_body_width(width),
+                theme,
+                chat.quit_guard.is_armed(),
+            ),
+            theme,
+            width,
+        )
     } else {
-        (cursor_row + 1)
-            .saturating_sub(visible_rows)
-            .min(rows.len() - visible_rows)
+        return composer_bottom(model, chat, theme, width, height);
     };
-    rows.iter()
-        .enumerate()
-        .skip(start)
-        .take(visible_rows)
-        .map(|(index, row)| {
-            let mut line = new_line();
-            if index == 0 {
-                push_span(&mut line, GLYPH_COL, "›", theme.text());
-            }
-            push_span(&mut line, TEXT_COL, row.clone(), theme.text());
-            finish_line(&mut line, width);
-            line
-        })
-        .collect()
+
+    // Keep the tail: the hint and action rows survive, body rows give way
+    // (mirrors the feed giving way to the composer).
+    let max_rows = height.saturating_sub(4).max(1);
+    if lines.len() > max_rows {
+        lines.drain(..lines.len() - max_rows);
+    }
+    lines
+}
+
+/// One docked ask, painted: its diff artifact leads the body through the
+/// shared diff rows, then the ask's own words, answers and keys.
+pub(crate) fn ask_panel_lines(
+    ask: &Ask,
+    mut parts: panel::AskPanel,
+    theme: Theme,
+    width: usize,
+) -> Vec<Line<'static>> {
+    if let Some(AskArtifact::Diff(artifact)) = &ask.artifact {
+        let rows = diff_rows_from_claude(artifact);
+        let shown = rows.len().min(DIFF_PREVIEW_ROWS);
+        let body_width = blocks::panel_body_width(width);
+        let mut body = blocks::diff_body_rows(&rows[..shown], theme, body_width);
+        if rows.len() > shown {
+            body.push(remainder_row(rows.len() - shown, "f full diff", theme));
+        }
+        body.append(&mut parts.body);
+        parts.body = body;
+    }
+    paint_ask_panel(
+        BlockKey(ask.id),
+        &parts.title,
+        parts.body,
+        parts.actions,
+        &parts.hints,
+        theme,
+        width,
+    )
+    .lines
+}
+
+/// `⋮ +K more lines · f full diff` — a preview always states its own
+/// arithmetic and names what shows the rest.
+fn remainder_row(hidden: usize, affordance: &str, theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(
+        &mut line,
+        blocks::TEXT_COL - 2,
+        format!("⋮ +{hidden} more lines · {affordance}"),
+        theme.muted(),
+    );
+    line
+}
+
+/// The read-only chat's bottom block (F1): the ask fact panel when one
+/// pends, the `⊘ read-only` statement where the composer would be, and
+/// the pager hints.
+fn readonly_bottom(model: &Model, chat: &View, theme: Theme, width: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if let Some(ask) = chat.ask_head(model) {
+        let count = model
+            .claude(chat.agent)
+            .map(|layer| layer.ask_count())
+            .unwrap_or(1);
+        lines.extend(ask_panel_lines(
+            ask,
+            panel::readonly_ask_panel(ask, count, blocks::panel_body_width(width), theme),
+            theme,
+            width,
+        ));
+        lines.push(Line::default());
+    }
+    let mut marker = Line::default();
+    push_span(
+        &mut marker,
+        blocks::GLYPH_COL,
+        "⊘ read-only — you are observing this session",
+        theme.muted(),
+    );
+    lines.push(marker);
+    lines.push(Line::default());
+    let mut hints = String::from("pgup/pgdn scroll");
+    if let Some(ask) = chat.ask_head(model)
+        && ask_ui::has_readable(ask)
+    {
+        hints.push_str(match &ask.artifact {
+            Some(AskArtifact::Diff(_)) => " · f view diff",
+            Some(AskArtifact::NewFile { .. }) => " · f view file",
+            None => " · f view plan",
+        });
+    }
+    hints.push_str(" · q back to fleet");
+    lines.push(if chat.quit_guard.is_armed() {
+        armed_quit_line(theme)
+    } else {
+        let mut footer = Line::default();
+        push_span(&mut footer, blocks::TEXT_COL, hints, theme.muted());
+        footer
+    });
+    lines
+}
+
+/// The composer as the person's own surface, with one hint row under it.
+fn composer_bottom(
+    model: &Model,
+    chat: &View,
+    theme: Theme,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    // The composer grows from one row to six, never past what the frame
+    // can spare: the hint row and a feed row survive every height.
+    let budget = height.saturating_sub(6).clamp(1, 6);
+    let (rows, cursor_row) = chat.composer.display_rows(text_width(width));
+    let mut lines = if chat.composer.is_empty() {
+        paint_composer_block(
+            vec![String::new()],
+            Some((0, 0)),
+            Some("Type a message"),
+            theme,
+            width,
+        )
+    } else {
+        let visible = rows.len().min(budget);
+        // Past the visible rows, the window follows the cursor.
+        let start = if rows.len() <= visible {
+            0
+        } else {
+            (cursor_row + 1)
+                .saturating_sub(visible)
+                .min(rows.len() - visible)
+        };
+        paint_composer_block(
+            rows[start..start + visible].to_vec(),
+            None,
+            None,
+            theme,
+            width,
+        )
+    };
+    lines.push(Line::default());
+    lines.push(footer_line(model, chat, theme, width));
+    lines
+}
+
+/// Cells available to content at the kit's text column, inside the
+/// frame's one-cell right margin.
+fn text_width(width: usize) -> usize {
+    width.saturating_sub(blocks::TEXT_COL + 1).max(1)
 }
 
 // --- footer -----------------------------------------------------------------
 
+/// `? help` joins the footer hints exactly when `?` opens the overlay —
+/// composer focus, empty draft (with anything typed, `?` types; a hint
+/// would lie, P10).
+fn help_hinted(chat: &View, hints: String) -> String {
+    if chat.composer.is_empty() {
+        format!("{hints} · ? help")
+    } else {
+        hints
+    }
+}
 /// One hint line, at most four items, derived purely from Model +
 /// ViewState (no stored footer mode); permission mode on the right (D4,
 /// hook-fact sourced).
 fn footer_line(model: &Model, chat: &View, theme: Theme, width: usize) -> Line<'static> {
-    let mut line = new_line();
+    let mut line = Line::default();
     if chat.quit_guard.is_armed() {
         // The armed quit guard replaces the hints (warning color); the
         // mode segment on the right stays.
         line = armed_quit_line(theme);
     } else if let Some(message) = chat.send_failure() {
-        push_span(&mut line, GLYPH_COL, "✗", theme.error());
+        push_span(&mut line, blocks::GLYPH_COL, "✗", theme.error());
         push_span(
             &mut line,
-            TEXT_COL,
+            blocks::TEXT_COL,
             format!("send failed: {message}"),
             theme.text(),
         );
@@ -720,7 +525,7 @@ fn footer_line(model: &Model, chat: &View, theme: Theme, width: usize) -> Line<'
         if chat.composer.is_empty() {
             hints.push_str(" · esc newest");
         }
-        push_span(&mut line, TEXT_COL, help_hinted(chat, hints), theme.muted());
+        push_span(&mut line, blocks::TEXT_COL, help_hinted(chat, hints), theme.muted());
     } else if let Some(refusal) = amux_ui::claude::send_gate(model, chat.agent).refusal() {
         let hint = if chat.composer.is_empty() {
             refusal.to_string()
@@ -729,11 +534,11 @@ fn footer_line(model: &Model, chat: &View, theme: Theme, width: usize) -> Line<'
             // kept — Enter is a no-op, never a loss.
             format!("draft kept — {refusal}")
         };
-        push_span(&mut line, TEXT_COL, help_hinted(chat, hint), theme.muted());
+        push_span(&mut line, blocks::TEXT_COL, help_hinted(chat, hint), theme.muted());
     } else {
         push_span(
             &mut line,
-            TEXT_COL,
+            blocks::TEXT_COL,
             help_hinted(chat, "enter send · ctrl+j newline".to_string()),
             theme.muted(),
         );
@@ -743,115 +548,82 @@ fn footer_line(model: &Model, chat: &View, theme: Theme, width: usize) -> Line<'
         .and_then(|layer| layer.session().permission_mode.as_deref())
     {
         let label = format!("mode {mode}");
-        let col = width.saturating_sub(2 + label.chars().count());
+        let col = width.saturating_sub(1 + label.chars().count());
         if col > line_len(&line) {
             push_span(&mut line, col, label, theme.muted());
         }
     }
-    finish_line(&mut line, width);
     line
 }
 
 // --- the feed ---------------------------------------------------------------
 
-/// One rendered feed block: an entry's rows plus whether it is a tool
-/// line (tool runs stack without blank separators, B4).
-struct Block {
-    lines: Vec<Line<'static>>,
-    tool: bool,
-}
-
-/// All feed display rows, in file order, echoes last (B1) — unwindowed;
-/// the frame slices by scroll. Block builders leave their lines open so
-/// grouping can extend a main line; everything is finished (padded,
-/// clipped, right-bordered) here, once.
-pub(crate) fn feed_lines(
-    model: &Model,
-    chat: &View,
-    theme: Theme,
-    width: usize,
-) -> Vec<Line<'static>> {
+/// Every feed block, in file order, echoes last (B1). Consecutive
+/// read/search entries fold into one exploration run first, so the feed
+/// shows what the agent did rather than every step it took to do it.
+fn feed_blocks(model: &Model, chat: &View, theme: Theme, width: usize) -> Vec<PaintedBlock> {
     let agent = chat.agent;
     let Some(layer) = model.claude(agent) else {
         return Vec::new();
     };
+    let entries: HashMap<u64, &FeedEntry> =
+        layer.entries().map(|entry| (entry.id, entry)).collect();
     // The plan reader affordance is a write-side binding; read-only chats
     // never advertise it (hints tell the truth, F1).
     let plan_hint = !model.agent(agent).is_some_and(|card| card.agent.readonly);
     let reports = MessageView::new(model, agent, chat.reports_open, chat.leader);
-    let mut blocks: Vec<Block> = Vec::new();
-    for entry in layer.entries() {
-        // B4's grouping fact: consecutive read/search one-liners join onto
-        // one line (idle wireframe: `✔ Read … · Grep …`). Joining is
-        // layout; the fact comes from the fold.
-        if let FeedEntryKind::Tool(tool) = &entry.kind
-            && tool.group_with_previous
-            && let Some(previous) = blocks.last_mut().filter(|block| block.tool)
-            && append_grouped_tool(previous, tool, theme, width)
-        {
-            continue;
-        }
-        blocks.push(entry_block(entry, theme, width, plan_hint, reports));
-    }
-    for echo in layer.pending_echoes() {
-        blocks.push(echo_block(echo, theme, width));
-    }
+    let hint = run_hint(chat);
 
-    let mut lines = Vec::new();
-    let mut prev_tool = false;
-    for (index, block) in blocks.into_iter().enumerate() {
-        if index > 0 && !(prev_tool && block.tool) {
-            lines.push(new_line());
+    let mut blocks = Vec::new();
+    for item in fold_runs(model, agent) {
+        match item {
+            ClaudeItem::Entry(id) => {
+                if let Some(entry) = entries.get(&id) {
+                    blocks.push(entry_block(entry, theme, width, plan_hint, reports));
+                }
+            }
+            ClaudeItem::Run {
+                key,
+                summary,
+                members,
+            } => {
+                let painted: Vec<PaintedBlock> = members
+                    .iter()
+                    .filter_map(|id| entries.get(id))
+                    .map(|entry| entry_block(entry, theme, width, plan_hint, reports))
+                    .collect();
+                blocks.push(paint_exploration_run(
+                    BlockKey(key.0),
+                    key,
+                    &summary,
+                    &painted,
+                    false,
+                    &hint,
+                    theme,
+                    width,
+                ));
+            }
         }
-        prev_tool = block.tool;
-        lines.extend(block.lines);
     }
-    for line in &mut lines {
-        finish_line(line, width);
+    for (index, echo) in layer.pending_echoes().iter().enumerate() {
+        blocks.push(paint_user_prompt(
+            BlockKey(ECHO_KEY_BASE - index as u64),
+            &echo.text,
+            true,
+            theme,
+            width,
+        ));
     }
-    lines
+    blocks
 }
 
-/// Join a grouped read/search one-liner onto the previous tool's main
-/// line when it fits; refuse (fall back to its own line) when it would
-/// clip — grouping compresses, it never hides. A grouped member that is
-/// not a plain success keeps its own outcome glyph inline.
-fn append_grouped_tool(previous: &mut Block, tool: &ToolEntry, theme: Theme, width: usize) -> bool {
-    let Some(main) = previous.lines.first_mut() else {
-        return false;
-    };
-    let (glyph, glyph_style) = outcome_glyph(tool, theme);
-    let plain_success = glyph == "✔";
-    let mut rest = String::new();
-    if !plain_success {
-        rest.push_str(glyph);
-        rest.push(' ');
-    }
-    rest.push_str(&tool_main_text(tool));
-    let added = 3 + str_width(&rest);
-    if line_len(main) + added > width.saturating_sub(2) {
-        return false;
-    }
-    let style = if plain_success {
-        theme.text()
-    } else {
-        glyph_style
-    };
-    main.spans.push(Span::styled(" · ", theme.muted()));
-    main.spans.push(Span::styled(rest, style));
-    true
-}
-
-fn echo_block(echo: &PromptEcho, theme: Theme, width: usize) -> Block {
-    let mut lines = glyph_block(
-        "›",
-        theme.text(),
-        markdown::plain_rows(&echo.text, text_width(width), theme.text()),
-    );
-    let mut sending = new_line();
-    push_span(&mut sending, TEXT_COL, "sending…", theme.muted());
-    lines.push(sending);
-    Block { lines, tool: false }
+/// What a folded run says opens it. The chord is a leader chord, so the
+/// configured leader is named rather than assumed.
+fn run_hint(chat: &View) -> String {
+    format!(
+        "{} o expand",
+        crate::bindings::Effective::new(chat.kitty, chat.leader).leader_label
+    )
 }
 
 fn entry_block(
@@ -860,22 +632,17 @@ fn entry_block(
     width: usize,
     plan_hint: bool,
     reports: MessageView<'_>,
-) -> Block {
+) -> PaintedBlock {
+    let key = BlockKey(entry.id);
     match &entry.kind {
-        FeedEntryKind::Prompt(prompt) => Block {
-            lines: glyph_block(
-                "›",
-                theme.text(),
-                markdown::plain_rows(&prompt.text, text_width(width), theme.text()),
-            ),
-            tool: false,
-        },
+        FeedEntryKind::Prompt(prompt) => {
+            paint_user_prompt(key, &prompt.text, false, theme, width)
+        }
         // One markdown source per message: blocks joined the way the API
         // separates them.
-        FeedEntryKind::Message(message) => Block {
-            lines: markdown_block(&message.segments.join("\n\n"), theme, width),
-            tool: false,
-        },
+        FeedEntryKind::Message(message) => {
+            paint_assistant(key, &message.segments.join("\n\n"), theme, width)
+        }
         FeedEntryKind::Thinking(thinking) => {
             let mut text = match thinking.duration_ms {
                 Some(ms) => format!("~ thought for {}", fmt_secs(ms.max(0) as u64 / 1000)),
@@ -884,10 +651,7 @@ fn entry_block(
             if thinking.redacted {
                 text.push_str(" · redacted");
             }
-            Block {
-                lines: vec![marker_line(&text, theme)],
-                tool: false,
-            }
+            paint_thinking(key, &text, theme, width)
         }
         FeedEntryKind::Turn(turn) => {
             let duration = match &turn.duration {
@@ -898,130 +662,81 @@ fn entry_block(
                     format!("~{}", fmt_secs((*ms).max(0) as u64 / 1000))
                 }
             };
-            let mut title = format!("─ turn · {duration} ");
+            let mut label = format!("turn · {duration}");
             if let Some(agents) = turn.pending_background_agents.filter(|n| *n > 0) {
-                title = format!("─ turn · {duration} · {agents} bg running ");
+                label.push_str(&format!(" · {agents} bg running"));
             }
-            Block {
-                lines: vec![feed_rule(&title, theme, width)],
-                tool: false,
-            }
+            paint_turn_rule(key, &label, theme, width)
         }
         FeedEntryKind::Compaction(compaction) => {
-            let mut title = String::from("─ compacted");
+            let mut label = String::from("compacted");
             if let Some(trigger) = &compaction.trigger {
-                title.push_str(&format!(" ({trigger})"));
+                label.push_str(&format!(" ({trigger})"));
             }
             if let (Some(pre), Some(post)) = (compaction.pre_tokens, compaction.post_tokens) {
-                title.push_str(&format!(
+                label.push_str(&format!(
                     " · {} → {} tok",
                     fmt_tokens(pre),
                     fmt_tokens(post)
                 ));
             }
-            title.push(' ');
-            Block {
-                lines: vec![feed_rule(&title, theme, width)],
-                tool: false,
-            }
+            paint_compaction_rule(key, &label, theme, width)
         }
-        FeedEntryKind::CompactSummary(summary) => Block {
-            lines: markdown_block(&summary.text, theme, width),
-            tool: false,
-        },
-        FeedEntryKind::Tool(tool) => tool_block(tool, theme, width, plan_hint),
+        FeedEntryKind::CompactSummary(summary) => {
+            paint_assistant(key, &summary.text, theme, width)
+        }
+        FeedEntryKind::Tool(tool) => tool_block(key, tool, theme, width, plan_hint),
         // One directional glyph, the sender, then the body — in the shape
         // the kernel gives the message's kind, so this chat and every
         // other draw a completion the same way.
         FeedEntryKind::AgentMessage(message) => {
-            let (glyph, glyph_style) = message_glyph(message.kind.presentation(), theme);
-            let mut rows = markdown::plain_rows(
-                &reports.sender(&message.from),
-                text_width(width),
-                theme.muted(),
-            );
+            let glyph = message_glyph(message.kind.presentation(), theme);
             let body = reports.body(message.kind.presentation(), &message.text);
-            if !body.text.is_empty() {
-                rows.extend(markdown::plain_rows(
-                    &body.text,
-                    text_width(width),
-                    theme.text(),
-                ));
-            }
-            if let Some(affordance) = body.affordance {
-                rows.extend(markdown::plain_rows(
-                    &affordance,
-                    text_width(width),
-                    theme.muted(),
-                ));
-            }
-            Block {
-                lines: glyph_block(glyph, glyph_style, rows),
-                tool: false,
-            }
+            paint_agent_message(
+                key,
+                glyph,
+                &reports.sender(&message.from),
+                &body.text,
+                body.affordance.as_deref(),
+                theme,
+                width,
+            )
         }
-        FeedEntryKind::TaskNotification(notification) => Block {
-            lines: glyph_block(
-                "✔",
-                theme.ok(),
-                markdown::plain_rows(&notification.text, text_width(width), theme.muted()),
-            ),
-            tool: false,
-        },
-        FeedEntryKind::Interruption(interruption) => {
-            let text = match interruption.kind {
+        FeedEntryKind::TaskNotification(notification) => {
+            paint_subagent(key, ("✔", theme.ok()), &notification.text, theme, width)
+        }
+        FeedEntryKind::Interruption(interruption) => paint_error(
+            key,
+            match interruption.kind {
                 InterruptionKind::Turn => "interrupted",
                 InterruptionKind::ToolUse => "interrupted (tool use)",
-            };
-            let mut line = new_line();
-            push_span(&mut line, GLYPH_COL, "✗", theme.error());
-            push_span(&mut line, TEXT_COL, text, theme.muted());
-            Block {
-                lines: vec![line],
-                tool: false,
-            }
-        }
+            },
+            false,
+            theme,
+            width,
+        ),
         FeedEntryKind::ApiError(error) => {
-            let mut label = String::from("api error");
+            let mut message = String::from("api error");
             if let Some(kind) = &error.error {
-                label.push_str(&format!(" ({kind})"));
+                message.push_str(&format!(" ({kind})"));
             }
-            let mut line = new_line();
-            push_span(&mut line, GLYPH_COL, "✗", theme.error());
-            push_span(&mut line, TEXT_COL, label, theme.text());
-            let mut lines = vec![line];
             if let Some(text) = &error.text {
-                lines.extend(continuation_lines(text, theme, width));
+                message.push('\n');
+                message.push_str(text.lines().next().unwrap_or_default());
             }
-            Block { lines, tool: false }
+            paint_error(key, &message, false, theme, width)
         }
         FeedEntryKind::Unrecognized(row) => {
             // Explicit, never silently dropped (G1).
-            let mut text = String::from("· unrecognized row");
-            match (&row.row_type, &row.detail) {
-                (Some(kind), Some(detail)) => text.push_str(&format!(" ({kind} · {detail})")),
-                (Some(kind), None) => text.push_str(&format!(" ({kind})")),
-                (None, Some(detail)) => text.push_str(&format!(" ({detail})")),
-                (None, None) => {}
-            }
-            Block {
-                lines: vec![marker_line(&text, theme)],
-                tool: false,
-            }
+            let detail = match (&row.row_type, &row.detail) {
+                (Some(kind), Some(detail)) => Some(format!("{kind} · {detail}")),
+                (Some(kind), None) => Some(kind.clone()),
+                (None, Some(detail)) => Some(detail.clone()),
+                (None, None) => None,
+            };
+            paint_unrecognized(key, "unrecognized row", detail.as_deref(), theme, width)
         }
     }
-}
-
-fn markdown_block(source: &str, theme: Theme, width: usize) -> Vec<Line<'static>> {
-    markdown::markdown_rows(source, text_width(width), theme)
-        .into_iter()
-        .map(|spans| {
-            let mut line = new_line();
-            pad_to(&mut line, TEXT_COL);
-            line.spans.extend(spans);
-            line
-        })
-        .collect()
 }
 
 // --- tool lines -------------------------------------------------------------
@@ -1039,42 +754,68 @@ fn outcome_glyph(tool: &ToolEntry, theme: Theme) -> (&'static str, Style) {
     }
 }
 
-fn tool_block(tool: &ToolEntry, theme: Theme, width: usize, plan_hint: bool) -> Block {
-    // Question answers collapse to per-answer fact lines.
+fn tool_block(
+    key: BlockKey,
+    tool: &ToolEntry,
+    theme: Theme,
+    width: usize,
+    plan_hint: bool,
+) -> PaintedBlock {
+    // An answered question is history: one plain row per answer, no panel.
     if let ToolOutcome::Success {
         facts: SuccessFacts::Answers { answers },
     } = &tool.outcome
     {
-        let mut lines = Vec::new();
-        for answer in answers {
-            let text = format!("{} → {}", answer.question, answer.answer);
-            lines.extend(glyph_block(
-                "?",
-                theme.warn(),
-                markdown::plain_rows(&text, text_width(width), theme.text()),
-            ));
-        }
-        if lines.is_empty() {
-            lines = glyph_block(
-                "?",
-                theme.warn(),
-                markdown::plain_rows("answered", text_width(width), theme.text()),
-            );
-        }
-        return Block { lines, tool: true };
+        let fact = if answers.is_empty() {
+            "answered".to_string()
+        } else {
+            answers
+                .iter()
+                .map(|answer| format!("{} → {}", answer.question, answer.answer))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        return paint_ask_fact(key, ("?", theme.warn()), &fact, theme, width);
+    }
+
+    // A landed edit is a file change, not a tool outcome: it says what
+    // moved and by how much, on its own row, never folded away.
+    if let (
+        ToolInvocation::Edit { .. } | ToolInvocation::Write { .. },
+        ToolOutcome::Success {
+            facts:
+                SuccessFacts::Edit {
+                    file_path,
+                    added,
+                    removed,
+                },
+        },
+    ) = (&tool.invocation, &tool.outcome)
+    {
+        return paint_file_change(
+            key,
+            tool.name.as_deref().unwrap_or("edit"),
+            file_path,
+            *added,
+            *removed,
+            theme,
+            width,
+        );
     }
 
     let (glyph, glyph_style) = outcome_glyph(tool, theme);
-    let main = tool_main_text(tool);
-    let mut lines = glyph_block(
-        glyph,
-        glyph_style,
-        markdown::plain_rows(&main, text_width(width), theme.text()),
+    let mut block = paint_tool_line(
+        key,
+        (glyph, glyph_style),
+        &tool_main_text(tool),
+        tool_continuation(tool).as_deref(),
+        theme,
+        width,
     );
 
     // The accepted plan stays readable in the feed, truncated to its
-    // preview with the reader affordance (B6: `plan · ctrl+t to read`);
-    // read-only chats state the truncation without the dead binding.
+    // preview with the reader affordance (B6); read-only chats state the
+    // truncation without the dead binding.
     if let (
         ToolInvocation::Plan {
             plan: Some(plan), ..
@@ -1084,34 +825,13 @@ fn tool_block(tool: &ToolEntry, theme: Theme, width: usize, plan_hint: bool) -> 
         },
     ) = (&tool.invocation, &tool.outcome)
     {
-        let total = plan.lines().count();
-        for line in plan.lines().take(PLAN_PREVIEW_LINES) {
-            for spans in markdown::plain_rows(line, text_width(width), theme.muted()) {
-                let mut out = new_line();
-                pad_to(&mut out, TEXT_COL);
-                out.spans.extend(spans);
-                lines.push(out);
-            }
-        }
-        let mut affordance = if total > PLAN_PREVIEW_LINES {
-            format!("⋮ {} more lines", total - PLAN_PREVIEW_LINES)
-        } else {
-            "plan".to_string()
-        };
-        if plan_hint {
-            affordance.push_str(" · ctrl+t to read");
-        }
-        if total > PLAN_PREVIEW_LINES || plan_hint {
-            let mut out = new_line();
-            push_span(&mut out, TEXT_COL, affordance, theme.muted());
-            lines.push(out);
-        }
+        let hint = if plan_hint { "ctrl+t to read" } else { "plan" };
+        let preview = paint_plan(key, plan, PLAN_PREVIEW_LINES, hint, theme, width);
+        block.lines.extend(preview.lines);
+        block.copy_text.push('\n');
+        block.copy_text.push_str(&preview.copy_text);
     }
-
-    if let Some(text) = tool_continuation(tool) {
-        lines.extend(continuation_lines(&text, theme, width));
-    }
-    Block { lines, tool: true }
+    block
 }
 
 /// The tool line's text: name, target, FACT magnitude (never recomputed —
@@ -1265,62 +985,98 @@ fn tool_continuation(tool: &ToolEntry) -> Option<String> {
     }
 }
 
-// --- line builders ----------------------------------------------------------
 
-/// A glyph at column 2, wrapped text rows at column 4.
-fn glyph_block(
-    glyph: &str,
-    glyph_style: Style,
-    rows: Vec<Vec<Span<'static>>>,
+// --- the overlays -----------------------------------------------------------
+
+/// The `?` overlay: the chat's full effective key list with tier
+/// annotations, from the one binding table (`crate::bindings`) — kitty
+/// rows appear only when probed, ext rows are marked terminal-dependent.
+/// Fullscreen like the reader; any key closes. On short viewports the
+/// tail gives way and a `⋮` row states the cut honestly.
+fn help_overlay(
+    model: &Model,
+    chat: &View,
+    theme: Theme,
+    width: usize,
+    height: usize,
 ) -> Vec<Line<'static>> {
-    rows.into_iter()
-        .enumerate()
-        .map(|(index, spans)| {
-            let mut line = new_line();
-            if index == 0 {
-                push_span(&mut line, GLYPH_COL, glyph.to_string(), glyph_style);
+    let sections = crate::bindings::chat_sections(
+        &crate::bindings::Effective::new(chat.kitty, chat.leader),
+        crate::chat::family_keys(model, chat.agent),
+    );
+    // One aligned action column across every section.
+    let key_col = blocks::TEXT_COL
+        + 2
+        + sections
+            .iter()
+            .flat_map(|section| &section.bindings)
+            .map(|binding| str_width(&binding.keys))
+            .max()
+            .unwrap_or(0)
+        + 3;
+
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for (index, section) in sections.iter().enumerate() {
+        if index > 0 {
+            rows.push(Line::default());
+        }
+        let mut title = Line::default();
+        push_span(&mut title, blocks::GLYPH_COL, section.title, theme.muted());
+        rows.push(title);
+        for binding in &section.bindings {
+            let mut line = Line::default();
+            push_span(
+                &mut line,
+                blocks::TEXT_COL + 2,
+                binding.keys.clone(),
+                theme.text(),
+            );
+            push_span(&mut line, key_col, binding.action.clone(), theme.muted());
+            if let Some(mark) = crate::render::tier_mark(binding.tier) {
+                line.spans
+                    .push(Span::styled(format!(" · {mark}"), theme.muted()));
             }
-            pad_to(&mut line, TEXT_COL);
-            line.spans.extend(spans);
-            line
-        })
-        .collect()
-}
-
-/// A dim marker at the glyph column (`~ thought for 6s`).
-fn marker_line(text: &str, theme: Theme) -> Line<'static> {
-    let mut line = new_line();
-    push_span(&mut line, GLYPH_COL, text.to_string(), theme.muted());
-    line
-}
-
-/// A feed rule: dim, starting at the glyph column, filled to the right
-/// border (`─ turn · 1m 42s ────…`).
-fn feed_rule(title: &str, theme: Theme, width: usize) -> Line<'static> {
-    let mut text = title.to_string();
-    while GLYPH_COL + text.chars().count() < width - 1 {
-        text.push('─');
+            rows.push(line);
+        }
     }
-    let mut line = new_line();
-    push_span(&mut line, GLYPH_COL, text, theme.muted());
-    line
-}
 
-/// Dim `└ text` continuation rows under a tool line.
-fn continuation_lines(text: &str, theme: Theme, width: usize) -> Vec<Line<'static>> {
-    markdown::plain_rows(text, cont_width(width), theme.muted())
-        .into_iter()
-        .enumerate()
-        .map(|(index, spans)| {
-            let mut line = new_line();
-            if index == 0 {
-                push_span(&mut line, TEXT_COL, "└", theme.muted());
-            }
-            pad_to(&mut line, CONT_COL);
-            line.spans.extend(spans);
-            line
-        })
-        .collect()
+    // Fixed chrome is five rows: the title, the gap under it, two rules
+    // and the hint. The body consumes every remaining viewport row.
+    let body_h = height.saturating_sub(5).max(1);
+    if rows.len() > body_h {
+        rows.truncate(body_h.saturating_sub(1));
+        let mut more = Line::default();
+        push_span(
+            &mut more,
+            blocks::GLYPH_COL,
+            "⋮ more — a taller terminal shows the full list",
+            theme.muted(),
+        );
+        rows.push(more);
+    }
+    while rows.len() < body_h {
+        rows.push(Line::default());
+    }
+
+    let mut title = Line::default();
+    push_span(&mut title, blocks::GLYPH_COL, "keys", theme.emphasis());
+    let hint = if chat.quit_guard.is_armed() {
+        armed_quit_line(theme)
+    } else {
+        let mut line = Line::default();
+        push_span(&mut line, blocks::TEXT_COL, "any key to close", theme.muted());
+        line
+    };
+
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
+    lines.push(title);
+    lines.push(Line::default());
+    lines.push(reader::rule_line(width, theme));
+    lines.extend(rows);
+    lines.push(reader::rule_line(width, theme));
+    lines.push(hint);
+    lines.truncate(height);
+    lines
 }
 
 // --- formatting -------------------------------------------------------------
@@ -1348,6 +1104,7 @@ fn fmt_tokens(count: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::composer::Composer;
 
     #[test]
     fn durations_floor_to_whole_units() {
@@ -1375,7 +1132,7 @@ mod tests {
     fn composer_rows_track_the_cursor_across_wraps() {
         let mut composer = Composer::default();
         composer.insert_str("abcdefgh");
-        let (rows, cursor_row) = composer_display_rows(&composer, 4);
+        let (rows, cursor_row) = composer.display_rows(4);
         // "abcdefgh▌" hard-wrapped at 4: abcd | efgh | ▌
         assert_eq!(rows, vec!["abcd", "efgh", "▌"]);
         assert_eq!(cursor_row, 2);
@@ -1388,7 +1145,7 @@ mod tests {
         for _ in 0..3 {
             composer.left();
         }
-        let (rows, cursor_row) = composer_display_rows(&composer, 40);
+        let (rows, cursor_row) = composer.display_rows(40);
         assert_eq!(rows, vec!["one", "▌two"]);
         assert_eq!(cursor_row, 1);
     }

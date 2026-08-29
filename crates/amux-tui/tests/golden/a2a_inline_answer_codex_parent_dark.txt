@@ -13,17 +13,17 @@
                                                                                         
                                                                                         
                                                                                         
+                                                                                        
+                                                                                        
  ◐ thinking                                                                             
-─ answering write-the-docs ──────────────────────────────────────────────── esc back ─  
- ⚠ permission — Bash                                                                    
+    answering write-the-docs — permission — Bash                                        
                                                                                         
-   $ git push --force origin a2a                                                        
+      $ git push --force origin a2a                                                     
                                                                                         
- › 1. Allow once                                                                        
-   2. Always allow access to /work from this project                                    
-   3. Deny — tell the agent why (optional)                                              
-                                                                                        
-   1-3/↑↓ select · enter confirm · esc back (never answers)                             
+    › 1. Allow once                                                                     
+      2. Always allow access to /work from this project                                 
+      3. Deny — tell the agent why (optional)                                           
+    1-3/↑↓ select · enter confirm · esc back (never answers) · esc back                 
                                                                                         
 --- styles ---
 ............mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm............................mmmmmmm...........
@@ -41,14 +41,14 @@ mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
 ........................................................................................
 ........................................................................................
 ........................................................................................
-mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..
-.w......................................................................................
-........................................................................................
-...m.ccccccccccccccccccccccccccc........................................................
 ........................................................................................
 ........................................................................................
-........................................................................................
-........................................................................................
-........................................................................................
-...mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.............................
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.
 ........................................................................................

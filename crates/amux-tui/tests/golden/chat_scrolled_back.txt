@@ -1,20 +1,20 @@
- fix-auth · claude @ mbp                                       chat · working   
+  fix-auth · claude @ mbp                                        chat · working 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
                                                                                 
-   The cap belongs in RetryConfig; I'll thread it through SyncOptions.          
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
                                                                                 
- ✔ Read sync/config.rs                                                          
- ▸ Bash cargo check -p amux-sync                                                
-   └ running                                                                    
+  ✔ Read sync/config.rs                                                         
                                                                                 
- › follow-up question 0                                                         
+  ▸ Bash cargo check -p amux-sync                                               
+    └ running                                                                   
                                                                                 
- › follow-up question 1                                                         
-─ ↓ following paused · 3 new entries · pgdn to resume ─────────────── 27% ────  
- ◓ working · 9s · ctrl+x interrupt                                              
+▎   follow-up question 0                                                        
                                                                                 
- › draft preserved while reading▌                                               
+▎   follow-up question 1                                                        
                                                                                 
-   pgup/pgdn scroll                                              mode default   
+  ↓ following paused · pgdn to resume                                           
+  ◓ working · 9s · ctrl+x interrupt                                             
                                                                                 
+▎   draft preserved while reading▌                                              
+                                                                                
+    pgup/pgdn scroll                                               mode default 

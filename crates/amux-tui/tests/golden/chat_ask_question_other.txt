@@ -1,18 +1,18 @@
- fix-auth · claude @ mbp                                     chat · needs you   
+  fix-auth · claude @ mbp                                      chat · needs you 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
                                                                                 
- ✔ Read sync/config.rs                                                          
- ▸ Bash cargo check -p amux-sync                                                
-   └ running                                                                    
-──────────────────────────────────────────────────────────────────────────────  
- ? question                                                                     
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
                                                                                 
-   Which color do you prefer?                                                   
+  ✔ Read sync/config.rs                                                         
                                                                                 
-   1. Red       warm, loud                                                      
-   2. Blue      cool, calm                                                      
- › 3. Other…    › a warm ochre▌                                                 
+  ▸ Bash cargo check -p amux-sync                                               
+    └ running                                                                   
                                                                                 
-   enter save · esc back (keeps text)                                           
+    question                                                                    
                                                                                 
+      Which color do you prefer?                                                
+                                                                                
+      1. Red       warm, loud                                                   
+      2. Blue      cool, calm                                                   
+    › 3. Other…    › a warm ochre▌                                              
+    enter save · esc back (keeps text)                                          

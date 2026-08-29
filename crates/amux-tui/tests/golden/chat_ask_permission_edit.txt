@@ -1,24 +1,24 @@
- fix-auth · claude @ mbp                                     chat · needs you   
+  fix-auth · claude @ mbp                                      chat · needs you 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
- ✔ Read sync/config.rs                                                          
- ▸ Bash cargo check -p amux-sync                                                
-   └ running                                                                    
-──────────────────────────────────────────────────────────────────────────────  
- ⚠ permission — Edit sync/config.rs (+4 -1)                          (1 of 2)   
                                                                                 
+  ✔ Read sync/config.rs                                                         
+                                                                                
+  ▸ Bash cargo check -p amux-sync                                               
+    └ running                                                                   
+                                                                                
+    permission — Edit sync/config.rs (+4 -1) · 1 of 2                           
+                                                                                
+     @@ -1,5 +1,8 @@                                                            
       pub struct RetryConfig {                                                  
-    -     pub max_attempts: u8,                                                 
-    +     pub max_attempts: u8,        // capped at 6                           
-    +     pub jitter_ms: u16,                                                   
-    +     pub retry_budget: u32,                                                
-    +     pub on_exhausted: Behavior,                                           
+     -    pub max_attempts: u8,                                                 
+     +    pub max_attempts: u8,        // capped at 6                           
+     +    pub jitter_ms: u16,                                                   
+     +    pub retry_budget: u32,                                                
+     +    pub on_exhausted: Behavior,                                           
           pub base_delay: Duration,                                             
-   ⋮  +2 more lines · f full diff                                               
+      ⋮ +2 more lines · f full diff                                             
                                                                                 
- › 1. Allow once                                                                
-   2. Always allow access to /work from this project                            
-   3. Deny — tell the agent why (optional)                                      
-                                                                                
-   1-3/↑↓ select · enter confirm · f full diff · esc back (never answers)       
-                                                                                
+    › 1. Allow once                                                             
+      2. Always allow access to /work from this project                         
+      3. Deny — tell the agent why (optional)                                   
+    1-3/↑↓ select · enter confirm · f full diff · esc back (never answers)      

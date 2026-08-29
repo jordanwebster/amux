@@ -1,30 +1,30 @@
- fix-auth · claude @ mbp                                          chat · idle   
+  fix-auth · claude @ mbp                                           chat · idle 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
- › explain the retry design                                                     
+▎   explain the retry design                                                    
                                                                                 
-   ## Approach                                                                  
+    ## Approach                                                                 
                                                                                 
-   1. Wrap Client::reconnect in retry_with_backoff                              
-   - exponential base 200 ms, cap 5 s, jitter bounded and documented for        
-     reviewers                                                                  
+    1. Wrap Client::reconnect in retry_with_backoff                             
+    - exponential base 200 ms, cap 5 s, jitter bounded and documented for       
+      reviewers                                                                 
                                                                                 
-   Inline RetryConfig moves, bold claims, and asides survive.                   
+    Inline RetryConfig moves, bold claims, and asides survive.                  
                                                                                 
-   ```rust                                                                      
-   let cfg  =  RetryConfig::default();                                          
-   ```                                                                          
+    ```rust                                                                     
+    let cfg  =  RetryConfig::default();                                         
+    ```                                                                         
                                                                                 
-   | attempt | delay |                                                          
-   |---------|-------|                                                          
-   | 1       | 200ms |                                                          
+    | attempt | delay |                                                         
+    |---------|-------|                                                         
+    | 1       | 200ms |                                                         
                                                                                 
-   Details: https://docs.rs/backoff/latest/backoff/index.html for the full      
-   derivation                                                                   
+    Details: https://docs.rs/backoff/latest/backoff/index.html for the full     
+    derivation                                                                  
                                                                                 
- ─ turn · 32s ────────────────────────────────────────────────────────────────  
+  ─ turn · 32s ─────────────────────────────────────────────────────────────────
                                                                                 
- › Type a message▌                                                              
                                                                                 
-   enter send · ctrl+j newline · ? help                          mode default   
                                                                                 
+▎   Type a message▌                                                             
+                                                                                
+    enter send · ctrl+j newline · ? help                           mode default 

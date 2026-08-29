@@ -1,18 +1,18 @@
- fix-auth · claude @ mbp                                     chat · needs you   
+  fix-auth · claude @ mbp                                      chat · needs you 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
                                                                                 
- ✔ Read sync/config.rs                                                          
- ▸ Bash cargo check -p amux-sync                                                
-   └ running                                                                    
-──────────────────────────────────────────────────────────────────────────────  
- ? question                                                                     
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
                                                                                 
-   Which color do you prefer?                                                   
+  ✔ Read sync/config.rs                                                         
                                                                                 
- › 1. Red       warm, loud                                                      
-   2. Blue      cool, calm                                                      
-   3. Other…    type your own answer                                            
+  ▸ Bash cargo check -p amux-sync                                               
+    └ running                                                                   
                                                                                 
-   1-3/↑↓ select · enter confirm · esc back (never answers)                     
+    question                                                                    
                                                                                 
+      Which color do you prefer?                                                
+                                                                                
+    › 1. Red       warm, loud                                                   
+      2. Blue      cool, calm                                                   
+      3. Other…    type your own answer                                         
+    1-3/↑↓ select · enter confirm · esc back (never answers)                    

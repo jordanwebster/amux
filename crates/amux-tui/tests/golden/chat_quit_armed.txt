@@ -1,20 +1,20 @@
- fix-auth · claude @ mbp                                          chat · idle   
+  fix-auth · claude @ mbp                                           chat · idle 
                                                                                 
-──────────────────────────────────────────────────────────────────────────────  
- › add retry with backoff to the sync client                                    
+▎   add retry with backoff to the sync client                                   
                                                                                 
-   I added exponential backoff to Client::reconnect — 6 attempts,               
-   jitter capped at 500 ms. SyncOptions grew a RetryConfig.                     
+    I added exponential backoff to Client::reconnect — 6 attempts,              
+    jitter capped at 500 ms. SyncOptions grew a RetryConfig.                    
                                                                                 
- ✔ Read sync/client.rs · Grep "reconnect"                                       
- ✔ Edit sync/client.rs (+18 -4)                                                 
- ✔ Bash cargo test -p amux-sync                                                 
-   └ 34 passed, 0 failed (2.1s)                                                 
+  ⌄ 1 read · 1 search · sync/client.rs · C-a o expand                           
                                                                                 
- ─ turn · 1m 42s ─────────────────────────────────────────────────────────────  
+  ✎ Edit sync/client.rs · +18 −4                                                
+                                                                                
+  ✔ Bash cargo test -p amux-sync                                                
+    └ 34 passed, 0 failed (2.1s)                                                
+                                                                                
+  ─ turn · 1m 42s ──────────────────────────────────────────────────────────────
                                                                                 
                                                                                 
- › Type a message▌                                                              
+▎   Type a message▌                                                             
                                                                                 
-   press ctrl+c again to quit                                    mode default   
-                                                                                
+    press ctrl+c again to quit                                     mode default 
