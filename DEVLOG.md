@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Probe re-record failures remain visible run outcomes.** A
+failed attempt to refresh one broken specification now records that claim as
+failed, continues through the registry, and still writes both probe and drift
+artifacts with the results collected before and after the capture error.
+
+---
+
 2026-08-29 — **Strict replay accounts for writes per named transport.**
 Concurrent write origins are now deduplicated within each transport, so two
 independent channels may arrive in either order while each channel's own

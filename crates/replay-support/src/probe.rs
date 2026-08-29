@@ -81,8 +81,11 @@ where
                 ProbeOutcome::Passed
             }
             Err(claim) => {
-                re_record(entry).await?;
-                ProbeOutcome::ReRecorded { claim }
+                if re_record(entry).await.is_ok() {
+                    ProbeOutcome::ReRecorded { claim }
+                } else {
+                    ProbeOutcome::Failed { claim }
+                }
             }
         };
         run.results.push(ProbeResult {
@@ -131,6 +134,23 @@ mod tests {
         SpecEntry {
             name: "fails",
             recording: "fails",
+            allowed_models: MODELS,
+        },
+    ];
+    const RERECORD_ERROR_REGISTRY: &[SpecEntry] = &[
+        SpecEntry {
+            name: "passes-before",
+            recording: "passes-before",
+            allowed_models: MODELS,
+        },
+        SpecEntry {
+            name: "record-fails",
+            recording: "record-fails",
+            allowed_models: MODELS,
+        },
+        SpecEntry {
+            name: "passes-after",
+            recording: "passes-after",
             allowed_models: MODELS,
         },
     ];
@@ -276,5 +296,67 @@ mod tests {
             serde_json::from_slice(&std::fs::read(drift_path).unwrap()).unwrap();
         assert_eq!(stored_drift["passes"], run.results[0].drift);
         assert_eq!(stored_drift["fails"], DriftReport::default());
+    }
+
+    #[tokio::test]
+    async fn probe_reports_rerecord_errors_and_preserves_the_run() {
+        let temp = tempfile::tempdir().unwrap();
+        let visited = Arc::new(Mutex::new(Vec::new()));
+        let visited_by_live = Arc::clone(&visited);
+        let mut run = ProbeRun {
+            run_id: "probe-rerecord-error".to_string(),
+            provider: "synthetic".to_string(),
+            version: Version::new(1, 1, 0),
+            dir: temp.path().join("run"),
+            results: Vec::new(),
+        };
+
+        let (probe_path, drift_path) = probe(
+            &mut run,
+            RERECORD_ERROR_REGISTRY,
+            move |entry| {
+                visited_by_live.lock().unwrap().push(entry.name.to_string());
+                async move {
+                    Ok(ProbeAttempt {
+                        claim: if entry.name == "record-fails" {
+                            Err("recorded claim no longer holds".to_string())
+                        } else {
+                            Ok(())
+                        },
+                        recorded: Observed::default(),
+                        live: Observed::default(),
+                        raw_payloads: 0,
+                    })
+                }
+            },
+            |_, _| async { Ok(()) },
+            |_| async { Err(io::Error::other("capture failed")) },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            *visited.lock().unwrap(),
+            vec!["passes-before", "record-fails", "passes-after"]
+        );
+        assert_eq!(run.results.len(), 3);
+        assert_eq!(run.results[0].outcome, ProbeOutcome::Passed);
+        assert_eq!(
+            run.results[1].outcome,
+            ProbeOutcome::Failed {
+                claim: "recorded claim no longer holds".to_string()
+            }
+        );
+        assert_eq!(run.results[2].outcome, ProbeOutcome::Passed);
+        assert!(probe_path.is_file());
+        assert!(drift_path.is_file());
+
+        let stored_run: ProbeRun =
+            serde_json::from_slice(&std::fs::read(probe_path).unwrap()).unwrap();
+        assert_eq!(stored_run, run);
+        let stored_drift: BTreeMap<String, DriftReport> =
+            serde_json::from_slice(&std::fs::read(drift_path).unwrap()).unwrap();
+        assert_eq!(stored_drift.len(), 3);
+        assert_eq!(stored_drift["record-fails"], DriftReport::default());
     }
 }
