@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Flattened agent kinds at the MCP tool boundary.** The `agents`
+tool now reports `claude`, `codex`, or `test-agent` in its `kind` field, matching
+the vocabulary used to select an agent provider. Claude's `pty` or `sdk` detail
+is a separate `driver` field instead of being nested inside `kind`.
+
+---
+
 2026-08-29 — **Made external Claude terminal absence observable.** A Claude
 session discovered through hooks still has the PTY driver kind because its
 transcript protocol is available, but it has no terminal owned by amux. The

@@ -486,9 +486,9 @@ impl ClientBackend {
             .iter()
             .map(|agent| {
                 let host = hosts.get(&agent.host_id);
-                json!({
+                let mut row = json!({
                     "name": display_agent_name(agent),
-                    "kind": agent.kind,
+                    "kind": agent.kind.provider(),
                     "host": host.map(|host| host.name.clone()).unwrap_or_else(|| agent.host_id.to_string()),
                     "alive": host.is_some_and(|host| host.online),
                     "working_on": agent.working_on.as_ref().map(|work| work.text.clone()),
@@ -496,7 +496,14 @@ impl ClientBackend {
                         names.get(&parent.agent_id).cloned().unwrap_or_else(|| parent.agent_id.to_string())
                     }),
                     "you": self.identity.is_some_and(|identity| identity.agent_id == agent.id)
-                })
+                });
+                if let amux::AgentKind::Claude { driver } = agent.kind {
+                    row["driver"] = json!(match driver {
+                        amux::ClaudeDriver::Pty => "pty",
+                        amux::ClaudeDriver::Sdk => "sdk",
+                    });
+                }
+                row
             })
             .collect();
         Ok(Value::Array(fleet))
@@ -621,19 +628,62 @@ mod tests {
     }
 
     fn test_agent(id: Uuid, host_id: Uuid, name: &str) -> Agent {
+        agent_with_kind(id, host_id, name, amux::AgentKind::TestAgent)
+    }
+
+    fn agent_with_kind(id: Uuid, host_id: Uuid, name: &str, kind: amux::AgentKind) -> Agent {
         Agent {
             id,
             host_id,
             name: Some(name.to_string()),
             command: "test".to_string(),
             working_dir: PathBuf::from("/work"),
-            kind: amux::AgentKind::TestAgent,
+            kind,
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
             parent: None,
             working_on: None,
         }
+    }
+
+    #[tokio::test]
+    async fn a2a_mcp_agents_uses_flat_provider_vocabulary() {
+        let daemon = Arc::new(FakeDaemon::new(vec![
+            agent_with_kind(
+                Uuid::from_u128(501),
+                Uuid::from_u128(511),
+                "claude-worker",
+                amux::AgentKind::Claude {
+                    driver: amux::ClaudeDriver::Sdk,
+                },
+            ),
+            agent_with_kind(
+                Uuid::from_u128(502),
+                Uuid::from_u128(512),
+                "codex-worker",
+                amux::AgentKind::Codex,
+            ),
+            agent_with_kind(
+                Uuid::from_u128(503),
+                Uuid::from_u128(513),
+                "test-worker",
+                amux::AgentKind::TestAgent,
+            ),
+        ]));
+        let backend = ClientBackend {
+            connector: Arc::new(FakeConnector::new(daemon.clone(), 0)),
+            identity: None,
+        };
+
+        let fleet = backend.list_agents(daemon.as_ref()).await.unwrap();
+        assert_eq!(fleet[0]["kind"], "claude");
+        assert_eq!(fleet[0]["driver"], "sdk");
+        assert!(!fleet[0]["kind"].is_object());
+        assert_eq!(fleet[1]["kind"], "codex");
+        assert!(fleet[1].get("driver").is_none());
+        assert_eq!(fleet[2]["kind"], "test-agent");
+        assert!(fleet[2].get("driver").is_none());
     }
 
     #[async_trait]
