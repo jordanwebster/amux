@@ -1,18 +1,40 @@
-  fix-auth · claude @ mbp                                           chat · idle 
-                                                                                
-  ⋯ earlier history unavailable                                                 
-▎   what does the dispatcher do on a seq mismatch?                              
-                                                                                
-    It refuses the write and requests a dump — dispatch.rs::guard_seq.          
-                                                                                
-  ─ turn · 12s ─────────────────────────────────────────────────────────────────
-                                                                                
-▎   and on replay?                                                              
-                                                                                
-    Replay folds but never executes Effects; the differential property proves   
-    it.                                                                         
-  ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest         
-                                                                                
-▎   Type a message▌                                                             
-                                                                                
-    C-a k/j focus · C-a y copy · ? help                                         
+  fix-auth · claude @ mbp                                                                                   chat · idle 
+                                                                                                                        
+  ⋯ earlier history unavailable                                                                                         
+▎   what does the dispatcher do on a seq mismatch?                                                                      
+                                                                                                                        
+    It refuses the write and requests a dump — dispatch.rs::guard_seq.                                                  
+                                                                                                                        
+  ─ turn · 12s ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+▎   and on replay?                                                                                                      
+                                                                                                                        
+    Replay folds but never executes Effects; the differential property proves it.                                       
+                                                                                                                        
+  ─ turn · 10s ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+  ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest                                                 
+                                                                                                                        
+▎   Type a message▌                                                                                                     
+                                                                                                                        
+    C-a k/j focus · C-a y copy · ? help                                                                                 

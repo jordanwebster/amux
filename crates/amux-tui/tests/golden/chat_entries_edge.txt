@@ -1,26 +1,40 @@
-  fix-auth · claude @ mbp                                        chat · errored 
-                                                                                
-                                                                                
-  ~ thought for 3s · redacted                                                   
-                                                                                
-  ✗ interrupted                                                                 
-                                                                                
-  ─ turn · ~6s ─────────────────────────────────────────────────────────────────
-                                                                                
-  ~ thought                                                                     
-                                                                                
-  ✗ api error (server_error)                                                    
-    API error — upstream 529                                                    
-                                                                                
-  ⚠ unrecognized row                                                            
-    └ progress                                                                  
-                                                                                
-  ✔ Background task finished: tests are green                                   
-                                                                                
-  ─ compacted (manual) · 31.6k → 1.8k tok ──────────────────────────────────────
-                                                                                
-    The session added retry with backoff and began the migration.               
-                                                                                
-▎   Type a message▌                                                             
-                                                                                
-    enter send · ctrl+j newline · ? help                           mode default 
+  fix-auth · claude @ mbp                                                                                chat · errored 
+                                                                                                                        
+▎   try the migration                                                                                                   
+                                                                                                                        
+  ~ thought for 3s · redacted                                                                                           
+                                                                                                                        
+  ✗ interrupted                                                                                                         
+                                                                                                                        
+  ─ turn · ~6s ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+  ~ thought                                                                                                             
+                                                                                                                        
+  ✗ api error (server_error)                                                                                            
+    API error — upstream 529                                                                                            
+                                                                                                                        
+  ⚠ unrecognized row                                                                                                    
+    └ progress                                                                                                          
+                                                                                                                        
+  ✔ Background task finished: tests are green                                                                           
+                                                                                                                        
+  ─ compacted (manual) · 31.6k → 1.8k tok ──────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+    The session added retry with backoff and began the migration.                                                       
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+▎   Type a message▌                                                                                                     
+                                                                                                                        
+    enter send · ctrl+j newline · ? help                                                                   mode default 

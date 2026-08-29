@@ -1,20 +1,40 @@
-  fix-auth · claude @ mbp                                           chat · idle 
-                                                                                
-▎   add retry with backoff to the sync client                                   
-                                                                                
-    I added exponential backoff to Client::reconnect — 6 attempts,              
-    jitter capped at 500 ms. SyncOptions grew a RetryConfig.                    
-                                                                                
-  ⌄ 1 read · 1 search · sync/client.rs · C-a o expand                           
-                                                                                
-  ✎ Edit sync/client.rs · +18 −4                                                
-                                                                                
-  ✔ Bash cargo test -p amux-sync                                                
-    └ 34 passed, 0 failed (2.1s)                                                
-                                                                                
-  ─ turn · 1m 42s ──────────────────────────────────────────────────────────────
-                                                                                
-                                                                                
-▎   Type a message▌                                                             
-                                                                                
-    enter send · ctrl+j newline · ? help                           mode default 
+  fix-auth · claude @ mbp                                                                                   chat · idle 
+                                                                                                                        
+▎   add retry with backoff to the sync client                                                                           
+                                                                                                                        
+    I added exponential backoff to Client::reconnect — 6 attempts,                                                      
+    jitter capped at 500 ms. SyncOptions grew a RetryConfig.                                                            
+                                                                                                                        
+  ⌄ 1 read · 1 search · sync/client.rs · C-a o expand                                                                   
+                                                                                                                        
+  ✎ Edit sync/client.rs · +18 −4                                                                                        
+                                                                                                                        
+  ✔ Bash cargo test -p amux-sync                                                                                        
+    └ 34 passed, 0 failed (2.1s)                                                                                        
+                                                                                                                        
+  ─ turn · 1m 42s ──────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+▎   Type a message▌                                                                                                     
+                                                                                                                        
+    enter send · ctrl+j newline · ? help                                                                   mode default 

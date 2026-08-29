@@ -1,11 +1,40 @@
-┌ amux ────────────────────────────────────────────────────────────┐
-│ /                                                    5 agents    │
-│                                                                  │
-│ ▎ ! fix-auth-bug          claude   nova       2m    permission   │
-│   ⋯ refactor-tunnels      claude   nova       12s   working      │
-│   – migration-plan        claude   hetzner    45s   –            │
-│   – nightly-refactor      codex    hetzner    3m    –            │
-│     docs-cleanup          claude   nova       1h    idle         │
-│                                                                  │
-│ ● connected · 3 hosts  n new  r rename  d delete  q quit  ? help │
-└──────────────────────────────────────────────────────────────────┘
+┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ /                                                                                                        5 agents    │
+│                                                                                                                      │
+│ ▎ ! fix-auth-bug          claude   nova       2m    permission                                                       │
+│   ⋯ refactor-tunnels      claude   nova       12s   working                                                          │
+│   – migration-plan        claude   hetzner    45s   –                                                                │
+│   – nightly-refactor      codex    hetzner    3m    –                                                                │
+│     docs-cleanup          claude   nova       1h    idle                                                             │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ● connected · 3 hosts  n new  r rename  d delete  q quit  ? help                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

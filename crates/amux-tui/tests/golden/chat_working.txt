@@ -1,20 +1,40 @@
-  fix-auth · claude @ mbp                                        chat · working 
-                                                                                
-▎   now make the retry count configurable                                       
-                                                                                
-  ~ thought for 6s                                                              
-                                                                                
-    The cap belongs in RetryConfig; I'll thread it through SyncOptions.         
-                                                                                
-  ✔ Read sync/config.rs                                                         
-                                                                                
-  ▸ Bash cargo check -p amux-sync                                               
-    └ running                                                                   
-                                                                                
-                                                                                
-                                                                                
-  ◐ working · 24s · ctrl+x interrupt                                            
-                                                                                
-▎   and please document it▌                                                     
-                                                                                
-    draft kept — send gated while working                          mode default 
+  fix-auth · claude @ mbp                                                                                chat · working 
+                                                                                                                        
+▎   now make the retry count configurable                                                                               
+                                                                                                                        
+  ~ thought for 6s                                                                                                      
+                                                                                                                        
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.                                                 
+                                                                                                                        
+  ✔ Read sync/config.rs                                                                                                 
+                                                                                                                        
+  ▸ Bash cargo check -p amux-sync                                                                                       
+    └ running                                                                                                           
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+  ◐ working · 24s · ctrl+x interrupt                                                                                    
+                                                                                                                        
+▎   and please document it▌                                                                                             
+                                                                                                                        
+    draft kept — send gated while working                                                                  mode default 

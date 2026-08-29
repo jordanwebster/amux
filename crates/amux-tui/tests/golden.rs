@@ -17,6 +17,8 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use uuid::Uuid;
 
+const GOLDEN_VIEWPORT: (u16, u16) = (120, 40);
+
 // --- fixture builders (mirroring the amux-ui spec harness) ----------------
 
 fn t0() -> DateTime<Utc> {
@@ -249,7 +251,7 @@ fn fleet_model() -> Model {
 
 // --- rendering ------------------------------------------------------------
 
-fn render_buffer(
+fn render_buffer_at(
     model: &Model,
     view: &ViewState,
     width: u16,
@@ -269,8 +271,30 @@ fn render_buffer(
     terminal.backend().buffer().clone()
 }
 
+fn render_buffer(
+    model: &Model,
+    view: &ViewState,
+    _width: u16,
+    _height: u16,
+    theme: Theme,
+) -> ratatui::buffer::Buffer {
+    render_buffer_at(model, view, GOLDEN_VIEWPORT.0, GOLDEN_VIEWPORT.1, theme)
+}
+
 fn render_frame(model: &Model, view: &ViewState, width: u16, height: u16) -> String {
     let buffer = render_buffer(model, view, width, height, Theme::default());
+    let mut out = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            out.push_str(buffer.cell((x, y)).expect("cell in area").symbol());
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn render_frame_at(model: &Model, view: &ViewState, width: u16, height: u16) -> String {
+    let buffer = render_buffer_at(model, view, width, height, Theme::default());
     let mut out = String::new();
     for y in 0..buffer.area.height {
         for x in 0..buffer.area.width {
@@ -362,13 +386,13 @@ fn frames_are_stable_across_runs() {
 /// the status word, 60 collapses it first.
 #[test]
 fn fleet_ranked_80col() {
-    let rendered = render_frame(&fleet_model(), &view_default(), 80, 11);
+    let rendered = render_frame_at(&fleet_model(), &view_default(), 80, 11);
     assert_golden("fleet_ranked_80col", &rendered);
 }
 
 #[test]
 fn fleet_ranked_60col() {
-    let rendered = render_frame(&fleet_model(), &view_default(), 60, 11);
+    let rendered = render_frame_at(&fleet_model(), &view_default(), 60, 11);
     assert_golden("fleet_ranked_60col", &rendered);
 }
 
@@ -484,7 +508,7 @@ fn fleet_empty_no_agents() {
 /// degrades to the too-small notice instead of underflowing the column grid.
 #[test]
 fn fleet_too_narrow() {
-    let rendered = render_frame(&fleet_model(), &view_default(), 12, 11);
+    let rendered = render_frame_at(&fleet_model(), &view_default(), 12, 11);
     assert_golden("fleet_too_narrow", &rendered);
 }
 
@@ -497,7 +521,7 @@ fn rendering_never_panics_at_any_viewport_size() {
     let view = view_default();
     for width in 1..=200u16 {
         for height in 1..=60u16 {
-            let _ = render_frame(&model, &view, width, height);
+            let _ = render_frame_at(&model, &view, width, height);
         }
     }
 }
@@ -760,7 +784,7 @@ fn a2a_fleet_family_open() {
 #[test]
 fn a2a_fleet_family_60col() {
     let view = expanded_view(&["refactor-tunnels"]);
-    let rendered = render_frame(&family_model(), &view, 60, 14);
+    let rendered = render_frame_at(&family_model(), &view, 60, 14);
     assert_golden("a2a_fleet_family_60col", &rendered);
 }
 
@@ -859,7 +883,7 @@ fn a2a_fleet_fold_key_is_inert_on_a_childless_row() {
 #[test]
 fn a2a_fleet_working_on_states_the_claim_and_its_age() {
     let view = expanded_view(&["refactor-tunnels"]);
-    let rendered = render_frame(&family_model(), &view, 80, 14);
+    let rendered = render_frame_at(&family_model(), &view, 80, 14);
     assert!(
         rendered.contains("run the t… 1m"),
         "the claim, clipped to the room left over, then how long ago it was made:\n{rendered}"
@@ -908,7 +932,7 @@ fn a2a_fleet_exited_status_stays_in_its_column() {
         "the code is clipped rather than allowed to run on: {row}"
     );
     assert!(
-        row.contains("run the t…"),
+        row.contains("run the tunnel suite end to end 1m"),
         "and the work claim keeps its own column: {row}"
     );
     assert_golden("fleet_exited_with_work", &rendered);
@@ -1048,7 +1072,7 @@ fn a2a_delete_confirm_keeps_the_fleet_for_a_childless_agent() {
 fn a2a_delete_confirm_counts_what_it_could_not_show() {
     let model = family_model();
     let view = confirming_delete(&model, "refactor-tunnels");
-    let rendered = render_frame(&model, &view, 80, 13);
+    let rendered = render_frame_at(&model, &view, 80, 13);
     assert!(
         rendered.contains("… and 2 more"),
         "the elision counts what is behind it:\n{rendered}"
@@ -1106,7 +1130,7 @@ fn a2a_bindings_hint_the_fold_key_only_with_a_family_on_screen() {
 /// full list lives.
 #[test]
 fn a2a_bindings_keep_the_hint_row_when_the_fold_key_will_not_fit() {
-    let narrow = render_frame(&family_model(), &view_default(), 68, 14);
+    let narrow = render_frame_at(&family_model(), &view_default(), 68, 14);
     assert!(
         narrow.contains("n new") && narrow.contains("? help"),
         "the row survives:\n{narrow}"

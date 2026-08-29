@@ -16,8 +16,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 const NOW: &str = "2026-08-12T09:12:30Z";
-const WIDTH: u16 = 88;
-const HEIGHT: u16 = 34;
+const WIDTH: u16 = 120;
+const HEIGHT: u16 = 40;
 
 fn at(value: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(value)
@@ -176,16 +176,15 @@ fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
 }
 
 fn assert_surface(name: &str, model: &Model) {
-    let height = if name == "streaming" { 50 } else { HEIGHT };
-    assert_state_surface(name, model, &view(model), height);
+    assert_state_surface(name, model, &view(model), HEIGHT);
 }
 
-fn assert_state_surface(name: &str, model: &Model, view: &ViewState, height: u16) {
+fn assert_state_surface(name: &str, model: &Model, view: &ViewState, _height: u16) {
     for (theme_name, theme) in [
         ("dark", Theme::default()),
         ("light", Theme::light(ColorMode::TrueColor)),
     ] {
-        let buffer = render_buffer(model, view, theme, height);
+        let buffer = render_buffer(model, view, theme, HEIGHT);
         let rendered = format!(
             "--- text ---\n{}--- styles ---\n{}",
             buffer_text(&buffer),

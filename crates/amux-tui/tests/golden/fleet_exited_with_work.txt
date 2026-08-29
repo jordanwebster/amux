@@ -1,14 +1,40 @@
-┌ amux ────────────────────────────────────────────────────────────────────────┐
-│ /                                                                8 agents    │
-│                                                                              │
-│ ▎ ⋯ refactor-tunnels      claude   nova       12s   working    split th… 15m │
-│   ✓   write-the-docs      claude   nova       5m    finished   document … 4m │
-│       test-runner         codex    nova       30s   exited(-1… run the t… 1m │
-│   !     flake-hunter      codex    nova       20s   permission               │
-│   ! fix-auth-bug          claude   nova       2m    permission               │
-│   ? migration-plan        claude   hetzner    45s   question                 │
-│   ✓ nightly-refactor      codex    hetzner    3m    finished                 │
-│     docs-cleanup          claude   nova       1h    idle                     │
-│                                                                              │
-│ ● connected · 3 hosts  n new  r rename  d delete  z fold  q quit  ? help     │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ /                                                                                                        8 agents    │
+│                                                                                                                      │
+│ ▎ ⋯ refactor-tunnels      claude   nova       12s   working    split the tunnel supervisor 15m                       │
+│   ✓   write-the-docs      claude   nova       5m    finished   document the new handshake 4m                         │
+│       test-runner         codex    nova       30s   exited(-1… run the tunnel suite end to end 1m                    │
+│   !     flake-hunter      codex    nova       20s   permission                                                       │
+│   ! fix-auth-bug          claude   nova       2m    permission                                                       │
+│   ? migration-plan        claude   hetzner    45s   question                                                         │
+│   ✓ nightly-refactor      codex    hetzner    3m    finished                                                         │
+│     docs-cleanup          claude   nova       1h    idle                                                             │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ● connected · 3 hosts  n new  r rename  d delete  z fold  q quit  ? help                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

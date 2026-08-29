@@ -24,6 +24,8 @@ use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+const GOLDEN_VIEWPORT: (u16, u16) = (120, 40);
+
 // --- fixture builders -------------------------------------------------------
 
 const SESSION: &str = "22222222-2222-4222-8222-222222222222";
@@ -457,7 +459,7 @@ fn chat_view() -> ViewState {
     }
 }
 
-fn render_buffer(
+fn render_buffer_at(
     model: &Model,
     view: &ViewState,
     width: u16,
@@ -476,6 +478,24 @@ fn render_buffer(
         .draw(|frame| render(model, view, &ctx, frame))
         .expect("draw");
     terminal.backend().buffer().clone()
+}
+
+fn render_buffer(
+    model: &Model,
+    view: &ViewState,
+    _width: u16,
+    _height: u16,
+    theme: Theme,
+    now: &str,
+) -> ratatui::buffer::Buffer {
+    render_buffer_at(
+        model,
+        view,
+        GOLDEN_VIEWPORT.0,
+        GOLDEN_VIEWPORT.1,
+        theme,
+        now,
+    )
 }
 
 fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
@@ -520,6 +540,17 @@ fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
 
 fn render_frame(model: &Model, view: &ViewState, width: u16, height: u16, now: &str) -> String {
     buffer_text(&render_buffer(
+        model,
+        view,
+        width,
+        height,
+        Theme::default(),
+        now,
+    ))
+}
+
+fn render_frame_at(model: &Model, view: &ViewState, width: u16, height: u16, now: &str) -> String {
+    buffer_text(&render_buffer_at(
         model,
         view,
         width,
@@ -626,7 +657,7 @@ fn chat_quit_armed_panel() {
 fn chat_quit_armed_panel_narrow() {
     let model = fold(edit_ask_msgs());
     let mut view = reconciled_view(&model);
-    let unarmed = render_frame(&model, &view, 60, 20, WORKING_NOW);
+    let unarmed = render_frame_at(&model, &view, 60, 20, WORKING_NOW);
     let hint_rows: Vec<&str> = unarmed
         .lines()
         .filter(|line| line.contains("select · enter confirm") || line.contains("never answers"))
@@ -637,7 +668,7 @@ fn chat_quit_armed_panel_narrow() {
         .expect("chat open")
         .quit_guard_mut()
         .press(at(WORKING_NOW));
-    let rendered = render_frame(&model, &view, 60, 20, WORKING_NOW);
+    let rendered = render_frame_at(&model, &view, 60, 20, WORKING_NOW);
     assert!(rendered.contains("1. Allow once"));
     assert!(rendered.contains("2. Always allow access to /work"));
     assert!(rendered.contains("3. Deny — tell the agent why"));
@@ -1674,8 +1705,9 @@ fn numbered_diff() -> DiffArtifact {
 }
 
 fn diff_body_buffer(theme: Theme) -> ratatui::buffer::Buffer {
-    let lines = amux_tui::chat::diff::reader_rows(&numbered_diff(), 72, theme);
-    let backend = TestBackend::new(72, lines.len() as u16);
+    let lines =
+        amux_tui::chat::diff::reader_rows(&numbered_diff(), GOLDEN_VIEWPORT.0 as usize, theme);
+    let backend = TestBackend::new(GOLDEN_VIEWPORT.0, GOLDEN_VIEWPORT.1);
     let mut terminal = Terminal::new(backend).expect("terminal");
     terminal
         .draw(|frame| {
@@ -2055,7 +2087,7 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
     for width in 1..=120u16 {
         for height in 1..=40u16 {
             for (model, view, now) in &states {
-                let rendered = render_frame(model, view, width, height, now);
+                let rendered = render_frame_at(model, view, width, height, now);
                 if width >= MIN_WIDTH && height >= MIN_HEIGHT {
                     // The chat is full-screen now: instead of a border
                     // surviving at the last row, every row of every size

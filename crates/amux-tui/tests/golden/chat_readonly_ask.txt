@@ -1,22 +1,40 @@
-  ci-triage · claude @ mbp                       chat · read-only · needs owner 
-                                                                                
-    shutdown.                                                                   
-                                                                                
-  ✔ Bash cargo test -p amux --test spec                                         
-    └ 2 failed: token_refresh, expired_session                                  
-                                                                                
-  ─ turn · 1m 30s ──────────────────────────────────────────────────────────────
-                                                                                
-▎   serialize the shutdown                                                      
-                                                                                
-    the agent is asking permission — Edit testnet/harness.rs (+1)               
-                                                                                
-      fn teardown() {                                                           
-     +    drain();                                                              
-          kill();                                                               
-      }                                                                         
-    waiting for a writable client · f read the diff                             
-                                                                                
-  ⊘ read-only — you are observing this session                                  
-                                                                                
-    pgup/pgdn scroll · f view diff · q back to fleet                            
+  ci-triage · claude @ mbp                                                               chat · read-only · needs owner 
+                                                                                                                        
+▎   fix the flaky teardown                                                                                              
+                                                                                                                        
+    The flake is a teardown race in the testnet harness; serializing the shutdown.                                      
+                                                                                                                        
+  ✔ Bash cargo test -p amux --test spec                                                                                 
+    └ 2 failed: token_refresh, expired_session                                                                          
+                                                                                                                        
+  ─ turn · 1m 30s ──────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+▎   serialize the shutdown                                                                                              
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+    the agent is asking permission — Edit testnet/harness.rs (+1)                                                       
+                                                                                                                        
+      fn teardown() {                                                                                                   
+     +    drain();                                                                                                      
+          kill();                                                                                                       
+      }                                                                                                                 
+    waiting for a writable client · f read the diff                                                                     
+                                                                                                                        
+  ⊘ read-only — you are observing this session                                                                          
+                                                                                                                        
+    pgup/pgdn scroll · f view diff · q back to fleet                                                                    

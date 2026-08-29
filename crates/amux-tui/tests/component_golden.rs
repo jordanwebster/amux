@@ -9,6 +9,13 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 const VIEWPORT: (u16, u16) = (120, 40);
+const WIDTH_DECLARING_GOLDENS: &[(&str, (u16, u16))] = &[
+    ("a2a_fleet_family_60col", (60, 14)),
+    ("fleet_ranked_60col", (60, 11)),
+    ("fleet_ranked_80col", (80, 11)),
+    ("chat_quit_armed_panel_narrow", (60, 20)),
+    ("fleet_too_narrow", (12, 11)),
+];
 const STATES: &[NamedState] = &[
     NamedState::ComponentGallery,
     NamedState::ComponentGalleryCodex,
@@ -66,6 +73,85 @@ fn assert_golden(name: &str, rendered: &str) {
     let expected = std::fs::read_to_string(&path)
         .unwrap_or_else(|_| panic!("missing golden {name} — run with UPDATE_GOLDENS=1"));
     assert_eq!(rendered, expected, "frame {name} diverged");
+}
+
+fn assert_cell_dimensions(name: &str, rendered: &str, viewport: (u16, u16), exact: bool) {
+    let lines = rendered.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines.len(),
+        viewport.1 as usize,
+        "golden {name} should have {} rows, got {}",
+        viewport.1,
+        lines.len()
+    );
+    for (row, line) in lines.into_iter().enumerate() {
+        let serialized_cells = line.chars().count();
+        if exact {
+            assert_eq!(
+                serialized_cells, viewport.0 as usize,
+                "golden {name} row {row} should have {} cells",
+                viewport.0
+            );
+        } else {
+            // A wide glyph occupies its lead cell and leaves a serialized
+            // continuation cell; combining marks can add another scalar.
+            // Text rows can therefore contain more scalars than buffer cells,
+            // but never fewer. Style maps are ASCII and remain exact above.
+            assert!(
+                serialized_cells >= viewport.0 as usize,
+                "golden {name} row {row} is shorter than {} serialized cells",
+                viewport.0
+            );
+        }
+    }
+}
+
+#[test]
+fn viewport_policy_keeps_only_the_five_width_declaring_goldens_nonstandard() {
+    assert_eq!(
+        WIDTH_DECLARING_GOLDENS
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>(),
+        [
+            "a2a_fleet_family_60col",
+            "fleet_ranked_60col",
+            "fleet_ranked_80col",
+            "chat_quit_armed_panel_narrow",
+            "fleet_too_narrow",
+        ]
+    );
+    if std::env::var_os("UPDATE_GOLDENS").is_some() {
+        return;
+    }
+
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+    for entry in std::fs::read_dir(directory).expect("read golden directory") {
+        let entry = entry.expect("golden directory entry");
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("txt") {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .expect("UTF-8 golden name");
+        let rendered = std::fs::read_to_string(&path).expect("read golden");
+        let viewport = WIDTH_DECLARING_GOLDENS
+            .iter()
+            .find_map(|(exception, viewport)| (*exception == name).then_some(*viewport))
+            .unwrap_or(VIEWPORT);
+
+        if let Some(combined) = rendered.strip_prefix("--- text ---\n") {
+            let (text, styles) = combined
+                .split_once("--- styles ---\n")
+                .unwrap_or_else(|| panic!("combined golden {name} has no styles section"));
+            assert_cell_dimensions(&format!("{name} text"), text, viewport, false);
+            assert_cell_dimensions(&format!("{name} styles"), styles, viewport, true);
+        } else {
+            assert_cell_dimensions(name, &rendered, viewport, name.contains("styles"));
+        }
+    }
 }
 
 fn changed_rows_are_diff_rows(capture: &Capture, page: &str) {

@@ -1,24 +1,40 @@
-  plan                                                           lines 1-15/31  
-                                                                                
-────────────────────────────────────────────────────────────────────────────────
-  ## Approach                                                                   
-                                                                                
-  1. Wrap Client::reconnect in retry_with_backoff                               
-  - exponential base 200 ms, cap 5 s, jitter bounded                            
-  2. Thread RetryConfig through SyncOptions                                     
-  3. Spec chapter sync::retry — cold start, mid-stream drop, give-up-after-cap  
-                                                                                
-  ## Out of scope                                                               
-                                                                                
-  - relay-side backpressure                                                     
-                                                                                
-  Step detail 1: keep the reader scrolling.                                     
-  Step detail 2: keep the reader scrolling.                                     
-  Step detail 3: keep the reader scrolling.                                     
-  Step detail 4: keep the reader scrolling.                                     
-────────────────────────────────────────────────────────────────────────────────
-  › 1. Approve — auto       agent proceeds, edits apply without asking          
-    2. Approve — manual     agent asks before each edit                         
-    3. Request changes      feedback required                                   
-                                                                                
-    ↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)    
+  plan                                                                                                   lines 1-31/31  
+                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ## Approach                                                                                                           
+                                                                                                                        
+  1. Wrap Client::reconnect in retry_with_backoff                                                                       
+  - exponential base 200 ms, cap 5 s, jitter bounded                                                                    
+  2. Thread RetryConfig through SyncOptions                                                                             
+  3. Spec chapter sync::retry — cold start, mid-stream drop, give-up-after-cap                                          
+                                                                                                                        
+  ## Out of scope                                                                                                       
+                                                                                                                        
+  - relay-side backpressure                                                                                             
+                                                                                                                        
+  Step detail 1: keep the reader scrolling.                                                                             
+  Step detail 2: keep the reader scrolling.                                                                             
+  Step detail 3: keep the reader scrolling.                                                                             
+  Step detail 4: keep the reader scrolling.                                                                             
+  Step detail 5: keep the reader scrolling.                                                                             
+  Step detail 6: keep the reader scrolling.                                                                             
+  Step detail 7: keep the reader scrolling.                                                                             
+  Step detail 8: keep the reader scrolling.                                                                             
+  Step detail 9: keep the reader scrolling.                                                                             
+  Step detail 10: keep the reader scrolling.                                                                            
+  Step detail 11: keep the reader scrolling.                                                                            
+  Step detail 12: keep the reader scrolling.                                                                            
+  Step detail 13: keep the reader scrolling.                                                                            
+  Step detail 14: keep the reader scrolling.                                                                            
+  Step detail 15: keep the reader scrolling.                                                                            
+  Step detail 16: keep the reader scrolling.                                                                            
+  Step detail 17: keep the reader scrolling.                                                                            
+  Step detail 18: keep the reader scrolling.                                                                            
+  Step detail 19: keep the reader scrolling.                                                                            
+  Step detail 20: keep the reader scrolling.                                                                            
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  › 1. Approve — auto       agent proceeds, edits apply without asking                                                  
+    2. Approve — manual     agent asks before each edit                                                                 
+    3. Request changes      feedback required                                                                           
+                                                                                                                        
+    ↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)                                            

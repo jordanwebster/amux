@@ -1,16 +1,40 @@
-  fix-auth · claude @ mbp                                      chat · replaying 
-                                                                                
-  ⟳ loading session…                                                            
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-▎   Type a message▌                                                             
-                                                                                
-    send gated while replaying · ? help                                         
+  fix-auth · claude @ mbp                                                                              chat · replaying 
+                                                                                                                        
+  ⟳ loading session…                                                                                                    
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+▎   Type a message▌                                                                                                     
+                                                                                                                        
+    send gated while replaying · ? help                                                                                 

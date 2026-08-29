@@ -23,8 +23,8 @@ use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const WIDTH: u16 = 88;
-const HEIGHT: u16 = 26;
+const WIDTH: u16 = 120;
+const HEIGHT: u16 = 40;
 
 fn t0() -> DateTime<Utc> {
     DateTime::from_timestamp(1_754_697_600, 0).expect("fixture epoch")
@@ -427,12 +427,12 @@ fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
 
 /// Every surface is locked in both themes, text and styles together — the
 /// pairing the Codex goldens established.
-fn assert_surface(name: &str, model: &Model, view: &ViewState, height: u16) {
+fn assert_surface(name: &str, model: &Model, view: &ViewState, _height: u16) {
     for (theme_name, theme) in [
         ("dark", Theme::default()),
         ("light", Theme::light(ColorMode::TrueColor)),
     ] {
-        let buffer = render_buffer(model, view, theme, height);
+        let buffer = render_buffer(model, view, theme, HEIGHT);
         let rendered = format!(
             "--- text ---\n{}--- styles ---\n{}",
             buffer_text(&buffer),

@@ -1,24 +1,40 @@
-  keys                                                                          
-                                                                                
-────────────────────────────────────────────────────────────────────────────────
-  chat                                                                          
-      ctrl+x                    interrupt the agent                             
-      pgup/pgdn                 scroll the feed                                 
-      ctrl+home/end             feed oldest / newest · terminal-dependent       
-      wheel                     scroll the feed                                 
-      shift+drag                select text (your terminal's own)               
-      C-a y                     copy the focused block (the newest if none)     
-      C-a k/j                   focus older / newer block                       
-      ctrl+↑/↓                  focus older / newer block · terminal-dependent  
-      C-a o                     open / close the focused run                    
-      esc                       close reader / clear focus / back ask / follow  
-      ctrl+t                    read accepted plans (←/→ steps)                 
-      ctrl+c                    clear field; empty: press twice to quit         
-      C-a s                     back to fleet                                   
-      C-a d                     detach to shell                                 
-                                                                                
-  composer                                                                      
-      enter                     send                                            
-  ⋮ more — a taller terminal shows the full list                                
-────────────────────────────────────────────────────────────────────────────────
-    any key to close                                                            
+  keys                                                                                                                  
+                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  chat                                                                                                                  
+      ctrl+x                    interrupt the agent                                                                     
+      pgup/pgdn                 scroll the feed                                                                         
+      ctrl+home/end             feed oldest / newest · terminal-dependent                                               
+      wheel                     scroll the feed                                                                         
+      shift+drag                select text (your terminal's own)                                                       
+      C-a y                     copy the focused block (the newest if none)                                             
+      C-a k/j                   focus older / newer block                                                               
+      ctrl+↑/↓                  focus older / newer block · terminal-dependent                                          
+      C-a o                     open / close the focused run                                                            
+      esc                       close reader / clear focus / back ask / follow                                          
+      ctrl+t                    read accepted plans (←/→ steps)                                                         
+      ctrl+c                    clear field; empty: press twice to quit                                                 
+      C-a s                     back to fleet                                                                           
+      C-a d                     detach to shell                                                                         
+                                                                                                                        
+  composer                                                                                                              
+      enter                     send                                                                                    
+      ctrl+j                    newline                                                                                 
+      shift+enter               newline · kitty                                                                         
+      shift+tab                 cycle permission mode                                                                   
+      home/end · ctrl+b/f/p/n   motion                                                                                  
+      ctrl+←/→                  word motion · terminal-dependent                                                        
+      ctrl+w/u/k                kill word / to line start / end                                                         
+      ctrl+d                    delete forward                                                                          
+      ctrl+y                    yank the last kill                                                                      
+      ?                         this help (empty draft)                                                                 
+                                                                                                                        
+  ask panels                                                                                                            
+      1-9                       select (never submits)                                                                  
+      ↑/↓                       move selection                                                                          
+      space                     toggle (multi-select)                                                                   
+      tab/shift+tab ←/→         cycle question tabs                                                                     
+      enter                     confirm / advance / submit                                                              
+  ⋮ more — a taller terminal shows the full list                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    any key to close                                                                                                    

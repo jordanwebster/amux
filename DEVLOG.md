@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Moved the golden surface to a 120×40 terminal.** Claude,
+Codex, agent-to-agent, fleet, and component captures now pass through one
+120-column by 40-row harness policy. Explicit render-at-size helpers remain
+only where a behavioral test sweeps terminal geometry or where the fixture's
+name promises a narrow viewport.
+
+A viewport-policy test walks every committed text and semantic-style golden,
+checks both halves of combined captures, and names the only five nonstandard
+files with their retained sizes: the 60-column family and ranked fleets, the
+80-column ranked fleet, the narrow armed chat panel, and the too-narrow fleet
+notice. This makes a future accidental return to the old 80/88-column frames
+a focused test failure rather than another broad regeneration.
+
+---
+
 2026-08-29 — **Proved imported themes at the rendered boundary.** The theme
 screenshot set now has executable coverage for the same Claude working frame
 in dark, light, imported base16 truecolor, and imported base16 ANSI. Its
