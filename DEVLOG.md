@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The chat's invariant warning stops wearing the fleet's border.**
+Both chats wrote the kernel's consistency warning over their header gap by
+borrowing the fleet's row, which is drawn inside a border; on a full-screen
+frame that left a stray glyph in column 0 and another in the last cell. The
+warning now has its own row in the shared block vocabulary — glyph on the
+chat's glyph column, background out to both edges — and the fleet's row is
+untouched. A test over both native adapters holds the grid, the fill and the
+absence of any unnamed style.
+
+---
+
 2026-08-29 — **An ask-time diff no longer states a position it does not know.**
 Claude sends a permission diff as a snippet whose hunk starts are relative to
 the snippet, not to the file; amux-ui records them as never-rendered. The chat

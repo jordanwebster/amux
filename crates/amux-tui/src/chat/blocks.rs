@@ -31,7 +31,9 @@ use ratatui::text::{Line, Span};
 use super::diff::{DiffRow, DiffRowKind};
 use super::frame::{BlockKey, PaintedBlock};
 use crate::markdown;
-use crate::render::{Theme, clip_to_width, line_len, pad_to, push_span, str_width};
+use crate::render::{
+    INVARIANT_WARNING, Theme, clip_to_width, line_len, pad_to, push_span, str_width,
+};
 
 /// Renderer-local identity for an expandable run of related feed entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -226,6 +228,27 @@ pub(crate) fn paint_user_prompt(
         })
         .collect();
     block(key, lines)
+}
+
+/// The sticky diagnostic the chat writes over its header gap when the
+/// kernel reports its own state stopped adding up.
+///
+/// The fleet has a row of the same words, but the fleet's rows are drawn
+/// inside a border; a chat's are not, and borrowing that one would put a
+/// border glyph in column 0 and again in the last cell of a full-screen
+/// frame. This row keeps the chat's grid — a glyph at `GLYPH_COL`, then
+/// the background out to the edge — and fills itself, because it is
+/// written over an already-fitted frame.
+pub(crate) fn invariant_warning_row(width: usize, theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(
+        &mut line,
+        GLYPH_COL,
+        clip_to_width(INVARIANT_WARNING, width.saturating_sub(GLYPH_COL)).to_string(),
+        theme.warn().patch(theme.background()),
+    );
+    fill(&mut line, width, theme.background());
+    line
 }
 
 /// Pad a surface row to the frame width so its tint reaches the edge.

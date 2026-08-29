@@ -469,7 +469,8 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use super::{AgentChatView, ChatView, entry_watermark};
+    use super::{AgentChatView, ChatView, build_chat_lines, entry_watermark};
+    use crate::render::{FrameContext, INVARIANT_WARNING, Theme, str_width};
     use crate::view::{ViewState, visible_rows};
 
     fn at(seconds: i64) -> DateTime<chrono::Utc> {
@@ -643,6 +644,68 @@ mod tests {
             amux_ui::claude::ChatPhase::Working
         ));
         assert!(chat.needs_tick(&model));
+    }
+
+    /// The kernel's own consistency warning is a chat row, not a fleet
+    /// row: it wears the chat's grid, reaches both edges on the
+    /// background, and carries no border glyph the full-screen frame
+    /// would otherwise leave stranded in column 0 and the last cell.
+    #[test]
+    fn the_chat_draws_its_invariant_warning_on_the_chat_grid() {
+        let theme = Theme::default();
+        for protocol in [amux_ui::claude::PROTOCOL, amux_ui::codex::PROTOCOL] {
+            let (model, agent) = model_with_protocol(protocol);
+            // The runtime setter is crate-private on purpose — a renderer
+            // only reads this fact — so serde supplies the failing model.
+            let mut value = serde_json::to_value(&model).expect("serialize model");
+            value["invariant_warning"] = serde_json::Value::Bool(true);
+            let model: Model = serde_json::from_value(value).expect("deserialize model");
+            let chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
+            let ctx = FrameContext {
+                viewport: (100, 30),
+                theme,
+                now: at(0),
+            };
+
+            let lines = build_chat_lines(&model, &chat, &ctx);
+            let warning = lines
+                .iter()
+                .find(|line| {
+                    line.spans
+                        .iter()
+                        .map(|span| span.content.as_ref())
+                        .collect::<String>()
+                        .contains(INVARIANT_WARNING)
+                })
+                .unwrap_or_else(|| panic!("{protocol} chat lost its invariant warning"));
+
+            let text = warning
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            assert!(
+                text.starts_with(&format!("{}⚠", " ".repeat(crate::chat::blocks::GLYPH_COL))),
+                "{protocol} warning does not start on the chat's glyph column: {text:?}"
+            );
+            assert_eq!(
+                str_width(&text),
+                100,
+                "{protocol} warning does not fill the frame: {text:?}"
+            );
+
+            let classes = warning
+                .spans
+                .iter()
+                .flat_map(|span| {
+                    std::iter::repeat_n(theme.classify(span.style), str_width(&span.content))
+                })
+                .collect::<String>();
+            assert!(
+                !classes.contains('?'),
+                "{protocol} warning paints an unnamed style: {classes}"
+            );
+        }
     }
 
     #[test]

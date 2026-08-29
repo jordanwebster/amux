@@ -127,7 +127,7 @@ pub(crate) fn build_chat_lines(
     // all content.
     let row = 1 + usize::from(banner);
     if !overlaid && model.has_invariant_warning() && lines.len() > row {
-        lines[row] = crate::render::invariant_warning_line(width, ctx.theme.warn());
+        lines[row] = blocks::invariant_warning_row(width, ctx.theme);
     }
     lines
 }
