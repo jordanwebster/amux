@@ -28,6 +28,7 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
+use super::diff::{DiffRow, DiffRowKind};
 use super::frame::{BlockKey, PaintedBlock};
 use crate::markdown;
 use crate::render::{Theme, clip_to_width, line_len, pad_to, push_span, str_width};
@@ -611,6 +612,130 @@ pub(crate) fn paint_composer_block(
     lines
 }
 
+// --- the two panelled surfaces ----------------------------------------------
+
+/// The column a panel's tint starts at. The mark column stays on the
+/// background so a focused panel still shows its bar against something.
+const PANEL_COL: usize = 1;
+
+/// Put a panel's tint under rows another layer formatted. The spans keep
+/// their own colours; the surface only supplies what they left unsaid.
+fn tinted(mut line: Line<'static>, surface: Style, width: usize) -> Line<'static> {
+    for span in &mut line.spans {
+        span.style = surface.patch(span.style);
+    }
+    let mut out = Line::default();
+    out.spans.push(Span::raw(" ".repeat(PANEL_COL)));
+    out.spans
+        .push(Span::styled(" ".repeat(TEXT_COL - PANEL_COL), surface));
+    out.spans.append(&mut line.spans);
+    fill(&mut out, width, surface);
+    out
+}
+
+/// A blank row of panel, used to keep a panel's parts apart.
+fn panel_gap(surface: Style, width: usize) -> Line<'static> {
+    let mut line = Line::default();
+    line.spans.push(Span::raw(" ".repeat(PANEL_COL)));
+    fill(&mut line, width, surface);
+    line
+}
+
+/// An ask, on the one surface that means "this is waiting for you":
+/// what is being asked, the agent layer's own body rows, the answers on
+/// offer, and the keys that give them.
+pub(crate) fn paint_ask_panel(
+    key: BlockKey,
+    title: &str,
+    body: Vec<Line<'static>>,
+    actions: Vec<Line<'static>>,
+    hints: &str,
+    theme: Theme,
+    width: usize,
+) -> PaintedBlock {
+    let surface = theme.panel();
+    let mut lines = vec![tinted(
+        Line::from(Span::styled(title.to_string(), theme.emphasis())),
+        surface,
+        width,
+    )];
+    if !body.is_empty() {
+        lines.push(panel_gap(surface, width));
+        lines.extend(body.into_iter().map(|line| tinted(line, surface, width)));
+    }
+    if !actions.is_empty() {
+        lines.push(panel_gap(surface, width));
+        lines.extend(actions.into_iter().map(|line| tinted(line, surface, width)));
+    }
+    if !hints.is_empty() {
+        lines.push(tinted(
+            Line::from(Span::styled(hints.to_string(), theme.muted())),
+            surface,
+            width,
+        ));
+    }
+    block(key, lines)
+}
+
+/// A unified diff in one column, with the old and new line numbers side
+/// by side in the gutter.
+///
+/// Only the rows that changed carry a tint, so a hunk reads as a few
+/// coloured lines inside a quiet panel rather than a wall of colour. A
+/// long line is cut at the right edge instead of wrapped: a diff whose
+/// rows do not line up with its gutter is harder to read than one that
+/// admits it is showing you the beginning of the line.
+pub(crate) fn paint_unified_diff(
+    key: BlockKey,
+    title: &str,
+    rows: &[DiffRow],
+    theme: Theme,
+    width: usize,
+) -> PaintedBlock {
+    let surface = theme.panel();
+    let digits = rows
+        .iter()
+        .flat_map(|row| [row.old, row.new])
+        .flatten()
+        .map(|number| number.to_string().len())
+        .max()
+        .unwrap_or(1)
+        .max(2);
+    let gutter = digits * 2 + 1;
+
+    let mut lines = vec![tinted(
+        Line::from(Span::styled(title.to_string(), theme.muted())),
+        surface,
+        width,
+    )];
+    for row in rows {
+        let style = match row.kind {
+            DiffRowKind::Meta => theme.diff_meta(),
+            DiffRowKind::Context => theme.diff_context(),
+            DiffRowKind::Added => theme.diff_added(),
+            DiffRowKind::Removed => theme.diff_removed(),
+        };
+        let numbers = format!(
+            "{:>digits$} {:>digits$}",
+            row.old.map(|n| n.to_string()).unwrap_or_default(),
+            row.new.map(|n| n.to_string()).unwrap_or_default(),
+        );
+        let mut line = Line::default();
+        line.spans.push(Span::raw(" ".repeat(PANEL_COL)));
+        line.spans
+            .push(Span::styled(" ".repeat(TEXT_COL - PANEL_COL), surface));
+        line.spans.push(Span::styled(numbers, theme.gutter()));
+        let room = width.saturating_sub(TEXT_COL + gutter + 1);
+        line.spans.push(Span::styled(
+            format!(" {}", clip_to_width(&row.text, room)),
+            style,
+        ));
+        fill(&mut line, width, style);
+        lines.push(line);
+    }
+    block(key, lines)
+}
+
 fn plural(count: usize, one: &str, many: &str) -> String {
     match count {
         1 => format!("1 {one}"),
@@ -936,6 +1061,128 @@ mod tests {
             80,
         );
         assert_eq!(opened.lines.len(), 1 + member.lines.len());
+    }
+
+    fn a_hunk() -> Vec<DiffRow> {
+        vec![
+            DiffRow {
+                old: None,
+                new: None,
+                kind: DiffRowKind::Meta,
+                text: "@@ -1,3 +1,4 @@".to_string(),
+            },
+            DiffRow {
+                old: Some(1),
+                new: Some(1),
+                kind: DiffRowKind::Context,
+                text: " fn reconnect() {".to_string(),
+            },
+            DiffRow {
+                old: Some(2),
+                new: None,
+                kind: DiffRowKind::Removed,
+                text: "-    sleep(1);".to_string(),
+            },
+            DiffRow {
+                old: None,
+                new: Some(2),
+                kind: DiffRowKind::Added,
+                text: "+    sleep(backoff());".to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn only_changed_rows_are_tinted_and_the_gutter_stays_on_the_panel() {
+        let theme = Theme::default();
+        let painted = paint_unified_diff(key(), "✎ src/sync/client.rs", &a_hunk(), theme, 60);
+        let rows: Vec<String> = classes(&painted.lines, theme)
+            .lines()
+            .map(str::to_string)
+            .collect();
+
+        // The title, the hunk header and the context row are panel only.
+        for (index, row) in rows.iter().take(3).enumerate() {
+            assert!(
+                !row.contains('+') && !row.contains('-'),
+                "row {index} must not be tinted: {row}"
+            );
+            assert!(
+                row.contains('P'),
+                "row {index} must sit on the panel: {row}"
+            );
+        }
+        assert!(
+            rows[3].contains('-'),
+            "the removed row is tinted: {}",
+            rows[3]
+        );
+        assert!(!rows[3].contains('+'), "{}", rows[3]);
+        assert!(
+            rows[4].contains('+'),
+            "the added row is tinted: {}",
+            rows[4]
+        );
+        assert!(!rows[4].contains('-'), "{}", rows[4]);
+
+        // Every row reaches both edges, and the gutter columns line up.
+        for line in &painted.lines {
+            assert_eq!(line_len(line), 60);
+        }
+        assert!(painted.copy_text.contains("2 +    sleep(backoff());"));
+    }
+
+    #[test]
+    fn a_long_diff_line_is_clipped_rather_than_wrapped() {
+        let theme = Theme::default();
+        let rows = vec![DiffRow {
+            old: None,
+            new: Some(7),
+            kind: DiffRowKind::Added,
+            text: format!("+{}", "x".repeat(200)),
+        }];
+        let painted = paint_unified_diff(key(), "✎ long.rs", &rows, theme, 40);
+        assert_eq!(painted.lines.len(), 2, "one title row and one diff row");
+        assert_eq!(line_len(&painted.lines[1]), 40);
+    }
+
+    #[test]
+    fn an_ask_panel_puts_every_part_on_the_panel_token() {
+        let theme = Theme::default();
+        let painted = paint_ask_panel(
+            key(),
+            "cargo test --workspace",
+            vec![Line::from(Span::styled(
+                "run the whole suite once",
+                theme.text(),
+            ))],
+            vec![Line::from(Span::styled("1 allow once", theme.ok()))],
+            "enter allow · esc deny",
+            theme,
+            60,
+        );
+        let map = classes(&painted.lines, theme);
+        assert!(!map.contains('?'), "{map}");
+        assert!(!map.contains('+') && !map.contains('-'), "{map}");
+        for row in map.lines() {
+            assert!(row.contains('P'), "every row sits on the panel: {row}");
+        }
+        for line in &painted.lines {
+            assert_eq!(line_len(line), 60);
+        }
+    }
+
+    #[test]
+    fn the_panel_class_belongs_to_panels_alone() {
+        let theme = Theme::default();
+        for (name, painted) in every_plain_block(theme, 80) {
+            assert!(
+                !classes(&painted.lines, theme).contains('P'),
+                "{name} is not a panel"
+            );
+        }
+        let prompt = paint_user_prompt(key(), "next task", false, theme, 80);
+        assert!(!classes(&prompt.lines, theme).contains('P'));
     }
 
     #[test]

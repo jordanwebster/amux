@@ -225,7 +225,10 @@ pub(crate) fn compose_chat_frame(
         .into_iter()
         .take(geometry.feed_rows)
         .map(|(line, key)| {
-            if key == viewport.focus {
+            // The rows between blocks, and the boundary rows above them,
+            // belong to no block; nothing focuses them, so they must not
+            // match a viewport that is focusing nothing.
+            if key.is_some() && key == viewport.focus {
                 mark_focused(line, theme)
             } else {
                 line
@@ -781,6 +784,27 @@ mod tests {
         assert!(
             rendered.iter().any(|row| row.starts_with("  second block")),
             "an unfocused block keeps the mark column clear: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn an_unfocused_frame_marks_nothing() {
+        let mut viewport = FeedViewport::following();
+        viewport.scroll = FeedScroll::Paused {
+            top_line: 0,
+            entry_watermark: 0,
+        };
+        let mut parts = parts(vec![block(1, &["  first"]), block(2, &["  second"])]);
+        parts.feed.history_truncated = true;
+        let rendered = texts(&compose_chat_frame(
+            parts,
+            &viewport,
+            Theme::default(),
+            (40, 12),
+        ));
+        assert!(
+            !rendered.iter().any(|row| row.starts_with(MARK_GLYPH)),
+            "a viewport focusing nothing must not mark the gaps: {rendered:?}"
         );
     }
 

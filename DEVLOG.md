@@ -4,6 +4,28 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Asks and diffs get the panel surface.** An ask now paints as
+one filled panel: what is being asked in bold, the agent layer's own body rows,
+the answers on offer, and the keys that give them, all on the `panel` token so
+the thing waiting for a person is the thing that looks different.
+
+A unified diff paints in one column, not two. The old and new line numbers sit
+side by side in a gutter on the `gutter` token, and only the rows that actually
+changed carry a tint, so a hunk reads as a few coloured lines inside a quiet
+panel instead of a wall of colour. Hunk headers stay muted. A long line is cut
+at the right edge rather than wrapped: a diff whose rows no longer line up with
+its gutter is harder to read than one that admits it is showing the beginning
+of the line. Style-class tests hold both promises — the added and removed
+classes appear on changed rows only, and the panel class appears nowhere
+outside a panel.
+
+Both panels leave the mark column on the background, so a focused panel still
+shows its bar against something. That column also caught a composition bug: the
+blank rows between blocks belong to no block, and a viewport focusing nothing
+was marking every one of them.
+
+---
+
 2026-08-29 — **One painter per block kind, in one place.** `chat/blocks.rs`
 now draws the whole chat vocabulary — header, user prompt, assistant markdown,
 thinking marker, tool line, folded exploration run, file change, settled ask,
