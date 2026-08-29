@@ -149,10 +149,18 @@ async fn tail_one(
     };
     let mut reader = BufReader::new(file);
     let mut line = String::new();
+    let mut eof_observed = false;
     loop {
         line.clear();
         match reader.read_line(&mut line).await {
             Ok(0) => {
+                if !eof_observed {
+                    eof_observed = true;
+                    tokio::select! {
+                        changed = paths.changed() => return if changed.is_ok() { TailOutcome::Relink } else { TailOutcome::Closed },
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => continue,
+                    }
+                }
                 let ready =
                     TranscriptRow::Unknown(serde_json::json!({"type":"amux.transcript_ready"}));
                 if rows.send(ready).await.is_err() {
@@ -161,6 +169,7 @@ async fn tail_one(
                 break;
             }
             Ok(_) => {
+                eof_observed = false;
                 if send_line(&line, rows).await.is_err() {
                     return TailOutcome::Closed;
                 }
@@ -267,6 +276,13 @@ mod tests {
         let path = dir.path().join("later.jsonl");
         let tailer = TranscriptTailer::follow(path.clone());
         let mut rows = tailer.rows();
+        drop(tokio::fs::File::create(&path).await.unwrap());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), rows.recv())
+                .await
+                .is_err(),
+            "a newly created transcript is not ready before its initial write"
+        );
         tokio::fs::write(&path, "{\"type\":\"system\",\"subtype\":\"ready\"}\n")
             .await
             .unwrap();
