@@ -252,6 +252,13 @@ impl ChatView {
         }
     }
 
+    fn overlay_open(&self) -> bool {
+        match &self.inner {
+            AgentChatView::Claude(view) => view.overlay_open(),
+            AgentChatView::Codex(view) => view.overlay_open(),
+        }
+    }
+
     fn consume_shared_leader(&mut self) {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.pending_leader = false,
@@ -283,74 +290,77 @@ pub fn handle_chat_key(
     if key.kind == KeyEventKind::Release {
         return None;
     }
-    let metrics = chat.metrics_for(model, viewport, now);
 
     // Feed focus is shared frame state. The native handler owns the first
     // leader press; once it is pending, these chords are consumed here so
     // Claude and Codex cannot drift. Ctrl+arrows are the terminal-dependent
-    // convenience tier for the same movement.
-    let leader_pending = chat.pending_leader();
-    if leader_pending {
-        match key.code {
-            KeyCode::Char('k') => {
-                chat.consume_shared_leader();
-                move_focus(
-                    &mut chat.viewport,
-                    &metrics,
-                    -1,
-                    entry_watermark(model, chat.agent),
-                );
-                return None;
+    // convenience tier for the same movement. Native overlays own every key,
+    // so help can close on any press and Claude's reader keeps its Esc chain.
+    if !chat.overlay_open() {
+        let metrics = chat.metrics_for(model, viewport, now);
+        let leader_pending = chat.pending_leader();
+        if leader_pending {
+            match key.code {
+                KeyCode::Char('k') => {
+                    chat.consume_shared_leader();
+                    move_focus(
+                        &mut chat.viewport,
+                        &metrics,
+                        -1,
+                        entry_watermark(model, chat.agent),
+                    );
+                    return None;
+                }
+                KeyCode::Char('j') => {
+                    chat.consume_shared_leader();
+                    move_focus(
+                        &mut chat.viewport,
+                        &metrics,
+                        1,
+                        entry_watermark(model, chat.agent),
+                    );
+                    return None;
+                }
+                KeyCode::Char('y') => {
+                    chat.consume_shared_leader();
+                    return chat.copy_text().map(UiAction::CopyToClipboard);
+                }
+                KeyCode::Char('o') => {
+                    chat.consume_shared_leader();
+                    let cached = chat.feed_metrics.get_mut();
+                    let blocks = cached
+                        .as_ref()
+                        .map(|cached| cached.blocks.as_slice())
+                        .unwrap_or_default();
+                    toggle_focused_run(&mut chat.viewport, blocks);
+                    return None;
+                }
+                _ => {}
             }
-            KeyCode::Char('j') => {
-                chat.consume_shared_leader();
-                move_focus(
-                    &mut chat.viewport,
-                    &metrics,
-                    1,
-                    entry_watermark(model, chat.agent),
-                );
-                return None;
-            }
-            KeyCode::Char('y') => {
-                chat.consume_shared_leader();
-                return chat.copy_text().map(UiAction::CopyToClipboard);
-            }
-            KeyCode::Char('o') => {
-                chat.consume_shared_leader();
-                let cached = chat.feed_metrics.get_mut();
-                let blocks = cached
-                    .as_ref()
-                    .map(|cached| cached.blocks.as_slice())
-                    .unwrap_or_default();
-                toggle_focused_run(&mut chat.viewport, blocks);
-                return None;
-            }
-            _ => {}
         }
-    }
 
-    if !leader_pending && key.modifiers.contains(KeyModifiers::CONTROL) {
-        let delta = match key.code {
-            KeyCode::Up => Some(-1),
-            KeyCode::Down => Some(1),
-            _ => None,
-        };
-        if let Some(delta) = delta {
+        if !leader_pending && key.modifiers.contains(KeyModifiers::CONTROL) {
+            let delta = match key.code {
+                KeyCode::Up => Some(-1),
+                KeyCode::Down => Some(1),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                chat.quit_guard_mut().disarm();
+                move_focus(
+                    &mut chat.viewport,
+                    &metrics,
+                    delta,
+                    entry_watermark(model, chat.agent),
+                );
+                return None;
+            }
+        }
+
+        if !leader_pending && key.code == KeyCode::Esc && chat.viewport.focus.take().is_some() {
             chat.quit_guard_mut().disarm();
-            move_focus(
-                &mut chat.viewport,
-                &metrics,
-                delta,
-                entry_watermark(model, chat.agent),
-            );
             return None;
         }
-    }
-
-    if !leader_pending && key.code == KeyCode::Esc && chat.viewport.focus.take().is_some() {
-        chat.quit_guard_mut().disarm();
-        return None;
     }
 
     let action = match &mut chat.inner {
@@ -362,6 +372,7 @@ pub fn handle_chat_key(
         AgentChatView::Codex(view) => view.scroll_intent.take(),
     };
     if let Some(intent) = intent {
+        let metrics = chat.metrics_for(model, viewport, now);
         apply_scroll(
             &mut chat.viewport,
             &metrics,
@@ -394,28 +405,22 @@ pub fn handle_chat_mouse(
         MouseEventKind::ScrollDown => viewport::ScrollIntent::Rows(3),
         _ => return false,
     };
-    let (geometry, overlay_open) = match &chat.inner {
-        AgentChatView::Claude(view) => (
-            claude::geometry(
-                model,
-                view,
-                size,
-                matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
-            ),
-            view.overlay_open(),
+    let geometry = match &chat.inner {
+        AgentChatView::Claude(view) => claude::geometry(
+            model,
+            view,
+            size,
+            matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
         ),
-        AgentChatView::Codex(view) => (
-            codex::geometry(
-                model,
-                view,
-                size,
-                matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
-            ),
-            view.overlay_open(),
+        AgentChatView::Codex(view) => codex::geometry(
+            model,
+            view,
+            size,
+            matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
         ),
     };
     let row = event.row as usize;
-    if overlay_open
+    if chat.overlay_open()
         || row < geometry.feed_top
         || row >= geometry.feed_top.saturating_add(geometry.feed_rows)
     {
@@ -840,6 +845,47 @@ mod tests {
         (model, agent)
     }
 
+    fn claude_plan_reader_model() -> (Model, AgentId) {
+        let (mut model, agent) = idle_claude_model();
+        update(
+            &mut model,
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Batch {
+                    at: at(3),
+                    entries: vec![
+                        StreamEntry {
+                            seq: 1,
+                            payload: json!({"type": "amux.transcript_ready"}),
+                        },
+                        StreamEntry {
+                            seq: 2,
+                            payload: json!({
+                                "type": "user",
+                                "uuid": "dddddddd-0000-4000-8000-000000000001",
+                                "sessionId": "22222222-2222-4222-8222-222222222222",
+                                "timestamp": "2026-08-12T09:00:00.000Z",
+                                "message": {"role": "user", "content": "make a plan"},
+                                "origin": {"kind": "human"},
+                                "promptSource": "typed"
+                            }),
+                        },
+                        StreamEntry {
+                            seq: 3,
+                            payload: json!({
+                                "type": "hook.permission_request",
+                                "tool_name": "ExitPlanMode",
+                                "tool_input": {"plan": "# plan\n\n- step"},
+                                "permission_mode": "default"
+                            }),
+                        },
+                    ],
+                },
+            },
+        );
+        (model, agent)
+    }
+
     fn seed_focus_cache(chat: &mut ChatView) {
         let block = |key, text: &str| PaintedBlock {
             key: BlockKey(key),
@@ -1032,6 +1078,60 @@ mod tests {
             press_chat(&mut chat, &model, KeyCode::Esc, KeyModifiers::NONE);
             assert_eq!(chat.viewport.focus, None, "{protocol:?} Esc clears focus");
         }
+    }
+
+    #[test]
+    fn native_help_overlays_take_shared_focus_keys_in_both_chats() {
+        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+            let wire = match protocol {
+                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
+                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
+            };
+            let (model, agent) = model_with_protocol(wire);
+            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
+            seed_focus_cache(&mut chat);
+
+            press_chat(&mut chat, &model, KeyCode::Char('?'), KeyModifiers::NONE);
+            assert!(chat.overlay_open(), "{protocol:?} help opens");
+            press_chat(&mut chat, &model, KeyCode::Up, KeyModifiers::CONTROL);
+            assert!(
+                !chat.overlay_open(),
+                "{protocol:?} help consumes Ctrl+Up and closes"
+            );
+            assert_eq!(
+                chat.viewport.focus, None,
+                "{protocol:?} help keeps focus movement behind the overlay"
+            );
+
+            chat.viewport.focus = Some(BlockKey(2));
+            press_chat(&mut chat, &model, KeyCode::Char('?'), KeyModifiers::NONE);
+            assert!(chat.overlay_open(), "{protocol:?} help reopens");
+            press_chat(&mut chat, &model, KeyCode::Esc, KeyModifiers::NONE);
+            assert!(!chat.overlay_open(), "{protocol:?} Esc closes help");
+            assert_eq!(
+                chat.viewport.focus,
+                Some(BlockKey(2)),
+                "{protocol:?} Esc leaves the covered block focus intact"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_reader_takes_esc_before_shared_block_focus() {
+        let (model, agent) = claude_plan_reader_model();
+        let mut chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat opens");
+        chat.reconcile(&model);
+        assert!(chat.overlay_open(), "the pending plan opens its reader");
+        chat.viewport.focus = Some(BlockKey(2));
+
+        press_chat(&mut chat, &model, KeyCode::Esc, KeyModifiers::NONE);
+
+        assert!(!chat.overlay_open(), "Esc closes the reader");
+        assert_eq!(
+            chat.viewport.focus,
+            Some(BlockKey(2)),
+            "the reader consumes Esc before shared focus clearing"
+        );
     }
 
     #[test]

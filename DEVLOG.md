@@ -5594,3 +5594,9 @@ median steady frames measured 1.305 ms for Claude and 1.779 ms for Codex on
 this machine. Structural tests also prove composer input and wheel scrolling
 paint zero feed blocks after warm-up, row counting adds no paint pass, and
 cold and warm frames are identical.
+
+2026-08-29 — **Restored native overlay precedence over shared feed keys.**
+Help overlays in both chats and Claude's fullscreen reader now receive keys
+before the shared focus, copy, fold, and Esc layer. Any key can therefore
+close help as documented, and Esc closes a reader before it clears a focused
+feed block; mouse and keyboard routing now use the same overlay predicate.
