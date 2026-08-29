@@ -19,6 +19,7 @@ testnet = ["dep:tempfile", "local-agents"]
 
 [dependencies]
 anyhow = { workspace = true }
+claude = { workspace = true }
 tempfile = { workspace = true, optional = true }
 pty-host = { workspace = true, optional = true }
 tokio = { workspace = true }

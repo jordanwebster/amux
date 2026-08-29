@@ -10,9 +10,9 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use super::ClaudeVersionCache;
-use super::transcript::TranscriptTailer;
 use crate::agents::StructuredLogSource;
 use crate::debug::{DebugView, LossyPath};
+use claude::transcript::TranscriptTailer;
 
 struct TranscriptIngestInner {
     source: StructuredLogSource,
@@ -86,7 +86,7 @@ impl TranscriptIngest {
             guard.take()
         };
         if let Some((old_tailer, handle)) = old_tailer {
-            old_tailer.stop();
+            drop(old_tailer);
             let _ = handle.await;
             self.inner.source.clear().await;
         }
@@ -96,20 +96,24 @@ impl TranscriptIngest {
             *current_path = Some(path.clone());
         }
 
-        let tailer = match &self.inner.delivery_ready {
-            Some(delivery_ready) => TranscriptTailer::with_delivery_ready(
-                path,
-                self.inner.source.clone(),
-                delivery_ready.clone(),
-                self.inner.claude_version_cache.clone(),
-            ),
-            None => TranscriptTailer::new(
-                path,
-                self.inner.source.clone(),
-                self.inner.claude_version_cache.clone(),
-            ),
-        };
-        let handle = tailer.start();
+        let tailer = claude::transcript::TranscriptTailer::follow(path);
+        let mut rows = tailer.rows();
+        let source = self.inner.source.clone();
+        let version = self.inner.claude_version_cache.clone();
+        let delivery_ready = self.inner.delivery_ready.clone();
+        let handle = tokio::spawn(async move {
+            while let Some(row) = rows.recv().await {
+                let value = row.into_value();
+                version.observe_transcript_row(&value);
+                if value.get("type").and_then(serde_json::Value::as_str)
+                    == Some("amux.transcript_ready")
+                    && let Some(delivery_ready) = &delivery_ready
+                {
+                    delivery_ready.store(true, std::sync::atomic::Ordering::Release);
+                }
+                source.write(value).await;
+            }
+        });
         let mut guard = self.inner.tailer.lock().await;
         *guard = Some((tailer, handle));
     }
@@ -121,7 +125,7 @@ impl TranscriptIngest {
             guard.take()
         };
         if let Some((tailer, handle)) = tailer {
-            tailer.stop();
+            drop(tailer);
             let _ = handle.await;
         }
         self.inner.source.close().await;

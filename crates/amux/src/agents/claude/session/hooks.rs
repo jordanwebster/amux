@@ -6,8 +6,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::core::{ClaudeMessagingCredentials, ClaudeSession};
-use crate::agents::claude::hooks::{ClaudeHookKind, ParsedClaudeHook};
 use crate::agents::{HookEnvironment, HookError, HookOutcome};
+use claude::hooks::HookPayload;
 
 const MESSAGING_SOCKET_ENV: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
 const MESSAGING_TOKEN_ENV: &str = "CLAUDE_CODE_MESSAGING_TOKEN";
@@ -46,14 +46,10 @@ impl ClaudeSession {
         }
     }
 
-    async fn sync_hook_metadata(&mut self, hook: &ParsedClaudeHook) {
-        if let Some(session_id) = hook.session_id() {
-            self.session_id = Some(session_id);
-        }
-
-        if let Some(transcript_path) = hook.transcript_path() {
-            self.link_transcript(PathBuf::from(transcript_path)).await;
-        }
+    async fn sync_hook_metadata(&mut self, hook: &HookPayload) {
+        let common = hook.common();
+        self.session_id = Some(common.session_id);
+        self.link_transcript(common.transcript_path.clone()).await;
     }
 
     fn sync_messaging_credentials(&mut self, env: &HookEnvironment) {
@@ -79,17 +75,22 @@ impl ClaudeSession {
         payload: &[u8],
         env: &HookEnvironment,
     ) -> std::result::Result<HookOutcome, HookError> {
-        let hook =
-            ParsedClaudeHook::parse_payload(payload).map_err(|e| HookError::InvalidPayload {
-                message: e.to_string(),
-            })?;
+        let hook = claude::hooks::parse(payload).map_err(|e| HookError::InvalidPayload {
+            message: e.to_string(),
+        })?;
         self.sync_messaging_credentials(env);
-        let is_unknown = hook.is_unknown();
-        let is_session_end = hook.is_session_end();
-        if hook.kind == ClaudeHookKind::SessionStart && !self.readonly {
+        let is_unknown = matches!(hook, HookPayload::Unknown { .. });
+        let is_session_end = matches!(hook, HookPayload::SessionEnd(_));
+        if matches!(hook, HookPayload::SessionStart(_)) && !self.readonly {
             self.delivery_ready.store(true, Ordering::Release);
         }
-        let completion = hook.last_assistant_message().map(str::to_string);
+        let completion = match &hook {
+            HookPayload::Stop {
+                last_assistant_message,
+                ..
+            } => last_assistant_message.clone(),
+            _ => None,
+        };
         if is_unknown {
             tracing::warn!(agent_id = %self.agent_id, "received unknown Claude hook variant");
         }
@@ -109,31 +110,23 @@ impl ClaudeSession {
         payload: &[u8],
         env: &HookEnvironment,
     ) -> std::result::Result<Option<Self>, HookError> {
-        let hook =
-            ParsedClaudeHook::parse_payload(payload).map_err(|e| HookError::InvalidPayload {
-                message: e.to_string(),
-            })?;
+        let hook = claude::hooks::parse(payload).map_err(|e| HookError::InvalidPayload {
+            message: e.to_string(),
+        })?;
 
-        if hook.is_unknown() {
+        if matches!(hook, HookPayload::Unknown { .. }) {
             tracing::warn!(%agent_id, "received unknown external Claude hook variant");
             return Ok(None);
         }
 
-        if hook.is_session_end() {
+        if matches!(hook, HookPayload::SessionEnd(_)) {
             tracing::debug!(%agent_id, "ignoring external Claude SessionEnd for unknown session");
             return Ok(None);
         }
 
-        let cwd = hook
-            .cwd()
-            .ok_or(HookError::MissingBootstrapField { field: "cwd" })?;
-        if hook.transcript_path().is_none() {
-            return Err(HookError::MissingBootstrapField {
-                field: "transcript_path",
-            });
-        }
+        let cwd = hook.common().cwd.clone();
 
-        let mut session = Self::new_readonly(agent_id, PathBuf::from(cwd));
+        let mut session = Self::new_readonly(agent_id, cwd);
         session.sync_messaging_credentials(env);
         session.handle_hook(hook).await;
         Ok(Some(session))
@@ -149,36 +142,36 @@ impl ClaudeSession {
     /// not emitted as structured output. Duplicate deliveries of one event
     /// (multiple hook registrations — see `HOOK_DEDUPE_WINDOW`) emit one
     /// structured row.
-    pub(crate) async fn handle_hook(&mut self, hook: ParsedClaudeHook) -> bool {
+    pub(crate) async fn handle_hook(&mut self, hook: HookPayload) -> bool {
         self.sync_hook_metadata(&hook).await;
         if self.transcript_ingest.is_none() {
             return false;
         }
         // Internal-only kinds return; emitted kinds name their structured
         // `type` tag.
-        let type_tag = match hook.kind {
-            ClaudeHookKind::SessionStart => {
-                let Some(common) = hook.common else {
-                    return false;
-                };
+        let type_tag = match &hook {
+            HookPayload::SessionStart(common) => {
                 tracing::debug!(
                     agent_id = %self.agent_id,
                     session_id = %common.session_id,
-                    transcript_path = common.transcript_path,
+                    transcript_path = %common.transcript_path.display(),
                     "session started"
                 );
                 return false;
             }
-            ClaudeHookKind::SessionEnd => {
+            HookPayload::SessionEnd(_) => {
                 tracing::debug!(agent_id = %self.agent_id, "session ended");
                 return false;
             }
-            ClaudeHookKind::Unknown => return false,
-            ClaudeHookKind::PermissionRequest => "hook.permission_request",
-            ClaudeHookKind::Stop => "hook.stop",
-            ClaudeHookKind::Notification => "hook.notification",
+            HookPayload::Unknown { .. } => return false,
+            HookPayload::PermissionRequest { .. } => "hook.permission_request",
+            HookPayload::Stop { .. } => "hook.stop",
+            HookPayload::Notification { .. } => "hook.notification",
+            HookPayload::UserPromptSubmit(_) => "hook.user_prompt_submit",
+            HookPayload::PreToolUse { .. } => "hook.pre_tool_use",
+            HookPayload::PostToolUse { .. } => "hook.post_tool_use",
         };
-        if self.is_duplicate_hook_delivery(&hook.raw) {
+        if self.is_duplicate_hook_delivery(hook.raw()) {
             tracing::debug!(
                 agent_id = %self.agent_id,
                 hook = type_tag,
@@ -187,7 +180,7 @@ impl ClaudeSession {
             return false;
         }
         tracing::debug!(agent_id = %self.agent_id, hook = type_tag, "structured hook");
-        let mut value = hook.raw;
+        let mut value = hook.raw().clone();
         if let Some(obj) = value.as_object_mut() {
             obj.insert("type".to_string(), json!(type_tag));
         }

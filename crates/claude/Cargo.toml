@@ -9,10 +9,13 @@ pty = ["dep:pty-host"]
 specs = []
 
 [dependencies]
+anyhow.workspace = true
 futures-core = "0.3"
 pty-host = { workspace = true, optional = true }
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+shell-words.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

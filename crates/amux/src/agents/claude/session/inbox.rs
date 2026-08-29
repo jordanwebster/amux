@@ -4,12 +4,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
-#[cfg(unix)]
-use serde_json::json;
-#[cfg(unix)]
-use tokio::io::AsyncWriteExt;
-#[cfg(unix)]
-use tokio::net::UnixStream;
 use uuid::Uuid;
 
 use super::core::{ClaudeMessagingCredentials, ClaudeSession};
@@ -89,17 +83,12 @@ impl ClaudeDeliveryTarget {
             anyhow::bail!("Claude transcript source is closed");
         };
 
-        let mut stream = UnixStream::connect(&credentials.socket_path).await?;
-        let auth = json!({"type": "auth", "token": credentials.token});
-        let message = json!({
-            "type": "user",
-            "message": {"role": "user", "content": content},
-        });
-        stream.write_all(auth.to_string().as_bytes()).await?;
-        stream.write_all(b"\n").await?;
-        stream.write_all(message.to_string().as_bytes()).await?;
-        stream.write_all(b"\n").await?;
-        stream.shutdown().await?;
+        let mut stream = claude::messaging::MessagingSocket::connect(
+            &credentials.socket_path,
+            &credentials.token,
+        )
+        .await?;
+        stream.send(content).await?;
 
         Ok(rows)
     }

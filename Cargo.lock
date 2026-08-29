@@ -26,6 +26,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
+ "claude",
  "codex",
  "core-foundation",
  "curve25519-dalek",
@@ -505,10 +506,13 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 name = "claude"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "futures-core",
  "pty-host",
+ "semver",
  "serde",
  "serde_json",
+ "shell-words",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",

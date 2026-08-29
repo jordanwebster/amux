@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -29,41 +29,6 @@ pub(super) struct ClaudeMessagingCredentials {
     pub(super) socket_path: PathBuf,
     pub(super) token: String,
 }
-
-/// Inherited environment variables scrubbed before spawning Claude Code.
-///
-/// Claude Code stamps every subprocess it spawns with a child-session marker
-/// set (verified against the claude 2.1.228 binary and by `ps eww` dumps of a
-/// daemon started from inside a Claude session): `CLAUDECODE=1`,
-/// `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDE_PID`,
-/// plus `AI_AGENT`, `CLAUDE_EFFORT`, and `TRACEPARENT` when applicable, and
-/// its process context (`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`,
-/// `CLAUDE_CODE_BRIDGE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`,
-/// `CLAUDE_CODE_MESSAGING_TOKEN`) leaks alongside. An amux daemon whose
-/// ancestry includes a Claude session (the CLI auto-spawns the daemon with
-/// full env inheritance — one `amux` command run from Claude's Bash tool is
-/// enough) carries these vars for its whole lifetime, and a claude spawned
-/// under that daemon inherits `CLAUDE_CODE_CHILD_SESSION`, sees itself as a
-/// nested child session, and turns transcript persistence off ("Transcript
-/// saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker") — which
-/// starves the structured transcript stream entirely.
-///
-/// The list is explicit, not a `CLAUDE_*` prefix wipe: variables like
-/// `CLAUDE_CONFIG_DIR` are legitimate user configuration and must survive.
-const CLAUDE_CHILD_SESSION_ENV_SCRUB: &[&str] = &[
-    "CLAUDECODE",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_PID",
-    "CLAUDE_EFFORT",
-    "AI_AGENT",
-    "TRACEPARENT",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_EXECPATH",
-    "CLAUDE_CODE_BRIDGE_SESSION_ID",
-    "CLAUDE_CODE_MESSAGING_SOCKET",
-    "CLAUDE_CODE_MESSAGING_TOKEN",
-];
 
 /// Environment additions for a spawned Claude Code process.
 ///
@@ -317,7 +282,10 @@ impl ClaudeSession {
         if self.driver == ClaudeDriver::Sdk {
             return Err(anyhow::anyhow!("Claude SDK agents are not implemented yet"));
         }
-        let claude_version = self.claude_version_cache.current();
+        let claude_version = self
+            .claude_version_cache
+            .current()
+            .map(|version| version.to_string());
         let args = self.spawn_args(claude_version.as_deref())?;
         let host_id = self
             .mcp_launch_route
@@ -331,7 +299,7 @@ impl ClaudeSession {
             &args,
             &self.working_dir,
             &env,
-            CLAUDE_CHILD_SESSION_ENV_SCRUB,
+            claude::launch::CHILD_SESSION_ENV_SCRUB,
             self.terminal_size,
         )?;
         let transcript_ingest = TranscriptIngest::with_delivery_ready(
@@ -354,13 +322,8 @@ impl ClaudeSession {
     }
 
     fn spawn_args(&self, version: Option<&str>) -> Result<Vec<String>> {
-        let mut args = match self.session_id {
-            Some(id) => vec!["--resume".to_string(), id.to_string()],
-            None => Vec::new(),
-        };
-        let mut user_args = without_managed_spawn_args(&self.args);
-        let user_settings = take_settings_args(&mut user_args)?;
-        args.extend(user_args);
+        let mut args = claude::launch::without_managed_spawn_args(&self.args);
+        let user_settings = claude::launch::take_settings_args(&mut args)?;
         args.push("--name".to_string());
         args.push(
             self.name
@@ -410,28 +373,36 @@ impl ClaudeSession {
                 serde_json::Value::String(config_path.to_string()),
             );
         }
-        args.push("--mcp-config".to_string());
-        args.push(
-            serde_json::json!({
-                "mcpServers": {
-                    "amux": {
-                        "command": amux_executable,
-                        "args": ["mcp", "agent", "--socket-path", socket_path],
-                        "env": mcp_env
-                    }
-                }
-            })
-            .to_string(),
-        );
-        args.push("--allowedTools".to_string());
-        args.push("mcp__amux__*".to_string());
-        args.push("--settings".to_string());
-        args.push(merged_settings(
-            &self.working_dir,
-            user_settings,
-            amux_executable,
-        )?);
-        Ok(args)
+        let hook_command = vec![
+            amux_executable.to_string(),
+            "hooks".to_string(),
+            "claude".to_string(),
+        ];
+        let managed = claude::launch::ManagedSettings {
+            hook_command: hook_command.clone(),
+            mcp_servers: Vec::new(),
+        };
+        let user_settings = claude::launch::load_user_settings(&self.working_dir, &user_settings)?;
+        let settings = claude::launch::merged_settings(user_settings, &managed);
+        let mcp_servers = vec![claude::launch::McpServerConfig {
+            name: "amux".to_string(),
+            config: serde_json::json!({
+                "command": amux_executable,
+                "args": ["mcp", "agent", "--socket-path", socket_path],
+                "env": mcp_env
+            }),
+        }];
+        Ok(claude::launch::pty_spawn_args(&claude::launch::Launch {
+            binary: self.command.clone().into(),
+            cwd: self.working_dir.clone(),
+            args,
+            session_id: self.session_id.unwrap_or(self.agent_id),
+            resume: self.session_id.is_some(),
+            settings,
+            hook_command,
+            mcp_servers,
+            env_scrub: claude::launch::CHILD_SESSION_ENV_SCRUB,
+        }))
     }
 
     /// Return the current structured output sequence number.
@@ -479,142 +450,6 @@ fn claude_supports_messaging_socket(version: &str) -> bool {
         .next()
         .and_then(|version| semver::Version::parse(version).ok())
         .is_some_and(|version| version >= CLAUDE_MESSAGING_SOCKET_MIN_VERSION)
-}
-
-fn without_managed_spawn_args(args: &[String]) -> Vec<String> {
-    let mut retained = Vec::with_capacity(args.len());
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--name" | "--messaging-socket-path" => {
-                index += 1;
-                if index < args.len() && !args[index].starts_with('-') {
-                    index += 1;
-                }
-            }
-            arg if arg.starts_with("--name=") || arg.starts_with("--messaging-socket-path=") => {
-                index += 1;
-            }
-            _ => {
-                retained.push(args[index].clone());
-                index += 1;
-            }
-        }
-    }
-    retained
-}
-
-fn take_settings_args(args: &mut Vec<String>) -> Result<Vec<String>> {
-    let mut retained = Vec::with_capacity(args.len());
-    let mut settings = Vec::new();
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--settings" => {
-                let value = args
-                    .get(index + 1)
-                    .filter(|value| !value.starts_with('-'))
-                    .context("Claude --settings requires a JSON string or file path")?;
-                settings.push(value.clone());
-                index += 2;
-            }
-            arg if arg.starts_with("--settings=") => {
-                settings.push(arg["--settings=".len()..].to_string());
-                index += 1;
-            }
-            _ => {
-                retained.push(args[index].clone());
-                index += 1;
-            }
-        }
-    }
-    *args = retained;
-    Ok(settings)
-}
-
-fn merged_settings(
-    working_dir: &Path,
-    user_settings: Vec<String>,
-    amux_executable: &str,
-) -> Result<String> {
-    let mut merged = serde_json::Value::Object(serde_json::Map::new());
-    for source in user_settings {
-        let value = read_settings(working_dir, &source)?;
-        deep_merge(&mut merged, value);
-    }
-    deep_merge(&mut merged, managed_hook_settings(amux_executable));
-    Ok(merged.to_string())
-}
-
-fn read_settings(working_dir: &Path, source: &str) -> Result<serde_json::Value> {
-    let value: serde_json::Value = match serde_json::from_str(source) {
-        Ok(value) => value,
-        Err(json_error) => {
-            let path = Path::new(source);
-            let path = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                working_dir.join(path)
-            };
-            let contents = std::fs::read_to_string(&path).with_context(|| {
-                format!(
-                    "Claude --settings value is neither JSON ({json_error}) nor a readable file at {}",
-                    path.display()
-                )
-            })?;
-            serde_json::from_str(&contents).with_context(|| {
-                format!(
-                    "failed to parse Claude settings file {} as JSON",
-                    path.display()
-                )
-            })?
-        }
-    };
-    if !value.is_object() {
-        anyhow::bail!("Claude --settings must contain a JSON object");
-    }
-    Ok(value)
-}
-
-fn deep_merge(destination: &mut serde_json::Value, addition: serde_json::Value) {
-    match (destination, addition) {
-        (serde_json::Value::Object(destination), serde_json::Value::Object(addition)) => {
-            for (key, value) in addition {
-                match destination.get_mut(&key) {
-                    Some(existing) => deep_merge(existing, value),
-                    None => {
-                        destination.insert(key, value);
-                    }
-                }
-            }
-        }
-        (serde_json::Value::Array(destination), serde_json::Value::Array(mut addition)) => {
-            destination.append(&mut addition);
-        }
-        (destination, addition) => *destination = addition,
-    }
-}
-
-fn managed_hook_settings(amux_executable: &str) -> serde_json::Value {
-    let command = format!("{} hooks claude", shell_words::quote(amux_executable));
-    let registration = || {
-        serde_json::json!([{
-            "hooks": [{
-                "type": "command",
-                "command": command.clone(),
-                "async": true
-            }]
-        }])
-    };
-    serde_json::json!({
-        "hooks": {
-            "SessionStart": registration(),
-            "SessionEnd": registration(),
-            "PermissionRequest": registration(),
-            "Stop": registration(),
-            "Notification": registration()
-        }
-    })
 }
 
 impl Serialize for DebugView<'_, ClaudeSession> {
@@ -694,7 +529,19 @@ mod tests {
     }
 
     fn expected_hook_settings(route: &McpLaunchRoute) -> String {
-        managed_hook_settings(route.executable().to_str().unwrap()).to_string()
+        claude::launch::merged_settings(
+            None,
+            &claude::launch::ManagedSettings {
+                hook_command: vec![
+                    route.executable().to_str().unwrap().to_string(),
+                    "hooks".to_string(),
+                    "claude".to_string(),
+                ],
+                mcp_servers: Vec::new(),
+            },
+        )
+        .as_value()
+        .to_string()
     }
 
     fn settings_arg(args: &[String]) -> serde_json::Value {
@@ -985,9 +832,9 @@ mod tests {
         let spec = pty_spawn(
             "claude",
             &[],
-            Path::new("/tmp"),
+            std::path::Path::new("/tmp"),
             &claude_spawn_env(Uuid::new_v4(), Uuid::new_v4()),
-            CLAUDE_CHILD_SESSION_ENV_SCRUB,
+            claude::launch::CHILD_SESSION_ENV_SCRUB,
             None,
         );
 
@@ -1017,13 +864,13 @@ mod tests {
         let spec = pty_spawn(
             "claude",
             &[],
-            Path::new("/tmp"),
+            std::path::Path::new("/tmp"),
             &claude_spawn_env(agent_id, host_id),
-            CLAUDE_CHILD_SESSION_ENV_SCRUB,
+            claude::launch::CHILD_SESSION_ENV_SCRUB,
             None,
         );
 
-        for key in CLAUDE_CHILD_SESSION_ENV_SCRUB {
+        for key in claude::launch::CHILD_SESSION_ENV_SCRUB {
             assert!(
                 spec.env_remove.iter().any(|removed| removed == key),
                 "{key} must be scrubbed"
@@ -1059,7 +906,7 @@ mod tests {
     /// present in the list regardless of how the list evolves.
     #[test]
     fn scrub_list_contains_the_child_session_marker() {
-        assert!(CLAUDE_CHILD_SESSION_ENV_SCRUB.contains(&"CLAUDE_CODE_CHILD_SESSION"));
+        assert!(claude::launch::CHILD_SESSION_ENV_SCRUB.contains(&"CLAUDE_CODE_CHILD_SESSION"));
     }
 
     #[tokio::test]
@@ -1089,10 +936,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            session.claude_version_cache.current().as_deref(),
+            session
+                .claude_version_cache
+                .current()
+                .map(|version| version.to_string())
+                .as_deref(),
             Some("2.1.200"),
             "the row was observed, into the session's private cache"
         );
-        assert_eq!(daemon_cache.current().as_deref(), Some("2.1.224"));
+        assert_eq!(
+            daemon_cache
+                .current()
+                .map(|version| version.to_string())
+                .as_deref(),
+            Some("2.1.224")
+        );
     }
 }

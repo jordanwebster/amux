@@ -10,7 +10,7 @@ use serde_json::json;
 #[cfg(test)]
 use crate::agents::StructuredLogSource;
 #[cfg(test)]
-use crate::agents::claude::hooks::{ClaudeHookKind, HookCommon, ParsedClaudeHook};
+use claude::hooks::{HookCommon, HookPayload};
 
 mod backend;
 mod core;
@@ -90,14 +90,23 @@ mod tests {
         let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
 
         session
-            .handle_hook(ParsedClaudeHook::from_typed(
-                ClaudeHookKind::PermissionRequest,
-                HookCommon {
+            .handle_hook(HookPayload::PermissionRequest {
+                common: HookCommon {
                     session_id,
-                    transcript_path: transcript_path_str.clone(),
-                    cwd: cwd.clone(),
+                    transcript_path: transcript_path.clone(),
+                    cwd: dir.path().to_path_buf(),
+                    permission_mode: None,
+                    raw: json!({
+                        "hook_event_name":"PermissionRequest",
+                        "session_id":session_id,
+                        "transcript_path":transcript_path_str,
+                        "cwd":cwd
+                    }),
                 },
-            ))
+                tool_name: "Bash".into(),
+                tool_input: json!({}),
+                suggestions: Vec::new(),
+            })
             .await;
 
         // 2 transcript lines + 1 hook event = 3
@@ -114,14 +123,22 @@ mod tests {
 
         let seq_after_first_hook = session.current_seq().await;
         session
-            .handle_hook(ParsedClaudeHook::from_typed(
-                ClaudeHookKind::Stop,
-                HookCommon {
+            .handle_hook(HookPayload::Stop {
+                common: HookCommon {
                     session_id,
-                    transcript_path: transcript_path_str,
-                    cwd,
+                    transcript_path: transcript_path.clone(),
+                    cwd: dir.path().to_path_buf(),
+                    permission_mode: None,
+                    raw: json!({
+                        "hook_event_name":"Stop",
+                        "session_id":session_id,
+                        "transcript_path":transcript_path,
+                        "cwd":dir.path()
+                    }),
                 },
-            ))
+                permission_mode: String::new(),
+                last_assistant_message: None,
+            })
             .await;
 
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -150,27 +167,35 @@ mod tests {
         let transcript_path = dir.path().join("transcript.jsonl");
         tokio::fs::write(&transcript_path, "").await.unwrap();
         session
-            .handle_hook(ParsedClaudeHook::from_typed(
-                ClaudeHookKind::SessionStart,
-                HookCommon {
-                    session_id,
-                    transcript_path: transcript_path.display().to_string(),
-                    cwd: cwd.clone(),
-                },
-            ))
+            .handle_hook(HookPayload::SessionStart(HookCommon {
+                session_id,
+                transcript_path: transcript_path.clone(),
+                cwd: dir.path().to_path_buf(),
+                permission_mode: None,
+                raw: json!({
+                    "hook_event_name":"SessionStart",
+                    "session_id":session_id,
+                    "transcript_path":transcript_path,
+                    "cwd":cwd
+                }),
+            }))
             .await;
 
         let seq_before = session.current_seq().await;
 
         session
-            .handle_hook(ParsedClaudeHook::from_typed(
-                ClaudeHookKind::SessionEnd,
-                HookCommon {
-                    session_id,
-                    transcript_path: transcript_path.display().to_string(),
-                    cwd,
-                },
-            ))
+            .handle_hook(HookPayload::SessionEnd(HookCommon {
+                session_id,
+                transcript_path: transcript_path.clone(),
+                cwd: dir.path().to_path_buf(),
+                permission_mode: None,
+                raw: json!({
+                    "hook_event_name":"SessionEnd",
+                    "session_id":session_id,
+                    "transcript_path":transcript_path,
+                    "cwd":cwd
+                }),
+            }))
             .await;
 
         // SessionEnd is internal-only — seq must not advance

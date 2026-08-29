@@ -5302,3 +5302,12 @@ recording replay and byte-for-byte fixture reproduction.
 tools now opt exact JSON field names into personal-identifier replacement.
 Codex host and installation identifiers stay sanitized without rewriting a
 different provider's semantic `server_name`, such as an MCP server id.
+
+2026-08-30 — **Moved shared Claude mechanics behind the provider boundary.**
+The canonical Claude crate now owns PTY and stream-JSON launch construction,
+managed hook and MCP settings, child-session environment scrubbing, semantic
+version probing, external hook parsing and socket forwarding, typed transcript
+rows and relinkable tailing, messaging-socket framing, and persisted-session
+history. The amux host consumes those modules while retaining only daemon
+policy: structured sequencing, hook deduplication, delivery confirmation and
+session lifecycle.
