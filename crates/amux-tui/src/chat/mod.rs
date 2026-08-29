@@ -2,10 +2,12 @@
 //! per-agent view; Claude and Codex keep their content, panels, and key
 //! semantics separate while sharing only proven terminal renderers.
 
+pub(crate) mod blocks;
 pub(crate) mod claude;
 mod codex;
+pub(crate) mod frame;
 pub(crate) mod inline;
-mod layout;
+pub(crate) mod viewport;
 
 use amux_ui::{
     AgentId, AgentMessageKind, AgentMessagePresentation, Command, FamilyNeed, Model, OpId,
@@ -182,7 +184,7 @@ pub(crate) fn build_chat_lines(
         lines[rule] =
             crate::render::invariant_warning_line(ctx.viewport.0 as usize, ctx.theme.warn());
     }
-    lines
+    frame::compose_opaque_chat_frame(lines, ctx.theme, ctx.viewport)
 }
 
 /// Everything an agent-message row needs besides the message itself: who

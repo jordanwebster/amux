@@ -18,7 +18,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::chat::claude::{View, ask_ui, entry_watermark, panel, reader};
-use crate::chat::layout::{ChatLayout, FrameRows};
+use crate::chat::frame::{ChatLayout, FrameRows};
 use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
 use crate::composer::Composer;
 use crate::markdown;

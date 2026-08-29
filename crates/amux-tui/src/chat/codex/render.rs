@@ -14,7 +14,7 @@ use ratatui::text::{Line, Span};
 use serde_json::Value;
 
 use super::View;
-use crate::chat::layout::{ChatLayout, FrameRows};
+use crate::chat::frame::{ChatLayout, FrameRows};
 use crate::chat::{FeedScroll, MessageView, entry_watermark, family_banner, message_glyph};
 use crate::markdown;
 use crate::render::{

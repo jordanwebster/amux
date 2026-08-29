@@ -5235,3 +5235,11 @@ path produced a dark `claude-idle` PNG and two repeated renders matched byte
 for byte. The QA evidence records that this checkout's configured Cargo build
 cache is not writable unless `CARGO_BUILD_BUILD_DIR` is unset and a local
 `--target-dir` is supplied; that README startup gap was filed for later work.
+
+2026-08-29 — **Moved both chats into one full-screen frame engine.** Shared
+geometry now budgets the header, feed, activity, paused state, and bottom
+block; shared windowing selects painted block rows and always fills the
+terminal; and a content-validating cache reuses paint only while the entry,
+width, theme, and expansion state still match. Claude and Codex enter the
+shell through temporary opaque blocks, which removes their outer borders
+without normalizing either agent's native content.
