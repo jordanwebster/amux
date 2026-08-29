@@ -57,6 +57,12 @@ pub(crate) struct FeedBlocks {
     pub(crate) loading: bool,
 }
 
+impl FeedBlocks {
+    pub(crate) fn boundary_rows(&self) -> usize {
+        usize::from(self.history_truncated) + usize::from(self.loading)
+    }
+}
+
 /// Eye-judged whitespace consumed by the geometry engine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FrameSpacing {
@@ -135,13 +141,17 @@ pub(crate) struct FeedMetrics {
 
 /// Count rows directly from painted blocks, without repainting content.
 pub(crate) fn feed_metrics(
-    blocks: &[PaintedBlock],
+    feed: &FeedBlocks,
     spacing: FrameSpacing,
     geometry: &ChatGeometry,
 ) -> FeedMetrics {
-    let mut cursor = 0;
-    let mut ranges = Vec::with_capacity(blocks.len());
-    for (index, block) in blocks.iter().enumerate() {
+    // Boundary rows share the scroll coordinate space with blocks. Their
+    // offset must be present in both max_top and block ranges or a
+    // truncated feed can never reach its real bottom and focus motion
+    // targets the wrong rows.
+    let mut cursor = feed.boundary_rows();
+    let mut ranges = Vec::with_capacity(feed.blocks.len());
+    for (index, block) in feed.blocks.iter().enumerate() {
         if index > 0 {
             cursor += spacing.block_gap;
         }
@@ -179,7 +189,7 @@ pub(crate) fn compose_chat_frame(
         return fit_frame(overlay, geometry.width, geometry.height, theme);
     }
 
-    let metrics = feed_metrics(&parts.feed.blocks, spacing, &geometry);
+    let metrics = feed_metrics(&parts.feed, spacing, &geometry);
     let mut boundary = Vec::with_capacity(
         usize::from(parts.feed.history_truncated) + usize::from(parts.feed.loading),
     );
@@ -210,7 +220,7 @@ pub(crate) fn compose_chat_frame(
         );
     }
 
-    let max_top = (boundary_rows + feed.len()).saturating_sub(geometry.feed_rows);
+    let max_top = metrics.max_top;
     let start = match viewport.scroll {
         FeedScroll::Following => max_top,
         FeedScroll::Paused { top_line, .. } => top_line.min(max_top),
@@ -334,10 +344,6 @@ fn mark_focused(line: Line<'static>, theme: Theme) -> Line<'static> {
     }
     Line { spans, ..line }
 }
-
-
-
-
 
 /// Paint/reuse counters for the most recently measured frame interval.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -559,7 +565,11 @@ mod tests {
             1,
         );
         let metrics = feed_metrics(
-            &blocks,
+            &FeedBlocks {
+                blocks,
+                history_truncated: false,
+                loading: false,
+            },
             FrameSpacing {
                 header_gap: 0,
                 block_gap: 2,
@@ -576,6 +586,31 @@ mod tests {
                 (BlockKey(3), 7..7)
             ]
         );
+    }
+
+    #[test]
+    fn feed_metrics_include_boundary_rows_in_bounds_and_ranges() {
+        let feed = FeedBlocks {
+            blocks: vec![block(7, &["one", "two", "three"])],
+            history_truncated: true,
+            loading: true,
+        };
+        let geometry = chat_geometry(
+            (20, 5),
+            FrameSpacing {
+                header_gap: 0,
+                block_gap: 1,
+                bottom_gap: 0,
+            },
+            false,
+            false,
+            false,
+            1,
+        );
+        let metrics = feed_metrics(&feed, FrameSpacing::DEFAULT, &geometry);
+        assert_eq!(metrics.total_rows, 5);
+        assert_eq!(metrics.max_top, 2);
+        assert_eq!(metrics.ranges, vec![(BlockKey(7), 2..5)]);
     }
 
     #[test]
@@ -741,7 +776,6 @@ mod tests {
         );
         assert_eq!(line_text(&marked), "\u{258e} wide 世 row");
     }
-
 
     #[test]
     fn cache_hits_and_content_changes_miss() {

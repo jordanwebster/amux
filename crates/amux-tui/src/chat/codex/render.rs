@@ -29,7 +29,6 @@ use crate::chat::blocks::{
 use crate::chat::diff::diff_rows_from_patch;
 use crate::chat::frame::{
     BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintedBlock, chat_geometry,
-    compose_chat_frame,
 };
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph};
@@ -41,8 +40,6 @@ use crate::view::QuitGuard;
 
 const GLYPH_COL: usize = blocks::GLYPH_COL;
 const TEXT_COL: usize = blocks::TEXT_COL;
-const MIN_WIDTH: usize = 24;
-const MIN_HEIGHT: usize = 10;
 const DECISION_LABEL_MAX: usize = 52;
 const DECISION_KIND_MAX: usize = 22;
 const DECISION_DETAIL_MAX: usize = DECISION_LABEL_MAX - DECISION_KIND_MAX - 3;
@@ -58,6 +55,7 @@ const PATCH_PREVIEW_ROWS: usize = 12;
 pub(crate) fn codex_frame_parts(
     model: &Model,
     chat: &View,
+    viewport: &FeedViewport,
     ctx: &FrameContext,
 ) -> ChatFrameParts {
     let width = ctx.viewport.0 as usize;
@@ -81,6 +79,7 @@ pub(crate) fn codex_frame_parts(
             .map(|label| configuration_row(label, theme)),
     };
 
+    let paused = matches!(viewport.scroll, FeedScroll::Paused { .. });
     ChatFrameParts {
         header: header_row(model, chat, &phase, theme, width),
         banner,
@@ -96,40 +95,11 @@ pub(crate) fn codex_frame_parts(
             loading,
         },
         activity: working.then(|| working_row(model, chat, &phase, ctx)),
-        bottom: bottom_block(model, chat, theme, width, height),
+        bottom: bottom_block(model, chat, theme, width, height, paused),
         overlay: chat
             .help
             .then(|| help_overlay(model, chat, theme, width, height)),
     }
-}
-
-pub(crate) fn build_chat_lines(
-    model: &Model,
-    chat: &View,
-    ctx: &FrameContext,
-) -> Vec<Line<'static>> {
-    let width = ctx.viewport.0 as usize;
-    let height = ctx.viewport.1 as usize;
-    if width < MIN_WIDTH || height < MIN_HEIGHT {
-        return vec![Line::from("amux: terminal too small")];
-    }
-    let parts = codex_frame_parts(model, chat, ctx);
-    let overlaid = parts.overlay.is_some();
-    let banner = parts.banner.is_some();
-    let viewport = FeedViewport {
-        scroll: chat.scroll.clone(),
-        ..FeedViewport::following()
-    };
-    let mut lines = compose_chat_frame(parts, &viewport, ctx.theme, ctx.viewport);
-
-    // The sticky diagnostic takes the gap row under the header: a warning
-    // costs the feed nothing, and it stays off the overlay, whose rows are
-    // all content.
-    let row = 1 + usize::from(banner);
-    if !overlaid && model.has_invariant_warning() && lines.len() > row {
-        lines[row] = blocks::invariant_warning_row(width, ctx.theme);
-    }
-    lines
 }
 
 // --- geometry the key handler shares ----------------------------------------
@@ -150,27 +120,8 @@ pub(in crate::chat) fn geometry(
         banner,
         active_phase(&amux_ui::codex::phase(model, chat.agent)),
         paused,
-        bottom_block(model, chat, theme, width, height).len(),
+        bottom_block(model, chat, theme, width, height, paused).len(),
     )
-}
-
-/// Feed rows under the paused layout — the paused rule takes a row, so
-/// paging targets that geometry.
-pub(crate) fn feed_rows_when_paused(model: &Model, chat: &View, viewport: (u16, u16)) -> usize {
-    geometry(model, chat, viewport, true).feed_rows
-}
-
-/// Total feed display rows at this width — the key handler's scroll
-/// bound.
-pub(crate) fn feed_line_count(model: &Model, chat: &View, width: usize) -> usize {
-    let blocks = feed_blocks(model, chat, Theme::default(), width);
-    let gaps = FrameSpacing::DEFAULT.block_gap * blocks.len().saturating_sub(1);
-    let boundary = usize::from(
-        model
-            .codex(chat.agent)
-            .is_some_and(|layer| layer.history_truncated()),
-    );
-    boundary + gaps + blocks.iter().map(|block| block.lines.len()).sum::<usize>()
 }
 
 // --- the header and the rows around the feed --------------------------------
@@ -302,6 +253,7 @@ fn bottom_block(
     theme: Theme,
     width: usize,
     height: usize,
+    paused: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = if chat.read_only(model) {
         readonly_bottom(theme)
@@ -330,7 +282,7 @@ fn bottom_block(
     ) {
         unsupported_panel(chat, width, theme)
     } else {
-        return composer_bottom(model, chat, theme, width, height);
+        return composer_bottom(model, chat, theme, width, height, paused);
     };
 
     // Keep the tail: the hint and action rows survive, body rows give way
@@ -682,6 +634,7 @@ fn composer_bottom(
     theme: Theme,
     width: usize,
     height: usize,
+    paused: bool,
 ) -> Vec<Line<'static>> {
     // The composer grows from one row to six, never past what the frame
     // can spare: the hint row and a feed row survive every height.
@@ -714,11 +667,11 @@ fn composer_bottom(
         )
     };
     lines.push(Line::default());
-    lines.push(footer_line(model, chat, theme));
+    lines.push(footer_line(model, chat, theme, paused));
     lines
 }
 
-fn footer_line(model: &Model, chat: &View, theme: Theme) -> Line<'static> {
+fn footer_line(model: &Model, chat: &View, theme: Theme, paused: bool) -> Line<'static> {
     let mut line = if chat.quit_guard.is_armed() {
         armed_quit_line(theme)
     } else {
@@ -733,7 +686,7 @@ fn footer_line(model: &Model, chat: &View, theme: Theme) -> Line<'static> {
                 format!("send failed: {message}"),
                 theme.text(),
             );
-        } else if matches!(chat.scroll, FeedScroll::Paused { .. }) {
+        } else if paused {
             push_span(
                 &mut line,
                 TEXT_COL,
@@ -1438,8 +1391,6 @@ fn text_width(width: usize) -> usize {
     width.saturating_sub(TEXT_COL + 1).max(1)
 }
 
-
-
 fn glyph_text(
     glyph: &str,
     text: &str,
@@ -1461,10 +1412,6 @@ fn glyph_text(
         })
         .collect()
 }
-
-
-
-
 
 /// The `?` overlay: this chat's full effective key list, fullscreen like
 /// the Claude chat's. On short viewports the tail gives way and a `⋮` row

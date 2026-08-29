@@ -3,9 +3,9 @@ use amux_ui::{Command, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use super::{View, render};
+use super::View;
 use crate::chat::inline::{InlineAsk, InlineOutcome};
-use crate::chat::{FeedScroll, entry_watermark};
+use crate::chat::viewport::ScrollIntent;
 use crate::composer;
 use crate::view::UiAction;
 
@@ -19,6 +19,7 @@ pub(crate) fn handle_chat_key(
     if key.kind == KeyEventKind::Release {
         return None;
     }
+    chat.scroll_intent = None;
     chat.send_failure = None;
     chat.answer_failure = None;
     chat.reconcile(model);
@@ -127,8 +128,8 @@ pub(crate) fn handle_chat_key(
 
     match key.code {
         KeyCode::Esc => {
-            if matches!(chat.scroll, FeedScroll::Paused { .. }) && chat.composer.is_empty() {
-                chat.scroll = FeedScroll::Following;
+            if chat.composer.is_empty() {
+                follow(chat);
             }
         }
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -143,7 +144,7 @@ pub(crate) fn handle_chat_key(
         KeyCode::PageUp => page_up(chat, model, viewport),
         KeyCode::PageDown => page_down(chat, model, viewport),
         KeyCode::Home if ctrl => jump_top(chat, model, viewport),
-        KeyCode::End if ctrl => chat.scroll = FeedScroll::Following,
+        KeyCode::End if ctrl => follow(chat),
         KeyCode::Char('?') if !ctrl && chat.composer.is_empty() => chat.help = true,
         KeyCode::Tab | KeyCode::BackTab => {}
         _ => {
@@ -302,13 +303,13 @@ fn readonly_key(
 ) -> Option<UiAction> {
     match key.code {
         KeyCode::Char('q') => return Some(UiAction::CloseChat),
-        KeyCode::Esc => chat.scroll = FeedScroll::Following,
+        KeyCode::Esc => follow(chat),
         KeyCode::PageUp => page_up(chat, model, viewport),
         KeyCode::PageDown => page_down(chat, model, viewport),
         KeyCode::Up | KeyCode::Char('k') => line_up(chat, model, viewport),
         KeyCode::Down | KeyCode::Char('j') => line_down(chat, model, viewport),
         KeyCode::Home | KeyCode::Char('g') => jump_top(chat, model, viewport),
-        KeyCode::End | KeyCode::Char('G') => chat.scroll = FeedScroll::Following,
+        KeyCode::End | KeyCode::Char('G') => follow(chat),
         _ => {}
     }
     None
@@ -320,88 +321,36 @@ fn scroll_keys(chat: &mut View, model: &Model, key: &KeyEvent, viewport: (u16, u
         KeyCode::PageUp => page_up(chat, model, viewport),
         KeyCode::PageDown => page_down(chat, model, viewport),
         KeyCode::Home if ctrl => jump_top(chat, model, viewport),
-        KeyCode::End if ctrl => chat.scroll = FeedScroll::Following,
+        KeyCode::End if ctrl => follow(chat),
         _ => return false,
     }
     true
 }
 
-fn metrics(chat: &View, model: &Model, viewport: (u16, u16)) -> (usize, usize) {
-    let feed_h = render::feed_rows_when_paused(model, chat, viewport).max(1);
-    (feed_h.saturating_sub(1).max(1), feed_h)
+fn request_scroll(chat: &mut View, intent: ScrollIntent) {
+    chat.scroll_intent = Some(intent);
 }
 
-fn pause_at(chat: &mut View, model: &Model, top_line: usize) {
-    let watermark = match chat.scroll {
-        FeedScroll::Paused {
-            entry_watermark, ..
-        } => entry_watermark,
-        FeedScroll::Following => entry_watermark(model, chat.agent),
-    };
-    chat.scroll = FeedScroll::Paused {
-        top_line,
-        entry_watermark: watermark,
-    };
+fn follow(chat: &mut View) {
+    request_scroll(chat, ScrollIntent::Follow);
 }
 
-fn page_up(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let (page, feed_h) = metrics(chat, model, viewport);
-    let total = render::feed_line_count(model, chat, viewport.0 as usize);
-    match chat.scroll {
-        FeedScroll::Following => {
-            let max_top = total.saturating_sub(feed_h);
-            if max_top > 0 {
-                pause_at(chat, model, max_top.saturating_sub(page));
-            }
-        }
-        FeedScroll::Paused { top_line, .. } => {
-            pause_at(chat, model, top_line.saturating_sub(page));
-        }
-    }
+fn page_up(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Page(-1));
 }
 
-fn page_down(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let FeedScroll::Paused { top_line, .. } = chat.scroll else {
-        return;
-    };
-    let (page, feed_h) = metrics(chat, model, viewport);
-    let total = render::feed_line_count(model, chat, viewport.0 as usize);
-    let max_top = total.saturating_sub(feed_h);
-    if top_line + page >= max_top {
-        chat.scroll = FeedScroll::Following;
-    } else {
-        pause_at(chat, model, top_line + page);
-    }
+fn page_down(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Page(1));
 }
 
-fn jump_top(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let (_, feed_h) = metrics(chat, model, viewport);
-    if render::feed_line_count(model, chat, viewport.0 as usize) > feed_h {
-        pause_at(chat, model, 0);
-    }
+fn jump_top(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Oldest);
 }
 
-fn line_up(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let (_, feed_h) = metrics(chat, model, viewport);
-    let max_top = render::feed_line_count(model, chat, viewport.0 as usize).saturating_sub(feed_h);
-    match chat.scroll {
-        FeedScroll::Following if max_top > 0 => pause_at(chat, model, max_top - 1),
-        FeedScroll::Paused { top_line, .. } => {
-            pause_at(chat, model, top_line.saturating_sub(1));
-        }
-        FeedScroll::Following => {}
-    }
+fn line_up(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Rows(-1));
 }
 
-fn line_down(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let FeedScroll::Paused { top_line, .. } = chat.scroll else {
-        return;
-    };
-    let (_, feed_h) = metrics(chat, model, viewport);
-    let max_top = render::feed_line_count(model, chat, viewport.0 as usize).saturating_sub(feed_h);
-    if top_line + 1 >= max_top {
-        chat.scroll = FeedScroll::Following;
-    } else {
-        pause_at(chat, model, top_line + 1);
-    }
+fn line_down(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Rows(1));
 }

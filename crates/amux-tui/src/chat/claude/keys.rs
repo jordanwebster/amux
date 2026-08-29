@@ -14,11 +14,11 @@ use amux_ui::{ClaudeCommand, Command, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::chat::FeedScroll;
+use crate::chat::claude::View;
 use crate::chat::claude::ask_ui::{self, AskKeyOutcome, AskStage, AskUi};
 use crate::chat::claude::reader::{self, ReaderSource, ReaderView};
-use crate::chat::claude::{View, entry_watermark, render};
 use crate::chat::inline::{InlineAsk, InlineOutcome};
+use crate::chat::viewport::ScrollIntent;
 use crate::composer;
 use crate::composer::Composer;
 use crate::view::UiAction;
@@ -33,6 +33,7 @@ pub fn handle_chat_key(
     if key.kind == KeyEventKind::Release {
         return None;
     }
+    chat.scroll_intent = None;
     // Any keypress dismisses a stated failure (dismissal is view state;
     // the Model keeps the outcome).
     chat.send_failure = None;
@@ -296,7 +297,7 @@ fn composer_key(
         // Ctrl+Home / Ctrl+End: feed oldest / newest (ext tier —
         // convenience, never the sole path; PgUp/PgDn are guaranteed).
         KeyCode::Home if ctrl => jump_top(chat, model, viewport),
-        KeyCode::End if ctrl => chat.scroll = FeedScroll::Following,
+        KeyCode::End if ctrl => follow(chat),
         // The `?` help overlay — on an EMPTY draft only; with anything
         // typed, `?` is a printable and types (P2). The footer hint
         // advertises it exactly when this branch is live.
@@ -470,8 +471,8 @@ fn esc_chain(chat: &mut View) {
         return;
     }
     // Stage 3: reset feed scroll to following — empty draft only.
-    if matches!(chat.scroll, FeedScroll::Paused { .. }) && chat.composer.is_empty() {
-        chat.scroll = FeedScroll::Following;
+    if chat.composer.is_empty() {
+        follow(chat);
     }
     // Stage 4: nothing.
 }
@@ -622,7 +623,7 @@ fn scroll_keys(chat: &mut View, model: &Model, key: &KeyEvent, viewport: (u16, u
         KeyCode::PageUp => page_up(chat, model, viewport),
         KeyCode::PageDown => page_down(chat, model, viewport),
         KeyCode::Home if ctrl => jump_top(chat, model, viewport),
-        KeyCode::End if ctrl => chat.scroll = FeedScroll::Following,
+        KeyCode::End if ctrl => follow(chat),
         _ => return false,
     }
     true
@@ -657,116 +658,48 @@ fn readonly_key(
             }
         }
         KeyCode::Esc => {
-            if matches!(chat.scroll, FeedScroll::Paused { .. }) {
-                chat.scroll = FeedScroll::Following;
-            }
+            follow(chat);
         }
         KeyCode::PageUp => page_up(chat, model, viewport),
         KeyCode::PageDown => page_down(chat, model, viewport),
         KeyCode::Up | KeyCode::Char('k') => line_up(chat, model, viewport),
         KeyCode::Down | KeyCode::Char('j') => line_down(chat, model, viewport),
         KeyCode::Home | KeyCode::Char('g') => jump_top(chat, model, viewport),
-        KeyCode::End | KeyCode::Char('G') => chat.scroll = FeedScroll::Following,
+        KeyCode::End | KeyCode::Char('G') => follow(chat),
         _ => {}
     }
     None
 }
 
-/// Scroll bounds under the paused layout (the paused rule takes a row, so
-/// paging targets that geometry).
-fn scroll_metrics(chat: &View, model: &Model, viewport: (u16, u16)) -> (usize, usize) {
-    let feed_h = render::feed_rows_when_paused(model, chat, viewport).max(1);
-    let page = feed_h.saturating_sub(1).max(1);
-    (page, feed_h)
+fn request_scroll(chat: &mut View, intent: ScrollIntent) {
+    chat.scroll_intent = Some(intent);
 }
 
-fn pause_at(chat: &mut View, model: &Model, top_line: usize) {
-    let entry_watermark = match chat.scroll {
-        // Re-anchoring while already paused keeps the original watermark:
-        // "new entries" counts from when following stopped.
-        FeedScroll::Paused {
-            entry_watermark, ..
-        } => entry_watermark,
-        FeedScroll::Following => entry_watermark(model, chat.agent),
-    };
-    chat.scroll = FeedScroll::Paused {
-        top_line,
-        entry_watermark,
-    };
+fn follow(chat: &mut View) {
+    request_scroll(chat, ScrollIntent::Follow);
 }
 
-fn page_up(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let (page, feed_h) = scroll_metrics(chat, model, viewport);
-    let total = render::feed_line_count(model, chat, viewport.0 as usize);
-    match chat.scroll {
-        FeedScroll::Following => {
-            let max_top = total.saturating_sub(feed_h);
-            if max_top == 0 {
-                // Everything already fits: nothing to scroll back to.
-                return;
-            }
-            pause_at(chat, model, max_top.saturating_sub(page));
-        }
-        FeedScroll::Paused { top_line, .. } => {
-            pause_at(chat, model, top_line.saturating_sub(page));
-        }
-    }
+fn page_up(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Page(-1));
 }
 
-fn page_down(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let FeedScroll::Paused { top_line, .. } = chat.scroll else {
-        return;
-    };
-    let (page, feed_h) = scroll_metrics(chat, model, viewport);
-    let total = render::feed_line_count(model, chat, viewport.0 as usize);
-    let max_top = total.saturating_sub(feed_h);
-    let next = top_line + page;
-    if next >= max_top {
-        // Reaching the bottom resumes following — sticky-bottom re-pins,
-        // no dedicated resume key (keybindings §2.4).
-        chat.scroll = FeedScroll::Following;
-    } else {
-        pause_at(chat, model, next);
-    }
+fn page_down(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Page(1));
 }
 
 /// Jump to the feed's oldest retained line (Ctrl+Home; `g`/Home in the
 /// read-only pager).
-fn jump_top(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let (_, feed_h) = scroll_metrics(chat, model, viewport);
-    let total = render::feed_line_count(model, chat, viewport.0 as usize);
-    if total > feed_h {
-        pause_at(chat, model, 0);
-    }
+fn jump_top(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Oldest);
 }
 
 /// One-line pager motion (read-only chats: ↑/k, ↓/j).
-fn line_up(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let (_, feed_h) = scroll_metrics(chat, model, viewport);
-    let total = render::feed_line_count(model, chat, viewport.0 as usize);
-    let max_top = total.saturating_sub(feed_h);
-    match chat.scroll {
-        FeedScroll::Following => {
-            if max_top > 0 {
-                pause_at(chat, model, max_top - 1);
-            }
-        }
-        FeedScroll::Paused { top_line, .. } => pause_at(chat, model, top_line.saturating_sub(1)),
-    }
+fn line_up(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Rows(-1));
 }
 
-fn line_down(chat: &mut View, model: &Model, viewport: (u16, u16)) {
-    let FeedScroll::Paused { top_line, .. } = chat.scroll else {
-        return;
-    };
-    let (_, feed_h) = scroll_metrics(chat, model, viewport);
-    let total = render::feed_line_count(model, chat, viewport.0 as usize);
-    let max_top = total.saturating_sub(feed_h);
-    if top_line + 1 >= max_top {
-        chat.scroll = FeedScroll::Following;
-    } else {
-        pause_at(chat, model, top_line + 1);
-    }
+fn line_down(chat: &mut View, _model: &Model, _viewport: (u16, u16)) {
+    request_scroll(chat, ScrollIntent::Rows(1));
 }
 
 #[cfg(test)]
@@ -777,6 +710,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::chat::FeedScroll;
+    use crate::chat::claude::render;
+    use crate::chat::frame::{FrameSpacing, compose_chat_frame, feed_metrics};
+    use crate::chat::viewport::{FeedViewport, apply_scroll};
 
     fn agent_id() -> amux_ui::AgentId {
         Uuid::from_u128(7)
@@ -1107,29 +1044,51 @@ mod tests {
         model
     }
 
+    fn drive_scroll(chat: &mut View, feed: &mut FeedViewport, model: &Model, key: KeyEvent) {
+        super::handle_chat_key(chat, model, key, VIEWPORT, t(0));
+        let Some(intent) = chat.scroll_intent.take() else {
+            return;
+        };
+        let ctx = crate::render::FrameContext {
+            viewport: VIEWPORT,
+            theme: crate::render::Theme::default(),
+            now: t(0),
+        };
+        let parts = render::claude_frame_parts(model, chat, feed, &ctx);
+        let geometry = render::geometry(model, chat, VIEWPORT, true);
+        let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &geometry);
+        apply_scroll(
+            feed,
+            &metrics,
+            intent,
+            crate::chat::entry_watermark(model, chat.agent),
+        );
+    }
+
     #[test]
     fn pgup_pauses_with_a_watermark_and_pgdn_at_the_bottom_resumes() {
         let model = long_feed_model();
         let mut chat = View::open(agent_id(), 'a', false);
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
+        let mut feed = FeedViewport::following();
+        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageUp));
         let FeedScroll::Paused {
             entry_watermark, ..
-        } = chat.scroll
+        } = feed.scroll
         else {
             panic!("PgUp pauses following");
         };
         assert_eq!(entry_watermark, 20, "watermark is the entry count at pause");
 
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageDown), VIEWPORT, t(0));
+        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageUp));
+        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageDown));
         assert!(
-            matches!(chat.scroll, FeedScroll::Paused { .. }),
+            matches!(feed.scroll, FeedScroll::Paused { .. }),
             "mid-feed PgDn stays paused"
         );
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageDown), VIEWPORT, t(0));
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageDown), VIEWPORT, t(0));
+        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageDown));
+        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageDown));
         assert_eq!(
-            chat.scroll,
+            feed.scroll,
             FeedScroll::Following,
             "reaching the bottom resumes following"
         );
@@ -1139,23 +1098,25 @@ mod tests {
     fn pgup_with_a_short_feed_stays_following() {
         let model = idle_model();
         let mut chat = View::open(agent_id(), 'a', false);
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
-        assert_eq!(chat.scroll, FeedScroll::Following);
+        let mut feed = FeedViewport::following();
+        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageUp));
+        assert_eq!(feed.scroll, FeedScroll::Following);
     }
 
     #[test]
     fn esc_resets_scroll_only_on_an_empty_draft() {
         let model = long_feed_model();
         let mut chat = chat_with_draft("reading notes");
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
-        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT, t(0));
+        let mut feed = FeedViewport::following();
+        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageUp));
+        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::Esc));
         assert!(
-            matches!(chat.scroll, FeedScroll::Paused { .. }),
+            matches!(feed.scroll, FeedScroll::Paused { .. }),
             "a non-empty draft keeps Esc away from the scroll (stage 3 gate)"
         );
         chat.composer.kill_all();
-        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT, t(0));
-        assert_eq!(chat.scroll, FeedScroll::Following);
+        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::Esc));
+        assert_eq!(feed.scroll, FeedScroll::Following);
     }
 
     #[test]
@@ -2139,7 +2100,9 @@ mod tests {
             theme: crate::render::Theme::default(),
             now: t(60),
         };
-        let frame = crate::chat::claude::build_chat_lines(&model, &chat, &ctx);
+        let viewport = FeedViewport::following();
+        let parts = render::claude_frame_parts(&model, &chat, &viewport, &ctx);
+        let frame = compose_chat_frame(parts, &viewport, ctx.theme, ctx.viewport);
         let text: String = frame
             .iter()
             .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))

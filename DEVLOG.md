@@ -4,6 +4,23 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **One viewport reducer owns both chat pagers.** Claude and Codex
+now keep one `FeedViewport` beside their native view instead of duplicating
+sticky-bottom state and paging arithmetic inside each adapter. Their key paths
+emit row, page, oldest, and follow intents; the outer chat seam applies those
+intents against `FeedMetrics`, preserving the first paused entry watermark,
+clamping stale positions, and returning to following exactly at the bottom.
+
+Each render caches the metrics calculated from the blocks it already painted,
+so a later paging key does not repaint the feed merely to count its rows. A
+pre-first-render or resized input has one safe fallback through the same
+adapter and immediately caches the result. Retained-history and loading rows
+now occupy the same metric coordinate space as block ranges, which keeps the
+bottom of a truncated feed reachable and prepares focus motion to target the
+rows the frame actually displays.
+
+---
+
 2026-08-29 — **The chat's invariant warning stops wearing the fleet's border.**
 Both chats wrote the kernel's consistency warning over their header gap by
 borrowing the fleet's row, which is drawn inside a border; on a full-screen

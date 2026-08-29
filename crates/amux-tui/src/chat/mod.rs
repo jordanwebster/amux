@@ -10,16 +10,20 @@ pub(crate) mod frame;
 pub(crate) mod inline;
 pub(crate) mod viewport;
 
+use std::cell::RefCell;
+
 use amux_ui::{
     AgentId, AgentMessageKind, AgentMessagePresentation, Command, FamilyNeed, Model, OpId,
     StructuredProtocol, Why, message_digest,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::KeyEvent;
+use frame::{FeedMetrics, FrameSpacing, compose_chat_frame, feed_metrics};
 use ratatui::text::Line;
+use viewport::{FeedViewport, apply_scroll};
 
 use crate::composer::Composer;
-use crate::render::FrameContext;
+use crate::render::{FrameContext, Theme};
 use crate::view::{QuitGuard, UiAction};
 
 /// Feed scroll state shared because both native screens have the same
@@ -40,12 +44,23 @@ enum AgentChatView {
     Codex(codex::View),
 }
 
+#[derive(Clone, Debug)]
+struct CachedFeedMetrics {
+    viewport: (u16, u16),
+    metrics: FeedMetrics,
+}
+
 /// Renderer-local state for one structured chat. Native sub-state remains
 /// namespaced; dispatch is exhaustive at this one additive seam.
 #[derive(Clone, Debug)]
 pub struct ChatView {
     pub agent: AgentId,
+    pub(crate) viewport: FeedViewport,
     inner: AgentChatView,
+    /// Metrics from the adapter blocks painted for the latest frame. Key
+    /// handling consumes this instead of walking and painting the feed a
+    /// second time merely to discover its scroll bounds.
+    feed_metrics: RefCell<Option<CachedFeedMetrics>>,
 }
 
 impl ChatView {
@@ -59,21 +74,30 @@ impl ChatView {
                 AgentChatView::Codex(codex::View::open(agent, leader, kitty))
             }
         };
-        Some(Self { agent, inner })
+        Some(Self {
+            agent,
+            viewport: FeedViewport::following(),
+            inner,
+            feed_metrics: RefCell::new(None),
+        })
     }
 
     /// Deterministic constructors used by pure golden fixtures.
     pub fn open_claude(agent: AgentId, leader: char, kitty: bool) -> Self {
         Self {
             agent,
+            viewport: FeedViewport::following(),
             inner: AgentChatView::Claude(claude::View::open(agent, leader, kitty)),
+            feed_metrics: RefCell::new(None),
         }
     }
 
     pub fn open_codex(agent: AgentId, leader: char, kitty: bool) -> Self {
         Self {
             agent,
+            viewport: FeedViewport::following(),
             inner: AgentChatView::Codex(codex::View::open(agent, leader, kitty)),
+            feed_metrics: RefCell::new(None),
         }
     }
 
@@ -106,19 +130,18 @@ impl ChatView {
     }
 
     pub fn set_scroll(&mut self, scroll: FeedScroll) {
-        match &mut self.inner {
-            AgentChatView::Claude(view) => view.scroll = scroll,
-            AgentChatView::Codex(view) => view.scroll = scroll,
-        }
+        self.viewport.scroll = scroll;
     }
 
     pub fn set_codex_configuration_label(&mut self, label: Option<String>) {
         if let AgentChatView::Codex(view) = &mut self.inner {
             view.configuration_label = label;
+            self.feed_metrics.get_mut().take();
         }
     }
 
     pub fn reconcile(&mut self, model: &Model) {
+        self.feed_metrics.get_mut().take();
         match &mut self.inner {
             AgentChatView::Claude(view) => view.reconcile(model),
             AgentChatView::Codex(view) => view.reconcile(model),
@@ -126,6 +149,7 @@ impl ChatView {
     }
 
     pub fn note_dispatched(&mut self, op: OpId, command: &Command) {
+        self.feed_metrics.get_mut().take();
         match &mut self.inner {
             AgentChatView::Claude(view) => view.note_dispatched(op, command),
             AgentChatView::Codex(view) => view.note_dispatched(op, command),
@@ -142,6 +166,42 @@ impl ChatView {
     pub fn expire_quit_guard(&mut self, now: DateTime<Utc>) -> bool {
         self.quit_guard_mut().expire(now)
     }
+
+    fn metrics_for(&self, model: &Model, viewport: (u16, u16), now: DateTime<Utc>) -> FeedMetrics {
+        if let Some(cached) = self.feed_metrics.borrow().as_ref()
+            && cached.viewport == viewport
+        {
+            return cached.metrics.clone();
+        }
+
+        // An input can arrive before the first frame, including in tests.
+        // Build the same adapter parts once as a fallback, then retain the
+        // resulting metrics for every subsequent key until render or
+        // reconciliation refreshes them.
+        let ctx = FrameContext {
+            viewport,
+            theme: Theme::default(),
+            now,
+        };
+        let parts = match &self.inner {
+            AgentChatView::Claude(view) => {
+                claude::claude_frame_parts(model, view, &self.viewport, &ctx)
+            }
+            AgentChatView::Codex(view) => {
+                codex::codex_frame_parts(model, view, &self.viewport, &ctx)
+            }
+        };
+        let geometry = match &self.inner {
+            AgentChatView::Claude(view) => claude::geometry(model, view, viewport, true),
+            AgentChatView::Codex(view) => codex::geometry(model, view, viewport, true),
+        };
+        let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &geometry);
+        self.feed_metrics.replace(Some(CachedFeedMetrics {
+            viewport,
+            metrics: metrics.clone(),
+        }));
+        metrics
+    }
 }
 
 pub fn handle_chat_key(
@@ -151,10 +211,24 @@ pub fn handle_chat_key(
     viewport: (u16, u16),
     now: DateTime<Utc>,
 ) -> Option<UiAction> {
-    match &mut chat.inner {
+    let metrics = chat.metrics_for(model, viewport, now);
+    let action = match &mut chat.inner {
         AgentChatView::Claude(view) => claude::handle_chat_key(view, model, key, viewport, now),
         AgentChatView::Codex(view) => codex::handle_chat_key(view, model, key, viewport, now),
+    };
+    let intent = match &mut chat.inner {
+        AgentChatView::Claude(view) => view.scroll_intent.take(),
+        AgentChatView::Codex(view) => view.scroll_intent.take(),
+    };
+    if let Some(intent) = intent {
+        apply_scroll(
+            &mut chat.viewport,
+            &metrics,
+            intent,
+            entry_watermark(model, chat.agent),
+        );
     }
+    action
 }
 
 pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
@@ -169,13 +243,38 @@ pub(crate) fn build_chat_lines(
     chat: &ChatView,
     ctx: &FrameContext,
 ) -> Vec<Line<'static>> {
-    // Both screens compose themselves through the shared shell and place
-    // their own diagnostic banner; nothing is left for this seam to do
-    // but pick the adapter.
-    match &chat.inner {
-        AgentChatView::Claude(view) => claude::build_chat_lines(model, view, ctx),
-        AgentChatView::Codex(view) => codex::build_chat_lines(model, view, ctx),
+    const MIN_WIDTH: usize = 24;
+    const MIN_HEIGHT: usize = 10;
+
+    let width = ctx.viewport.0 as usize;
+    let height = ctx.viewport.1 as usize;
+    if width < MIN_WIDTH || height < MIN_HEIGHT {
+        return vec![Line::from("amux: terminal too small")];
     }
+    let parts = match &chat.inner {
+        AgentChatView::Claude(view) => claude::claude_frame_parts(model, view, &chat.viewport, ctx),
+        AgentChatView::Codex(view) => codex::codex_frame_parts(model, view, &chat.viewport, ctx),
+    };
+    let overlaid = parts.overlay.is_some();
+    let banner = parts.banner.is_some();
+    let paused_geometry = match &chat.inner {
+        AgentChatView::Claude(view) => claude::geometry(model, view, ctx.viewport, true),
+        AgentChatView::Codex(view) => codex::geometry(model, view, ctx.viewport, true),
+    };
+    let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &paused_geometry);
+    chat.feed_metrics.replace(Some(CachedFeedMetrics {
+        viewport: ctx.viewport,
+        metrics,
+    }));
+
+    let mut lines = compose_chat_frame(parts, &chat.viewport, ctx.theme, ctx.viewport);
+    // The sticky diagnostic takes the header gap rather than reducing the
+    // feed, and stays off overlays whose rows are all content.
+    let row = 1 + usize::from(banner);
+    if !overlaid && model.has_invariant_warning() && lines.len() > row {
+        lines[row] = blocks::invariant_warning_row(width, ctx.theme);
+    }
+    lines
 }
 
 /// Everything an agent-message row needs besides the message itself: who
@@ -463,13 +562,14 @@ pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
 mod tests {
     use amux_ui::{
         Agent, AgentId, Attention, ClaudeCommand, Command, HostEntry, HostTrustStatus, Model, Msg,
-        OpId, SendGate, ServerMsg, StreamEntry, StreamMsg, update,
+        OpId, SendGate, ServerMsg, StreamEntry, StreamMsg, StructuredProtocol, update,
     };
     use chrono::{DateTime, TimeDelta};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use serde_json::json;
     use uuid::Uuid;
 
-    use super::{AgentChatView, ChatView, build_chat_lines, entry_watermark};
+    use super::{AgentChatView, ChatView, FeedScroll, build_chat_lines, entry_watermark};
     use crate::render::{FrameContext, INVARIANT_WARNING, Theme, str_width};
     use crate::view::{ViewState, visible_rows};
 
@@ -556,6 +656,78 @@ mod tests {
         let codex =
             ChatView::open(&codex, codex_agent, 'a', false).expect("known Codex protocol opens");
         assert!(matches!(codex.inner, AgentChatView::Codex(_)));
+    }
+
+    #[test]
+    fn both_agents_route_paging_and_endpoints_through_the_shared_viewport() {
+        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+            let wire = match protocol {
+                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
+                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
+            };
+            let (model, agent) = model_with_protocol(wire);
+            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
+            let ctx = FrameContext {
+                viewport: (120, 40),
+                theme: Theme::default(),
+                now: at(0),
+            };
+            chat.feed_metrics.replace(Some(super::CachedFeedMetrics {
+                viewport: ctx.viewport,
+                metrics: super::frame::FeedMetrics {
+                    total_rows: 100,
+                    feed_rows: 20,
+                    max_top: 80,
+                    ranges: Vec::new(),
+                },
+            }));
+
+            super::handle_chat_key(
+                &mut chat,
+                &model,
+                KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+                ctx.viewport,
+                ctx.now,
+            );
+            assert!(
+                matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
+                "{protocol:?} PgUp pauses"
+            );
+
+            super::handle_chat_key(
+                &mut chat,
+                &model,
+                KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+                ctx.viewport,
+                ctx.now,
+            );
+            assert_eq!(
+                chat.viewport.scroll,
+                FeedScroll::Following,
+                "{protocol:?} PgDn at the bottom follows"
+            );
+
+            super::handle_chat_key(
+                &mut chat,
+                &model,
+                KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL),
+                ctx.viewport,
+                ctx.now,
+            );
+            assert!(matches!(
+                chat.viewport.scroll,
+                FeedScroll::Paused { top_line: 0, .. }
+            ));
+
+            super::handle_chat_key(
+                &mut chat,
+                &model,
+                KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL),
+                ctx.viewport,
+                ctx.now,
+            );
+            assert_eq!(chat.viewport.scroll, FeedScroll::Following);
+        }
     }
 
     #[test]

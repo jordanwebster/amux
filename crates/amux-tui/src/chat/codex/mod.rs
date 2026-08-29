@@ -7,13 +7,12 @@ pub(crate) mod render;
 use amux_ui::codex::{AskContext, CodexCommand, CodexPhase};
 use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
-pub(crate) use render::build_chat_lines;
-#[cfg(test)]
+pub(crate) use render::codex_frame_parts;
 pub(in crate::chat) use render::geometry;
 use serde_json::Value;
 
-use crate::chat::FeedScroll;
 use crate::chat::inline::InlineAsk;
+use crate::chat::viewport::ScrollIntent;
 use crate::composer::Composer;
 use crate::view::QuitGuard;
 
@@ -33,7 +32,7 @@ struct PendingAnswer {
 pub(crate) struct View {
     pub agent: AgentId,
     pub composer: Composer,
-    pub scroll: FeedScroll,
+    pub(crate) scroll_intent: Option<ScrollIntent>,
     pending_send: Option<PendingSend>,
     pending_answer: Option<PendingAnswer>,
     pub(crate) send_failure: Option<String>,
@@ -63,7 +62,7 @@ impl View {
         Self {
             agent,
             composer: Composer::default(),
-            scroll: FeedScroll::Following,
+            scroll_intent: None,
             pending_send: None,
             pending_answer: None,
             send_failure: None,

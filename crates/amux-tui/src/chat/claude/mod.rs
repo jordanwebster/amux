@@ -4,8 +4,8 @@
 //! A screen within the chrome, not a fork of it: same alternate-screen
 //! frame, same pure `render(Model, ViewState, FrameContext)` discipline,
 //! same Command-only write surface. This module owns the chat's renderer-
-//! local state — draft, cursor, kill buffer, scroll/follow — exactly the
-//! set `docs/UI.md` allows a renderer to keep. Every derivation a view
+//! local state — draft, cursor, kill buffer, panels — while the outer
+//! `ChatView` owns the shared feed viewport. Every derivation a view
 //! wants (phase, send gate, magnitudes, counts) comes from the Model; the
 //! code here formats.
 //!
@@ -27,12 +27,11 @@ use amux_ui::{AgentId, Attention, Command, Model, OpId, OpOutcome};
 use ask_ui::AskUi;
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 use reader::{ReaderSource, ReaderView};
-#[cfg(test)]
 pub(in crate::chat) use render::geometry;
-pub(crate) use render::{ask_panel_lines, build_chat_lines};
+pub(crate) use render::{ask_panel_lines, claude_frame_parts};
 
-use crate::chat::FeedScroll;
 use crate::chat::inline::InlineAsk;
+use crate::chat::viewport::ScrollIntent;
 use crate::composer::Composer;
 use crate::view::QuitGuard;
 
@@ -59,7 +58,7 @@ struct PendingAnswer {
 pub struct View {
     pub agent: AgentId,
     pub composer: Composer,
-    pub scroll: FeedScroll,
+    pub(crate) scroll_intent: Option<ScrollIntent>,
     pending_send: Option<PendingSend>,
     pending_answer: Option<PendingAnswer>,
     /// A failed send, stated until the next keypress dismisses it (the
@@ -102,7 +101,7 @@ impl View {
         Self {
             agent,
             composer: Composer::default(),
-            scroll: FeedScroll::Following,
+            scroll_intent: None,
             pending_send: None,
             pending_answer: None,
             send_failure: None,
