@@ -57,7 +57,45 @@ impl Effective {
             leader_label: format!("C-{leader}"),
         }
     }
+
+    /// Move the block focus older or newer.
+    pub fn focus_chord(&self) -> String {
+        format!("{} k/j", self.leader_label)
+    }
+
+    /// Copy the focused block — the newest one when nothing is focused.
+    pub fn copy_chord(&self) -> String {
+        format!("{} y", self.leader_label)
+    }
+
+    /// Open or shut the focused folded run.
+    pub fn fold_chord(&self) -> String {
+        format!("{} o", self.leader_label)
+    }
+
+    /// What the feed offers a reader who has stopped following: the two
+    /// acts that need a block under the focus bar. Written here so the
+    /// footer cannot name a chord the overlay does not list.
+    pub fn feed_hint(&self) -> String {
+        format!("{} focus · {} copy", self.focus_chord(), self.copy_chord())
+    }
+
+    /// What a folded run says will open it, and what an open one says
+    /// will shut it again.
+    pub fn fold_hint(&self, expanded: bool) -> String {
+        format!(
+            "{} {}",
+            self.fold_chord(),
+            if expanded { "close" } else { "expand" }
+        )
+    }
 }
+
+/// The rule the frame draws under a feed that is no longer following.
+/// Every chord it names is leaderless, so unlike the hints it needs no
+/// `Effective` — but it lives beside the table it must agree with.
+pub const PAUSED_RULE: &str =
+    "↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest";
 
 /// The screen facts the family chords depend on. Each of the three
 /// exists only where it would do something: `<leader> n` needs somewhere
@@ -99,23 +137,32 @@ fn family_rows(eff: &Effective, family: FamilyKeys) -> Vec<Binding> {
     rows
 }
 
-/// Shared feed-focus rows. Wording is intentionally compact here; the
-/// interaction copy is polished together with the finished paused and
-/// expansion affordances.
+/// Shared feed rows: how the reader moves through the history and takes
+/// something out of it. `shift+drag` is listed although amux binds
+/// nothing — mouse capture would otherwise look as though it had taken
+/// selection away, and the reader needs to know their terminal still has
+/// it.
 fn feed_focus_rows(eff: &Effective) -> Vec<Binding> {
     vec![
+        row("wheel", "scroll the feed", Tier::Plain),
         row(
-            format!("{} k / {} j", eff.leader_label, eff.leader_label),
-            "focus older / newer block",
+            "shift+drag",
+            "select text (your terminal's own)",
             Tier::Plain,
         ),
+        row(
+            eff.copy_chord(),
+            "copy the focused block (the newest if none)",
+            Tier::Plain,
+        ),
+        row(eff.focus_chord(), "focus older / newer block", Tier::Plain),
         row("ctrl+↑/↓", "focus older / newer block", Tier::Ext),
         row(
-            format!("{} y", eff.leader_label),
-            "copy focused / latest block",
+            eff.fold_chord(),
+            "open / close the focused run",
             Tier::Plain,
         ),
-        row("esc", "clear block focus", Tier::Plain),
+        row("esc", "clear the block focus", Tier::Plain),
     ]
 }
 
@@ -198,6 +245,11 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
         row("ctrl+x", "interrupt the agent", Tier::Plain),
         row("pgup/pgdn", "scroll the feed", Tier::Plain),
         row("ctrl+home/end", "feed oldest / newest", Tier::Ext),
+    ];
+    // The feed rows sit with the scroll rows they belong to, not at the
+    // end of the section, because they are all one act to the reader.
+    chat.extend(feed_focus_rows(eff));
+    chat.extend([
         row("ctrl+t", "read accepted plans (←/→ steps)", Tier::Plain),
         row(
             "ctrl+c",
@@ -214,8 +266,7 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
             "detach to shell",
             Tier::Plain,
         ),
-    ];
-    chat.extend(feed_focus_rows(eff));
+    ]);
     chat.extend(family_rows(eff, family));
     let mut composer = vec![
         row("enter", "send", Tier::Plain),
@@ -284,6 +335,9 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
         row("ctrl+x", "interrupt the active turn", Tier::Plain),
         row("pgup/pgdn", "scroll the feed", Tier::Plain),
         row("ctrl+home/end", "feed oldest / newest", Tier::Ext),
+    ];
+    chat.extend(feed_focus_rows(eff));
+    chat.extend([
         row(
             "ctrl+c",
             "clear draft; empty: press twice to quit",
@@ -299,8 +353,7 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
             "detach to shell",
             Tier::Plain,
         ),
-    ];
-    chat.extend(feed_focus_rows(eff));
+    ]);
     chat.extend(family_rows(eff, family));
     let mut composer = vec![
         row("enter", "send or steer", Tier::Plain),
@@ -418,25 +471,39 @@ mod tests {
         assert!(chat.iter().any(|b| b.keys == "C-b d"));
     }
 
+    /// Everything the feed offers a reader is listed in both chats:
+    /// the wheel, the terminal's own selection, copy, focus motion in
+    /// both tiers, the fold and the way out of focus.
     #[test]
-    fn focus_and_copy_bindings_are_identical_in_both_chats() {
+    fn feed_bindings_are_identical_in_both_chats() {
         for sections in [
             chat_sections(&eff(false), FamilyKeys::default()),
             codex_chat_sections(&eff(false), FamilyKeys::default()),
         ] {
             let chat = &sections[0].bindings;
-            assert!(
-                chat.iter().any(|binding| {
-                    binding.keys == "C-b k / C-b j" && binding.tier == Tier::Plain
-                })
-            );
+            let plain = |keys: &str| {
+                chat.iter()
+                    .any(|binding| binding.keys == keys && binding.tier == Tier::Plain)
+            };
+            assert!(plain("wheel"));
+            assert!(plain("shift+drag"));
+            assert!(plain("C-b y"));
+            assert!(plain("C-b k/j"));
             assert!(
                 chat.iter()
                     .any(|binding| { binding.keys == "ctrl+↑/↓" && binding.tier == Tier::Ext })
             );
-            assert!(chat.iter().any(|binding| binding.keys == "C-b y"));
-            assert!(chat.iter().any(|binding| binding.keys == "esc"));
+            assert!(plain("C-b o"));
+            assert!(plain("esc"));
         }
+    }
+
+    /// A folded run offers to open; the same run, open, offers to shut.
+    /// The hint follows the state so it never invites a second expand.
+    #[test]
+    fn the_fold_hint_names_the_act_that_is_available() {
+        assert_eq!(eff(false).fold_hint(false), "C-b o expand");
+        assert_eq!(eff(false).fold_hint(true), "C-b o close");
     }
 
     /// The family chords are listed exactly where they would do

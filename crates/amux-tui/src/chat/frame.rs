@@ -256,7 +256,7 @@ pub(crate) fn compose_chat_frame(
     lines.extend(window);
     if paused {
         lines.push(indented_row(
-            "↓ following paused · pgdn to resume",
+            crate::bindings::PAUSED_RULE,
             theme.muted(),
             theme,
         ));

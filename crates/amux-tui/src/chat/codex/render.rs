@@ -687,10 +687,13 @@ fn footer_line(model: &Model, chat: &View, theme: Theme, paused: bool) -> Line<'
                 theme.text(),
             );
         } else if paused {
+            // The rule above the footer already says how to catch up, so
+            // the footer spends its width on what a stopped reader came
+            // for: putting the focus on a block and taking it out.
             push_span(
                 &mut line,
                 TEXT_COL,
-                "pgup/pgdn scroll · esc newest",
+                crate::bindings::Effective::new(chat.kitty, chat.leader).feed_hint(),
                 theme.muted(),
             );
         } else if amux_ui::codex::allows_steer(model, chat.agent) {

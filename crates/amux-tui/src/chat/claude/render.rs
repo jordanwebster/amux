@@ -477,11 +477,16 @@ fn footer_line(
             theme.text(),
         );
     } else if paused {
-        let mut hints = String::from("pgup/pgdn scroll");
-        if chat.composer.is_empty() {
-            hints.push_str(" · esc newest");
-        }
-        push_span(&mut line, blocks::TEXT_COL, help_hinted(chat, hints), theme.muted());
+        // The rule above the footer already says how to catch up, so the
+        // footer spends its width on what a stopped reader came for:
+        // putting the focus on a block and taking it out.
+        let hints = effective(chat).feed_hint();
+        push_span(
+            &mut line,
+            blocks::TEXT_COL,
+            help_hinted(chat, hints),
+            theme.muted(),
+        );
     } else if let Some(refusal) = amux_ui::claude::send_gate(model, chat.agent).refusal() {
         let hint = if chat.composer.is_empty() {
             refusal.to_string()
@@ -534,7 +539,7 @@ fn feed_blocks(
     // never advertise it (hints tell the truth, F1).
     let plan_hint = !model.agent(agent).is_some_and(|card| card.agent.readonly);
     let reports = MessageView::new(model, agent, chat.reports_open, chat.leader);
-    let hint = run_hint(chat);
+    let eff = effective(chat);
 
     let mut blocks = Vec::new();
     for item in fold_runs(model, agent) {
@@ -554,13 +559,15 @@ fn feed_blocks(
                     .filter_map(|id| entries.get(id))
                     .map(|entry| entry_block(entry, theme, width, plan_hint, reports))
                     .collect();
+                // An open run offers to shut again, not to open twice.
+                let expanded = viewport.expanded.contains(&key);
                 blocks.push(paint_exploration_run(
                     BlockKey(key.0),
                     key,
                     &summary,
                     &painted,
-                    viewport.expanded.contains(&key),
-                    &hint,
+                    expanded,
+                    &eff.fold_hint(expanded),
                     theme,
                     width,
                 ));
@@ -579,13 +586,11 @@ fn feed_blocks(
     blocks
 }
 
-/// What a folded run says opens it. The chord is a leader chord, so the
-/// configured leader is named rather than assumed.
-fn run_hint(chat: &View) -> String {
-    format!(
-        "{} o expand",
-        crate::bindings::Effective::new(chat.kitty, chat.leader).leader_label
-    )
+/// This chat's effective binding table — the one source every hint that
+/// names a leader chord reads, so a hint cannot drift from the `?`
+/// overlay.
+fn effective(chat: &View) -> crate::bindings::Effective {
+    crate::bindings::Effective::new(chat.kitty, chat.leader)
 }
 
 fn entry_block(

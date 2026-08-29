@@ -12,9 +12,9 @@
                                                                                 
 ▎   follow-up question 1                                                        
                                                                                 
-  ↓ following paused · pgdn to resume                                           
+  ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest         
   ◓ working · 9s · ctrl+x interrupt                                             
                                                                                 
 ▎   draft preserved while reading▌                                              
                                                                                 
-    pgup/pgdn scroll                                               mode default 
+    C-a k/j focus · C-a y copy                                     mode default 

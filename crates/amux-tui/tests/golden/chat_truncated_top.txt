@@ -11,8 +11,8 @@
                                                                                 
     Replay folds but never executes Effects; the differential property proves   
     it.                                                                         
-  ↓ following paused · pgdn to resume                                           
+  ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest         
                                                                                 
 ▎   Type a message▌                                                             
                                                                                 
-    pgup/pgdn scroll · esc newest · ? help                                      
+    C-a k/j focus · C-a y copy · ? help                                         

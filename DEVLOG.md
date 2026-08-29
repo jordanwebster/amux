@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The feed says what it is doing and how to get back.** A
+feed that has stopped following now says so in its own words: the rule under
+it reads "scrolled back" and names the wheel, PgDn and Ctrl+End rather than
+the earlier "following paused". The rule keeps to leaderless chords so it can
+be one sentence for both chats.
+
+With resuming stated above it, the paused footer spends its width on what a
+stopped reader actually wants — moving the block focus and copying the block
+under it. A folded run now offers "expand" when it is shut and "close" when
+it is open, so the affordance can never invite the act that has already
+happened.
+
+Every chord in those hints is derived from the binding table rather than
+written twice: the table gained the focus, copy and fold chord labels, and
+the footer and the run row read them through the configured leader. The `?`
+overlay's feed rows moved up beside the scroll rows and now list the wheel
+and the terminal's own Shift+drag selection, which mouse capture would
+otherwise appear to have taken away. Codex gained a scrolled-back golden so
+the shared wording is locked in both chats, and the Claude overlay golden
+grew taller because the full key list no longer fits at 46 rows.
+
+---
+
 2026-08-29 — **Exploration runs open at the focused block.** Claude's
 native feed fold still groups only consecutive reads and searches; edits,
 writes, commands, and every other consequential entry remain independent

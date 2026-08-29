@@ -568,7 +568,7 @@ fn chat_help_overlay() {
     let model = idle_model();
     let mut view = chat_view();
     view.chat.as_mut().expect("chat open").set_help(true);
-    let rendered = render_frame(&model, &view, 80, 46, IDLE_NOW);
+    let rendered = render_frame(&model, &view, 80, 52, IDLE_NOW);
     assert_golden("chat_help_overlay", &rendered);
 }
 

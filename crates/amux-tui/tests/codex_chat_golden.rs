@@ -115,8 +115,14 @@ fn model_with_extra(rows: Vec<Value>, extra: Vec<Msg>) -> Model {
 }
 
 fn view(model: &Model) -> ViewState {
-    let mut chat =
-        ChatView::open(model, agent_id(), 'a', false).expect("known Codex protocol opens");
+    let chat = ChatView::open(model, agent_id(), 'a', false).expect("known Codex protocol opens");
+    dressed(model, chat)
+}
+
+/// The chat as every golden shows it: the configuration label set and
+/// reconciled. Taking the chat rather than building it lets a golden
+/// drive keys into the view first.
+fn dressed(model: &Model, mut chat: ChatView) -> ViewState {
     chat.set_codex_configuration_label(Some(
         "model=gpt-5.4 · approval=on-request · sandbox=workspace-write".to_string(),
     ));
@@ -127,7 +133,12 @@ fn view(model: &Model) -> ViewState {
     }
 }
 
-fn render_buffer(model: &Model, theme: Theme, height: u16) -> ratatui::buffer::Buffer {
+fn render_buffer(
+    model: &Model,
+    view: &ViewState,
+    theme: Theme,
+    height: u16,
+) -> ratatui::buffer::Buffer {
     let backend = TestBackend::new(WIDTH, height);
     let mut terminal = Terminal::new(backend).expect("terminal");
     let ctx = FrameContext {
@@ -135,9 +146,8 @@ fn render_buffer(model: &Model, theme: Theme, height: u16) -> ratatui::buffer::B
         theme,
         now: at(NOW),
     };
-    let view = view(model);
     terminal
-        .draw(|frame| render(model, &view, &ctx, frame))
+        .draw(|frame| render(model, view, &ctx, frame))
         .expect("draw");
     terminal.backend().buffer().clone()
 }
@@ -167,11 +177,15 @@ fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
 
 fn assert_surface(name: &str, model: &Model) {
     let height = if name == "streaming" { 50 } else { HEIGHT };
+    assert_state_surface(name, model, &view(model), height);
+}
+
+fn assert_state_surface(name: &str, model: &Model, view: &ViewState, height: u16) {
     for (theme_name, theme) in [
         ("dark", Theme::default()),
         ("light", Theme::light(ColorMode::TrueColor)),
     ] {
-        let buffer = render_buffer(model, theme, height);
+        let buffer = render_buffer(model, view, theme, height);
         let rendered = format!(
             "--- text ---\n{}--- styles ---\n{}",
             buffer_text(&buffer),
@@ -333,6 +347,24 @@ fn codex_resumed_both_themes() {
     );
 }
 
+/// The feed scrolled back: the rule states where the view is and how to
+/// catch up, and the footer names the block chords a stopped reader
+/// wants. Locked in Codex as well as Claude because the wording belongs
+/// to the shared frame — the two chats must never say it differently.
+#[test]
+fn codex_scrolled_back_both_themes() {
+    let model = model(live_rows());
+    let chat = ChatView::open(&model, agent_id(), 'a', false).expect("Codex chat opens");
+    let mut state = dressed(&model, chat);
+    press(
+        &model,
+        state.chat.as_mut().expect("chat open"),
+        KeyCode::PageUp,
+        KeyModifiers::NONE,
+    );
+    assert_state_surface("scrolled_back", &model, &state, HEIGHT);
+}
+
 fn press(
     model: &Model,
     chat: &mut ChatView,
@@ -427,7 +459,12 @@ fn object_approval_choices_stay_disabled_and_unknown_labels_are_safe() {
         ]
     });
     let network = model(network_rows);
-    let network_text = buffer_text(&render_buffer(&network, Theme::default(), HEIGHT));
+    let network_text = buffer_text(&render_buffer(
+        &network,
+        &view(&network),
+        Theme::default(),
+        HEIGHT,
+    ));
     assert!(network_text.contains("apply network policy change · allow crates.io"));
     assert!(
         network
@@ -448,7 +485,12 @@ fn object_approval_choices_stay_disabled_and_unknown_labels_are_safe() {
         ]
     });
     let unknown = model(unknown_rows);
-    let text = buffer_text(&render_buffer(&unknown, Theme::default(), HEIGHT));
+    let text = buffer_text(&render_buffer(
+        &unknown,
+        &view(&unknown),
+        Theme::default(),
+        HEIGHT,
+    ));
     let row = text
         .lines()
         .find(|line| line.contains("futurePolicy"))
@@ -514,7 +556,12 @@ fn working_line_advertises_only_the_actions_the_write_gate_allows() {
     assert!(!amux_ui::codex::allows_steer(&in_flight, agent_id()));
     assert!(amux_ui::codex::allows_interrupt(&in_flight, agent_id()));
 
-    let text = buffer_text(&render_buffer(&in_flight, Theme::default(), HEIGHT));
+    let text = buffer_text(&render_buffer(
+        &in_flight,
+        &view(&in_flight),
+        Theme::default(),
+        HEIGHT,
+    ));
     assert!(
         text.contains("ctrl+x interrupt"),
         "the safe escape hatch stays visible: {text}"
@@ -551,7 +598,12 @@ fn refusing_approval_gates_remove_selection_and_confirm_affordances() {
             !amux_ui::codex::allows_answer(&model, agent_id()),
             "{name} approval must be gated"
         );
-        let text = buffer_text(&render_buffer(&model, Theme::default(), HEIGHT));
+        let text = buffer_text(&render_buffer(
+            &model,
+            &view(&model),
+            Theme::default(),
+            HEIGHT,
+        ));
         assert!(
             text.contains("approval — command"),
             "ask remains visible: {text}"

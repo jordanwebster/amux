@@ -3,9 +3,15 @@
 ────────────────────────────────────────────────────────────────────────────────
   chat                                                                          
       ctrl+x                    interrupt the agent                             
-      esc                       back one stage (never answers)                  
       pgup/pgdn                 scroll the feed                                 
       ctrl+home/end             feed oldest / newest · terminal-dependent       
+      wheel                     scroll the feed                                 
+      shift+drag                select text (your terminal's own)               
+      C-a y                     copy the focused block (the newest if none)     
+      C-a k/j                   focus older / newer block                       
+      ctrl+↑/↓                  focus older / newer block · terminal-dependent  
+      C-a o                     open / close the focused run                    
+      esc                       clear the block focus                           
       ctrl+t                    read accepted plans (←/→ steps)                 
       ctrl+c                    clear field; empty: press twice to quit         
       C-a s                     back to fleet                                   

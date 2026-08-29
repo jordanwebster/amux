@@ -2,7 +2,7 @@
                                                                                                                         
 ▎   Find every retry ceiling and raise the default.                                                                     
                                                                                                                         
-  ⌃ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o expand                                                
+  ⌃ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o close                                                 
   ✔ Grep "max_attempts"                                                                                                 
   ✔ Read sync/config.rs                                                                                                 
   ✔ Read sync/client.rs                                                                                                 
