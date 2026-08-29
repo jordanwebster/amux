@@ -15,6 +15,8 @@ pub struct Redaction {
     pub home: PathBuf,
     pub extra_paths: Vec<PathBuf>,
     pub secret_env: Vec<String>,
+    /// Exact JSON field names whose values this capture treats as personal identifiers.
+    pub personal_identifier_keys: Vec<String>,
 }
 
 /// Strip secrets, machine paths, and personal identifiers from raw traffic.
@@ -37,7 +39,7 @@ fn sanitize_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionS
     match value {
         Value::Object(object) => {
             for (key, value) in object {
-                if is_personal_identifier_key(key) && !value.is_null() {
+                if is_personal_identifier_key(key, rules) && !value.is_null() {
                     if value.as_str() != Some(IDENTIFIER_PLACEHOLDER) {
                         *value = Value::String(IDENTIFIER_PLACEHOLDER.to_string());
                         summary.personal_identifiers += 1;
@@ -64,11 +66,11 @@ fn sanitize_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionS
     }
 }
 
-fn is_personal_identifier_key(key: &str) -> bool {
-    matches!(
-        normalized_key(key).as_str(),
-        "installationid" | "servername"
-    )
+fn is_personal_identifier_key(key: &str, rules: &Redaction) -> bool {
+    rules
+        .personal_identifier_keys
+        .iter()
+        .any(|identifier_key| identifier_key == key)
 }
 
 fn sanitize_path_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionSummary) {
@@ -327,6 +329,7 @@ mod tests {
             home: PathBuf::from("/Users/alice"),
             extra_paths: vec![PathBuf::from("/srv/operator")],
             secret_env: vec!["exact-secret".to_string()],
+            personal_identifier_keys: vec!["installationId".into(), "serverName".into()],
         };
 
         let summary = sanitize(&mut io, &rules);
@@ -358,6 +361,36 @@ mod tests {
         let repeated = io.clone();
         assert_eq!(sanitize(&mut io, &rules), RedactionSummary::default());
         assert_eq!(io, repeated, "sanitization must be idempotent");
+    }
+
+    #[test]
+    fn sanitize_scopes_identifier_keys_to_the_capture_and_exact_field_name() {
+        let mut io = vec![event(serde_json::json!({
+            "remoteControl": {
+                "serverName": "Alices-Laptop.local"
+            },
+            "mcp": {
+                "server_name": "spec"
+            }
+        }))];
+        let rules = Redaction {
+            personal_identifier_keys: vec!["serverName".into()],
+            ..Redaction::default()
+        };
+
+        assert_eq!(
+            sanitize(&mut io, &rules),
+            RedactionSummary {
+                personal_identifiers: 1,
+                ..RedactionSummary::default()
+            }
+        );
+        let sanitized: Value = serde_json::from_str(&io[0].line).unwrap();
+        assert_eq!(
+            sanitized["remoteControl"]["serverName"],
+            IDENTIFIER_PLACEHOLDER
+        );
+        assert_eq!(sanitized["mcp"]["server_name"], "spec");
     }
 
     #[test]

@@ -5297,3 +5297,8 @@ explicit separate fixture.
 unit tests keep direct coverage of daemon-authored delivery rows, while the
 derived-rows integration boundary now exclusively owns complete provider
 recording replay and byte-for-byte fixture reproduction.
+
+2026-08-30 — **Scoped capture-specific identifier redaction.** Corpus capture
+tools now opt exact JSON field names into personal-identifier replacement.
+Codex host and installation identifiers stay sanitized without rewriting a
+different provider's semantic `server_name`, such as an MCP server id.
