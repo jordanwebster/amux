@@ -134,7 +134,12 @@ pub(crate) fn build_chat_lines(
 
 // --- geometry the key handler shares ----------------------------------------
 
-fn geometry(model: &Model, chat: &View, viewport: (u16, u16), paused: bool) -> ChatGeometry {
+pub(in crate::chat) fn geometry(
+    model: &Model,
+    chat: &View,
+    viewport: (u16, u16),
+    paused: bool,
+) -> ChatGeometry {
     let theme = Theme::default();
     let width = viewport.0 as usize;
     let height = viewport.1 as usize;

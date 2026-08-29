@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The shared chat geometry and component gallery are locked.**
+The Claude and Codex gallery pages, plus both halves of the exploration pair,
+now have separate 120x40 text and semantic-style goldens in the dark and light
+themes. The gallery assertions hold the prompt surface, accent bar, ask panel
+and changed-row tints in place; they also prove those tints occur only on diff
+rows, while the Codex page proves each changed row carries a numbered gutter.
+
+An idle Claude fixture and an idle Codex fixture now pass through their native
+adapters at 120x40 and produce identical shared-frame geometry. The Codex-only
+configuration banner is removed for that comparison so the test isolates the
+shell's geometry from deliberately agent-specific content.
+
+---
+
 2026-08-29 — **The gallery gets a second page, for what Claude cannot say.**
 `component-gallery-codex` is one Codex thread holding the three block kinds no
 Claude session can produce — the compaction rule, the unrecognized row and the

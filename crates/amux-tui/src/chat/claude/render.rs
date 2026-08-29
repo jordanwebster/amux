@@ -154,7 +154,12 @@ fn spacing() -> FrameSpacing {
 }
 
 /// The frame budget at this viewport, under the given pause state.
-fn geometry(model: &Model, chat: &View, viewport: (u16, u16), paused: bool) -> ChatGeometry {
+pub(in crate::chat) fn geometry(
+    model: &Model,
+    chat: &View,
+    viewport: (u16, u16),
+    paused: bool,
+) -> ChatGeometry {
     let theme = Theme::default();
     let width = viewport.0 as usize;
     let height = viewport.1 as usize;

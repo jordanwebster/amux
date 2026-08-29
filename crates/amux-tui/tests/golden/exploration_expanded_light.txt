@@ -1,0 +1,40 @@
+  fix-auth · claude @ mbp                                                                                   chat · idle 
+                                                                                                                        
+▎   Find every retry ceiling and raise the default.                                                                     
+                                                                                                                        
+  ⌄ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o expand                                                
+                                                                                                                        
+  ✎ Edit sync/config.rs · +3 −1                                                                                         
+                                                                                                                        
+  ⌄ 2 reads · 1 search · sync/tests.rs, sync/backoff.rs · C-a o expand                                                  
+                                                                                                                        
+    The ceiling now lives in one place, and the tests read it from there.                                               
+                                                                                                                        
+  ─ turn · 27s ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+▎   Type a message▌                                                                                                     
+                                                                                                                        
+    enter send · ctrl+j newline · ? help                                                                   mode default 

@@ -428,6 +428,36 @@ impl PaintCache {
 }
 
 #[cfg(test)]
+#[test]
+fn geometry_identical_for_claude_and_codex_fixtures_at_120_by_40() {
+    use crate::chat::AgentChatView;
+    use crate::fixtures::{NamedState, fixture};
+
+    let claude = fixture(NamedState::ClaudeIdle);
+    let mut codex = fixture(NamedState::CodexIdle);
+    codex
+        .view
+        .chat
+        .as_mut()
+        .expect("Codex fixture opens a chat")
+        .set_codex_configuration_label(None);
+
+    let geometry = |fixture: &crate::fixtures::Fixture| {
+        let chat = fixture.view.chat.as_ref().expect("fixture opens a chat");
+        match &chat.inner {
+            AgentChatView::Claude(view) => {
+                crate::chat::claude::geometry(&fixture.model, view, (120, 40), false)
+            }
+            AgentChatView::Codex(view) => {
+                crate::chat::codex::geometry(&fixture.model, view, (120, 40), false)
+            }
+        }
+    };
+
+    assert_eq!(geometry(&claude), geometry(&codex));
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::theme::ColorMode;
