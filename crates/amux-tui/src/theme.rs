@@ -123,60 +123,65 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// The provisional dark palette. Visual tuning happens after the block
-    /// vocabulary can be rendered as screenshots.
+    /// amux's own dark palette: a cool near-black that is not quite
+    /// black, one clearly lighter surface for the person's own words, and
+    /// accents pulled toward teal and moss so nothing in the feed shouts.
+    /// Tuned by eye at 120x40 against the working Claude and Codex
+    /// screens; every hex is amux's, borrowed from no published scheme.
     pub const fn dark(mode: ColorMode) -> Self {
         Self {
             tokens: Tokens {
-                background: Token::new((17, 19, 24), Color::Black),
-                text: Token::new((230, 233, 239), Color::White),
-                muted: Token::new((127, 132, 156), Color::DarkGray),
-                emphasis: Token::new((244, 244, 245), Color::White),
-                accent: Token::new((125, 207, 255), Color::Cyan),
-                user_surface: Token::new((27, 36, 50), Color::DarkGray),
-                panel: Token::new((32, 36, 50), Color::Blue),
-                focus: Token::new((187, 154, 247), Color::Magenta),
-                code: Token::new((122, 162, 247), Color::Cyan),
-                ok: Token::new((158, 206, 106), Color::Green),
-                warn: Token::new((224, 175, 104), Color::Yellow),
-                error: Token::new((247, 118, 142), Color::Red),
-                diff_added_fg: Token::new((158, 206, 106), Color::Black),
-                diff_added_bg: Token::new((24, 44, 31), Color::Green),
-                diff_removed_fg: Token::new((247, 118, 142), Color::White),
-                diff_removed_bg: Token::new((52, 28, 34), Color::Red),
-                diff_context: Token::new((192, 202, 224), Color::White),
-                diff_meta: Token::new((105, 113, 147), Color::DarkGray),
-                gutter: Token::new((86, 95, 137), Color::Gray),
+                background: Token::new((15, 18, 22), Color::Black),
+                text: Token::new((223, 227, 232), Color::White),
+                muted: Token::new((138, 144, 160), Color::DarkGray),
+                emphasis: Token::new((242, 244, 247), Color::White),
+                accent: Token::new((95, 179, 198), Color::Cyan),
+                user_surface: Token::new((24, 32, 40), Color::DarkGray),
+                panel: Token::new((23, 27, 34), Color::Blue),
+                focus: Token::new((156, 140, 214), Color::Magenta),
+                code: Token::new((127, 182, 217), Color::Cyan),
+                ok: Token::new((134, 184, 122), Color::Green),
+                warn: Token::new((210, 162, 76), Color::Yellow),
+                error: Token::new((222, 123, 132), Color::Red),
+                diff_added_fg: Token::new((143, 203, 138), Color::Black),
+                diff_added_bg: Token::new((22, 38, 27), Color::Green),
+                diff_removed_fg: Token::new((224, 141, 149), Color::White),
+                diff_removed_bg: Token::new((44, 26, 30), Color::Red),
+                diff_context: Token::new((195, 201, 212), Color::White),
+                diff_meta: Token::new((110, 118, 134), Color::DarkGray),
+                gutter: Token::new((89, 96, 111), Color::Gray),
             },
             mode,
             name: ThemeName::Dark,
         }
     }
 
-    /// The provisional light palette. Visual tuning happens after the block
-    /// vocabulary can be rendered as screenshots.
+    /// amux's own light palette: a warm off-white that is easier to sit
+    /// in front of than pure white, the same teal accent darkened until
+    /// it holds its own on paper, and diff tints kept pale enough that a
+    /// hunk still reads as text.
     pub const fn light(mode: ColorMode) -> Self {
         Self {
             tokens: Tokens {
-                background: Token::new((247, 247, 245), Color::White),
-                text: Token::new((36, 40, 59), Color::Black),
-                muted: Token::new((107, 112, 137), Color::DarkGray),
-                emphasis: Token::new((22, 22, 30), Color::Black),
-                accent: Token::new((0, 109, 143), Color::Blue),
-                user_surface: Token::new((233, 240, 243), Color::Cyan),
-                panel: Token::new((236, 236, 241), Color::Gray),
-                focus: Token::new((122, 76, 160), Color::Magenta),
-                code: Token::new((0, 95, 135), Color::Blue),
-                ok: Token::new((47, 125, 50), Color::Green),
-                warn: Token::new((138, 90, 0), Color::Yellow),
-                error: Token::new((180, 35, 53), Color::Red),
-                diff_added_fg: Token::new((35, 105, 47), Color::Black),
-                diff_added_bg: Token::new((224, 242, 226), Color::Green),
-                diff_removed_fg: Token::new((168, 35, 52), Color::White),
-                diff_removed_bg: Token::new((250, 226, 229), Color::Red),
-                diff_context: Token::new((56, 60, 78), Color::Black),
-                diff_meta: Token::new((117, 121, 139), Color::DarkGray),
-                gutter: Token::new((137, 142, 160), Color::Gray),
+                background: Token::new((250, 250, 248), Color::White),
+                text: Token::new((42, 46, 56), Color::Black),
+                muted: Token::new((106, 112, 128), Color::DarkGray),
+                emphasis: Token::new((21, 24, 31), Color::Black),
+                accent: Token::new((31, 111, 130), Color::Blue),
+                user_surface: Token::new((236, 241, 243), Color::Cyan),
+                panel: Token::new((240, 240, 238), Color::Gray),
+                focus: Token::new((109, 78, 156), Color::Magenta),
+                code: Token::new((26, 95, 135), Color::Blue),
+                ok: Token::new((47, 122, 68), Color::Green),
+                warn: Token::new((138, 91, 16), Color::Yellow),
+                error: Token::new((168, 50, 68), Color::Red),
+                diff_added_fg: Token::new((34, 107, 51), Color::Black),
+                diff_added_bg: Token::new((227, 242, 229), Color::Green),
+                diff_removed_fg: Token::new((158, 47, 63), Color::White),
+                diff_removed_bg: Token::new((250, 228, 230), Color::Red),
+                diff_context: Token::new((58, 63, 76), Color::Black),
+                diff_meta: Token::new((117, 122, 136), Color::DarkGray),
+                gutter: Token::new((138, 143, 156), Color::Gray),
             },
             mode,
             name: ThemeName::Light,
@@ -831,5 +836,130 @@ mod tests {
         assert_eq!(nearest_ansi((250, 10, 10)), Color::LightRed);
         assert_eq!(nearest_ansi((10, 240, 245)), Color::LightCyan);
         assert_eq!(nearest_ansi((248, 248, 248)), Color::White);
+    }
+
+    // --- the two shipped palettes -------------------------------------
+
+    /// Relative luminance, per WCAG 2.
+    fn luminance(rgb: (u8, u8, u8)) -> f64 {
+        fn channel(value: u8) -> f64 {
+            let value = f64::from(value) / 255.0;
+            if value <= 0.040_45 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        0.2126 * channel(rgb.0) + 0.7152 * channel(rgb.1) + 0.0722 * channel(rgb.2)
+    }
+
+    fn contrast(a: (u8, u8, u8), b: (u8, u8, u8)) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        let (lighter, darker) = if a > b { (a, b) } else { (b, a) };
+        (lighter + 0.05) / (darker + 0.05)
+    }
+
+    /// Body text has to be readable on every surface it can land on, in
+    /// both palettes — 4.5:1 is the WCAG AA threshold for ordinary text.
+    #[test]
+    fn palettes_keep_text_readable_on_every_surface() {
+        for theme in [Theme::dark(ColorMode::TrueColor), Theme::light(ColorMode::TrueColor)] {
+            let text = theme.tokens.text.rgb;
+            for (surface, name) in [
+                (theme.tokens.background.rgb, "background"),
+                (theme.tokens.user_surface.rgb, "user_surface"),
+                (theme.tokens.panel.rgb, "panel"),
+            ] {
+                let ratio = contrast(text, surface);
+                assert!(
+                    ratio >= 4.5,
+                    "{:?} text on {name} is only {ratio:.1}:1",
+                    theme.name
+                );
+            }
+            for (fg, bg, name) in [
+                (
+                    theme.tokens.diff_added_fg.rgb,
+                    theme.tokens.diff_added_bg.rgb,
+                    "diff added",
+                ),
+                (
+                    theme.tokens.diff_removed_fg.rgb,
+                    theme.tokens.diff_removed_bg.rgb,
+                    "diff removed",
+                ),
+            ] {
+                let ratio = contrast(fg, bg);
+                assert!(
+                    ratio >= 4.5,
+                    "{:?} {name} is only {ratio:.1}:1",
+                    theme.name
+                );
+            }
+        }
+    }
+
+    /// A tinted diff row has to be visibly a tint and not just the panel
+    /// it sits on, and the two tints have to be told apart from each
+    /// other at a glance.
+    #[test]
+    fn palettes_separate_the_diff_tints_from_the_panel() {
+        for theme in [Theme::dark(ColorMode::TrueColor), Theme::light(ColorMode::TrueColor)] {
+            let panel = theme.tokens.panel.rgb;
+            let added = theme.tokens.diff_added_bg.rgb;
+            let removed = theme.tokens.diff_removed_bg.rgb;
+            assert_ne!(added, panel, "{:?} added tint is the panel", theme.name);
+            assert_ne!(removed, panel, "{:?} removed tint is the panel", theme.name);
+            assert_ne!(added, removed, "{:?} tints are the same", theme.name);
+            assert_ne!(
+                theme.tokens.user_surface.rgb, panel,
+                "{:?} user surface is the panel",
+                theme.name
+            );
+        }
+    }
+
+    /// The shipped palettes are amux's own. This locks the deliberate
+    /// move off the borrowed hexes the provisional palette used, so a
+    /// later tweak cannot quietly reintroduce a published scheme amux
+    /// only supports as an imported theme file.
+    #[test]
+    fn palettes_borrow_no_published_scheme() {
+        const BORROWED: [(u8, u8, u8); 6] = [
+            (122, 162, 247),
+            (125, 207, 255),
+            (158, 206, 106),
+            (224, 175, 104),
+            (247, 118, 142),
+            (187, 154, 247),
+        ];
+        for theme in [Theme::dark(ColorMode::TrueColor), Theme::light(ColorMode::TrueColor)] {
+            for token in [
+                theme.tokens.background,
+                theme.tokens.text,
+                theme.tokens.muted,
+                theme.tokens.emphasis,
+                theme.tokens.accent,
+                theme.tokens.user_surface,
+                theme.tokens.panel,
+                theme.tokens.focus,
+                theme.tokens.code,
+                theme.tokens.ok,
+                theme.tokens.warn,
+                theme.tokens.error,
+                theme.tokens.diff_added_fg,
+                theme.tokens.diff_removed_fg,
+                theme.tokens.diff_context,
+                theme.tokens.diff_meta,
+                theme.tokens.gutter,
+            ] {
+                assert!(
+                    !BORROWED.contains(&token.rgb),
+                    "{:?} still carries a borrowed colour {:?}",
+                    theme.name,
+                    token.rgb
+                );
+            }
+        }
     }
 }

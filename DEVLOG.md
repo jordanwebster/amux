@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Both shipped palettes are amux's own.** The provisional dark
+palette carried a published scheme's hexes verbatim; amux ships two hand-tuned
+palettes and imports everything else from a theme file, so those values had to
+go. The dark palette is now a cool near-black that is not quite black, one
+clearly lighter surface for the person's own words, and accents pulled toward
+teal and moss so nothing in the feed shouts for attention it has not earned.
+The light palette is a warm off-white — easier to sit in front of all day than
+pure white — with the same teal accent darkened until it holds on paper and
+diff tints kept pale enough that a hunk still reads as text.
+
+Three tests hold the palettes to their promises: body text clears 4.5:1 against
+the background, the user surface and the panel in both palettes, and each diff
+tint clears it against its own foreground; the two diff tints differ from each
+other, from the panel and from the user surface, so a tinted row is legible as
+a tint; and no token carries one of the borrowed hexes the provisional palette
+used, so a later tweak cannot quietly reintroduce a scheme amux only supports
+as an import. The values were judged at 120x40 against the working Claude and
+Codex screens in both themes and beside the two reference screenshots.
+
+---
+
 2026-08-29 — **Asks and diffs get the panel surface.** An ask now paints as
 one filled panel: what is being asked in bold, the agent layer's own body rows,
 the answers on offer, and the keys that give them, all on the `panel` token so
