@@ -35,6 +35,9 @@ pub struct TuiConfig {
     /// The configured leader character (`a` for ctrl+a): labels the help
     /// overlay and composes the chat's leader chords.
     pub leader: char,
+    /// The fully resolved palette; renderers never read terminal capability
+    /// or theme files themselves.
+    pub theme: Theme,
     /// The mode the fleet's Enter opens (A1), from the amux config's
     /// `ui.default_open_mode`.
     pub default_open_mode: crate::view::OpenMode,
@@ -128,7 +131,7 @@ async fn chrome_session(
                 let area = frame.area();
                 let ctx = FrameContext {
                     viewport: (area.width, area.height),
-                    theme: Theme::default(),
+                    theme: config.theme,
                     now: Utc::now(),
                 };
                 render(runtime.model(), view, &ctx, frame);

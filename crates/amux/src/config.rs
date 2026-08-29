@@ -153,6 +153,56 @@ pub enum OpenMode {
     Chat,
 }
 
+/// A shipped theme name or a YAML theme file path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThemeSetting {
+    Dark,
+    Light,
+    File(PathBuf),
+}
+
+impl Default for ThemeSetting {
+    fn default() -> Self {
+        Self::Dark
+    }
+}
+
+impl Serialize for ThemeSetting {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Dark => serializer.serialize_str("dark"),
+            Self::Light => serializer.serialize_str("light"),
+            Self::File(path) => path.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ThemeSetting {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "dark" => Self::Dark,
+            "light" => Self::Light,
+            _ => Self::File(PathBuf::from(value)),
+        })
+    }
+}
+
+/// The terminal colour capability preference.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorSetting {
+    #[default]
+    Auto,
+    TrueColor,
+    Ansi,
+}
+
 /// Client UI configuration (the TUI; future desktop clients read the same
 /// keys).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -161,6 +211,10 @@ pub struct UiSettings {
     /// The mode the fleet's Enter opens; the non-default mode opens via
     /// Ctrl+Enter (kitty-detected) or `o`.
     pub default_open_mode: OpenMode,
+    /// A shipped theme name or a path resolved beside the config file.
+    pub theme: ThemeSetting,
+    /// Whether to detect, force, or disable truecolor output.
+    pub color: ColorSetting,
 }
 
 /// Server configuration
@@ -436,6 +490,52 @@ mod tests {
         let serialized = serde_yaml::to_string(&config).unwrap();
         let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
         assert_eq!(parsed.ui.default_open_mode, OpenMode::Chat);
+    }
+
+    #[test]
+    fn ui_theme_and_color_defaults_are_dark_and_auto() {
+        let config = Config::default();
+        assert_eq!(config.ui.theme, ThemeSetting::Dark);
+        assert_eq!(config.ui.color, ColorSetting::Auto);
+
+        let parsed: Config = serde_yaml::from_str("ui: {}\n").unwrap();
+        assert_eq!(parsed.ui.theme, ThemeSetting::Dark);
+        assert_eq!(parsed.ui.color, ColorSetting::Auto);
+    }
+
+    #[test]
+    fn ui_theme_and_color_yaml_roundtrip() {
+        let yaml = "ui:\n  theme: light\n  color: ansi\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.ui.theme, ThemeSetting::Light);
+        assert_eq!(config.ui.color, ColorSetting::Ansi);
+
+        let serialized = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.ui.theme, ThemeSetting::Light);
+        assert_eq!(parsed.ui.color, ColorSetting::Ansi);
+    }
+
+    #[test]
+    fn ui_theme_file_path_yaml_roundtrip() {
+        let yaml = "ui:\n  theme: themes/forest.yaml\n  color: truecolor\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.ui.theme,
+            ThemeSetting::File(PathBuf::from("themes/forest.yaml"))
+        );
+        assert_eq!(config.ui.color, ColorSetting::TrueColor);
+
+        let serialized = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.ui.theme, config.ui.theme);
+        assert_eq!(parsed.ui.color, config.ui.color);
+    }
+
+    #[test]
+    fn unknown_ui_color_is_rejected() {
+        let error = serde_yaml::from_str::<Config>("ui:\n  color: millions\n").unwrap_err();
+        assert!(error.to_string().contains("unknown variant"));
     }
 
     #[test]

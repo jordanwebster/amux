@@ -5170,3 +5170,12 @@ An imported colour carries its RGB value and a nearest named ANSI face. A file
 that supplies any base24 extension colour must supply all of `base10` through
 `base17`; missing colours, malformed hex, and unknown direct token names fail
 with the offending key.
+
+2026-08-29 — **Resolved UI themes before entering terminal chrome.** The `ui`
+config now accepts `theme: dark | light | <path>` and
+`color: auto | truecolor | ansi`. Relative theme paths resolve beside the
+active config file. The CLI
+captures terminal colour signals once, loads and validates any theme file, and
+hands the resolved palette through `TuiConfig`; the renderer no longer reads a
+default theme for each frame, and a bad file exits as a normal startup error
+before the alternate screen is entered.
