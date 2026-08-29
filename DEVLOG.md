@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Codex raw PTY detach has a synchronous termination floor.**
+The final raw-terminal lease now signals the hosted process group with
+SIGTERM before it asks Tokio to await and escalate shutdown. Detach therefore
+still starts teardown when it happens outside a runtime or while a runtime is
+shutting down; an available runtime retains the bounded SIGKILL escalation.
+
+---
+
 2026-08-29 — **PTY process hosting is provider-neutral.** Claude PTY,
 Codex's raw terminal, and real test-agent processes now spawn through the
 `pty-host` crate. The crate owns PTY creation, environment layering, one raw

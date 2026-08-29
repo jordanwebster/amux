@@ -455,6 +455,14 @@ impl Drop for CodexRawPtyLease {
         };
         let agent_id = self.agent_id;
         let epoch = self.epoch;
+        if let Err(error) = handle.signal_process_group(pty_host::ProcessGroupSignal::Terminate) {
+            tracing::warn!(
+                %agent_id,
+                epoch,
+                %error,
+                "failed to signal detached Codex raw TUI process group"
+            );
+        }
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
                 runtime.spawn(async move {
@@ -473,7 +481,7 @@ impl Drop for CodexRawPtyLease {
                     %agent_id,
                     epoch,
                     %error,
-                    "cannot terminate detached Codex raw TUI outside a Tokio runtime"
+                    "cannot escalate detached Codex raw TUI termination outside a Tokio runtime"
                 );
             }
         }

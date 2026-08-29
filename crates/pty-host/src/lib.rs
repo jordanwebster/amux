@@ -146,6 +146,34 @@ impl PtyHandle {
         self.shared.pid
     }
 
+    /// Signal the entire hosted process group without requiring an async runtime.
+    pub fn signal_process_group(&self, signal: ProcessGroupSignal) -> Result<(), PtyError> {
+        if self.shared.exit_rx.borrow().is_some() {
+            return Ok(());
+        }
+
+        #[cfg(unix)]
+        {
+            let signal = match signal {
+                ProcessGroupSignal::Terminate => libc::SIGTERM,
+                ProcessGroupSignal::Kill => libc::SIGKILL,
+            };
+            signal_group(self.pid(), signal).map_err(PtyError::Io)
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = signal;
+            self.shared
+                .killer
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .kill()
+                .map_err(anyhow_to_io)
+                .map_err(PtyError::Io)
+        }
+    }
+
     fn exited_error(&self) -> Result<(), PtyError> {
         Err(self
             .shared
@@ -191,6 +219,13 @@ impl ExitMonitor {
 #[derive(Clone, Copy, Debug)]
 pub enum Terminate {
     Graceful { grace: Duration },
+    Kill,
+}
+
+/// A signal delivered synchronously to the hosted process group.
+#[derive(Clone, Copy, Debug)]
+pub enum ProcessGroupSignal {
+    Terminate,
     Kill,
 }
 
@@ -304,14 +339,22 @@ pub async fn terminate(process: &PtyProcess, policy: Terminate) -> ExitStatus {
     #[cfg(unix)]
     {
         match policy {
-            Terminate::Kill => signal_group(process.handle.pid(), libc::SIGKILL),
+            Terminate::Kill => {
+                let _ = process
+                    .handle
+                    .signal_process_group(ProcessGroupSignal::Kill);
+            }
             Terminate::Graceful { grace } => {
-                signal_group(process.handle.pid(), libc::SIGTERM);
+                let _ = process
+                    .handle
+                    .signal_process_group(ProcessGroupSignal::Terminate);
                 let mut monitor = process.exit.clone();
                 if let Ok(status) = tokio::time::timeout(grace, monitor.wait()).await {
                     return status;
                 }
-                signal_group(process.handle.pid(), libc::SIGKILL);
+                let _ = process
+                    .handle
+                    .signal_process_group(ProcessGroupSignal::Kill);
             }
         }
     }
@@ -333,15 +376,24 @@ pub async fn terminate(process: &PtyProcess, policy: Terminate) -> ExitStatus {
 }
 
 #[cfg(unix)]
-fn signal_group(pid: u32, signal: libc::c_int) {
-    let Ok(pid) = i32::try_from(pid) else {
-        return;
-    };
+fn signal_group(pid: u32, signal: libc::c_int) -> std::io::Result<()> {
+    let pid = i32::try_from(pid).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("PTY process id {pid} does not fit in a signed process id"),
+        )
+    })?;
     // portable-pty creates a session whose leader is the spawned child, so a
     // negative pid addresses the child and every provider shim it launched.
-    unsafe {
-        libc::kill(-pid, signal);
+    let result = unsafe { libc::kill(-pid, signal) };
+    if result == 0 {
+        return Ok(());
     }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(());
+    }
+    Err(error)
 }
 
 fn portable_size(size: PtySize) -> portable_pty::PtySize {
@@ -408,6 +460,21 @@ mod tests {
         assert!(seen.windows(7).any(|window| window == b"echo me"));
         terminate(&process, Terminate::Kill).await;
         assert!(process.exit.status().is_some());
+    }
+
+    #[tokio::test]
+    async fn signals_the_process_group_without_a_runtime() {
+        let mut process = spawn(shell("sleep 30")).unwrap();
+        let handle = process.handle.clone();
+        std::thread::spawn(move || handle.signal_process_group(ProcessGroupSignal::Terminate))
+            .join()
+            .unwrap()
+            .unwrap();
+
+        let status = tokio::time::timeout(Duration::from_secs(3), process.exit.wait())
+            .await
+            .expect("process group did not terminate after synchronous signal");
+        assert!(!status.success());
     }
 
     #[tokio::test]

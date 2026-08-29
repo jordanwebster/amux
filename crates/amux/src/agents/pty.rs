@@ -104,6 +104,18 @@ impl PtyHandle {
         self.buffer.close().await;
         Ok(())
     }
+
+    /// Signal a real hosted process group synchronously.
+    pub(crate) fn signal_process_group(&self, signal: pty_host::ProcessGroupSignal) -> Result<()> {
+        match &self.hosted {
+            HostedPty::Process(process) => process
+                .handle
+                .signal_process_group(signal)
+                .map_err(Into::into),
+            #[cfg(any(test, feature = "testnet"))]
+            HostedPty::TestEcho(_) => Ok(()),
+        }
+    }
 }
 
 /// Spawn through pty-host and feed its single output stream into amux replay.
