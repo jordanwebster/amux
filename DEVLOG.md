@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Screenshot manifests survive repeatable capture workflows.** A
+render now replaces the manifest entry for its output filename, and a repeated
+render-set replaces the receipt with the same set name. Replaying evidence into
+an existing directory therefore leaves one current hash per PNG instead of a
+stale entry that makes verification report false corruption.
+
+---
+
 2026-08-29 — **Screenshot captures cover the TUI's symbol vocabulary.** The
 PNG rasterizer keeps JetBrains Mono for regular, bold, italic, and bold-italic
 text, then falls back to the open-licensed DejaVu Sans face when the selected

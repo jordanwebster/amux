@@ -62,7 +62,7 @@ pub struct ManifestSet {
     pub files: Vec<String>,
 }
 
-/// The append-only capture record stored beside rendered files.
+/// The capture record stored beside rendered files.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Manifest {
     pub entries: Vec<ManifestEntry>,
@@ -393,7 +393,7 @@ pub fn write_png(raster: &Raster, out: &Path) -> Result<(), ShotError> {
     Ok(())
 }
 
-/// Render, encode, and append one capture to the manifest beside `out`.
+/// Render, encode, and record one capture in the manifest beside `out`.
 pub fn render_to_path(
     state: NamedState,
     theme: Theme,
@@ -430,19 +430,36 @@ pub fn render_to_path(
     Ok(entry)
 }
 
-/// Append a receipt after a complete render-set invocation.
+/// Record a receipt after a complete render-set invocation.
 pub fn append_set(dir: &Path, name: &str, files: Vec<String>) -> Result<(), ShotError> {
     let mut manifest = read_manifest_or_default(&dir.join("manifest.json"))?;
-    manifest.sets.push(ManifestSet {
+    let set = ManifestSet {
         name: name.to_string(),
         files,
-    });
+    };
+    if let Some(existing) = manifest
+        .sets
+        .iter_mut()
+        .find(|existing| existing.name == name)
+    {
+        *existing = set;
+    } else {
+        manifest.sets.push(set);
+    }
     write_manifest(dir, &manifest)
 }
 
 fn append_entry(dir: &Path, entry: ManifestEntry) -> Result<(), ShotError> {
     let mut manifest = read_manifest_or_default(&dir.join("manifest.json"))?;
-    manifest.entries.push(entry);
+    if let Some(existing) = manifest
+        .entries
+        .iter_mut()
+        .find(|existing| existing.file == entry.file)
+    {
+        *existing = entry;
+    } else {
+        manifest.entries.push(entry);
+    }
     write_manifest(dir, &manifest)
 }
 
@@ -608,8 +625,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        CELL_HEIGHT, CELL_WIDTH, Fonts, TUI_CHROME_GLYPHS, VIEWPORT, rasterize, render_to_path,
-        verify,
+        CELL_HEIGHT, CELL_WIDTH, Fonts, TUI_CHROME_GLYPHS, VIEWPORT, append_set, rasterize,
+        render_to_path, verify,
     };
 
     #[test]
@@ -669,6 +686,35 @@ mod tests {
             serde_json::from_slice(&fs::read(directory.path().join("manifest.json")).unwrap())
                 .unwrap();
         assert_eq!(manifest.entries.len(), 2, "each render appends a row");
+    }
+
+    #[test]
+    fn rerender_replaces_the_file_entry_and_named_set_receipt() {
+        let directory = tempdir().unwrap();
+        let output = directory.path().join("x.png");
+        render_to_path(
+            NamedState::ClaudeIdle,
+            Theme::dark(ColorMode::TrueColor),
+            "dark",
+            &output,
+        )
+        .unwrap();
+        append_set(directory.path(), "chat", vec!["stale.png".to_string()]).unwrap();
+
+        render_to_path(
+            NamedState::ClaudeIdle,
+            Theme::light(ColorMode::TrueColor),
+            "light",
+            &output,
+        )
+        .unwrap();
+        append_set(directory.path(), "chat", vec!["x.png".to_string()]).unwrap();
+
+        let manifest = verify(directory.path()).unwrap();
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].theme, "light");
+        assert_eq!(manifest.sets.len(), 1);
+        assert_eq!(manifest.sets[0].files, ["x.png"]);
     }
 
     #[test]

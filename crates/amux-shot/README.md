@@ -27,11 +27,12 @@ The declared sets are `chat`, `agent-specific`, `gallery`, `scroll`, `copy`,
 fixture has not landed yet exits with `UnknownState(name)`; this keeps the
 eventual evidence contract visible without inventing placeholder pictures.
 
-Each successful render appends its state, theme, colour mode, viewport, pixel
-dimensions, filename, and SHA-256 digest to `manifest.json` beside the PNG.
-`render-set` also records the completed set. `verify` recursively reads those
-manifests, checks the hashes and fixed dimensions, and fully decodes every PNG,
-so truncated files are rejected.
+Each successful render records its state, theme, colour mode, viewport, pixel
+dimensions, filename, and SHA-256 digest in `manifest.json` beside the PNG. A
+re-render of the same filename replaces its prior record, and a repeated
+`render-set` replaces the receipt with the same set name. `verify` recursively
+reads those manifests, checks the hashes and fixed dimensions, and fully
+decodes every PNG, so truncated files are rejected.
 
 The JetBrains Mono files and `assets/OFL.txt` come from the
 [JetBrains Mono project](https://github.com/JetBrains/JetBrainsMono). The
