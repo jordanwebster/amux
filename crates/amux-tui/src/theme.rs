@@ -136,7 +136,7 @@ impl Theme {
                 muted: Token::new((138, 144, 160), Color::DarkGray),
                 emphasis: Token::new((242, 244, 247), Color::White),
                 accent: Token::new((95, 179, 198), Color::Cyan),
-                user_surface: Token::new((24, 32, 40), Color::DarkGray),
+                user_surface: Token::new((24, 32, 40), Color::Black),
                 panel: Token::new((23, 27, 34), Color::Blue),
                 focus: Token::new((156, 140, 214), Color::Magenta),
                 code: Token::new((127, 182, 217), Color::Cyan),
@@ -165,7 +165,7 @@ impl Theme {
             tokens: Tokens {
                 background: Token::new((250, 250, 248), Color::White),
                 text: Token::new((42, 46, 56), Color::Black),
-                muted: Token::new((106, 112, 128), Color::DarkGray),
+                muted: Token::new((106, 112, 128), Color::Black),
                 emphasis: Token::new((21, 24, 31), Color::Black),
                 accent: Token::new((31, 111, 130), Color::Blue),
                 user_surface: Token::new((236, 241, 243), Color::Cyan),
@@ -180,8 +180,8 @@ impl Theme {
                 diff_removed_fg: Token::new((158, 47, 63), Color::White),
                 diff_removed_bg: Token::new((250, 228, 230), Color::Red),
                 diff_context: Token::new((58, 63, 76), Color::Black),
-                diff_meta: Token::new((117, 122, 136), Color::DarkGray),
-                gutter: Token::new((138, 143, 156), Color::Gray),
+                diff_meta: Token::new((117, 122, 136), Color::Black),
+                gutter: Token::new((138, 143, 156), Color::Black),
             },
             mode,
             name: ThemeName::Light,
@@ -961,8 +961,8 @@ mod tests {
     const BASE16_SAMPLE: &str = include_str!("../tests/themes/base16-sample.yaml");
     const BASE24_SAMPLE: &str = include_str!("../tests/themes/base24-sample.yaml");
 
-    fn render_claude_working(theme: Theme) -> Buffer {
-        let fixture = fixture(NamedState::ClaudeWorking);
+    fn render_named(state: NamedState, theme: Theme) -> Buffer {
+        let fixture = fixture(state);
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("theme test terminal");
         let context = FrameContext {
@@ -972,8 +972,12 @@ mod tests {
         };
         terminal
             .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
-            .expect("render ClaudeWorking theme proof");
+            .unwrap_or_else(|error| panic!("render {} theme proof: {error}", state.name()));
         terminal.backend().buffer().clone()
+    }
+
+    fn render_claude_working(theme: Theme) -> Buffer {
+        render_named(NamedState::ClaudeWorking, theme)
     }
 
     #[test]
@@ -1427,15 +1431,14 @@ mod tests {
 
     /// The palettes are only a claim until something paints with them: walk
     /// the cells of a real frame and hold every painted glyph to the floor
-    /// below. The shipped palettes are held here in truecolor only — in
-    /// sixteen colours their block surfaces round onto the background face
-    /// and muted text inside a block goes invisible, which the style-map
-    /// classifier depends on and so has to be repaired on its own.
+    /// below.
     #[test]
     fn every_theme_paints_a_readable_frame() {
         for theme in [
             Theme::dark(ColorMode::TrueColor),
+            Theme::dark(ColorMode::Ansi),
             Theme::light(ColorMode::TrueColor),
+            Theme::light(ColorMode::Ansi),
             imported_mapping(BASE16_SAMPLE, ColorMode::TrueColor),
             imported_mapping(BASE16_SAMPLE, ColorMode::Ansi),
             imported_mapping(BASE24_SAMPLE, ColorMode::TrueColor),
@@ -1450,21 +1453,28 @@ mod tests {
                 Color::Reset => surface,
                 face => ansi_rgb(face),
             };
-            let buffer = render_claude_working(theme);
-            for cell in buffer.content() {
-                if cell.symbol().trim().is_empty() {
-                    continue;
+            for state in [
+                NamedState::ClaudeWorking,
+                NamedState::ClaudePermissionAsk,
+                NamedState::CodexApproval,
+            ] {
+                let buffer = render_named(state, theme);
+                for cell in buffer.content() {
+                    if cell.symbol().trim().is_empty() {
+                        continue;
+                    }
+                    let ratio = contrast(painted(cell.fg), painted(cell.bg));
+                    assert!(
+                        ratio >= READABLE_TRIM,
+                        "{} {:?} {:?} paints {:?} at {ratio:.1}:1, {:?} on {:?}",
+                        state.name(),
+                        theme.name,
+                        theme.mode,
+                        cell.symbol(),
+                        cell.fg,
+                        cell.bg
+                    );
                 }
-                let ratio = contrast(painted(cell.fg), painted(cell.bg));
-                assert!(
-                    ratio >= READABLE_TRIM,
-                    "{:?} {:?} paints {:?} at {ratio:.1}:1, {:?} on {:?}",
-                    theme.name,
-                    theme.mode,
-                    cell.symbol(),
-                    cell.fg,
-                    cell.bg
-                );
             }
         }
     }

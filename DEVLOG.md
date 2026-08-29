@@ -5703,3 +5703,10 @@ workflow.
 a tall renderer test now derives the complete expected list from the binding
 table and proves that every section and row, including reader and read-only
 chat controls, is painted when space permits.
+
+2026-08-30 — **Made both shipped palettes readable in sixteen colours.** The
+dark palette now lets its subtle user surface fall back to black instead of
+colliding with muted text, while the light palette uses black for muted labels,
+diff metadata, and gutters against its cyan and grey surfaces. Rendered-cell
+tests cover working, permission, and approval frames in truecolor and ANSI and
+hold every painted glyph to at least 3:1 contrast.
