@@ -5311,3 +5311,10 @@ rows and relinkable tailing, messaging-socket framing, and persisted-session
 history. The amux host consumes those modules while retaining only daemon
 policy: structured sequencing, hook deduplication, delivery confirmation and
 session lifecycle.
+
+2026-08-30 — **Added the canonical Claude PTY session boundary.** Live and
+recorded sessions now enter through one bundle of terminal, hook, transcript
+and semantic-version sources. The crate exposes one typed event stream and a
+control handle for fixed input programs, resize, delivery and termination;
+synthetic-source tests cover transcript relinks, ask facts, socket confirmation,
+paste fallback and process exit.

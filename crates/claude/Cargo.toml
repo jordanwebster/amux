@@ -5,13 +5,15 @@ edition.workspace = true
 
 [features]
 default = []
-pty = ["dep:pty-host"]
+pty = ["dep:bytes", "dep:pty-host", "dep:replay-support"]
 specs = []
 
 [dependencies]
 anyhow.workspace = true
+bytes = { workspace = true, optional = true }
 futures-core = "0.3"
 pty-host = { workspace = true, optional = true }
+replay-support = { path = "../replay-support", optional = true }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

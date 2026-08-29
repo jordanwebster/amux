@@ -507,8 +507,10 @@ name = "claude"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "futures-core",
  "pty-host",
+ "replay-support",
  "semver",
  "serde",
  "serde_json",
