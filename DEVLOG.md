@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Claude exploration runs now fold at the native entry seam.**
+The chat adapter walks Claude's own `FeedEntryKind` values and collapses two or
+more consecutively grouped Read and Query tools under the first entry's stable
+identity. A lone read stays visible as its own entry, while edits, writes,
+commands, subagents, plans, asks and every non-exploration row split a run.
+The summary counts reads and searches, previews the first two read paths, and
+states how many further read targets are hidden. Tool results update their
+native entry in place, so an outcome arriving between exploration calls does
+not create a false visual boundary. No shared content type or reducer change
+is involved.
+
+---
+
 2026-08-29 — **Both shipped palettes are amux's own.** The provisional dark
 palette carried a published scheme's hexes verbatim; amux ships two hand-tuned
 palettes and imports everything else from a theme file, so those values had to

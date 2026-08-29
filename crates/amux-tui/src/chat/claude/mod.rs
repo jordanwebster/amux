@@ -20,6 +20,7 @@ mod keys;
 pub(crate) mod panel;
 mod reader;
 mod render;
+pub(crate) mod runs;
 
 use amux_ui::claude::{Ask, AskKind, AskState, ChatPhase, ToolInvocation};
 use amux_ui::{AgentId, Attention, Command, Model, OpId, OpOutcome};
