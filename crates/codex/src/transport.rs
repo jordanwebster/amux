@@ -113,6 +113,11 @@ pub(crate) fn spawn_process(
 
     let mut cmd = tokio::process::Command::new(&program);
 
+    if let Some(model) = &config.model {
+        cmd.arg("--model");
+        cmd.arg(model);
+    }
+
     // Add --config overrides
     for (key, value) in &config.config_overrides {
         cmd.arg("--config");
@@ -345,5 +350,38 @@ pub(crate) async fn terminate_child_group(child: &mut Child) {
     {
         let _ = child.kill().await;
         let _ = child.wait().await;
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::collections::HashMap;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn spawn_places_the_explicit_model_before_app_server() {
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("fake-codex");
+        let marker = temp.path().join("argv.txt");
+        std::fs::write(&script, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$MARKER\"\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let config = CodexConfig {
+            codex_path: Some(script),
+            model: Some("gpt-5.6-luna".to_string()),
+            env: Some(HashMap::from([(
+                "MARKER".to_string(),
+                marker.to_string_lossy().into_owned(),
+            )])),
+            ..CodexConfig::default()
+        };
+
+        let (mut child, _stdin, _stdout, _stderr) = spawn_process(&config).unwrap();
+        assert!(child.wait().await.unwrap().success());
+        assert_eq!(
+            std::fs::read_to_string(marker).unwrap(),
+            "--model\ngpt-5.6-luna\napp-server\n--listen\nstdio://\n"
+        );
     }
 }

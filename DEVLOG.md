@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Codex specifications now share their live and replay path.**
+The feature-gated `codex::specs` registry covers initialization, turns,
+approvals, interruption, list/resume, dynamic tools, idle and busy injection,
+and assistant-message ordering. `codex-probe` lists corpus provenance, records
+through isolated credential homes with `gpt-5.6-luna` passed explicitly, and
+uses the shared probe machinery to append ledgers or re-record only failed
+claims while retaining additive drift. Strict replay tests own the full
+accounting report and reject orphaned or below-minimum recordings.
+
+---
+
 2026-08-29 — **Codex now has a canonical provider boundary.** The former
 `codex-sdk` package is now the `codex` workspace crate. Its existing app-server
 surface remains available, while `Session` pairs the thread's single owned

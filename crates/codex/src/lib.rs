@@ -8,6 +8,8 @@ pub mod init;
 pub mod notification;
 pub mod server;
 pub mod session;
+#[cfg(feature = "specs")]
+pub mod specs;
 pub mod thread;
 pub mod thread_event_stream;
 pub mod transport;
@@ -50,6 +52,7 @@ mod tests {
         assert_eq!(config.client_name, "codex-rust-sdk");
         assert!(config.experimental_api);
         assert!(config.codex_path.is_none());
+        assert!(config.model.is_none());
     }
 
     #[test]

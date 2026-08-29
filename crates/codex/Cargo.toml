@@ -3,15 +3,29 @@ name = "codex"
 version = "0.1.0"
 edition.workspace = true
 
+[features]
+specs = [
+    "dep:chrono",
+    "dep:replay-support",
+    "dep:semver",
+    "dep:tempfile",
+    "dep:uuid",
+]
+
 [dependencies]
 anyhow.workspace = true
+chrono = { workspace = true, optional = true }
 futures-util.workspace = true
+replay-support = { path = "../replay-support", optional = true }
+semver = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+uuid = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true
@@ -20,3 +34,8 @@ tokio-tungstenite.workspace = true
 [dev-dependencies]
 replay-support = { path = "../replay-support" }
 tempfile.workspace = true
+
+[[bin]]
+name = "codex-probe"
+path = "src/bin/codex_probe.rs"
+required-features = ["specs"]

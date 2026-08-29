@@ -10,6 +10,8 @@ use crate::types::ServiceTier;
 pub struct CodexConfig {
     /// Path to the `codex` binary. Defaults to `"codex"` (found via PATH).
     pub codex_path: Option<PathBuf>,
+    /// Model passed explicitly to the Codex CLI before the app-server command.
+    pub model: Option<String>,
     /// Working directory for the subprocess.
     pub cwd: Option<PathBuf>,
     /// Client name sent in the initialize handshake.
@@ -37,6 +39,7 @@ impl Default for CodexConfig {
     fn default() -> Self {
         Self {
             codex_path: None,
+            model: None,
             cwd: None,
             client_name: "codex-rust-sdk".into(),
             client_title: None,

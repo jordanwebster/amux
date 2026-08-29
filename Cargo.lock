@@ -506,9 +506,11 @@ name = "codex"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "futures-util",
  "nix 0.31.3",
  "replay-support",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -517,6 +519,7 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
