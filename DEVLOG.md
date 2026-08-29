@@ -5730,3 +5730,10 @@ deliberately width-declaring goldens. Release rendering at 1,000 entries and
 the 8 ms budget. The complete evidence replay verifies 91 PNG entries across
 10 sets, while the merge-base diff confirms `crates/amux-ui/src` stayed
 untouched.
+
+2026-08-30 — **Completed the final presentation QA replay.** Starting from a
+clean `target/`, `scripts/tui-evidence .autopilot/evidence` reproduced every
+declared set, both 25-frame wheel GIFs, and all mechanical transcripts. The
+QA pass opened the 48 unique PNG renders plus both opencode references and
+found complete visual coverage with no new defects; the final report records
+each accepted demonstration and expectation.
