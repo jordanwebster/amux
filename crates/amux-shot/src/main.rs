@@ -401,7 +401,12 @@ fn resolve_theme_spec(spec: ThemeSpec, mode: ColorMode) -> Result<(Theme, String
 
 #[cfg(test)]
 mod tests {
-    use super::{SET_NAMES, set_members};
+    use std::fs;
+
+    use amux_shot::Manifest;
+    use tempfile::tempdir;
+
+    use super::{SET_NAMES, render_set, set_members};
 
     #[test]
     fn every_declared_set_has_members() {
@@ -424,5 +429,24 @@ mod tests {
                 super::parse_state(member.state).unwrap_or_else(|error| panic!("{set}: {error:?}"));
             }
         }
+    }
+
+    #[test]
+    fn theme_set_manifest_records_the_forced_ansi_render() {
+        let directory = tempdir().expect("theme set tempdir");
+        render_set("themes", directory.path()).expect("render theme set");
+        let manifest: Manifest = serde_json::from_slice(
+            &fs::read(directory.path().join("manifest.json")).expect("read theme manifest"),
+        )
+        .expect("parse theme manifest");
+
+        let ansi = manifest
+            .entries
+            .iter()
+            .find(|entry| entry.file == "claude-working-imported-base16-ansi.png")
+            .expect("ANSI theme entry");
+        assert_eq!(ansi.theme, "imported-base16");
+        assert_eq!(ansi.color, "ansi");
+        assert_eq!(manifest.sets[0].name, "themes");
     }
 }

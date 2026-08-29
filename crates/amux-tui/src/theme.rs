@@ -588,10 +588,31 @@ pub fn detect_color_mode(
 
 #[cfg(test)]
 mod tests {
+    use crate::fixtures::{NamedState, fixture};
+    use crate::{FrameContext, render};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+
     use super::*;
 
     const BASE16_SAMPLE: &str = include_str!("../tests/themes/base16-sample.yaml");
     const BASE24_SAMPLE: &str = include_str!("../tests/themes/base24-sample.yaml");
+
+    fn render_claude_working(theme: Theme) -> Buffer {
+        let fixture = fixture(NamedState::ClaudeWorking);
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("theme test terminal");
+        let context = FrameContext {
+            viewport: (120, 40),
+            theme,
+            now: fixture.now,
+        };
+        terminal
+            .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
+            .expect("render ClaudeWorking theme proof");
+        terminal.backend().buffer().clone()
+    }
 
     #[test]
     fn default_is_dark_truecolor() {
@@ -747,6 +768,41 @@ mod tests {
         assert_eq!(theme.tokens.focus.rgb, (0xa0, 0x60, 0xc0));
         assert_eq!(theme.tokens.accent.rgb, (0xab, 0xcd, 0xef));
         assert_eq!(theme.tokens.accent.ansi, nearest_ansi((0xab, 0xcd, 0xef)));
+    }
+
+    #[test]
+    fn base24_direct_override_reaches_the_rendered_frame() {
+        let file = parse_theme_file(BASE24_SAMPLE).expect("parse base24 fixture");
+        let theme = theme_from_file(&file, ColorMode::TrueColor).expect("resolve base24 fixture");
+        let buffer = render_claude_working(theme);
+
+        assert!(
+            buffer
+                .content()
+                .iter()
+                .any(|cell| cell.fg == Color::Rgb(0xab, 0xcd, 0xef)),
+            "ClaudeWorking should paint its accent bars from the direct accent override"
+        );
+    }
+
+    #[test]
+    fn imported_ansi_theme_puts_no_rgb_colours_in_the_rendered_buffer() {
+        let file = parse_theme_file(BASE16_SAMPLE).expect("parse base16 fixture");
+        let theme = theme_from_file(&file, ColorMode::Ansi).expect("resolve ANSI base16 fixture");
+        let buffer = render_claude_working(theme);
+
+        for (index, cell) in buffer.content().iter().enumerate() {
+            assert!(
+                !matches!(cell.fg, Color::Rgb(..)),
+                "cell {index} has RGB foreground {:?}",
+                cell.fg
+            );
+            assert!(
+                !matches!(cell.bg, Color::Rgb(..)),
+                "cell {index} has RGB background {:?}",
+                cell.bg
+            );
+        }
     }
 
     #[test]

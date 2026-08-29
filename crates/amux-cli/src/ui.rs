@@ -176,25 +176,7 @@ mod tests {
 
     use super::*;
 
-    const BASE16: &str = r##"
-scheme: cli theme fixture
-base00: "#101010"
-base01: "#202020"
-base02: "#303030"
-base03: "#404040"
-base04: "#505050"
-base05: "#606060"
-base06: "#707070"
-base07: "#808080"
-base08: "#900000"
-base09: "#a06000"
-base0A: "#b09000"
-base0B: "#009000"
-base0C: "#008090"
-base0D: "#0060a0"
-base0E: "#7040a0"
-base0F: "#804020"
-"##;
+    const BASE16_SAMPLE: &str = include_str!("../../amux-tui/tests/themes/base16-sample.yaml");
 
     fn env(colorterm: Option<&str>, no_color: bool) -> ColorEnv {
         ColorEnv {
@@ -244,17 +226,19 @@ base0F: "#804020"
     #[test]
     fn theme_relative_file_resolves_beside_config() {
         let directory = tempfile::tempdir().expect("tempdir");
-        let themes = directory.path().join("themes");
-        fs::create_dir(&themes).expect("create themes directory");
-        fs::write(themes.join("sample.yaml"), BASE16).expect("write theme fixture");
+        let config = directory.path().join("amux.yaml");
+        fs::write(&config, "ui:\n  theme: base16-sample.yaml\n").expect("write temporary config");
+        fs::write(directory.path().join("base16-sample.yaml"), BASE16_SAMPLE)
+            .expect("copy committed theme fixture beside config");
         let settings = UiSettings {
-            theme: ThemeSetting::File(PathBuf::from("themes/sample.yaml")),
+            theme: ThemeSetting::File(PathBuf::from("base16-sample.yaml")),
             color: ColorSetting::TrueColor,
             ..UiSettings::default()
         };
 
-        let theme = resolve_theme(&settings, directory.path(), &ColorEnv::default())
-            .expect("resolve relative imported theme");
+        let config_dir = config.parent().expect("temporary config has a parent");
+        let theme = resolve_theme(&settings, config_dir, &ColorEnv::default())
+            .expect("resolve committed sample relative to config");
         assert_eq!(theme.name, amux_tui::ThemeName::Imported);
         assert_eq!(theme.tokens.background.rgb, (0x10, 0x10, 0x10));
         assert_eq!(theme.mode, ColorMode::TrueColor);

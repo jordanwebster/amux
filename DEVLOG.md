@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Proved imported themes at the rendered boundary.** The theme
+screenshot set now has executable coverage for the same Claude working frame
+in dark, light, imported base16 truecolor, and imported base16 ANSI. Its
+manifest test locks the forced render to `ansi`, while the TUI test inspects
+every rendered cell and rejects any RGB foreground or background that leaks
+through ANSI degradation.
+
+The CLI resolution test now copies the committed base16 fixture beside a
+temporary config and resolves its relative `ui.theme` path, rather than using
+a second inline palette. The committed base24 fixture's direct accent override
+is also rendered through the Claude frame and observed on its accent bars, so
+override precedence is proved where a user sees it instead of only in token
+data.
+
+---
+
 2026-08-29 — **The fleet is painted from the same tokens as the chat.** Every
 cell of the fleet screen — the border, the title, the rows, the badges, the
 banner, the filter, the status line and the key hints — now names a semantic
