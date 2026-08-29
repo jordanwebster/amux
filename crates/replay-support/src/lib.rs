@@ -1,7 +1,13 @@
+mod manifest;
 pub mod transport;
 
 use std::path::Path;
 
+pub use manifest::{
+    MANIFEST_SCHEMA_VERSION, Manifest, Observed, Recorded, Recording, RecordingError,
+    RedactionSummary, SourceKind, Verification, append_verification, load_recording,
+    migrate_legacy_manifest,
+};
 pub use transport::{
     ReplayAdvance, ReplayClock, ReplayController, ReplayOptions, ReplayPeek, ReplayTiming,
     replay_transport, replay_transport_with_controller, replay_transport_with_options,
@@ -27,15 +33,27 @@ pub enum IoDirection {
 pub fn load_script(path: impl AsRef<Path>) -> Vec<IoEvent> {
     let path = path.as_ref();
     let display = path.display().to_string();
-    let content =
-        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {display}: {e}"));
+    parse_script(path).unwrap_or_else(|e| panic!("failed to load {display}: {e}"))
+}
+
+fn parse_script(path: &Path) -> Result<Vec<IoEvent>, RecordingError> {
+    let content = std::fs::read_to_string(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => RecordingError::Missing(path.to_path_buf()),
+        _ => RecordingError::Malformed {
+            path: path.to_path_buf(),
+            reason: error.to_string(),
+        },
+    })?;
     let mut events = Vec::new();
-    for line in content.lines() {
+    for (index, line) in content.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
-        let value: serde_json::Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("bad io.jsonl line: {e}\n  line: {line}"));
+        let value: serde_json::Value =
+            serde_json::from_str(line).map_err(|error| RecordingError::Malformed {
+                path: path.to_path_buf(),
+                reason: format!("line {}: {error}", index + 1),
+            })?;
         let us = value.get("us").and_then(|v| v.as_u64()).unwrap_or(0);
         let dir = value.get("dir").and_then(|v| v.as_str()).unwrap_or("");
         let payload = value
@@ -66,5 +84,5 @@ pub fn load_script(path: impl AsRef<Path>) -> Vec<IoEvent> {
             session_id,
         });
     }
-    events
+    Ok(events)
 }
