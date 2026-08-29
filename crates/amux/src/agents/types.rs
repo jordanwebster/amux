@@ -119,14 +119,3 @@ pub struct Agent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_on: Option<WorkingOn>,
 }
-
-impl Agent {
-    /// Temporary compatibility view for clients migrating to typed protocols.
-    pub fn io_protocols(&self) -> Vec<String> {
-        self.kind
-            .protocols()
-            .iter()
-            .map(ToString::to_string)
-            .collect()
-    }
-}

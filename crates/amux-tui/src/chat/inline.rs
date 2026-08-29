@@ -83,7 +83,8 @@ pub(crate) fn can_open(model: &Model, parent: AgentId, child: AgentId) -> bool {
             .codex(child)
             .and_then(|layer| layer.ask_head())
             .is_some(),
-        None => false,
+        // A layer nothing folds has no ask to dock.
+        Some(StructuredProtocol::ClaudeSdk) | None => false,
     }
 }
 
@@ -105,7 +106,8 @@ fn bottom_is_taken(model: &Model, parent: AgentId) -> bool {
             .codex(parent)
             .and_then(|layer| layer.ask_head())
             .is_some(),
-        None => true,
+        // The placeholder frame has no composer to give up.
+        Some(StructuredProtocol::ClaudeSdk) | None => true,
     }
 }
 
@@ -123,6 +125,7 @@ impl InlineAsk {
                 model.codex(child)?.ask_head()?;
                 Ui::Codex { cursor: 0 }
             }
+            StructuredProtocol::ClaudeSdk => return None,
         };
         Some(Self { child, ui })
     }

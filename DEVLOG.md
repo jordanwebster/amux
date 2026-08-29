@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The chat layer comes from the agent's kind, and an unread
+protocol renders as one.** The UI no longer sniffs a layer out of advertised
+protocol strings: a kind determines its layer, and a Claude driven through
+the SDK gets a typed layer that folds nothing. Its chat is a placeholder
+naming the protocol nothing here reads, taking no input and still offering
+the keys that leave, so an agent kind can ship before its reader does without
+becoming unreachable. Fleet fixtures that reached Codex states through Claude
+rows now use Codex rows, which is the only way to reach them under closed
+kinds.
+
+---
+
 2026-08-29 — **Probe re-record failures remain visible run outcomes.** A
 failed attempt to refresh one broken specification now records that claim as
 failed, continues through the registry, and still writes both probe and drift

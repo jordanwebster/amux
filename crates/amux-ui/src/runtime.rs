@@ -830,6 +830,18 @@ async fn pump_structured_stream(
         StructuredProtocol::Codex => codex_io::encode_codex_sdk_v1_args(codex_io::CodexSdkV1Args {
             replay_query: Some(codex_io::CodexSdkV1ReplayQuery::Tail { count: tail }),
         }),
+        // The subscription policy never opens this protocol, because no
+        // layer here folds it. Reaching this arm means the policy changed
+        // without the fold: say which protocol is missing rather than
+        // subscribing with arguments nobody can read.
+        StructuredProtocol::ClaudeSdk => {
+            return Some(StreamCloseReason::InternalError {
+                detail: format!(
+                    "{} has no client-side fold in this build",
+                    protocol.as_str()
+                ),
+            });
+        }
     };
     let mut session = match client
         .subscribe_session(SubscribeSessionRequest {
@@ -940,6 +952,14 @@ fn decode_structured_entry(
 ) -> Result<StreamEntry, StreamCloseReason> {
     let output = match protocol {
         StructuredProtocol::Claude => claude_io::decode_pty_transcript_v1_output(payload),
+        StructuredProtocol::ClaudeSdk => {
+            return Err(StreamCloseReason::InternalError {
+                detail: format!(
+                    "{} has no client-side fold in this build",
+                    protocol.as_str()
+                ),
+            });
+        }
         StructuredProtocol::Codex => {
             let output = codex_io::decode_codex_sdk_v1_output(payload).map_err(|error| {
                 StreamCloseReason::InternalError {

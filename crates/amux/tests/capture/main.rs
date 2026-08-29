@@ -3025,17 +3025,12 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
-    if !external.readonly
-        || !external
-            .io_protocols()
-            .iter()
-            .any(|protocol| protocol == PTY_TRANSCRIPT_V1)
-        || external
-            .io_protocols()
-            .iter()
-            .any(|protocol| protocol == amux::terminal_io::TERMINAL_V1)
-    {
-        bail!("external inventory shape is not structured-only readonly: {external:?}");
+    // An externally started Claude is a PTY-driven Claude somebody else
+    // owns: readonly, and reachable only through its transcript. There is
+    // no terminal to attach to, which the daemon states by refusing that
+    // plane rather than by advertising a shorter protocol list.
+    if !external.readonly || !external.kind.exposes(amux::Protocol::ClaudePtyTranscriptV1) {
+        bail!("external inventory shape is not readonly transcript Claude: {external:?}");
     }
 
     let mut stream = daemon
