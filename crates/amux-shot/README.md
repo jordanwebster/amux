@@ -21,6 +21,21 @@ cargo run -p amux-shot -- record-scroll codex --out target/shot/scroll
 cargo run -p amux-shot -- verify target/shot
 ```
 
+To reproduce the complete review bundle in one command, use the repository
+wrapper:
+
+```sh
+scripts/tui-evidence target/tui-evidence
+```
+
+The wrapper renders every declared set, records both agents' wheel sessions,
+captures the command help and fixture list, proves byte-for-byte repeatability,
+and records the debug and release paint benchmarks plus the theme-loader and
+OSC 52 tests. It finishes by recursively verifying every PNG manifest below
+the output directory and exits non-zero if rendering, recording, testing,
+repeatability, or verification fails. Existing unrelated files in the output
+directory are left in place.
+
 `--theme` accepts `dark`, `light`, or a YAML theme-file path. `--color`
 accepts `truecolor` or `ansi` and defaults to truecolor.
 

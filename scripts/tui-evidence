@@ -1,0 +1,135 @@
+#!/bin/sh
+
+set -eu
+
+usage() {
+    echo "usage: scripts/tui-evidence <output-directory>" >&2
+    exit 2
+}
+
+[ "$#" -eq 1 ] || usage
+[ -n "$1" ] || usage
+
+case "$1" in
+    /*) evidence_dir=$1 ;;
+    *) evidence_dir=$PWD/$1 ;;
+esac
+
+script_dir=$(CDPATH='' cd "$(dirname "$0")" && pwd)
+repo_root=$(CDPATH='' cd "$script_dir/.." && pwd)
+mkdir -p "$evidence_dir"
+evidence_dir=$(CDPATH='' cd "$evidence_dir" && pwd)
+
+case "$evidence_dir" in
+    /|"$repo_root")
+        echo "refusing to write evidence into $evidence_dir" >&2
+        exit 2
+        ;;
+esac
+
+cd "$repo_root"
+
+# Some developer checkouts configure a shared Cargo build directory that is
+# unavailable inside a sandbox. Evidence is self-contained, so keep its build
+# artifacts in this checkout unless the caller selected another target dir.
+unset CARGO_BUILD_BUILD_DIR
+: "${CARGO_TARGET_DIR:=$repo_root/target/autopilot}"
+export CARGO_TARGET_DIR
+
+shot() {
+    timeout 600 cargo run --quiet -p amux-shot -- "$@"
+}
+
+capture() {
+    capture_file=$1
+    shift
+    mkdir -p "$(dirname "$capture_file")"
+    {
+        printf '$'
+        for argument in "$@"; do
+            printf ' %s' "$argument"
+        done
+        printf '\n\n'
+    } >"$capture_file"
+    if "$@" >>"$capture_file" 2>&1; then
+        cat "$capture_file"
+    else
+        capture_status=$?
+        cat "$capture_file" >&2
+        return "$capture_status"
+    fi
+}
+
+repeatability() {
+    repeat_file=$evidence_dir/tool/repeatability.txt
+    run_a=$evidence_dir/tool/run-a/smoke.png
+    run_b=$evidence_dir/tool/run-b/smoke.png
+    mkdir -p "$(dirname "$run_a")" "$(dirname "$run_b")"
+    if {
+        echo '$ cargo run --quiet -p amux-shot -- render claude-idle --out tool/run-a/smoke.png' &&
+            shot render claude-idle --out "$run_a" &&
+            echo &&
+            echo '$ cargo run --quiet -p amux-shot -- render claude-idle --out tool/run-b/smoke.png' &&
+            shot render claude-idle --out "$run_b" &&
+            echo &&
+            echo '$ shasum -a 256 tool/run-a/smoke.png tool/run-b/smoke.png' &&
+            shasum -a 256 "$run_a" "$run_b" &&
+            echo &&
+            echo '$ cmp tool/run-a/smoke.png tool/run-b/smoke.png' &&
+            cmp "$run_a" "$run_b" &&
+            echo 'Result: PNG bytes match exactly.'
+    } >"$repeat_file" 2>&1; then
+        cat "$repeat_file"
+    else
+        cat "$repeat_file" >&2
+        return 1
+    fi
+}
+
+echo "Rendering declared evidence sets into $evidence_dir"
+for set_name in chat agent-specific gallery scroll copy collapse themes fleet; do
+    shot render-set "$set_name" --out "$evidence_dir/$set_name"
+done
+shot render-set all --out "$evidence_dir"
+
+echo "Recording synthetic wheel sessions"
+shot record-scroll claude --out "$evidence_dir/scroll"
+shot record-scroll codex --out "$evidence_dir/scroll"
+
+echo "Capturing screenshot-tool commands"
+capture "$evidence_dir/tool/help.txt" \
+    timeout 600 cargo run --quiet -p amux-shot -- --help
+capture "$evidence_dir/tool/list.txt" \
+    timeout 600 cargo run --quiet -p amux-shot -- list
+repeatability
+
+echo "Capturing mechanical demonstrations"
+capture "$evidence_dir/perf/perf-debug.txt" \
+    timeout 900 cargo test -p amux-tui --test perf -- --nocapture
+capture "$evidence_dir/perf/perf-release.txt" \
+    timeout 900 cargo test -p amux-tui --release --test perf -- --nocapture
+capture "$evidence_dir/themes/theme-loader-tests.txt" \
+    timeout 600 cargo test -p amux-tui theme:: -- --nocapture
+capture "$evidence_dir/copy/osc52-transcript.txt" \
+    timeout 600 cargo test -p amux-tui osc52 -- --nocapture
+
+for required_file in \
+    "$evidence_dir/scroll/claude-wheel.gif" \
+    "$evidence_dir/scroll/codex-wheel.gif" \
+    "$evidence_dir/scroll/events.json" \
+    "$evidence_dir/tool/help.txt" \
+    "$evidence_dir/tool/list.txt" \
+    "$evidence_dir/tool/repeatability.txt" \
+    "$evidence_dir/perf/perf-debug.txt" \
+    "$evidence_dir/perf/perf-release.txt" \
+    "$evidence_dir/themes/theme-loader-tests.txt" \
+    "$evidence_dir/copy/osc52-transcript.txt"
+do
+    if [ ! -s "$required_file" ]; then
+        echo "missing evidence artifact: $required_file" >&2
+        exit 1
+    fi
+done
+
+echo "Verifying the complete evidence tree"
+shot verify "$evidence_dir"

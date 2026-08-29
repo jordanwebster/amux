@@ -950,13 +950,13 @@ pub fn detect_color_mode(
 
 #[cfg(test)]
 mod tests {
-    use crate::fixtures::{NamedState, fixture};
-    use crate::{FrameContext, render};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
 
     use super::*;
+    use crate::fixtures::{NamedState, fixture};
+    use crate::{FrameContext, render};
 
     const BASE16_SAMPLE: &str = include_str!("../tests/themes/base16-sample.yaml");
     const BASE24_SAMPLE: &str = include_str!("../tests/themes/base24-sample.yaml");
@@ -1321,11 +1321,6 @@ mod tests {
 
     // --- imported palettes ---------------------------------------------
 
-    fn imported(yaml: &str, mode: ColorMode) -> Theme {
-        let file = parse_theme_file(yaml).expect("parse imported fixture");
-        theme_from_file(&file, mode).expect("resolve imported fixture")
-    }
-
     /// The same scheme with its direct overrides dropped. A token named under
     /// `tokens:` is the user's own word and is taken literally, so only the
     /// base mapping carries a readability guarantee.
@@ -1504,7 +1499,10 @@ mod tests {
     /// both palettes — 4.5:1 is the WCAG AA threshold for ordinary text.
     #[test]
     fn palettes_keep_text_readable_on_every_surface() {
-        for theme in [Theme::dark(ColorMode::TrueColor), Theme::light(ColorMode::TrueColor)] {
+        for theme in [
+            Theme::dark(ColorMode::TrueColor),
+            Theme::light(ColorMode::TrueColor),
+        ] {
             let text = theme.tokens.text.rgb;
             for (surface, name) in [
                 (theme.tokens.background.rgb, "background"),
@@ -1531,11 +1529,7 @@ mod tests {
                 ),
             ] {
                 let ratio = contrast(fg, bg);
-                assert!(
-                    ratio >= 4.5,
-                    "{:?} {name} is only {ratio:.1}:1",
-                    theme.name
-                );
+                assert!(ratio >= 4.5, "{:?} {name} is only {ratio:.1}:1", theme.name);
             }
         }
     }
@@ -1545,7 +1539,10 @@ mod tests {
     /// other at a glance.
     #[test]
     fn palettes_separate_the_diff_tints_from_the_panel() {
-        for theme in [Theme::dark(ColorMode::TrueColor), Theme::light(ColorMode::TrueColor)] {
+        for theme in [
+            Theme::dark(ColorMode::TrueColor),
+            Theme::light(ColorMode::TrueColor),
+        ] {
             let panel = theme.tokens.panel.rgb;
             let added = theme.tokens.diff_added_bg.rgb;
             let removed = theme.tokens.diff_removed_bg.rgb;
@@ -1574,7 +1571,10 @@ mod tests {
             (247, 118, 142),
             (187, 154, 247),
         ];
-        for theme in [Theme::dark(ColorMode::TrueColor), Theme::light(ColorMode::TrueColor)] {
+        for theme in [
+            Theme::dark(ColorMode::TrueColor),
+            Theme::light(ColorMode::TrueColor),
+        ] {
             for token in [
                 theme.tokens.background,
                 theme.tokens.text,

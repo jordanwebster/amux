@@ -22,9 +22,8 @@ use serde_json::Value;
 use super::View;
 use crate::chat::blocks::{
     self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant,
-    paint_compaction_rule, paint_composer_block, paint_error, paint_header,
-    paint_mcp_startup, paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized,
-    paint_user_prompt,
+    paint_compaction_rule, paint_composer_block, paint_error, paint_header, paint_mcp_startup,
+    paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::diff::diff_rows_from_patch;
 use crate::chat::frame::{
@@ -34,9 +33,7 @@ use crate::chat::frame::{
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph};
 use crate::markdown;
-use crate::render::{
-    FrameContext, Theme, clip_to_width, pad_to, push_span, str_width,
-};
+use crate::render::{FrameContext, Theme, clip_to_width, pad_to, push_span, str_width};
 use crate::view::QuitGuard;
 
 const GLYPH_COL: usize = blocks::GLYPH_COL;
@@ -354,7 +351,13 @@ fn approval_body(
     let _ = model;
     let mut lines = context_lines(&ask.context, width, theme);
     if let Some(message) = view.failure {
-        lines.extend(panel_glyph_text("✗", message, width, theme.error(), theme.text()));
+        lines.extend(panel_glyph_text(
+            "✗",
+            message,
+            width,
+            theme.error(),
+            theme.text(),
+        ));
     }
     lines
 }
@@ -460,36 +463,44 @@ fn panel_glyph_text(
     glyph_style: Style,
     text_style: Style,
 ) -> Vec<Line<'static>> {
-    markdown::plain_rows(text, width.saturating_sub(PANEL_TEXT_COL).max(1), text_style)
-        .into_iter()
-        .enumerate()
-        .map(|(index, spans)| {
-            let mut line = Line::default();
-            if index == 0 {
-                push_span(&mut line, PANEL_GLYPH_COL, glyph.to_string(), glyph_style);
-            }
-            pad_to(&mut line, PANEL_TEXT_COL);
-            line.spans.extend(spans);
-            line
-        })
-        .collect()
+    markdown::plain_rows(
+        text,
+        width.saturating_sub(PANEL_TEXT_COL).max(1),
+        text_style,
+    )
+    .into_iter()
+    .enumerate()
+    .map(|(index, spans)| {
+        let mut line = Line::default();
+        if index == 0 {
+            push_span(&mut line, PANEL_GLYPH_COL, glyph.to_string(), glyph_style);
+        }
+        pad_to(&mut line, PANEL_TEXT_COL);
+        line.spans.extend(spans);
+        line
+    })
+    .collect()
 }
 
 /// A dim `└ …` continuation inside a panel body.
 fn panel_continuation(text: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    markdown::plain_rows(text, width.saturating_sub(PANEL_CONT_COL).max(1), theme.muted())
-        .into_iter()
-        .enumerate()
-        .map(|(index, spans)| {
-            let mut line = Line::default();
-            if index == 0 {
-                push_span(&mut line, PANEL_TEXT_COL, "└", theme.muted());
-            }
-            pad_to(&mut line, PANEL_CONT_COL);
-            line.spans.extend(spans);
-            line
-        })
-        .collect()
+    markdown::plain_rows(
+        text,
+        width.saturating_sub(PANEL_CONT_COL).max(1),
+        theme.muted(),
+    )
+    .into_iter()
+    .enumerate()
+    .map(|(index, spans)| {
+        let mut line = Line::default();
+        if index == 0 {
+            push_span(&mut line, PANEL_TEXT_COL, "└", theme.muted());
+        }
+        pad_to(&mut line, PANEL_CONT_COL);
+        line.spans.extend(spans);
+        line
+    })
+    .collect()
 }
 
 fn context_lines(context: &AskContext, width: usize, theme: Theme) -> Vec<Line<'static>> {
@@ -501,7 +512,13 @@ fn context_lines(context: &AskContext, width: usize, theme: Theme) -> Vec<Line<'
             reason,
             ..
         } => {
-            lines.extend(panel_glyph_text("$", command, width, theme.muted(), theme.code()));
+            lines.extend(panel_glyph_text(
+                "$",
+                command,
+                width,
+                theme.muted(),
+                theme.code(),
+            ));
             if let Some(cwd) = cwd {
                 lines.extend(panel_continuation(&format!("cwd {cwd}"), width, theme));
             }

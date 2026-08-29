@@ -5715,3 +5715,10 @@ hold every painted glyph to at least 3:1 contrast.
 records post-mapping contrast repair, literal unguaranteed token overrides,
 scheme-hued diff-background tints, and preservation-based ANSI face selection.
 It also stops deferring message copy now that the OSC 52 binding ships.
+
+2026-08-30 — **Made the complete TUI proof reproducible with one command.**
+`scripts/tui-evidence` now renders every screenshot set, records both wheel
+sessions, checks byte-repeatable PNG output, captures the paint, theme-loader,
+and OSC 52 test transcripts, and recursively verifies the resulting evidence
+tree. The wrapper keeps Cargo artifacts local when a checkout's shared build
+directory is unavailable.

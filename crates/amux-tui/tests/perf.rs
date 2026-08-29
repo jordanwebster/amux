@@ -1,12 +1,10 @@
 use std::time::{Duration, Instant};
 
-use amux_ui::StructuredProtocol;
 use amux_tui::chat::{handle_chat_key, handle_chat_mouse};
 use amux_tui::fixtures::{Fixture, long_feed};
 use amux_tui::{FrameContext, PaintStats, Theme, render};
-use crossterm::event::{
-    KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
-};
+use amux_ui::StructuredProtocol;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;

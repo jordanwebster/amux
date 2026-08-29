@@ -171,10 +171,8 @@ fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'stat
 /// between a title, a body and the keys that act on it.
 pub(crate) fn rule_line(width: usize, theme: Theme) -> Line<'static> {
     let mut line = Line::default();
-    line.spans.push(Span::styled(
-        "─".repeat(width),
-        theme.muted(),
-    ));
+    line.spans
+        .push(Span::styled("─".repeat(width), theme.muted()));
     line
 }
 
@@ -360,7 +358,6 @@ fn hint(text: &str, theme: Theme) -> Vec<Line<'static>> {
     push_span(&mut line, 4, text.to_string(), theme.muted());
     vec![line]
 }
-
 
 fn title_line(
     title: &str,

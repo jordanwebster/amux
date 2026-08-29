@@ -497,7 +497,12 @@ fn footer_line(
             // kept — Enter is a no-op, never a loss.
             format!("draft kept — {refusal}")
         };
-        push_span(&mut line, blocks::TEXT_COL, help_hinted(chat, hint), theme.muted());
+        push_span(
+            &mut line,
+            blocks::TEXT_COL,
+            help_hinted(chat, hint),
+            theme.muted(),
+        );
     } else {
         push_span(
             &mut line,
@@ -586,31 +591,22 @@ fn feed_blocks(
                 );
                 blocks.push(
                     cache
-                        .get_or_paint(
-                            BlockKey(key.0),
-                            &content,
-                            width,
-                            theme,
-                            expanded,
-                            || {
-                                let painted: Vec<PaintedBlock> = member_entries
-                                    .iter()
-                                    .map(|entry| {
-                                        entry_block(entry, theme, width, plan_hint, reports)
-                                    })
-                                    .collect();
-                                paint_exploration_run(
-                                    BlockKey(key.0),
-                                    key,
-                                    &summary,
-                                    &painted,
-                                    expanded,
-                                    &hint,
-                                    theme,
-                                    width,
-                                )
-                            },
-                        )
+                        .get_or_paint(BlockKey(key.0), &content, width, theme, expanded, || {
+                            let painted: Vec<PaintedBlock> = member_entries
+                                .iter()
+                                .map(|entry| entry_block(entry, theme, width, plan_hint, reports))
+                                .collect();
+                            paint_exploration_run(
+                                BlockKey(key.0),
+                                key,
+                                &summary,
+                                &painted,
+                                expanded,
+                                &hint,
+                                theme,
+                                width,
+                            )
+                        })
                         .clone(),
                 );
             }
@@ -646,9 +642,7 @@ fn entry_block(
 ) -> PaintedBlock {
     let key = BlockKey(entry.id);
     match &entry.kind {
-        FeedEntryKind::Prompt(prompt) => {
-            paint_user_prompt(key, &prompt.text, false, theme, width)
-        }
+        FeedEntryKind::Prompt(prompt) => paint_user_prompt(key, &prompt.text, false, theme, width),
         // One markdown source per message: blocks joined the way the API
         // separates them.
         FeedEntryKind::Message(message) => {
@@ -693,9 +687,7 @@ fn entry_block(
             }
             paint_compaction_rule(key, &label, theme, width)
         }
-        FeedEntryKind::CompactSummary(summary) => {
-            paint_assistant(key, &summary.text, theme, width)
-        }
+        FeedEntryKind::CompactSummary(summary) => paint_assistant(key, &summary.text, theme, width),
         FeedEntryKind::Tool(tool) => tool_block(key, tool, theme, width, plan_hint),
         // One directional glyph, the sender, then the body — in the shape
         // the kernel gives the message's kind, so this chat and every
@@ -1074,7 +1066,12 @@ fn help_overlay(
         armed_quit_line(theme)
     } else {
         let mut line = Line::default();
-        push_span(&mut line, blocks::TEXT_COL, "any key to close", theme.muted());
+        push_span(
+            &mut line,
+            blocks::TEXT_COL,
+            "any key to close",
+            theme.muted(),
+        );
         line
     };
 

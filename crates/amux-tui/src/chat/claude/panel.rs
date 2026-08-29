@@ -196,23 +196,19 @@ fn answer_summary(answer: &AskAnswer, theme: Theme) -> (&'static str, Style, &'s
 /// The stated failure line (SendFailed resurfacing, or a synchronous
 /// refusal the reducer reported).
 fn failure_line(message: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    markdown::plain_rows(
-        message,
-        width.saturating_sub(TEXT_COL).max(1),
-        theme.text(),
-    )
-    .into_iter()
-    .enumerate()
-    .map(|(index, spans)| {
-        let mut line = Line::default();
-        if index == 0 {
-            push_span(&mut line, GLYPH_COL, "✗", theme.error());
-        }
-        push_span(&mut line, TEXT_COL, "", theme.text());
-        line.spans.extend(spans);
-        line
-    })
-    .collect()
+    markdown::plain_rows(message, width.saturating_sub(TEXT_COL).max(1), theme.text())
+        .into_iter()
+        .enumerate()
+        .map(|(index, spans)| {
+            let mut line = Line::default();
+            if index == 0 {
+                push_span(&mut line, GLYPH_COL, "✗", theme.error());
+            }
+            push_span(&mut line, TEXT_COL, "", theme.text());
+            line.spans.extend(spans);
+            line
+        })
+        .collect()
 }
 
 /// The numbered action list — the one list idiom every ask uses (C2).
@@ -339,11 +335,9 @@ fn body_lines(ask: &Ask, width: usize, theme: Theme) -> Vec<Line<'static>> {
             let mut lines = Vec::new();
             let total = plan.lines().count();
             for text in plan.lines().take(PLAN_PREVIEW_LINES) {
-                for spans in markdown::plain_rows(
-                    text,
-                    width.saturating_sub(TEXT_COL).max(1),
-                    theme.muted(),
-                ) {
+                for spans in
+                    markdown::plain_rows(text, width.saturating_sub(TEXT_COL).max(1), theme.muted())
+                {
                     let mut line = Line::default();
                     push_span(&mut line, TEXT_COL, "", theme.muted());
                     line.spans.extend(spans);
@@ -396,10 +390,7 @@ pub(crate) fn ask_panel(
     if let AskState::AnsweredOptimistic { answer, .. } = &ask.state {
         let (glyph, _, summary) = answer_summary(answer, theme);
         return AskPanel::titled(
-            format!(
-                "{glyph} {summary} — {} · sending…",
-                ask_identity(ask)
-            ),
+            format!("{glyph} {summary} — {} · sending…", ask_identity(ask)),
             ask_count,
         )
         .hinted(
@@ -452,10 +443,7 @@ fn permission_panel(
         theme,
         quit_guard_armed,
     } = ctx;
-    let mut panel = AskPanel::titled(
-        format!("permission — {}", ask_identity(ask)),
-        ask_count,
-    );
+    let mut panel = AskPanel::titled(format!("permission — {}", ask_identity(ask)), ask_count);
     if let Some(message) = failed {
         panel.body.extend(failure_line(message, width, theme));
     }
@@ -478,9 +466,12 @@ fn permission_panel(
         }
         _ => {
             panel.body.extend(body_lines(ask, width, theme));
-            panel
-                .actions
-                .extend(permission_actions(suggestions, Some(ui.menu_cursor()), width, theme));
+            panel.actions.extend(permission_actions(
+                suggestions,
+                Some(ui.menu_cursor()),
+                width,
+                theme,
+            ));
             let f_hint = if ask_ui::has_readable(ask) {
                 match &ask.artifact {
                     Some(AskArtifact::NewFile { .. }) => " · f full view",
@@ -502,21 +493,13 @@ fn permission_panel(
 /// from the suggestions, and shapes no capture confirmed have no digit
 /// table — the panel states the typed refusal read-only-style instead of
 /// offering actions the encoder would refuse.
-fn refusal_panel(
-    ask: &Ask,
-    refusal: &str,
-    ask_count: usize,
-    ctx: PanelContext,
-) -> AskPanel {
+fn refusal_panel(ask: &Ask, refusal: &str, ask_count: usize, ctx: PanelContext) -> AskPanel {
     let PanelContext {
         width,
         theme,
         quit_guard_armed,
     } = ctx;
-    let mut panel = AskPanel::titled(
-        format!("permission — {}", ask_identity(ask)),
-        ask_count,
-    );
+    let mut panel = AskPanel::titled(format!("permission — {}", ask_identity(ask)), ask_count);
     panel.body.extend(body_lines(ask, width, theme));
     panel.actions.extend(failure_line(refusal, width, theme));
     let f_hint = if ask_ui::has_readable(ask) {
@@ -857,10 +840,7 @@ pub(crate) fn readonly_ask_panel(
                         .or_else(|| question.header.clone())
                 })
                 .unwrap_or_default();
-            (
-                format!("the agent is asking a question — {text}"),
-                None,
-            )
+            (format!("the agent is asking a question — {text}"), None)
         }
         AskKind::Permission { .. } if ask_ui::is_plan(ask) => (
             "the agent is asking for plan approval".to_string(),
