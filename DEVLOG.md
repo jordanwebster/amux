@@ -5710,3 +5710,8 @@ colliding with muted text, while the light palette uses black for muted labels,
 diff metadata, and gutters against its cyan and grey surfaces. Rendered-cell
 tests cover working, permission, and approval frames in truecolor and ANSI and
 hold every painted glyph to at least 3:1 contrast.
+
+2026-08-30 — **Corrected the imported-theme documentation.** The chat spec now
+records post-mapping contrast repair, literal unguaranteed token overrides,
+scheme-hued diff-background tints, and preservation-based ANSI face selection.
+It also stops deferring message copy now that the OSC 52 binding ships.

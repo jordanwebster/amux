@@ -971,7 +971,7 @@ unknown token names are startup errors that name the key.
 | Semantic roles | base16 | base24 |
 | --- | --- | --- |
 | background | `base00` | `base00` |
-| user surface and diff tint fallbacks | `base01` | `base01` |
+| user surface | `base01` | `base01` |
 | panel | `base02` | `base02` |
 | muted and gutter | `base03` | `base03` |
 | diff metadata | `base04` | `base04` |
@@ -983,11 +983,23 @@ unknown token names are startup errors that name the key.
 | code | `base0C` | `base17` |
 | accent | `base0D` | `base15` |
 | focus | `base0E` | `base16` |
+| added / removed diff backgrounds | `base01` tinted with `base0B` / `base08` | `base01` tinted with `base13` / `base12` |
 
 The `tokens:` map is applied after that mapping and may override any of
 `background`, `text`, `muted`, `emphasis`, `accent`, `user_surface`, `panel`,
 `focus`, `code`, `ok`, `warn`, `error`, `diff_added_fg`, `diff_added_bg`,
 `diff_removed_fg`, `diff_removed_bg`, `diff_context`, `diff_meta`, or `gutter`.
+Base16 has no diff-background slots: unless directly overridden, amux starts
+both backgrounds from `base01` and tints the added and removed surfaces with
+the scheme's own success and error hues.
+
+After mapping, amux repairs the mechanically mapped palette for the surfaces
+the TUI actually paints. Foregrounds that miss their contrast floor are moved
+only along HSL lightness until they clear it, so the rendered RGB value may
+differ from the file's hexadecimal value while its hue and saturation survive.
+A token named explicitly under `tokens:` is the theme author's final word: it
+is taken literally, skipped by this repair, and carries no readability
+guarantee.
 
 Select the palette and terminal colour policy in the ordinary amux config:
 
@@ -1002,8 +1014,14 @@ process working directory. Theme files are loaded before amux enters the
 alternate screen, so an invalid file fails as a normal startup error. In
 `auto`, amux uses truecolor only when `COLORTERM` says `truecolor` or `24bit`
 and `NO_COLOR` is unset; `truecolor` and `ansi` force the mode. Imported RGB
-values degrade to their nearest named 16-colour ANSI value, keeping the same
-semantic roles without making painters branch on terminal capability.
+values that came through the base mapping degrade to named 16-colour ANSI
+faces chosen by a preservation score: contrast shortfall and loss of
+chromatic-or-neutral identity, hue, and lightness are all penalized. This is
+not nearest-RGB rounding, which can collapse a dark ramp onto one invisible
+face. Direct `tokens:` overrides skip that repair: their RGB value stays
+literal and their ANSI face stays at its initial named-colour mapping, with no
+readability guarantee. Painters keep the same semantic roles without branching
+on terminal capability.
 
 ## Reproducible screenshots with amux-shot
 
@@ -1200,7 +1218,7 @@ above.
   token count (D5).
 - **Nested subagent timelines** — requires tailing child transcript
   files; B7's one-line summaries stand until then.
-- **Message-level copy/retry; archive.**
+- **Message-level retry and archive.**
 - **Composer prompt-history recall** — adopt opencode's edge-of-buffer
   + unchanged-buffer guard when it lands.
 - **Command palette** — the binding table is palette-ready; V1
