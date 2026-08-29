@@ -2977,6 +2977,7 @@ async fn subscriptions(
 /// no file beneath the user's real ~/.claude is read or written.
 async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<serde_json::Value> {
     use amux::claude_io::{PTY_TRANSCRIPT_V1, decode_pty_transcript_v1_output};
+    use amux::terminal_io::TERMINAL_V1;
     use amux::{
         AgentIdentifier, ClientError, ProtocolError, SendInputRequest, SubscribeSessionEvent,
         SubscribeSessionRequest,
@@ -3025,12 +3026,33 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
-    // An externally started Claude is a PTY-driven Claude somebody else
-    // owns: readonly, and reachable only through its transcript. There is
-    // no terminal to attach to, which the daemon states by refusing that
-    // plane rather than by advertising a shorter protocol list.
-    if !external.readonly || !external.kind.exposes(amux::Protocol::ClaudePtyTranscriptV1) {
-        bail!("external inventory shape is not readonly transcript Claude: {external:?}");
+    if !external.readonly
+        || external.kind
+            != (amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            })
+    {
+        bail!("external inventory shape is not readonly PTY Claude: {external:?}");
+    }
+
+    let terminal_result = daemon
+        .client
+        .subscribe_session(SubscribeSessionRequest {
+            agent: AgentIdentifier::Id(session_id),
+            io_protocol: TERMINAL_V1.to_string(),
+            args: None,
+        })
+        .await;
+    let terminal_error = match terminal_result {
+        Ok(_) => bail!("externally discovered session exposed an amux-owned terminal"),
+        Err(error) => error,
+    };
+    if !matches!(
+        &terminal_error,
+        ClientError::Protocol(ProtocolError::FailedPrecondition { message })
+            if message == "Claude PTY is not active"
+    ) {
+        bail!("readonly terminal subscription returned the wrong typed error: {terminal_error}");
     }
 
     let mut stream = daemon
@@ -3130,6 +3152,7 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
             "readonly": true,
             "structured_replay": true,
             "raw_absent": true,
+            "terminal_refused": terminal_error.to_string(),
             "input_refused": readonly_error.to_string(),
             "session_end_withdrew": true
         }

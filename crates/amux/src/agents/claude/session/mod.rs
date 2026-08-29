@@ -33,7 +33,20 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::agents::{LocalAgentNameSource, SessionEvent};
+    use crate::agents::{AgentBackend, LocalAgentNameSource, Protocol, SessionEvent};
+    use crate::protocol::ProtocolError;
+
+    #[test]
+    fn externally_discovered_session_refuses_terminal_plane_without_owned_pty() {
+        let dir = tempdir().unwrap();
+        let session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
+
+        assert!(matches!(
+            session.plane(Protocol::TerminalV1),
+            Err(ProtocolError::FailedPrecondition { message })
+                if message == "Claude PTY is not active"
+        ));
+    }
 
     #[test]
     fn test_pty_input_deserializes() {

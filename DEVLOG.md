@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Made external Claude terminal absence observable.** A Claude
+session discovered through hooks still has the PTY driver kind because its
+transcript protocol is available, but it has no terminal owned by amux. The
+backend and live capture boundary now prove that a terminal subscription is
+refused with `FailedPrecondition` while transcript replay remains available.
+
+---
+
 2026-08-29 — **Agent kinds and session protocols are closed across the wire.**
 Claude now carries its PTY or SDK driver in the agent kind, while Codex and the
 test agent are distinct variants; each kind derives the protocols it exposes.
