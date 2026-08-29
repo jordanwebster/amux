@@ -5697,3 +5697,9 @@ The chat spec shows the borderless 120-column frame and records the finished
 block surfaces, exploration folds, unified diffs, wheel/focus/copy bindings,
 base16/base24 theme schema, terminal colour policy, and repeatable `amux-shot`
 workflow.
+
+2026-08-30 — **Restored complete help-overlay binding coverage.** The standard
+120×40 chat goldens continue to lock their honest truncated presentation, while
+a tall renderer test now derives the complete expected list from the binding
+table and proves that every section and row, including reader and read-only
+chat controls, is painted when space permits.

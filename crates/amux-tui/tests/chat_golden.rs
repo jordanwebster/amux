@@ -590,10 +590,10 @@ fn chat_idle() {
     assert_golden("chat_idle", &rendered);
 }
 
-/// The `?` overlay: the chat's full effective key list with tier
-/// annotations, from the one binding table — plain terminal (no kitty
-/// row; ctrl+home/end and ctrl+←/→ marked terminal-dependent), tall
-/// enough for the full list.
+/// The `?` overlay on the standard viewport: a plain terminal has no
+/// kitty row, and the honest `⋮ more` tail says the complete binding
+/// list continues below the available space. A renderer unit test uses a
+/// tall viewport to assert every row from the binding table.
 #[test]
 fn chat_help_overlay() {
     let model = idle_model();

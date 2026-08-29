@@ -1117,6 +1117,50 @@ mod tests {
     use crate::composer::Composer;
 
     #[test]
+    fn tall_help_overlay_renders_every_effective_binding() {
+        let model = Model::default();
+        let chat = View::open(uuid::Uuid::nil(), 'a', false);
+        let sections = crate::bindings::chat_sections(
+            &crate::bindings::Effective::new(chat.kitty, chat.leader),
+            crate::bindings::FamilyKeys::default(),
+        );
+        let body_rows = sections
+            .iter()
+            .map(|section| 1 + section.bindings.len())
+            .sum::<usize>()
+            + sections.len().saturating_sub(1);
+        let lines = help_overlay(&model, &chat, Theme::default(), 120, body_rows + 5);
+        let rendered: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect();
+
+        assert!(rendered.iter().all(|line| !line.contains("⋮ more")));
+        for section in sections {
+            assert!(
+                rendered.iter().any(|line| line.trim() == section.title),
+                "missing help section {:?}",
+                section.title
+            );
+            for binding in section.bindings {
+                assert!(
+                    rendered.iter().any(|line| {
+                        line.contains(&binding.keys) && line.contains(&binding.action)
+                    }),
+                    "missing help row {:?}: {:?}",
+                    binding.keys,
+                    binding.action
+                );
+            }
+        }
+    }
+
+    #[test]
     fn durations_floor_to_whole_units() {
         assert_eq!(fmt_secs(24), "24s");
         assert_eq!(fmt_secs(102), "1m 42s");
