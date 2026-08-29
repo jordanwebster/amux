@@ -1,5 +1,8 @@
 mod manifest;
+mod observation;
+mod probe;
 mod registry;
+mod sanitize;
 pub mod transport;
 
 use std::path::Path;
@@ -9,7 +12,10 @@ pub use manifest::{
     RedactionSummary, SourceKind, Verification, append_verification, load_recording,
     migrate_legacy_manifest,
 };
+pub use observation::{DriftReport, drift, observe};
+pub use probe::{ProbeAttempt, ProbeOutcome, ProbeResult, ProbeRun, probe};
 pub use registry::{RegistryRow, SpecEntry, below_minimum, orphan_recordings, registry_rows};
+pub use sanitize::{Redaction, sanitize};
 pub use transport::{
     ReplayAdvance, ReplayClock, ReplayController, ReplayError, ReplayNotificationIgnore,
     ReplayOptions, ReplayPeek, ReplayReport, ReplayTiming, ReplayTransport, ReplayWriteMismatch,

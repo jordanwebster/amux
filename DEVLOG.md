@@ -5162,3 +5162,12 @@ Provider registries can now list each specification beside its recording,
 capture version and later live-verification ledger. Shared checks walk nested
 fixture roots deterministically to expose unclaimed recording directories and
 captures older than a provider's declared minimum.
+
+2026-08-29 — **Completed the provider specification substrate.** Provider-neutral
+PTY hosting now sits beside ledgered, content-inventoried recordings and strict
+multi-transport replay. `replay-support` observes recursive raw-frame structure,
+reports additive protocol drift without turning it into a version gate, and
+drives live corpus probes that append successful verification ledgers while
+re-recording only failed claims. Probe and drift reports are durable JSON run
+artifacts, and the shared sanitizer removes nested secrets, machine paths and
+personal identifiers while reporting exactly what it changed.
