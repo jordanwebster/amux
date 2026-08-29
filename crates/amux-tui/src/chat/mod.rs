@@ -153,6 +153,12 @@ impl ChatView {
         self.viewport.scroll = scroll;
     }
 
+    /// Current shared feed position, exposed for deterministic interaction
+    /// recordings without granting another mutation path around the reducer.
+    pub fn scroll(&self) -> &FeedScroll {
+        &self.viewport.scroll
+    }
+
     pub fn set_codex_configuration_label(&mut self, label: Option<String>) {
         if let AgentChatView::Codex(view) = &mut self.inner {
             view.configuration_label = label;

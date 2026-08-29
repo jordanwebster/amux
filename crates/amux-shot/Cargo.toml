@@ -6,9 +6,12 @@ description = "Deterministic PNG renderer for named amux TUI states"
 publish = false
 
 [dependencies]
+amux-ui = { workspace = true }
 amux-tui = { workspace = true, features = ["fixtures"] }
 clap = { workspace = true }
+crossterm = { workspace = true }
 fontdue = { workspace = true }
+gif = { workspace = true }
 png = { workspace = true }
 ratatui = { workspace = true }
 serde = { workspace = true }

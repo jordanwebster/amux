@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Wheel scrolling now leaves a replayable visual record.** The
+committed screenshot tool builds each native chat's 1,000-entry fixture and
+routes twelve upward and twelve downward wheel events through the production
+mouse handler. Each command emits a 25-frame animated GIF, from the initial
+following frame through the final return to following, plus an append-safe
+JSON transcript naming every event and resulting scroll state. The scroll PNG
+set supplies the matching following and scrolled-back stills for both agents.
+
+---
+
 2026-08-29 — **The feed says what it is doing and how to get back.** A
 feed that has stopped following now says so in its own words: the rule under
 it reads "scrolled back" and names the wheel, PgDn and Ctrl+End rather than

@@ -1,12 +1,16 @@
 //! Deterministic raster captures of named `amux-tui` fixtures.
 
 use std::fs::{self, File};
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use amux_tui::fixtures::{NamedState, fixture};
+use amux_tui::chat::{FeedScroll, handle_chat_mouse};
+use amux_tui::fixtures::{Fixture, NamedState, fixture, long_feed};
 use amux_tui::{ColorMode, FrameContext, Theme, render};
+use amux_ui::StructuredProtocol;
+use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 use fontdue::{Font, FontSettings};
+use gif::{Encoder as GifEncoder, Frame as GifFrame, Repeat};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
@@ -68,6 +72,65 @@ pub struct Manifest {
     pub entries: Vec<ManifestEntry>,
     #[serde(default)]
     pub sets: Vec<ManifestSet>,
+}
+
+/// Feed position recorded after one synthetic wheel event.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "PascalCase")]
+pub enum RecordedScrollState {
+    Following,
+    ScrolledBack {
+        top_line: usize,
+        entry_watermark: u64,
+    },
+}
+
+impl From<&FeedScroll> for RecordedScrollState {
+    fn from(scroll: &FeedScroll) -> Self {
+        match scroll {
+            FeedScroll::Following => Self::Following,
+            FeedScroll::Paused {
+                top_line,
+                entry_watermark,
+            } => Self::ScrolledBack {
+                top_line: *top_line,
+                entry_watermark: *entry_watermark,
+            },
+        }
+    }
+}
+
+/// The mouse input applied between two frames of a scroll recording.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub enum RecordedMouseEvent {
+    WheelUp,
+    WheelDown,
+}
+
+/// One applied event and the state visible in its resulting frame.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ScrollEventRecord {
+    pub frame: usize,
+    pub event: RecordedMouseEvent,
+    pub scroll: RecordedScrollState,
+}
+
+/// One agent's receipt in `events.json`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ScrollRecording {
+    pub agent: String,
+    pub gif: String,
+    pub frames: usize,
+    pub initial_scroll: RecordedScrollState,
+    pub events: Vec<ScrollEventRecord>,
+}
+
+/// Append-safe receipt shared by the Claude and Codex recordings.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ScrollEventLog {
+    pub version: u32,
+    pub viewport: [u16; 2],
+    pub recordings: Vec<ScrollRecording>,
 }
 
 /// Errors from state lookup, rendering, encoding, or verification.
@@ -140,6 +203,10 @@ impl Fonts {
 /// Render one fixture through ratatui's `TestBackend`.
 pub fn render_buffer(state: NamedState, theme: Theme) -> Result<Buffer, ShotError> {
     let fixture = fixture(state);
+    render_fixture_buffer(&fixture, theme)
+}
+
+fn render_fixture_buffer(fixture: &Fixture, theme: Theme) -> Result<Buffer, ShotError> {
     let backend = TestBackend::new(VIEWPORT.0, VIEWPORT.1);
     let mut terminal =
         Terminal::new(backend).map_err(|error| ShotError::Render(error.to_string()))?;
@@ -152,6 +219,166 @@ pub fn render_buffer(state: NamedState, theme: Theme) -> Result<Buffer, ShotErro
         .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
         .map_err(|error| ShotError::Render(error.to_string()))?;
     Ok(terminal.backend().buffer().clone())
+}
+
+/// Record twelve wheel-up and twelve wheel-down events against a long feed.
+/// The first GIF frame is the untouched following state; every later frame
+/// is rendered after routing one real `MouseEvent` through the chat handler.
+pub fn record_scroll(
+    protocol: StructuredProtocol,
+    theme: Theme,
+    out: &Path,
+) -> Result<ScrollRecording, ShotError> {
+    const EVENT_COUNT_PER_DIRECTION: usize = 12;
+    const FRAME_DELAY_CENTISECONDS: u16 = 12;
+
+    fs::create_dir_all(out)?;
+    let agent = protocol_name(protocol);
+    let gif_name = format!("{agent}-wheel.gif");
+    let gif_path = out.join(&gif_name);
+    let temporary = out.join(format!("{gif_name}.tmp"));
+    let mut fixture = long_feed(protocol, 1_000);
+
+    let initial_buffer = render_fixture_buffer(&fixture, theme)?;
+    let initial_raster = rasterize(&initial_buffer, theme)?;
+    let width = u16::try_from(initial_raster.width)
+        .map_err(|_| ShotError::Encode("GIF width exceeds u16".to_string()))?;
+    let height = u16::try_from(initial_raster.height)
+        .map_err(|_| ShotError::Encode("GIF height exceeds u16".to_string()))?;
+    let writer = BufWriter::new(File::create(&temporary)?);
+    let mut encoder = GifEncoder::new(writer, width, height, &[])
+        .map_err(|error| ShotError::Encode(error.to_string()))?;
+    encoder
+        .set_repeat(Repeat::Infinite)
+        .map_err(|error| ShotError::Encode(error.to_string()))?;
+    write_gif_frame(&mut encoder, initial_raster, FRAME_DELAY_CENTISECONDS)?;
+
+    let initial_scroll = fixture
+        .view
+        .chat
+        .as_ref()
+        .map(|chat| RecordedScrollState::from(chat.scroll()))
+        .ok_or_else(|| ShotError::Render(format!("{agent} long-feed fixture has no chat")))?;
+    let mut events = Vec::with_capacity(EVENT_COUNT_PER_DIRECTION * 2);
+    for (index, kind) in std::iter::repeat_n(RecordedMouseEvent::WheelUp, EVENT_COUNT_PER_DIRECTION)
+        .chain(std::iter::repeat_n(
+            RecordedMouseEvent::WheelDown,
+            EVENT_COUNT_PER_DIRECTION,
+        ))
+        .enumerate()
+    {
+        let mouse = MouseEvent {
+            kind: match kind {
+                RecordedMouseEvent::WheelUp => MouseEventKind::ScrollUp,
+                RecordedMouseEvent::WheelDown => MouseEventKind::ScrollDown,
+            },
+            column: 4,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        let chat =
+            fixture.view.chat.as_mut().ok_or_else(|| {
+                ShotError::Render(format!("{agent} long-feed fixture has no chat"))
+            })?;
+        if !handle_chat_mouse(chat, &fixture.model, mouse, VIEWPORT) {
+            return Err(ShotError::Render(format!(
+                "{agent} wheel event {} did not move the long feed",
+                index + 1
+            )));
+        }
+        let scroll = RecordedScrollState::from(chat.scroll());
+        let buffer = render_fixture_buffer(&fixture, theme)?;
+        let raster = rasterize(&buffer, theme)?;
+        write_gif_frame(&mut encoder, raster, FRAME_DELAY_CENTISECONDS)?;
+        events.push(ScrollEventRecord {
+            frame: index + 1,
+            event: kind,
+            scroll,
+        });
+    }
+
+    let mut writer = encoder
+        .into_inner()
+        .map_err(|error| ShotError::Encode(error.to_string()))?;
+    writer.flush()?;
+    fs::rename(temporary, gif_path)?;
+
+    let recording = ScrollRecording {
+        agent: agent.to_string(),
+        gif: gif_name,
+        frames: events.len() + 1,
+        initial_scroll,
+        events,
+    };
+    if recording.events.last().map(|event| &event.scroll) != Some(&RecordedScrollState::Following) {
+        return Err(ShotError::Render(format!(
+            "{agent} did not resume Following after the final wheel event"
+        )));
+    }
+    update_scroll_event_log(out, recording.clone())?;
+    Ok(recording)
+}
+
+fn write_gif_frame<W: Write>(
+    encoder: &mut GifEncoder<W>,
+    raster: Raster,
+    delay: u16,
+) -> Result<(), ShotError> {
+    let width = u16::try_from(raster.width)
+        .map_err(|_| ShotError::Encode("GIF width exceeds u16".to_string()))?;
+    let height = u16::try_from(raster.height)
+        .map_err(|_| ShotError::Encode("GIF height exceeds u16".to_string()))?;
+    let mut frame = GifFrame::from_rgb_speed(width, height, &raster.pixels, 10);
+    frame.delay = delay;
+    encoder
+        .write_frame(&frame)
+        .map_err(|error| ShotError::Encode(error.to_string()))
+}
+
+fn update_scroll_event_log(out: &Path, recording: ScrollRecording) -> Result<(), ShotError> {
+    let path = out.join("events.json");
+    let mut log = match fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice::<ScrollEventLog>(&bytes)
+            .map_err(|error| ShotError::Verify(format!("{}: {error}", path.display())))?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => ScrollEventLog {
+            version: 1,
+            viewport: [VIEWPORT.0, VIEWPORT.1],
+            recordings: Vec::new(),
+        },
+        Err(error) => return Err(error.into()),
+    };
+    if log.version != 1 || log.viewport != [VIEWPORT.0, VIEWPORT.1] {
+        return Err(ShotError::Verify(format!(
+            "{} is not a compatible 120x40 scroll log",
+            path.display()
+        )));
+    }
+    if let Some(existing) = log
+        .recordings
+        .iter_mut()
+        .find(|existing| existing.agent == recording.agent)
+    {
+        *existing = recording;
+    } else {
+        log.recordings.push(recording);
+    }
+    log.recordings
+        .sort_by(|left, right| left.agent.cmp(&right.agent));
+
+    let temporary = out.join("events.json.tmp");
+    let mut bytes = serde_json::to_vec_pretty(&log)
+        .map_err(|error| ShotError::Verify(format!("event log serialization: {error}")))?;
+    bytes.push(b'\n');
+    fs::write(&temporary, bytes)?;
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
+fn protocol_name(protocol: StructuredProtocol) -> &'static str {
+    match protocol {
+        StructuredProtocol::Claude => "claude",
+        StructuredProtocol::Codex => "codex",
+    }
 }
 
 /// Rasterize every cell, including its foreground, background, bold, italic,
@@ -619,14 +846,15 @@ mod tests {
 
     use amux_tui::fixtures::NamedState;
     use amux_tui::{ColorMode, Theme};
+    use amux_ui::StructuredProtocol;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::style::{Color, Modifier};
     use tempfile::tempdir;
 
     use super::{
-        CELL_HEIGHT, CELL_WIDTH, Fonts, TUI_CHROME_GLYPHS, VIEWPORT, append_set, rasterize,
-        render_to_path, verify,
+        CELL_HEIGHT, CELL_WIDTH, Fonts, RecordedScrollState, TUI_CHROME_GLYPHS, VIEWPORT,
+        append_set, rasterize, record_scroll, render_to_path, verify,
     };
 
     #[test]
@@ -686,6 +914,41 @@ mod tests {
             serde_json::from_slice(&fs::read(directory.path().join("manifest.json")).unwrap())
                 .unwrap();
         assert_eq!(manifest.entries.len(), 2, "each render appends a row");
+    }
+
+    #[test]
+    fn scroll_gif_has_one_initial_frame_plus_every_event_and_resumes_following() {
+        let directory = tempdir().unwrap();
+        let recording = record_scroll(
+            StructuredProtocol::Claude,
+            Theme::dark(ColorMode::TrueColor),
+            directory.path(),
+        )
+        .unwrap();
+
+        assert_eq!(recording.frames, 25);
+        assert_eq!(recording.events.len(), 24);
+        assert_eq!(
+            recording.events.last().map(|event| &event.scroll),
+            Some(&RecordedScrollState::Following)
+        );
+
+        let file = fs::File::open(directory.path().join(&recording.gif)).unwrap();
+        let mut decoder = gif::DecodeOptions::new();
+        decoder.set_color_output(gif::ColorOutput::RGBA);
+        let mut decoder = decoder.read_info(std::io::BufReader::new(file)).unwrap();
+        assert_eq!(decoder.width(), VIEWPORT.0 * CELL_WIDTH as u16);
+        assert_eq!(decoder.height(), VIEWPORT.1 * CELL_HEIGHT as u16);
+        let mut frames = 0;
+        while decoder.read_next_frame().unwrap().is_some() {
+            frames += 1;
+        }
+        assert_eq!(frames, 25);
+
+        let event_log: super::ScrollEventLog =
+            serde_json::from_slice(&fs::read(directory.path().join("events.json")).unwrap())
+                .unwrap();
+        assert_eq!(event_log.recordings, [recording]);
     }
 
     #[test]

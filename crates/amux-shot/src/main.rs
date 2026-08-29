@@ -2,9 +2,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use amux_shot::{ShotError, append_set, render_to_path, verify};
+use amux_shot::{ShotError, append_set, record_scroll, render_to_path, verify};
 use amux_tui::fixtures::{NamedState, all_states};
 use amux_tui::{ColorMode, Theme, parse_theme_file, theme_from_file};
+use amux_ui::StructuredProtocol;
 use clap::{Parser, Subcommand, ValueEnum};
 
 const SET_NAMES: &[&str] = &[
@@ -46,6 +47,13 @@ enum Command {
         #[arg(long, default_value = "target/amux-shot")]
         out: PathBuf,
     },
+    /// Record twelve wheel-up and twelve wheel-down events as an animated GIF.
+    RecordScroll {
+        #[arg(value_enum)]
+        agent: AgentArg,
+        #[arg(long, default_value = "target/amux-shot")]
+        out: PathBuf,
+    },
     /// Verify PNG dimensions, hashes, decoding, and completed sets.
     Verify { dir: PathBuf },
 }
@@ -54,6 +62,21 @@ enum Command {
 enum ColorArg {
     Truecolor,
     Ansi,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum AgentArg {
+    Claude,
+    Codex,
+}
+
+impl From<AgentArg> for StructuredProtocol {
+    fn from(value: AgentArg) -> Self {
+        match value {
+            AgentArg::Claude => Self::Claude,
+            AgentArg::Codex => Self::Codex,
+        }
+    }
 }
 
 impl From<ColorArg> for ColorMode {
@@ -253,6 +276,16 @@ fn run(cli: Cli) -> Result<(), ShotError> {
             Ok(())
         }
         Command::RenderSet { set, out } => render_set(&set, &out),
+        Command::RecordScroll { agent, out } => {
+            let recording = record_scroll(agent.into(), Theme::dark(ColorMode::TrueColor), &out)?;
+            println!(
+                "recorded {} frames for {} to {}",
+                recording.frames,
+                recording.agent,
+                out.join(recording.gif).display()
+            );
+            Ok(())
+        }
         Command::Verify { dir } => {
             let manifest = verify(&dir)?;
             println!(
@@ -378,10 +411,10 @@ mod tests {
     }
 
     #[test]
-    fn future_set_reports_the_unavailable_state() {
-        let member = set_members("scroll").unwrap()[1];
-        let error = super::parse_state(member.state).unwrap_err();
-        assert_eq!(error.to_string(), "UnknownState(claude-scrolled-back)");
+    fn the_scroll_set_names_states_that_exist() {
+        for member in set_members("scroll").unwrap() {
+            super::parse_state(member.state).unwrap();
+        }
     }
 
     #[test]
