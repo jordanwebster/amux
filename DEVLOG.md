@@ -5737,3 +5737,8 @@ declared set, both 25-frame wheel GIFs, and all mechanical transcripts. The
 QA pass opened the 48 unique PNG renders plus both opencode references and
 found complete visual coverage with no new defects; the final report records
 each accepted demonstration and expectation.
+
+2026-08-30 — **Kept flight reports out of source history.** The final QA
+commit had force-added two ignored `.autopilot/` reports. They are no longer
+tracked, while their working copies remain available to the running flight
+under the existing ignore rule.
