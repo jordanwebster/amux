@@ -38,8 +38,8 @@ pub(super) struct ClaudeMessagingCredentials {
 /// `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDE_PID`,
 /// plus `AI_AGENT`, `CLAUDE_EFFORT`, and `TRACEPARENT` when applicable, and
 /// its process context (`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`,
-/// `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`) leaks
-/// alongside. An amux daemon whose
+/// `CLAUDE_CODE_BRIDGE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`,
+/// `CLAUDE_CODE_MESSAGING_TOKEN`) leaks alongside. An amux daemon whose
 /// ancestry includes a Claude session (the CLI auto-spawns the daemon with
 /// full env inheritance — one `amux` command run from Claude's Bash tool is
 /// enough) carries these vars for its whole lifetime, and a claude spawned
@@ -60,6 +60,7 @@ const CLAUDE_CHILD_SESSION_ENV_SCRUB: &[&str] = &[
     "TRACEPARENT",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
     "CLAUDE_CODE_MESSAGING_SOCKET",
     "CLAUDE_CODE_MESSAGING_TOKEN",
 ];

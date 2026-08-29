@@ -1,4 +1,4 @@
-//! Minimal fail-loud redaction for synthetic Codex capture artifacts.
+//! Minimal fail-loud redaction for synthetic Codex live artifacts.
 
 use std::path::Path;
 
@@ -25,6 +25,12 @@ pub fn redact_json(input: &str, scratch: &Path) -> Result<String> {
     let mut value: Value = serde_json::from_str(input)?;
     redact_value(&mut value, scratch);
     let output = serde_json::to_string_pretty(&value)?;
+    verify(&output, scratch)?;
+    Ok(output)
+}
+
+pub fn redact_log(input: &str, scratch: &Path) -> Result<String> {
+    let output = redact_text(input, scratch);
     verify(&output, scratch)?;
     Ok(output)
 }
@@ -73,6 +79,6 @@ fn verify(output: &str, scratch: &Path) -> Result<()> {
     if violations.is_empty() {
         Ok(())
     } else {
-        bail!("Codex capture redaction failed: {violations:?}")
+        bail!("Codex live redaction failed: {violations:?}")
     }
 }

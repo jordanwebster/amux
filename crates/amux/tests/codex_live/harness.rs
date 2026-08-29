@@ -2,6 +2,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -16,7 +17,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
-use serde_json::{Value, json};
+use serde_json::json;
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -43,8 +44,11 @@ impl Scratch {
         let temp = tempfile::Builder::new()
             .prefix("amux-codex-capture-")
             .tempdir_in("/tmp")
-            .context("create Codex capture scratch directory")?;
-        let root = temp.path().to_path_buf();
+            .context("create Codex live scratch directory")?;
+        let root = temp
+            .path()
+            .canonicalize()
+            .context("canonicalize Codex live scratch directory")?;
         for dir in [
             "config",
             "data",
@@ -56,6 +60,7 @@ impl Scratch {
         ] {
             std::fs::create_dir_all(root.join(dir))?;
         }
+        std::fs::set_permissions(root.join("sock"), std::fs::Permissions::from_mode(0o700))?;
 
         let codex_home = root.join("codex-home");
         seed_codex_auth(&codex_home)?;
@@ -207,7 +212,12 @@ impl Harness {
     /// for `amux new codex`, and the case a hardcoded `Some(..)` here hid:
     /// naming a thread is what persists it, so an unnamed agent exercised a
     /// materially different path that nothing covered.
-    pub async fn create_agent(&self, scenario: Option<&str>, model: &str) -> Result<Uuid> {
+    pub async fn create_agent(
+        &self,
+        scenario: Option<&str>,
+        model: &str,
+        working_dir: &Path,
+    ) -> Result<Uuid> {
         let agent_id = Uuid::new_v4();
         let agent = self
             .client()
@@ -221,7 +231,7 @@ impl Harness {
                     sandbox_policy: Some("read-only".into()),
                     resume_thread_id: None,
                 },
-                working_dir: self.scratch.project.clone(),
+                working_dir: working_dir.to_path_buf(),
                 terminal_size: Some(TerminalSize {
                     rows: 45,
                     cols: 140,
@@ -263,8 +273,9 @@ async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
             "--foreground",
         ])
         .env("CODEX_HOME", &scratch.codex_home)
-        .env("AMUX_CODEX_CAPTURE_DIR", &scratch.out)
-        .env("AMUX_LOG", scratch.out.join("amux.log"))
+        .env("AMUX_CONFIG", &scratch.config_path)
+        .env("AMUX_LIVE_OUT", &scratch.out)
+        .env("AMUX_LOG", scratch.root.join("amux.log"))
         .env("XDG_CONFIG_HOME", scratch.root.join("config"))
         .env("XDG_DATA_HOME", scratch.root.join("data"))
         .env("XDG_STATE_HOME", scratch.root.join("state"))
@@ -300,7 +311,7 @@ async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
 }
 
 /// The suite drives the prebuilt `target/debug/amux`, which `cargo test -p amux
-/// --test codex_capture` does not rebuild. A scenario run against a stale
+/// --test codex_live` does not rebuild. A scenario run against a stale
 /// binary reports on code that is not in the tree — it silently passes changes
 /// it never executed, and silently "passes" reverts too. The header says to
 /// build the CLI first; this makes it a control rather than an instruction.
@@ -422,14 +433,6 @@ impl StructuredCapture {
         })
         .await
     }
-
-    pub async fn answer(&self, request_id: &Value, decision: &str) -> Result<Vec<u8>> {
-        self.send(CodexSdkV1Input::ApprovalDecision {
-            request_id: serde_json::to_vec(request_id)?,
-            decision: decision.into(),
-        })
-        .await
-    }
 }
 
 pub async fn subscribe_raw(harness: &Harness, agent: Uuid) -> Result<amux::SessionStream> {
@@ -484,7 +487,12 @@ pub async fn raw_until(
         match event {
             SubscribeSessionEvent::Output { payload } => bytes.extend_from_slice(&payload),
             SubscribeSessionEvent::Closed { reason } => {
-                bail!("raw terminal closed while waiting for output: {reason:?}")
+                let tail = &bytes[bytes.len().saturating_sub(240)..];
+                bail!(
+                    "raw terminal closed while waiting for output: {reason:?}; collected {} bytes, tail={:?}",
+                    bytes.len(),
+                    String::from_utf8_lossy(tail)
+                )
             }
             _ => {}
         }
@@ -563,6 +571,16 @@ pub fn codex_version() -> String {
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .find(|part| {
+                    part.matches('.').count() == 2
+                        && part
+                            .chars()
+                            .all(|character| character.is_ascii_digit() || character == '.')
+                })
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "unknown".into())
 }

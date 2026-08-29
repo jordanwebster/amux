@@ -88,11 +88,11 @@ name = "capture"
 path = "tests/capture/main.rs"
 harness = false
 
-# Maintained opt-in real-Codex E2E suite. It exits without work unless a
-# scenario argument is supplied; see tests/codex_capture.rs.
+# Maintained opt-in real-Codex backend suite. With no arguments it prints usage
+# and exits without live work; see tests/codex_live.rs.
 [[test]]
-name = "codex_capture"
-path = "tests/codex_capture.rs"
+name = "codex_live"
+path = "tests/codex_live.rs"
 harness = false
 
 [build-dependencies]

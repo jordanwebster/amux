@@ -1,4 +1,4 @@
-#[path = "codex_capture/depfile.rs"]
+#[path = "codex_live/depfile.rs"]
 mod depfile;
 
 use std::path::Path;
