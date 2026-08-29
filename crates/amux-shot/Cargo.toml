@@ -1,0 +1,20 @@
+[package]
+name = "amux-shot"
+version = "0.4.0"
+edition.workspace = true
+description = "Deterministic PNG renderer for named amux TUI states"
+publish = false
+
+[dependencies]
+amux-tui = { workspace = true, features = ["fixtures"] }
+clap = { workspace = true }
+fontdue = { workspace = true }
+png = { workspace = true }
+ratatui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

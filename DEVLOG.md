@@ -5186,3 +5186,12 @@ reader, startup, help, fleet, empty-fleet, and 1000-entry feed states by folding
 real `amux-ui` messages at a fixed clock. State names round-trip through the
 registry, and an exhaustive 120×40 render test keeps every screenshot subject
 on the production `render(Model, ViewState, FrameContext)` boundary.
+
+2026-08-29 — **Added deterministic PNG proof for named TUI states.** The
+non-default `amux-shot` workspace tool renders the fixture registry through a
+120×40 ratatui test backend and rasterizes its cells with four vendored
+JetBrains Mono OFL faces. Captures preserve foreground and background colours,
+bold, italic, and dim styling; append hashes and dimensions to a JSON manifest;
+and can be fully decoded and verified later. All planned evidence sets are
+declared up front, with unavailable future fixtures reported by name instead of
+rendering placeholders.
