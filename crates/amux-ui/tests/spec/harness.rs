@@ -356,13 +356,29 @@ pub fn claude_layer<'m>(model: &'m Model, agent: &str) -> &'m ClaudeLayer {
     model.claude(agent_id(agent)).expect("claude layer folded")
 }
 
-/// Structural rows from the provenance-stamped P5b Codex capture fixture.
+/// Backend rows derived from every recording in the canonical Codex corpus.
 pub fn codex_fixture_rows() -> Vec<serde_json::Value> {
-    include_str!("../../../amux/tests/fixtures/codex_backend/rows.jsonl")
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("Codex fixture row parses"))
-        .collect()
+    [
+        include_str!("../../../amux/tests/fixtures/codex_backend/initialize_and_start.rows.jsonl"),
+        include_str!("../../../amux/tests/fixtures/codex_backend/turn_round_trip.rows.jsonl"),
+        include_str!("../../../amux/tests/fixtures/codex_backend/approval_allow.rows.jsonl"),
+        include_str!("../../../amux/tests/fixtures/codex_backend/approval_deny.rows.jsonl"),
+        include_str!("../../../amux/tests/fixtures/codex_backend/interrupt.rows.jsonl"),
+        include_str!(
+            "../../../amux/tests/fixtures/codex_backend/thread_list_and_resume.rows.jsonl"
+        ),
+        include_str!("../../../amux/tests/fixtures/codex_backend/dynamic_tools.rows.jsonl"),
+        include_str!("../../../amux/tests/fixtures/codex_backend/inject_idle.rows.jsonl"),
+        include_str!("../../../amux/tests/fixtures/codex_backend/inject_busy.rows.jsonl"),
+        include_str!(
+            "../../../amux/tests/fixtures/codex_backend/two_assistant_messages.rows.jsonl"
+        ),
+    ]
+    .into_iter()
+    .flat_map(str::lines)
+    .filter(|line| !line.trim().is_empty())
+    .map(|line| serde_json::from_str(line).expect("Codex fixture row parses"))
+    .collect()
 }
 
 pub fn codex_base(agent: &str) -> Vec<Msg> {

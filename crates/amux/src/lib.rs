@@ -101,6 +101,11 @@ pub mod typed_protocol_test_support {
     }
 }
 
+#[cfg(all(feature = "local-agents", debug_assertions, unix))]
+#[doc(hidden)]
+/// Backend-boundary harness used to derive deterministic fixtures from provider recordings.
+pub mod derived_rows_test_support;
+
 pub mod claude_io {
     pub use crate::agents::claude::io::{
         ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input,

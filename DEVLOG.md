@@ -5283,3 +5283,12 @@ restricted control handle, including approvals, injection, interruption and
 A2A delivery. Live reconnect and thread materialization remain host policy,
 while recorded sessions can enter the same backend through an injection seam;
 delivery and suspend-record construction have explicit adapter modules.
+
+2026-08-30 — **Completed the canonical Codex provider boundary.** The maintained
+live suite now keeps only host-level behavior and records one green run against
+codex-cli 0.150.1 with explicit `gpt-5.6-luna`; its raw and structured readers
+run concurrently so terminal backpressure cannot stall the daemon. Every Codex
+recording also replays strictly through an injected `codex::Session` and the
+real amux backend, reproducing one committed full-fidelity row fixture byte for
+byte. The UI folds those derived rows, while daemon-authored A2A rows remain an
+explicit separate fixture.

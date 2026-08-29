@@ -72,6 +72,7 @@ windows-sys = { version = "0.61.2", features = [
 tempfile = { workspace = true }
 prost-types = { workspace = true }
 amux-ui = { workspace = true }
+codex = { path = "../codex", features = ["specs"] }
 replay-support = { path = "../replay-support" }
 tokio-tungstenite = { workspace = true }
 nix = { workspace = true }

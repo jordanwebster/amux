@@ -31,24 +31,21 @@ replacing.
 
 ## Structured backend scenarios
 
-This fixture was captured and reduced on 2026-08-13 from the P5b live capture
-rig against `codex-cli 0.147.0`, then redacted and normalized for deterministic
-replay. User and assistant content is synthetic (`Reply exactly PONG.` / `PONG`),
-thread, turn, item, approval, and request IDs are stable placeholders, timestamps
-are relative fixture time, and local paths are replaced with `/work` and
-`/Users/test/.codex`.
+Every `*.rows.jsonl` file is derived from the same-named recording under
+`crates/codex/fixtures/`. The `derived_rows` integration test opens that
+recording with strict replay, injects its `codex::Session` through
+`CodexBackend::with_session`, drives the recorded scenario through the backend
+boundary, and compares the complete emitted JSONL bytes with the committed
+file. Set `UPDATE_DERIVED_ROWS=1` on that test to regenerate the files; there is
+no separate hand-authored structural projection.
 
-The reduced stream combines the six captured scenario families: pong, command
-approval allow, command approval deny, file-change approval, interrupt, and
-resume with history. `rows.jsonl` is a structural oracle: fields omitted there
-are intentionally prose- or schema-detail-insensitive. The full raw params are
-still asserted separately by the replay test.
+The recordings were captured with codex-cli 0.150.1 and explicit model
+`gpt-5.6-luna`. Their sanitizer replaces machine paths and credentials while
+preserving provider IDs, timestamps, notification payloads, and response
+ordering, so the derived rows are deterministic offline but retain the full
+backend-visible event shapes.
 
-The final `amux.codex_message` projection is daemon-synthesized rather than an
-upstream capture. Its expected row is generated from the same authenticated
-envelope fixture used by the Codex delivery tests, then checked alongside the
-captured stream so the closed row vocabulary cannot reduce it to a type-only
-unknown row.
-
-The older `crates/codex-sdk/fixtures` remain SDK parser/transport anchors; this
-fixture supersedes them only for amux backend semantics.
+`amux.codex_message` remains a daemon-authored row and therefore is not present
+in a provider-derived file. The UI A2A specification appends its explicit
+carrier-row fixture after folding this corpus, keeping provider provenance and
+daemon synthesis separate.
