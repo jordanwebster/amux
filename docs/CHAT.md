@@ -22,10 +22,11 @@ appear in the chat.
 
 ## Vocabulary
 
-- **Chat** — the structured conversation view over a Claude session,
-  built on the `claude_pty_transcript_v1` io_protocol: Claude Code's
-  transcript rows interleaved with amux hook rows; input by seq-guarded
-  keystroke injection into the session PTY.
+- **Chat** — the shared structured conversation screen over a known agent
+  session. Claude's native layer consumes `claude_pty_transcript_v1`
+  transcript and hook rows and sends seq-guarded keystroke programs; Codex's
+  native layer consumes its app-server control plane and sends typed requests.
+  Both enter the same presentation shell without sharing a content model.
 - **Feed** — the scrolling sequence of conversation entries. An
   **entry** is one rendered unit: a prompt, a message, a tool line, a
   marker, a collapsed ask fact.
@@ -80,9 +81,11 @@ and pays for it with a debounced resize-reflow state machine
 (VS Code 1 000, WezTerm 3 500, Windows Terminal 9 001, Alacritty
 10 000), a dedicated Zellij escape path, and a user-facing `/raw`
 command as the apology. Their own alt-screen transcript overlay proves
-reading and scrolling work fine without scrollback. The one real cost —
-no native search/copy over chat history — is accepted; the feed remains
-resize-independent and the Model stays the single source of truth.
+reading and scrolling work fine without scrollback. The feed remains
+resize-independent and the Model stays the single source of truth. Mouse
+capture gives the wheel to the feed; Shift+drag invokes the terminal's native
+selection override, and the copy binding emits OSC 52, so copying does not
+depend on terminal scrollback.
 
 ## The feed (B)
 
@@ -147,14 +150,14 @@ truncation recovery must fold to the identical Model.
   (`filePath` + `structuredPatch`), e.g. `✔ Edit sync/config.rs
   (+9 -2)`. A Write that creates a file carries an EMPTY
   `structuredPatch` (Phase 1, observed); its magnitude FACT is the
-  created content's line count — `✔ Write plans/x.md (+20)`. Other tools render as compact one-liners; consecutive
-  read/search one-liners group with no blank line between them, so runs
-  of exploration compress without extra chrome — grouping is computed
-  in the Claude-layer fold from entry kinds, never by renderer layout
-  introspection. An unpaired `tool_use` in a final message renders as
+  created content's line count — `✔ Write plans/x.md (+20)`. Other tools
+  render as compact one-liners. An unpaired `tool_use` in a final message renders as
   running (INFERRED-pending; FACT once the result lands). Oversized
   outputs render the truncation notice; the full text stays on disk
-  behind the Effect seam.
+  behind the Effect seam. Consecutive reads, searches, and globs collapse into
+  one exploration-run summary when there are at least two; see **Exploration
+  runs** below. Edits, writes, and commands are consequential and always stay
+  visible as individual blocks.
 - **Collapsed ask facts** (B5). Resolved asks collapse to one-line
   facts: `✔ allowed for session — Edit sync/config.rs`,
   `✗ denied — Bash rm -rf …`, `? storage → trust store, recorder
@@ -206,6 +209,42 @@ Session-state rows (`permission-mode`, `mode`, `ai-title`,
 `last-prompt`, `queue-operation`) and attachment rows are not feed
 entries; they fold into phase, composer, and header state as
 latest-wins facts.
+
+### Block vocabulary and surfaces
+
+Both agents paint through the same finite block vocabulary, but each agent
+chooses blocks from its own native entry kinds. The vocabulary is: user prompt,
+assistant markdown, thinking marker, tool one-liner, collapsed exploration
+run, file change with magnitude, unified diff, ask panel, collapsed ask fact,
+plan with its reader affordance, subagent line, agent-to-agent message, turn
+rule, compaction rule, error, Codex MCP startup, and unrecognized row. The
+composer and header are shared frame elements rather than feed blocks.
+
+Surfaces are deliberately restrained. A user prompt has a tinted
+`user_surface` and an accent bar in column zero. Unified diffs and ask panels
+use the `panel` surface; added and removed diff rows add their semantic tints.
+Assistant text, thinking markers, tool and file-change lines, plans, messages,
+rules, errors, MCP startup, and unrecognized rows sit directly on the
+background. Block focus is a focus-coloured bar at column zero, not another
+box. Blank rows separate blocks; there is no outer border, left gutter, top
+rule, or sidebar around the chat.
+
+This is a presentation vocabulary, not a shared content representation. The
+Claude layer folds Claude transcript entries and the Codex layer folds Codex
+control-plane entries; neither projects into a common feed-entry enum. The
+painters receive already-formatted facts and cannot infer agent semantics.
+
+### Exploration runs
+
+Two or more consecutive native read, search, or glob operations collapse to
+one summary such as `⌄ 2 reads · 1 search · src/lib.rs · C-a o expand`.
+`<leader> o` opens or closes the run under the focus bar, preserving member
+order. A single exploration operation remains a normal tool line. Any edit,
+write, command, ask, plan, or other consequential operation splits a run and
+stays visible in both collapsed and expanded states. Grouping is computed by
+the owning agent layer from its native kinds, never by inspecting rendered
+text or command names; Codex currently has no native exploration kinds and
+therefore does not synthesize runs from shell commands.
 
 ### Retention and windowing (B9)
 
@@ -362,18 +401,25 @@ carries `{plan, planFilePath}`; the plan is also written under
 `permission-mode` row either — the effective mode becomes acceptEdits
 per hook facts, and edits proceed ask-free.
 
-### Diffs and the reader's artifacts
+### Unified diffs and the reader's artifacts
 
-Diff rendering is grounded in `notes/chat-v1/diff-rendering.md`
-(both reference TUIs converge on unified-at-80, numbered gutter,
-wrap-not-scroll, no intra-line emphasis). Two producers, both
-Claude-layer folds, one pure renderer:
+Every landed diff uses one unified, single-column layout at every supported
+width. A fixed gutter carries independent old and new line numbers; metadata,
+context, added, and removed rows are explicit kinds. Added and removed rows
+use semantic foreground and background tints on the `panel` surface. A
+side-by-side layout is deliberately absent: at the standard 120-column
+viewport it would leave roughly 55 columns per side and wrap ordinary code.
 
-- **Post-hoc** (feed): `toolUseResult.structuredPatch` hunks are
+There are three native producers feeding one pure row painter:
+
+- **Claude post-hoc** (feed): `toolUseResult.structuredPatch` hunks are
   restated verbatim — absolute line numbers, FACT magnitude for the
   feed line's `(+9 -2)`. The transcript already states every landed
   edit; the client never recomputes one.
-- **Ask-time** (permission panel): no hunks exist yet — the hook
+- **Codex landed changes** (feed): the Codex layer parses its native unified
+  patch into the same numbered row facts. Headerless or malformed patch text
+  yields no speculative diff rows; the file-change line remains visible.
+- **Ask-time** (permission panel): no hunks exist yet — the Claude hook
   carries only `old_string`/`new_string` — so the mini-diff is
   computed in the fold (`similar`, line-level, context 3) and
   rendered **numberless**, with an *estimated* magnitude; a
@@ -382,17 +428,16 @@ Claude-layer folds, one pure renderer:
   create-vs-overwrite is unknowable before the tool runs, and the
   header claims neither.
 
-Appearance, panel and reader alike: sign column, then content; in
-numbered form the number column right-aligns to the widest number,
-and a replaced pair repeats its number (`15 -` / `15 +` describe one
-position in two file versions). Long lines wrap — never horizontal
-scroll — with blank-gutter continuation rows so the gutter never
-lies; tabs expand before width math. The panel preview budget is at
+Appearance, panel and reader alike: old number, new number, sign, then
+content. Context rows carry both numbers, removals only the old number, and
+additions only the new number; the counters advance independently. Long lines
+wrap — never horizontal scroll — with blank-gutter continuation rows so the
+gutter never lies; tabs expand before width math. The panel preview budget is at
 most 8 screen rows (wrapped rows count), cut with a remainder line
 that always states the arithmetic: `⋮ +K more lines · f full diff`.
-Four semantic tokens carry color in both themes — `diff.added`,
-`diff.removed`, `diff.context`, `diff.meta` — foreground-only in V1;
-background tints are a named additive extension.
+The semantic colour family is `diff_added_fg`, `diff_added_bg`,
+`diff_removed_fg`, `diff_removed_bg`, `diff_context`, `diff_meta`, and
+`gutter`; both shipped themes and imported themes resolve all seven.
 
 The reader is one overlay over a typed artifact model — a match, not
 a viewer framework: **Plan** (markdown, the B2 renderer reused),
@@ -519,63 +564,63 @@ Fork-into-writable is deferred (F2).
 
 ## Wireframes
 
-One visual language, fixed here: user lines prefixed `› `; assistant
-text plain at a two-column indent; tool lines glyphed by outcome
-(`✔` done, `▸` running, `✗` failed/denied) with dim `└` continuations;
-markers and boundaries as dim `─` rules; ask panels docked above the
-footer behind a dim rule, headed `⚠ permission` / `? question`; options
-as numbered lists with a `›` cursor. Header line: agent · host on the
-left, `chat · <phase>` on the right. Footer: one hint line — hints
-separated by ` · ` on the left, the permission mode on the right,
-rendered from the effective binding table. `▌` is the text cursor.
+These are 120-column schematics of the full-screen frame. Header and footer
+fields are right-aligned to the terminal edge; blank-row runs are shortened
+here, while the renderer and its committed goldens always produce all 40 rows. The
+screen has no box around it: the terminal background is the frame. Feed blocks
+begin at column zero with an accent or focus bar where applicable, the composer
+is a block at the bottom, and the remaining rows belong to the feed. `▌` is the
+text cursor.
 
 ### Idle
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ fix-auth · claude @ mbp                                          chat · idle │
-│──────────────────────────────────────────────────────────────────────────────│
-│ › add retry with backoff to the sync client                                  │
-│                                                                              │
-│   I added exponential backoff to Client::reconnect — 6 attempts,             │
-│   jitter capped at 500 ms. SyncOptions grew a RetryConfig.                   │
-│                                                                              │
-│ ✔ Read sync/client.rs · Grep "reconnect" (4 matches)                         │
-│ ✔ Edit sync/client.rs  (+18 -4)                                              │
-│ ✔ Bash cargo test -p amux-sync                                               │
-│   └ 34 passed, 0 failed (2.1s)                                               │
-│                                                                              │
-│ ─ turn · 1m 42s ─────────────────────────────────────────────────────────────│
-│                                                                              │
-│ › Type a message▌                                                            │
-│                                                                              │
-│   enter send · ctrl+j newline · ? help                          mode default │
-└──────────────────────────────────────────────────────────────────────────────┘
+  fix-auth · claude @ mbp                                                                                   chat · idle
+
+▎   add retry with backoff to the sync client
+
+    I added exponential backoff to Client::reconnect — 6 attempts,
+    jitter capped at 500 ms. SyncOptions grew a RetryConfig.
+
+  ⌄ 1 read · 1 search · sync/client.rs · C-a o expand
+
+  ✎ Edit sync/client.rs · +18 −4
+
+  ✔ Bash cargo test -p amux-sync
+    └ 34 passed, 0 failed (2.1s)
+
+  ─ turn · 1m 42s ──────────────────────────────────────────────────────────────────────────────────────────────────────
+
+                                                    [feed owns the remaining rows]
+
+▎   Type a message▌
+
+    enter send · ctrl+j newline · ? help                                                                   mode default
 ```
 
 ### Working
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ fix-auth · claude @ mbp                                       chat · working │
-│──────────────────────────────────────────────────────────────────────────────│
-│ › now make the retry count configurable                                      │
-│                                                                              │
-│ ~ thought for 6s                                                             │
-│                                                                              │
-│   The cap belongs in RetryConfig; I'll thread it through SyncOptions.        │
-│                                                                              │
-│ ✔ Read sync/config.rs                                                        │
-│ ▸ Bash cargo check -p amux-sync                                              │
-│   └ running · 8s                                                             │
-│                                                                              │
-│                                                                              │
-│ ◐ working · 24s · 12.4k tok · ctrl+x interrupt                               │
-│                                                                              │
-│ › and please document it▌                                                    │
-│                                                                              │
-│   draft kept — send gated while working                       mode default   │
-└──────────────────────────────────────────────────────────────────────────────┘
+  fix-auth · claude @ mbp                                                                                chat · working
+
+▎   now make the retry count configurable
+
+  ~ thought for 6s
+
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.
+
+  ✔ Read sync/config.rs
+
+  ▸ Bash cargo check -p amux-sync
+    └ running
+
+                                                    [feed owns the remaining rows]
+
+  ◐ working · 24s · ctrl+x interrupt
+
+▎   and please document it▌
+
+    draft kept — send gated while working                                                                  mode default
 ```
 
 The blank row above the working line is reserved for the queued-input
@@ -584,103 +629,119 @@ preview when queueing lands (deferred, door open).
 ### Permission ask
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ fix-auth · claude @ mbp                                     chat · needs you │
-│──────────────────────────────────────────────────────────────────────────────│
-│   I'll update the retry cap in the config too:                               │
-│                                                                              │
-│ ✔ Read sync/config.rs                                                        │
-│                                                                              │
-│──────────────────────────────────────────────────────────────────────────────│
-│ ⚠ permission — Edit sync/config.rs  (+2 -1)                         (1 of 2) │
-│                                                                              │
-│      pub struct RetryConfig {                                                │
-│    -     pub max_attempts: u8,                                               │
-│    +     pub max_attempts: u8,        // capped at 6                         │
-│    +     pub jitter_ms: u16,                                                 │
-│   ⋮  +5 more lines · f full diff                                             │
-│                                                                              │
-│ › 1. Allow once                                                              │
-│   2. Allow for this session                                                  │
-│   3. Deny — tell the agent why (optional)                                    │
-│                                                                              │
-│   1-3/↑↓ select · enter confirm · f full diff · esc back (never answers)     │
-└──────────────────────────────────────────────────────────────────────────────┘
+  fix-auth · claude @ mbp                                                                              chat · needs you
+
+▎   now make the retry count configurable
+
+    The cap belongs in RetryConfig; I'll thread it through SyncOptions.
+
+  ✔ Read sync/config.rs
+
+                                                    [feed owns the remaining rows]
+
+    permission — Edit sync/config.rs (+4 -1) · 1 of 2
+
+      pub struct RetryConfig {
+     -    pub max_attempts: u8,
+     +    pub max_attempts: u8,        // capped at 6
+     +    pub jitter_ms: u16,
+      ⋮ +1 more lines · f full diff
+
+    › 1. Allow once
+      2. Always allow access to /work from this project
+      3. Deny — tell the agent why (optional)
+    1-3/↑↓ select · enter confirm · f full diff · esc back (never answers)
 ```
 
 ### Question ask (multi-question, multi-select)
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ fix-auth · claude @ mbp                                     chat · needs you │
-│──────────────────────────────────────────────────────────────────────────────│
-│   Before I write the migration, two decisions:                               │
-│                                                                              │
-│──────────────────────────────────────────────────────────────────────────────│
-│ ? questions   [storage*] [rollout] [submit]                                  │
-│                                                                              │
-│   Which stores should the migration cover? (select all that apply)           │
-│                                                                              │
-│ › 1. [x] trust store       pairing + relay trust records                     │
-│   2. [ ] session index     bounded tail metadata                             │
-│   3. [x] recorder dumps    panic-hook recordings                             │
-│   4. [ ] Other…            type your own answer                              │
-│                                                                              │
-│   1-4/↑↓ select · space toggle · tab next question · enter advance           │
-│   · esc back (never answers)                                                 │
-└──────────────────────────────────────────────────────────────────────────────┘
+  fix-auth · claude @ mbp                                                                              chat · needs you
+
+▎   before I write the migration, two decisions
+
+                                                    [feed owns the remaining rows]
+
+    questions
+
+      [storage*] [rollout] [submit]
+      Which stores should the migration cover? (select all that apply)
+
+      1. [x] trust store       pairing + relay trust records
+      2. [ ] session index     bounded tail metadata
+    › 3. [x] recorder dumps    panic-hook recordings
+      4. [ ] Other…            type your own answer
+    1-4/↑↓ select · space toggle · tab next question · enter advance · esc back (never answers)
+```
+
+### Codex approval (the same frame)
+
+```
+  codex-retry · codex @ mbp                                                                            chat · needs you
+  model=gpt-5.4 · approval=on-request · sandbox=workspace-write
+
+  ⚠ $ cargo test --workspace · awaiting approval
+    └ cwd /work/amux
+
+                                                    [feed owns the remaining rows]
+
+    approval — command
+
+    $ cargo test --workspace
+      └ cwd /work/amux
+      └ Run the repository test suite?
+
+    › 1. accept once
+      2. accept and allow similar commands · unavailable in V1
+      3. decline
+      4. cancel
+    ↑↓/1-9 select · enter confirm · ctrl+x interrupt
 ```
 
 ### Plan review (reader, fullscreen)
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ plan — add retry with backoff                                  lines 1-11/52 │
-│──────────────────────────────────────────────────────────────────────────────│
-│  ## Approach                                                                 │
-│                                                                              │
-│  1. Wrap Client::reconnect in retry_with_backoff                             │
-│     - exponential base 200 ms, cap 5 s, jitter ≤ 500 ms                      │
-│  2. Thread RetryConfig through SyncOptions                                   │
-│  3. Spec chapter sync::retry — cold start, mid-stream drop,                  │
-│     give-up-after-cap                                                        │
-│                                                                              │
-│  ## Out of scope                                                             │
-│                                                                              │
-│  - relay-side backpressure                                                   │
-│                                                                              │
-│──────────────────────────────────────────────────────────────────────────────│
-│ › 1. Approve — auto       agent proceeds, edits apply without asking         │
-│   2. Approve — manual     agent asks before each edit                        │
-│   3. Request changes      feedback required                                  │
-│                                                                              │
-│   ↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)   │
-└──────────────────────────────────────────────────────────────────────────────┘
+  plan                                                                                                   lines 1-31/31
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ## Approach
+
+  1. Wrap Client::reconnect in retry_with_backoff
+  - exponential base 200 ms, cap 5 s, jitter bounded
+  2. Thread RetryConfig through SyncOptions
+  3. Spec chapter sync::retry — cold start, mid-stream drop, give-up-after-cap
+
+                                                    [reader body owns the remaining rows]
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  › 1. Approve — auto       agent proceeds, edits apply without asking
+    2. Approve — manual     agent asks before each edit
+    3. Request changes      feedback required
+
+    ↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)
 ```
 
 ### Scrolled back
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ fix-auth · claude @ mbp                                       chat · working │
-│─ earlier history unavailable ────────────────────────────────────────────────│
-│ › what does the dispatcher do on a seq mismatch?                             │
-│                                                                              │
-│   It refuses the write and requests a dump — dispatch.rs::guard_seq.         │
-│   The client then resurfaces the ask with the failure stated.                │
-│                                                                              │
-│ ✔ Read src/dispatch.rs                                                       │
-│ ─ turn · 12s ────────────────────────────────────────────────────────────────│
-│                                                                              │
-│ › and on replay?                                                             │
-│                                                                              │
-│─ ↓ following paused · 3 new entries · pgdn to resume ─────────────── 43% ────│
-│ ◐ working · 1m 12s · ctrl+x interrupt                                        │
-│                                                                              │
-│ › draft preserved while reading▌                                             │
-│                                                                              │
-│   pgup/pgdn scroll · end newest · ? help                      mode default   │
-└──────────────────────────────────────────────────────────────────────────────┘
+  fix-auth · claude @ mbp                                                                                chat · working
+
+▎   follow-up question 1
+
+    It refuses the write and requests a dump — dispatch.rs::guard_seq.
+
+  ✔ Read src/dispatch.rs
+
+▎   follow-up question 2
+
+                                                    [older feed rows remain above]
+
+  ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest
+  ◓ working · 9s · ctrl+x interrupt
+
+▎   draft preserved while reading▌
+
+    C-a k/j focus · C-a y copy                                                                             mode default
 ```
 
 Sticky-bottom until the user scrolls; the paused rule with a new-entry
@@ -690,33 +751,40 @@ stays visible so scrolling never hides that the agent is active.
 ### Read-only
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ ci-triage · claude @ buildhost                chat · read-only · needs owner │
-│──────────────────────────────────────────────────────────────────────────────│
-│   The flake is a teardown race in the testnet harness; serializing           │
-│   the shutdown.                                                              │
-│                                                                              │
-│ ✔ Bash cargo test -p amux --test spec                                        │
-│   └ 2 failed: token_refresh, expired_session                                 │
-│                                                                              │
-│──────────────────────────────────────────────────────────────────────────────│
-│ ⚠ the agent is asking permission — Edit testnet/harness.rs  (+3 -1)          │
-│   waiting for a writable client · f read the diff                            │
-│                                                                              │
-│ ⊘ read-only — you are observing this session                                 │
-│                                                                              │
-│   pgup/pgdn scroll · f view diff · q back to fleet                           │
-└──────────────────────────────────────────────────────────────────────────────┘
+  ci-triage · claude @ mbp                                                               chat · read-only · needs owner
+
+▎   fix the flaky teardown
+
+    The flake is a teardown race in the testnet harness; serializing the shutdown.
+
+  ✔ Bash cargo test -p amux --test spec
+    └ 2 failed: token_refresh, expired_session
+
+                                                    [feed owns the remaining rows]
+
+    the agent is asking permission — Edit testnet/harness.rs (+1)
+
+      fn teardown() {
+     +    drain();
+          kill();
+      }
+    waiting for a writable client · f read the diff
+
+  ⊘ read-only — you are observing this session
+
+    pgup/pgdn scroll · f view diff · q back to fleet
 ```
 
 ## State transitions
 
-Two orthogonal axes. **Phase** lives in the Model, changes only on
-transcript facts, and is never changed by keys. **Focus** is renderer
+Three orthogonal axes. **Phase** lives in the Model, changes only on
+native agent facts, and is never changed by keys. **Input owner** is renderer
 ViewState: `COMPOSER` (free typing), `ASK` (docked panel or plan
 reader owns keys), `PENDING` (answer in flight), `READER` (read-only
-full plan/diff). Scroll is a third orthogonal scalar; any focus state
-may be scrolled.
+full plan/diff). **Block focus** is an optional key in the shared feed: it is
+the target for copy and exploration expansion and is independent of the input
+owner. Scroll is a third renderer-local scalar; every input-owner state may be
+scrolled.
 
 | From | Event / key | To | Notes |
 |---|---|---|---|
@@ -735,14 +803,17 @@ may be scrolled.
 | any | ask resolved remotely / interrupt | COMPOSER | panel dismissed, fact rendered |
 | any | PgUp / wheel | same, scrolled | following paused; new-entry count shown |
 | scrolled | PgDn at bottom (or Esc, empty draft) | same, following | snap to newest |
+| chat | `<leader> k` / `<leader> j` | same | focus the older / newer feed block and keep it visible |
+| chat | `<leader> y` | same | copy the focused block, or newest block when none is focused, via OSC 52 |
+| focused exploration run | `<leader> o` | same | expand / collapse the run in place |
 | COMPOSER | Ctrl+T | READER (plan) | newest accepted plan; ←/→ steps between plans |
 | READER | Esc | previous state | close; nothing answered |
 
 Esc is one deterministic chain, view-only, checked in order:
 **1** close the reader (a plan-review reader drops to its docked
-panel) → **2** step back ask stages, flooring at the menu stage —
-never dismissing the panel → **3** reset feed scroll to following
-(empty draft only) → **4** nothing. Esc never interrupts and never
+panel) → **2** clear block focus → **3** step back ask stages, flooring at
+the menu stage — never dismissing the panel → **4** reset feed scroll to
+following (empty draft only) → **5** nothing. Esc never interrupts and never
 answers; interrupt is Ctrl+X alone. Read-only chats have a single viewing focus: scroll keys,
 `f`, and `q` only (F1).
 
@@ -833,7 +904,12 @@ excepted, as today.
 | Tab | composer | reserved (future queueing) | — |
 | PgUp / PgDn | chat | scroll feed; reaching bottom resumes following | plain |
 | Ctrl+Home / Ctrl+End | chat | feed oldest / newest + follow | ext |
-| wheel | chat | deferred (see Deferred decisions) — PgUp/PgDn is the guaranteed path | — |
+| wheel | chat feed | scroll three feed rows per notch; reaching bottom resumes following | plain |
+| Shift+drag | chat | select text with the terminal's native selection override | plain |
+| `<leader> k` / `<leader> j` | chat feed | focus older / newer block and keep it visible | plain |
+| Ctrl+↑ / Ctrl+↓ | chat feed | focus older / newer block | ext |
+| `<leader> y` | chat feed | copy focused block (newest when none) to the clipboard with OSC 52 | plain |
+| `<leader> o` | focused exploration run | expand / collapse the run | plain |
 | j k, g G, Home/End | reader, read-only chat | pager motion (line, top/bottom) | plain |
 | q | reader, read-only chat | close reader / back to fleet | plain |
 | ? | composer, empty | help overlay (full key list); types `?` otherwise | plain |
@@ -856,6 +932,107 @@ four items, derived purely from Model + ViewState — no stored footer
 mode) and the `?` help overlay listing every effective binding with
 its tier.
 
+## Themes
+
+The chat and fleet consume one semantic `Theme`; painters name roles rather
+than terminal colours. amux ships exactly two hand-tuned palettes, `dark` and
+`light`. A third-party theme is a YAML base16 or base24 scheme with optional
+semantic overrides:
+
+```yaml
+scheme: my theme             # optional metadata
+variant: dark                # optional: dark or light
+base00: "#101418"
+base01: "#1b2229"
+base02: "#242d35"
+base03: "#52606d"
+base04: "#73808c"
+base05: "#d8dee9"
+base06: "#edf1f5"
+base07: "#ffffff"
+base08: "#d06f79"
+base09: "#d49a58"
+base0A: "#d2b86c"
+base0B: "#82b482"
+base0C: "#70a9a1"
+base0D: "#6599b3"
+base0E: "#9a86c8"
+base0F: "#aa7d66"
+tokens:
+  accent: "#5fb3c6"
+  diff_added_bg: "#16261b"
+```
+
+All `base00` through `base0F` values are required. Supplying any base24
+extension makes all of `base10` through `base17` required as well. Colours are
+six-digit hexadecimal RGB strings, with or without `#`; malformed colours and
+unknown token names are startup errors that name the key.
+
+| Semantic roles | base16 | base24 |
+| --- | --- | --- |
+| background | `base00` | `base00` |
+| user surface and diff tint fallbacks | `base01` | `base01` |
+| panel | `base02` | `base02` |
+| muted and gutter | `base03` | `base03` |
+| diff metadata | `base04` | `base04` |
+| text and diff context | `base05` | `base05` |
+| emphasis | `base06` | `base06` |
+| error and removed foreground | `base08` | `base12` |
+| warning | `base09` | `base14` |
+| success and added foreground | `base0B` | `base13` |
+| code | `base0C` | `base17` |
+| accent | `base0D` | `base15` |
+| focus | `base0E` | `base16` |
+
+The `tokens:` map is applied after that mapping and may override any of
+`background`, `text`, `muted`, `emphasis`, `accent`, `user_surface`, `panel`,
+`focus`, `code`, `ok`, `warn`, `error`, `diff_added_fg`, `diff_added_bg`,
+`diff_removed_fg`, `diff_removed_bg`, `diff_context`, `diff_meta`, or `gutter`.
+
+Select the palette and terminal colour policy in the ordinary amux config:
+
+```yaml
+ui:
+  theme: dark                  # dark, light, or a YAML file path
+  color: auto                  # auto, truecolor, or ansi
+```
+
+A relative `ui.theme` path resolves beside the active config file, not the
+process working directory. Theme files are loaded before amux enters the
+alternate screen, so an invalid file fails as a normal startup error. In
+`auto`, amux uses truecolor only when `COLORTERM` says `truecolor` or `24bit`
+and `NO_COLOR` is unset; `truecolor` and `ansi` force the mode. Imported RGB
+values degrade to their nearest named 16-colour ANSI value, keeping the same
+semantic roles without making painters branch on terminal capability.
+
+## Reproducible screenshots with amux-shot
+
+The committed `amux-shot` developer tool renders named production fixtures
+through the same pure render boundary as the text goldens. Every capture is a
+120-column by 40-row terminal rasterized with vendored fonts; it does not open
+a PTY, connect to a daemon, or depend on the local terminal. From the repository
+root:
+
+```sh
+cargo run -p amux-shot -- list
+cargo run -p amux-shot -- render claude-idle --out target/shot/claude-idle.png
+cargo run -p amux-shot -- render claude-idle --theme light --color ansi \
+  --out target/shot/claude-idle-light-ansi.png
+cargo run -p amux-shot -- render-set themes --out target/shot/themes
+cargo run -p amux-shot -- record-scroll claude --out target/shot/scroll
+cargo run -p amux-shot -- verify target/shot
+```
+
+`--theme` accepts `dark`, `light`, or a YAML path; `--color` accepts
+`truecolor` or `ansi`. The declared sets are `chat`, `agent-specific`,
+`gallery`, `scroll`, `copy`, `collapse`, `themes`, `fleet`, and `all`.
+`record-scroll` accepts `claude` or `codex` and drives real mouse-wheel events
+through the production handler. Each render records its state, theme, colour
+mode, viewport, pixel dimensions, filename, and SHA-256 digest in a manifest;
+`verify` checks hashes, dimensions, and decodability. These PNGs and GIFs are
+repeatable review proof, not an image-golden CI gate; text and semantic
+style-map goldens remain the regression gate.
+
 ## Architecture constraints (G)
 
 `docs/UI.md` legislates the architecture; this section only pins the
@@ -867,6 +1044,10 @@ chat-specific consequences.
   explicit unrecognized entries, and rules never gate on key-set
   equality or crash on absent fields, because the format is internal
   and drifts by version.
+- The Codex chat layer independently consumes native app-server entries and
+  retains Codex-only approvals, network-policy amendments, MCP startup rows,
+  and token usage. Neither layer implements a shared content trait. The shared
+  shell accepts painted blocks and owns presentation mechanics only.
 - Interpretation happens only in layer folds; core transports rows
   opaquely; nothing new rides the peer wire (G2). Views format, never
   decide — no error-string sniffing, no heuristics in renderers.
@@ -945,8 +1126,10 @@ Recorded with their evidence so they are not helpfully reintroduced.
 - **Click-only expansion, hover states, copy-on-select** (opencode).
   Keyboard-unreachable affordances are an accessibility gap; hover is
   impure under FrameContext; copy-on-select fights native selection —
-  they shipped an escape flag for it. Keyboard-first; wheel scrolling
-  only, no mouse capture.
+  they shipped an escape flag for it. Mouse capture exists so the wheel
+  reliably scrolls the feed; expansion and copy remain keyboard actions,
+  Shift+drag reaches native terminal selection, and OSC 52 provides a
+  selection-independent clipboard path.
 - **Error-string sniffing in views** (opencode renders "denied" from
   `error.includes("rejected permission")`). The heuristics-in-views
   failure G2 forbids; denial is a typed fact (`toolDenialKind`).
@@ -1024,16 +1207,9 @@ above.
   discoverability is the footer line + `?` overlay.
 - **Syntax highlighting** in fenced code and diffs — additive renderer
   work; plain blocks ship first.
-- **Wheel scrolling** (Phase 6 drift). Alternate-scroll mode delivers
-  wheel motion as arrow keys indistinguishable from the keyboard's —
-  but the composer owns arrows for line motion and ↑-at-top is
-  reserved for history recall, so wheel-as-arrows would move the
-  cursor, not the feed, whenever the composer has focus. Branching on
-  focus would put meaning on invisible state (P3). Deferred until a
-  design honors both; PgUp/PgDn is the guaranteed path, and mouse
-  capture remains rejected.
-- **Mouse support generally** — any future affordance must
-  stay keyboard-reachable and renderer-pure.
-- **Theming beyond dark/light on semantic tokens** — the token
-  vocabulary (background/panel, text/muted, semantic accents, diff
-  family) is fixed; palettes may multiply later.
+- **Mouse support beyond wheel scrolling** — clicks, drags, hover, and
+  click-to-focus remain absent; any future affordance must stay
+  keyboard-reachable and renderer-pure.
+- **Additional built-in themes.** Dark and light are the only shipped
+  palettes. Other palettes belong in base16/base24 files rather than amux's
+  source tree.

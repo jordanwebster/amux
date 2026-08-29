@@ -14,12 +14,15 @@ subject; when two overlap, the owner named here wins.
 - `UI.md` — the client layer: the amux-ui reducer core, the
   kernel/per-agent-layer split, edge contracts, and the TUI.
 - `CHAT.md` — the chat TUI view; companion to `UI.md`, which owns the
-  client layer it stands on.
+  client layer it stands on; includes the full-screen frame, interaction
+  bindings, theme-file format, and `amux-shot` screenshot workflow.
 - `CODEX.md` — the OpenAI Codex integration: process ownership, the two
   planes a codex agent exposes, the structured row vocabulary, and the
   client-side layer that folds it.
 - `CLAUDE_TRANSCRIPT.md` — the grounded Claude Code transcript taxonomy
   consumed by the capture drift tooling and its committed fixtures.
+- `../crates/amux-shot/README.md` — the committed 120×40 PNG and wheel-recording
+  tool for named TUI states.
 - `../crates/amux/tests/spec/` — the executable spec. The suite reads as
   documentation and locks the protocol's guarantees; run it with
   `timeout 600 cargo test -p amux --features testnet --test spec`.

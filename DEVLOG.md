@@ -5659,3 +5659,11 @@ chat binding table now tells both native help overlays that Esc closes a
 reader, clears block focus, steps back an ask, or returns the feed to
 following, one visible layer at a time. Text and semantic-style goldens lock
 the same derived wording in compact, kitty, dark, and light presentations.
+
+2026-08-29 — **Rewrote the normative chat presentation.** The client docs now
+assign geometry, windowing, scrolling, composer, focus, and theme to one shared
+frame shell without projecting Claude and Codex content into a common type.
+The chat spec shows the borderless 120-column frame and records the finished
+block surfaces, exploration folds, unified diffs, wheel/focus/copy bindings,
+base16/base24 theme schema, terminal colour policy, and repeatable `amux-shot`
+workflow.

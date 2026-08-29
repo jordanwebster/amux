@@ -252,10 +252,21 @@ independently is how projection drift starts.
 ## Chrome and native chats
 
 The amux TUI owns fleet chrome — attention, create/rename/delete, host state —
-and native structured chats for Claude and Codex. Each known layer renders its
-own typed feed, composer, obligations, and action hints from the Model. The
-configured `chat`/`raw` default chooses an agent's normal entry mode; both
-remain available when the agent advertises them.
+and one full-screen frame shell shared by the native Claude and Codex chats.
+The shell owns geometry, windowing, scrolling, the composer, block focus, and
+theme. Each agent layer owns its native typed feed walk, content and panels,
+and its own keys; it hands already-painted blocks and agent-specific surfaces
+to the shell. The configured `chat`/`raw` default chooses an agent's normal
+entry mode; both remain available when the agent advertises them.
+
+Sharing this presentation shell is not content normalization. The shell never
+classifies a Claude transcript row or a Codex control-plane entry, and adding
+an agent-specific concept must not force a change that the other agent can
+see. There is no common feed-entry type, cross-layer trait, or capability
+vocabulary: Claude and Codex retain their asymmetric models and exhaustive
+native dispatch. Geometry is singular because copied geometry drifts; content
+and interpretation remain native because merging them would erase real agent
+differences.
 
 Raw attach is byte passthrough to the agent's own TUI. Entering it from chrome
 or a native chat suspends amux's TUI (leave the alternate screen, restore
