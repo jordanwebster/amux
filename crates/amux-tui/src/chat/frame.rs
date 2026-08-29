@@ -190,7 +190,10 @@ pub(crate) fn compose_chat_frame(
         ));
     }
     if parts.feed.loading {
-        boundary.push((indented_row("⟳ loading session…", theme.muted(), theme), None));
+        boundary.push((
+            indented_row("⟳ loading session…", theme.muted(), theme),
+            None,
+        ));
     }
     let boundary_rows = boundary.len();
     let mut feed = Vec::with_capacity(metrics.total_rows);

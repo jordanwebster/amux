@@ -328,6 +328,11 @@ impl Theme {
             return 'P';
         }
 
+        // A row that fills to the width sets the background token
+        // explicitly, so a foreground token over it is still a plain row
+        // wearing one colour — not a surface.
+        let plain_bg = bg.is_none() || bg == Some(self.color(self.tokens.background));
+
         if style.add_modifier.contains(Modifier::BOLD)
             && fg == Some(self.color(self.tokens.emphasis))
         {
@@ -347,7 +352,7 @@ impl Theme {
             (self.tokens.diff_meta, 'M'),
             (self.tokens.gutter, 'G'),
         ] {
-            if fg == Some(self.color(token)) && bg.is_none() && style.add_modifier.is_empty() {
+            if fg == Some(self.color(token)) && plain_bg && style.add_modifier.is_empty() {
                 return class;
             }
         }
@@ -355,7 +360,6 @@ impl Theme {
         let plain_fg = fg.is_none()
             || fg == Some(self.color(self.tokens.text))
             || fg == Some(self.color(self.tokens.diff_context));
-        let plain_bg = bg.is_none() || bg == Some(self.color(self.tokens.background));
         if plain_fg && plain_bg && style.add_modifier.is_empty() && style.sub_modifier.is_empty() {
             '.'
         } else {

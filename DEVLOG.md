@@ -4,6 +4,32 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **One painter per block kind, in one place.** `chat/blocks.rs`
+now draws the whole chat vocabulary — header, user prompt, assistant markdown,
+thinking marker, tool line, folded exploration run, file change, settled ask,
+plan preview, subagent, agent-to-agent message, turn and compaction rules,
+error, MCP startup, unrecognized row and the composer block — from
+already-formatted facts. Nothing in the kit reads an entry kind or decides what
+a block is; each agent's adapter does that and hands over words, so the two
+chats cannot drift apart visually.
+
+Only two things wear a surface: what the person typed and what they are about
+to type. Both fill the `user_surface` tint edge to edge with the accent bar in
+the mark column, and every other painter leaves the background alone, so a
+style map of the feed reads a plain row or a single foreground token. Glyphs
+sit at column 2, text at column 4, `└` continuations at column 6 — the same
+grid the bordered frame used, now measured from the screen's own edge. Wrapping
+counts display cells throughout, so a wide grapheme never straddles the right
+margin.
+
+The style classifier now treats the background token the same as an unset
+background. A full-screen frame sets that background on every cell, so without
+this a muted hint or a green success glyph classified as an unrecognized style
+and the goldens could not tell a token from a stray literal. The regenerated
+maps replace the legacy `?` regions with the tokens actually painted.
+
+---
+
 2026-08-29 — **The chat composes as one full-screen frame.** The shell now
 orders the header, an optional family banner, the feed, the paused rule, the
 activity row and the bottom block with no border, no chrome gutter and no rule
