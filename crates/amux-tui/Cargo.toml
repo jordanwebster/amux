@@ -16,6 +16,9 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
 # Display-cell measurement for wrapping and border math — the same
 # versions ratatui itself renders with, so the two never disagree.
 unicode-width = "0.2"

@@ -5146,3 +5146,27 @@ focus, code, success, warning, error, added and removed diff foregrounds and
 backgrounds, diff context, diff metadata, and gutter. Renderers keep their
 existing style-method seam, while style-map tests can classify those semantic
 styles and flag unrecognized literal colours.
+
+2026-08-29 — **Loaded base16 and base24 files into the semantic palette.**
+The import mapping is fixed and direct overrides apply after it:
+
+| Tokens | Base16 | Base24 |
+| --- | --- | --- |
+| background | `base00` | `base00` |
+| user surface and diff tint fallbacks | `base01` | `base01` |
+| panel | `base02` | `base02` |
+| muted and gutter | `base03` | `base03` |
+| diff metadata | `base04` | `base04` |
+| text and diff context | `base05` | `base05` |
+| emphasis | `base06` | `base06` |
+| error and removed foreground | `base08` | `base12` |
+| warning | `base09` | `base14` |
+| success and added foreground | `base0B` | `base13` |
+| code | `base0C` | `base17` |
+| accent | `base0D` | `base15` |
+| focus | `base0E` | `base16` |
+
+An imported colour carries its RGB value and a nearest named ANSI face. A file
+that supplies any base24 extension colour must supply all of `base10` through
+`base17`; missing colours, malformed hex, and unknown direct token names fail
+with the offending key.
