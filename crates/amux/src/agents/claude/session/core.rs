@@ -617,7 +617,7 @@ impl Serialize for DebugView<'_, ClaudeSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::pty::apply_env;
+    use crate::agents::pty::pty_spawn;
     use crate::agents::{AgentType, CreateAgentRequest, McpLaunchRoute};
 
     fn test_route(host_id: Uuid) -> McpLaunchRoute {
@@ -945,18 +945,25 @@ mod tests {
 
     #[test]
     fn a2a_claude_spawn_argv_scrubs_inherited_messaging_credentials() {
-        let mut cmd = portable_pty::CommandBuilder::new("claude");
-        cmd.env("CLAUDE_CODE_MESSAGING_SOCKET", "/parent/session.sock");
-        cmd.env("CLAUDE_CODE_MESSAGING_TOKEN", "parent-token");
-
-        apply_env(
-            &mut cmd,
+        let spec = pty_spawn(
+            "claude",
+            &[],
+            Path::new("/tmp"),
             &claude_spawn_env(Uuid::new_v4(), Uuid::new_v4()),
             CLAUDE_CHILD_SESSION_ENV_SCRUB,
+            None,
         );
 
-        assert_eq!(cmd.get_env("CLAUDE_CODE_MESSAGING_SOCKET"), None);
-        assert_eq!(cmd.get_env("CLAUDE_CODE_MESSAGING_TOKEN"), None);
+        assert!(
+            spec.env_remove
+                .iter()
+                .any(|key| key == "CLAUDE_CODE_MESSAGING_SOCKET")
+        );
+        assert!(
+            spec.env_remove
+                .iter()
+                .any(|key| key == "CLAUDE_CODE_MESSAGING_TOKEN")
+        );
     }
 
     /// The environment a spawned claude actually receives: every inherited
@@ -970,41 +977,44 @@ mod tests {
     fn spawned_claude_env_scrubs_child_session_markers_and_forces_persistence() {
         let agent_id = Uuid::new_v4();
         let host_id = Uuid::new_v4();
-        let mut cmd = portable_pty::CommandBuilder::new("claude");
-        // Simulate a daemon started from inside a Claude session: the full
-        // marker set observed via `ps eww` on such a daemon.
-        for key in CLAUDE_CHILD_SESSION_ENV_SCRUB {
-            cmd.env(key, "poisoned");
-        }
-        // Deliberate user configuration must survive the scrub.
-        cmd.env("CLAUDE_CONFIG_DIR", "/custom/claude");
-
-        apply_env(
-            &mut cmd,
+        let spec = pty_spawn(
+            "claude",
+            &[],
+            Path::new("/tmp"),
             &claude_spawn_env(agent_id, host_id),
             CLAUDE_CHILD_SESSION_ENV_SCRUB,
+            None,
         );
 
         for key in CLAUDE_CHILD_SESSION_ENV_SCRUB {
-            assert_eq!(cmd.get_env(key), None, "{key} must be scrubbed");
+            assert!(
+                spec.env_remove.iter().any(|removed| removed == key),
+                "{key} must be scrubbed"
+            );
         }
         assert_eq!(
-            cmd.get_env("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE")
-                .and_then(|v| v.to_str()),
+            spawn_env(&spec, "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"),
             Some("1")
         );
         assert_eq!(
-            cmd.get_env("AMUX_AGENT_ID").and_then(|v| v.to_str()),
+            spawn_env(&spec, "AMUX_AGENT_ID"),
             Some(agent_id.to_string().as_str())
         );
         assert_eq!(
-            cmd.get_env("AMUX_HOST_ID").and_then(|v| v.to_str()),
+            spawn_env(&spec, "AMUX_HOST_ID"),
             Some(host_id.to_string().as_str())
         );
-        assert_eq!(
-            cmd.get_env("CLAUDE_CONFIG_DIR").and_then(|v| v.to_str()),
-            Some("/custom/claude")
+        assert!(
+            !spec.env_remove.iter().any(|key| key == "CLAUDE_CONFIG_DIR"),
+            "deliberate user configuration must survive the scrub"
         );
+    }
+
+    fn spawn_env<'a>(spec: &'a pty_host::PtySpawn, key: &str) -> Option<&'a str> {
+        spec.env
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .and_then(|(_, value)| value.to_str())
     }
 
     /// The scrub list stays explicit: `CLAUDE_CODE_CHILD_SESSION` is the

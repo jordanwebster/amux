@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **PTY process hosting is provider-neutral.** Claude PTY,
+Codex's raw terminal, and real test-agent processes now spawn through the
+`pty-host` crate. The crate owns PTY creation, environment layering, one raw
+output stream, synchronous resize, exit status, and process-group shutdown
+that escalates from SIGTERM to SIGKILL after a bounded grace period. amux's
+remaining PTY module only feeds that output into its replaying byte buffer and
+keeps the in-process echo used by deterministic tests. The mobile library
+build still excludes PTY hosting when default features are disabled.
+
+---
+
 2026-08-25 — **E2E expectations follow the pairing banner's new wording.**
 Demo pairing made the banner's TTL human-readable, because `2592000
 seconds` is not a duration anyone can read; five E2E scripts wait on the

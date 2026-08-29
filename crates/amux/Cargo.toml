@@ -12,7 +12,7 @@ default = ["local-agents"]
 # embedded mobile clients build with `default-features = false`. The daemonish
 # behaviors (direct reachability, self-update poll) are NOT gated here — they
 # are a runtime builder/config choice, independent of this feature.
-local-agents = ["dep:portable-pty", "dep:codex-sdk"]
+local-agents = ["dep:pty-host", "dep:codex-sdk"]
 # Compiles the in-process spec-test harness (`amux::testnet`) into the
 # library. Test-only; never enable in production builds.
 testnet = ["dep:tempfile", "local-agents"]
@@ -20,7 +20,7 @@ testnet = ["dep:tempfile", "local-agents"]
 [dependencies]
 anyhow = { workspace = true }
 tempfile = { workspace = true, optional = true }
-portable-pty = { workspace = true, optional = true }
+pty-host = { workspace = true, optional = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

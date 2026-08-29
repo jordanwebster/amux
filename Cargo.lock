@@ -36,11 +36,11 @@ dependencies = [
  "libc",
  "nix 0.31.3",
  "oauth2",
- "portable-pty",
  "prost",
  "prost-build",
  "prost-types",
  "protoc-bin-vendored",
+ "pty-host",
  "rcgen",
  "replay-support",
  "reqwest",
@@ -2182,6 +2182,18 @@ name = "protoc-bin-vendored-win32"
 version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95067976aca6421a523e491fce939a3e65249bac4b977adee0ee9771568e8aa3"
+
+[[package]]
+name = "pty-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "libc",
+ "portable-pty",
+ "thiserror 2.0.20",
+ "tokio",
+]
 
 [[package]]
 name = "pulldown-cmark"

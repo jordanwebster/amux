@@ -455,18 +455,17 @@ impl Drop for CodexRawPtyLease {
         };
         let agent_id = self.agent_id;
         let epoch = self.epoch;
-        if let Err(error) = handle.terminate_process_group() {
-            tracing::warn!(
-                %agent_id,
-                epoch,
-                %error,
-                "failed to terminate detached Codex raw TUI process group"
-            );
-        }
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
                 runtime.spawn(async move {
-                    handle.close().await;
+                    if let Err(error) = handle.terminate().await {
+                        tracing::warn!(
+                            %agent_id,
+                            epoch,
+                            %error,
+                            "failed to terminate detached Codex raw TUI process group"
+                        );
+                    }
                 });
             }
             Err(error) => {
@@ -763,14 +762,13 @@ fn cached_raw_pty_lease(
 }
 
 async fn retire_unpublished_raw_pty(agent_id: Uuid, handle: PtyHandle) {
-    if let Err(error) = handle.terminate_process_group() {
+    if let Err(error) = handle.terminate().await {
         tracing::warn!(
             %agent_id,
             %error,
             "failed to terminate unpublished Codex raw TUI process group"
         );
     }
-    handle.close().await;
 }
 
 #[cfg(test)]

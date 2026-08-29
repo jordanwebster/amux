@@ -1,0 +1,13 @@
+[package]
+name = "pty-host"
+version = "0.1.0"
+edition.workspace = true
+description = "Provider-neutral PTY process hosting for amux"
+
+[dependencies]
+anyhow = { workspace = true }
+bytes = { workspace = true }
+libc = { workspace = true }
+portable-pty = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }

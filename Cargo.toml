@@ -11,6 +11,7 @@ edition = "2024"
 amux = { path = "crates/amux" }
 amux-ui = { path = "crates/amux-ui" }
 amux-tui = { path = "crates/amux-tui" }
+pty-host = { path = "crates/pty-host" }
 
 # Shared
 portable-pty = "0.9"
