@@ -5149,3 +5149,10 @@ queued nothing. Five seconds was sized for the old meaning. Two is enough to
 cover scheduling noise, and it halves the worst case a wedged recipient can
 impose on a sender — or on a spawn, which pays this window after its readiness
 wait.
+
+2026-08-29 — **Made recorded transport failures fully accountable.** Strict
+replay now exposes one reader and writer per recorded transport while retaining
+global causal ordering. Completion reports every unread or unwritten event,
+unused transport, trailing output, notification skip, delivery failure and
+write mismatch; a wrong write returns an I/O error with its expected and actual
+payloads in the report instead of panicking the specification process.

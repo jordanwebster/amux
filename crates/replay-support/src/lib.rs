@@ -9,8 +9,10 @@ pub use manifest::{
     migrate_legacy_manifest,
 };
 pub use transport::{
-    ReplayAdvance, ReplayClock, ReplayController, ReplayOptions, ReplayPeek, ReplayTiming,
-    replay_transport, replay_transport_with_controller, replay_transport_with_options,
+    ReplayAdvance, ReplayClock, ReplayController, ReplayError, ReplayNotificationIgnore,
+    ReplayOptions, ReplayPeek, ReplayReport, ReplayTiming, ReplayTransport, ReplayWriteMismatch,
+    StrictReplay, replay_transport, replay_transport_with_controller,
+    replay_transport_with_options, strict_replay,
 };
 
 /// A single IO event from a recorded session.
