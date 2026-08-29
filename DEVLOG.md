@@ -5318,3 +5318,11 @@ and semantic-version sources. The crate exposes one typed event stream and a
 control handle for fixed input programs, resize, delivery and termination;
 synthetic-source tests cover transcript relinks, ask facts, socket confirmation,
 paste fallback and process exit.
+
+2026-08-30 — **Kept the Claude SDK corpus at its canonical boundary.** All 23
+Claude Code 2.1.247 donor recordings now carry ledger-ready manifests, complete
+content inventories and migrated provenance in the `claude` crate. Their
+executable claims drive the crate's owned event stream, answer permission,
+hook, elicitation and dialog requests through its control handle, and finish
+under strict multi-transport replay. The crate also owns SDK registry listing,
+recording and drift probing plus the standalone hook socket forwarder.

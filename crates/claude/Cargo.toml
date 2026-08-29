@@ -6,11 +6,12 @@ edition.workspace = true
 [features]
 default = []
 pty = ["dep:bytes", "dep:pty-host", "dep:replay-support"]
-specs = []
+specs = ["dep:chrono", "dep:replay-support", "dep:tempfile"]
 
 [dependencies]
 anyhow.workspace = true
 bytes = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
 futures-core = "0.3"
 pty-host = { workspace = true, optional = true }
 replay-support = { path = "../replay-support", optional = true }
@@ -19,9 +20,20 @@ serde.workspace = true
 serde_json.workspace = true
 shell-words.workspace = true
 thiserror.workspace = true
+tempfile = { workspace = true, optional = true }
 tokio.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[[bin]]
+name = "claude-hook"
+path = "src/bin/claude_hook.rs"
+required-features = ["specs"]
+
+[[bin]]
+name = "claude-probe"
+path = "src/bin/claude_probe.rs"
+required-features = ["specs", "pty"]
