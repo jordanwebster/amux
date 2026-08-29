@@ -4,6 +4,36 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Made imported colour schemes readable.** A base16 file is
+authored for an editor, where the only thing painted on `base00` is code, so a
+scheme whose `base05` sits a few steps above its background left amux's
+labels, composer and status line barely visible — and unreadable once
+sixteen-colour degradation rounded a whole dark ramp onto black. The loader
+now repairs an imported palette after mapping it: each foreground is lifted
+away from the surfaces it can land on until it clears a contrast floor, moving
+only HSL lightness so the scheme's own hues and saturation survive exactly. A
+scheme that already reads comes through untouched, and a token named directly
+under `tokens:` is the user's own word and is taken literally.
+
+Sixteen-colour faces are chosen by what they preserve rather than by RGB
+distance, which used to turn a half-saturated lavender into grey and a whole
+dark ramp into black: a saturated colour keeps a coloured face and a neutral
+one a grey face, nearer hue wins, and falling short of the floor is a penalty
+rather than a veto. Block surfaces that are only a shade of the background now
+share its face instead of becoming a loud grey band, and against a diff tint —
+where the surface already says what the row is — the foreground goes neutral,
+which is what the shipped palettes do with their own tints. base16 has no diff
+colours, so both tints, which used to be the same fallback shade, are now
+tinted with the scheme's own success and error hues.
+
+Coverage is at three levels: the resolved palettes clear their floors in both
+colour modes, and a rendered Claude frame is walked cell by cell so every
+painted glyph reads. The base24 fixture's `base13` was made more saturated so
+the extended range stays distinguishable from `base0B` once repair is free to
+move lightness.
+
+---
+
 2026-08-29 — **Moved the golden surface to a 120×40 terminal.** Claude,
 Codex, agent-to-agent, fleet, and component captures now pass through one
 120-column by 40-row harness policy. Explicit render-at-size helpers remain

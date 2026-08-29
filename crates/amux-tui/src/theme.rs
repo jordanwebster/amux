@@ -1,6 +1,6 @@
 //! Semantic colour tokens shared by every TUI surface.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use ratatui::style::{Color, Modifier, Style};
@@ -424,7 +424,11 @@ fn normalize_base_key(key: &str) -> Option<String> {
 /// | accent | 0D | 15 |
 /// | focus | 0E | 16 |
 ///
-/// Direct `tokens:` overrides are applied after this mapping.
+/// base16 has no diff backgrounds, so both tints start from `base01` and are
+/// then tinted with the scheme's own success and error hues.
+///
+/// Direct `tokens:` overrides are applied after this mapping and are taken
+/// literally; everything else is then put through [`make_readable`].
 pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, ThemeError> {
     for index in 0..=0x0F {
         mapped_token(file, &format!("base{index:02X}"))?;
@@ -460,16 +464,361 @@ pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, Theme
         diff_removed_bg: mapped_token(file, "base01")?,
     };
 
+    let mut authored = BTreeSet::new();
     for (name, value) in &file.tokens {
         let token = parse_token(name, value)?;
         set_token(&mut tokens, name, token)?;
+        authored.insert(name.clone());
     }
+
+    make_readable(&mut tokens, &authored);
 
     Ok(Theme {
         tokens,
         mode,
         name: ThemeName::Imported,
     })
+}
+
+/// The contrast an imported palette has to reach before amux paints words
+/// with it. Body copy is held above the WCAG AAA threshold so an imported
+/// scheme still reads like the shipped ones; labels, accents and status
+/// colours are held to AA; gutters, rules and hunk metadata are decoration
+/// and only have to be visible.
+const READABLE_BODY: f64 = 7.0;
+const READABLE_LABEL: f64 = 4.5;
+const READABLE_TRIM: f64 = 3.0;
+
+/// How far apart two foregrounds have to be before a reader can see that
+/// one of them is emphasised.
+const SEPARATION: f64 = 1.25;
+
+/// Repair an imported palette so every foreground is legible on the surfaces
+/// it can land on.
+///
+/// A base16 scheme is authored for an editor, where the only thing painted on
+/// `base00` is source code that the scheme's author looked at. amux paints
+/// labels, a composer and a status line as well, and a scheme whose `base05`
+/// sits a few steps above `base00` leaves all of that unreadable — worse once
+/// sixteen-colour degradation rounds both of them to the same terminal face.
+/// Rather than reject such a scheme, lift each foreground away from its
+/// surfaces until it clears the floor above, moving only HSL lightness so the
+/// scheme's own hues and saturation survive exactly. A scheme that is already
+/// readable — which is nearly all of them — comes through untouched.
+///
+/// Tokens named directly under `tokens:` are the user's own word and are
+/// taken literally; only the mechanical base mapping is repaired.
+fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>) {
+    // base16 has no diff colours, so the mapping falls back to `base01` for
+    // both tints and a hunk reads as one undifferentiated slab. Tint that
+    // surface with the scheme's own success and error hues instead, and give
+    // each tint the saturated terminal face its hue rounds to so a diff still
+    // reads as a diff in sixteen colours.
+    if !authored.contains("diff_added_bg") {
+        tokens.diff_added_bg = tinted(tokens.diff_added_bg, tokens.ok);
+    }
+    if !authored.contains("diff_removed_bg") {
+        tokens.diff_removed_bg = tinted(tokens.diff_removed_bg, tokens.error);
+    }
+
+    // A scheme's block surfaces are shades of its background, and rounding
+    // each one to its own terminal face turns a barely-there shade into a
+    // loud grey band and then constrains every foreground that lands on it.
+    // Anything this close to the background is not meant to read as a colour,
+    // so let it share the background's face and disappear the way it does in
+    // truecolor.
+    if !authored.contains("user_surface") && shade_of(tokens.user_surface, tokens.background) {
+        tokens.user_surface.ansi = tokens.background.ansi;
+    }
+    if !authored.contains("panel") && shade_of(tokens.panel, tokens.background) {
+        tokens.panel.ansi = tokens.background.ansi;
+    }
+
+    let surfaces = [tokens.background, tokens.user_surface, tokens.panel];
+    let added = [tokens.diff_added_bg];
+    let removed = [tokens.diff_removed_bg];
+    let hunk = [
+        tokens.panel,
+        tokens.background,
+        tokens.diff_added_bg,
+        tokens.diff_removed_bg,
+    ];
+
+    let lift = |token: &mut Token, name: &str, on: &[Token], floor: f64| {
+        if authored.contains(name) {
+            return;
+        }
+        let against: Vec<(Token, f64)> = on.iter().map(|surface| (*surface, floor)).collect();
+        *token = readable_token(*token, &against);
+    };
+
+    lift(&mut tokens.text, "text", &surfaces, READABLE_BODY);
+    lift(
+        &mut tokens.diff_context,
+        "diff_context",
+        &hunk,
+        READABLE_BODY,
+    );
+    lift(&mut tokens.muted, "muted", &surfaces, READABLE_LABEL);
+    lift(&mut tokens.accent, "accent", &surfaces, READABLE_LABEL);
+    lift(&mut tokens.focus, "focus", &surfaces, READABLE_LABEL);
+    lift(&mut tokens.code, "code", &surfaces, READABLE_LABEL);
+    lift(&mut tokens.ok, "ok", &surfaces, READABLE_LABEL);
+    lift(&mut tokens.warn, "warn", &surfaces, READABLE_LABEL);
+    lift(&mut tokens.error, "error", &surfaces, READABLE_LABEL);
+    lift(
+        &mut tokens.diff_added_fg,
+        "diff_added_fg",
+        &added,
+        READABLE_LABEL,
+    );
+    lift(
+        &mut tokens.diff_removed_fg,
+        "diff_removed_fg",
+        &removed,
+        READABLE_LABEL,
+    );
+    lift(&mut tokens.gutter, "gutter", &surfaces, READABLE_TRIM);
+    lift(&mut tokens.diff_meta, "diff_meta", &hunk, READABLE_TRIM);
+
+    // Emphasis is only emphasis if it out-reads the body it interrupts, and
+    // lifting two flat greys to the same floor would land them on the same
+    // colour, so hold it away from the repaired text as well.
+    if !authored.contains("emphasis") {
+        let against = [
+            (tokens.background, READABLE_BODY),
+            (tokens.user_surface, READABLE_BODY),
+            (tokens.panel, READABLE_BODY),
+            (tokens.text, SEPARATION),
+        ];
+        tokens.emphasis = readable_token(tokens.emphasis, &against);
+    }
+}
+
+/// Mix a hue into a surface far enough to be seen without turning the
+/// surface into a foreground. Unlike the block surfaces above, a tint is
+/// meant to be seen, so it keeps a face of its own even when the mix is
+/// pale: the nearest face by identity, which is the tint's hue at whichever
+/// end of the ramp the mix landed on.
+fn tinted(surface: Token, hue: Token) -> Token {
+    const MIX: f64 = 0.22;
+    let blend = |surface: u8, hue: u8| {
+        (f64::from(surface) * (1.0 - MIX) + f64::from(hue) * MIX).round() as u8
+    };
+    let rgb = (
+        blend(surface.rgb.0, hue.rgb.0),
+        blend(surface.rgb.1, hue.rgb.1),
+        blend(surface.rgb.2, hue.rgb.2),
+    );
+    let ansi = ANSI_FACES
+        .into_iter()
+        .min_by(|left, right| {
+            face_identity(rgb, left.1)
+                .partial_cmp(&face_identity(rgb, right.1))
+                .expect("face cost is finite")
+        })
+        .map(|(face, _)| face)
+        .expect("ANSI palette is non-empty");
+    Token { rgb, ansi }
+}
+
+/// Whether one surface is close enough to the background to read as the same
+/// surface rather than as a block of its own.
+fn shade_of(surface: Token, background: Token) -> bool {
+    const SHADE: f64 = 1.5;
+    contrast(surface.rgb, background.rgb) < SHADE
+}
+
+/// Lift one token until it clears every floor it was given, in both colour
+/// modes.
+fn readable_token(token: Token, against: &[(Token, f64)]) -> Token {
+    let rgb = lift_lightness(token.rgb, against);
+    Token {
+        rgb,
+        ansi: readable_face(rgb, against),
+    }
+}
+
+/// The smallest ratio of achieved contrast to demanded contrast across every
+/// surface: at or above 1.0 the colour is readable everywhere it can land.
+fn margin(
+    candidate: (u8, u8, u8),
+    against: &[(Token, f64)],
+    surface: fn(Token) -> (u8, u8, u8),
+) -> f64 {
+    against
+        .iter()
+        .map(|(token, floor)| contrast(candidate, surface(*token)) / floor)
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Move a colour's HSL lightness — and nothing else — until it is readable.
+fn lift_lightness(rgb: (u8, u8, u8), against: &[(Token, f64)]) -> (u8, u8, u8) {
+    let reach = |candidate| margin(candidate, against, |token| token.rgb);
+    if reach(rgb) >= 1.0 {
+        return rgb;
+    }
+    let (hue, saturation, lightness) = to_hsl(rgb);
+    let toward = if reach(from_hsl(hue, saturation, 1.0)) >= reach(from_hsl(hue, saturation, 0.0)) {
+        1.0
+    } else {
+        0.0
+    };
+    // Binary search the least movement that reads, keeping `far` as the end
+    // known to be no worse than the extreme this scheme can reach.
+    let (mut near, mut far) = (lightness, toward);
+    for _ in 0..24 {
+        let middle = (near + far) / 2.0;
+        if reach(from_hsl(hue, saturation, middle)) >= 1.0 {
+            far = middle;
+        } else {
+            near = middle;
+        }
+    }
+    from_hsl(hue, saturation, far)
+}
+
+/// Choose the sixteen-colour face that keeps the most of a repaired colour.
+///
+/// Rounding each colour to its nearest RGB neighbour on its own is what made
+/// imported schemes vanish on a monochrome terminal — a whole dark ramp
+/// collapses onto black — and nearest-RGB also throws hues away, because a
+/// half-saturated lavender is closer to grey than to magenta. Score every face
+/// on what it preserves instead: a saturated colour has to stay a coloured
+/// face and a neutral one a grey face, then the nearer hue wins, then the
+/// nearer lightness. Falling short of the contrast floor is a penalty rather
+/// than a veto, since in this mode the terminal owns the colours it actually
+/// paints and the floor is measured against conventional values; a face may
+/// win by a small shortfall if it keeps the hue, never by a large one.
+fn readable_face(rgb: (u8, u8, u8), against: &[(Token, f64)]) -> Color {
+    const SHORTFALL: f64 = 4.0;
+    let reach = |candidate: (u8, u8, u8)| margin(candidate, against, |token| ansi_rgb(token.ansi));
+
+    // Against a coloured surface — a diff tint — the surface already says what
+    // the row is, and a second hue laid over it only clashes. Take the face
+    // that reads best there and let it be neutral, which is what the shipped
+    // palettes do with their own tints.
+    if against
+        .iter()
+        .any(|(surface, _)| chromatic(ansi_rgb(surface.ansi)))
+    {
+        return ANSI_FACES
+            .into_iter()
+            .max_by(|left, right| {
+                reach(left.1)
+                    .partial_cmp(&reach(right.1))
+                    .expect("contrast is finite")
+                    .then_with(|| {
+                        face_identity(rgb, right.1)
+                            .partial_cmp(&face_identity(rgb, left.1))
+                            .expect("face cost is finite")
+                    })
+            })
+            .map(|(face, _)| face)
+            .expect("ANSI palette is non-empty");
+    }
+
+    let cost = |candidate: (u8, u8, u8)| {
+        face_identity(rgb, candidate) + (1.0 - reach(candidate)).max(0.0) * SHORTFALL
+    };
+    ANSI_FACES
+        .into_iter()
+        .min_by(|left, right| {
+            cost(left.1)
+                .partial_cmp(&cost(right.1))
+                .expect("face cost is finite")
+        })
+        .map(|(face, _)| face)
+        .expect("ANSI palette is non-empty")
+}
+
+/// Whether a colour reads as a hue rather than as a grey.
+fn chromatic(rgb: (u8, u8, u8)) -> bool {
+    /// Below this, a colour reads as a grey rather than as a hue.
+    const CHROMATIC: f64 = 0.2;
+    to_hsl(rgb).1 >= CHROMATIC
+}
+
+/// How much of a colour's identity a terminal face gives up, in the same
+/// units as the contrast shortfall above.
+fn face_identity(rgb: (u8, u8, u8), face: (u8, u8, u8)) -> f64 {
+    let (hue, _, lightness) = to_hsl(rgb);
+    let (face_hue, _, face_lightness) = to_hsl(face);
+    let coloured = chromatic(rgb);
+    let face_coloured = chromatic(face);
+    let class = f64::from(u8::from(coloured != face_coloured));
+    let gap = if coloured && face_coloured {
+        let gap = (hue - face_hue).abs().rem_euclid(360.0);
+        gap.min(360.0 - gap) / 180.0
+    } else {
+        0.0
+    };
+    class + gap * 1.5 + (lightness - face_lightness).abs() * 0.5
+}
+
+/// Relative luminance, per WCAG 2.
+pub(crate) fn luminance(rgb: (u8, u8, u8)) -> f64 {
+    fn channel(value: u8) -> f64 {
+        let value = f64::from(value) / 255.0;
+        if value <= 0.040_45 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * channel(rgb.0) + 0.7152 * channel(rgb.1) + 0.0722 * channel(rgb.2)
+}
+
+/// The WCAG 2 contrast ratio between two colours, from 1.0 to 21.0.
+pub(crate) fn contrast(left: (u8, u8, u8), right: (u8, u8, u8)) -> f64 {
+    let (left, right) = (luminance(left), luminance(right));
+    let (lighter, darker) = if left > right {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+fn to_hsl(rgb: (u8, u8, u8)) -> (f64, f64, f64) {
+    let (red, green, blue) = (
+        f64::from(rgb.0) / 255.0,
+        f64::from(rgb.1) / 255.0,
+        f64::from(rgb.2) / 255.0,
+    );
+    let max = red.max(green).max(blue);
+    let min = red.min(green).min(blue);
+    let lightness = (max + min) / 2.0;
+    let range = max - min;
+    if range <= f64::EPSILON {
+        return (0.0, 0.0, lightness);
+    }
+    let saturation = range / (1.0 - (2.0 * lightness - 1.0).abs());
+    let hue = if max == red {
+        ((green - blue) / range).rem_euclid(6.0)
+    } else if max == green {
+        (blue - red) / range + 2.0
+    } else {
+        (red - green) / range + 4.0
+    };
+    (hue * 60.0, saturation, lightness)
+}
+
+fn from_hsl(hue: f64, saturation: f64, lightness: f64) -> (u8, u8, u8) {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let sector = hue.rem_euclid(360.0) / 60.0;
+    let middle = chroma * (1.0 - (sector.rem_euclid(2.0) - 1.0).abs());
+    let (red, green, blue) = match sector as u32 {
+        0 => (chroma, middle, 0.0),
+        1 => (middle, chroma, 0.0),
+        2 => (0.0, chroma, middle),
+        3 => (0.0, middle, chroma),
+        4 => (middle, 0.0, chroma),
+        _ => (chroma, 0.0, middle),
+    };
+    let base = lightness - chroma / 2.0;
+    let quantize = |value: f64| ((value + base) * 255.0).round().clamp(0.0, 255.0) as u8;
+    (quantize(red), quantize(green), quantize(blue))
 }
 
 fn require_base<'a>(file: &'a ThemeFile, key: &str) -> Result<&'a str, ThemeError> {
@@ -527,28 +876,41 @@ fn set_token(tokens: &mut Tokens, name: &str, token: Token) -> Result<(), ThemeE
     Ok(())
 }
 
+/// The sixteen terminal faces at their conventional RGB values, which is the
+/// only ground amux has for reasoning about contrast in a mode where the
+/// terminal, not amux, owns the actual colours.
+const ANSI_FACES: [(Color, (u8, u8, u8)); 16] = [
+    (Color::Black, (0, 0, 0)),
+    (Color::Red, (128, 0, 0)),
+    (Color::Green, (0, 128, 0)),
+    (Color::Yellow, (128, 128, 0)),
+    (Color::Blue, (0, 0, 128)),
+    (Color::Magenta, (128, 0, 128)),
+    (Color::Cyan, (0, 128, 128)),
+    (Color::Gray, (192, 192, 192)),
+    (Color::DarkGray, (128, 128, 128)),
+    (Color::LightRed, (255, 0, 0)),
+    (Color::LightGreen, (0, 255, 0)),
+    (Color::LightYellow, (255, 255, 0)),
+    (Color::LightBlue, (0, 0, 255)),
+    (Color::LightMagenta, (255, 0, 255)),
+    (Color::LightCyan, (0, 255, 255)),
+    (Color::White, (255, 255, 255)),
+];
+
+/// The conventional RGB value of one terminal face.
+fn ansi_rgb(face: Color) -> (u8, u8, u8) {
+    ANSI_FACES
+        .into_iter()
+        .find(|(candidate, _)| *candidate == face)
+        .map(|(_, rgb)| rgb)
+        .unwrap_or((0, 0, 0))
+}
+
 /// Choose the nearest named 16-colour terminal face by squared RGB distance.
 pub fn nearest_ansi(rgb: (u8, u8, u8)) -> Color {
-    const ANSI: [(Color, (u8, u8, u8)); 16] = [
-        (Color::Black, (0, 0, 0)),
-        (Color::Red, (128, 0, 0)),
-        (Color::Green, (0, 128, 0)),
-        (Color::Yellow, (128, 128, 0)),
-        (Color::Blue, (0, 0, 128)),
-        (Color::Magenta, (128, 0, 128)),
-        (Color::Cyan, (0, 128, 128)),
-        (Color::Gray, (192, 192, 192)),
-        (Color::DarkGray, (128, 128, 128)),
-        (Color::LightRed, (255, 0, 0)),
-        (Color::LightGreen, (0, 255, 0)),
-        (Color::LightYellow, (255, 255, 0)),
-        (Color::LightBlue, (0, 0, 255)),
-        (Color::LightMagenta, (255, 0, 255)),
-        (Color::LightCyan, (0, 255, 255)),
-        (Color::White, (255, 255, 255)),
-    ];
-
-    ANSI.into_iter()
+    ANSI_FACES
+        .into_iter()
         .min_by_key(|(_, candidate)| rgb_distance(rgb, *candidate))
         .map(|(color, _)| color)
         .expect("ANSI palette is non-empty")
@@ -727,6 +1089,15 @@ mod tests {
         );
     }
 
+    fn hue_and_saturation(rgb: (u8, u8, u8)) -> (f64, f64) {
+        let (hue, saturation, _) = to_hsl(rgb);
+        (hue, saturation)
+    }
+
+    /// Every semantic family comes from the base16 slot the mapping table
+    /// promises. The readability pass may move a colour's lightness, so each
+    /// family is identified by the hue and saturation it kept, which is the
+    /// part of an imported scheme a user would recognise.
     #[test]
     fn base16_sample_maps_every_semantic_family() {
         let file = parse_theme_file(BASE16_SAMPLE).expect("parse base16 fixture");
@@ -739,20 +1110,32 @@ mod tests {
         assert_eq!(theme.tokens.background.rgb, (0x10, 0x10, 0x10));
         assert_eq!(theme.tokens.user_surface.rgb, (0x20, 0x20, 0x20));
         assert_eq!(theme.tokens.panel.rgb, (0x30, 0x30, 0x30));
-        assert_eq!(theme.tokens.muted.rgb, (0x40, 0x40, 0x40));
-        assert_eq!(theme.tokens.diff_meta.rgb, (0x50, 0x50, 0x50));
-        assert_eq!(theme.tokens.text.rgb, (0x60, 0x60, 0x60));
-        assert_eq!(theme.tokens.emphasis.rgb, (0x70, 0x70, 0x70));
-        assert_eq!(theme.tokens.error.rgb, (0x90, 0x00, 0x00));
-        assert_eq!(theme.tokens.warn.rgb, (0xa0, 0x60, 0x00));
-        assert_eq!(theme.tokens.ok.rgb, (0x00, 0x90, 0x00));
-        assert_eq!(theme.tokens.code.rgb, (0x00, 0x80, 0x90));
-        assert_eq!(theme.tokens.accent.rgb, (0x00, 0x60, 0xa0));
-        assert_eq!(theme.tokens.focus.rgb, (0x70, 0x40, 0xa0));
-        assert_eq!(theme.tokens.diff_added_bg.rgb, (0x20, 0x20, 0x20));
-        assert_eq!(theme.tokens.diff_removed_bg.rgb, (0x20, 0x20, 0x20));
+        for (token, base, family) in [
+            (theme.tokens.muted, (0x40, 0x40, 0x40), "muted"),
+            (theme.tokens.diff_meta, (0x50, 0x50, 0x50), "diff_meta"),
+            (theme.tokens.text, (0x60, 0x60, 0x60), "text"),
+            (theme.tokens.emphasis, (0x70, 0x70, 0x70), "emphasis"),
+            (theme.tokens.error, (0x90, 0x00, 0x00), "error"),
+            (theme.tokens.warn, (0xa0, 0x60, 0x00), "warn"),
+            (theme.tokens.ok, (0x00, 0x90, 0x00), "ok"),
+            (theme.tokens.code, (0x00, 0x80, 0x90), "code"),
+            (theme.tokens.accent, (0x00, 0x60, 0xa0), "accent"),
+            (theme.tokens.focus, (0x70, 0x40, 0xa0), "focus"),
+        ] {
+            let (hue, saturation) = hue_and_saturation(token.rgb);
+            let (base_hue, base_saturation) = hue_and_saturation(base);
+            assert!(
+                (hue - base_hue).abs() < 1.0 && (saturation - base_saturation).abs() < 0.02,
+                "{family} lost its imported colour: {:?} is not {base:?}",
+                token.rgb
+            );
+        }
     }
 
+    /// A base24 scheme's extended accents win over the base16 ones it also
+    /// carries, and a direct override wins over both. The two fixtures give
+    /// each family the same hue in both ranges, so the extended slot is
+    /// identified by the saturation only it has.
     #[test]
     fn base24_sample_uses_bright_accents_and_applies_overrides_last() {
         let file = parse_theme_file(BASE24_SAMPLE).expect("parse base24 fixture");
@@ -761,11 +1144,54 @@ mod tests {
 
         let theme = theme_from_file(&file, ColorMode::Ansi).expect("resolve base24 fixture");
         assert_eq!(theme.mode, ColorMode::Ansi);
-        assert_eq!(theme.tokens.error.rgb, (0xff, 0x40, 0x40));
-        assert_eq!(theme.tokens.ok.rgb, (0x40, 0xb0, 0x40));
-        assert_eq!(theme.tokens.warn.rgb, (0xd0, 0x90, 0x20));
-        assert_eq!(theme.tokens.code.rgb, (0x30, 0xa0, 0xa0));
-        assert_eq!(theme.tokens.focus.rgb, (0xa0, 0x60, 0xc0));
+        for (token, extended, base16, family) in [
+            (
+                theme.tokens.error,
+                (0xff, 0x40, 0x40),
+                (0xb0, 0x30, 0x30),
+                "error",
+            ),
+            (
+                theme.tokens.ok,
+                (0x20, 0xc0, 0x20),
+                (0x30, 0x80, 0x30),
+                "ok",
+            ),
+            (
+                theme.tokens.warn,
+                (0xd0, 0x90, 0x20),
+                (0xb0, 0x60, 0x20),
+                "warn",
+            ),
+            (
+                theme.tokens.code,
+                (0x30, 0xa0, 0xa0),
+                (0x20, 0x80, 0x80),
+                "code",
+            ),
+            (
+                theme.tokens.focus,
+                (0xa0, 0x60, 0xc0),
+                (0x70, 0x40, 0x90),
+                "focus",
+            ),
+        ] {
+            let (hue, saturation) = hue_and_saturation(token.rgb);
+            let (extended_hue, extended_saturation) = hue_and_saturation(extended);
+            assert!(
+                (hue - extended_hue).abs() < 1.0 && (saturation - extended_saturation).abs() < 0.02,
+                "{family} did not come from the extended range: {:?}",
+                token.rgb
+            );
+            let (_, base16_saturation) = hue_and_saturation(base16);
+            assert!(
+                (saturation - base16_saturation).abs() > 0.02,
+                "{family} is indistinguishable from its base16 slot"
+            );
+        }
+
+        // A token named directly is the user's own word, so it is taken
+        // literally in both faces rather than repaired.
         assert_eq!(theme.tokens.accent.rgb, (0xab, 0xcd, 0xef));
         assert_eq!(theme.tokens.accent.ansi, nearest_ansi((0xab, 0xcd, 0xef)));
     }
@@ -887,6 +1313,160 @@ mod tests {
         assert_eq!(nearest_ansi((250, 10, 10)), Color::LightRed);
         assert_eq!(nearest_ansi((10, 240, 245)), Color::LightCyan);
         assert_eq!(nearest_ansi((248, 248, 248)), Color::White);
+    }
+
+    // --- imported palettes ---------------------------------------------
+
+    fn imported(yaml: &str, mode: ColorMode) -> Theme {
+        let file = parse_theme_file(yaml).expect("parse imported fixture");
+        theme_from_file(&file, mode).expect("resolve imported fixture")
+    }
+
+    /// The same scheme with its direct overrides dropped. A token named under
+    /// `tokens:` is the user's own word and is taken literally, so only the
+    /// base mapping carries a readability guarantee.
+    fn imported_mapping(yaml: &str, mode: ColorMode) -> Theme {
+        let mut file = parse_theme_file(yaml).expect("parse imported fixture");
+        file.tokens.clear();
+        theme_from_file(&file, mode).expect("resolve imported fixture")
+    }
+
+    /// Every foreground an imported scheme supplies has to read on every
+    /// surface it can land on, whatever the scheme's author thought was
+    /// enough contrast for an editor.
+    #[test]
+    fn imported_palettes_are_lifted_until_they_read() {
+        for yaml in [BASE16_SAMPLE, BASE24_SAMPLE] {
+            let tokens = imported_mapping(yaml, ColorMode::TrueColor).tokens;
+            let surfaces = [
+                (tokens.background.rgb, "background"),
+                (tokens.user_surface.rgb, "user surface"),
+                (tokens.panel.rgb, "panel"),
+            ];
+            for (fg, floor, family) in [
+                (tokens.text, READABLE_BODY, "text"),
+                (tokens.emphasis, READABLE_BODY, "emphasis"),
+                (tokens.muted, READABLE_LABEL, "muted"),
+                (tokens.accent, READABLE_LABEL, "accent"),
+                (tokens.focus, READABLE_LABEL, "focus"),
+                (tokens.code, READABLE_LABEL, "code"),
+                (tokens.ok, READABLE_LABEL, "ok"),
+                (tokens.warn, READABLE_LABEL, "warn"),
+                (tokens.error, READABLE_LABEL, "error"),
+                (tokens.gutter, READABLE_TRIM, "gutter"),
+            ] {
+                for (surface, name) in surfaces {
+                    let ratio = contrast(fg.rgb, surface);
+                    assert!(
+                        ratio >= floor,
+                        "imported {family} on {name} is only {ratio:.1}:1"
+                    );
+                }
+            }
+            for (fg, bg, name) in [
+                (tokens.diff_added_fg, tokens.diff_added_bg, "added"),
+                (tokens.diff_removed_fg, tokens.diff_removed_bg, "removed"),
+            ] {
+                let ratio = contrast(fg.rgb, bg.rgb);
+                assert!(
+                    ratio >= READABLE_LABEL,
+                    "imported diff {name} is only {ratio:.1}:1"
+                );
+            }
+            assert!(
+                contrast(tokens.emphasis.rgb, tokens.text.rgb) >= SEPARATION,
+                "imported emphasis is the same colour as its body text"
+            );
+            assert_ne!(
+                tokens.diff_added_bg.rgb, tokens.diff_removed_bg.rgb,
+                "imported diff tints are the same colour"
+            );
+        }
+    }
+
+    /// The same has to hold once the palette is rounded to sixteen faces,
+    /// which is where an imported dark scheme used to disappear onto black.
+    #[test]
+    fn imported_ansi_faces_read_against_the_surfaces_they_land_on() {
+        for yaml in [BASE16_SAMPLE, BASE24_SAMPLE] {
+            let tokens = imported_mapping(yaml, ColorMode::Ansi).tokens;
+            let surfaces = [tokens.background, tokens.user_surface, tokens.panel];
+            for (fg, family, on) in [
+                (tokens.text, "text", &surfaces[..]),
+                (tokens.emphasis, "emphasis", &surfaces[..]),
+                (tokens.muted, "muted", &surfaces[..]),
+                (tokens.focus, "focus", &surfaces[..]),
+                (tokens.code, "code", &surfaces[..]),
+                (tokens.ok, "ok", &surfaces[..]),
+                (tokens.warn, "warn", &surfaces[..]),
+                (tokens.error, "error", &surfaces[..]),
+                (tokens.gutter, "gutter", &surfaces[..]),
+                (
+                    tokens.diff_added_fg,
+                    "diff added",
+                    &[tokens.diff_added_bg][..],
+                ),
+                (
+                    tokens.diff_removed_fg,
+                    "diff removed",
+                    &[tokens.diff_removed_bg][..],
+                ),
+            ] {
+                for surface in on {
+                    let ratio = contrast(ansi_rgb(fg.ansi), ansi_rgb(surface.ansi));
+                    assert!(
+                        ratio >= READABLE_TRIM,
+                        "imported {family} reads {ratio:.1}:1 as {:?} on {:?}",
+                        fg.ansi,
+                        surface.ansi
+                    );
+                }
+            }
+        }
+    }
+
+    /// The palettes are only a claim until something paints with them: walk
+    /// the cells of a real frame and hold every painted glyph to the floor
+    /// below. The shipped palettes are held here in truecolor only — in
+    /// sixteen colours their block surfaces round onto the background face
+    /// and muted text inside a block goes invisible, which the style-map
+    /// classifier depends on and so has to be repaired on its own.
+    #[test]
+    fn every_theme_paints_a_readable_frame() {
+        for theme in [
+            Theme::dark(ColorMode::TrueColor),
+            Theme::light(ColorMode::TrueColor),
+            imported_mapping(BASE16_SAMPLE, ColorMode::TrueColor),
+            imported_mapping(BASE16_SAMPLE, ColorMode::Ansi),
+            imported_mapping(BASE24_SAMPLE, ColorMode::TrueColor),
+            imported_mapping(BASE24_SAMPLE, ColorMode::Ansi),
+        ] {
+            let surface = match theme.mode {
+                ColorMode::TrueColor => theme.tokens.background.rgb,
+                ColorMode::Ansi => ansi_rgb(theme.tokens.background.ansi),
+            };
+            let painted = |color: Color| match color {
+                Color::Rgb(red, green, blue) => (red, green, blue),
+                Color::Reset => surface,
+                face => ansi_rgb(face),
+            };
+            let buffer = render_claude_working(theme);
+            for cell in buffer.content() {
+                if cell.symbol().trim().is_empty() {
+                    continue;
+                }
+                let ratio = contrast(painted(cell.fg), painted(cell.bg));
+                assert!(
+                    ratio >= READABLE_TRIM,
+                    "{:?} {:?} paints {:?} at {ratio:.1}:1, {:?} on {:?}",
+                    theme.name,
+                    theme.mode,
+                    cell.symbol(),
+                    cell.fg,
+                    cell.bg
+                );
+            }
+        }
     }
 
     // --- the two shipped palettes -------------------------------------
