@@ -14,6 +14,9 @@ const STATES: &[NamedState] = &[
     NamedState::ComponentGalleryCodex,
     NamedState::ExplorationCollapsed,
     NamedState::ExplorationExpanded,
+    NamedState::ClaudeScrolledBack,
+    NamedState::CodexScrolledBack,
+    NamedState::HelpOverlay,
 ];
 
 struct Capture {
@@ -163,4 +166,25 @@ fn exploration_pair_expands_members_in_order_and_keeps_the_edit_visible() {
     for frame in [&collapsed, &expanded] {
         assert!(frame.contains("Edit sync/config.rs · +3 −1"));
     }
+}
+
+#[test]
+fn interaction_states_name_the_paused_view_and_copy_chord() {
+    let theme = Theme::dark(ColorMode::TrueColor);
+    for state in [
+        NamedState::ClaudeScrolledBack,
+        NamedState::CodexScrolledBack,
+    ] {
+        let frame = capture(state, theme).text;
+        assert!(
+            frame.contains("scrolled back"),
+            "{state} should say plainly that following is paused:\n{frame}"
+        );
+    }
+
+    let help = capture(NamedState::HelpOverlay, theme).text;
+    assert!(
+        help.contains("C-a y") && help.contains("copy the focused block"),
+        "help should name the effective copy chord and action:\n{help}"
+    );
 }

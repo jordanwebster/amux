@@ -14,11 +14,13 @@ use amux_ui::{
     StreamMsg, StructuredProtocol, update,
 };
 use chrono::{DateTime, Utc};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
 
-use crate::chat::handle_chat_key;
-use crate::{ChatView, ViewState};
+use crate::chat::{handle_chat_key, handle_chat_mouse};
+use crate::{ChatView, FrameContext, Theme, ViewState, render};
 
 const NOW: &str = "2026-08-12T09:12:30Z";
 const SESSION: &str = "22222222-2222-4222-8222-222222222222";
@@ -42,6 +44,8 @@ pub enum NamedState {
     FleetEmpty,
     ClaudeLongFeed,
     CodexLongFeed,
+    ClaudeScrolledBack,
+    CodexScrolledBack,
     ComponentGallery,
     ComponentGalleryCodex,
     ExplorationCollapsed,
@@ -65,6 +69,8 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::FleetEmpty,
     NamedState::ClaudeLongFeed,
     NamedState::CodexLongFeed,
+    NamedState::ClaudeScrolledBack,
+    NamedState::CodexScrolledBack,
     NamedState::ComponentGallery,
     NamedState::ComponentGalleryCodex,
     NamedState::ExplorationCollapsed,
@@ -90,6 +96,8 @@ impl NamedState {
             Self::FleetEmpty => "fleet-empty",
             Self::ClaudeLongFeed => "claude-long-feed",
             Self::CodexLongFeed => "codex-long-feed",
+            Self::ClaudeScrolledBack => "claude-scrolled-back",
+            Self::CodexScrolledBack => "codex-scrolled-back",
             Self::ComponentGallery => "component-gallery",
             Self::ComponentGalleryCodex => "component-gallery-codex",
             Self::ExplorationCollapsed => "exploration-collapsed",
@@ -197,6 +205,8 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::FleetEmpty => fleet_fixture(true),
         NamedState::ClaudeLongFeed => long_feed(StructuredProtocol::Claude, 1_000),
         NamedState::CodexLongFeed => long_feed(StructuredProtocol::Codex, 1_000),
+        NamedState::ClaudeScrolledBack => scrolled_back(StructuredProtocol::Claude),
+        NamedState::CodexScrolledBack => scrolled_back(StructuredProtocol::Codex),
         NamedState::ComponentGallery => claude_fixture(gallery::gallery_rows()),
         NamedState::ComponentGalleryCodex => codex_fixture(gallery::codex_gallery_rows()),
         // Both halves of the pair are one transcript. Collapsed is what a
@@ -221,14 +231,47 @@ pub fn fixture(state: NamedState) -> Fixture {
 
 /// Build a retained feed of exactly `entries` provider-native items.
 pub fn long_feed(protocol: StructuredProtocol, entries: usize) -> Fixture {
-    let rows = match protocol {
-        StructuredProtocol::Claude => (0..entries).map(claude_long_row).collect(),
-        StructuredProtocol::Codex => (0..entries).map(codex_long_row).collect(),
-    };
+    let mut rows = Vec::with_capacity(entries + 1);
+    rows.push(match protocol {
+        StructuredProtocol::Claude => claude_ready(),
+        StructuredProtocol::Codex => codex_ready(),
+    });
+    match protocol {
+        StructuredProtocol::Claude => rows.extend((0..entries).map(claude_long_row)),
+        StructuredProtocol::Codex => rows.extend((0..entries).map(codex_long_row)),
+    }
     match protocol {
         StructuredProtocol::Claude => claude_fixture(rows),
         StructuredProtocol::Codex => codex_fixture(rows),
     }
+}
+
+fn scrolled_back(protocol: StructuredProtocol) -> Fixture {
+    let mut fixture = long_feed(protocol, 1_000);
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("fixture terminal");
+    let context = FrameContext {
+        viewport: (120, 40),
+        theme: Theme::default(),
+        now: fixture.now,
+    };
+    terminal
+        .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
+        .expect("warm long-feed frame");
+    let chat = fixture.view.chat.as_mut().expect("structured chat open");
+    let wheel_up = MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: 4,
+        row: 10,
+        modifiers: KeyModifiers::NONE,
+    };
+    for event_index in 0..4 {
+        assert!(
+            handle_chat_mouse(chat, &fixture.model, wheel_up, (120, 40)),
+            "{protocol:?} long feed can scroll another three rows at wheel event {event_index}"
+        );
+    }
+    fixture
 }
 
 fn fixed_now() -> DateTime<Utc> {

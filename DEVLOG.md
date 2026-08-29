@@ -5570,3 +5570,9 @@ separate old/new gutters and explicit metadata, context, added, and removed
 kinds. Counters reset per hunk and advance independently, while line content
 stays verbatim for the painter; malformed or headerless patches produce no
 rows rather than speculative output.
+
+2026-08-29 — **Locked the scroll and copy affordance states.** The named-state
+registry now includes Claude and Codex long feeds paused exactly twelve rows
+back by real wheel events. Text and semantic style-map goldens cover both
+paused screens and the finished help overlay, while focused assertions keep
+the honest scrolled-back wording and effective copy chord visible.
