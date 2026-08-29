@@ -135,6 +135,16 @@ const GALLERY: &[SetMember] = &[
         "component-gallery-light.png",
         ThemeSpec::Light,
     ),
+    member(
+        "component-gallery-codex",
+        "component-gallery-codex-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "component-gallery-codex",
+        "component-gallery-codex-light.png",
+        ThemeSpec::Light,
+    ),
 ];
 
 const SCROLL: &[SetMember] = &[

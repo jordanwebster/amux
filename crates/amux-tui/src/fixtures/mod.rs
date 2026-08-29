@@ -43,6 +43,7 @@ pub enum NamedState {
     ClaudeLongFeed,
     CodexLongFeed,
     ComponentGallery,
+    ComponentGalleryCodex,
     ExplorationCollapsed,
     ExplorationExpanded,
 }
@@ -65,6 +66,7 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::ClaudeLongFeed,
     NamedState::CodexLongFeed,
     NamedState::ComponentGallery,
+    NamedState::ComponentGalleryCodex,
     NamedState::ExplorationCollapsed,
     NamedState::ExplorationExpanded,
 ];
@@ -89,6 +91,7 @@ impl NamedState {
             Self::ClaudeLongFeed => "claude-long-feed",
             Self::CodexLongFeed => "codex-long-feed",
             Self::ComponentGallery => "component-gallery",
+            Self::ComponentGalleryCodex => "component-gallery-codex",
             Self::ExplorationCollapsed => "exploration-collapsed",
             Self::ExplorationExpanded => "exploration-expanded",
         }
@@ -195,6 +198,7 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::ClaudeLongFeed => long_feed(StructuredProtocol::Claude, 1_000),
         NamedState::CodexLongFeed => long_feed(StructuredProtocol::Codex, 1_000),
         NamedState::ComponentGallery => claude_fixture(gallery::gallery_rows()),
+        NamedState::ComponentGalleryCodex => codex_fixture(gallery::codex_gallery_rows()),
         // Both halves of the pair are one transcript. Collapsed is what a
         // run looks like on arrival; expanded is the same screen with the
         // reader having opened the first run, which the feed viewport will
@@ -722,6 +726,38 @@ mod tests {
             assert!(
                 frame.contains(marker),
                 "the gallery no longer shows {marker:?}:\n{frame}"
+            );
+        }
+    }
+
+    /// The Codex page carries what a Claude session cannot say at all,
+    /// and the same rule holds: every block whole, none scrolled away.
+    #[test]
+    fn the_codex_gallery_page_shows_what_claude_cannot() {
+        let frame = frame_text(NamedState::ComponentGalleryCodex);
+        for marker in [
+            "context compacted · turn-08",    // the compaction rule
+            "Cap the retry backoff.",         // the prompt, on its surface
+            "MCP servers · 0 starting",       // the Codex-only startup block
+            "~ reasoning",                    // the thinking marker
+            "summary: Where the cap belongs", // and its continuation
+            "The cap belongs in",             // assistant markdown
+            "file changes · 1 · done",        // the landed file change
+            "sync/backoff.rs · update",
+            "@@ -12,3 +12,4 @@",                    // its patch, with a gutter
+            "12 12      if attempt >= config",      // a numbered context row
+            "13    -        return Err(RetryError", // a numbered removal
+            "13 +        return Err(RetryError",    // a numbered addition
+            "unrecognized Codex row",               // the degraded row
+            "thread/experimental/telemetryPing",    // and the method it kept
+            "─ turn completed",                     // the turn rule
+            "$ cargo test --workspace · awaiting approval",
+            "approval — command", // the docked approval
+            "apply network policy change · allow crates.io",
+        ] {
+            assert!(
+                frame.contains(marker),
+                "the Codex gallery page no longer shows {marker:?}:\n{frame}"
             );
         }
     }

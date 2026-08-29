@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The gallery gets a second page, for what Claude cannot say.**
+`component-gallery-codex` is one Codex thread holding the three block kinds no
+Claude session can produce — the compaction rule, the unrecognized row and the
+MCP startup block — plus a landed file change whose unified patch paints the
+numbered gutter, and a docked approval whose decisions include a network-policy
+amendment. The split is by what each provider can say, not by how much fits: a
+Claude ask-time diff is numberless by design, because the edit has not landed
+and there are no line numbers to be honest about, so the Claude page can show a
+diff but never a gutter, and Claude has no content type that folds to a
+compaction boundary, a degraded row or an MCP startup tally.
+
+The `gallery` set now renders four PNGs, dark and light for each page. The
+Codex page's feed rows are as full as the Claude page's, and a test asserts
+every marker is still on screen, so a block painter that grows by a row fails
+loudly rather than scrolling the oldest blocks out of the capture.
+
 2026-08-29 — **A component gallery, and a pair that shows what folding
 hides.** Three named states join the screenshot registry. `component-gallery`
 is one Claude session written so the chat's visual vocabulary is on a single

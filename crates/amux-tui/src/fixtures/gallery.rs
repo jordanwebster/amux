@@ -1,12 +1,27 @@
 //! Exemplar transcripts that put every painted block kind on one screen.
 //!
-//! The gallery is how the chat's visual vocabulary is reviewed: one Claude
-//! session whose rows were chosen so each block kind appears exactly once,
-//! in its shortest honest form, and still fits a 120x40 terminal. Content
-//! is deliberately terse — a gallery is read block by block, not for its
+//! The gallery is how the chat's visual vocabulary is reviewed: sessions
+//! whose rows were chosen so each block kind appears exactly once, in its
+//! shortest honest form, and still fits a 120x40 terminal. Content is
+//! deliberately terse — a gallery is read block by block, not for its
 //! story — and the rows enter through the same transcript shapes a real
 //! session writes, so nothing here can show a presentation the reducer
 //! cannot actually produce.
+//!
+//! It takes two pages, because no single session can produce the whole
+//! vocabulary. Three block kinds only exist downstream of a Codex thread:
+//! the compaction rule, the unrecognized row and the MCP startup block —
+//! Claude's transcript has no content type that folds to any of them. The
+//! numbered diff gutter is the same kind of gap in the other direction: a
+//! Claude ask-time diff is numberless by design, because the edit has not
+//! landed and there are no line numbers to be honest about, so the Claude
+//! page can show a diff but never a gutter. Codex patches carry hunk
+//! headers, so the Codex page is where the gutter is reviewed.
+//!
+//! The pages are therefore split by what each provider can say, not by
+//! how much fits: the Claude page holds the shared vocabulary, and the
+//! Codex page holds what Claude cannot produce plus the approval shapes
+//! that go with it.
 
 use serde_json::{Value, json};
 
@@ -130,14 +145,12 @@ from-kind=\"codex\">\n{text}\n</amux>"
 /// the bottom, and the pending ask docked under all of it.
 ///
 /// A 120x40 screen holds fourteen blocks once the ask panel takes its ten
-/// rows, and the vocabulary has more kinds than that, so three are left
-/// out — each one a repeat of a shape already on the screen. The
-/// compaction rule is the same muted rule as the turn rule. The
-/// unrecognized row is the same glyph-and-continuation shape as the tool
-/// line, in the warn accent the collapsed question already shows. The MCP
-/// startup block only exists in Codex threads, and `codex-mcp-startup` is
-/// where it is reviewed. Every block that is here is here whole: a
-/// gallery that scrolls hides exactly what it was built to show.
+/// rows, and this page shows fourteen. The three kinds a Claude thread
+/// cannot produce at all — the compaction rule, the unrecognized row and
+/// the MCP startup block — are on the Codex page, together with the
+/// numbered diff gutter a Claude ask-time diff never has. Every block
+/// that is here is here whole: a gallery that scrolls hides exactly what
+/// it was built to show.
 pub(super) fn gallery_rows() -> Vec<Value> {
     let plan = "Cap the backoff at six attempts, then thread the cap through SyncOptions.";
     vec![
@@ -422,5 +435,92 @@ pub(super) fn exploration_rows() -> Vec<Value> {
             "timestamp": "2026-08-12T09:10:27Z",
             "durationMs": 27_000,
         }),
+    ]
+}
+
+// --- the Codex page ---------------------------------------------------------
+
+/// The unified patch the file-change block paints, with hunk headers so
+/// the gutter has real line numbers to show.
+const PATCH: &str = "@@ -12,3 +12,4 @@\n     if attempt >= config.max_attempts {\n-        return Err(RetryError::Exhausted);\n+        return Err(RetryError::Exhausted { attempt });\n+        metrics.record(attempt);\n     }\n";
+
+/// One Codex thread written to show the blocks a Claude session cannot
+/// produce.
+///
+/// A Codex thread is where the compaction rule, the unrecognized row and
+/// the MCP startup block live, and where a file change carries a real
+/// unified patch, so the numbered gutter has numbers to print. The order
+/// is a session's order: the compaction rule closes the history that came
+/// before, the turn does its work, and the next turn stops on an approval
+/// that is docked under everything — an approval whose decisions include
+/// a network-policy amendment, which is the only place that shape appears.
+///
+/// The arithmetic is as tight as the Claude page's: the feed's rows are
+/// full, so a block gained here is a block lost off the top. Nothing that
+/// is a repeat of a shape the Claude page already shows earns a row —
+/// which is why the completed command is the one awaiting approval, and
+/// why the reasoning marker carries the only continuation on the page.
+pub(super) fn codex_gallery_rows() -> Vec<Value> {
+    vec![
+        json!({"type": "amux.codex_ready"}),
+        json!({"type": "thread/compacted", "turnId": "turn-08"}),
+        json!({"type": "turn/started", "turn": {"id": "turn-09", "status": "inProgress"}}),
+        json!({"type": "item/completed", "turnId": "turn-09", "item": {
+            "id": "user-cap",
+            "type": "userMessage",
+            "content": [{"type": "text", "text": "Cap the retry backoff."}],
+        }}),
+        // Two servers, one of them failed: the block states the tally, not
+        // the roster, so it stays one row however many servers there are.
+        json!({"type": "mcpServer/startupStatus/updated", "threadId": "thread-1",
+               "name": "node_repl", "status": "ready"}),
+        json!({"type": "mcpServer/startupStatus/updated", "threadId": "thread-1",
+               "name": "issues", "status": "failed", "error": "launch failed",
+               "failureReason": "process exited"}),
+        json!({"type": "item/completed", "item": {
+            "id": "reason-cap",
+            "type": "reasoning",
+            "content": [],
+            "summary": ["Where the cap belongs"],
+        }}),
+        json!({"type": "item/completed", "item": {
+            "id": "msg-cap",
+            "type": "agentMessage",
+            "text": "The cap belongs in `RetryConfig`.",
+            "phase": "final_answer",
+        }}),
+        // The patch arrives as a delta and the completed item names the
+        // file: that is the order the wire writes them, and the block only
+        // has a diff to paint because the delta came first.
+        json!({"type": "item/fileChange/outputDelta", "itemId": "edit-cap", "delta": PATCH}),
+        json!({"type": "item/completed", "item": {
+            "id": "edit-cap",
+            "type": "fileChange",
+            "status": "completed",
+            "changes": [{"path": "sync/backoff.rs", "kind": {"type": "update"}}],
+        }}),
+        // A method this build has never seen. Nothing is dropped: the row
+        // says what arrived and stays legible.
+        json!({"type": "thread/experimental/telemetryPing", "threadId": "thread-1"}),
+        json!({"type": "turn/completed", "turn": {"id": "turn-09", "status": "completed"}}),
+        json!({"type": "turn/started", "turn": {"id": "turn-10", "status": "inProgress"}}),
+        json!({"type": "item/started", "item": {
+            "id": "exec-ask",
+            "type": "commandExecution",
+            "command": "cargo test --workspace",
+            "status": "inProgress",
+        }}),
+        json!({"type": "item/commandExecution/requestApproval", "itemId": "exec-ask",
+               "command": "cargo test --workspace",
+               "reason": "Run the repository test suite?",
+               "proposedNetworkPolicyAmendments": [{"host": "crates.io", "action": "allow"}]}),
+        json!({"type": "amux.codex_approval_required", "request_id": "approval-1",
+        "availableDecisions": [
+            "accept",
+            {"applyNetworkPolicyAmendment": {
+                "network_policy_amendment": {"host": "crates.io", "action": "allow"}
+            }},
+            "decline"
+        ]}),
     ]
 }
