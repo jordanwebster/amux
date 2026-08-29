@@ -17,10 +17,10 @@ use amux_ui::{
     StructuredProtocol, Why, message_digest,
 };
 use chrono::{DateTime, Utc};
-use crossterm::event::{KeyEvent, MouseEvent, MouseEventKind};
-use frame::{FeedMetrics, FrameSpacing, compose_chat_frame, feed_metrics};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
+use frame::{FeedMetrics, FrameSpacing, PaintedBlock, compose_chat_frame, feed_metrics};
 use ratatui::text::Line;
-use viewport::{FeedViewport, apply_scroll};
+use viewport::{FeedViewport, apply_scroll, move_focus};
 
 use crate::composer::Composer;
 use crate::render::{FrameContext, Theme};
@@ -48,6 +48,7 @@ enum AgentChatView {
 struct CachedFeedMetrics {
     viewport: (u16, u16),
     metrics: FeedMetrics,
+    blocks: Vec<PaintedBlock>,
 }
 
 /// Renderer-local state for one structured chat. Native sub-state remains
@@ -199,8 +200,36 @@ impl ChatView {
         self.feed_metrics.replace(Some(CachedFeedMetrics {
             viewport,
             metrics: metrics.clone(),
+            blocks: parts.feed.blocks,
         }));
         metrics
+    }
+
+    fn pending_leader(&self) -> bool {
+        match &self.inner {
+            AgentChatView::Claude(view) => view.pending_leader,
+            AgentChatView::Codex(view) => view.pending_leader,
+        }
+    }
+
+    fn consume_shared_leader(&mut self) {
+        match &mut self.inner {
+            AgentChatView::Claude(view) => view.pending_leader = false,
+            AgentChatView::Codex(view) => view.pending_leader = false,
+        }
+        self.quit_guard_mut().disarm();
+    }
+
+    fn copy_text(&self) -> Option<String> {
+        let cached = self.feed_metrics.borrow();
+        let blocks = &cached.as_ref()?.blocks;
+        match self.viewport.focus {
+            Some(focused) => blocks
+                .iter()
+                .find(|block| block.key == focused)
+                .map(|block| block.copy_text.clone()),
+            None => blocks.last().map(|block| block.copy_text.clone()),
+        }
     }
 }
 
@@ -211,7 +240,69 @@ pub fn handle_chat_key(
     viewport: (u16, u16),
     now: DateTime<Utc>,
 ) -> Option<UiAction> {
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
     let metrics = chat.metrics_for(model, viewport, now);
+
+    // Feed focus is shared frame state. The native handler owns the first
+    // leader press; once it is pending, these chords are consumed here so
+    // Claude and Codex cannot drift. Ctrl+arrows are the terminal-dependent
+    // convenience tier for the same movement.
+    let leader_pending = chat.pending_leader();
+    if leader_pending {
+        match key.code {
+            KeyCode::Char('k') => {
+                chat.consume_shared_leader();
+                move_focus(
+                    &mut chat.viewport,
+                    &metrics,
+                    -1,
+                    entry_watermark(model, chat.agent),
+                );
+                return None;
+            }
+            KeyCode::Char('j') => {
+                chat.consume_shared_leader();
+                move_focus(
+                    &mut chat.viewport,
+                    &metrics,
+                    1,
+                    entry_watermark(model, chat.agent),
+                );
+                return None;
+            }
+            KeyCode::Char('y') => {
+                chat.consume_shared_leader();
+                return chat.copy_text().map(UiAction::CopyToClipboard);
+            }
+            _ => {}
+        }
+    }
+
+    if !leader_pending && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let delta = match key.code {
+            KeyCode::Up => Some(-1),
+            KeyCode::Down => Some(1),
+            _ => None,
+        };
+        if let Some(delta) = delta {
+            chat.quit_guard_mut().disarm();
+            move_focus(
+                &mut chat.viewport,
+                &metrics,
+                delta,
+                entry_watermark(model, chat.agent),
+            );
+            return None;
+        }
+    }
+
+    if !leader_pending && key.code == KeyCode::Esc && chat.viewport.focus.take().is_some() {
+        chat.quit_guard_mut().disarm();
+        return None;
+    }
+
     let action = match &mut chat.inner {
         AgentChatView::Claude(view) => claude::handle_chat_key(view, model, key, viewport, now),
         AgentChatView::Codex(view) => codex::handle_chat_key(view, model, key, viewport, now),
@@ -314,9 +405,11 @@ pub(crate) fn build_chat_lines(
         AgentChatView::Codex(view) => codex::geometry(model, view, ctx.viewport, true),
     };
     let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &paused_geometry);
+    let blocks = parts.feed.blocks.clone();
     chat.feed_metrics.replace(Some(CachedFeedMetrics {
         viewport: ctx.viewport,
         metrics,
+        blocks,
     }));
 
     let mut lines = compose_chat_frame(parts, &chat.viewport, ctx.theme, ctx.viewport);
@@ -612,6 +705,8 @@ pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
     use amux_ui::{
         Agent, AgentId, Attention, ClaudeCommand, Command, HostEntry, HostTrustStatus, Model, Msg,
         OpId, SendGate, ServerMsg, StreamEntry, StreamMsg, StructuredProtocol, update,
@@ -620,12 +715,14 @@ mod tests {
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
+    use ratatui::text::Line;
     use serde_json::json;
     use uuid::Uuid;
 
     use super::{AgentChatView, ChatView, FeedScroll, build_chat_lines, entry_watermark};
+    use crate::chat::frame::{BlockKey, PaintedBlock};
     use crate::render::{FrameContext, INVARIANT_WARNING, Theme, str_width};
-    use crate::view::{ViewState, visible_rows};
+    use crate::view::{UiAction, ViewState, visible_rows};
 
     fn at(seconds: i64) -> DateTime<chrono::Utc> {
         DateTime::from_timestamp(1_754_697_600 + seconds, 0).expect("fixture timestamp")
@@ -685,6 +782,56 @@ mod tests {
         (model, agent)
     }
 
+    fn seed_focus_cache(chat: &mut ChatView) {
+        let block = |key, text: &str| PaintedBlock {
+            key: BlockKey(key),
+            lines: vec![Line::from(text.to_string())],
+            copy_text: text.to_string(),
+            run: None,
+        };
+        chat.feed_metrics.replace(Some(super::CachedFeedMetrics {
+            viewport: (120, 40),
+            metrics: super::frame::FeedMetrics {
+                total_rows: 100,
+                feed_rows: 20,
+                max_top: 80,
+                ranges: vec![
+                    (BlockKey(1), Range { start: 0, end: 5 }),
+                    (BlockKey(2), Range { start: 40, end: 45 }),
+                    (BlockKey(3), Range { start: 90, end: 95 }),
+                ],
+            },
+            blocks: vec![
+                block(1, "oldest block"),
+                block(2, "middle block"),
+                block(3, "newest block"),
+            ],
+        }));
+    }
+
+    fn press_chat(
+        chat: &mut ChatView,
+        model: &Model,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<UiAction> {
+        super::handle_chat_key(
+            chat,
+            model,
+            KeyEvent::new(code, modifiers),
+            (120, 40),
+            at(0),
+        )
+    }
+
+    fn leader_chat(chat: &mut ChatView, model: &Model, key: char) -> Option<UiAction> {
+        assert_eq!(
+            press_chat(chat, model, KeyCode::Char('a'), KeyModifiers::CONTROL,),
+            None
+        );
+        press_chat(chat, model, KeyCode::Char(key), KeyModifiers::NONE)
+    }
+
     fn send_prompt(model: &mut Model, agent: AgentId, seconds: i64) {
         update(model, Msg::Tick { now: at(seconds) });
         update(
@@ -734,6 +881,7 @@ mod tests {
                     max_top: 80,
                     ranges: Vec::new(),
                 },
+                blocks: Vec::new(),
             }));
 
             super::handle_chat_key(
@@ -785,6 +933,76 @@ mod tests {
     }
 
     #[test]
+    fn focus_chords_move_blocks_and_keep_them_visible_in_both_chats() {
+        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+            let wire = match protocol {
+                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
+                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
+            };
+            let (model, agent) = model_with_protocol(wire);
+            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
+            seed_focus_cache(&mut chat);
+
+            leader_chat(&mut chat, &model, 'k');
+            assert_eq!(chat.viewport.focus, Some(BlockKey(3)), "{protocol:?}");
+            assert_eq!(chat.viewport.scroll, FeedScroll::Following, "{protocol:?}");
+
+            leader_chat(&mut chat, &model, 'k');
+            assert_eq!(chat.viewport.focus, Some(BlockKey(2)), "{protocol:?}");
+            assert!(matches!(
+                chat.viewport.scroll,
+                FeedScroll::Paused { top_line: 40, .. }
+            ));
+
+            press_chat(&mut chat, &model, KeyCode::Up, KeyModifiers::CONTROL);
+            assert_eq!(chat.viewport.focus, Some(BlockKey(1)), "{protocol:?}");
+            assert!(matches!(
+                chat.viewport.scroll,
+                FeedScroll::Paused { top_line: 0, .. }
+            ));
+
+            press_chat(&mut chat, &model, KeyCode::Down, KeyModifiers::CONTROL);
+            assert_eq!(chat.viewport.focus, Some(BlockKey(2)), "{protocol:?}");
+            let FeedScroll::Paused { top_line, .. } = chat.viewport.scroll else {
+                panic!("{protocol:?} focus stays paused away from the newest rows");
+            };
+            assert!(
+                top_line <= 40 && 45 <= top_line + 20,
+                "focused block is visible"
+            );
+
+            press_chat(&mut chat, &model, KeyCode::Esc, KeyModifiers::NONE);
+            assert_eq!(chat.viewport.focus, None, "{protocol:?} Esc clears focus");
+        }
+    }
+
+    #[test]
+    fn focus_copy_uses_the_focused_block_or_the_newest_block_in_both_chats() {
+        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+            let wire = match protocol {
+                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
+                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
+            };
+            let (model, agent) = model_with_protocol(wire);
+            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
+            seed_focus_cache(&mut chat);
+
+            assert_eq!(
+                leader_chat(&mut chat, &model, 'y'),
+                Some(UiAction::CopyToClipboard("newest block".to_string())),
+                "{protocol:?} copies newest when focus is absent"
+            );
+
+            chat.viewport.focus = Some(BlockKey(1));
+            assert_eq!(
+                leader_chat(&mut chat, &model, 'y'),
+                Some(UiAction::CopyToClipboard("oldest block".to_string())),
+                "{protocol:?} copies focused block"
+            );
+        }
+    }
+
+    #[test]
     fn mouse_wheel_routes_three_rows_through_both_chat_viewports() {
         for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
             let wire = match protocol {
@@ -801,6 +1019,7 @@ mod tests {
                     max_top: 80,
                     ranges: Vec::new(),
                 },
+                blocks: Vec::new(),
             }));
             let event = |kind, row| MouseEvent {
                 kind,

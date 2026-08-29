@@ -10,6 +10,7 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Once, OnceLock};
 
+use base64::Engine as _;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -69,6 +70,31 @@ pub fn write_restore(out: &mut impl Write) -> io::Result<()> {
         Show,
         LeaveAlternateScreen
     )
+}
+
+/// Maximum source payload accepted by [`write_osc52`]. Keeping the bound
+/// before base64 encoding avoids an unbounded terminal control sequence while
+/// preserving the copied text exactly below the limit.
+const OSC52_MAX_BYTES: usize = 100 * 1024;
+
+/// Emit an OSC 52 clipboard sequence for `text`.
+///
+/// Payloads above 100 KiB are truncated at a UTF-8 character boundary. The
+/// returned notice lets the event loop tell the user when that happened.
+pub fn write_osc52(out: &mut impl Write, text: &str) -> io::Result<Option<String>> {
+    let mut end = text.len().min(OSC52_MAX_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let truncated = end < text.len();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&text.as_bytes()[..end]);
+
+    out.write_all(b"\x1b]52;c;")?;
+    out.write_all(encoded.as_bytes())?;
+    out.write_all(b"\x07")?;
+    out.flush()?;
+
+    Ok(truncated.then(|| "copied first 100 KiB to clipboard (message truncated)".to_string()))
 }
 
 fn restore_now() {
@@ -238,5 +264,33 @@ mod tests {
             out,
             b"\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1015h\x1b[?1006h"
         );
+    }
+
+    #[test]
+    fn osc52_writes_the_exact_clipboard_sequence() {
+        let mut out = Vec::new();
+        assert_eq!(write_osc52(&mut out, "hello").expect("write to vec"), None);
+        eprintln!("OSC 52 bytes: {out:?}");
+        assert_eq!(out, b"\x1b]52;c;aGVsbG8=\x07");
+    }
+
+    #[test]
+    fn osc52_caps_source_text_at_100_kib_without_splitting_utf8() {
+        let text = format!("{}€", "a".repeat(OSC52_MAX_BYTES - 1));
+        let mut out = Vec::new();
+        let notice = write_osc52(&mut out, &text)
+            .expect("write to vec")
+            .expect("oversized text reports truncation");
+
+        assert!(notice.contains("100 KiB"));
+        assert!(notice.contains("truncated"));
+        assert!(out.starts_with(b"\x1b]52;c;"));
+        assert_eq!(out.last(), Some(&b'\x07'));
+        let encoded = &out[b"\x1b]52;c;".len()..out.len() - 1];
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("valid base64");
+        assert_eq!(decoded.len(), OSC52_MAX_BYTES - 1);
+        assert!(decoded.iter().all(|byte| *byte == b'a'));
     }
 }

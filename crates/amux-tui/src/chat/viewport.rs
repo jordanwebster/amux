@@ -98,8 +98,12 @@ fn offset_by_pages(current: usize, delta: i32, page: usize, max_top: usize) -> u
 }
 
 /// Move focus through painted blocks and keep the selected range visible.
-#[allow(dead_code)]
-pub(crate) fn move_focus(viewport: &mut FeedViewport, metrics: &FeedMetrics, delta: i32) -> bool {
+pub(crate) fn move_focus(
+    viewport: &mut FeedViewport,
+    metrics: &FeedMetrics,
+    delta: i32,
+    watermark: u64,
+) -> bool {
     if metrics.ranges.is_empty() || delta == 0 {
         return false;
     }
@@ -124,19 +128,19 @@ pub(crate) fn move_focus(viewport: &mut FeedViewport, metrics: &FeedMetrics, del
         FeedScroll::Paused { top_line, .. } => top_line.min(metrics.max_top),
     };
     if range.start < top {
-        set_focus_top(viewport, range.start, metrics.max_top);
+        set_focus_top(viewport, range.start, metrics.max_top, watermark);
     } else if range.end > top.saturating_add(metrics.feed_rows) {
         set_focus_top(
             viewport,
             range.end.saturating_sub(metrics.feed_rows),
             metrics.max_top,
+            watermark,
         );
     }
     (viewport.focus, viewport.scroll.clone()) != before
 }
 
-#[allow(dead_code)]
-fn set_focus_top(viewport: &mut FeedViewport, top_line: usize, max_top: usize) {
+fn set_focus_top(viewport: &mut FeedViewport, top_line: usize, max_top: usize, watermark: u64) {
     if top_line >= max_top {
         viewport.scroll = FeedScroll::Following;
         return;
@@ -145,7 +149,7 @@ fn set_focus_top(viewport: &mut FeedViewport, top_line: usize, max_top: usize) {
         FeedScroll::Paused {
             entry_watermark, ..
         } => entry_watermark,
-        FeedScroll::Following => 0,
+        FeedScroll::Following => watermark,
     };
     viewport.scroll = FeedScroll::Paused {
         top_line,
@@ -276,11 +280,11 @@ mod tests {
                 (BlockKey(3), Range { start: 25, end: 30 }),
             ],
         };
-        assert!(move_focus(&mut viewport, &metrics, -1));
+        assert!(move_focus(&mut viewport, &metrics, -1, 47));
         assert_eq!(viewport.focus, Some(BlockKey(3)));
-        assert!(move_focus(&mut viewport, &metrics, -1));
+        assert!(move_focus(&mut viewport, &metrics, -1, 99));
         assert_eq!(viewport.focus, Some(BlockKey(2)));
-        assert_eq!(paused(&viewport).0, 12);
+        assert_eq!(paused(&viewport), (12, 99));
     }
 
     #[test]

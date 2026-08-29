@@ -129,6 +129,7 @@ dependencies = [
  "amux-tui",
  "amux-ui",
  "anyhow",
+ "base64",
  "chrono",
  "crossterm",
  "futures-util",

@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Focused chat blocks copy through the terminal boundary.** Both
+native chats now route block focus through their shared painted ranges:
+leader-k/j and the terminal-dependent Ctrl+arrow equivalents move across
+blocks, keep the selected block visible, and Esc clears the selection. The
+same painted-block cache supplies leader-y with the focused block's exact
+`copy_text`, falling back to the newest block when focus has not started.
+
+The key handler returns a typed clipboard action rather than writing bytes.
+The run loop owns the OSC 52 boundary, emits the byte-exact base64 sequence,
+and records a copy notice. Source text is capped at 100 KiB on a UTF-8
+boundary; truncation is explicit in the notice. The shared binding table now
+carries the focus and copy chords for both agent overlays.
+
+---
+
 2026-08-29 — **The alternate-screen feed owns the mouse wheel.** Entering
 the TUI now enables terminal mouse capture alongside bracketed paste, and
 every orderly, panic, and Unix signal restore disables mouse and paste modes

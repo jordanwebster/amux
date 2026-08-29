@@ -16,7 +16,7 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::keys::handle_key;
 use crate::render::{FrameContext, Theme, list_capacity, render};
-use crate::terminal::TerminalGuard;
+use crate::terminal::{TerminalGuard, write_osc52};
 use crate::view::{UiAction, ViewState, next_agent_name};
 
 /// What the embedding CLI's attach handoff decided: resume the fleet
@@ -185,6 +185,12 @@ async fn chrome_session(
                     match action {
                         Some(UiAction::Quit) => break ChromeExit::Quit,
                         Some(UiAction::Attach(agent)) => break ChromeExit::Attach(agent),
+                        Some(UiAction::CopyToClipboard(text)) => {
+                            let notice = write_osc52(&mut io::stdout(), &text)?;
+                            view.notice = Some(notice.unwrap_or_else(|| {
+                                "copied message to clipboard".to_string()
+                            }));
+                        }
                         Some(UiAction::OpenChat(agent)) => {
                             // Chat entry (A1/A3) stays inside the chrome —
                             // no terminal handoff — but widens the

@@ -397,6 +397,9 @@ pub fn next_agent_name(model: &Model, agent_type: &amux_ui::AgentType) -> String
 pub enum UiAction {
     Quit,
     Attach(AgentId),
+    /// Ask the terminal boundary to publish this exact block text through
+    /// OSC 52. Key handlers never write terminal control sequences directly.
+    CopyToClipboard(String),
     /// Open the chat screen for an agent (A1/A3): stays inside the
     /// chrome — no terminal handoff — and notes the attach for the
     /// subscription policy.

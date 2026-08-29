@@ -99,6 +99,26 @@ fn family_rows(eff: &Effective, family: FamilyKeys) -> Vec<Binding> {
     rows
 }
 
+/// Shared feed-focus rows. Wording is intentionally compact here; the
+/// interaction copy is polished together with the finished paused and
+/// expansion affordances.
+fn feed_focus_rows(eff: &Effective) -> Vec<Binding> {
+    vec![
+        row(
+            format!("{} k / {} j", eff.leader_label, eff.leader_label),
+            "focus older / newer block",
+            Tier::Plain,
+        ),
+        row("ctrl+↑/↓", "focus older / newer block", Tier::Ext),
+        row(
+            format!("{} y", eff.leader_label),
+            "copy focused / latest block",
+            Tier::Plain,
+        ),
+        row("esc", "clear block focus", Tier::Plain),
+    ]
+}
+
 fn row(keys: impl Into<String>, action: impl Into<String>, tier: Tier) -> Binding {
     Binding {
         keys: keys.into(),
@@ -176,7 +196,6 @@ pub fn fleet_sections(
 pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
     let mut chat = vec![
         row("ctrl+x", "interrupt the agent", Tier::Plain),
-        row("esc", "back one stage (never answers)", Tier::Plain),
         row("pgup/pgdn", "scroll the feed", Tier::Plain),
         row("ctrl+home/end", "feed oldest / newest", Tier::Ext),
         row("ctrl+t", "read accepted plans (←/→ steps)", Tier::Plain),
@@ -196,6 +215,7 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
             Tier::Plain,
         ),
     ];
+    chat.extend(feed_focus_rows(eff));
     chat.extend(family_rows(eff, family));
     let mut composer = vec![
         row("enter", "send", Tier::Plain),
@@ -280,6 +300,7 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
             Tier::Plain,
         ),
     ];
+    chat.extend(feed_focus_rows(eff));
     chat.extend(family_rows(eff, family));
     let mut composer = vec![
         row("enter", "send or steer", Tier::Plain),
@@ -397,6 +418,27 @@ mod tests {
         assert!(chat.iter().any(|b| b.keys == "C-b d"));
     }
 
+    #[test]
+    fn focus_and_copy_bindings_are_identical_in_both_chats() {
+        for sections in [
+            chat_sections(&eff(false), FamilyKeys::default()),
+            codex_chat_sections(&eff(false), FamilyKeys::default()),
+        ] {
+            let chat = &sections[0].bindings;
+            assert!(
+                chat.iter().any(|binding| {
+                    binding.keys == "C-b k / C-b j" && binding.tier == Tier::Plain
+                })
+            );
+            assert!(
+                chat.iter()
+                    .any(|binding| { binding.keys == "ctrl+↑/↓" && binding.tier == Tier::Ext })
+            );
+            assert!(chat.iter().any(|binding| binding.keys == "C-b y"));
+            assert!(chat.iter().any(|binding| binding.keys == "esc"));
+        }
+    }
+
     /// The family chords are listed exactly where they would do
     /// something. A chat with no family below it, no completion to open
     /// and no child waiting has none of the three rows; the same table
@@ -464,7 +506,7 @@ mod tests {
                 .iter()
                 .flat_map(|section| &section.bindings)
                 .map(|binding| binding.keys.as_str())
-                .filter(|keys| keys.starts_with("C-b ") && *keys != "C-b s" && *keys != "C-b d")
+                .filter(|keys| ["C-b n", "C-b m", "C-b a"].contains(keys))
                 .collect();
             assert_eq!(chords, vec![expected]);
         }
