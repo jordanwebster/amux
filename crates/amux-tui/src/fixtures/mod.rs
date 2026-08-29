@@ -4,6 +4,8 @@
 //! not construct provider layers or feed entries directly, so captures keep
 //! exercising the reducer boundary that production uses.
 
+mod gallery;
+
 use std::fmt;
 use std::str::FromStr;
 
@@ -40,6 +42,9 @@ pub enum NamedState {
     FleetEmpty,
     ClaudeLongFeed,
     CodexLongFeed,
+    ComponentGallery,
+    ExplorationCollapsed,
+    ExplorationExpanded,
 }
 
 const ALL_STATES: &[NamedState] = &[
@@ -59,6 +64,9 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::FleetEmpty,
     NamedState::ClaudeLongFeed,
     NamedState::CodexLongFeed,
+    NamedState::ComponentGallery,
+    NamedState::ExplorationCollapsed,
+    NamedState::ExplorationExpanded,
 ];
 
 impl NamedState {
@@ -80,6 +88,9 @@ impl NamedState {
             Self::FleetEmpty => "fleet-empty",
             Self::ClaudeLongFeed => "claude-long-feed",
             Self::CodexLongFeed => "codex-long-feed",
+            Self::ComponentGallery => "component-gallery",
+            Self::ExplorationCollapsed => "exploration-collapsed",
+            Self::ExplorationExpanded => "exploration-expanded",
         }
     }
 
@@ -183,6 +194,14 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::FleetEmpty => fleet_fixture(true),
         NamedState::ClaudeLongFeed => long_feed(StructuredProtocol::Claude, 1_000),
         NamedState::CodexLongFeed => long_feed(StructuredProtocol::Codex, 1_000),
+        NamedState::ComponentGallery => claude_fixture(gallery::gallery_rows()),
+        // Both halves of the pair are one transcript. Collapsed is what a
+        // run looks like on arrival; expanded is the same screen with the
+        // reader having opened the first run, which the feed viewport will
+        // carry once runs can be toggled.
+        NamedState::ExplorationCollapsed | NamedState::ExplorationExpanded => {
+            claude_fixture(gallery::exploration_rows())
+        }
     }
 }
 
@@ -642,20 +661,92 @@ mod tests {
         assert_eq!(NamedState::parse("unknown"), None);
     }
 
+    /// The screen one named state draws at the size every capture uses.
+    fn frame_text(state: NamedState) -> String {
+        let fixture = fixture(state);
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let context = FrameContext {
+            viewport: (120, 40),
+            theme: Theme::default(),
+            now: fixture.now,
+        };
+        terminal
+            .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
+            .unwrap_or_else(|error| panic!("{state} failed to render: {error}"));
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer.cell((x, y)).expect("cell in area").symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn every_named_state_renders_at_capture_size() {
         for state in all_states() {
-            let fixture = fixture(*state);
-            let backend = TestBackend::new(120, 40);
-            let mut terminal = Terminal::new(backend).expect("terminal");
-            let context = FrameContext {
-                viewport: (120, 40),
-                theme: Theme::default(),
-                now: fixture.now,
-            };
-            terminal
-                .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
-                .unwrap_or_else(|error| panic!("{state} failed to render: {error}"));
+            let _ = frame_text(*state);
+        }
+    }
+
+    /// The gallery earns its name only while every block it was built to
+    /// show is still on the screen. A block painter that grows by a row,
+    /// or a fixture that gains one, pushes the oldest blocks off the top
+    /// where nobody reviewing the capture would notice they had gone.
+    #[test]
+    fn the_gallery_shows_every_block_it_was_built_for() {
+        let frame = frame_text(NamedState::ComponentGallery);
+        for marker in [
+            "Cap the retry backoff.",        // the prompt, on its surface
+            "thought for",                   // the thinking marker
+            "The cap belongs in",            // assistant markdown
+            "2 reads · 1 search",            // the collapsed exploration run
+            "Bash cargo check -p amux-sync", // a tool line
+            "└ Finished in 4.10s",           // its continuation
+            "Edit sync/config.rs · +2 −1",   // the landed file change
+            "? Cap → 6 attempts",            // the answered question, collapsed
+            "plan approved",                 // the approved plan and its preview
+            "ctrl+t to read",
+            "Subagent finished",                // a background subagent
+            "codex-retry",                      // a message from another agent
+            "api error (server_error)",         // an error
+            "─ turn · 1m 2s",                   // the turn rule
+            "permission — Edit sync/config.rs", // the docked ask panel
+            "@@ -1,1 +1,1 @@",                  // its unified diff
+            "-    pub max_attempts: u8,",
+            "+    pub max_attempts: u16,",
+        ] {
+            assert!(
+                frame.contains(marker),
+                "the gallery no longer shows {marker:?}:\n{frame}"
+            );
+        }
+    }
+
+    /// The point of the pair: exploration folds away, and the edit between
+    /// the two runs does not.
+    #[test]
+    fn the_collapse_pair_keeps_the_edit_out_of_its_runs() {
+        for state in [
+            NamedState::ExplorationCollapsed,
+            NamedState::ExplorationExpanded,
+        ] {
+            let frame = frame_text(state);
+            assert!(
+                frame.contains("2 reads · 2 searches"),
+                "{state} lost the first run:\n{frame}"
+            );
+            assert!(
+                frame.contains("2 reads · 1 search"),
+                "{state} lost the second run:\n{frame}"
+            );
+            assert!(
+                frame.contains("Edit sync/config.rs · +3 −1"),
+                "{state} folded the edit into a run:\n{frame}"
+            );
         }
     }
 

@@ -369,8 +369,17 @@ mod tests {
 
     #[test]
     fn future_set_reports_the_unavailable_state() {
-        let member = set_members("gallery").unwrap()[0];
+        let member = set_members("scroll").unwrap()[1];
         let error = super::parse_state(member.state).unwrap_err();
-        assert_eq!(error.to_string(), "UnknownState(component-gallery)");
+        assert_eq!(error.to_string(), "UnknownState(claude-scrolled-back)");
+    }
+
+    #[test]
+    fn the_gallery_and_collapse_sets_name_states_that_exist() {
+        for set in ["gallery", "collapse"] {
+            for member in set_members(set).unwrap() {
+                super::parse_state(member.state).unwrap_or_else(|error| panic!("{set}: {error:?}"));
+            }
+        }
     }
 }

@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **A component gallery, and a pair that shows what folding
+hides.** Three named states join the screenshot registry. `component-gallery`
+is one Claude session written so the chat's visual vocabulary is on a single
+screen: a prompt on its surface, a thinking marker, assistant markdown, a
+folded read/search run, a tool line with its continuation, a landed file
+change, an answered question, an approved plan with its preview, a subagent
+notice, a message from another agent, an error, the turn rule, and a pending
+permission whose panel carries the unified diff. `exploration-collapsed` and
+`exploration-expanded` are one session where two runs of reads and searches
+sit either side of an edit, which stays on its own line — the pair exists so
+expanding a run can be reviewed against collapsing it once runs can be
+toggled; until then both halves draw the collapsed form.
+
+A 120x40 screen holds fourteen blocks once a docked ask takes its ten rows,
+and the vocabulary has seventeen kinds, so the gallery leaves out three that
+each repeat a shape already on the screen: the compaction rule draws the same
+muted rule as the turn rule, the unrecognized row the same glyph and
+continuation as a tool line, and the MCP startup block exists only in Codex
+threads, where `codex-mcp-startup` shows it. A test renders the gallery at
+capture size and fails if any block it was built to show has scrolled off the
+top, because a gallery that scrolls hides exactly what it was built to show.
+
+---
+
 2026-08-29 — **The Codex chat joins the shared frame, and the last native
 frame is gone.** The Codex adapter walks its own typed entries and hands the
 shared shell finished blocks from the same painter kit the Claude chat uses:
