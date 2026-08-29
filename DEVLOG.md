@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Local QA evidence stays out of repository history.** The shared
+frame review remains available in the ignored `.autopilot/` workspace state,
+but is no longer tracked. Both `.autopilot/` and `.handoff/` are deliberately
+local evidence surfaces; reports under them must not be force-added.
+
+---
+
 2026-08-29 — **Focused chat blocks copy through the terminal boundary.** Both
 native chats now route block focus through their shared painted ranges:
 leader-k/j and the terminal-dependent Ctrl+arrow equivalents move across
