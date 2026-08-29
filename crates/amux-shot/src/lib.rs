@@ -28,6 +28,12 @@ const REGULAR_FONT: &[u8] = include_bytes!("../assets/JetBrainsMono-Regular.ttf"
 const BOLD_FONT: &[u8] = include_bytes!("../assets/JetBrainsMono-Bold.ttf");
 const ITALIC_FONT: &[u8] = include_bytes!("../assets/JetBrainsMono-Italic.ttf");
 const BOLD_ITALIC_FONT: &[u8] = include_bytes!("../assets/JetBrainsMono-BoldItalic.ttf");
+const SYMBOL_FONT: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
+
+#[cfg(test)]
+// Static non-ASCII chrome emitted by amux-tui. Model and user content is
+// intentionally unbounded and still uses the documented missing-glyph box.
+const TUI_CHROME_GLYPHS: &str = "·±–—‘’“”←↑→↓↪⟳⌃⌄─│┌┐└┘▌▸●◌◐◑◒◓⚠✓✔✗›…⋮⋯⊘";
 
 /// RGB pixels produced from a terminal buffer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -90,6 +96,7 @@ struct Fonts {
     bold: Font,
     italic: Font,
     bold_italic: Font,
+    symbols: Font,
 }
 
 impl Fonts {
@@ -104,6 +111,7 @@ impl Fonts {
             bold: parse(BOLD_FONT, "bold")?,
             italic: parse(ITALIC_FONT, "italic")?,
             bold_italic: parse(BOLD_ITALIC_FONT, "bold italic")?,
+            symbols: parse(SYMBOL_FONT, "symbols fallback")?,
         })
     }
 
@@ -116,6 +124,15 @@ impl Fonts {
             (true, false) => &self.bold,
             (false, true) => &self.italic,
             (false, false) => &self.regular,
+        }
+    }
+
+    fn for_character(&self, cell: &Cell, character: char) -> &Font {
+        let primary = self.for_cell(cell);
+        if primary.lookup_glyph_index(character) == 0 {
+            &self.symbols
+        } else {
+            primary
         }
     }
 }
@@ -180,10 +197,10 @@ fn paint_cell(raster: &mut Raster, fonts: &Fonts, cell: &Cell, theme: Theme, x: 
         return;
     }
 
-    let font = fonts.for_cell(cell);
     let chars = symbol.chars().filter(|character| !character.is_control());
     let mut pen_x = left as i32;
     for character in chars {
+        let font = fonts.for_character(cell, character);
         let glyph = font.lookup_glyph_index(character);
         if glyph == 0 && character != '\0' {
             draw_missing_glyph(raster, left, top, fg);
@@ -590,7 +607,36 @@ mod tests {
     use ratatui::style::{Color, Modifier};
     use tempfile::tempdir;
 
-    use super::{CELL_HEIGHT, CELL_WIDTH, VIEWPORT, rasterize, render_to_path, verify};
+    use super::{
+        CELL_HEIGHT, CELL_WIDTH, Fonts, TUI_CHROME_GLYPHS, VIEWPORT, rasterize, render_to_path,
+        verify,
+    };
+
+    #[test]
+    fn every_tui_chrome_glyph_has_a_vendored_face_in_every_style() {
+        let fonts = Fonts::load().unwrap();
+        let modifiers = [
+            Modifier::empty(),
+            Modifier::BOLD,
+            Modifier::ITALIC,
+            Modifier::BOLD | Modifier::ITALIC,
+        ];
+
+        for character in TUI_CHROME_GLYPHS.chars() {
+            assert!(!character.is_ascii(), "glyph inventory is non-ASCII only");
+            for modifier in modifiers {
+                let mut cell = ratatui::buffer::Cell::default();
+                cell.modifier = modifier;
+                let font = fonts.for_character(&cell, character);
+                assert_ne!(
+                    font.lookup_glyph_index(character),
+                    0,
+                    "U+{:04X} `{character}` is missing for {modifier:?}",
+                    character as u32
+                );
+            }
+        }
+    }
 
     #[test]
     fn png_has_exact_cell_dimensions() {

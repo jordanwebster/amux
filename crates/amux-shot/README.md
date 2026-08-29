@@ -3,8 +3,9 @@
 `amux-shot` renders deterministic PNG screenshots from the same pure
 `amux-tui::render` boundary used by the text goldens. It does not start a PTY,
 connect to a daemon, or inspect the local terminal. Every capture uses a
-120-column by 40-row ratatui `TestBackend`, 10×20-pixel cells, and the vendored
-JetBrains Mono faces under their OFL license.
+120-column by 40-row ratatui `TestBackend`, 10×20-pixel cells, and vendored
+JetBrains Mono faces with a DejaVu Sans fallback. Both fonts carry their
+open-source licenses beside the assets.
 
 The crate is a workspace member but is intentionally outside the workspace's
 default members. Run it explicitly from the repository root:
@@ -32,5 +33,7 @@ dimensions, filename, and SHA-256 digest to `manifest.json` beside the PNG.
 manifests, checks the hashes and fixed dimensions, and fully decodes every PNG,
 so truncated files are rejected.
 
-The embedded font files and `assets/OFL.txt` come from the
-[JetBrains Mono project](https://github.com/JetBrains/JetBrainsMono).
+The JetBrains Mono files and `assets/OFL.txt` come from the
+[JetBrains Mono project](https://github.com/JetBrains/JetBrainsMono). The
+fallback and `assets/DejaVu-LICENSE.txt` come from the
+[DejaVu Fonts project](https://github.com/dejavu-fonts/dejavu-fonts).

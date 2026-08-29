@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Screenshot captures cover the TUI's symbol vocabulary.** The
+PNG rasterizer keeps JetBrains Mono for regular, bold, italic, and bold-italic
+text, then falls back to the open-licensed DejaVu Sans face when the selected
+style lacks a glyph. This covers the working spinner, success marks, and
+loading marker without replacing them with the renderer's missing-glyph box;
+a four-style inventory test locks every non-ASCII chrome glyph.
+
+---
+
 2026-08-29 — **Chat style goldens classify semantic theme tokens.** The
 Claude, Codex, and agent-family golden harnesses now ask the rendered theme to
 classify every cell instead of inferring meaning from the old named ANSI
