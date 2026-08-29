@@ -2,10 +2,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::core::ClaudeSession;
-use crate::agents::{PtyHandle, StructuredInput, StructuredLogSource};
+use crate::agents::{PtyHandle, StructuredInput, StructuredInputEvent, StructuredLogSource};
 use crate::protocol::ProtocolError;
 
 const PASTE_BEGIN: &[u8] = b"\x1b[200~";
@@ -112,11 +111,16 @@ impl ClaudeStructuredInputTarget {
 
 #[async_trait]
 impl StructuredInput for ClaudeStructuredInputTarget {
-    async fn send(
-        &self,
-        client_seq: u64,
-        payload: Value,
-    ) -> std::result::Result<(), ProtocolError> {
+    async fn send(&self, input: StructuredInputEvent) -> std::result::Result<(), ProtocolError> {
+        let StructuredInputEvent::ClaudePty {
+            client_seq,
+            payload,
+        } = input
+        else {
+            return Err(ProtocolError::InvalidArgument {
+                message: "Claude PTY input target received another protocol's input".to_string(),
+            });
+        };
         if self.readonly {
             return Err(ProtocolError::ServerError {
                 message: "session is readonly".to_string(),

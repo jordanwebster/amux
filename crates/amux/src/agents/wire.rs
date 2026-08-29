@@ -22,14 +22,14 @@ pub(crate) enum SessionInputEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SubscribeSessionRequest {
     pub(crate) agent_id: Uuid,
-    pub(crate) io_protocol: String,
+    pub(crate) protocol: Protocol,
     pub(crate) args: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SendInputRequest {
     pub(crate) agent_id: Uuid,
-    pub(crate) io_protocol: String,
+    pub(crate) protocol: Protocol,
     pub(crate) event: SessionInputEvent,
 }
 
@@ -94,7 +94,7 @@ pub(crate) fn subscribe_session_request_from_wire(
     let (protocol, args) = subscribe_protocol_from_agent_wire(request.protocol)?;
     Ok(SubscribeSessionRequest {
         agent_id: required_uuid_from_bytes("agent_id", request.agent_id)?,
-        io_protocol: protocol.to_string(),
+        protocol,
         args,
     })
 }
@@ -108,7 +108,7 @@ pub(crate) fn send_input_request_from_wire(
     let (protocol, event) = send_input_event_from_agent_wire(request.input_id, event)?;
     Ok(SendInputRequest {
         agent_id: required_uuid_from_bytes("agent_id", request.agent_id)?,
-        io_protocol: protocol.to_string(),
+        protocol,
         event,
     })
 }
@@ -162,64 +162,54 @@ fn subscribe_protocol_from_agent_wire(
 }
 
 pub(crate) fn subscribe_protocol_to_agent_wire(
-    protocol: &str,
+    protocol: Protocol,
     args: Option<&[u8]>,
 ) -> Result<pb::subscribe_session_request::Protocol, protocol_wire::DecodeError> {
     Ok(match protocol {
-        "terminal_v1" => pb::subscribe_session_request::Protocol::TerminalV1(
+        Protocol::TerminalV1 => pb::subscribe_session_request::Protocol::TerminalV1(
             decode_optional_message(args, "TerminalV1Args")?,
         ),
-        "claude_pty_transcript_v1" => {
+        Protocol::ClaudePtyTranscriptV1 => {
             pb::subscribe_session_request::Protocol::ClaudePtyTranscriptV1(decode_optional_message(
                 args,
                 "ClaudePtyTranscriptV1Args",
             )?)
         }
-        "claude_sdk_v1" => pb::subscribe_session_request::Protocol::ClaudeSdkV1(
+        Protocol::ClaudeSdkV1 => pb::subscribe_session_request::Protocol::ClaudeSdkV1(
             decode_optional_message(args, "ClaudeSdkV1Args")?,
         ),
-        "codex_sdk_v1" => pb::subscribe_session_request::Protocol::CodexSdkV1(
+        Protocol::CodexSdkV1 => pb::subscribe_session_request::Protocol::CodexSdkV1(
             decode_optional_message(args, "CodexSdkV1Args")?,
         ),
-        "test_echo_v1" => {
+        Protocol::TestEchoV1 => {
             reject_args(args, "TestEchoV1Args")?;
             pb::subscribe_session_request::Protocol::TestEchoV1(pb::TestEchoV1Args {})
-        }
-        other => {
-            return Err(protocol_wire::DecodeError::Invalid(format!(
-                "unknown session protocol `{other}`"
-            )));
         }
     })
 }
 
 pub(crate) fn subscribe_protocol_to_client_wire(
-    protocol: &str,
+    protocol: Protocol,
     args: Option<&[u8]>,
 ) -> Result<pb::client_subscribe_session_request::Protocol, protocol_wire::DecodeError> {
     Ok(match protocol {
-        "terminal_v1" => pb::client_subscribe_session_request::Protocol::TerminalV1(
+        Protocol::TerminalV1 => pb::client_subscribe_session_request::Protocol::TerminalV1(
             decode_optional_message(args, "TerminalV1Args")?,
         ),
-        "claude_pty_transcript_v1" => {
+        Protocol::ClaudePtyTranscriptV1 => {
             pb::client_subscribe_session_request::Protocol::ClaudePtyTranscriptV1(
                 decode_optional_message(args, "ClaudePtyTranscriptV1Args")?,
             )
         }
-        "claude_sdk_v1" => pb::client_subscribe_session_request::Protocol::ClaudeSdkV1(
+        Protocol::ClaudeSdkV1 => pb::client_subscribe_session_request::Protocol::ClaudeSdkV1(
             decode_optional_message(args, "ClaudeSdkV1Args")?,
         ),
-        "codex_sdk_v1" => pb::client_subscribe_session_request::Protocol::CodexSdkV1(
+        Protocol::CodexSdkV1 => pb::client_subscribe_session_request::Protocol::CodexSdkV1(
             decode_optional_message(args, "CodexSdkV1Args")?,
         ),
-        "test_echo_v1" => {
+        Protocol::TestEchoV1 => {
             reject_args(args, "TestEchoV1Args")?;
             pb::client_subscribe_session_request::Protocol::TestEchoV1(pb::TestEchoV1Args {})
-        }
-        other => {
-            return Err(protocol_wire::DecodeError::Invalid(format!(
-                "unknown session protocol `{other}`"
-            )));
         }
     })
 }
@@ -326,7 +316,7 @@ fn send_input_event_from_agent_wire(
 }
 
 pub(crate) fn send_input_event_to_agent_wire(
-    protocol: &str,
+    protocol: Protocol,
     event: &SessionInputEvent,
 ) -> Result<(Vec<u8>, pb::send_input_request::Event), protocol_wire::DecodeError> {
     let (input_id, event) = send_input_event_to_wire(protocol, event)?;
@@ -344,7 +334,7 @@ pub(crate) fn send_input_event_to_agent_wire(
 }
 
 pub(crate) fn send_input_event_to_client_wire(
-    protocol: &str,
+    protocol: Protocol,
     event: &SessionInputEvent,
 ) -> Result<(Vec<u8>, pb::client_send_input_request::Event), protocol_wire::DecodeError> {
     let (input_id, event) = send_input_event_to_wire(protocol, event)?;
@@ -371,7 +361,7 @@ enum OutboundInput {
 }
 
 fn send_input_event_to_wire(
-    protocol: &str,
+    protocol: Protocol,
     event: &SessionInputEvent,
 ) -> Result<(Vec<u8>, OutboundInput), protocol_wire::DecodeError> {
     match event {
@@ -381,24 +371,21 @@ fn send_input_event_to_wire(
         )),
         SessionInputEvent::Input { input_id, payload } => {
             let event = match protocol {
-                "terminal_v1" => OutboundInput::Terminal(pb::TerminalV1Input {
+                Protocol::TerminalV1 => OutboundInput::Terminal(pb::TerminalV1Input {
                     payload: payload.clone(),
                 }),
-                "claude_pty_transcript_v1" => {
+                Protocol::ClaudePtyTranscriptV1 => {
                     OutboundInput::ClaudePty(decode_message(payload, "ClaudePtyTranscriptV1Input")?)
                 }
-                "claude_sdk_v1" => {
+                Protocol::ClaudeSdkV1 => {
                     OutboundInput::ClaudeSdk(decode_message(payload, "ClaudeSdkV1Input")?)
                 }
-                "codex_sdk_v1" => OutboundInput::Codex(decode_message(payload, "CodexSdkV1Input")?),
-                "test_echo_v1" => OutboundInput::TestEcho(pb::TestEchoV1Input {
+                Protocol::CodexSdkV1 => {
+                    OutboundInput::Codex(decode_message(payload, "CodexSdkV1Input")?)
+                }
+                Protocol::TestEchoV1 => OutboundInput::TestEcho(pb::TestEchoV1Input {
                     payload: payload.clone(),
                 }),
-                other => {
-                    return Err(protocol_wire::DecodeError::Invalid(format!(
-                        "unknown session protocol `{other}`"
-                    )));
-                }
             };
             Ok((input_id.clone(), event))
         }
@@ -1240,7 +1227,7 @@ mod tests {
             .unwrap();
             assert_eq!(decoded.agent_id, agent_id);
             assert_eq!(
-                subscribe_protocol_to_agent_wire(&decoded.io_protocol, decoded.args.as_deref(),)
+                subscribe_protocol_to_agent_wire(decoded.protocol, decoded.args.as_deref(),)
                     .unwrap(),
                 protocol
             );
@@ -1272,7 +1259,7 @@ mod tests {
         for protocol in protocols {
             let (decoded, args) = subscribe_protocol_from_client_wire(Some(protocol)).unwrap();
             assert_eq!(
-                subscribe_protocol_to_client_wire(decoded.as_str(), args.as_deref()).unwrap(),
+                subscribe_protocol_to_client_wire(decoded, args.as_deref()).unwrap(),
                 protocol
             );
         }
@@ -1360,7 +1347,7 @@ mod tests {
             })
             .unwrap();
             let (_, encoded) =
-                send_input_event_to_agent_wire(&decoded.io_protocol, &decoded.event).unwrap();
+                send_input_event_to_agent_wire(decoded.protocol, &decoded.event).unwrap();
             assert_eq!(encoded, wire_event);
         }
     }
@@ -1404,8 +1391,7 @@ mod tests {
             let (protocol, decoded) =
                 send_input_event_from_client_wire(b"input-id".to_vec(), Some(event.clone()))
                     .unwrap();
-            let (_, encoded) =
-                send_input_event_to_client_wire(protocol.as_str(), &decoded).unwrap();
+            let (_, encoded) = send_input_event_to_client_wire(protocol, &decoded).unwrap();
             assert_eq!(encoded, event);
         }
     }

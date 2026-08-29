@@ -37,15 +37,13 @@ pub(crate) use naming::LocalAgentNameSource;
 #[cfg(feature = "local-agents")]
 pub(crate) use pty::{PtyHandle, spawn_pty_agent};
 pub(crate) use record::{AgentRecord, SessionEvent, StopPolicy};
-#[cfg(all(feature = "local-agents", unix))]
-pub(crate) use session::CodexInput;
 #[cfg(all(feature = "local-agents", test))]
 pub(crate) use session::mcp_launch_route_for_tests;
 #[cfg(feature = "local-agents")]
 pub(crate) use session::{
     AgentBackend, AgentDeliveryTarget, AgentDeps, AgentSession, Delivery, DeliveryError,
-    DeliveryLiveness, McpLaunchRoute, RawPtyTarget, StructuredInput, agent_from_suspended,
-    bootstrap_external_hook, new_agent,
+    DeliveryLiveness, McpLaunchRoute, Plane, RawPtyTarget, StructuredInput, StructuredInputEvent,
+    agent_from_suspended, bootstrap_external_hook, new_agent,
 };
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]

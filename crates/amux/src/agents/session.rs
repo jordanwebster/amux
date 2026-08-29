@@ -2,11 +2,11 @@
 //!
 //! [`AgentBackend`] is the instance behavior every locally hosted agent
 //! implements; [`AgentSession`] is the owned handle the runtime stores.
-//! [`StructuredInput`] and [`RawPtyTarget`] are owned endpoints a backend hands
-//! out so callers can do input or raw-PTY preparation once the session registry
-//! lock is released. The Claude and test-agent impls live beside their sessions;
-//! this module keeps only the factories and shared session behavior. Protocol
-//! exposure is derived from each backend's [`AgentKind`].
+//! [`Plane`] is the owned endpoint a backend hands out so callers can prepare
+//! input or output once the session registry lock is released. The Claude and
+//! test-agent impls live beside their sessions; this module keeps only the
+//! factories and shared session behavior. Protocol exposure is derived from
+//! each backend's [`AgentKind`].
 //!
 //! This module constructs live agent sessions, so it is gated at its `mod`
 //! declaration behind the `local-agents` feature. The data types it produces
@@ -35,7 +35,9 @@ use super::{
     AgentRecord, ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome,
     LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredLogSource,
 };
-use crate::agents::{AgentKind, AgentParent, AgentType, ClaudeDriver, CreateAgentRequest};
+use crate::agents::{
+    AgentKind, AgentParent, AgentType, ClaudeDriver, CreateAgentRequest, Protocol,
+};
 use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::protocol::ProtocolError;
@@ -124,19 +126,23 @@ impl AgentDeliveryTarget for UnsupportedAgentDelivery {
     }
 }
 
+/// A typed input accepted by a structured protocol plane.
+pub(crate) enum StructuredInputEvent {
+    ClaudePty {
+        client_seq: u64,
+        payload: Value,
+    },
+    #[cfg(unix)]
+    Codex {
+        input_id: Vec<u8>,
+        input: super::codex::io::CodexSdkV1Input,
+    },
+}
+
 /// An owned structured-input endpoint detached from the session registry lock.
 #[async_trait]
 pub(crate) trait StructuredInput: Send + Sync {
-    async fn send(&self, client_seq: u64, payload: Value)
-    -> std::result::Result<(), ProtocolError>;
-}
-
-/// Codex-owned structured input endpoint, separate from Claude's sequence-
-/// checked JSON seam.
-#[cfg(unix)]
-#[async_trait]
-pub(crate) trait CodexInput: Send + Sync {
-    async fn send(&self, input_id: Vec<u8>, input: super::codex::io::CodexSdkV1Input);
+    async fn send(&self, input: StructuredInputEvent) -> std::result::Result<(), ProtocolError>;
 }
 
 /// An owned raw-PTY preparation target detached from the session registry.
@@ -144,6 +150,15 @@ pub(crate) enum RawPtyTarget {
     Existing(PtyHandle),
     #[cfg(unix)]
     Codex(CodexRawPtyTarget),
+}
+
+/// An owned backend endpoint selected by a closed session protocol.
+pub(crate) enum Plane {
+    Terminal(RawPtyTarget),
+    Structured {
+        log: StructuredLogSource,
+        input: Box<dyn StructuredInput>,
+    },
 }
 
 /// Effective configuration provenance frozen when the daemon starts.
@@ -311,6 +326,7 @@ pub(crate) trait AgentBackend: Send + Sync {
     ) -> Result<tokio::task::JoinHandle<()>>;
     async fn stop(&self, policy: StopPolicy);
     fn kind(&self) -> AgentKind;
+    fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError>;
 
     fn spawn_inheritance(&self) -> SpawnInheritance {
         SpawnInheritance::default()
@@ -319,17 +335,6 @@ pub(crate) trait AgentBackend: Send + Sync {
     fn parent(&self) -> Option<AgentParent> {
         None
     }
-
-    fn io_protocols(&self) -> Vec<String> {
-        self.kind()
-            .protocols()
-            .iter()
-            .map(ToString::to_string)
-            .collect()
-    }
-
-    fn log_source(&self) -> Option<StructuredLogSource>;
-    fn pty_handle(&self) -> Result<Option<PtyHandle>>;
 
     /// Snapshot the smallest owned target needed to deliver a message.
     fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
@@ -345,22 +350,6 @@ pub(crate) trait AgentBackend: Send + Sync {
     #[allow(dead_code)]
     async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
         self.delivery_target().deliver(envelope).await
-    }
-
-    /// Snapshot the smallest owned target needed to prepare a raw subscription.
-    /// The default covers backends whose PTY already exists for the session.
-    fn raw_pty_target(&self) -> Result<Option<RawPtyTarget>> {
-        self.pty_handle()
-            .map(|handle| handle.map(RawPtyTarget::Existing))
-    }
-
-    fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {
-        None
-    }
-
-    #[cfg(unix)]
-    fn codex_input(&self) -> Option<Box<dyn CodexInput>> {
-        None
     }
 
     async fn handle_hook_payload(
@@ -614,9 +603,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_agent_has_no_structured_input() {
+    async fn test_agent_refuses_structured_protocols() {
         let session = TestAgentSession::echo_for_tests(Uuid::new_v4(), None);
-        assert!(session.structured_input().is_none());
+        assert!(matches!(
+            session.plane(Protocol::ClaudePtyTranscriptV1),
+            Err(ProtocolError::NotExposed {
+                kind: AgentKind::TestAgent,
+                protocol: Protocol::ClaudePtyTranscriptV1,
+            })
+        ));
     }
 
     #[test]

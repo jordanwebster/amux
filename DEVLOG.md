@@ -5201,3 +5201,11 @@ Session subscriptions, inputs, controls and outputs select typed protobuf arms
 for terminal, Claude PTY, Claude SDK, Codex SDK and test echo traffic, including
 the routed client mirrors; protocol names and opaque top-level payload fields no
 longer cross the network boundary.
+
+2026-08-29 — **Made protocol exposure an exhaustive backend decision.** Every
+agent backend now maps the closed protocol enum to either a terminal or
+structured plane and returns `NotExposed` for every invalid kind/protocol pair.
+Daemon subscription and input demux no longer rebuild protocol strings or use a
+separate structured-codec discriminator, and typed refusal details survive the
+protobuf error boundary. Claude SDK creation remains an explicit
+`Unimplemented` operation until its driver lands.

@@ -508,14 +508,19 @@ impl Client {
         request: SubscribeSessionRequest,
     ) -> Result<SessionStream, ClientError> {
         self.ensure_open()?;
-        let protocol = crate::agents::subscribe_protocol_to_client_wire(
-            &request.io_protocol,
-            request.args.as_deref(),
-        )
-        .map_err(|error| ClientError::Encode {
-            method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
-            message: error.to_string(),
-        })?;
+        let protocol = request
+            .io_protocol
+            .parse()
+            .map_err(|message| ClientError::Encode {
+                method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
+                message,
+            })?;
+        let protocol =
+            crate::agents::subscribe_protocol_to_client_wire(protocol, request.args.as_deref())
+                .map_err(|error| ClientError::Encode {
+                    method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
+                    message: error.to_string(),
+                })?;
         let response = self
             .inner
             .lock()
@@ -540,13 +545,18 @@ impl Client {
             input_id: request.input_id,
             payload: request.payload.to_vec(),
         };
-        let (input_id, event) =
-            crate::agents::send_input_event_to_client_wire(&request.io_protocol, &event).map_err(
-                |error| ClientError::Encode {
-                    method: method::CLIENT_SEND_INPUT_NAME,
-                    message: error.to_string(),
-                },
-            )?;
+        let protocol = request
+            .io_protocol
+            .parse()
+            .map_err(|message| ClientError::Encode {
+                method: method::CLIENT_SEND_INPUT_NAME,
+                message,
+            })?;
+        let (input_id, event) = crate::agents::send_input_event_to_client_wire(protocol, &event)
+            .map_err(|error| ClientError::Encode {
+                method: method::CLIENT_SEND_INPUT_NAME,
+                message: error.to_string(),
+            })?;
         self.inner
             .lock()
             .await

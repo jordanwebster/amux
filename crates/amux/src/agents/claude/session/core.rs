@@ -112,6 +112,25 @@ pub(crate) struct ClaudeSession {
 }
 
 impl ClaudeSession {
+    #[cfg(debug_assertions)]
+    pub(crate) fn for_protocol_tests(
+        req: &CreateAgentRequest,
+        runtime_dir: PathBuf,
+        claude_version_cache: ClaudeVersionCache,
+        mcp_launch_route: McpLaunchRoute,
+    ) -> Self {
+        let mut session = Self::new(req, runtime_dir, claude_version_cache, mcp_launch_route);
+        if session.driver == ClaudeDriver::Pty {
+            session.pty = Some(PtyHandle::test_echo());
+        }
+        session.transcript_ingest = Some(TranscriptIngest::with_delivery_ready(
+            StructuredLogSource::new(32),
+            session.delivery_ready.clone(),
+            session.claude_version_cache.clone(),
+        ));
+        session
+    }
+
     /// Create a new ClaudeSession from a CreateAgentRequest.
     /// Does not spawn the process — call [`start`] afterwards.
     pub(in crate::agents) fn new(

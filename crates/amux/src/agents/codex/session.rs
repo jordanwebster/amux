@@ -17,16 +17,16 @@ use tokio::task::AbortHandle;
 use uuid::Uuid;
 
 use super::CODEX_RAW_THREAD_NOT_READY;
-#[cfg(test)]
-use super::io;
 use super::io::CodexSdkV1Input;
 use crate::agent_tools;
 use crate::agents::{
-    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CodexInput, CreateAgentRequest,
-    Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource, McpLaunchRoute, PtyHandle,
-    RawPtyTarget, SessionEvent, SpawnInheritance, StopPolicy, StructuredLogSource, spawn_pty_agent,
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CreateAgentRequest, Delivery,
+    DeliveryError, DeliveryLiveness, LocalAgentNameSource, McpLaunchRoute, Plane, Protocol,
+    PtyHandle, RawPtyTarget, SessionEvent, SpawnInheritance, StopPolicy, StructuredInput,
+    StructuredInputEvent, StructuredLogSource, spawn_pty_agent,
 };
 use crate::envelope::{Envelope, Sender};
+use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
 
 // Codex streams are delta-heavy and this is their sole elastic/replay buffer.
@@ -350,6 +350,15 @@ pub(crate) struct CodexRawPtyTarget {
 }
 
 impl CodexRawPtyTarget {
+    pub(crate) fn active_handle(&self) -> Option<PtyHandle> {
+        self.runtime
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .pty
+            .as_ref()
+            .map(|pty| pty.handle.clone())
+    }
+
     pub(crate) async fn acquire_lease(&self) -> Result<CodexRawPtyLease> {
         let _preparation = self.preparation.lock().await;
         let plan = {
@@ -735,15 +744,6 @@ impl CodexSession {
             preparation: self.raw_pty_preparation.clone(),
             stop_tx: self.stop_tx.clone(),
         }
-    }
-
-    fn cached_pty(&self) -> Option<PtyHandle> {
-        self.runtime
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .pty
-            .as_ref()
-            .map(|pty| pty.handle.clone())
     }
 }
 
@@ -1748,20 +1748,7 @@ impl CodexInputTarget {
             }
         }
     }
-}
 
-fn approval_response(decision: &str) -> Result<ApprovalResponse> {
-    match decision {
-        "accept" => Ok(ApprovalResponse::Accept),
-        "acceptForSession" => Ok(ApprovalResponse::AcceptForSession),
-        "decline" => Ok(ApprovalResponse::Decline),
-        "cancel" => Ok(ApprovalResponse::Cancel),
-        other => Err(anyhow!("unsupported approval decision `{other}`")),
-    }
-}
-
-#[async_trait]
-impl CodexInput for CodexInputTarget {
     async fn send(&self, input_id: Vec<u8>, input: CodexSdkV1Input) {
         let result = self.execute(input).await;
         let row = match result {
@@ -1777,6 +1764,29 @@ impl CodexInput for CodexInputTarget {
             }),
         };
         self.log_source.write(row).await;
+    }
+}
+
+fn approval_response(decision: &str) -> Result<ApprovalResponse> {
+    match decision {
+        "accept" => Ok(ApprovalResponse::Accept),
+        "acceptForSession" => Ok(ApprovalResponse::AcceptForSession),
+        "decline" => Ok(ApprovalResponse::Decline),
+        "cancel" => Ok(ApprovalResponse::Cancel),
+        other => Err(anyhow!("unsupported approval decision `{other}`")),
+    }
+}
+
+#[async_trait]
+impl StructuredInput for CodexInputTarget {
+    async fn send(&self, input: StructuredInputEvent) -> std::result::Result<(), ProtocolError> {
+        let StructuredInputEvent::Codex { input_id, input } = input else {
+            return Err(ProtocolError::InvalidArgument {
+                message: "Codex input target received another protocol's input".to_string(),
+            });
+        };
+        self.send(input_id, input).await;
+        Ok(())
     }
 }
 
@@ -1867,6 +1877,24 @@ impl AgentBackend for CodexSession {
         AgentKind::Codex
     }
 
+    fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError> {
+        match protocol {
+            Protocol::TerminalV1 => Ok(Plane::Terminal(RawPtyTarget::Codex(
+                self.owned_raw_pty_target(),
+            ))),
+            Protocol::CodexSdkV1 => Ok(Plane::Structured {
+                log: self.log_source.clone(),
+                input: Box::new(self.input_target()),
+            }),
+            Protocol::ClaudePtyTranscriptV1 | Protocol::ClaudeSdkV1 | Protocol::TestEchoV1 => {
+                Err(ProtocolError::NotExposed {
+                    kind: self.kind(),
+                    protocol,
+                })
+            }
+        }
+    }
+
     fn spawn_inheritance(&self) -> SpawnInheritance {
         SpawnInheritance {
             codex_approval_policy: self.approval_policy.clone(),
@@ -1879,27 +1907,11 @@ impl AgentBackend for CodexSession {
         self.parent
     }
 
-    fn log_source(&self) -> Option<StructuredLogSource> {
-        Some(self.log_source.clone())
-    }
-
     fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
         Box::new(CodexDeliveryTarget {
             runtime: self.runtime.clone(),
             log_source: self.log_source.clone(),
         })
-    }
-
-    fn pty_handle(&self) -> Result<Option<PtyHandle>> {
-        Ok(self.cached_pty())
-    }
-
-    fn raw_pty_target(&self) -> Result<Option<RawPtyTarget>> {
-        Ok(Some(RawPtyTarget::Codex(self.owned_raw_pty_target())))
-    }
-
-    fn codex_input(&self) -> Option<Box<dyn CodexInput>> {
-        Some(Box::new(self.input_target()))
     }
 
     fn suspended_state(&self) -> Result<SuspendedAgent> {
@@ -2660,11 +2672,14 @@ mod tests {
     fn advertises_both_planes_before_pty_exists() {
         let session = session();
         assert!(session.runtime.lock().unwrap().pty.is_none());
-        assert!(session.pty_handle().unwrap().is_none());
-        assert_eq!(
-            session.io_protocols(),
-            [crate::agents::terminal_io::TERMINAL_V1, io::CODEX_SDK_V1]
-        );
+        assert!(matches!(
+            session.plane(Protocol::TerminalV1),
+            Ok(Plane::Terminal(_))
+        ));
+        assert!(matches!(
+            session.plane(Protocol::CodexSdkV1),
+            Ok(Plane::Structured { .. })
+        ));
     }
 
     fn test_pty_spawn(aborts: &mut Vec<AbortHandle>) -> (PtyHandle, tokio::task::JoinHandle<()>) {
@@ -2794,7 +2809,7 @@ mod tests {
         .unwrap();
         assert!(error.to_string().contains("thread_id is not available"));
         assert!(session.runtime.lock().unwrap().pty.is_none());
-        assert!(session.log_source().unwrap().subscribe().await.is_some());
+        assert!(session.log_source.subscribe().await.is_some());
     }
 
     #[tokio::test]

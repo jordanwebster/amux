@@ -1,0 +1,82 @@
+use amux::typed_protocol_test_support::{create_sdk, open_in_process_plane};
+use amux::{AgentKind, ClaudeDriver, Protocol, ProtocolError};
+
+async fn assert_not_exposed(kind: AgentKind, protocol: Protocol) {
+    assert_eq!(
+        open_in_process_plane(kind, protocol).await,
+        Err(ProtocolError::NotExposed { kind, protocol })
+    );
+}
+
+#[tokio::test]
+async fn pty_claude_refuses_claude_sdk_protocol() {
+    assert_not_exposed(
+        AgentKind::Claude {
+            driver: ClaudeDriver::Pty,
+        },
+        Protocol::ClaudeSdkV1,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn sdk_claude_refuses_terminal_protocol() {
+    assert_not_exposed(
+        AgentKind::Claude {
+            driver: ClaudeDriver::Sdk,
+        },
+        Protocol::TerminalV1,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn claude_refuses_codex_protocol() {
+    assert_not_exposed(
+        AgentKind::Claude {
+            driver: ClaudeDriver::Pty,
+        },
+        Protocol::CodexSdkV1,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn every_exposed_provider_protocol_opens_in_process() {
+    for (kind, protocol) in [
+        (
+            AgentKind::Claude {
+                driver: ClaudeDriver::Pty,
+            },
+            Protocol::TerminalV1,
+        ),
+        (
+            AgentKind::Claude {
+                driver: ClaudeDriver::Pty,
+            },
+            Protocol::ClaudePtyTranscriptV1,
+        ),
+        (
+            AgentKind::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            Protocol::ClaudeSdkV1,
+        ),
+        (AgentKind::Codex, Protocol::CodexSdkV1),
+    ] {
+        open_in_process_plane(kind, protocol)
+            .await
+            .unwrap_or_else(|error| panic!("{kind} should expose {protocol}: {error}"));
+    }
+}
+
+#[tokio::test]
+async fn sdk_claude_create_is_typed_unimplemented() {
+    let error = create_sdk().await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        ProtocolError::Unimplemented { message }
+            if message == "Claude SDK agents are not implemented yet"
+    ));
+}

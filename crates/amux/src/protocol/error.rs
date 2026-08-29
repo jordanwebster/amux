@@ -6,8 +6,8 @@ use uuid::Uuid;
 use crate::agents::{AgentKind, Protocol};
 
 use super::amux::v1::{
-    AmbiguousAgentName, Error, ErrorCode, ErrorDetail, ProtocolVersionMismatch,
-    SequenceNumberMismatch, UpdateRequired,
+    AgentProtocol, AmbiguousAgentName, Error, ErrorCode, ErrorDetail, ProtocolNotExposed,
+    ProtocolVersionMismatch, SequenceNumberMismatch, UpdateRequired,
 };
 
 /// Errors carried over generated service and routing protocol boundaries.
@@ -97,7 +97,15 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
         ProtocolError::Unimplemented { message } => simple_error(10, message.clone()),
         ProtocolError::Cancelled { message } => simple_error(1, message.clone()),
         ProtocolError::InvalidArgument { message } => simple_error(2, message.clone()),
-        ProtocolError::NotExposed { .. } => simple_error(7, error.to_string()),
+        ProtocolError::NotExposed { kind, protocol } => detailed_error(
+            7,
+            error.to_string(),
+            "amux.v1.ProtocolNotExposed",
+            ProtocolNotExposed {
+                kind: Some(crate::agents::agent_kind_to_wire(*kind)),
+                protocol: agent_protocol_to_wire(*protocol) as i32,
+            },
+        ),
         ProtocolError::AlreadyExists { message } => simple_error(4, message.clone()),
         ProtocolError::PermissionDenied { message } => simple_error(5, message.clone()),
         ProtocolError::FailedPrecondition { message } => simple_error(7, message.clone()),
@@ -173,6 +181,16 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
                     };
                 }
             }
+            "amux.v1.ProtocolNotExposed" => {
+                if let Ok(detail) = ProtocolNotExposed::decode(detail.value.as_slice())
+                    && let Some(kind) = detail.kind
+                    && let Ok(kind) = crate::agents::agent_kind_from_wire(kind)
+                    && let Ok(protocol) = AgentProtocol::try_from(detail.protocol)
+                    && let Some(protocol) = agent_protocol_from_wire(protocol)
+                {
+                    return ProtocolError::NotExposed { kind, protocol };
+                }
+            }
             _ => {}
         }
     }
@@ -211,6 +229,27 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
         _ => ProtocolError::ServerError {
             message: error.message,
         },
+    }
+}
+
+fn agent_protocol_to_wire(protocol: Protocol) -> AgentProtocol {
+    match protocol {
+        Protocol::TerminalV1 => AgentProtocol::TerminalV1,
+        Protocol::ClaudePtyTranscriptV1 => AgentProtocol::ClaudePtyTranscriptV1,
+        Protocol::ClaudeSdkV1 => AgentProtocol::ClaudeSdkV1,
+        Protocol::CodexSdkV1 => AgentProtocol::CodexSdkV1,
+        Protocol::TestEchoV1 => AgentProtocol::TestEchoV1,
+    }
+}
+
+fn agent_protocol_from_wire(protocol: AgentProtocol) -> Option<Protocol> {
+    match protocol {
+        AgentProtocol::Unspecified => None,
+        AgentProtocol::TerminalV1 => Some(Protocol::TerminalV1),
+        AgentProtocol::ClaudePtyTranscriptV1 => Some(Protocol::ClaudePtyTranscriptV1),
+        AgentProtocol::ClaudeSdkV1 => Some(Protocol::ClaudeSdkV1),
+        AgentProtocol::CodexSdkV1 => Some(Protocol::CodexSdkV1),
+        AgentProtocol::TestEchoV1 => Some(Protocol::TestEchoV1),
     }
 }
 
@@ -404,5 +443,23 @@ mod tests {
         assert_eq!(encoded.code, 2);
         assert_eq!(encoded.details.len(), 1);
         assert_eq!(decode_protocol_error(encoded), error);
+    }
+
+    #[test]
+    fn not_exposed_uses_typed_detail() {
+        let error = ProtocolError::NotExposed {
+            kind: AgentKind::Claude {
+                driver: crate::agents::ClaudeDriver::Pty,
+            },
+            protocol: Protocol::ClaudeSdkV1,
+        };
+
+        let encoded = encode_protocol_error(&error);
+        assert_eq!(encoded.code, 7);
+        assert_eq!(encoded.details.len(), 1);
+        assert_eq!(decode_protocol_error(encoded), error);
+
+        let status = protocol_status(error.clone());
+        assert_eq!(protocol_error_from_status_details(&status), Some(error));
     }
 }

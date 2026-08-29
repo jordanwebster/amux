@@ -2,13 +2,14 @@
 
 use std::future::Future;
 
+use prost::Message as _;
 use serde_json::json;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::PtyAgentHost;
-#[cfg(any(test, feature = "testnet"))]
-use crate::agents::TEST_ECHO_V1;
+#[cfg(unix)]
+use crate::agents::CodexRawPtyLease;
 use crate::agents::claude::io::{
     self as claude_io, ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Output,
     ClaudePtyTranscriptV1ReplayQuery,
@@ -16,12 +17,10 @@ use crate::agents::claude::io::{
 use crate::agents::codex::io::{self as codex_io, CodexSdkV1Output, CodexSdkV1ReplayQuery};
 use crate::agents::terminal_io::{self, TerminalV1Control, TerminalV1ReplayQuery};
 use crate::agents::{
-    BroadcastRead, ByteReplayQuery, Protocol, PtyHandle, RawPtyTarget, SendInputRequest,
-    SessionCloseReason, SessionInputEvent, StructuredInput, StructuredOutput,
+    BroadcastRead, ByteReplayQuery, Plane, Protocol, PtyHandle, RawPtyTarget, SendInputRequest,
+    SessionCloseReason, SessionInputEvent, StructuredInput, StructuredInputEvent, StructuredOutput,
     SubscribeSessionEvent, SubscribeSessionRequest,
 };
-#[cfg(unix)]
-use crate::agents::{CodexInput, CodexRawPtyLease};
 use crate::protocol::{ProtocolError, protocol_status};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 
@@ -53,8 +52,9 @@ pub(super) async fn subscribe_session_stream(
 enum SessionOutputReader {
     Raw(RawSessionOutputReader),
     Structured {
+        protocol: Protocol,
         reader: crate::agents::MultiplexStructuredReader,
-        codec: StructuredCodec,
+        replay_cursor: Option<Vec<u8>>,
     },
 }
 
@@ -71,13 +71,6 @@ struct RawPtySubscription {
     codex_lease: Option<CodexRawPtyLease>,
 }
 
-/// Per-protocol structured output encoding, plus whatever the protocol reports
-/// as its replay-complete cursor.
-enum StructuredCodec {
-    Claude { replay_cursor: Vec<u8> },
-    Codex,
-}
-
 struct PreparedSessionSubscription {
     output: SessionOutputReader,
 }
@@ -86,48 +79,30 @@ async fn prepare_direct_session_subscription(
     request: &SubscribeSessionRequest,
     host: &PtyAgentHost,
 ) -> Result<PreparedSessionSubscription, ProtocolError> {
-    match request.io_protocol.as_str() {
-        terminal_io::TERMINAL_V1 => {
+    match request.protocol {
+        Protocol::TerminalV1 => {
             let reader = prepare_direct_raw_session_subscription(request, host).await?;
             Ok(PreparedSessionSubscription {
                 output: SessionOutputReader::Raw(reader),
             })
         }
-        claude_io::PTY_TRANSCRIPT_V1 => {
+        Protocol::ClaudePtyTranscriptV1 | Protocol::ClaudeSdkV1 | Protocol::CodexSdkV1 => {
             prepare_direct_structured_session_subscription(request, host)
                 .await
-                .map(|(reader, current_seq)| PreparedSessionSubscription {
+                .map(|(reader, replay_cursor)| PreparedSessionSubscription {
                     output: SessionOutputReader::Structured {
+                        protocol: request.protocol,
                         reader,
-                        codec: StructuredCodec::Claude {
-                            replay_cursor: encode_transcript_cursor(current_seq),
-                        },
+                        replay_cursor,
                     },
                 })
         }
-        codex_io::CODEX_SDK_V1 => prepare_codex_structured_session_subscription(request, host)
-            .await
-            .map(|reader| PreparedSessionSubscription {
-                output: SessionOutputReader::Structured {
-                    reader,
-                    codec: StructuredCodec::Codex,
-                },
-            }),
-        #[cfg(any(test, feature = "testnet"))]
-        TEST_ECHO_V1 => {
+        Protocol::TestEchoV1 => {
             let reader = prepare_direct_test_echo_session_subscription(request, host).await?;
             Ok(PreparedSessionSubscription {
                 output: SessionOutputReader::Raw(reader),
             })
         }
-        other => Err(ProtocolError::InvalidArgument {
-            message: format!(
-                "unsupported SubscribeSession io_protocol `{other}`; expected `{}`, `{}`, or `{}`",
-                terminal_io::TERMINAL_V1,
-                claude_io::PTY_TRANSCRIPT_V1,
-                codex_io::CODEX_SDK_V1
-            ),
-        }),
     }
 }
 
@@ -141,8 +116,7 @@ async fn prepare_direct_raw_session_subscription(
         .as_ref()
         .map(|TerminalV1ReplayQuery::TailBytes { count }| ByteReplayQuery::Tail { count: *count });
 
-    let subscription =
-        raw_pty_subscription(host, request.agent_id, terminal_io::TERMINAL_V1).await?;
+    let subscription = raw_pty_subscription(host, request.agent_id, Protocol::TerminalV1).await?;
     if let Some(size) = args.terminal_size {
         subscription
             .pty
@@ -166,17 +140,17 @@ async fn prepare_direct_raw_session_subscription(
     })
 }
 
-#[cfg(any(test, feature = "testnet"))]
 async fn prepare_direct_test_echo_session_subscription(
     request: &SubscribeSessionRequest,
     host: &PtyAgentHost,
 ) -> Result<RawSessionOutputReader, ProtocolError> {
     if request.args.is_some() {
         return Err(ProtocolError::InvalidArgument {
-            message: format!("`{TEST_ECHO_V1}` does not accept args"),
+            message: format!("`{}` does not accept args", Protocol::TestEchoV1),
         });
     }
-    let pty = agent_pty(host, request.agent_id, TEST_ECHO_V1).await?;
+    let subscription = raw_pty_subscription(host, request.agent_id, Protocol::TestEchoV1).await?;
+    let pty = subscription.pty;
     let reader = pty
         .subscribe_with_query(None)
         .await
@@ -185,47 +159,49 @@ async fn prepare_direct_test_echo_session_subscription(
         protocol: Protocol::TestEchoV1,
         reader,
         #[cfg(unix)]
-        _codex_lease: None,
+        _codex_lease: subscription.codex_lease,
     })
 }
 
 async fn raw_pty_subscription(
     host: &PtyAgentHost,
     agent_id: Uuid,
-    io_protocol: &str,
+    protocol: Protocol,
 ) -> Result<RawPtySubscription, ProtocolError> {
-    raw_pty_subscription_with(host, agent_id, io_protocol, prepare_raw_pty_target).await
+    raw_pty_subscription_with(host, agent_id, protocol, prepare_raw_pty_target).await
 }
 
 async fn raw_pty_subscription_with<Prepare, Prepared>(
     host: &PtyAgentHost,
     agent_id: Uuid,
-    io_protocol: &str,
+    protocol: Protocol,
     prepare: Prepare,
 ) -> Result<RawPtySubscription, ProtocolError>
 where
     Prepare: FnOnce(RawPtyTarget) -> Prepared,
     Prepared: Future<Output = Result<RawPtySubscription, ProtocolError>>,
 {
-    let target = {
-        let state = host.state().read().await;
-        let session = state
-            .local_agents
-            .get(&agent_id)
-            .map(|context| &context.session)
-            .ok_or(ProtocolError::NoAgentFound)?;
-        ensure_agent_supports_protocol(session, agent_id, io_protocol)?;
-        session
-            .raw_pty_target()
-            .map_err(|error| ProtocolError::ServerError {
-                message: error.to_string(),
-            })?
-            .ok_or_else(|| ProtocolError::InvalidArgument {
-                message: format!("agent {agent_id} does not support raw PTY sessions"),
-            })?
-    };
-
+    let target = raw_plane_target(host, agent_id, protocol).await?;
     prepare(target).await
+}
+
+async fn raw_plane_target(
+    host: &PtyAgentHost,
+    agent_id: Uuid,
+    protocol: Protocol,
+) -> Result<RawPtyTarget, ProtocolError> {
+    let state = host.state().read().await;
+    let session = state
+        .local_agents
+        .get(&agent_id)
+        .map(|context| &context.session)
+        .ok_or(ProtocolError::NoAgentFound)?;
+    match session.plane(protocol)? {
+        Plane::Terminal(target) => Ok(target),
+        Plane::Structured { .. } => Err(ProtocolError::ServerError {
+            message: format!("{protocol} resolved to a structured plane"),
+        }),
+    }
 }
 
 async fn prepare_raw_pty_target(target: RawPtyTarget) -> Result<RawPtySubscription, ProtocolError> {
@@ -255,136 +231,160 @@ async fn prepare_raw_pty_target(target: RawPtyTarget) -> Result<RawPtySubscripti
 async fn prepare_direct_structured_session_subscription(
     request: &SubscribeSessionRequest,
     host: &PtyAgentHost,
-) -> Result<(crate::agents::MultiplexStructuredReader, u64), ProtocolError> {
-    let args = claude_io::decode_pty_transcript_v1_args(request.args.as_deref())?;
-    let replay_query = match &args.replay_query {
-        None => None,
-        Some(ClaudePtyTranscriptV1ReplayQuery::Tail { count }) => {
-            Some(crate::agents::SequencedReplayQuery::Tail { count: *count })
-        }
-        Some(ClaudePtyTranscriptV1ReplayQuery::Since { seq_id }) => {
-            let seq = seq_id
-                .checked_add(1)
-                .ok_or_else(|| ProtocolError::InvalidArgument {
-                    message: "transcript SubscribeSession replay since cursor is out of range"
-                        .to_string(),
-                })?;
-            Some(crate::agents::SequencedReplayQuery::Since { seq })
-        }
-    };
-
-    let (log_source, pty) = {
+) -> Result<(crate::agents::MultiplexStructuredReader, Option<Vec<u8>>), ProtocolError> {
+    let (replay_query, terminal_size) = structured_replay_query(request)?;
+    let log = {
         let state = host.state().read().await;
         let session = state
             .local_agents
             .get(&request.agent_id)
             .map(|context| &context.session)
             .ok_or(ProtocolError::NoAgentFound)?;
-        ensure_agent_supports_protocol(session, request.agent_id, claude_io::PTY_TRANSCRIPT_V1)?;
-        (
-            session.log_source().ok_or(ProtocolError::NoAgentFound)?,
-            session
-                .pty_handle()
-                .map_err(|error| ProtocolError::ServerError {
-                    message: error.to_string(),
-                })?,
-        )
+        match session.plane(request.protocol)? {
+            Plane::Structured { log, .. } => log,
+            Plane::Terminal(_) => {
+                return Err(ProtocolError::ServerError {
+                    message: format!("{} resolved to a terminal plane", request.protocol),
+                });
+            }
+        }
     };
 
-    if let Some(size) = args.terminal_size {
-        let Some(pty) = pty else {
-            return Err(ProtocolError::InvalidArgument {
-                message: format!(
-                    "agent {} does not support terminal resize for `{}` sessions",
-                    request.agent_id,
-                    claude_io::PTY_TRANSCRIPT_V1
-                ),
-            });
-        };
-        pty.resize(size)
+    if let Some(size) = terminal_size {
+        let subscription =
+            raw_pty_subscription(host, request.agent_id, Protocol::TerminalV1).await?;
+        subscription
+            .pty
+            .resize(size)
             .await
             .map_err(|error| ProtocolError::ServerError {
                 message: error.to_string(),
             })?;
     }
 
-    log_source
+    let (reader, current_seq) = log
         .subscribe_with_query(replay_query)
         .await
-        .ok_or(ProtocolError::NoAgentFound)
+        .ok_or(ProtocolError::NoAgentFound)?;
+    let replay_cursor = (request.protocol == Protocol::ClaudePtyTranscriptV1)
+        .then(|| encode_transcript_cursor(current_seq));
+    Ok((reader, replay_cursor))
 }
 
-async fn prepare_codex_structured_session_subscription(
+fn structured_replay_query(
     request: &SubscribeSessionRequest,
-    host: &PtyAgentHost,
-) -> Result<crate::agents::MultiplexStructuredReader, ProtocolError> {
-    let args = codex_io::decode_codex_sdk_v1_args(request.args.as_deref())?;
-    let replay_query = match args.replay_query {
-        None => None,
-        Some(CodexSdkV1ReplayQuery::Tail { count }) => {
-            Some(crate::agents::SequencedReplayQuery::Tail { count })
-        }
-        Some(CodexSdkV1ReplayQuery::Since { seq }) => {
-            let seq = seq
-                .checked_add(1)
-                .ok_or_else(|| ProtocolError::InvalidArgument {
-                    message: "Codex SubscribeSession replay since cursor is out of range"
-                        .to_string(),
-                })?;
-            Some(crate::agents::SequencedReplayQuery::Since { seq })
-        }
+) -> Result<
+    (
+        Option<crate::agents::SequencedReplayQuery>,
+        Option<crate::agents::TerminalSize>,
+    ),
+    ProtocolError,
+> {
+    let out_of_range = |protocol: Protocol| ProtocolError::InvalidArgument {
+        message: format!("{protocol} replay since cursor is out of range"),
     };
-
-    let log_source = {
-        let state = host.state().read().await;
-        let session = state
-            .local_agents
-            .get(&request.agent_id)
-            .map(|context| &context.session)
-            .ok_or(ProtocolError::NoAgentFound)?;
-        ensure_agent_supports_protocol(session, request.agent_id, codex_io::CODEX_SDK_V1)?;
-        session.log_source().ok_or(ProtocolError::NoAgentFound)?
-    };
-
-    log_source
-        .subscribe_with_query(replay_query)
-        .await
-        .map(|(reader, _)| reader)
-        .ok_or(ProtocolError::NoAgentFound)
+    match request.protocol {
+        Protocol::ClaudePtyTranscriptV1 => {
+            let args = claude_io::decode_pty_transcript_v1_args(request.args.as_deref())?;
+            let query = match args.replay_query {
+                None => None,
+                Some(ClaudePtyTranscriptV1ReplayQuery::Tail { count }) => {
+                    Some(crate::agents::SequencedReplayQuery::Tail { count })
+                }
+                Some(ClaudePtyTranscriptV1ReplayQuery::Since { seq_id }) => {
+                    Some(crate::agents::SequencedReplayQuery::Since {
+                        seq: seq_id
+                            .checked_add(1)
+                            .ok_or_else(|| out_of_range(request.protocol))?,
+                    })
+                }
+            };
+            Ok((query, args.terminal_size))
+        }
+        Protocol::ClaudeSdkV1 => {
+            let args = match request.args.as_deref() {
+                Some(args) => {
+                    crate::protocol::wire::ClaudeSdkV1Args::decode(args).map_err(|error| {
+                        ProtocolError::InvalidArgument {
+                            message: format!("invalid ClaudeSdkV1Args: {error}"),
+                        }
+                    })?
+                }
+                None => crate::protocol::wire::ClaudeSdkV1Args::default(),
+            };
+            let query = match args.replay_query.and_then(|query| query.query) {
+                None => None,
+                Some(crate::protocol::wire::claude_sdk_v1_replay_query::Query::TailCount(
+                    count,
+                )) => Some(crate::agents::SequencedReplayQuery::Tail { count }),
+                Some(crate::protocol::wire::claude_sdk_v1_replay_query::Query::Since(seq)) => {
+                    Some(crate::agents::SequencedReplayQuery::Since {
+                        seq: seq
+                            .checked_add(1)
+                            .ok_or_else(|| out_of_range(request.protocol))?,
+                    })
+                }
+            };
+            Ok((query, None))
+        }
+        Protocol::CodexSdkV1 => {
+            let args = codex_io::decode_codex_sdk_v1_args(request.args.as_deref())?;
+            let query = match args.replay_query {
+                None => None,
+                Some(CodexSdkV1ReplayQuery::Tail { count }) => {
+                    Some(crate::agents::SequencedReplayQuery::Tail { count })
+                }
+                Some(CodexSdkV1ReplayQuery::Since { seq }) => {
+                    Some(crate::agents::SequencedReplayQuery::Since {
+                        seq: seq
+                            .checked_add(1)
+                            .ok_or_else(|| out_of_range(request.protocol))?,
+                    })
+                }
+            };
+            Ok((query, None))
+        }
+        Protocol::TerminalV1 | Protocol::TestEchoV1 => Err(ProtocolError::InvalidArgument {
+            message: format!("{} is not a structured protocol", request.protocol),
+        }),
+    }
 }
 
 pub(super) async fn send_session_input(
     host: &PtyAgentHost,
     request: SendInputRequest,
 ) -> Result<(), ProtocolError> {
-    match request.io_protocol.as_str() {
-        terminal_io::TERMINAL_V1 => {
-            send_raw_session_input(
-                host,
-                request.agent_id,
-                terminal_io::TERMINAL_V1,
-                request.event,
-            )
-            .await
+    match request.protocol {
+        Protocol::TerminalV1 => {
+            send_raw_session_input(host, request.agent_id, Protocol::TerminalV1, request.event)
+                .await
         }
-        claude_io::PTY_TRANSCRIPT_V1 => {
+        Protocol::ClaudePtyTranscriptV1 => {
             send_structured_session_input(host, request.agent_id, request.event).await
         }
-        codex_io::CODEX_SDK_V1 => {
+        Protocol::ClaudeSdkV1 => {
+            let _input = structured_input_target(host, request.agent_id, request.protocol).await?;
+            Err(ProtocolError::Unimplemented {
+                message: "Claude SDK input is not implemented yet".to_string(),
+            })
+        }
+        Protocol::CodexSdkV1 => {
             let SessionInputEvent::Input { input_id, payload } = request.event else {
                 return Err(ProtocolError::InvalidArgument {
                     message: format!(
                         "`{}` does not accept SendInput control events",
-                        codex_io::CODEX_SDK_V1
+                        request.protocol
                     ),
                 });
             };
             let input = codex_io::decode_codex_sdk_v1_input(&payload)?;
             #[cfg(unix)]
             {
-                let target = codex_input_target(host, request.agent_id).await?;
-                target.send(input_id, input).await;
-                Ok(())
+                let target =
+                    structured_input_target(host, request.agent_id, request.protocol).await?;
+                target
+                    .send(StructuredInputEvent::Codex { input_id, input })
+                    .await
             }
             #[cfg(not(unix))]
             {
@@ -394,28 +394,30 @@ pub(super) async fn send_session_input(
                 })
             }
         }
-        #[cfg(any(test, feature = "testnet"))]
-        TEST_ECHO_V1 => {
-            send_raw_session_input(host, request.agent_id, TEST_ECHO_V1, request.event).await
+        Protocol::TestEchoV1 => {
+            send_raw_session_input(host, request.agent_id, Protocol::TestEchoV1, request.event)
+                .await
         }
-        other => Err(ProtocolError::InvalidArgument {
-            message: format!(
-                "unsupported SendInput io_protocol `{other}`; expected `{}`, `{}`, or `{}`",
-                terminal_io::TERMINAL_V1,
-                claude_io::PTY_TRANSCRIPT_V1,
-                codex_io::CODEX_SDK_V1
-            ),
-        }),
     }
 }
 
 async fn send_raw_session_input(
     host: &PtyAgentHost,
     agent_id: Uuid,
-    io_protocol: &str,
+    protocol: Protocol,
     event: SessionInputEvent,
 ) -> Result<(), ProtocolError> {
-    let pty = agent_pty(host, agent_id, io_protocol).await?;
+    let pty = match raw_plane_target(host, agent_id, protocol).await? {
+        RawPtyTarget::Existing(pty) => pty,
+        #[cfg(unix)]
+        RawPtyTarget::Codex(target) => {
+            target
+                .active_handle()
+                .ok_or_else(|| ProtocolError::FailedPrecondition {
+                    message: "Codex raw PTY is not active; open terminal_v1 first".to_string(),
+                })?
+        }
+    };
     match event {
         SessionInputEvent::Input { payload, .. } => {
             pty.send_input(payload)
@@ -453,41 +455,19 @@ async fn send_structured_session_input(
         });
     };
     let input = claude_io::decode_pty_transcript_v1_input(&payload)?;
-    let target = structured_input_target(host, agent_id, claude_io::PTY_TRANSCRIPT_V1).await?;
+    let target = structured_input_target(host, agent_id, Protocol::ClaudePtyTranscriptV1).await?;
     target
-        .send(
-            input.expected_seq,
-            transcript_actions_to_pty_input_json(input.actions),
-        )
-        .await
-}
-
-async fn agent_pty(
-    host: &PtyAgentHost,
-    agent_id: Uuid,
-    io_protocol: &str,
-) -> Result<PtyHandle, ProtocolError> {
-    let state = host.state().read().await;
-    let session = state
-        .local_agents
-        .get(&agent_id)
-        .map(|context| &context.session)
-        .ok_or(ProtocolError::NoAgentFound)?;
-    ensure_agent_supports_protocol(session, agent_id, io_protocol)?;
-    session
-        .pty_handle()
-        .map_err(|error| ProtocolError::ServerError {
-            message: error.to_string(),
-        })?
-        .ok_or_else(|| ProtocolError::InvalidArgument {
-            message: format!("agent {agent_id} does not support raw PTY sessions"),
+        .send(StructuredInputEvent::ClaudePty {
+            client_seq: input.expected_seq,
+            payload: transcript_actions_to_pty_input_json(input.actions),
         })
+        .await
 }
 
 async fn structured_input_target(
     host: &PtyAgentHost,
     agent_id: Uuid,
-    io_protocol: &str,
+    protocol: Protocol,
 ) -> Result<Box<dyn StructuredInput>, ProtocolError> {
     let state = host.state().read().await;
     let session = state
@@ -495,48 +475,11 @@ async fn structured_input_target(
         .get(&agent_id)
         .map(|context| &context.session)
         .ok_or(ProtocolError::NoAgentFound)?;
-    ensure_agent_supports_protocol(session, agent_id, io_protocol)?;
-    session
-        .structured_input()
-        .ok_or_else(|| ProtocolError::ServerError {
-            message: "structured input not supported".to_string(),
-        })
-}
-
-#[cfg(unix)]
-async fn codex_input_target(
-    host: &PtyAgentHost,
-    agent_id: Uuid,
-) -> Result<Box<dyn CodexInput>, ProtocolError> {
-    let state = host.state().read().await;
-    let session = state
-        .local_agents
-        .get(&agent_id)
-        .map(|context| &context.session)
-        .ok_or(ProtocolError::NoAgentFound)?;
-    ensure_agent_supports_protocol(session, agent_id, codex_io::CODEX_SDK_V1)?;
-    session
-        .codex_input()
-        .ok_or_else(|| ProtocolError::ServerError {
-            message: "Codex input not supported".to_string(),
-        })
-}
-
-fn ensure_agent_supports_protocol(
-    session: &crate::agents::AgentSession,
-    agent_id: Uuid,
-    io_protocol: &str,
-) -> Result<(), ProtocolError> {
-    if session
-        .io_protocols()
-        .iter()
-        .any(|protocol| protocol == io_protocol)
-    {
-        Ok(())
-    } else {
-        Err(ProtocolError::InvalidArgument {
-            message: format!("agent {agent_id} does not support `{io_protocol}` sessions"),
-        })
+    match session.plane(protocol)? {
+        Plane::Structured { input, .. } => Ok(input),
+        Plane::Terminal(_) => Err(ProtocolError::ServerError {
+            message: format!("{protocol} resolved to a terminal plane"),
+        }),
     }
 }
 
@@ -711,14 +654,7 @@ impl SessionOutputReader {
     fn protocol(&self) -> Protocol {
         match self {
             Self::Raw(raw) => raw.protocol,
-            Self::Structured {
-                codec: StructuredCodec::Claude { .. },
-                ..
-            } => Protocol::ClaudePtyTranscriptV1,
-            Self::Structured {
-                codec: StructuredCodec::Codex,
-                ..
-            } => Protocol::CodexSdkV1,
+            Self::Structured { protocol, .. } => *protocol,
         }
     }
 }
@@ -738,46 +674,177 @@ async fn read_session_output_event(
                 message: "session output subscriber queue closed".to_string(),
             }),
         }),
-        SessionOutputReader::Structured { reader, codec } => {
-            reader.read_event().await.map(|event| match event {
-                BroadcastRead::ReplayItem(output) | BroadcastRead::LiveItem(output) => {
-                    structured_output_event(output, codec)
-                }
-                BroadcastRead::ReplayComplete => Ok(SubscribeSessionEvent::ReplayComplete {
-                    cursor: match codec {
-                        StructuredCodec::Claude { replay_cursor } => Some(replay_cursor.clone()),
-                        StructuredCodec::Codex => None,
-                    },
-                }),
-                BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
-                    message: "session output subscriber queue closed".to_string(),
-                }),
-            })
-        }
+        SessionOutputReader::Structured {
+            protocol,
+            reader,
+            replay_cursor,
+        } => reader.read_event().await.map(|event| match event {
+            BroadcastRead::ReplayItem(output) | BroadcastRead::LiveItem(output) => {
+                structured_output_event(output, *protocol)
+            }
+            BroadcastRead::ReplayComplete => Ok(SubscribeSessionEvent::ReplayComplete {
+                cursor: replay_cursor.clone(),
+            }),
+            BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
+                message: "session output subscriber queue closed".to_string(),
+            }),
+        }),
     }
 }
 
 fn structured_output_event(
     output: StructuredOutput,
-    codec: &StructuredCodec,
+    protocol: Protocol,
 ) -> Result<SubscribeSessionEvent, ProtocolError> {
     let payload_json =
         serde_json::to_vec(&output.payload).map_err(|error| ProtocolError::ServerError {
             message: format!("failed to encode transcript SubscribeSession output: {error}"),
         })?;
-    let payload = match codec {
-        StructuredCodec::Claude { .. } => {
+    let payload = match protocol {
+        Protocol::ClaudePtyTranscriptV1 => {
             claude_io::encode_pty_transcript_v1_output(ClaudePtyTranscriptV1Output {
                 seq_id: output.seq,
                 payload: payload_json,
             })
         }
-        StructuredCodec::Codex => codex_io::encode_codex_sdk_v1_output(CodexSdkV1Output {
+        Protocol::ClaudeSdkV1 => crate::protocol::wire::ClaudeSdkV1Output {
+            seq_id: output.seq,
+            payload: payload_json,
+        }
+        .encode_to_vec(),
+        Protocol::CodexSdkV1 => codex_io::encode_codex_sdk_v1_output(CodexSdkV1Output {
             seq: output.seq,
             payload: payload_json,
         }),
+        Protocol::TerminalV1 | Protocol::TestEchoV1 => {
+            return Err(ProtocolError::ServerError {
+                message: format!("{protocol} cannot encode structured output"),
+            });
+        }
     };
     Ok(SubscribeSessionEvent::Output { payload })
+}
+
+#[cfg(debug_assertions)]
+pub(super) async fn open_in_process_protocol_plane(
+    kind: crate::agents::AgentKind,
+    protocol: Protocol,
+) -> Result<(), ProtocolError> {
+    use crate::agents::{AgentSession, AgentType, ClaudeDriver, CreateAgentRequest, new_agent};
+
+    let host_id = Uuid::new_v4();
+    let config = crate::config::Config::default();
+    let route =
+        crate::agents::McpLaunchRoute::for_current_process(&config, host_id).map_err(|error| {
+            ProtocolError::ServerError {
+                message: error.to_string(),
+            }
+        })?;
+    let host = PtyAgentHost::new_with_mcp_launch_route(route).map_err(|error| {
+        ProtocolError::ServerError {
+            message: error.to_string(),
+        }
+    })?;
+    let agent_id = Uuid::new_v4();
+    let agent_type = match kind {
+        crate::agents::AgentKind::Claude { driver } => AgentType::Claude { driver },
+        crate::agents::AgentKind::Codex => AgentType::Codex {
+            model: None,
+            approval_policy: None,
+            sandbox_policy: None,
+            resume_thread_id: None,
+        },
+        crate::agents::AgentKind::TestAgent => AgentType::TestAgent {
+            command: "in-process-test-agent".to_string(),
+        },
+    };
+    let request = CreateAgentRequest {
+        agent_id,
+        host_id: None,
+        name: Some("typed-protocol-test".to_string()),
+        agent_type,
+        working_dir: std::env::temp_dir(),
+        terminal_size: None,
+        args: Vec::new(),
+        parent: None,
+        initial_prompt: None,
+    };
+    let deps = host.state().read().await.deps.clone();
+    let session: AgentSession = match kind {
+        crate::agents::AgentKind::Claude { .. } => {
+            let session = crate::agents::claude::ClaudeSession::for_protocol_tests(
+                &request,
+                deps.runtime_dir.clone(),
+                deps.claude_version_cache.clone(),
+                deps.mcp_launch_route.clone(),
+            );
+            Box::new(session)
+        }
+        crate::agents::AgentKind::Codex | crate::agents::AgentKind::TestAgent => {
+            new_agent(&request, &deps).map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })?
+        }
+    };
+    host.state()
+        .write()
+        .await
+        .insert_registered_local_agent(host_id, agent_id, session)
+        .map_err(|message| ProtocolError::ServerError { message })?;
+
+    let prepared = prepare_direct_session_subscription(
+        &SubscribeSessionRequest {
+            agent_id,
+            protocol,
+            args: None,
+        },
+        &host,
+    )
+    .await?;
+    drop(prepared);
+    if matches!(
+        kind,
+        crate::agents::AgentKind::Claude {
+            driver: ClaudeDriver::Sdk
+        }
+    ) {
+        debug_assert_eq!(protocol, Protocol::ClaudeSdkV1);
+    }
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub(super) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
+    use super::LocalAgentHost;
+    use crate::agents::{ClaudeDriver, CreateAgentConfig, CreateAgentRpcRequest};
+
+    let host_id = Uuid::new_v4();
+    let config = crate::config::Config::default();
+    let route =
+        crate::agents::McpLaunchRoute::for_current_process(&config, host_id).map_err(|error| {
+            ProtocolError::ServerError {
+                message: error.to_string(),
+            }
+        })?;
+    let host = PtyAgentHost::new_with_mcp_launch_route(route).map_err(|error| {
+        ProtocolError::ServerError {
+            message: error.to_string(),
+        }
+    })?;
+    host.create(CreateAgentRpcRequest {
+        agent_id: Uuid::new_v4(),
+        name: Some("sdk-placeholder".to_string()),
+        parent: None,
+        initial_prompt: None,
+        agent: CreateAgentConfig::Claude {
+            driver: ClaudeDriver::Sdk,
+            working_dir: std::env::temp_dir(),
+            args: Vec::new(),
+            terminal_size: None,
+        },
+    })
+    .await
+    .map(|_| ())
 }
 
 #[cfg(test)]
@@ -826,7 +893,7 @@ mod tests {
             &host,
             SubscribeSessionRequest {
                 agent_id,
-                io_protocol: codex_io::CODEX_SDK_V1.to_string(),
+                protocol: Protocol::CodexSdkV1,
                 args: None,
             },
         )
@@ -866,7 +933,7 @@ mod tests {
             &host,
             SubscribeSessionRequest {
                 agent_id,
-                io_protocol: terminal_io::TERMINAL_V1.to_string(),
+                protocol: Protocol::TerminalV1,
                 args: None,
             },
         )
@@ -876,11 +943,14 @@ mod tests {
 
         let pty = {
             let state = host.state().read().await;
-            state.local_agents[&agent_id]
+            let Plane::Terminal(RawPtyTarget::Existing(pty)) = state.local_agents[&agent_id]
                 .session
-                .pty_handle()
+                .plane(Protocol::TerminalV1)
                 .unwrap()
-                .unwrap()
+            else {
+                panic!("test-agent terminal plane should hold an existing PTY");
+            };
+            pty
         };
         let mut reader = pty.subscribe_with_query(None).await.unwrap();
         pty.send_input(b"still-live".to_vec()).await.unwrap();
@@ -913,7 +983,7 @@ mod tests {
                 raw_pty_subscription_with(
                     &subscription_host,
                     agent_id,
-                    terminal_io::TERMINAL_V1,
+                    Protocol::TerminalV1,
                     move |target| async move {
                         entered_tx
                             .send(())
@@ -974,7 +1044,7 @@ mod tests {
 
         let missing = timeout(
             Duration::from_secs(1),
-            raw_pty_subscription(&host, agent_id, terminal_io::TERMINAL_V1),
+            raw_pty_subscription(&host, agent_id, Protocol::TerminalV1),
         )
         .await
         .expect("missing-agent lookup timed out");
@@ -997,7 +1067,7 @@ mod tests {
         }
         let unsupported = timeout(
             Duration::from_secs(1),
-            raw_pty_subscription(&host, agent_id, "not_advertised_v1"),
+            raw_pty_subscription(&host, agent_id, Protocol::ClaudeSdkV1),
         )
         .await
         .expect("protocol validation timed out");
@@ -1006,10 +1076,10 @@ mod tests {
         };
         assert!(matches!(
             unsupported,
-            ProtocolError::InvalidArgument { message }
-                if message == format!(
-                    "agent {agent_id} does not support `not_advertised_v1` sessions"
-                )
+            ProtocolError::NotExposed {
+                kind: crate::agents::AgentKind::TestAgent,
+                protocol: Protocol::ClaudeSdkV1,
+            }
         ));
     }
 

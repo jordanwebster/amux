@@ -38,6 +38,19 @@ type TonicResult<T> = Result<tonic::Response<T>, tonic::Status>;
 pub(crate) type ResponseStream<T> =
     Pin<Box<dyn Stream<Item = Result<T, tonic::Status>> + Send + 'static>>;
 
+#[cfg(all(feature = "local-agents", debug_assertions))]
+pub(crate) async fn open_in_process_protocol_plane(
+    kind: crate::agents::AgentKind,
+    protocol: crate::agents::Protocol,
+) -> Result<(), ProtocolError> {
+    session_rpc::open_in_process_protocol_plane(kind, protocol).await
+}
+
+#[cfg(all(feature = "local-agents", debug_assertions))]
+pub(crate) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
+    session_rpc::create_sdk_in_process().await
+}
+
 /// The seam between the core and the local agent runtime.
 ///
 /// The runtime (sessions, PTY, hooks, lifecycle, suspend/resume) lives behind

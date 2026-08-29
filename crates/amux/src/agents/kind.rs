@@ -113,6 +113,21 @@ impl std::fmt::Display for Protocol {
     }
 }
 
+impl std::str::FromStr for Protocol {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "terminal_v1" => Ok(Self::TerminalV1),
+            "claude_pty_transcript_v1" => Ok(Self::ClaudePtyTranscriptV1),
+            "claude_sdk_v1" => Ok(Self::ClaudeSdkV1),
+            "codex_sdk_v1" => Ok(Self::CodexSdkV1),
+            "test_echo_v1" => Ok(Self::TestEchoV1),
+            other => Err(format!("unknown session protocol `{other}`")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

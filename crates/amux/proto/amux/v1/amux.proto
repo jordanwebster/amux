@@ -68,6 +68,20 @@ message ClaudeKind {
 message CodexKind {}
 message TestAgentKind {}
 
+enum AgentProtocol {
+  AGENT_PROTOCOL_UNSPECIFIED = 0;
+  AGENT_PROTOCOL_TERMINAL_V1 = 1;
+  AGENT_PROTOCOL_CLAUDE_PTY_TRANSCRIPT_V1 = 2;
+  AGENT_PROTOCOL_CLAUDE_SDK_V1 = 3;
+  AGENT_PROTOCOL_CODEX_SDK_V1 = 4;
+  AGENT_PROTOCOL_TEST_ECHO_V1 = 5;
+}
+
+message ProtocolNotExposed {
+  AgentKind kind = 1;
+  AgentProtocol protocol = 2;
+}
+
 message AgentRef {
   oneof identifier {
     bytes agent_id = 1;

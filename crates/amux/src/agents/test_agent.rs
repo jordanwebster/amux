@@ -19,12 +19,13 @@ use uuid::Uuid;
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agents::{
     AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CreateAgentRequest, Delivery,
-    DeliveryError, DeliveryLiveness, LocalAgentNameSource, SessionEvent, StopPolicy,
-    StructuredLogSource, TerminalSize,
+    DeliveryError, DeliveryLiveness, LocalAgentNameSource, Plane, Protocol, RawPtyTarget,
+    SessionEvent, StopPolicy, StructuredLogSource, TerminalSize,
 };
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
 use crate::debug::DebugView;
+use crate::protocol::ProtocolError;
 
 const STRUCTURED_LOG_RETENTION: usize = 1000;
 
@@ -191,10 +192,6 @@ impl TestAgentSession {
         }))
     }
 
-    pub(crate) fn log_source(&self) -> Option<StructuredLogSource> {
-        self.log_source.clone()
-    }
-
     /// Subscribe to structured log output with an optional query filter
     /// and return the matching seq.
     #[cfg(test)]
@@ -266,16 +263,27 @@ impl AgentBackend for TestAgentSession {
         AgentKind::TestAgent
     }
 
+    fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError> {
+        match protocol {
+            Protocol::TerminalV1 | Protocol::TestEchoV1 => self
+                .pty
+                .clone()
+                .map(RawPtyTarget::Existing)
+                .map(Plane::Terminal)
+                .ok_or_else(|| ProtocolError::FailedPrecondition {
+                    message: "test-agent PTY is not active".to_string(),
+                }),
+            Protocol::ClaudePtyTranscriptV1 | Protocol::ClaudeSdkV1 | Protocol::CodexSdkV1 => {
+                Err(ProtocolError::NotExposed {
+                    kind: self.kind(),
+                    protocol,
+                })
+            }
+        }
+    }
+
     fn parent(&self) -> Option<AgentParent> {
         self.parent
-    }
-
-    fn log_source(&self) -> Option<StructuredLogSource> {
-        TestAgentSession::log_source(self)
-    }
-
-    fn pty_handle(&self) -> Result<Option<PtyHandle>> {
-        Ok(self.pty.clone())
     }
 
     fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {

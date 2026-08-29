@@ -75,6 +75,7 @@ mod tests {
             "PairingIdentity",
             "AgentUpdated",
             "AgentKind",
+            "ProtocolNotExposed",
             "ClaudeKind",
             "CodexKind",
             "TestAgentKind",

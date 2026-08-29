@@ -83,6 +83,24 @@ pub use subscription::SubscriptionReporter;
 pub use transport::TransportError;
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 
+#[cfg(all(feature = "local-agents", debug_assertions))]
+#[doc(hidden)]
+/// Hermetic constructors used by protocol-boundary integration tests.
+pub mod typed_protocol_test_support {
+    use crate::{AgentKind, Protocol, ProtocolError};
+
+    pub async fn open_in_process_plane(
+        kind: AgentKind,
+        protocol: Protocol,
+    ) -> Result<(), ProtocolError> {
+        crate::services::open_in_process_protocol_plane(kind, protocol).await
+    }
+
+    pub async fn create_sdk() -> Result<(), ProtocolError> {
+        crate::services::create_sdk_in_process().await
+    }
+}
+
 pub mod claude_io {
     pub use crate::agents::claude::io::{
         ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input,

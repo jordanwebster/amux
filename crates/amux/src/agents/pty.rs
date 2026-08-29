@@ -3,10 +3,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(any(test, feature = "testnet"))]
+#[cfg(any(debug_assertions, test, feature = "testnet"))]
 use anyhow::anyhow;
 use anyhow::{Context, Result};
-#[cfg(any(test, feature = "testnet"))]
+#[cfg(any(debug_assertions, test, feature = "testnet"))]
 use tokio::sync::mpsc;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -20,7 +20,7 @@ const TERMINATE_GRACE: Duration = Duration::from_millis(250);
 #[derive(Clone)]
 enum HostedPty {
     Process(Arc<pty_host::PtyProcess>),
-    #[cfg(any(test, feature = "testnet"))]
+    #[cfg(any(debug_assertions, test, feature = "testnet"))]
     TestEcho(mpsc::Sender<Vec<u8>>),
 }
 
@@ -32,7 +32,7 @@ pub(crate) struct PtyHandle {
 }
 
 impl PtyHandle {
-    #[cfg(any(test, feature = "testnet"))]
+    #[cfg(any(debug_assertions, test, feature = "testnet"))]
     pub(crate) fn test_echo() -> Self {
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
         let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
@@ -54,7 +54,7 @@ impl PtyHandle {
     pub(crate) async fn send_input(&self, data: Vec<u8>) -> Result<()> {
         match &self.hosted {
             HostedPty::Process(process) => process.handle.write(&data).await.map_err(Into::into),
-            #[cfg(any(test, feature = "testnet"))]
+            #[cfg(any(debug_assertions, test, feature = "testnet"))]
             HostedPty::TestEcho(input_tx) => input_tx
                 .send(data)
                 .await
@@ -76,7 +76,7 @@ impl PtyHandle {
                 .handle
                 .resize(pty_size(size))
                 .context("failed to resize pty"),
-            #[cfg(any(test, feature = "testnet"))]
+            #[cfg(any(debug_assertions, test, feature = "testnet"))]
             HostedPty::TestEcho(_) => Ok(()),
         }
     }
@@ -98,7 +98,7 @@ impl PtyHandle {
                 )
                 .await;
             }
-            #[cfg(any(test, feature = "testnet"))]
+            #[cfg(any(debug_assertions, test, feature = "testnet"))]
             HostedPty::TestEcho(_) => {}
         }
         self.buffer.close().await;
@@ -112,7 +112,7 @@ impl PtyHandle {
                 .handle
                 .signal_process_group(signal)
                 .map_err(Into::into),
-            #[cfg(any(test, feature = "testnet"))]
+            #[cfg(any(debug_assertions, test, feature = "testnet"))]
             HostedPty::TestEcho(_) => Ok(()),
         }
     }

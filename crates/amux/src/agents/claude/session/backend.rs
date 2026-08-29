@@ -10,10 +10,11 @@ use super::ClaudeSession;
 use super::inbox::ClaudeDeliveryTarget;
 use crate::agents::{
     AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, HookEnvironment, HookError,
-    HookOutcome, LocalAgentNameSource, PtyHandle, SessionEvent, SpawnInheritance, StopPolicy,
-    StructuredInput, StructuredLogSource,
+    HookOutcome, LocalAgentNameSource, Plane, Protocol, RawPtyTarget, SessionEvent,
+    SpawnInheritance, StopPolicy,
 };
 use crate::debug::DebugView;
+use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
 
 #[async_trait]
@@ -67,6 +68,43 @@ impl AgentBackend for ClaudeSession {
         }
     }
 
+    fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError> {
+        match (self.driver, protocol) {
+            (crate::agents::ClaudeDriver::Pty, Protocol::TerminalV1) => self
+                .pty
+                .clone()
+                .map(RawPtyTarget::Existing)
+                .map(Plane::Terminal)
+                .ok_or_else(|| ProtocolError::FailedPrecondition {
+                    message: "Claude PTY is not active".to_string(),
+                }),
+            (crate::agents::ClaudeDriver::Pty, Protocol::ClaudePtyTranscriptV1)
+            | (crate::agents::ClaudeDriver::Sdk, Protocol::ClaudeSdkV1) => {
+                let log = ClaudeSession::log_source(self).ok_or_else(|| {
+                    ProtocolError::FailedPrecondition {
+                        message: format!("{protocol} output is not ready"),
+                    }
+                })?;
+                Ok(Plane::Structured {
+                    log,
+                    input: Box::new(self.structured_input_target()),
+                })
+            }
+            (crate::agents::ClaudeDriver::Pty, Protocol::ClaudeSdkV1)
+            | (crate::agents::ClaudeDriver::Pty, Protocol::CodexSdkV1)
+            | (crate::agents::ClaudeDriver::Pty, Protocol::TestEchoV1)
+            | (crate::agents::ClaudeDriver::Sdk, Protocol::TerminalV1)
+            | (crate::agents::ClaudeDriver::Sdk, Protocol::ClaudePtyTranscriptV1)
+            | (crate::agents::ClaudeDriver::Sdk, Protocol::CodexSdkV1)
+            | (crate::agents::ClaudeDriver::Sdk, Protocol::TestEchoV1) => {
+                Err(ProtocolError::NotExposed {
+                    kind: self.kind(),
+                    protocol,
+                })
+            }
+        }
+    }
+
     fn spawn_inheritance(&self) -> SpawnInheritance {
         SpawnInheritance {
             claude_permission_args: crate::agent_tools::claude_permission_args(&self.args),
@@ -78,20 +116,8 @@ impl AgentBackend for ClaudeSession {
         self.parent
     }
 
-    fn log_source(&self) -> Option<StructuredLogSource> {
-        ClaudeSession::log_source(self)
-    }
-
-    fn pty_handle(&self) -> Result<Option<PtyHandle>> {
-        Ok(self.pty.clone())
-    }
-
     fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
         Box::new(ClaudeDeliveryTarget::new(self))
-    }
-
-    fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {
-        Some(Box::new(self.structured_input_target()))
     }
 
     async fn handle_hook_payload(
@@ -149,7 +175,7 @@ mod tests {
     use super::*;
     use crate::agents::{
         AgentParent, AgentType, ClaudeDriver, CreateAgentRequest, Delivery, DeliveryLiveness,
-        HookEnvironment,
+        HookEnvironment, PtyHandle, StructuredLogSource,
     };
     use crate::envelope::{Envelope, EnvelopeKind, Sender};
 

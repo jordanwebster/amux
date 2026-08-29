@@ -26,11 +26,11 @@ use super::{
 #[cfg(feature = "testnet")]
 use crate::agents::claude::ClaudeSession;
 use crate::agents::{
-    Agent, AgentDeps, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
-    CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap, HookEnvironment, HookOutcome,
-    McpLaunchRoute, RenameAgentRequest, SendInputRequest, SessionCloseReason, SessionEvent,
-    SetAgentStatusRequest, SpawnInheritance, StopPolicy, SubscribeSessionRequest,
-    bootstrap_external_hook,
+    Agent, AgentDeps, AgentEvent, AgentSession, AgentType, ClaudeDriver, CreateAgentConfig,
+    CreateAgentRequest, CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap,
+    HookEnvironment, HookOutcome, McpLaunchRoute, RenameAgentRequest, SendInputRequest,
+    SessionCloseReason, SessionEvent, SetAgentStatusRequest, SpawnInheritance, StopPolicy,
+    SubscribeSessionRequest, bootstrap_external_hook,
 };
 use crate::envelope::{Envelope, EnvelopeKind};
 use crate::protocol::{ProtocolError, wire};
@@ -271,6 +271,16 @@ fn secure_codex_fallback_directory(path: &Path) -> io::Result<()> {
 impl LocalAgentHost for PtyAgentHost {
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError> {
         let req = create_rpc_to_domain_request(request.agent_id, request)?;
+        if matches!(
+            req.agent_type,
+            AgentType::Claude {
+                driver: ClaudeDriver::Sdk
+            }
+        ) {
+            return Err(ProtocolError::Unimplemented {
+                message: "Claude SDK agents are not implemented yet".to_string(),
+            });
+        }
         if matches!(req.agent_type, AgentType::Codex { .. }) {
             #[cfg(unix)]
             {

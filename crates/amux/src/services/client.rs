@@ -1064,11 +1064,8 @@ impl wire::client_service_server::ClientService for ClientService {
             let agent_request = wire::pb::SubscribeSessionRequest {
                 agent_id: agent.id.as_bytes().to_vec(),
                 protocol: Some(
-                    crate::agents::subscribe_protocol_to_agent_wire(
-                        protocol.as_str(),
-                        args.as_deref(),
-                    )
-                    .map_err(decode_remote_status)?,
+                    crate::agents::subscribe_protocol_to_agent_wire(protocol, args.as_deref())
+                        .map_err(decode_remote_status)?,
                 ),
             };
             return self
@@ -1079,7 +1076,7 @@ impl wire::client_service_server::ClientService for ClientService {
         let ctx = self.local_agent_service();
         let decoded = SubscribeSessionRequest {
             agent_id: agent.id,
-            io_protocol: protocol.to_string(),
+            protocol,
             args,
         };
         let stream = ctx
@@ -1105,9 +1102,8 @@ impl wire::client_service_server::ClientService for ClientService {
             crate::agents::send_input_event_from_client_wire(request.input_id, request.event)
                 .map_err(decode_remote_status)?;
         if !self.is_local_host(agent.host_id) {
-            let (input_id, event) =
-                crate::agents::send_input_event_to_agent_wire(protocol.as_str(), &event)
-                    .map_err(decode_remote_status)?;
+            let (input_id, event) = crate::agents::send_input_event_to_agent_wire(protocol, &event)
+                .map_err(decode_remote_status)?;
             let agent_request = wire::pb::SendInputRequest {
                 agent_id: agent.id.as_bytes().to_vec(),
                 input_id,
@@ -1119,7 +1115,7 @@ impl wire::client_service_server::ClientService for ClientService {
         let ctx = self.local_agent_service();
         ctx.send_input(SendInputRequest {
             agent_id: agent.id,
-            io_protocol: protocol.to_string(),
+            protocol,
             event,
         })
         .await
