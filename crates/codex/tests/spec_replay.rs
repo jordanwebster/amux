@@ -9,6 +9,7 @@ use semver::Version;
 #[tokio::test]
 async fn every_registered_specification_replays_strictly() {
     for entry in registry() {
+        eprintln!("replaying {}", entry.name);
         let recording = load_recording(&fixtures_root().join(entry.recording))
             .unwrap_or_else(|error| panic!("load {}: {error}", entry.name));
         assert!(

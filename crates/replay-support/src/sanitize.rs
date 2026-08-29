@@ -6,6 +6,7 @@ use crate::{IoEvent, RedactionSummary};
 
 const SECRET_PLACEHOLDER: &str = "<REDACTED>";
 const EMAIL_PLACEHOLDER: &str = "<REDACTED_EMAIL>";
+const IDENTIFIER_PLACEHOLDER: &str = "<REDACTED_IDENTIFIER>";
 const PATH_PLACEHOLDER: &str = "<MACHINE_PATH>";
 
 /// Capture-specific values that supplement the sanitizer's structural rules.
@@ -36,7 +37,12 @@ fn sanitize_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionS
     match value {
         Value::Object(object) => {
             for (key, value) in object {
-                if is_sensitive_key(key) && !value.is_null() {
+                if is_personal_identifier_key(key) && !value.is_null() {
+                    if value.as_str() != Some(IDENTIFIER_PLACEHOLDER) {
+                        *value = Value::String(IDENTIFIER_PLACEHOLDER.to_string());
+                        summary.personal_identifiers += 1;
+                    }
+                } else if is_sensitive_key(key) && !value.is_null() {
                     if value.as_str() != Some(SECRET_PLACEHOLDER) {
                         *value = Value::String(SECRET_PLACEHOLDER.to_string());
                         summary.secrets += 1;
@@ -56,6 +62,13 @@ fn sanitize_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionS
         Value::String(value) => *value = redact_text(value, rules, summary),
         _ => {}
     }
+}
+
+fn is_personal_identifier_key(key: &str) -> bool {
+    matches!(
+        normalized_key(key).as_str(),
+        "installationid" | "servername"
+    )
 }
 
 fn sanitize_path_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionSummary) {
@@ -301,7 +314,9 @@ mod tests {
                 "message": {
                     "note": "email alice@example.com and token exact-secret",
                     "paths": ["/srv/operator/project", "relative/file"]
-                }
+                },
+                "installationId": "2b93020b-f38b-47de-ae2f-d9885611b5f0",
+                "serverName": "Alices-Laptop.local"
             })),
             event(serde_json::json!({
                 "type": "system",
@@ -329,13 +344,14 @@ mod tests {
         assert!(!sanitized.contains("abc123"));
         assert!(sanitized.contains(SECRET_PLACEHOLDER));
         assert!(sanitized.contains(EMAIL_PLACEHOLDER));
+        assert!(sanitized.contains(IDENTIFIER_PLACEHOLDER));
         assert!(sanitized.contains(PATH_PLACEHOLDER));
         assert_eq!(
             summary,
             RedactionSummary {
                 secrets: 3,
                 machine_paths: 3,
-                personal_identifiers: 1,
+                personal_identifiers: 3,
             }
         );
 

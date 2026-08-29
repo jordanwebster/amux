@@ -97,14 +97,19 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
     let mut runtime = open_runtime(spec, source).await?;
     let initialization = runtime.codex.initialization_result().cloned();
     let scenario = run_scenario(spec.name, &runtime.codex, &runtime.model, &runtime.project).await;
-    runtime.codex.close().await;
-
-    if let Some(mut driver) = runtime.replay_driver.take()
-        && tokio::time::timeout(Duration::from_secs(5), &mut driver)
+    let replay_exhausted = if let Some(mut driver) = runtime.replay_driver.take() {
+        let exhausted = tokio::time::timeout(Duration::from_secs(5), &mut driver)
             .await
-            .is_err()
-    {
-        driver.abort();
+            .is_ok();
+        if !exhausted {
+            driver.abort();
+        }
+        exhausted
+    } else {
+        true
+    };
+    runtime.codex.close().await;
+    if !replay_exhausted {
         return Err(failure(
             spec,
             "strict replay driver did not reach exhaustion",
@@ -201,7 +206,7 @@ async fn open_runtime(spec: &SpecEntry, source: SpecSource) -> Result<Runtime, S
             Ok(Runtime {
                 codex,
                 model: CAPTURE_MODEL.to_string(),
-                project: PathBuf::from("[SCRATCH]/project"),
+                project: PathBuf::from("<MACHINE_PATH>"),
                 live_io: None,
                 replay_driver: Some(driver),
             })
@@ -290,20 +295,30 @@ async fn approval(
     project: &Path,
     allow: bool,
 ) -> Result<ScenarioReport, String> {
-    let thread = start_thread(codex, model, project).await?;
+    let mut config = thread_config(model, project);
+    config.sandbox = Some(SandboxMode::ReadOnly);
+    let thread = codex
+        .start_thread(config)
+        .await
+        .map_err(|error| format!("model {model}: thread/start failed: {error}"))?;
     let mut events = thread.events().await.map_err(stringify)?;
     let file = project.join(if allow {
         "approval-allowed.txt"
     } else {
         "approval-denied.txt"
     });
-    thread
-        .start_turn(format!(
+    let command = if project == Path::new("<MACHINE_PATH>") {
+        // The sanitizer replaces the complete path token, including its trailing
+        // punctuation, so replay must produce the canonical recorded sentence.
+        "Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE."
+            .to_string()
+    } else {
+        format!(
             "Run this exact shell command and no substitute: /usr/bin/touch {}. Then say DONE.",
             file.display()
-        ))
-        .await
-        .map_err(stringify)?;
+        )
+    };
+    thread.start_turn(command).await.map_err(stringify)?;
 
     loop {
         let event = next_event(&mut events, "approval request").await?;
@@ -367,6 +382,13 @@ async fn thread_list_and_resume(
 ) -> Result<ScenarioReport, String> {
     let thread = start_thread(codex, model, project).await?;
     let original = report(&thread);
+    let mut events = thread.events().await.map_err(stringify)?;
+    thread
+        .start_turn("Reply with exactly CODEX_SPEC_RESUME and nothing else.")
+        .await
+        .map_err(stringify)?;
+    wait_for_completion(&mut events).await?;
+    drop(events);
     codex
         .rename_thread(thread.id(), "codex-spec-resume")
         .await
@@ -466,7 +488,9 @@ async fn inject_idle(codex: &Codex, model: &str, project: &Path) -> Result<Scena
     let thread = start_thread(codex, model, project).await?;
     let mut events = thread.events().await.map_err(stringify)?;
     thread
-        .inject_items(vec![injected_item("CODEX_SPEC_INJECT_IDLE")])
+        .inject_items(vec![injected_item(
+            "Reply with exactly CODEX_SPEC_INJECT_IDLE and nothing else.",
+        )])
         .await
         .map_err(stringify)?;
     thread.start_empty_turn().await.map_err(stringify)?;
@@ -496,7 +520,9 @@ async fn inject_busy(codex: &Codex, model: &str, project: &Path) -> Result<Scena
         }
     }
     thread
-        .inject_items(vec![injected_item("CODEX_SPEC_INJECT_BUSY")])
+        .inject_items(vec![injected_item(
+            "Reply with exactly CODEX_SPEC_INJECT_BUSY and nothing else.",
+        )])
         .await
         .map_err(stringify)?;
     let messages = wait_for_completion(&mut events).await?;

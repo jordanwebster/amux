@@ -5269,3 +5269,10 @@ Daemon subscription and input demux no longer rebuild protocol strings or use a
 separate structured-codec discriminator, and typed refusal details survive the
 protobuf error boundary. Claude SDK creation remains an explicit
 `Unimplemented` operation until its driver lands.
+
+2026-08-29 — **Recorded Codex behavior as executable specifications.** Ten live
+app-server scenarios captured with codex-cli 0.150.1 and `gpt-5.6-luna` now
+cover initialization, turns, approvals, interruption, resume, dynamic tools,
+input injection and multi-message ordering. Their sanitized transcripts replay
+strictly, and host names plus per-installation identifiers are redacted at the
+shared corpus boundary.
