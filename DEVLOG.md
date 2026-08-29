@@ -5276,3 +5276,10 @@ cover initialization, turns, approvals, interruption, resume, dynamic tools,
 input injection and multi-message ordering. Their sanitized transcripts replay
 strictly, and host names plus per-installation identifiers are redacted at the
 shared corpus boundary.
+
+2026-08-29 — **Reduced Codex hosting to a provider-session adapter.** The amux
+backend now owns one `codex::Session` event stream and operates it through the
+restricted control handle, including approvals, injection, interruption and
+A2A delivery. Live reconnect and thread materialization remain host policy,
+while recorded sessions can enter the same backend through an injection seam;
+delivery and suspend-record construction have explicit adapter modules.

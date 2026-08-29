@@ -1,4 +1,4 @@
-//! Codex agent runtime backed by the shared app-server daemon.
+//! Codex adapter backed by the canonical provider crate.
 
 pub mod io;
 
@@ -9,7 +9,11 @@ pub const CODEX_RAW_THREAD_NOT_READY: &str =
     "Codex raw session is not ready: thread_id is not available yet";
 
 #[cfg(all(feature = "local-agents", unix))]
-mod session;
+mod backend;
+#[cfg(all(feature = "local-agents", unix))]
+mod delivery;
+#[cfg(all(feature = "local-agents", unix))]
+mod suspend;
 
 #[cfg(all(feature = "local-agents", unix))]
-pub(crate) use session::{CodexClient, CodexRawPtyLease, CodexRawPtyTarget, CodexSession};
+pub(crate) use backend::{CodexBackend, CodexClient, CodexRawPtyLease, CodexRawPtyTarget};

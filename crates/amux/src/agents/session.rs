@@ -29,7 +29,7 @@ use uuid::Uuid;
 use super::TestAgentSession;
 use super::claude::{ClaudeSession, ClaudeVersionCache};
 #[cfg(unix)]
-use super::codex::{CodexClient, CodexRawPtyTarget, CodexSession};
+use super::codex::{CodexBackend, CodexClient, CodexRawPtyTarget};
 use super::types::SpawnInheritance;
 use super::{
     AgentRecord, ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome,
@@ -404,7 +404,7 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
             driver: ClaudeDriver::Sdk,
         } => Err(anyhow::anyhow!("Claude SDK agents are not implemented yet")),
         #[cfg(unix)]
-        AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(
+        AgentType::Codex { .. } => Ok(Box::new(CodexBackend::new(
             req,
             deps.codex_client.clone(),
             deps.mcp_launch_route.clone(),
@@ -486,7 +486,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 parent,
                 initial_prompt: None,
             };
-            Box::new(CodexSession::from_suspended(
+            Box::new(CodexBackend::from_suspended(
                 &req,
                 deps.codex_client.clone(),
                 deps.mcp_launch_route.clone(),

@@ -1,3 +1,5 @@
+//! amux adapter for the canonical Codex provider session boundary.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -7,9 +9,10 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use codex::{
-    AccountReadParams, ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallResponse,
-    Error as CodexError, InputItem, RequestId, Thread, ThreadConfig, ThreadEvent, ThreadItem,
-    TurnEvent, connect_daemon, connect_socket, daemon_socket_path, ensure_daemon_with_fallback,
+    AccountReadParams, ApprovalResponse, Codex, CodexConfig, DaemonMode, Error as CodexError,
+    InputItem, RequestId, Session as ProviderSession, Thread, ThreadConfig, ThreadControl,
+    ThreadEvent, ThreadItem, TurnEvent, TurnInput, connect_daemon, connect_socket,
+    daemon_socket_path, ensure_daemon_with_fallback,
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
@@ -17,14 +20,21 @@ use tokio::task::AbortHandle;
 use uuid::Uuid;
 
 use super::CODEX_RAW_THREAD_NOT_READY;
+use super::delivery::CodexDeliveryTarget;
+#[cfg(test)]
+use super::delivery::codex_message_row;
 use super::io::CodexSdkV1Input;
+use super::suspend::CodexSuspendRecord;
 use crate::agent_tools;
+#[cfg(test)]
+use crate::agents::Delivery;
 use crate::agents::{
-    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CreateAgentRequest, Delivery,
-    DeliveryError, DeliveryLiveness, LocalAgentNameSource, McpLaunchRoute, Plane, Protocol,
-    PtyHandle, RawPtyTarget, SessionEvent, SpawnInheritance, StopPolicy, StructuredInput,
-    StructuredInputEvent, StructuredLogSource, spawn_pty_agent,
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CreateAgentRequest,
+    LocalAgentNameSource, McpLaunchRoute, Plane, Protocol, PtyHandle, RawPtyTarget, SessionEvent,
+    SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent, StructuredLogSource,
+    spawn_pty_agent,
 };
+#[cfg(test)]
 use crate::envelope::{Envelope, Sender};
 use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
@@ -244,21 +254,20 @@ enum PendingRequestKind {
 
 enum PendingReply {
     Approval(ApprovalResponse),
-    ToolCall { success: bool },
 }
 
 #[derive(Clone)]
-struct CodexLive {
-    client: Codex,
-    thread: Thread,
-    socket_path: PathBuf,
+pub(super) struct CodexLive {
+    client: Option<Codex>,
+    pub(super) control: ThreadControl,
+    socket_path: Option<PathBuf>,
 }
 
-struct CodexAttached {
+pub(super) struct CodexAttached {
     thread_id: String,
     daemon_mode: Option<String>,
-    live: Option<CodexLive>,
-    active_turn_id: Option<String>,
+    pub(super) live: Option<CodexLive>,
+    pub(super) active_turn_id: Option<String>,
     last_agent_messages: HashMap<String, String>,
     pending: HashMap<RequestId, PendingRequestKind>,
     applied_name_generation: Option<u64>,
@@ -329,7 +338,8 @@ impl CodexRawPtyPlan {
                 && attached
                     .live
                     .as_ref()
-                    .is_some_and(|live| live.socket_path == self.socket_path)
+                    .and_then(|live| live.socket_path.as_ref())
+                    == Some(&self.socket_path)
         })
     }
 }
@@ -379,9 +389,12 @@ impl CodexRawPtyTarget {
             let live = attached.live.as_ref().ok_or_else(|| {
                 anyhow!("Codex raw session is unavailable until reconnect succeeds")
             })?;
+            let socket_path = live.socket_path.clone().ok_or_else(|| {
+                anyhow!("Codex raw session is unavailable for an injected provider session")
+            })?;
             CodexRawPtyPlan {
                 thread_id: attached.thread_id.clone(),
-                socket_path: live.socket_path.clone(),
+                socket_path,
                 model: self.model.clone(),
                 approval_policy: self.approval_policy.clone(),
                 sandbox_policy: self.sandbox_policy.clone(),
@@ -498,11 +511,11 @@ impl Drop for CodexRawPtyLease {
     }
 }
 
-struct CodexRuntime {
+pub(super) struct CodexRuntime {
     desired_name: Option<String>,
     desired_name_generation: u64,
     name_reconciler_running: bool,
-    attached: Option<CodexAttached>,
+    pub(super) attached: Option<CodexAttached>,
     resume_daemon_mode: Option<String>,
     startup_error: Option<String>,
     ingest_abort: Option<AbortHandle>,
@@ -510,7 +523,7 @@ struct CodexRuntime {
     next_pty_epoch: u64,
 }
 
-pub(crate) struct CodexSession {
+pub(crate) struct CodexBackend {
     agent_id: Uuid,
     name: Option<String>,
     working_dir: PathBuf,
@@ -521,15 +534,16 @@ pub(crate) struct CodexSession {
     resume_thread_id: Option<String>,
     created_at: DateTime<Utc>,
     log_source: StructuredLogSource,
-    shared_client: Arc<CodexClient>,
-    mcp_launch_route: McpLaunchRoute,
+    shared_client: Option<Arc<CodexClient>>,
+    mcp_launch_route: Option<McpLaunchRoute>,
+    injected_session: Option<ProviderSession>,
     runtime: Arc<StdMutex<CodexRuntime>>,
     raw_pty_preparation: Arc<Mutex<()>>,
     stop_tx: watch::Sender<bool>,
     started: bool,
 }
 
-impl CodexSession {
+impl CodexBackend {
     pub(crate) fn new(
         req: &CreateAgentRequest,
         shared_client: Arc<CodexClient>,
@@ -547,7 +561,7 @@ impl CodexSession {
                 sandbox_policy.clone(),
                 resume_thread_id.clone(),
             ),
-            _ => unreachable!("CodexSession requires AgentType::Codex"),
+            _ => unreachable!("CodexBackend requires AgentType::Codex"),
         };
         let (stop_tx, _) = watch::channel(false);
         Self {
@@ -561,8 +575,9 @@ impl CodexSession {
             resume_thread_id,
             created_at: Utc::now(),
             log_source: codex_log_source(),
-            shared_client,
-            mcp_launch_route,
+            shared_client: Some(shared_client),
+            mcp_launch_route: Some(mcp_launch_route),
+            injected_session: None,
             runtime: Arc::new(StdMutex::new(CodexRuntime {
                 desired_name: req.name.clone(),
                 desired_name_generation: 0,
@@ -601,8 +616,51 @@ impl CodexSession {
         }
     }
 
+    #[allow(dead_code)] // Used by integration-level recording derivation.
+    pub(crate) fn with_session(
+        record: crate::agents::AgentRecord,
+        session: ProviderSession,
+    ) -> Self {
+        debug_assert_eq!(record.kind, AgentKind::Codex);
+        let thread_id = session.control.thread_id().to_string();
+        let (stop_tx, _) = watch::channel(false);
+        Self {
+            agent_id: record.id,
+            name: record.name.clone(),
+            working_dir: record.working_dir,
+            model: None,
+            approval_policy: None,
+            sandbox_policy: None,
+            parent: record.parent,
+            resume_thread_id: Some(thread_id),
+            created_at: record.created_at,
+            log_source: codex_log_source(),
+            shared_client: None,
+            mcp_launch_route: None,
+            injected_session: Some(session),
+            runtime: Arc::new(StdMutex::new(CodexRuntime {
+                desired_name: record.name,
+                desired_name_generation: 0,
+                name_reconciler_running: false,
+                attached: None,
+                resume_daemon_mode: None,
+                startup_error: None,
+                ingest_abort: None,
+                pty: None,
+                next_pty_epoch: 0,
+            })),
+            raw_pty_preparation: Arc::new(Mutex::new(())),
+            stop_tx,
+            started: false,
+        }
+    }
+
     fn thread_config(&self) -> Result<ThreadConfig> {
-        self.mcp_launch_route
+        let mcp_launch_route = self
+            .mcp_launch_route
+            .as_ref()
+            .context("injected Codex sessions do not have a managed MCP launch route")?;
+        mcp_launch_route
             .validate()
             .context("managed Codex MCP launch route is no longer valid")?;
         let cwd = self
@@ -622,13 +680,11 @@ impl CodexSession {
             .map(|value| serde_json::from_value(Value::String(value.clone())))
             .transpose()
             .context("invalid Codex sandbox_policy")?;
-        let executable = self
-            .mcp_launch_route
+        let executable = mcp_launch_route
             .executable()
             .to_str()
             .context("the running amux executable path is not valid UTF-8")?;
-        let socket_path = self
-            .mcp_launch_route
+        let socket_path = mcp_launch_route
             .socket_path()
             .to_str()
             .context("the daemon socket path is not valid UTF-8")?;
@@ -639,10 +695,10 @@ impl CodexSession {
             ),
             (
                 "AMUX_HOST_ID".to_string(),
-                Value::String(self.mcp_launch_route.host_id().to_string()),
+                Value::String(mcp_launch_route.host_id().to_string()),
             ),
         ]);
-        if let Some(config_path) = self.mcp_launch_route.config_path() {
+        if let Some(config_path) = mcp_launch_route.config_path() {
             environment.insert(
                 "AMUX_CONFIG".to_string(),
                 Value::String(
@@ -686,12 +742,31 @@ impl CodexSession {
     }
 
     fn start_task(
-        &self,
+        &mut self,
         stop_rx: watch::Receiver<bool>,
         event_tx: &tokio::sync::mpsc::Sender<SessionEvent>,
     ) -> Result<tokio::task::JoinHandle<()>> {
+        if let Some(session) = self.injected_session.take() {
+            let runtime = self.runtime.clone();
+            let handle = tokio::spawn(run_injected_session(
+                self.agent_id,
+                runtime.clone(),
+                self.log_source.clone(),
+                self.completion_sink(event_tx),
+                session,
+                stop_rx,
+            ));
+            runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .ingest_abort = Some(handle.abort_handle());
+            return Ok(handle);
+        }
         let thread_config = self.thread_config()?;
-        let shared_client = self.shared_client.clone();
+        let shared_client = self
+            .shared_client
+            .clone()
+            .context("live Codex backend has no shared client")?;
         let runtime = self.runtime.clone();
         let log_source = self.log_source.clone();
         let resume_thread_id = self.resume_thread_id.clone();
@@ -851,6 +926,61 @@ fn raw_tui_args(
     args
 }
 
+async fn run_injected_session(
+    _agent_id: Uuid,
+    runtime: Arc<StdMutex<CodexRuntime>>,
+    log_source: StructuredLogSource,
+    completion_sink: Option<CodexCompletionSink>,
+    session: ProviderSession,
+    mut stop_rx: watch::Receiver<bool>,
+) {
+    let ProviderSession {
+        mut events,
+        control,
+    } = session;
+    let thread_id = control.thread_id().to_string();
+    runtime
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .attached = Some(CodexAttached {
+        thread_id,
+        daemon_mode: None,
+        live: Some(CodexLive {
+            client: None,
+            control,
+            socket_path: None,
+        }),
+        active_turn_id: None,
+        last_agent_messages: HashMap::new(),
+        pending: HashMap::new(),
+        applied_name_generation: Some(0),
+    });
+    log_source.write(ready_row(false)).await;
+
+    let reason = loop {
+        tokio::select! {
+            changed = stop_rx.changed() => {
+                if changed.is_err() || *stop_rx.borrow() {
+                    break "session_stopped";
+                }
+            }
+            next = events.next() => match next {
+                Ok(Some(event)) => ingest_event(
+                    &runtime,
+                    &log_source,
+                    completion_sink.as_ref(),
+                    event,
+                ).await,
+                Ok(None) => break "connection_lost",
+                Err(CodexError::ThreadQueueOverflow(_)) => break "queue_overflow",
+                Err(_) => break "event_stream_error",
+            }
+        }
+    };
+    let pending = mark_disconnected(&runtime, None);
+    resolve_pending(&log_source, pending, reason).await;
+}
+
 async fn run_ingest_supervisor(
     agent_id: Uuid,
     shared_client: Arc<CodexClient>,
@@ -939,8 +1069,11 @@ async fn run_ingest_supervisor(
         // completed, or a successful resume authoritatively proved that an
         // ambiguous response had materialized it.
         thread_id = Some(id.clone());
-        let mut events = match thread.events().await {
-            Ok(events) => events,
+        let ProviderSession {
+            mut events,
+            control,
+        } = match codex::open(thread).await {
+            Ok(session) => session,
             Err(error) => {
                 let message = error.to_string();
                 let pending = mark_disconnected(&runtime, Some(message.clone()));
@@ -961,9 +1094,9 @@ async fn run_ingest_supervisor(
                 thread_id: id.clone(),
                 daemon_mode: Some(connection.mode.to_string()),
                 live: Some(CodexLive {
-                    client: connection.client.clone(),
-                    thread: thread.clone(),
-                    socket_path: connection.socket_path.clone(),
+                    client: Some(connection.client.clone()),
+                    control,
+                    socket_path: Some(connection.socket_path.clone()),
                 }),
                 active_turn_id: None,
                 last_agent_messages: HashMap::new(),
@@ -1202,7 +1335,10 @@ fn schedule_name_reconciliation(
     let should_start = {
         let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
         let pending = state.attached.as_ref().is_some_and(|attached| {
-            attached.live.is_some()
+            attached
+                .live
+                .as_ref()
+                .is_some_and(|live| live.client.is_some())
                 && attached.applied_name_generation != Some(state.desired_name_generation)
         });
         if pending && !state.name_reconciler_running {
@@ -1239,12 +1375,12 @@ async fn reconcile_thread_name(
                 state.name_reconciler_running = false;
                 return;
             }
-            let Some(live) = attached.live.as_ref() else {
+            let Some(client) = attached.live.as_ref().and_then(|live| live.client.as_ref()) else {
                 state.name_reconciler_running = false;
                 return;
             };
             (
-                live.client.clone(),
+                client.clone(),
                 attached.thread_id.clone(),
                 generation,
                 thread_name_for(desired_name.as_deref(), agent_id),
@@ -1346,7 +1482,10 @@ async fn wait_for_retry(stop_rx: &mut watch::Receiver<bool>, retry: usize) -> bo
 }
 
 /// Apply `update` to the attached thread state, if a thread is attached.
-fn update_attached(runtime: &StdMutex<CodexRuntime>, update: impl FnOnce(&mut CodexAttached)) {
+pub(super) fn update_attached(
+    runtime: &StdMutex<CodexRuntime>,
+    update: impl FnOnce(&mut CodexAttached),
+) {
     if let Some(attached) = runtime
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
@@ -1515,112 +1654,6 @@ struct CodexInputTarget {
     log_source: StructuredLogSource,
 }
 
-struct CodexDeliveryTarget {
-    runtime: Arc<StdMutex<CodexRuntime>>,
-    log_source: StructuredLogSource,
-}
-
-impl CodexDeliveryTarget {
-    fn live_and_active(&self) -> Result<(CodexLive, bool)> {
-        let state = self
-            .runtime
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let attached = state
-            .attached
-            .as_ref()
-            .ok_or_else(|| anyhow!("Codex thread is not attached"))?;
-        let live = attached
-            .live
-            .clone()
-            .ok_or_else(|| anyhow!("Codex thread is read-only until reconnect succeeds"))?;
-        Ok((live, attached.active_turn_id.is_some()))
-    }
-
-    async fn deliver_envelope(&self, envelope: &Envelope) -> Result<Delivery> {
-        let text = crate::envelope::format(envelope);
-        let (live, active) = self.live_and_active()?;
-        let item = json!({
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": text}],
-        });
-
-        let delivery = match live.thread.inject_items(vec![item]).await {
-            Ok(()) if active => Delivery::InjectQueued,
-            Ok(()) => {
-                let turn_id = live.thread.start_empty_turn().await?;
-                update_attached(&self.runtime, |attached| {
-                    attached.active_turn_id = Some(turn_id);
-                });
-                Delivery::InjectStarted
-            }
-            Err(inject_error) => {
-                tracing::warn!(
-                    %inject_error,
-                    envelope_id = %envelope.id,
-                    "Codex message injection failed; starting a visible turn"
-                );
-                let turn_id = live.thread.start_turn(text).await?;
-                update_attached(&self.runtime, |attached| {
-                    attached.active_turn_id = Some(turn_id);
-                });
-                Delivery::TurnStarted
-            }
-        };
-
-        self.log_source
-            .write(codex_message_row(envelope, delivery))
-            .await;
-        Ok(delivery)
-    }
-}
-
-#[async_trait]
-impl AgentDeliveryTarget for CodexDeliveryTarget {
-    fn liveness(&self) -> std::result::Result<DeliveryLiveness, DeliveryError> {
-        let state = self
-            .runtime
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        match state.attached.as_ref() {
-            Some(attached) if attached.live.is_some() => Ok(DeliveryLiveness::Live),
-            Some(_) => Ok(DeliveryLiveness::Pending(
-                "Codex thread is read-only until reconnect succeeds".to_string(),
-            )),
-            None => Ok(DeliveryLiveness::Pending(
-                "Codex thread is not attached".to_string(),
-            )),
-        }
-    }
-
-    async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
-        self.deliver_envelope(envelope)
-            .await
-            .map_err(|error| DeliveryError::Failed(error.to_string()))
-    }
-}
-
-fn codex_message_row(envelope: &Envelope, delivery: Delivery) -> Value {
-    let (from, from_id) = match &envelope.from {
-        Sender::Agent(agent) => (
-            format!("{}/{}", agent.name, agent.host_id),
-            Some(agent.agent_id),
-        ),
-        Sender::Human => ("human".to_string(), None),
-    };
-    json!({
-        "type": "amux.codex_message",
-        "id": envelope.id,
-        "kind": envelope.kind,
-        "from": from,
-        "from_id": from_id,
-        "context": envelope.context,
-        "text": envelope.text,
-        "delivery": delivery.carrier(),
-    })
-}
-
 impl CodexInputTarget {
     fn live(&self) -> Result<CodexLive> {
         self.runtime
@@ -1638,7 +1671,7 @@ impl CodexInputTarget {
                 let items: Vec<InputItem> = serde_json::from_slice(&input)
                     .context("Codex user_turn input must be JSON input items")?;
                 let live = self.live()?;
-                let turn_id = live.thread.start_turn(items).await?;
+                let turn_id = live.control.user_turn(TurnInput::Items(items)).await?;
                 update_attached(&self.runtime, |attached| {
                     attached.active_turn_id = Some(turn_id);
                 });
@@ -1648,7 +1681,10 @@ impl CodexInputTarget {
                 let items: Vec<InputItem> = serde_json::from_slice(&input)
                     .context("Codex steer input must be JSON input items")?;
                 let live = self.live()?;
-                let active = live.thread.steer(&turn_id, items).await?;
+                let active = live
+                    .control
+                    .steer(&turn_id, TurnInput::Items(items))
+                    .await?;
                 update_attached(&self.runtime, |attached| {
                     attached.active_turn_id = Some(active);
                 });
@@ -1679,7 +1715,7 @@ impl CodexInputTarget {
                     })?;
                     (live, interrupt_turn_id)
                 };
-                live.thread.interrupt(&interrupt_turn_id).await?;
+                live.control.interrupt(&interrupt_turn_id).await?;
                 Ok(())
             }
             CodexSdkV1Input::ApprovalDecision {
@@ -1706,12 +1742,9 @@ impl CodexInputTarget {
                             PendingReply::Approval(approval_response(&decision)?)
                         }
                         PendingRequestKind::ToolCall => {
-                            let success =
-                                matches!(decision.as_str(), "accept" | "acceptForSession");
-                            if !success && !matches!(decision.as_str(), "decline" | "cancel") {
-                                return Err(anyhow!("unsupported approval decision `{decision}`"));
-                            }
-                            PendingReply::ToolCall { success }
+                            return Err(anyhow!(
+                                "Codex dynamic tool calls cannot be answered through the provider session boundary"
+                            ));
                         }
                     };
                     let live = attached.live.clone().ok_or_else(|| {
@@ -1722,20 +1755,7 @@ impl CodexInputTarget {
                 };
                 let result = match reply {
                     PendingReply::Approval(response) => {
-                        live.thread
-                            .respond_approval(request_id.clone(), response)
-                            .await
-                    }
-                    PendingReply::ToolCall { success } => {
-                        live.thread
-                            .respond_tool_call(
-                                request_id.clone(),
-                                DynamicToolCallResponse {
-                                    content_items: Vec::new(),
-                                    success,
-                                },
-                            )
-                            .await
+                        live.control.approve(request_id.clone(), response).await
                     }
                 };
                 let reason = if result.is_ok() {
@@ -1791,7 +1811,7 @@ impl StructuredInput for CodexInputTarget {
 }
 
 #[async_trait]
-impl AgentBackend for CodexSession {
+impl AgentBackend for CodexBackend {
     fn agent_id(&self) -> Uuid {
         self.agent_id
     }
@@ -1908,10 +1928,10 @@ impl AgentBackend for CodexSession {
     }
 
     fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
-        Box::new(CodexDeliveryTarget {
-            runtime: self.runtime.clone(),
-            log_source: self.log_source.clone(),
-        })
+        Box::new(CodexDeliveryTarget::new(
+            self.runtime.clone(),
+            self.log_source.clone(),
+        ))
     }
 
     fn suspended_state(&self) -> Result<SuspendedAgent> {
@@ -1938,7 +1958,7 @@ impl AgentBackend for CodexSession {
                 .or_else(|| runtime.resume_daemon_mode.clone());
             (thread_id, daemon_mode)
         };
-        Ok(SuspendedAgent::Codex {
+        Ok(CodexSuspendRecord {
             agent_id: self.agent_id,
             name: self.name.clone(),
             working_dir: self.working_dir.clone(),
@@ -1949,8 +1969,8 @@ impl AgentBackend for CodexSession {
             daemon_mode,
             created_at: self.created_at,
             parent: self.parent,
-            working_on: None,
-        })
+        }
+        .into())
     }
 
     fn debug_json(&self, _verbose: bool) -> serde_json::Result<Value> {
@@ -2006,16 +2026,16 @@ mod tests {
         }
     }
 
-    fn session() -> CodexSession {
+    fn session() -> CodexBackend {
         let req = session_request();
-        CodexSession::new(
+        CodexBackend::new(
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
             crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(10)),
         )
     }
 
-    fn file_backed_session() -> (tempfile::TempDir, CodexSession, Value) {
+    fn file_backed_session() -> (tempfile::TempDir, CodexBackend, Value) {
         let temporary = tempfile::tempdir_in("/tmp").unwrap();
         let config_path = temporary.path().join("amux.yaml");
         std::fs::write(&config_path, "socket_path: daemon.sock\n").unwrap();
@@ -2030,7 +2050,7 @@ mod tests {
         )
         .unwrap();
         let request = session_request();
-        let session = CodexSession::new(
+        let session = CodexBackend::new(
             &request,
             Arc::new(CodexClient::new(temporary.path().join("codex.sock"))),
             route,
@@ -2070,12 +2090,12 @@ mod tests {
     fn managed_codex_fresh_and_suspended_sessions_keep_the_exact_mcp_route() {
         let request = session_request();
         let route = crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(12));
-        let fresh = CodexSession::new(
+        let fresh = CodexBackend::new(
             &request,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
             route.clone(),
         );
-        let suspended = CodexSession::from_suspended(
+        let suspended = CodexBackend::from_suspended(
             &request,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
             route.clone(),
@@ -2083,8 +2103,47 @@ mod tests {
             Utc::now(),
         );
 
-        assert_eq!(fresh.mcp_launch_route, route);
-        assert_eq!(suspended.mcp_launch_route, route);
+        assert_eq!(fresh.mcp_launch_route, Some(route.clone()));
+        assert_eq!(suspended.mcp_launch_route, Some(route));
+    }
+
+    #[tokio::test]
+    async fn injected_provider_session_uses_the_backend_ingest_boundary() {
+        let (client, mut reader, mut writer) = mock_codex().await;
+        let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
+        let provider = codex::open(thread).await.unwrap();
+        let record = crate::agents::AgentRecord {
+            id: Uuid::from_u128(91),
+            host_id: Uuid::from_u128(92),
+            name: Some("recorded-codex".into()),
+            command: "codex".into(),
+            working_dir: PathBuf::from("/recorded/project"),
+            kind: AgentKind::Codex,
+            readonly: false,
+            args: Vec::new(),
+            created_at: Utc::now(),
+            parent: None,
+            working_on: None,
+        };
+        let mut backend = CodexBackend::with_session(record, provider);
+        let (mut rows, count) = backend.log_source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(count, 0);
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
+        let ingest = backend.start(&event_tx).unwrap();
+
+        let row = tokio::time::timeout(Duration::from_secs(1), rows.read())
+            .await
+            .expect("injected session did not publish readiness")
+            .expect("injected session log closed");
+        assert_eq!(row.payload, json!({"type": "amux.codex_ready"}));
+        assert!(matches!(
+            backend.plane(Protocol::CodexSdkV1),
+            Ok(Plane::Structured { .. })
+        ));
+
+        backend.stop(StopPolicy::Interrupt).await;
+        let _ = ingest.await;
+        client.close().await;
     }
 
     #[test]
@@ -2114,7 +2173,12 @@ mod tests {
         assert_eq!(environment["AMUX_AGENT_ID"], session.agent_id.to_string());
         assert_eq!(
             environment["AMUX_HOST_ID"],
-            session.mcp_launch_route.host_id().to_string()
+            session
+                .mcp_launch_route
+                .as_ref()
+                .unwrap()
+                .host_id()
+                .to_string()
         );
     }
 
@@ -2344,7 +2408,7 @@ mod tests {
         (client, thread, driver)
     }
 
-    async fn assert_delivery_row(session: &CodexSession, delivery: Delivery) {
+    async fn assert_delivery_row(session: &CodexBackend, delivery: Delivery) {
         let (mut rows, count) = session
             .log_source
             .subscribe_with_query(None)
@@ -2370,7 +2434,7 @@ mod tests {
     async fn a2a_codex_dynamic_tool_requests_remain_generic_and_are_never_executed() {
         let (client, mut reader, mut writer) = mock_codex().await;
         let request = session_request();
-        let session = CodexSession::new(
+        let session = CodexBackend::new(
             &request,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
             crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(10)),
@@ -2390,8 +2454,7 @@ mod tests {
         );
         write_response(&mut writer, &request, thread_session("thread-1", None)).await;
         let thread = start.await.unwrap();
-        let mut events = thread.events().await.unwrap();
-        attach_runtime(&session.runtime, &client, &thread);
+        let mut events = attach_runtime(&session.runtime, &client, thread).await;
 
         writer
             .write_all(
@@ -2445,7 +2508,7 @@ mod tests {
         let (client, thread, driver) =
             start_delivery_replay("a2a_inject_idle.io.jsonl", &tagged).await;
         let session = session();
-        attach_runtime(&session.runtime, &client, &thread);
+        let _events = attach_runtime(&session.runtime, &client, thread).await;
 
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(2), session.deliver(&envelope))
@@ -2481,11 +2544,11 @@ mod tests {
         let (client, thread, driver) =
             start_delivery_replay("a2a_inject_busy.io.jsonl", &tagged).await;
         let session = session();
-        attach_runtime(&session.runtime, &client, &thread);
         let active_turn = thread
             .start_turn("Think carefully for a moment, then reply exactly C13_INITIAL.")
             .await
             .expect("initial turn/start replay failed");
+        let _events = attach_runtime(&session.runtime, &client, thread).await;
         update_attached(&session.runtime, |attached| {
             attached.active_turn_id = Some(active_turn.clone());
         });
@@ -2523,7 +2586,7 @@ mod tests {
         let (client, mut reader, mut writer) = mock_codex().await;
         let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
         let session = session();
-        attach_runtime(&session.runtime, &client, &thread);
+        let _events = attach_runtime(&session.runtime, &client, thread).await;
         let envelope = delivery_envelope();
         let tagged = crate::envelope::format(&envelope);
         let delivery = tokio::spawn({
@@ -2846,18 +2909,20 @@ mod tests {
     async fn resumed_thread_stays_attached_when_name_reconciliation_fails() {
         let (client, mut reader, mut writer) = mock_codex().await;
         let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
+        let ProviderSession { control, .. } = codex::open(thread).await.unwrap();
+        let thread_id = control.thread_id().to_string();
         let session = session();
         {
             let mut state = session.runtime.lock().unwrap();
             state.desired_name = Some("wanted".into());
             state.desired_name_generation = 1;
             state.attached = Some(CodexAttached {
-                thread_id: thread.id().into(),
+                thread_id,
                 daemon_mode: Some("test".into()),
                 live: Some(CodexLive {
-                    client: client.clone(),
-                    thread,
-                    socket_path: PathBuf::from("/tmp/missing-test-codex.sock"),
+                    client: Some(client.clone()),
+                    control,
+                    socket_path: Some(PathBuf::from("/tmp/missing-test-codex.sock")),
                 }),
                 active_turn_id: None,
                 last_agent_messages: HashMap::new(),
@@ -2945,20 +3010,23 @@ mod tests {
         }
         write_response(&mut writer, &first, json!({})).await;
         let materialized = materialize.await.unwrap();
+        let applied_name_generation = materialized.applied_name_generation;
+        let ProviderSession { control, .. } = codex::open(materialized.thread).await.unwrap();
+        let thread_id = control.thread_id().to_string();
         {
             let mut state = runtime.lock().unwrap();
             state.attached = Some(CodexAttached {
-                thread_id: materialized.thread.id().into(),
+                thread_id,
                 daemon_mode: Some("test".into()),
                 live: Some(CodexLive {
-                    client: client.clone(),
-                    thread: materialized.thread,
-                    socket_path: PathBuf::from("/tmp/test.sock"),
+                    client: Some(client.clone()),
+                    control,
+                    socket_path: Some(PathBuf::from("/tmp/test.sock")),
                 }),
                 active_turn_id: None,
                 last_agent_messages: HashMap::new(),
                 pending: HashMap::new(),
-                applied_name_generation: materialized.applied_name_generation,
+                applied_name_generation,
             });
         }
         schedule_name_reconciliation(Uuid::from_u128(1), &runtime, stop_tx.subscribe());
@@ -2984,17 +3052,19 @@ mod tests {
     async fn rapid_renames_are_serialized_and_clearing_restores_bootstrap_label() {
         let (client, mut reader, mut writer) = mock_codex().await;
         let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
+        let ProviderSession { control, .. } = codex::open(thread).await.unwrap();
+        let thread_id = control.thread_id().to_string();
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: Some("older".into()),
             desired_name_generation: 1,
             name_reconciler_running: false,
             attached: Some(CodexAttached {
-                thread_id: thread.id().into(),
+                thread_id,
                 daemon_mode: Some("test".into()),
                 live: Some(CodexLive {
-                    client: client.clone(),
-                    thread,
-                    socket_path: PathBuf::from("/tmp/test.sock"),
+                    client: Some(client.clone()),
+                    control,
+                    socket_path: Some(PathBuf::from("/tmp/test.sock")),
                 }),
                 active_turn_id: None,
                 last_agent_messages: HashMap::new(),
@@ -3392,7 +3462,7 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let session = CodexSession::new(
+        let session = CodexBackend::new(
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
             crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(11)),
@@ -3636,6 +3706,7 @@ mod tests {
         .await
         .unwrap();
         let thread = client.start_thread(ThreadConfig::default()).await.unwrap();
+        let ProviderSession { control, .. } = codex::open(thread).await.unwrap();
         let source = StructuredLogSource::new(4);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
@@ -3645,9 +3716,9 @@ mod tests {
                 thread_id: "thread-1".into(),
                 daemon_mode: Some("test".into()),
                 live: Some(CodexLive {
-                    client: client.clone(),
-                    thread,
-                    socket_path: PathBuf::from("/tmp/test-codex.sock"),
+                    client: Some(client.clone()),
+                    control,
+                    socket_path: Some(PathBuf::from("/tmp/test-codex.sock")),
                 }),
                 active_turn_id: None,
                 last_agent_messages: HashMap::new(),
@@ -3691,23 +3762,30 @@ mod tests {
         event
     }
 
-    fn attach_runtime(runtime: &Arc<StdMutex<CodexRuntime>>, client: &Codex, thread: &Thread) {
+    async fn attach_runtime(
+        runtime: &Arc<StdMutex<CodexRuntime>>,
+        client: &Codex,
+        thread: Thread,
+    ) -> codex::ThreadEventStream {
+        let ProviderSession { events, control } = codex::open(thread).await.unwrap();
+        let thread_id = control.thread_id().to_string();
         runtime
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .attached = Some(CodexAttached {
-            thread_id: thread.id().into(),
+            thread_id,
             daemon_mode: Some("replay".into()),
             live: Some(CodexLive {
-                client: client.clone(),
-                thread: thread.clone(),
-                socket_path: PathBuf::from("/tmp/test-codex.sock"),
+                client: Some(client.clone()),
+                control,
+                socket_path: Some(PathBuf::from("/tmp/test-codex.sock")),
             }),
             active_turn_id: None,
             last_agent_messages: HashMap::new(),
             pending: HashMap::new(),
             applied_name_generation: Some(0),
         });
+        events
     }
 
     #[tokio::test]
@@ -3758,7 +3836,6 @@ mod tests {
         .await
         .expect("thread/start replay timed out")
         .expect("thread/start replay failed");
-        let mut events = thread.events().await.expect("thread events");
 
         let mut session = session();
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(4);
@@ -3767,7 +3844,6 @@ mod tests {
             agent_id: Uuid::from_u128(2),
             host_id: Uuid::from_u128(3),
         });
-        attach_runtime(&session.runtime, &client, &thread);
         let source = StructuredLogSource::new(64);
         let completion_sink = session
             .completion_sink(&event_tx)
@@ -3779,6 +3855,7 @@ mod tests {
             )
             .await
             .expect("turn/start replay failed");
+        let mut events = attach_runtime(&session.runtime, &client, thread).await;
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 let event = events.next().await.expect("thread event").expect("event");
@@ -3895,7 +3972,6 @@ mod tests {
         .await
         .unwrap();
         let thread = client.start_thread(ThreadConfig::default()).await.unwrap();
-        let mut events = thread.events().await.unwrap();
         let source = StructuredLogSource::new(128);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
@@ -3908,7 +3984,7 @@ mod tests {
             pty: None,
             next_pty_epoch: 0,
         }));
-        attach_runtime(&runtime, &client, &thread);
+        let mut events = attach_runtime(&runtime, &client, thread).await;
         source.write(json!({"type": "amux.codex_ready"})).await;
         let target = CodexInputTarget {
             runtime: runtime.clone(),
@@ -3967,8 +4043,7 @@ mod tests {
             .resume_thread("thread-capture", ThreadConfig::default())
             .await
             .unwrap();
-        let mut resumed_events = resumed.events().await.unwrap();
-        attach_runtime(&runtime, &client, &resumed);
+        let mut resumed_events = attach_runtime(&runtime, &client, resumed).await;
         source.write(json!({"type": "amux.codex_ready"})).await;
         next_ingested(&mut resumed_events, &runtime, &source).await;
         source
