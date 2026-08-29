@@ -5138,3 +5138,11 @@ queued nothing. Five seconds was sized for the old meaning. Two is enough to
 cover scheduling noise, and it halves the worst case a wedged recipient can
 impose on a sender — or on a spawn, which pays this window after its readiness
 wait.
+
+2026-08-29 — **Made TUI colours semantic and terminal-aware.** The dark and
+light themes now resolve both truecolor and ANSI faces from one shared token
+vocabulary: background, text, muted, emphasis, accent, user surface, panel,
+focus, code, success, warning, error, added and removed diff foregrounds and
+backgrounds, diff context, diff metadata, and gutter. Renderers keep their
+existing style-method seam, while style-map tests can classify those semantic
+styles and flag unrecognized literal colours.

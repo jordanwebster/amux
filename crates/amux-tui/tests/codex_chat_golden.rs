@@ -2,7 +2,7 @@
 //! including a one-character-per-cell semantic style map.
 
 use amux_tui::view::{UiAction, ViewState};
-use amux_tui::{ChatView, FrameContext, Theme, render};
+use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
 use amux_ui::codex::{CodexCommand, CodexDecision};
 use amux_ui::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, OpId, ServerMsg, StreamCloseReason,
@@ -180,7 +180,10 @@ fn buffer_styles(buffer: &ratatui::buffer::Buffer) -> String {
 
 fn assert_surface(name: &str, model: &Model) {
     let height = if name == "streaming" { 50 } else { HEIGHT };
-    for (theme_name, theme) in [("dark", Theme::Dark), ("light", Theme::Light)] {
+    for (theme_name, theme) in [
+        ("dark", Theme::default()),
+        ("light", Theme::light(ColorMode::TrueColor)),
+    ] {
         let buffer = render_buffer(model, theme, height);
         let rendered = format!(
             "--- text ---\n{}--- styles ---\n{}",
@@ -437,7 +440,7 @@ fn object_approval_choices_stay_disabled_and_unknown_labels_are_safe() {
         ]
     });
     let network = model(network_rows);
-    let network_text = buffer_text(&render_buffer(&network, Theme::Dark, HEIGHT));
+    let network_text = buffer_text(&render_buffer(&network, Theme::default(), HEIGHT));
     assert!(network_text.contains("apply network policy change · allow crates.io"));
     assert!(
         network
@@ -458,7 +461,7 @@ fn object_approval_choices_stay_disabled_and_unknown_labels_are_safe() {
         ]
     });
     let unknown = model(unknown_rows);
-    let text = buffer_text(&render_buffer(&unknown, Theme::Dark, HEIGHT));
+    let text = buffer_text(&render_buffer(&unknown, Theme::default(), HEIGHT));
     let row = text
         .lines()
         .find(|line| line.contains("futurePolicy"))
@@ -524,7 +527,7 @@ fn working_line_advertises_only_the_actions_the_write_gate_allows() {
     assert!(!amux_ui::codex::allows_steer(&in_flight, agent_id()));
     assert!(amux_ui::codex::allows_interrupt(&in_flight, agent_id()));
 
-    let text = buffer_text(&render_buffer(&in_flight, Theme::Dark, HEIGHT));
+    let text = buffer_text(&render_buffer(&in_flight, Theme::default(), HEIGHT));
     assert!(
         text.contains("ctrl+x interrupt"),
         "the safe escape hatch stays visible: {text}"
@@ -561,7 +564,7 @@ fn refusing_approval_gates_remove_selection_and_confirm_affordances() {
             !amux_ui::codex::allows_answer(&model, agent_id()),
             "{name} approval must be gated"
         );
-        let text = buffer_text(&render_buffer(&model, Theme::Dark, HEIGHT));
+        let text = buffer_text(&render_buffer(&model, Theme::default(), HEIGHT));
         assert!(
             text.contains("approval — command"),
             "ask remains visible: {text}"

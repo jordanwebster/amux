@@ -11,7 +11,7 @@
 //! and review the diff like code.
 
 use amux_tui::view::{UiAction, ViewState};
-use amux_tui::{ChatView, FrameContext, Theme, render};
+use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
 use amux_ui::{
     Agent, AgentId, AgentParent, HostEntry, HostId, Model, Msg, ServerMsg, StreamEntry, StreamMsg,
     update,
@@ -440,7 +440,10 @@ fn buffer_styles(buffer: &ratatui::buffer::Buffer) -> String {
 /// Every surface is locked in both themes, text and styles together — the
 /// pairing the Codex goldens established.
 fn assert_surface(name: &str, model: &Model, view: &ViewState, height: u16) {
-    for (theme_name, theme) in [("dark", Theme::Dark), ("light", Theme::Light)] {
+    for (theme_name, theme) in [
+        ("dark", Theme::default()),
+        ("light", Theme::light(ColorMode::TrueColor)),
+    ] {
         let buffer = render_buffer(model, view, theme, height);
         let rendered = format!(
             "--- text ---\n{}--- styles ---\n{}",
@@ -462,7 +465,7 @@ fn assert_surface(name: &str, model: &Model, view: &ViewState, height: u16) {
 }
 
 fn header_of(model: &Model, view: &ViewState) -> String {
-    buffer_text(&render_buffer(model, view, Theme::Dark, HEIGHT))
+    buffer_text(&render_buffer(model, view, Theme::default(), HEIGHT))
         .lines()
         .nth(1)
         .expect("the header row")
@@ -617,7 +620,7 @@ fn a2a_header_marker_key_is_inert_outside_a_family() {
 /// The banner's row is the one under the header — read it there rather
 /// than by searching for the glyph, which an ask panel also wears.
 fn banner_of(model: &Model, view: &ViewState) -> Option<String> {
-    let frame = buffer_text(&render_buffer(model, view, Theme::Dark, HEIGHT));
+    let frame = buffer_text(&render_buffer(model, view, Theme::default(), HEIGHT));
     let row = frame.lines().nth(2)?.trim_matches(['│', ' ']).to_string();
     row.starts_with('⚠').then_some(row)
 }
@@ -810,7 +813,7 @@ fn a2a_banner_is_silent_about_the_agent_whose_chat_it_is() {
 fn a2a_banner_takes_a_row_from_the_feed_and_covers_nothing() {
     let model = family_model();
     let view = chat_on(&model, LEAD);
-    let frame = buffer_text(&render_buffer(&model, &view, Theme::Dark, HEIGHT));
+    let frame = buffer_text(&render_buffer(&model, &view, Theme::default(), HEIGHT));
     assert_eq!(frame.lines().count(), HEIGHT as usize);
     assert!(
         frame.contains("split the tunnel supervisor"),
@@ -898,7 +901,7 @@ fn conversation_model() -> Model {
 }
 
 fn frame_of(model: &Model, view: &ViewState) -> String {
-    buffer_text(&render_buffer(model, view, Theme::Dark, 40))
+    buffer_text(&render_buffer(model, view, Theme::default(), 40))
 }
 
 fn opened_reports(model: &Model, name: &str) -> ViewState {
@@ -1506,7 +1509,7 @@ fn a2a_inline_answer_in_a_codex_parents_chat() {
 fn help_overlay(model: &Model, name: &str) -> String {
     let mut view = chat_on(model, name);
     view.chat.as_mut().expect("an open chat").set_help(true);
-    buffer_text(&render_buffer(model, &view, Theme::Dark, 46))
+    buffer_text(&render_buffer(model, &view, Theme::default(), 46))
 }
 
 /// A parent with children below it, a completion to open and a child

@@ -286,51 +286,55 @@ mod tests {
 
     #[test]
     fn headings_stay_bold_and_keep_their_hashes() {
-        let rows = markdown_rows("## Approach", 40, Theme::Dark);
+        let rows = markdown_rows("## Approach", 40, Theme::default());
         assert_eq!(text_of(&rows), vec!["## Approach"]);
-        assert_eq!(rows[0][0].style, Theme::Dark.emphasis());
+        assert_eq!(rows[0][0].style, Theme::default().emphasis());
     }
 
     #[test]
     fn fenced_code_renders_verbatim_between_visible_fences() {
         let source = "```rust\nlet x  =  1;\n```";
-        let rows = markdown_rows(source, 40, Theme::Dark);
+        let rows = markdown_rows(source, 40, Theme::default());
         assert_eq!(text_of(&rows), vec!["```rust", "let x  =  1;", "```"]);
-        assert_eq!(rows[1][0].style, Theme::Dark.code());
-        assert_eq!(rows[0][0].style, Theme::Dark.muted());
+        assert_eq!(rows[1][0].style, Theme::default().code());
+        assert_eq!(rows[0][0].style, Theme::default().muted());
     }
 
     #[test]
     fn lists_wrap_with_a_hanging_indent() {
-        let rows = markdown_rows("- alpha beta gamma delta", 12, Theme::Dark);
+        let rows = markdown_rows("- alpha beta gamma delta", 12, Theme::default());
         assert_eq!(text_of(&rows), vec!["- alpha beta", "  gamma", "  delta"]);
     }
 
     #[test]
     fn inline_emphasis_and_code_style_their_runs() {
-        let rows = markdown_rows("mind the **gap** and `code` here", 60, Theme::Dark);
+        let rows = markdown_rows("mind the **gap** and `code` here", 60, Theme::default());
         assert_eq!(text_of(&rows), vec!["mind the gap and code here"]);
         let styles: Vec<Style> = rows[0].iter().map(|span| span.style).collect();
-        assert!(styles.contains(&Theme::Dark.emphasis()));
-        assert!(styles.contains(&Theme::Dark.code()));
+        assert!(styles.contains(&Theme::default().emphasis()));
+        assert!(styles.contains(&Theme::default().code()));
     }
 
     #[test]
     fn unmatched_markers_render_literally() {
-        let rows = markdown_rows("2 * 3 is six", 60, Theme::Dark);
+        let rows = markdown_rows("2 * 3 is six", 60, Theme::default());
         assert_eq!(text_of(&rows), vec!["2 * 3 is six"]);
     }
 
     #[test]
     fn tables_are_preformatted() {
         let source = "| a | b |\n|---|---|\n| 1 | 2 |";
-        let rows = markdown_rows(source, 40, Theme::Dark);
+        let rows = markdown_rows(source, 40, Theme::default());
         assert_eq!(text_of(&rows), vec!["| a | b |", "|---|---|", "| 1 | 2 |"]);
     }
 
     #[test]
     fn urls_never_split_when_they_fit_a_line() {
-        let rows = markdown_rows("see https://example.com/a/longer here", 30, Theme::Dark);
+        let rows = markdown_rows(
+            "see https://example.com/a/longer here",
+            30,
+            Theme::default(),
+        );
         assert_eq!(
             text_of(&rows),
             vec!["see", "https://example.com/a/longer", "here"]
@@ -339,7 +343,7 @@ mod tests {
 
     #[test]
     fn overlong_words_hard_split_as_the_last_resort() {
-        let rows = markdown_rows("abcdefghij", 4, Theme::Dark);
+        let rows = markdown_rows("abcdefghij", 4, Theme::default());
         assert_eq!(text_of(&rows), vec!["abcd", "efgh", "ij"]);
     }
 

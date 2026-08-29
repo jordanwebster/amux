@@ -2137,7 +2137,7 @@ mod tests {
         // The next frame states it: the docked panel renders the failure.
         let ctx = crate::render::FrameContext {
             viewport: VIEWPORT,
-            theme: crate::render::Theme::Dark,
+            theme: crate::render::Theme::default(),
             now: t(60),
         };
         let frame = crate::chat::claude::build_chat_lines(&model, &chat, &ctx);

@@ -10,7 +10,7 @@
 //! per theme — the surface the text goldens are blind to.
 
 use amux_tui::view::ViewState;
-use amux_tui::{ChatView, FrameContext, Theme, render};
+use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
 use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer};
 use amux_ui::claude::{DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
 use amux_ui::{
@@ -525,7 +525,14 @@ fn buffer_styles(buffer: &ratatui::buffer::Buffer) -> String {
 }
 
 fn render_frame(model: &Model, view: &ViewState, width: u16, height: u16, now: &str) -> String {
-    buffer_text(&render_buffer(model, view, width, height, Theme::Dark, now))
+    buffer_text(&render_buffer(
+        model,
+        view,
+        width,
+        height,
+        Theme::default(),
+        now,
+    ))
 }
 
 fn assert_golden(name: &str, rendered: &str) {
@@ -1184,7 +1191,7 @@ fn chat_ask_permission_edit_cjk() {
     ));
     let model = fold(msgs);
     let view = reconciled_view(&model);
-    let buffer = render_buffer(&model, &view, 80, 22, Theme::Dark, WORKING_NOW);
+    let buffer = render_buffer(&model, &view, 80, 22, Theme::default(), WORKING_NOW);
     for y in 0..22u16 {
         let symbol = buffer.cell((79, y)).expect("border cell").symbol();
         assert!(
@@ -1697,7 +1704,7 @@ fn diff_body_buffer(theme: Theme) -> ratatui::buffer::Buffer {
 fn chat_reader_diff_numbered() {
     assert_golden(
         "chat_reader_diff_numbered",
-        &buffer_text(&diff_body_buffer(Theme::Dark)),
+        &buffer_text(&diff_body_buffer(Theme::default())),
     );
 }
 
@@ -1705,7 +1712,7 @@ fn chat_reader_diff_numbered() {
 fn chat_reader_diff_styles_dark() {
     assert_golden(
         "chat_reader_diff_styles_dark",
-        &buffer_styles(&diff_body_buffer(Theme::Dark)),
+        &buffer_styles(&diff_body_buffer(Theme::default())),
     );
 }
 
@@ -1713,7 +1720,7 @@ fn chat_reader_diff_styles_dark() {
 fn chat_reader_diff_styles_light() {
     assert_golden(
         "chat_reader_diff_styles_light",
-        &buffer_styles(&diff_body_buffer(Theme::Light)),
+        &buffer_styles(&diff_body_buffer(Theme::light(ColorMode::TrueColor))),
     );
 }
 
@@ -1830,7 +1837,7 @@ fn chat_ask_permission_styles_dark() {
         &view,
         80,
         24,
-        Theme::Dark,
+        Theme::default(),
         WORKING_NOW,
     ));
     assert_golden("chat_ask_permission_styles_dark", &styles);
@@ -1845,7 +1852,7 @@ fn chat_ask_permission_styles_light() {
         &view,
         80,
         24,
-        Theme::Light,
+        Theme::light(ColorMode::TrueColor),
         WORKING_NOW,
     ));
     assert_golden("chat_ask_permission_styles_light", &styles);
@@ -1860,7 +1867,7 @@ fn chat_idle_styles_dark() {
         &chat_view(),
         80,
         20,
-        Theme::Dark,
+        Theme::default(),
         IDLE_NOW,
     ));
     assert_golden("chat_idle_styles_dark", &styles);
@@ -1873,7 +1880,7 @@ fn chat_idle_styles_light() {
         &chat_view(),
         80,
         20,
-        Theme::Light,
+        Theme::light(ColorMode::TrueColor),
         IDLE_NOW,
     ));
     assert_golden("chat_idle_styles_light", &styles);
@@ -1905,7 +1912,7 @@ fn chat_markdown_styles_dark() {
         &chat_view(),
         80,
         18,
-        Theme::Dark,
+        Theme::default(),
         IDLE_NOW,
     ));
     assert_golden("chat_markdown_styles_dark", &styles);
@@ -1937,7 +1944,7 @@ fn chat_markdown_styles_light() {
         &chat_view(),
         80,
         18,
-        Theme::Light,
+        Theme::light(ColorMode::TrueColor),
         IDLE_NOW,
     ));
     assert_golden("chat_markdown_styles_light", &styles);
@@ -1979,7 +1986,7 @@ fn chat_unicode_width() {
         .expect("chat open")
         .composer_mut()
         .insert_str("繁体字と emoji 🚀 のドラフト");
-    let buffer = render_buffer(&model, &view, 80, 22, Theme::Dark, IDLE_NOW);
+    let buffer = render_buffer(&model, &view, 80, 22, Theme::default(), IDLE_NOW);
     for y in 0..22u16 {
         let symbol = buffer.cell((79, y)).expect("border cell").symbol();
         assert!(
@@ -1995,13 +2002,20 @@ fn chat_unicode_width() {
 fn themes_agree_on_text_layout() {
     let model = idle_model();
     let view = chat_view();
-    let dark = buffer_text(&render_buffer(&model, &view, 80, 20, Theme::Dark, IDLE_NOW));
+    let dark = buffer_text(&render_buffer(
+        &model,
+        &view,
+        80,
+        20,
+        Theme::default(),
+        IDLE_NOW,
+    ));
     let light = buffer_text(&render_buffer(
         &model,
         &view,
         80,
         20,
-        Theme::Light,
+        Theme::light(ColorMode::TrueColor),
         IDLE_NOW,
     ));
     assert_eq!(dark, light);

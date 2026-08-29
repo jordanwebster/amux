@@ -14,6 +14,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+pub use crate::theme::Theme;
 use crate::view::{Mode, QuitGuard, ViewState, VisibleRow, visible_rows};
 
 // Column grid (0-indexed), from the aligned 68-column frames in the spec.
@@ -64,98 +65,6 @@ pub(crate) const INVARIANT_WARNING: &str = "⚠ internal consistency error — s
 /// Rows of chrome that are not list rows: two borders, filter line, spacer,
 /// banner/spacer, status line.
 const CHROME_ROWS: usize = 6;
-
-/// The two shipped themes, selecting a palette of semantic tokens
-/// (`docs/CHAT.md` deferred-decisions: background/panel, text/muted,
-/// semantic accents — palettes may multiply later, the vocabulary is
-/// fixed). Named ANSI colors resolve through the terminal's own palette,
-/// so most tokens are theme-independent; the variants differ only where
-/// the palette cannot help (muted and inline-code contrast on light
-/// backgrounds). The fleet renderer predates the tokens and keeps its
-/// fixed styles — they equal the Dark tokens byte-for-byte.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Theme {
-    #[default]
-    Dark,
-    Light,
-}
-
-impl Theme {
-    /// Body text.
-    pub(crate) fn text(self) -> Style {
-        Style::default()
-    }
-
-    /// De-emphasis: markers, rules, continuations, hints.
-    pub(crate) fn muted(self) -> Style {
-        match self {
-            // DIM renders poorly on many light backgrounds; a real grey
-            // keeps the de-emphasis readable there.
-            Theme::Dark => Style::default().add_modifier(Modifier::DIM),
-            Theme::Light => Style::default().fg(Color::DarkGray),
-        }
-    }
-
-    /// Markdown emphasis (bold) and headings.
-    pub(crate) fn emphasis(self) -> Style {
-        Style::default().add_modifier(Modifier::BOLD)
-    }
-
-    /// Markdown italic emphasis.
-    pub(crate) fn italic(self) -> Style {
-        Style::default().add_modifier(Modifier::ITALIC)
-    }
-
-    /// Inline code and fenced code blocks.
-    pub(crate) fn code(self) -> Style {
-        match self {
-            Theme::Dark => Style::default().fg(Color::Cyan),
-            Theme::Light => Style::default().fg(Color::Blue),
-        }
-    }
-
-    /// Success accents (`✔`).
-    pub(crate) fn ok(self) -> Style {
-        Style::default().fg(Color::Green)
-    }
-
-    /// Attention accents (`needs you`, question marks).
-    pub(crate) fn warn(self) -> Style {
-        Style::default().fg(Color::Yellow)
-    }
-
-    /// Failure accents (`✗`, api errors, failed sends).
-    pub(crate) fn error(self) -> Style {
-        Style::default().fg(Color::Red)
-    }
-
-    // The diff family (`docs/CHAT.md` §Diffs): four semantic tokens,
-    // foreground-only in V1 — theme-proof by construction (named ANSI
-    // resolves per palette). Background tints are the named additive
-    // extension; adding them later touches these tokens only. The V1
-    // values coincide with ok/error/text/muted, but the vocabulary is
-    // fixed separately so the palettes may diverge without a relayout.
-
-    /// `+` sign + added content foreground.
-    pub(crate) fn diff_added(self) -> Style {
-        Style::default().fg(Color::Green)
-    }
-
-    /// `-` sign + removed content foreground.
-    pub(crate) fn diff_removed(self) -> Style {
-        Style::default().fg(Color::Red)
-    }
-
-    /// Context content.
-    pub(crate) fn diff_context(self) -> Style {
-        Style::default()
-    }
-
-    /// Line numbers, `⋮` gaps, remainder lines, blank gutters.
-    pub(crate) fn diff_meta(self) -> Style {
-        self.muted()
-    }
-}
 
 /// The frame's environment: everything a render may depend on besides the
 /// Model and the ViewState.
@@ -1027,7 +936,7 @@ mod tests {
     fn context() -> FrameContext {
         FrameContext {
             viewport: (80, 24),
-            theme: Theme::Dark,
+            theme: Theme::default(),
             now: DateTime::<Utc>::from_timestamp(1_754_697_600, 0).expect("fixture time"),
         }
     }

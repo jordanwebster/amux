@@ -1641,7 +1641,7 @@ mod tests {
                 ]),
             ),
         ] {
-            let lines = mcp_startup_lines(&McpStartupEntry { servers }, 88, Theme::Dark);
+            let lines = mcp_startup_lines(&McpStartupEntry { servers }, 88, Theme::default());
             let rendered = lines[0]
                 .spans
                 .iter()

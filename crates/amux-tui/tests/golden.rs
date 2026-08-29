@@ -7,7 +7,7 @@
 //! and review the diff like code.
 
 use amux_tui::view::{Mode, UiAction, ViewState};
-use amux_tui::{FrameContext, Theme, render};
+use amux_tui::{ColorMode, FrameContext, Theme, render};
 use amux_ui::{
     Agent, AgentId, AgentParent, Command, DisconnectReason, HostEntry, HostId, Model, Msg, OpId,
     ServerMsg, StreamCloseReason, StreamEntry, StreamMsg, WorkingOn, update,
@@ -782,14 +782,26 @@ fn a2a_fleet_family_60col() {
 #[test]
 fn a2a_fleet_family_styles_dark() {
     let view = expanded_view(&["refactor-tunnels"]);
-    let styles = buffer_styles(&render_buffer(&family_model(), &view, 80, 14, Theme::Dark));
+    let styles = buffer_styles(&render_buffer(
+        &family_model(),
+        &view,
+        80,
+        14,
+        Theme::default(),
+    ));
     assert_golden("a2a_fleet_family_styles_dark", &styles);
 }
 
 #[test]
 fn a2a_fleet_family_styles_light() {
     let view = expanded_view(&["refactor-tunnels"]);
-    let styles = buffer_styles(&render_buffer(&family_model(), &view, 80, 14, Theme::Light));
+    let styles = buffer_styles(&render_buffer(
+        &family_model(),
+        &view,
+        80,
+        14,
+        Theme::light(ColorMode::TrueColor),
+    ));
     assert_golden("a2a_fleet_family_styles_light", &styles);
 }
 
@@ -1078,7 +1090,7 @@ fn a2a_delete_confirm_frame() {
 fn a2a_delete_confirm_styles() {
     let model = family_model();
     let view = confirming_delete(&model, "refactor-tunnels");
-    let styles = buffer_styles(&render_buffer(&model, &view, 80, 14, Theme::Dark));
+    let styles = buffer_styles(&render_buffer(&model, &view, 80, 14, Theme::default()));
     assert_golden("a2a_delete_confirm_styles", &styles);
 }
 

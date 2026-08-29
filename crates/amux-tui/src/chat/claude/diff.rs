@@ -399,7 +399,7 @@ mod tests {
             )],
             DiffNumbering::Absolute,
         );
-        let rows = text_of(&reader_rows(&a, 60, Theme::Dark));
+        let rows = text_of(&reader_rows(&a, 60, Theme::default()));
         assert_eq!(
             rows,
             vec![
@@ -421,7 +421,7 @@ mod tests {
             vec![hunk(1, 1, &[" ctx", "-old", "+new"])],
             DiffNumbering::None,
         );
-        let rows = text_of(&reader_rows(&a, 40, Theme::Dark));
+        let rows = text_of(&reader_rows(&a, 40, Theme::default()));
         assert_eq!(rows, vec!["│      ctx", "│    - old", "│    + new"]);
     }
 
@@ -433,7 +433,7 @@ mod tests {
             vec![hunk(9, 9, &["+abcdefghijklmnopqrstuvwxyz"])],
             DiffNumbering::Absolute,
         );
-        let rows = text_of(&reader_rows(&a, 20, Theme::Dark));
+        let rows = text_of(&reader_rows(&a, 20, Theme::default()));
         assert_eq!(rows[0], "│  9  + abcdefghijk");
         assert_eq!(rows[1], "│       lmnopqrstuv");
         assert_eq!(rows[2], "│       wxyz");
@@ -450,7 +450,7 @@ mod tests {
             ],
             DiffNumbering::Absolute,
         );
-        let rows = text_of(&reader_rows(&a, 40, Theme::Dark));
+        let rows = text_of(&reader_rows(&a, 40, Theme::default()));
         assert_eq!(
             rows,
             vec![
@@ -478,7 +478,7 @@ mod tests {
             )],
             DiffNumbering::None,
         );
-        let lines = diff_preview(&a, 60, Theme::Dark, 5, "f full diff");
+        let lines = diff_preview(&a, 60, Theme::default(), 5, "f full diff");
         let rows = text_of(&lines);
         assert_eq!(
             rows,
@@ -501,7 +501,7 @@ mod tests {
             vec![hunk(1, 1, &[" c1", "-old", "+new", " c2"])],
             DiffNumbering::None,
         );
-        let lines = diff_preview(&a, 60, Theme::Dark, PREVIEW_BUDGET, "f full diff");
+        let lines = diff_preview(&a, 60, Theme::default(), PREVIEW_BUDGET, "f full diff");
         assert_eq!(lines.len(), 4, "no remainder, nothing hidden");
     }
 
@@ -513,7 +513,7 @@ mod tests {
             vec![hunk(1, 1, &["-a", "+b"]), hunk(9, 9, &[" c", "+d", " e"])],
             DiffNumbering::None,
         );
-        let lines = diff_preview(&a, 60, Theme::Dark, PREVIEW_BUDGET, "f full diff");
+        let lines = diff_preview(&a, 60, Theme::default(), PREVIEW_BUDGET, "f full diff");
         let rows = text_of(&lines);
         assert_eq!(
             rows.last().expect("remainder"),
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn new_file_blocks_share_the_plus_gutter() {
         let content = "use std::time::Duration;\n\npub struct RetryPolicy;";
-        let panel = text_of(&new_file_preview(content, 60, Theme::Dark, 2));
+        let panel = text_of(&new_file_preview(content, 60, Theme::default(), 2));
         assert_eq!(
             panel,
             vec![
@@ -534,7 +534,7 @@ mod tests {
                 "│   ⋮  +2 more lines · f full view",
             ]
         );
-        let reader = text_of(&new_file_rows(content, 60, Theme::Dark, true));
+        let reader = text_of(&new_file_rows(content, 60, Theme::default(), true));
         assert_eq!(
             reader,
             vec![
@@ -553,7 +553,7 @@ mod tests {
             vec![hunk(1, 1, &["\\ No newline at end of file"])],
             DiffNumbering::Absolute,
         );
-        let rows = text_of(&reader_rows(&a, 60, Theme::Dark));
+        let rows = text_of(&reader_rows(&a, 60, Theme::default()));
         assert_eq!(rows, vec!["│      \\ No newline at end of file"]);
     }
 

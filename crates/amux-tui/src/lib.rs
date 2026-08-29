@@ -15,10 +15,12 @@ pub(crate) mod markdown;
 pub mod render;
 pub mod run;
 pub mod terminal;
+pub mod theme;
 pub mod view;
 
 pub use chat::ChatView;
-pub use render::{FrameContext, Theme, build_lines, render};
+pub use render::{FrameContext, build_lines, render};
 pub use run::{AttachReturn, TuiConfig, run_fleet};
 pub use terminal::{TerminalGuard, install_panic_hook, write_enter_chrome, write_restore};
+pub use theme::{ColorMode, ColorPreference, Theme, ThemeName, Token, Tokens, detect_color_mode};
 pub use view::{Mode, OpenMode, UiAction, ViewState};
