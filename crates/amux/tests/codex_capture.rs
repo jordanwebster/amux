@@ -44,9 +44,9 @@ fn main() -> anyhow::Result<()> {
 
     use amux::codex_io::CodexSdkV1Input;
     use anyhow::{Context, Result, anyhow, bail};
+    use codex::notification::TurnEvent;
+    use codex::{CodexConfig, DynamicToolCallResponse, ThreadConfig, connect};
     use codex_capture::{harness, redact, structure};
-    use codex_sdk::notification::TurnEvent;
-    use codex_sdk::{CodexConfig, DynamicToolCallResponse, ThreadConfig, connect};
     use harness::{
         Harness, RAW_TIMEOUT, READY_TIMEOUT, StructuredCapture, TURN_TIMEOUT,
         app_server_process_group, drain_raw, raw_until, subscribe_raw, terminate_process_group,

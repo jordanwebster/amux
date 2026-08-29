@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use codex_sdk::{
+use codex::{
     AccountReadParams, ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallResponse,
     Error as CodexError, InputItem, RequestId, Thread, ThreadConfig, ThreadEvent, ThreadItem,
     TurnEvent, connect_daemon, connect_socket, daemon_socket_path, ensure_daemon_with_fallback,
@@ -1140,7 +1140,7 @@ async fn materialize_started_thread(
                 };
             }
             Err(name_error) => {
-                // codex-sdk replaces the thread's event registration before
+                // codex replaces the thread's event registration before
                 // issuing resume, even when that RPC fails. Once attempted,
                 // a later naming success must resume again to obtain the live
                 // registration that will be published.
@@ -3682,7 +3682,7 @@ mod tests {
     }
 
     async fn next_ingested(
-        events: &mut codex_sdk::ThreadEventStream,
+        events: &mut codex::ThreadEventStream,
         runtime: &Arc<StdMutex<CodexRuntime>>,
         source: &StructuredLogSource,
     ) -> ThreadEvent {

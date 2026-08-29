@@ -185,7 +185,7 @@ fn codex_private_socket_path_with_fallback(
         Ok(adjacent)
     } else {
         // Move only the Codex runtime socket when the configured amux
-        // directory leaves too little room for codex-sdk's sun_path cap.
+        // directory leaves too little room for codex's sun_path cap.
         secure_codex_fallback_directory(fallback_dir)?;
         Ok(fallback_dir.join(file_name))
     }

@@ -1,3 +1,0 @@
-{"dir":"stdin","line":"{\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{\"experimentalApi\":true},\"clientInfo\":{\"name\":\"codex-rust-sdk\",\"title\":null,\"version\":\"0.1.0\"}}}","us":1}
-{"dir":"stdout","line":"{\"id\":1,\"result\":{\"userAgent\":\"codex-rust-sdk/0.118.0\",\"codexHome\":\"/Users/test/.codex\",\"platformFamily\":\"unix\",\"platformOs\":\"macos\"}}","us":2}
-{"dir":"stdin","line":"{\"method\":\"initialized\"}","us":3}

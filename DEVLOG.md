@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Codex now has a canonical provider boundary.** The former
+`codex-sdk` package is now the `codex` workspace crate. Its existing app-server
+surface remains available, while `Session` pairs the thread's single owned
+event stream with a restricted, cloneable control handle for turns, steering,
+interrupts, approvals, injected items, and identity. The reduced replay smoke
+recordings and credential-gated daemon probe are gone; the fake-socket framing
+test remains as the transport boundary.
+
+---
+
 2026-08-29 — **Flattened agent kinds at the MCP tool boundary.** The `agents`
 tool now reports `claude`, `codex`, or `test-agent` in its `kind` field, matching
 the vocabulary used to select an agent provider. Claude's `pty` or `sdk` detail

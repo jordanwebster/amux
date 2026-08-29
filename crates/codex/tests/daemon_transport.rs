@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use codex_sdk::{CodexConfig, ListThreadsParams, connect_socket};
+use codex::{CodexConfig, ListThreadsParams, connect_socket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::UnixListener;
 use tokio_tungstenite::accept_async;
