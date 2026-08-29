@@ -2,7 +2,11 @@
                                                                                                                         
 ▎   Find every retry ceiling and raise the default.                                                                     
                                                                                                                         
-  ⌄ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o expand                                                
+  ⌃ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o expand                                                
+  ✔ Grep "max_attempts"                                                                                                 
+  ✔ Read sync/config.rs                                                                                                 
+  ✔ Read sync/client.rs                                                                                                 
+  ✔ Grep "RetryConfig"                                                                                                  
                                                                                                                         
   ✎ Edit sync/config.rs · +3 −1                                                                                         
                                                                                                                         
@@ -11,10 +15,6 @@
     The ceiling now lives in one place, and the tests read it from there.                                               
                                                                                                                         
   ─ turn · 27s ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
                                                                                                                         
                                                                                                                         
                                                                                                                         

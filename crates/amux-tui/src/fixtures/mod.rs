@@ -201,10 +201,20 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::ComponentGalleryCodex => codex_fixture(gallery::codex_gallery_rows()),
         // Both halves of the pair are one transcript. Collapsed is what a
         // run looks like on arrival; expanded is the same screen with the
-        // reader having opened the first run, which the feed viewport will
-        // carry once runs can be toggled.
-        NamedState::ExplorationCollapsed | NamedState::ExplorationExpanded => {
-            claude_fixture(gallery::exploration_rows())
+        // first run present in the feed viewport's expansion set.
+        NamedState::ExplorationCollapsed => claude_fixture(gallery::exploration_rows()),
+        NamedState::ExplorationExpanded => {
+            let mut fixture = claude_fixture(gallery::exploration_rows());
+            let chat = fixture.view.chat.as_mut().expect("Claude chat open");
+            let run = crate::chat::claude::runs::fold_runs(&fixture.model, chat.agent)
+                .into_iter()
+                .find_map(|item| match item {
+                    crate::chat::claude::runs::ClaudeItem::Run { key, .. } => Some(key),
+                    crate::chat::claude::runs::ClaudeItem::Entry(_) => None,
+                })
+                .expect("exploration fixture has a folded run");
+            chat.viewport.expanded.insert(run);
+            fixture
         }
     }
 }

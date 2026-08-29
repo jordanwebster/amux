@@ -142,3 +142,25 @@ fn gallery_style_maps_lock_surfaces_and_diff_rows() {
         changed_rows_have_numbered_gutters(&codex, &format!("Codex {theme_name} gallery"));
     }
 }
+
+#[test]
+fn exploration_pair_expands_members_in_order_and_keeps_the_edit_visible() {
+    let theme = Theme::dark(ColorMode::TrueColor);
+    let collapsed = capture(NamedState::ExplorationCollapsed, theme).text;
+    let expanded = capture(NamedState::ExplorationExpanded, theme).text;
+
+    assert!(!collapsed.contains("Grep \"max_attempts\""));
+    let grep = expanded
+        .find("Grep \"max_attempts\"")
+        .expect("first member");
+    let config = expanded.find("Read sync/config.rs").expect("second member");
+    let client = expanded.find("Read sync/client.rs").expect("third member");
+    let retry = expanded
+        .find("Grep \"RetryConfig\"")
+        .expect("fourth member");
+    assert!(grep < config && config < client && client < retry);
+
+    for frame in [&collapsed, &expanded] {
+        assert!(frame.contains("Edit sync/config.rs · +3 −1"));
+    }
+}

@@ -260,21 +260,28 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_splits_read_edit_read_into_entries() {
-        let model = model(vec![
-            read(1, "a.rs"),
-            tool_row(2, "Edit", json!({"file_path": "a.rs"})),
-            read(3, "b.rs"),
-        ]);
+    fn consequential_tools_split_exploration_runs() {
+        for (name, input) in [
+            ("Edit", json!({"file_path": "a.rs"})),
+            ("Write", json!({"file_path": "a.rs"})),
+            ("Bash", json!({"command": "cargo test"})),
+        ] {
+            let model = model(vec![
+                read(1, "a.rs"),
+                tool_row(2, name, input),
+                read(3, "b.rs"),
+            ]);
 
-        assert_eq!(
-            fold_runs(&model, agent_id()),
-            vec![
-                ClaudeItem::Entry(0),
-                ClaudeItem::Entry(1),
-                ClaudeItem::Entry(2),
-            ]
-        );
+            assert_eq!(
+                fold_runs(&model, agent_id()),
+                vec![
+                    ClaudeItem::Entry(0),
+                    ClaudeItem::Entry(1),
+                    ClaudeItem::Entry(2),
+                ],
+                "{name} remains outside exploration runs"
+            );
+        }
     }
 
     #[test]

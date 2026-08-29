@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use frame::{FeedMetrics, FrameSpacing, PaintedBlock, compose_chat_frame, feed_metrics};
 use ratatui::text::Line;
-use viewport::{FeedViewport, apply_scroll, move_focus};
+use viewport::{FeedViewport, apply_scroll, move_focus, toggle_focused_run};
 
 use crate::composer::Composer;
 use crate::render::{FrameContext, Theme};
@@ -275,6 +275,16 @@ pub fn handle_chat_key(
             KeyCode::Char('y') => {
                 chat.consume_shared_leader();
                 return chat.copy_text().map(UiAction::CopyToClipboard);
+            }
+            KeyCode::Char('o') => {
+                chat.consume_shared_leader();
+                let cached = chat.feed_metrics.get_mut();
+                let blocks = cached
+                    .as_ref()
+                    .map(|cached| cached.blocks.as_slice())
+                    .unwrap_or_default();
+                toggle_focused_run(&mut chat.viewport, blocks);
+                return None;
             }
             _ => {}
         }
@@ -720,6 +730,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{AgentChatView, ChatView, FeedScroll, build_chat_lines, entry_watermark};
+    use crate::chat::blocks::RunKey;
     use crate::chat::frame::{BlockKey, PaintedBlock};
     use crate::render::{FrameContext, INVARIANT_WARNING, Theme, str_width};
     use crate::view::{UiAction, ViewState, visible_rows};
@@ -1000,6 +1011,30 @@ mod tests {
                 "{protocol:?} copies focused block"
             );
         }
+    }
+
+    #[test]
+    fn leader_o_toggles_the_focused_exploration_run() {
+        let (model, agent) = model_with_protocol(amux_ui::claude::PROTOCOL);
+        let mut chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat opens");
+        seed_focus_cache(&mut chat);
+        let run = RunKey(2);
+        chat.feed_metrics
+            .get_mut()
+            .as_mut()
+            .expect("seeded cache")
+            .blocks[1]
+            .run = Some(run);
+        chat.viewport.focus = Some(BlockKey(2));
+
+        assert_eq!(leader_chat(&mut chat, &model, 'o'), None);
+        assert_eq!(
+            chat.viewport.expanded,
+            std::collections::BTreeSet::from([run])
+        );
+
+        assert_eq!(leader_chat(&mut chat, &model, 'o'), None);
+        assert!(chat.viewport.expanded.is_empty());
     }
 
     #[test]

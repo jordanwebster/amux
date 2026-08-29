@@ -98,7 +98,7 @@ pub(crate) fn claude_frame_parts(
             blocks: if loading {
                 Vec::new()
             } else {
-                feed_blocks(model, chat, theme, width)
+                feed_blocks(model, chat, viewport, theme, width)
             },
             history_truncated: model
                 .claude(chat.agent)
@@ -517,7 +517,13 @@ fn footer_line(
 /// Every feed block, in file order, echoes last (B1). Consecutive
 /// read/search entries fold into one exploration run first, so the feed
 /// shows what the agent did rather than every step it took to do it.
-fn feed_blocks(model: &Model, chat: &View, theme: Theme, width: usize) -> Vec<PaintedBlock> {
+fn feed_blocks(
+    model: &Model,
+    chat: &View,
+    viewport: &FeedViewport,
+    theme: Theme,
+    width: usize,
+) -> Vec<PaintedBlock> {
     let agent = chat.agent;
     let Some(layer) = model.claude(agent) else {
         return Vec::new();
@@ -553,7 +559,7 @@ fn feed_blocks(model: &Model, chat: &View, theme: Theme, width: usize) -> Vec<Pa
                     key,
                     &summary,
                     &painted,
-                    false,
+                    viewport.expanded.contains(&key),
                     &hint,
                     theme,
                     width,

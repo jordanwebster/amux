@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Exploration runs open at the focused block.** Claude's
+native feed fold still groups only consecutive reads and searches; edits,
+writes, commands, and every other consequential entry remain independent
+blocks. The shared viewport now carries the open run keys, and leader-o
+toggles only the run metadata attached to the focused painted block. A stale
+focus or run key after the model changes is inert.
+
+The Claude adapter passes each run's open state to the exploration painter,
+so an open run shows its members in transcript order while the closed form
+stays a single summary. The paint-cache contract now proves through its
+counters that changing one run's open flag repaints that block and reuses its
+neighbours.
+
+---
+
 2026-08-29 — **Local QA evidence stays out of repository history.** The shared
 frame review remains available in the ignored `.autopilot/` workspace state,
 but is no longer tracked. Both `.autopilot/` and `.handoff/` are deliberately

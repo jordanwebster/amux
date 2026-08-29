@@ -158,7 +158,6 @@ fn set_focus_top(viewport: &mut FeedViewport, top_line: usize, max_top: usize, w
 }
 
 /// Toggle expansion for the run owned by the focused painted block.
-#[allow(dead_code)]
 pub(crate) fn toggle_focused_run(viewport: &mut FeedViewport, blocks: &[PaintedBlock]) -> bool {
     let Some(focused) = viewport.focus else {
         return false;
@@ -303,5 +302,23 @@ mod tests {
         assert!(viewport.expanded.contains(&run));
         assert!(toggle_focused_run(&mut viewport, &blocks));
         assert!(!viewport.expanded.contains(&run));
+    }
+
+    #[test]
+    fn stale_exploration_run_keys_are_ignored_against_current_blocks() {
+        let stale = RunKey(11);
+        let current = RunKey(12);
+        let blocks = vec![PaintedBlock {
+            key: BlockKey(8),
+            lines: Vec::new(),
+            copy_text: String::new(),
+            run: Some(current),
+        }];
+        let mut viewport = FeedViewport::following();
+        viewport.focus = Some(BlockKey(7));
+        viewport.expanded.insert(stale);
+
+        assert!(!toggle_focused_run(&mut viewport, &blocks));
+        assert_eq!(viewport.expanded, BTreeSet::from([stale]));
     }
 }

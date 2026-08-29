@@ -893,6 +893,33 @@ mod tests {
     }
 
     #[test]
+    fn cache_repaints_only_the_toggled_exploration_block() {
+        let mut cache = PaintCache::default();
+        for value in 1..=3 {
+            let key = BlockKey(value);
+            cache.get_or_paint(key, &value, 80, Theme::default(), false, || {
+                paint(key, "collapsed")
+            });
+        }
+
+        cache.reset_stats();
+        for value in 1..=3 {
+            let key = BlockKey(value);
+            let expanded = value == 2;
+            cache.get_or_paint(key, &value, 80, Theme::default(), expanded, || {
+                paint(key, "expanded")
+            });
+        }
+        assert_eq!(
+            cache.stats(),
+            PaintStats {
+                painted: 1,
+                reused: 2
+            }
+        );
+    }
+
+    #[test]
     fn cache_retain_drops_only_stale_keys() {
         let mut cache = PaintCache::default();
         for value in 1..=3 {
