@@ -104,6 +104,7 @@ dependencies = [
 name = "amux-tui"
 version = "0.4.0"
 dependencies = [
+ "amux-tui",
  "amux-ui",
  "anyhow",
  "chrono",

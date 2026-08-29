@@ -10,6 +10,8 @@
 pub(crate) mod bindings;
 pub mod chat;
 pub mod composer;
+#[cfg(feature = "fixtures")]
+pub mod fixtures;
 pub mod keys;
 pub(crate) mod markdown;
 pub mod render;

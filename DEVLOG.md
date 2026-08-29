@@ -5179,3 +5179,10 @@ captures terminal colour signals once, loads and validates any theme file, and
 hands the resolved palette through `TuiConfig`; the renderer no longer reads a
 default theme for each frame, and a bad file exits as a normal startup error
 before the alternate screen is entered.
+
+2026-08-29 — **Named TUI states now share one deterministic fixture registry.**
+The optional `fixtures` feature builds Claude and Codex idle, working, ask,
+reader, startup, help, fleet, empty-fleet, and 1000-entry feed states by folding
+real `amux-ui` messages at a fixed clock. State names round-trip through the
+registry, and an exhaustive 120×40 render test keeps every screenshot subject
+on the production `render(Model, ViewState, FrameContext)` boundary.
