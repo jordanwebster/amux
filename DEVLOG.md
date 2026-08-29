@@ -5195,3 +5195,9 @@ bold, italic, and dim styling; append hashes and dimensions to a JSON manifest;
 and can be fully decoded and verified later. All planned evidence sets are
 declared up front, with unavailable future fixtures reported by name instead of
 rendering placeholders.
+
+2026-08-29 — **QA'd the screenshot tool as a stranger.** The documented render
+path produced a dark `claude-idle` PNG and two repeated renders matched byte
+for byte. The QA evidence records that this checkout's configured Cargo build
+cache is not writable unless `CARGO_BUILD_BUILD_DIR` is unset and a local
+`--target-dir` is supplied; that README startup gap was filed for later work.
