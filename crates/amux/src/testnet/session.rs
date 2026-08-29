@@ -111,10 +111,7 @@ impl Daemon {
         let parsed = crate::envelope::parse(&encoded)
             .unwrap_or_else(|error| panic!("initial child prompt did not parse: {error}"));
         assert_eq!(parsed.from_id, Some(parent.id));
-        assert_eq!(
-            parsed.from_kind.as_deref(),
-            Some(parent.agent_type.as_str())
-        );
+        assert_eq!(parsed.from_kind.as_deref(), Some(parent.kind.provider()));
         assert_eq!(parsed.kind, crate::envelope::EnvelopeKind::Message);
         assert_eq!(parsed.text, prompt);
         child
@@ -701,7 +698,7 @@ impl Daemon {
             "the echoed tag carries the daemon-resolved agent id"
         );
         assert!(
-            encoded.contains(&format!("from-kind=\"{}\"", sender.agent_type)),
+            encoded.contains(&format!("from-kind=\"{}\"", sender.kind.provider())),
             "the echoed tag carries the daemon-resolved agent kind"
         );
         let parsed = crate::envelope::parse(&encoded)
@@ -709,10 +706,7 @@ impl Daemon {
         assert_eq!(parsed.id, envelope_id);
         assert_eq!(parsed.from, format!("{sender_name}/{}", sender.host_id));
         assert_eq!(parsed.from_id, Some(sender.id));
-        assert_eq!(
-            parsed.from_kind.as_deref(),
-            Some(sender.agent_type.as_str())
-        );
+        assert_eq!(parsed.from_kind.as_deref(), Some(sender.kind.provider()));
         assert_eq!(parsed.kind, crate::envelope::EnvelopeKind::Message);
         assert_eq!(parsed.text, text);
     }

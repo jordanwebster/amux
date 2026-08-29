@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use crate::agents::{
     Agent, AgentEvent, CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest,
-    SessionInputEvent, SetAgentStatusRequest, SpawnInheritance, SubscribeSessionEvent,
-    SubscribeSessionRequest, TerminalSize,
+    SetAgentStatusRequest, SpawnInheritance, SubscribeSessionEvent, SubscribeSessionRequest,
+    TerminalSize,
 };
 use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
@@ -1058,11 +1058,18 @@ impl wire::client_service_server::ClientService for ClientService {
             )?)
             .await
             .map_err(protocol_status)?;
+        let (protocol, args) = crate::agents::subscribe_protocol_from_client_wire(request.protocol)
+            .map_err(decode_remote_status)?;
         if !self.is_local_host(agent.host_id) {
             let agent_request = wire::pb::SubscribeSessionRequest {
                 agent_id: agent.id.as_bytes().to_vec(),
-                io_protocol: request.io_protocol,
-                args: request.args,
+                protocol: Some(
+                    crate::agents::subscribe_protocol_to_agent_wire(
+                        protocol.as_str(),
+                        args.as_deref(),
+                    )
+                    .map_err(decode_remote_status)?,
+                ),
             };
             return self
                 .remote_subscribe_session(agent.host_id, agent_request)
@@ -1072,8 +1079,8 @@ impl wire::client_service_server::ClientService for ClientService {
         let ctx = self.local_agent_service();
         let decoded = SubscribeSessionRequest {
             agent_id: agent.id,
-            io_protocol: request.io_protocol,
-            args: request.args,
+            io_protocol: protocol.to_string(),
+            args,
         };
         let stream = ctx
             .subscribe_session_response_stream(decoded)
@@ -1094,12 +1101,17 @@ impl wire::client_service_server::ClientService for ClientService {
             )?)
             .await
             .map_err(protocol_status)?;
+        let (protocol, event) =
+            crate::agents::send_input_event_from_client_wire(request.input_id, request.event)
+                .map_err(decode_remote_status)?;
         if !self.is_local_host(agent.host_id) {
-            let event = client_send_input_event_to_agent_event(request.event)?;
+            let (input_id, event) =
+                crate::agents::send_input_event_to_agent_wire(protocol.as_str(), &event)
+                    .map_err(decode_remote_status)?;
             let agent_request = wire::pb::SendInputRequest {
                 agent_id: agent.id.as_bytes().to_vec(),
-                io_protocol: request.io_protocol,
-                event,
+                input_id,
+                event: Some(event),
             };
             return self.remote_send_input(agent.host_id, agent_request).await;
         }
@@ -1107,8 +1119,8 @@ impl wire::client_service_server::ClientService for ClientService {
         let ctx = self.local_agent_service();
         ctx.send_input(SendInputRequest {
             agent_id: agent.id,
-            io_protocol: request.io_protocol,
-            event: client_send_input_event_to_session_event(request.event)?,
+            io_protocol: protocol.to_string(),
+            event,
         })
         .await
         .map_err(protocol_status)?;
@@ -1848,9 +1860,13 @@ fn host_unreachable_session_response_stream() -> ResponseStream<wire::SubscribeS
 }
 
 fn host_unreachable_session_closed() -> wire::SubscribeSessionResponse {
-    crate::agents::session_output_event_to_wire(&SubscribeSessionEvent::Closed {
-        reason: crate::agents::SessionCloseReason::HostUnreachable,
-    })
+    crate::agents::session_output_event_to_wire(
+        &SubscribeSessionEvent::Closed {
+            reason: crate::agents::SessionCloseReason::HostUnreachable,
+        },
+        crate::agents::Protocol::TerminalV1,
+    )
+    .expect("closed session events contain no protocol payload")
 }
 
 fn has_shutdown_reason_metadata(status: &tonic::Status) -> bool {
@@ -2368,37 +2384,6 @@ fn client_agent_ref(
     }
 }
 
-fn client_send_input_event_to_agent_event(
-    event: Option<wire::client_send_input_request::Event>,
-) -> Result<Option<wire::pb::send_input_request::Event>, tonic::Status> {
-    let event = event
-        .ok_or_else(|| tonic::Status::invalid_argument("ClientSendInputRequest missing event"))?;
-    Ok(Some(match event {
-        wire::client_send_input_request::Event::Input(input) => {
-            wire::pb::send_input_request::Event::Input(input)
-        }
-        wire::client_send_input_request::Event::Control(control) => {
-            wire::pb::send_input_request::Event::Control(control)
-        }
-    }))
-}
-
-fn client_send_input_event_to_session_event(
-    event: Option<wire::client_send_input_request::Event>,
-) -> Result<SessionInputEvent, tonic::Status> {
-    let event = event
-        .ok_or_else(|| tonic::Status::invalid_argument("ClientSendInputRequest missing event"))?;
-    Ok(match event {
-        wire::client_send_input_request::Event::Input(input) => SessionInputEvent::Input {
-            input_id: input.input_id,
-            payload: input.payload,
-        },
-        wire::client_send_input_request::Event::Control(control) => SessionInputEvent::Control {
-            payload: control.payload,
-        },
-    })
-}
-
 fn ensure_local_create_target(
     ctx: &AgentServiceCtx,
     request: &wire::ClientCreateAgentRequest,
@@ -2442,7 +2427,9 @@ fn client_create_to_create_rpc_request(
         .agent
         .ok_or_else(|| tonic::Status::invalid_argument("ClientCreateAgentRequest missing agent"))?;
     let agent = match agent {
-        wire::client_create_agent_request::Agent::Claude(claude) => CreateAgentConfig::ClaudePty {
+        wire::client_create_agent_request::Agent::Claude(claude) => CreateAgentConfig::Claude {
+            driver: crate::agents::claude_driver_from_wire(claude.driver)
+                .map_err(decode_remote_status)?,
             working_dir: claude.working_dir.into(),
             args: claude.args,
             terminal_size: claude
@@ -2719,7 +2706,7 @@ mod tests {
     use super::*;
     use crate::agents::{
         AGENT_TYPE_CLAUDE, HookEnvironment, TEST_DELAYED_DELIVERY_COMMAND, TEST_ECHO_COMMAND,
-        TEST_ECHO_V1, TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
+        TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
     };
     use crate::config::Config;
     use crate::identity::DeviceIdentity;
@@ -3236,6 +3223,9 @@ mod tests {
         let Some(wire::subscribe_session_response::Event::Output(output)) = output.event else {
             panic!("expected SessionOutput");
         };
+        let Some(wire::session_output::Output::TestEchoV1(output)) = output.output else {
+            panic!("expected test echo output");
+        };
         assert_eq!(output.payload, expected);
     }
 
@@ -3334,10 +3324,9 @@ mod tests {
     ) -> wire::ClientSendInputRequest {
         wire::ClientSendInputRequest {
             agent: Some(agent_ref_id(agent_id)),
-            io_protocol: TEST_ECHO_V1.to_string(),
-            event: Some(wire::client_send_input_request::Event::Input(
-                wire::pb::SessionInput {
-                    input_id: b"input-1".to_vec(),
+            input_id: b"input-1".to_vec(),
+            event: Some(wire::client_send_input_request::Event::TestEchoV1(
+                wire::TestEchoV1Input {
                     payload: payload.to_vec(),
                 },
             )),
@@ -3347,8 +3336,11 @@ mod tests {
     fn test_agent_subscribe_session_request(agent_id: Uuid) -> wire::ClientSubscribeSessionRequest {
         wire::ClientSubscribeSessionRequest {
             agent: Some(agent_ref_id(agent_id)),
-            io_protocol: TEST_ECHO_V1.to_string(),
-            args: None,
+            protocol: Some(
+                wire::client_subscribe_session_request::Protocol::TestEchoV1(
+                    wire::TestEchoV1Args {},
+                ),
+            ),
         }
     }
 
@@ -4866,6 +4858,9 @@ mod tests {
         let Some(wire::subscribe_session_response::Event::Output(output)) = output.event else {
             panic!("expected SessionOutput");
         };
+        let Some(wire::session_output::Output::TestEchoV1(output)) = output.output else {
+            panic!("expected test echo output");
+        };
         assert_eq!(output.payload, b"through-client");
 
         <ClientService as wire::client_service_server::ClientService>::delete_agent(
@@ -4976,6 +4971,9 @@ mod tests {
             .expect("remote session stream returned error");
         let Some(wire::subscribe_session_response::Event::Output(output)) = output.event else {
             panic!("expected remote SessionOutput");
+        };
+        let Some(wire::session_output::Output::TestEchoV1(output)) = output.output else {
+            panic!("expected test echo output");
         };
         assert_eq!(output.payload, b"remote-input");
 

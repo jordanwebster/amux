@@ -29,12 +29,11 @@ message SnapshotComplete {}
 
 // In-band marker that a session replay has been flushed.
 message ReplayComplete {
-  // Opaque position at the replay boundary when the io_protocol has one.
+  // Opaque position at the replay boundary when the selected protocol has one.
   optional bytes cursor = 1;
 }
 
-// Agent-independent raw terminal byte-plane payloads. The core protocol
-// carries these as opaque args/control bytes on session RPCs.
+// Agent-independent raw terminal byte-plane payloads.
 message TerminalV1Args {
   optional TerminalSize terminal_size = 1;
   optional TerminalV1ReplayQuery replay_query = 2;
@@ -46,11 +45,28 @@ message TerminalV1ReplayQuery {
   }
 }
 
-message TerminalV1Control {
-  oneof control {
-    TerminalSize resize = 1;
+message TerminalV1Input {
+  bytes payload = 1;
+}
+
+message TerminalV1Output {
+  bytes payload = 1;
+}
+
+message AgentKind {
+  oneof kind {
+    ClaudeKind claude = 1;
+    CodexKind codex = 2;
+    TestAgentKind test_agent = 3;
   }
 }
+
+message ClaudeKind {
+  ClaudeDriver driver = 1;
+}
+
+message CodexKind {}
+message TestAgentKind {}
 
 message AgentRef {
   oneof identifier {
@@ -206,11 +222,11 @@ message Reauth {
 
 message Capabilities {
   repeated string features = 1;
-  repeated SupportedAgentType supported_agent_types = 2;
+  repeated SupportedAgentType supported_agents = 2;
 }
 
 message SupportedAgentType {
-  string agent_type = 1;
+  AgentKind kind = 1;
 }
 
 // "The link is closed now, here's why." No grace period: a receiver treats
@@ -333,8 +349,8 @@ message Agent {
   optional string name = 3;
   string command = 4;
   string working_dir = 5;
-  string agent_type = 6;
-  repeated string io_protocols = 7;
+  AgentKind kind = 6;
+  reserved 7;
   bool readonly = 8;
   repeated string args = 9;
   int64 created_at_unix_ms = 10;
@@ -402,7 +418,7 @@ message AgentDown {
 service AgentService {
   // Subscribe to this host's agent inventory: snapshot (one AgentUp per
   // currently-known agent) then SnapshotComplete then deltas.
-  // Hosts with no supported_agent_types MUST reject with FAILED_PRECONDITION.
+  // Hosts with no supported agents MUST reject with FAILED_PRECONDITION.
   rpc SubscribeAgentEvents(SubscribeAgentEventsRequest) returns (stream SubscribeAgentEventsResponse);
 
   rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse);
@@ -411,8 +427,8 @@ service AgentService {
   rpc SendMessage(Envelope) returns (SendMessageResponse);
   rpc SetAgentStatus(SetAgentStatusRequest) returns (SetAgentStatusResponse);
 
-  // Subscribe to an agent's session output. The session payload schema is
-  // io_protocol-defined and opaque to AgentService.
+  // Subscribe to an agent's session output. The selected oneof arm names the
+  // protocol and carries its typed arguments.
   rpc SubscribeSession(SubscribeSessionRequest) returns (stream SubscribeSessionResponse);
 
   // Send input/control to an agent independently of subscriptions.
@@ -483,9 +499,13 @@ message SetAgentStatusResponse {}
 
 message SubscribeSessionRequest {
   bytes agent_id = 1;
-  string io_protocol = 2;
-  // Opaque arguments. The selected io_protocol defines the contents.
-  optional bytes args = 3;
+  oneof protocol {
+    TerminalV1Args terminal_v1 = 10;
+    ClaudePtyTranscriptV1Args claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Args claude_sdk_v1 = 12;
+    CodexSdkV1Args codex_sdk_v1 = 13;
+    TestEchoV1Args test_echo_v1 = 100;
+  }
 }
 
 message SubscribeSessionResponse {
@@ -499,34 +519,38 @@ message SubscribeSessionResponse {
 
 message SendInputRequest {
   bytes agent_id = 1;
-  string io_protocol = 2;
+  // Client-generated id for correlating protocol-defined input results.
+  bytes input_id = 2;
   oneof event {
-    SessionInput input = 10;
-    SessionControl control = 11;
+    TerminalV1Input terminal_v1 = 10;
+    ClaudePtyTranscriptV1Input claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Input claude_sdk_v1 = 12;
+    CodexSdkV1Input codex_sdk_v1 = 13;
+    SessionControl control = 20;
+    TestEchoV1Input test_echo_v1 = 100;
   }
 }
 
 message SendInputResponse {}
 
-message SessionInput {
-  // Client-generated id for correlating protocol-defined input results.
-  bytes input_id = 1;
-  // Opaque input payload. The selected io_protocol defines the contents.
-  bytes payload = 2;
-}
-
-// Side-channel control event (resize, focus, etc.). Distinct from
-// `SessionInput` because it isn't data flowing through the agent's I/O -
-// it's a directive about the session itself. Vocabulary is io_protocol-defined.
+// Side-channel control event. It is a directive about the session itself,
+// rather than data flowing through one provider protocol.
 message SessionControl {
-  bytes payload = 1;
+  oneof control {
+    TerminalSize resize = 1;
+  }
 }
 
 message SessionOpened {}
 
 message SessionOutput {
-  // Opaque output payload. The selected io_protocol defines the contents.
-  bytes payload = 1;
+  oneof output {
+    TerminalV1Output terminal_v1 = 10;
+    ClaudePtyTranscriptV1Output claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Output claude_sdk_v1 = 12;
+    CodexSdkV1Output codex_sdk_v1 = 13;
+    TestEchoV1Output test_echo_v1 = 100;
+  }
 }
 
 message SessionClosed {
@@ -654,16 +678,25 @@ message ClientSetAgentStatusRequest {
 
 message ClientSubscribeSessionRequest {
   AgentRef agent = 1;
-  string io_protocol = 2;
-  optional bytes args = 3;
+  oneof protocol {
+    TerminalV1Args terminal_v1 = 10;
+    ClaudePtyTranscriptV1Args claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Args claude_sdk_v1 = 12;
+    CodexSdkV1Args codex_sdk_v1 = 13;
+    TestEchoV1Args test_echo_v1 = 100;
+  }
 }
 
 message ClientSendInputRequest {
   AgentRef agent = 1;
-  string io_protocol = 2;
+  bytes input_id = 2;
   oneof event {
-    SessionInput input = 10;
-    SessionControl control = 11;
+    TerminalV1Input terminal_v1 = 10;
+    ClaudePtyTranscriptV1Input claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Input claude_sdk_v1 = 12;
+    CodexSdkV1Input codex_sdk_v1 = 13;
+    SessionControl control = 20;
+    TestEchoV1Input test_echo_v1 = 100;
   }
 }
 

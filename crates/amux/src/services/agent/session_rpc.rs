@@ -16,9 +16,9 @@ use crate::agents::claude::io::{
 use crate::agents::codex::io::{self as codex_io, CodexSdkV1Output, CodexSdkV1ReplayQuery};
 use crate::agents::terminal_io::{self, TerminalV1Control, TerminalV1ReplayQuery};
 use crate::agents::{
-    BroadcastRead, ByteReplayQuery, PtyHandle, RawPtyTarget, SendInputRequest, SessionCloseReason,
-    SessionInputEvent, StructuredInput, StructuredOutput, SubscribeSessionEvent,
-    SubscribeSessionRequest,
+    BroadcastRead, ByteReplayQuery, Protocol, PtyHandle, RawPtyTarget, SendInputRequest,
+    SessionCloseReason, SessionInputEvent, StructuredInput, StructuredOutput,
+    SubscribeSessionEvent, SubscribeSessionRequest,
 };
 #[cfg(unix)]
 use crate::agents::{CodexInput, CodexRawPtyLease};
@@ -59,6 +59,7 @@ enum SessionOutputReader {
 }
 
 struct RawSessionOutputReader {
+    protocol: Protocol,
     reader: crate::agents::MultiplexByteReader,
     #[cfg(unix)]
     _codex_lease: Option<CodexRawPtyLease>,
@@ -158,6 +159,7 @@ async fn prepare_direct_raw_session_subscription(
         .await
         .ok_or(ProtocolError::NoAgentFound)?;
     Ok(RawSessionOutputReader {
+        protocol: Protocol::TerminalV1,
         reader,
         #[cfg(unix)]
         _codex_lease: subscription.codex_lease,
@@ -180,6 +182,7 @@ async fn prepare_direct_test_echo_session_subscription(
         .await
         .ok_or(ProtocolError::NoAgentFound)?;
     Ok(RawSessionOutputReader {
+        protocol: Protocol::TestEchoV1,
         reader,
         #[cfg(unix)]
         _codex_lease: None,
@@ -592,7 +595,7 @@ fn direct_session_response_stream(
                     close_rx,
                     shutdown_rx,
                 } => Some((
-                    session_output_response(SubscribeSessionEvent::Opened),
+                    session_output_response(SubscribeSessionEvent::Opened, reader.protocol()),
                     DirectSessionStreamState::Reading {
                         agent_id,
                         reader,
@@ -606,6 +609,7 @@ fn direct_session_response_stream(
                     mut close_rx,
                     mut shutdown_rx,
                 } => {
+                    let protocol = reader.protocol();
                     let event = tokio::select! {
                         biased;
                         reason = shutdown_rx.recv() => {
@@ -664,7 +668,7 @@ fn direct_session_response_stream(
                             shutdown_rx,
                         },
                     };
-                    Some((session_output_response(event), next_state))
+                    Some((session_output_response(event, protocol), next_state))
                 }
                 DirectSessionStreamState::Done => None,
             }
@@ -697,8 +701,26 @@ async fn recv_close_reason_for_agent(
 
 fn session_output_response(
     event: SubscribeSessionEvent,
+    protocol: Protocol,
 ) -> Result<crate::protocol::wire::SubscribeSessionResponse, tonic::Status> {
-    Ok(crate::agents::session_output_event_to_wire(&event))
+    crate::agents::session_output_event_to_wire(&event, protocol)
+        .map_err(|error| tonic::Status::internal(error.to_string()))
+}
+
+impl SessionOutputReader {
+    fn protocol(&self) -> Protocol {
+        match self {
+            Self::Raw(raw) => raw.protocol,
+            Self::Structured {
+                codec: StructuredCodec::Claude { .. },
+                ..
+            } => Protocol::ClaudePtyTranscriptV1,
+            Self::Structured {
+                codec: StructuredCodec::Codex,
+                ..
+            } => Protocol::CodexSdkV1,
+        }
+    }
 }
 
 async fn read_session_output_event(
@@ -1001,6 +1023,7 @@ mod tests {
         let mut stream = direct_session_response_stream(
             agent_id,
             SessionOutputReader::Raw(RawSessionOutputReader {
+                protocol: Protocol::TerminalV1,
                 reader,
                 #[cfg(unix)]
                 _codex_lease: None,
@@ -1053,6 +1076,7 @@ mod tests {
         let mut stream = direct_session_response_stream(
             agent_id,
             SessionOutputReader::Raw(RawSessionOutputReader {
+                protocol: Protocol::TerminalV1,
                 reader,
                 #[cfg(unix)]
                 _codex_lease: None,

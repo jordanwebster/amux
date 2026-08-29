@@ -2,11 +2,7 @@ syntax = "proto3";
 
 package amux.v1;
 
-// Codex-specific creation config and structured io_protocol payloads.
-//
-// These messages are intentionally independent from amux.proto. The core
-// protocol treats session args/input/control/output as opaque bytes; callers
-// serialize these inner messages only when they opt into the Codex protocol.
+// Codex-specific creation config and structured protocol payloads.
 
 message CodexCreateConfig {
   string cwd = 1;

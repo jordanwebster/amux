@@ -66,11 +66,15 @@ pub use types::{
 };
 pub(crate) use wire::{
     CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest, SessionInputEvent,
-    SetAgentStatusRequest, SubscribeSessionRequest, agent_from_wire, agent_parent_from_wire,
-    agent_to_wire, create_agent_request_from_wire, delete_agent_id_from_wire, envelope_from_wire,
-    envelope_to_wire, rename_agent_request_from_wire, send_input_request_from_wire,
-    session_output_event_to_wire, set_agent_status_request_from_wire,
-    subscribe_session_request_from_wire,
+    SetAgentStatusRequest, SubscribeSessionRequest, agent_from_wire, agent_kind_from_wire,
+    agent_kind_to_wire, agent_parent_from_wire, agent_to_wire, claude_driver_from_wire,
+    claude_driver_to_wire, create_agent_request_from_wire, delete_agent_id_from_wire,
+    envelope_from_wire, envelope_to_wire, rename_agent_request_from_wire,
+    send_input_event_from_client_wire, send_input_event_to_agent_wire,
+    send_input_event_to_client_wire, send_input_request_from_wire, session_output_event_to_wire,
+    session_output_payload_from_wire, set_agent_status_request_from_wire,
+    subscribe_protocol_from_client_wire, subscribe_protocol_to_agent_wire,
+    subscribe_protocol_to_client_wire, subscribe_session_request_from_wire,
 };
 #[cfg(test)]
 pub(crate) use wire::{decode_session_output_event_payload, encode_session_output_event_payload};

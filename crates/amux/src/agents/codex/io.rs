@@ -181,16 +181,18 @@ mod tests {
 
     #[test]
     fn args_and_output_roundtrip() {
-        let encoded = encode_codex_sdk_v1_args(CodexSdkV1Args {
-            replay_query: Some(CodexSdkV1ReplayQuery::Since { seq: 41 }),
-        })
-        .unwrap();
-        assert_eq!(
-            decode_codex_sdk_v1_args(Some(&encoded)).unwrap(),
+        let args = [
             CodexSdkV1Args {
-                replay_query: Some(CodexSdkV1ReplayQuery::Since { seq: 41 })
-            }
-        );
+                replay_query: Some(CodexSdkV1ReplayQuery::Since { seq: 41 }),
+            },
+            CodexSdkV1Args {
+                replay_query: Some(CodexSdkV1ReplayQuery::Tail { count: 8 }),
+            },
+        ];
+        for args in args {
+            let encoded = encode_codex_sdk_v1_args(args.clone()).unwrap();
+            assert_eq!(decode_codex_sdk_v1_args(Some(&encoded)).unwrap(), args);
+        }
 
         let output = CodexSdkV1Output {
             seq: 42,

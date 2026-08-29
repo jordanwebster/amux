@@ -232,25 +232,24 @@ mod tests {
 
     #[test]
     fn transcript_args_decode_terminal_size_and_replay_query() {
-        let args = encode_pty_transcript_v1_args(ClaudePtyTranscriptV1Args {
-            terminal_size: Some(TerminalSize {
-                rows: 30,
-                cols: 100,
-            }),
-            replay_query: Some(ClaudePtyTranscriptV1ReplayQuery::Since { seq_id: 42 }),
-        })
-        .unwrap();
-
-        assert_eq!(
-            decode_pty_transcript_v1_args(Some(&args)).unwrap(),
+        let cases = [
             ClaudePtyTranscriptV1Args {
                 terminal_size: Some(TerminalSize {
                     rows: 30,
-                    cols: 100
+                    cols: 100,
                 }),
                 replay_query: Some(ClaudePtyTranscriptV1ReplayQuery::Since { seq_id: 42 }),
-            }
-        );
+            },
+            ClaudePtyTranscriptV1Args {
+                terminal_size: None,
+                replay_query: Some(ClaudePtyTranscriptV1ReplayQuery::Tail { count: 12 }),
+            },
+        ];
+
+        for args in cases {
+            let encoded = encode_pty_transcript_v1_args(args.clone()).unwrap();
+            assert_eq!(decode_pty_transcript_v1_args(Some(&encoded)).unwrap(), args);
+        }
     }
 
     #[test]

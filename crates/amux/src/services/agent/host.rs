@@ -651,7 +651,8 @@ fn create_rpc_to_domain_request(
     let parent = request.parent;
     let initial_prompt = request.initial_prompt;
     match request.agent {
-        CreateAgentConfig::ClaudePty {
+        CreateAgentConfig::Claude {
+            driver,
             working_dir,
             args,
             terminal_size,
@@ -659,9 +660,7 @@ fn create_rpc_to_domain_request(
             agent_id,
             host_id: None,
             name: request.name,
-            agent_type: AgentType::Claude {
-                driver: crate::agents::ClaudeDriver::Pty,
-            },
+            agent_type: AgentType::Claude { driver },
             working_dir,
             terminal_size,
             args,

@@ -5194,3 +5194,10 @@ drives live corpus probes that append successful verification ledgers while
 re-recording only failed claims. Probe and drift reports are durable JSON run
 artifacts, and the shared sanitizer removes nested secrets, machine paths and
 personal identifiers while reporting exactly what it changed.
+
+2026-08-29 — **Made agent sessions self-describing on the wire.** Agent records
+and host capabilities now carry a closed provider kind and Claude driver.
+Session subscriptions, inputs, controls and outputs select typed protobuf arms
+for terminal, Claude PTY, Claude SDK, Codex SDK and test echo traffic, including
+the routed client mirrors; protocol names and opaque top-level payload fields no
+longer cross the network boundary.

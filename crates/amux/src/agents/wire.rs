@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{TimeZone, Utc};
-#[cfg(test)]
 use prost::Message as ProstMessage;
 use protocol_wire::DeleteAgentRequest;
 use uuid::Uuid;
 
-use super::{Agent, AgentKind, AgentParent, SessionCloseReason, SubscribeSessionEvent, WorkingOn};
+use super::{
+    Agent, AgentKind, AgentParent, ClaudeDriver, Protocol, SessionCloseReason,
+    SubscribeSessionEvent, WorkingOn,
+};
 use crate::agents::{RenameAgentRequest, TerminalSize};
 use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use crate::protocol::wire::{self as protocol_wire, pb};
@@ -48,7 +50,8 @@ pub(crate) struct SetAgentStatusRequest {
 
 #[derive(Debug, Clone)]
 pub(crate) enum CreateAgentConfig {
-    ClaudePty {
+    Claude {
+        driver: ClaudeDriver,
         working_dir: PathBuf,
         args: Vec<String>,
         terminal_size: Option<TerminalSize>,
@@ -68,8 +71,13 @@ pub(crate) enum CreateAgentConfig {
 }
 
 #[cfg(test)]
-pub(crate) fn encode_session_output_event_payload(event: &SubscribeSessionEvent) -> Vec<u8> {
-    session_output_event_to_wire(event).encode_to_vec()
+pub(crate) fn encode_session_output_event_payload(
+    event: &SubscribeSessionEvent,
+    protocol: Protocol,
+) -> Vec<u8> {
+    session_output_event_to_wire(event, protocol)
+        .expect("test event must contain a valid protocol payload")
+        .encode_to_vec()
 }
 
 #[cfg(test)]
@@ -83,10 +91,11 @@ pub(crate) fn decode_session_output_event_payload(
 pub(crate) fn subscribe_session_request_from_wire(
     request: pb::SubscribeSessionRequest,
 ) -> Result<SubscribeSessionRequest, protocol_wire::DecodeError> {
+    let (protocol, args) = subscribe_protocol_from_agent_wire(request.protocol)?;
     Ok(SubscribeSessionRequest {
         agent_id: required_uuid_from_bytes("agent_id", request.agent_id)?,
-        io_protocol: request.io_protocol,
-        args: request.args,
+        io_protocol: protocol.to_string(),
+        args,
     })
 }
 
@@ -96,32 +105,345 @@ pub(crate) fn send_input_request_from_wire(
     let event = request.event.ok_or_else(|| {
         protocol_wire::DecodeError::Invalid("SendInputRequest missing event".into())
     })?;
-    let event = match event {
-        pb::send_input_request::Event::Input(input) => SessionInputEvent::Input {
-            input_id: input.input_id,
-            payload: input.payload,
-        },
-        pb::send_input_request::Event::Control(control) => SessionInputEvent::Control {
-            payload: control.payload,
-        },
-    };
+    let (protocol, event) = send_input_event_from_agent_wire(request.input_id, event)?;
     Ok(SendInputRequest {
         agent_id: required_uuid_from_bytes("agent_id", request.agent_id)?,
-        io_protocol: request.io_protocol,
+        io_protocol: protocol.to_string(),
         event,
     })
 }
 
+pub(crate) fn subscribe_protocol_from_client_wire(
+    protocol: Option<pb::client_subscribe_session_request::Protocol>,
+) -> Result<(Protocol, Option<Vec<u8>>), protocol_wire::DecodeError> {
+    let protocol = protocol.ok_or_else(|| {
+        protocol_wire::DecodeError::Invalid("ClientSubscribeSessionRequest missing protocol".into())
+    })?;
+    Ok(match protocol {
+        pb::client_subscribe_session_request::Protocol::TerminalV1(args) => {
+            (Protocol::TerminalV1, Some(args.encode_to_vec()))
+        }
+        pb::client_subscribe_session_request::Protocol::ClaudePtyTranscriptV1(args) => {
+            (Protocol::ClaudePtyTranscriptV1, Some(args.encode_to_vec()))
+        }
+        pb::client_subscribe_session_request::Protocol::ClaudeSdkV1(args) => {
+            (Protocol::ClaudeSdkV1, Some(args.encode_to_vec()))
+        }
+        pb::client_subscribe_session_request::Protocol::CodexSdkV1(args) => {
+            (Protocol::CodexSdkV1, Some(args.encode_to_vec()))
+        }
+        pb::client_subscribe_session_request::Protocol::TestEchoV1(_) => {
+            (Protocol::TestEchoV1, None)
+        }
+    })
+}
+
+fn subscribe_protocol_from_agent_wire(
+    protocol: Option<pb::subscribe_session_request::Protocol>,
+) -> Result<(Protocol, Option<Vec<u8>>), protocol_wire::DecodeError> {
+    let protocol = protocol.ok_or_else(|| {
+        protocol_wire::DecodeError::Invalid("SubscribeSessionRequest missing protocol".into())
+    })?;
+    Ok(match protocol {
+        pb::subscribe_session_request::Protocol::TerminalV1(args) => {
+            (Protocol::TerminalV1, Some(args.encode_to_vec()))
+        }
+        pb::subscribe_session_request::Protocol::ClaudePtyTranscriptV1(args) => {
+            (Protocol::ClaudePtyTranscriptV1, Some(args.encode_to_vec()))
+        }
+        pb::subscribe_session_request::Protocol::ClaudeSdkV1(args) => {
+            (Protocol::ClaudeSdkV1, Some(args.encode_to_vec()))
+        }
+        pb::subscribe_session_request::Protocol::CodexSdkV1(args) => {
+            (Protocol::CodexSdkV1, Some(args.encode_to_vec()))
+        }
+        pb::subscribe_session_request::Protocol::TestEchoV1(_) => (Protocol::TestEchoV1, None),
+    })
+}
+
+pub(crate) fn subscribe_protocol_to_agent_wire(
+    protocol: &str,
+    args: Option<&[u8]>,
+) -> Result<pb::subscribe_session_request::Protocol, protocol_wire::DecodeError> {
+    Ok(match protocol {
+        "terminal_v1" => pb::subscribe_session_request::Protocol::TerminalV1(
+            decode_optional_message(args, "TerminalV1Args")?,
+        ),
+        "claude_pty_transcript_v1" => {
+            pb::subscribe_session_request::Protocol::ClaudePtyTranscriptV1(decode_optional_message(
+                args,
+                "ClaudePtyTranscriptV1Args",
+            )?)
+        }
+        "claude_sdk_v1" => pb::subscribe_session_request::Protocol::ClaudeSdkV1(
+            decode_optional_message(args, "ClaudeSdkV1Args")?,
+        ),
+        "codex_sdk_v1" => pb::subscribe_session_request::Protocol::CodexSdkV1(
+            decode_optional_message(args, "CodexSdkV1Args")?,
+        ),
+        "test_echo_v1" => {
+            reject_args(args, "TestEchoV1Args")?;
+            pb::subscribe_session_request::Protocol::TestEchoV1(pb::TestEchoV1Args {})
+        }
+        other => {
+            return Err(protocol_wire::DecodeError::Invalid(format!(
+                "unknown session protocol `{other}`"
+            )));
+        }
+    })
+}
+
+pub(crate) fn subscribe_protocol_to_client_wire(
+    protocol: &str,
+    args: Option<&[u8]>,
+) -> Result<pb::client_subscribe_session_request::Protocol, protocol_wire::DecodeError> {
+    Ok(match protocol {
+        "terminal_v1" => pb::client_subscribe_session_request::Protocol::TerminalV1(
+            decode_optional_message(args, "TerminalV1Args")?,
+        ),
+        "claude_pty_transcript_v1" => {
+            pb::client_subscribe_session_request::Protocol::ClaudePtyTranscriptV1(
+                decode_optional_message(args, "ClaudePtyTranscriptV1Args")?,
+            )
+        }
+        "claude_sdk_v1" => pb::client_subscribe_session_request::Protocol::ClaudeSdkV1(
+            decode_optional_message(args, "ClaudeSdkV1Args")?,
+        ),
+        "codex_sdk_v1" => pb::client_subscribe_session_request::Protocol::CodexSdkV1(
+            decode_optional_message(args, "CodexSdkV1Args")?,
+        ),
+        "test_echo_v1" => {
+            reject_args(args, "TestEchoV1Args")?;
+            pb::client_subscribe_session_request::Protocol::TestEchoV1(pb::TestEchoV1Args {})
+        }
+        other => {
+            return Err(protocol_wire::DecodeError::Invalid(format!(
+                "unknown session protocol `{other}`"
+            )));
+        }
+    })
+}
+
+pub(crate) fn send_input_event_from_client_wire(
+    input_id: Vec<u8>,
+    event: Option<pb::client_send_input_request::Event>,
+) -> Result<(Protocol, SessionInputEvent), protocol_wire::DecodeError> {
+    let event = event.ok_or_else(|| {
+        protocol_wire::DecodeError::Invalid("ClientSendInputRequest missing event".into())
+    })?;
+    Ok(match event {
+        pb::client_send_input_request::Event::TerminalV1(input) => (
+            Protocol::TerminalV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.payload,
+            },
+        ),
+        pb::client_send_input_request::Event::ClaudePtyTranscriptV1(input) => (
+            Protocol::ClaudePtyTranscriptV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.encode_to_vec(),
+            },
+        ),
+        pb::client_send_input_request::Event::ClaudeSdkV1(input) => (
+            Protocol::ClaudeSdkV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.encode_to_vec(),
+            },
+        ),
+        pb::client_send_input_request::Event::CodexSdkV1(input) => (
+            Protocol::CodexSdkV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.encode_to_vec(),
+            },
+        ),
+        pb::client_send_input_request::Event::TestEchoV1(input) => (
+            Protocol::TestEchoV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.payload,
+            },
+        ),
+        pb::client_send_input_request::Event::Control(control) => (
+            Protocol::TerminalV1,
+            SessionInputEvent::Control {
+                payload: control.encode_to_vec(),
+            },
+        ),
+    })
+}
+
+fn send_input_event_from_agent_wire(
+    input_id: Vec<u8>,
+    event: pb::send_input_request::Event,
+) -> Result<(Protocol, SessionInputEvent), protocol_wire::DecodeError> {
+    Ok(match event {
+        pb::send_input_request::Event::TerminalV1(input) => (
+            Protocol::TerminalV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.payload,
+            },
+        ),
+        pb::send_input_request::Event::ClaudePtyTranscriptV1(input) => (
+            Protocol::ClaudePtyTranscriptV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.encode_to_vec(),
+            },
+        ),
+        pb::send_input_request::Event::ClaudeSdkV1(input) => (
+            Protocol::ClaudeSdkV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.encode_to_vec(),
+            },
+        ),
+        pb::send_input_request::Event::CodexSdkV1(input) => (
+            Protocol::CodexSdkV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.encode_to_vec(),
+            },
+        ),
+        pb::send_input_request::Event::TestEchoV1(input) => (
+            Protocol::TestEchoV1,
+            SessionInputEvent::Input {
+                input_id,
+                payload: input.payload,
+            },
+        ),
+        pb::send_input_request::Event::Control(control) => (
+            Protocol::TerminalV1,
+            SessionInputEvent::Control {
+                payload: control.encode_to_vec(),
+            },
+        ),
+    })
+}
+
+pub(crate) fn send_input_event_to_agent_wire(
+    protocol: &str,
+    event: &SessionInputEvent,
+) -> Result<(Vec<u8>, pb::send_input_request::Event), protocol_wire::DecodeError> {
+    let (input_id, event) = send_input_event_to_wire(protocol, event)?;
+    let event = match event {
+        OutboundInput::Terminal(input) => pb::send_input_request::Event::TerminalV1(input),
+        OutboundInput::ClaudePty(input) => {
+            pb::send_input_request::Event::ClaudePtyTranscriptV1(input)
+        }
+        OutboundInput::ClaudeSdk(input) => pb::send_input_request::Event::ClaudeSdkV1(input),
+        OutboundInput::Codex(input) => pb::send_input_request::Event::CodexSdkV1(input),
+        OutboundInput::TestEcho(input) => pb::send_input_request::Event::TestEchoV1(input),
+        OutboundInput::Control(control) => pb::send_input_request::Event::Control(control),
+    };
+    Ok((input_id, event))
+}
+
+pub(crate) fn send_input_event_to_client_wire(
+    protocol: &str,
+    event: &SessionInputEvent,
+) -> Result<(Vec<u8>, pb::client_send_input_request::Event), protocol_wire::DecodeError> {
+    let (input_id, event) = send_input_event_to_wire(protocol, event)?;
+    let event = match event {
+        OutboundInput::Terminal(input) => pb::client_send_input_request::Event::TerminalV1(input),
+        OutboundInput::ClaudePty(input) => {
+            pb::client_send_input_request::Event::ClaudePtyTranscriptV1(input)
+        }
+        OutboundInput::ClaudeSdk(input) => pb::client_send_input_request::Event::ClaudeSdkV1(input),
+        OutboundInput::Codex(input) => pb::client_send_input_request::Event::CodexSdkV1(input),
+        OutboundInput::TestEcho(input) => pb::client_send_input_request::Event::TestEchoV1(input),
+        OutboundInput::Control(control) => pb::client_send_input_request::Event::Control(control),
+    };
+    Ok((input_id, event))
+}
+
+enum OutboundInput {
+    Terminal(pb::TerminalV1Input),
+    ClaudePty(pb::ClaudePtyTranscriptV1Input),
+    ClaudeSdk(pb::ClaudeSdkV1Input),
+    Codex(pb::CodexSdkV1Input),
+    TestEcho(pb::TestEchoV1Input),
+    Control(pb::SessionControl),
+}
+
+fn send_input_event_to_wire(
+    protocol: &str,
+    event: &SessionInputEvent,
+) -> Result<(Vec<u8>, OutboundInput), protocol_wire::DecodeError> {
+    match event {
+        SessionInputEvent::Control { payload } => Ok((
+            Vec::new(),
+            OutboundInput::Control(decode_message(payload, "SessionControl")?),
+        )),
+        SessionInputEvent::Input { input_id, payload } => {
+            let event = match protocol {
+                "terminal_v1" => OutboundInput::Terminal(pb::TerminalV1Input {
+                    payload: payload.clone(),
+                }),
+                "claude_pty_transcript_v1" => {
+                    OutboundInput::ClaudePty(decode_message(payload, "ClaudePtyTranscriptV1Input")?)
+                }
+                "claude_sdk_v1" => {
+                    OutboundInput::ClaudeSdk(decode_message(payload, "ClaudeSdkV1Input")?)
+                }
+                "codex_sdk_v1" => OutboundInput::Codex(decode_message(payload, "CodexSdkV1Input")?),
+                "test_echo_v1" => OutboundInput::TestEcho(pb::TestEchoV1Input {
+                    payload: payload.clone(),
+                }),
+                other => {
+                    return Err(protocol_wire::DecodeError::Invalid(format!(
+                        "unknown session protocol `{other}`"
+                    )));
+                }
+            };
+            Ok((input_id.clone(), event))
+        }
+    }
+}
+
+fn decode_optional_message<M: ProstMessage + Default>(
+    bytes: Option<&[u8]>,
+    name: &str,
+) -> Result<M, protocol_wire::DecodeError> {
+    match bytes {
+        Some(bytes) => decode_message(bytes, name),
+        None => Ok(M::default()),
+    }
+}
+
+fn decode_message<M: ProstMessage + Default>(
+    bytes: &[u8],
+    name: &str,
+) -> Result<M, protocol_wire::DecodeError> {
+    M::decode(bytes).map_err(|error| {
+        protocol_wire::DecodeError::Invalid(format!("invalid {name} protobuf: {error}"))
+    })
+}
+
+fn reject_args(args: Option<&[u8]>, name: &str) -> Result<(), protocol_wire::DecodeError> {
+    if args.is_some_and(|args| !args.is_empty()) {
+        return Err(protocol_wire::DecodeError::Invalid(format!(
+            "{name} does not accept arguments"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn session_output_event_to_wire(
     event: &SubscribeSessionEvent,
-) -> pb::SubscribeSessionResponse {
+    protocol: Protocol,
+) -> Result<pb::SubscribeSessionResponse, protocol_wire::DecodeError> {
     let event = match event {
         SubscribeSessionEvent::Opened => {
             pb::subscribe_session_response::Event::Opened(pb::SessionOpened {})
         }
         SubscribeSessionEvent::Output { payload } => {
             pb::subscribe_session_response::Event::Output(pb::SessionOutput {
-                payload: payload.clone(),
+                output: Some(session_output_to_wire(protocol, payload)?),
             })
         }
         SubscribeSessionEvent::ReplayComplete { cursor } => {
@@ -133,7 +455,45 @@ pub(crate) fn session_output_event_to_wire(
             pb::subscribe_session_response::Event::Closed(session_closed_to_wire(reason))
         }
     };
-    pb::SubscribeSessionResponse { event: Some(event) }
+    Ok(pb::SubscribeSessionResponse { event: Some(event) })
+}
+
+fn session_output_to_wire(
+    protocol: Protocol,
+    payload: &[u8],
+) -> Result<pb::session_output::Output, protocol_wire::DecodeError> {
+    Ok(match protocol {
+        Protocol::TerminalV1 => pb::session_output::Output::TerminalV1(pb::TerminalV1Output {
+            payload: payload.to_vec(),
+        }),
+        Protocol::ClaudePtyTranscriptV1 => pb::session_output::Output::ClaudePtyTranscriptV1(
+            decode_message(payload, "ClaudePtyTranscriptV1Output")?,
+        ),
+        Protocol::ClaudeSdkV1 => {
+            pb::session_output::Output::ClaudeSdkV1(decode_message(payload, "ClaudeSdkV1Output")?)
+        }
+        Protocol::CodexSdkV1 => {
+            pb::session_output::Output::CodexSdkV1(decode_message(payload, "CodexSdkV1Output")?)
+        }
+        Protocol::TestEchoV1 => pb::session_output::Output::TestEchoV1(pb::TestEchoV1Output {
+            payload: payload.to_vec(),
+        }),
+    })
+}
+
+pub(crate) fn session_output_payload_from_wire(
+    output: pb::SessionOutput,
+) -> Result<Vec<u8>, protocol_wire::DecodeError> {
+    let output = output.output.ok_or_else(|| {
+        protocol_wire::DecodeError::Invalid("SessionOutput missing output".into())
+    })?;
+    Ok(match output {
+        pb::session_output::Output::TerminalV1(output) => output.payload,
+        pb::session_output::Output::ClaudePtyTranscriptV1(output) => output.encode_to_vec(),
+        pb::session_output::Output::ClaudeSdkV1(output) => output.encode_to_vec(),
+        pb::session_output::Output::CodexSdkV1(output) => output.encode_to_vec(),
+        pb::session_output::Output::TestEchoV1(output) => output.payload,
+    })
 }
 
 #[cfg(test)]
@@ -147,7 +507,7 @@ fn session_output_event_from_wire(
         pb::subscribe_session_response::Event::Opened(_) => Ok(SubscribeSessionEvent::Opened),
         pb::subscribe_session_response::Event::Output(output) => {
             Ok(SubscribeSessionEvent::Output {
-                payload: output.payload,
+                payload: session_output_payload_from_wire(output)?,
             })
         }
         pb::subscribe_session_response::Event::ReplayComplete(replay_complete) => {
@@ -215,16 +575,15 @@ pub(crate) fn create_agent_request_from_wire(
     })?;
 
     let agent = match agent {
-        protocol_wire::create_agent_request::Agent::Claude(claude) => {
-            CreateAgentConfig::ClaudePty {
-                working_dir: PathBuf::from(claude.working_dir),
-                args: claude.args,
-                terminal_size: claude
-                    .initial_terminal_size
-                    .map(terminal_size_from_wire)
-                    .transpose()?,
-            }
-        }
+        protocol_wire::create_agent_request::Agent::Claude(claude) => CreateAgentConfig::Claude {
+            driver: claude_driver_from_wire(claude.driver)?,
+            working_dir: PathBuf::from(claude.working_dir),
+            args: claude.args,
+            terminal_size: claude
+                .initial_terminal_size
+                .map(terminal_size_from_wire)
+                .transpose()?,
+        },
         protocol_wire::create_agent_request::Agent::Codex(codex) => CreateAgentConfig::Codex {
             cwd: PathBuf::from(codex.cwd),
             model: codex.model,
@@ -359,13 +718,7 @@ pub(crate) fn agent_to_wire(
         name: agent.name.clone(),
         command: agent.command.clone(),
         working_dir: path_to_proto_string("Agent.working_dir", &agent.working_dir)?,
-        agent_type: agent.kind.provider().to_string(),
-        io_protocols: agent
-            .kind
-            .protocols()
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
+        kind: Some(agent_kind_to_wire(agent.kind)),
         readonly: agent.readonly,
         args: agent.args.clone(),
         created_at_unix_ms: agent.created_at.timestamp_millis(),
@@ -385,8 +738,11 @@ pub(crate) fn agent_from_wire(
     let parent = agent.parent.map(agent_parent_from_wire).transpose()?;
     let working_on = agent.working_on.map(working_on_from_wire).transpose()?;
 
-    let kind = AgentKind::from_legacy(&agent.agent_type, &agent.io_protocols)
-        .map_err(protocol_wire::DecodeError::Invalid)?;
+    let kind = agent_kind_from_wire(
+        agent
+            .kind
+            .ok_or_else(|| protocol_wire::DecodeError::Invalid("Agent missing kind".into()))?,
+    )?;
 
     Ok(Agent {
         id: required_uuid_from_bytes("agent_id", agent.agent_id)?,
@@ -401,6 +757,55 @@ pub(crate) fn agent_from_wire(
         parent,
         working_on,
     })
+}
+
+pub(crate) fn agent_kind_to_wire(kind: AgentKind) -> protocol_wire::AgentKind {
+    let kind = match kind {
+        AgentKind::Claude { driver } => {
+            protocol_wire::agent_kind::Kind::Claude(protocol_wire::ClaudeKind {
+                driver: claude_driver_to_wire(driver) as i32,
+            })
+        }
+        AgentKind::Codex => protocol_wire::agent_kind::Kind::Codex(protocol_wire::CodexKind {}),
+        AgentKind::TestAgent => {
+            protocol_wire::agent_kind::Kind::TestAgent(protocol_wire::TestAgentKind {})
+        }
+    };
+    protocol_wire::AgentKind { kind: Some(kind) }
+}
+
+pub(crate) fn agent_kind_from_wire(
+    kind: protocol_wire::AgentKind,
+) -> Result<AgentKind, protocol_wire::DecodeError> {
+    let kind = kind
+        .kind
+        .ok_or_else(|| protocol_wire::DecodeError::Invalid("AgentKind missing kind".into()))?;
+    Ok(match kind {
+        protocol_wire::agent_kind::Kind::Claude(claude) => AgentKind::Claude {
+            driver: claude_driver_from_wire(claude.driver)?,
+        },
+        protocol_wire::agent_kind::Kind::Codex(_) => AgentKind::Codex,
+        protocol_wire::agent_kind::Kind::TestAgent(_) => AgentKind::TestAgent,
+    })
+}
+
+pub(crate) const fn claude_driver_to_wire(driver: ClaudeDriver) -> protocol_wire::ClaudeDriver {
+    match driver {
+        ClaudeDriver::Pty => protocol_wire::ClaudeDriver::Pty,
+        ClaudeDriver::Sdk => protocol_wire::ClaudeDriver::Sdk,
+    }
+}
+
+pub(crate) fn claude_driver_from_wire(
+    driver: i32,
+) -> Result<ClaudeDriver, protocol_wire::DecodeError> {
+    match protocol_wire::ClaudeDriver::try_from(driver) {
+        Ok(protocol_wire::ClaudeDriver::Pty) => Ok(ClaudeDriver::Pty),
+        Ok(protocol_wire::ClaudeDriver::Sdk) => Ok(ClaudeDriver::Sdk),
+        Ok(protocol_wire::ClaudeDriver::Unspecified) | Err(_) => Err(
+            protocol_wire::DecodeError::Invalid("ClaudeDriver must be specified".into()),
+        ),
+    }
 }
 
 pub(crate) fn agent_parent_to_wire(parent: AgentParent) -> protocol_wire::AgentParent {
@@ -488,6 +893,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agent_kinds_roundtrip_every_variant() {
+        for kind in [
+            AgentKind::Claude {
+                driver: ClaudeDriver::Pty,
+            },
+            AgentKind::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            AgentKind::Codex,
+            AgentKind::TestAgent,
+        ] {
+            assert_eq!(
+                agent_kind_from_wire(agent_kind_to_wire(kind)).unwrap(),
+                kind
+            );
+        }
+    }
+
+    #[test]
     fn a2a_record_roundtrip() {
         let parent = AgentParent {
             agent_id: Uuid::new_v4(),
@@ -540,6 +964,7 @@ mod tests {
                         rows: 40,
                         cols: 120,
                     }),
+                    driver: protocol_wire::ClaudeDriver::Sdk as i32,
                 },
             )),
         };
@@ -549,7 +974,8 @@ mod tests {
         assert_eq!(decoded.name.as_deref(), Some("dev"));
         assert_eq!(decoded.parent, Some(parent));
         assert_eq!(decoded.initial_prompt.as_deref(), Some("start here"));
-        let CreateAgentConfig::ClaudePty {
+        let CreateAgentConfig::Claude {
+            driver,
             working_dir,
             args,
             terminal_size,
@@ -557,6 +983,7 @@ mod tests {
         else {
             panic!("expected Claude create config");
         };
+        assert_eq!(driver, ClaudeDriver::Sdk);
         assert_eq!(working_dir, PathBuf::from("/tmp/work"));
         assert_eq!(args, ["--resume", "abc"]);
         assert_eq!(
@@ -618,6 +1045,7 @@ mod tests {
                     working_dir: "/tmp/work".to_string(),
                     args: Vec::new(),
                     initial_terminal_size: None,
+                    driver: protocol_wire::ClaudeDriver::Pty as i32,
                 },
             )),
         };
@@ -771,57 +1199,214 @@ mod tests {
     }
 
     #[test]
-    fn subscribe_session_request_decodes_from_wire() {
-        let agent_id = Uuid::new_v4();
-        let request = SubscribeSessionRequest {
-            agent_id,
-            io_protocol: "terminal_v1".to_string(),
-            args: Some(vec![1, 2, 3]),
-        };
-        let decoded = subscribe_session_request_from_wire(pb::SubscribeSessionRequest {
-            agent_id: uuid_to_bytes(agent_id),
-            io_protocol: request.io_protocol.clone(),
-            args: request.args.clone(),
-        })
-        .unwrap();
-        assert_eq!(decoded, request);
+    fn subscribe_session_requests_roundtrip_every_protocol() {
+        let protocols = [
+            pb::subscribe_session_request::Protocol::TerminalV1(pb::TerminalV1Args {
+                terminal_size: Some(pb::TerminalSize { rows: 24, cols: 80 }),
+                replay_query: None,
+            }),
+            pb::subscribe_session_request::Protocol::ClaudePtyTranscriptV1(
+                pb::ClaudePtyTranscriptV1Args {
+                    terminal_size: None,
+                    replay_query: Some(pb::ClaudePtyTranscriptV1ReplayQuery {
+                        query: Some(pb::claude_pty_transcript_v1_replay_query::Query::Since(4)),
+                    }),
+                },
+            ),
+            pb::subscribe_session_request::Protocol::ClaudeSdkV1(pb::ClaudeSdkV1Args {
+                replay_query: Some(pb::ClaudeSdkV1ReplayQuery {
+                    query: Some(pb::claude_sdk_v1_replay_query::Query::TailCount(3)),
+                }),
+            }),
+            pb::subscribe_session_request::Protocol::ClaudeSdkV1(pb::ClaudeSdkV1Args {
+                replay_query: Some(pb::ClaudeSdkV1ReplayQuery {
+                    query: Some(pb::claude_sdk_v1_replay_query::Query::Since(9)),
+                }),
+            }),
+            pb::subscribe_session_request::Protocol::CodexSdkV1(pb::CodexSdkV1Args {
+                replay_query: Some(pb::CodexSdkV1ReplayQuery {
+                    query: Some(pb::codex_sdk_v1_replay_query::Query::Since(7)),
+                }),
+            }),
+            pb::subscribe_session_request::Protocol::TestEchoV1(pb::TestEchoV1Args {}),
+        ];
+
+        for protocol in protocols {
+            let agent_id = Uuid::new_v4();
+            let decoded = subscribe_session_request_from_wire(pb::SubscribeSessionRequest {
+                agent_id: uuid_to_bytes(agent_id),
+                protocol: Some(protocol),
+            })
+            .unwrap();
+            assert_eq!(decoded.agent_id, agent_id);
+            assert_eq!(
+                subscribe_protocol_to_agent_wire(&decoded.io_protocol, decoded.args.as_deref(),)
+                    .unwrap(),
+                protocol
+            );
+        }
     }
 
     #[test]
-    fn send_input_requests_decode_from_wire() {
-        let events = [
-            SessionInputEvent::Input {
-                input_id: Uuid::new_v4().as_bytes().to_vec(),
-                payload: b"hello".to_vec(),
-            },
-            SessionInputEvent::Control {
-                payload: b"resize".to_vec(),
-            },
+    fn client_subscription_mirror_roundtrips_every_protocol() {
+        let protocols = [
+            pb::client_subscribe_session_request::Protocol::TerminalV1(pb::TerminalV1Args {
+                terminal_size: None,
+                replay_query: None,
+            }),
+            pb::client_subscribe_session_request::Protocol::ClaudePtyTranscriptV1(
+                pb::ClaudePtyTranscriptV1Args {
+                    terminal_size: None,
+                    replay_query: None,
+                },
+            ),
+            pb::client_subscribe_session_request::Protocol::ClaudeSdkV1(pb::ClaudeSdkV1Args {
+                replay_query: None,
+            }),
+            pb::client_subscribe_session_request::Protocol::CodexSdkV1(pb::CodexSdkV1Args {
+                replay_query: None,
+            }),
+            pb::client_subscribe_session_request::Protocol::TestEchoV1(pb::TestEchoV1Args {}),
+        ];
+
+        for protocol in protocols {
+            let (decoded, args) = subscribe_protocol_from_client_wire(Some(protocol)).unwrap();
+            assert_eq!(
+                subscribe_protocol_to_client_wire(decoded.as_str(), args.as_deref()).unwrap(),
+                protocol
+            );
+        }
+    }
+
+    #[test]
+    fn send_input_requests_roundtrip_every_protocol_and_control() {
+        let events = vec![
+            pb::send_input_request::Event::TerminalV1(pb::TerminalV1Input {
+                payload: b"terminal".to_vec(),
+            }),
+            pb::send_input_request::Event::ClaudePtyTranscriptV1(pb::ClaudePtyTranscriptV1Input {
+                expected_seq: 2,
+                actions: vec![pb::ClaudePtyTranscriptV1Action {
+                    action: Some(pb::claude_pty_transcript_v1_action::Action::Write(
+                        b"claude".to_vec(),
+                    )),
+                }],
+            }),
+            pb::send_input_request::Event::ClaudeSdkV1(pb::ClaudeSdkV1Input {
+                input: Some(pb::claude_sdk_v1_input::Input::Prompt(
+                    pb::ClaudeSdkPrompt {
+                        text: "hello".into(),
+                    },
+                )),
+            }),
+            pb::send_input_request::Event::ClaudeSdkV1(pb::ClaudeSdkV1Input {
+                input: Some(pb::claude_sdk_v1_input::Input::Interrupt(
+                    pb::ClaudeSdkInterrupt {},
+                )),
+            }),
+            pb::send_input_request::Event::ClaudeSdkV1(pb::ClaudeSdkV1Input {
+                input: Some(pb::claude_sdk_v1_input::Input::PermissionDecision(
+                    pb::ClaudeSdkPermissionDecision {
+                        request_id: "permission-allow".into(),
+                        decision: Some(pb::claude_sdk_permission_decision::Decision::Allow(
+                            pb::ClaudeSdkPermissionAllow {
+                                updated_input_json: Some(br#"{"path":"/tmp"}"#.to_vec()),
+                                updated_permissions_json: vec![br#"{"type":"addRules"}"#.to_vec()],
+                                tool_use_id: Some("tool-allow".into()),
+                            },
+                        )),
+                    },
+                )),
+            }),
+            pb::send_input_request::Event::ClaudeSdkV1(pb::ClaudeSdkV1Input {
+                input: Some(pb::claude_sdk_v1_input::Input::PermissionDecision(
+                    pb::ClaudeSdkPermissionDecision {
+                        request_id: "permission-1".into(),
+                        decision: Some(pb::claude_sdk_permission_decision::Decision::Deny(
+                            pb::ClaudeSdkPermissionDeny {
+                                message: "no".into(),
+                                interrupt: Some(true),
+                                tool_use_id: Some("tool-1".into()),
+                            },
+                        )),
+                    },
+                )),
+            }),
+            pb::send_input_request::Event::CodexSdkV1(pb::CodexSdkV1Input {
+                input: Some(pb::codex_sdk_v1_input::Input::Interrupt(
+                    pb::CodexSdkV1Interrupt {
+                        turn_id: "turn-1".into(),
+                    },
+                )),
+            }),
+            pb::send_input_request::Event::TestEchoV1(pb::TestEchoV1Input {
+                payload: b"echo".to_vec(),
+            }),
+            pb::send_input_request::Event::Control(pb::SessionControl {
+                control: Some(pb::session_control::Control::Resize(pb::TerminalSize {
+                    rows: 30,
+                    cols: 100,
+                })),
+            }),
+        ];
+
+        for wire_event in events {
+            let agent_id = Uuid::new_v4();
+            let input_id = Uuid::new_v4().as_bytes().to_vec();
+            let decoded = send_input_request_from_wire(pb::SendInputRequest {
+                agent_id: uuid_to_bytes(agent_id),
+                input_id,
+                event: Some(wire_event.clone()),
+            })
+            .unwrap();
+            let (_, encoded) =
+                send_input_event_to_agent_wire(&decoded.io_protocol, &decoded.event).unwrap();
+            assert_eq!(encoded, wire_event);
+        }
+    }
+
+    #[test]
+    fn client_input_mirror_roundtrips_every_protocol_and_control() {
+        let events = vec![
+            pb::client_send_input_request::Event::TerminalV1(pb::TerminalV1Input {
+                payload: b"terminal".to_vec(),
+            }),
+            pb::client_send_input_request::Event::ClaudePtyTranscriptV1(
+                pb::ClaudePtyTranscriptV1Input {
+                    expected_seq: 1,
+                    actions: Vec::new(),
+                },
+            ),
+            pb::client_send_input_request::Event::ClaudeSdkV1(pb::ClaudeSdkV1Input {
+                input: Some(pb::claude_sdk_v1_input::Input::Interrupt(
+                    pb::ClaudeSdkInterrupt {},
+                )),
+            }),
+            pb::client_send_input_request::Event::CodexSdkV1(pb::CodexSdkV1Input {
+                input: Some(pb::codex_sdk_v1_input::Input::UserTurn(
+                    pb::CodexSdkV1UserTurn {
+                        input: b"[]".to_vec(),
+                    },
+                )),
+            }),
+            pb::client_send_input_request::Event::TestEchoV1(pb::TestEchoV1Input {
+                payload: b"echo".to_vec(),
+            }),
+            pb::client_send_input_request::Event::Control(pb::SessionControl {
+                control: Some(pb::session_control::Control::Resize(pb::TerminalSize {
+                    rows: 40,
+                    cols: 120,
+                })),
+            }),
         ];
 
         for event in events {
-            let agent_id = Uuid::new_v4();
-            let io_protocol = "terminal_v1".to_string();
-            let wire_event = match event.clone() {
-                SessionInputEvent::Input { input_id, payload } => {
-                    pb::send_input_request::Event::Input(pb::SessionInput { input_id, payload })
-                }
-                SessionInputEvent::Control { payload } => {
-                    pb::send_input_request::Event::Control(pb::SessionControl { payload })
-                }
-            };
-            let request = SendInputRequest {
-                agent_id,
-                io_protocol: io_protocol.clone(),
-                event,
-            };
-            let decoded = send_input_request_from_wire(pb::SendInputRequest {
-                agent_id: uuid_to_bytes(agent_id),
-                io_protocol,
-                event: Some(wire_event),
-            })
-            .unwrap();
-            assert_eq!(decoded, request);
+            let (protocol, decoded) =
+                send_input_event_from_client_wire(b"input-id".to_vec(), Some(event.clone()))
+                    .unwrap();
+            let (_, encoded) =
+                send_input_event_to_client_wire(protocol.as_str(), &decoded).unwrap();
+            assert_eq!(encoded, event);
         }
     }
 
@@ -829,9 +1414,6 @@ mod tests {
     fn session_output_events_roundtrip() {
         let events = [
             SubscribeSessionEvent::Opened,
-            SubscribeSessionEvent::Output {
-                payload: b"hello".to_vec(),
-            },
             SubscribeSessionEvent::ReplayComplete {
                 cursor: Some(b"cursor-2".to_vec()),
             },
@@ -852,9 +1434,46 @@ mod tests {
         ];
 
         for event in events {
-            let encoded = encode_session_output_event_payload(&event);
+            let encoded = encode_session_output_event_payload(&event, Protocol::TerminalV1);
             let decoded = decode_session_output_event_payload(&encoded).unwrap();
             assert_eq!(decoded, event);
+        }
+
+        let outputs = [
+            (Protocol::TerminalV1, b"terminal".to_vec()),
+            (
+                Protocol::ClaudePtyTranscriptV1,
+                pb::ClaudePtyTranscriptV1Output {
+                    seq_id: 1,
+                    payload: b"claude-pty".to_vec(),
+                }
+                .encode_to_vec(),
+            ),
+            (
+                Protocol::ClaudeSdkV1,
+                pb::ClaudeSdkV1Output {
+                    seq_id: 2,
+                    payload: b"claude-sdk".to_vec(),
+                }
+                .encode_to_vec(),
+            ),
+            (
+                Protocol::CodexSdkV1,
+                pb::CodexSdkV1Output {
+                    seq: 3,
+                    payload: b"codex".to_vec(),
+                }
+                .encode_to_vec(),
+            ),
+            (Protocol::TestEchoV1, b"echo".to_vec()),
+        ];
+        for (protocol, payload) in outputs {
+            let event = SubscribeSessionEvent::Output { payload };
+            let encoded = encode_session_output_event_payload(&event, protocol);
+            assert_eq!(
+                decode_session_output_event_payload(&encoded).unwrap(),
+                event
+            );
         }
     }
 }

@@ -476,7 +476,7 @@ mod tests {
     use tower::service_fn;
 
     use super::*;
-    use crate::agents::{CreateAgentConfig, TEST_ECHO_COMMAND, TEST_ECHO_V1};
+    use crate::agents::{CreateAgentConfig, TEST_ECHO_COMMAND};
 
     fn service_host() -> Arc<PtyAgentHost> {
         PtyAgentHost::new(Uuid::from_u128(1))
@@ -522,18 +522,18 @@ mod tests {
     fn test_echo_subscribe_request(agent_id: Uuid) -> wire::pb::SubscribeSessionRequest {
         wire::pb::SubscribeSessionRequest {
             agent_id: agent_id.as_bytes().to_vec(),
-            io_protocol: TEST_ECHO_V1.to_string(),
-            args: None,
+            protocol: Some(wire::pb::subscribe_session_request::Protocol::TestEchoV1(
+                wire::pb::TestEchoV1Args {},
+            )),
         }
     }
 
     fn test_echo_send_input_request(agent_id: Uuid, payload: &[u8]) -> wire::pb::SendInputRequest {
         wire::pb::SendInputRequest {
             agent_id: agent_id.as_bytes().to_vec(),
-            io_protocol: TEST_ECHO_V1.to_string(),
-            event: Some(wire::pb::send_input_request::Event::Input(
-                wire::pb::SessionInput {
-                    input_id: b"input-1".to_vec(),
+            input_id: b"input-1".to_vec(),
+            event: Some(wire::pb::send_input_request::Event::TestEchoV1(
+                wire::pb::TestEchoV1Input {
                     payload: payload.to_vec(),
                 },
             )),
@@ -575,10 +575,9 @@ mod tests {
             &ctx,
             tonic::Request::new(wire::pb::SendInputRequest {
                 agent_id: missing_agent_id.as_bytes().to_vec(),
-                io_protocol: "terminal_v1".to_string(),
-                event: Some(wire::pb::send_input_request::Event::Input(
-                    wire::pb::SessionInput {
-                        input_id: vec![1],
+                input_id: vec![1],
+                event: Some(wire::pb::send_input_request::Event::TerminalV1(
+                    wire::pb::TerminalV1Input {
                         payload: b"input".to_vec(),
                     },
                 )),
@@ -768,6 +767,9 @@ mod tests {
             .expect("session stream returned error");
         let Some(wire::subscribe_session_response::Event::Output(output)) = output.event else {
             panic!("expected SessionOutput");
+        };
+        let Some(wire::session_output::Output::TestEchoV1(output)) = output.output else {
+            panic!("expected test echo output");
         };
         assert_eq!(output.payload, b"hello");
 
