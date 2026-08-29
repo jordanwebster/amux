@@ -11,7 +11,7 @@
       C-a k/j                   focus older / newer block                       
       ctrl+↑/↓                  focus older / newer block · terminal-dependent  
       C-a o                     open / close the focused run                    
-      esc                       clear the block focus                           
+      esc                       close reader / clear focus / back ask / follow  
       ctrl+t                    read accepted plans (←/→ steps)                 
       ctrl+c                    clear field; empty: press twice to quit         
       C-a s                     back to fleet                                   

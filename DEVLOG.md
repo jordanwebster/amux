@@ -5600,3 +5600,9 @@ Help overlays in both chats and Claude's fullscreen reader now receive keys
 before the shared focus, copy, fold, and Esc layer. Any key can therefore
 close help as documented, and Esc closes a reader before it clears a focused
 feed block; mouse and keyboard routing now use the same overlay predicate.
+
+2026-08-29 — **Made Esc's complete back path discoverable again.** The shared
+chat binding table now tells both native help overlays that Esc closes a
+reader, clears block focus, steps back an ask, or returns the feed to
+following, one visible layer at a time. Text and semantic-style goldens lock
+the same derived wording in compact, kitty, dark, and light presentations.

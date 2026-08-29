@@ -97,6 +97,11 @@ impl Effective {
 pub const PAUSED_RULE: &str =
     "↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest";
 
+/// Esc walks visible chat state back by one layer. A native overlay closes
+/// before shared block focus; without one, the native ask and feed stages
+/// follow focus clearing.
+const ESC_BACK_ACTION: &str = "close reader / clear focus / back ask / follow";
+
 /// The screen facts the family chords depend on. Each of the three
 /// exists only where it would do something: `<leader> n` needs somewhere
 /// else in the family to go, `<leader> m` needs a completion with a body
@@ -162,7 +167,7 @@ fn feed_focus_rows(eff: &Effective) -> Vec<Binding> {
             "open / close the focused run",
             Tier::Plain,
         ),
-        row("esc", "clear the block focus", Tier::Plain),
+        row("esc", ESC_BACK_ACTION, Tier::Plain),
     ]
 }
 
@@ -415,6 +420,28 @@ mod tests {
         Effective {
             kitty,
             leader_label: "C-b".to_string(),
+        }
+    }
+
+    #[test]
+    fn both_chat_tables_state_escs_back_one_stage_behavior() {
+        for sections in [
+            chat_sections(&eff(false), all_family()),
+            codex_chat_sections(&eff(false), all_family()),
+        ] {
+            let esc = sections
+                .iter()
+                .flat_map(|section| &section.bindings)
+                .find(|binding| binding.keys == "esc")
+                .expect("chat bindings carry Esc");
+            assert_eq!(esc.action, ESC_BACK_ACTION);
+            for meaning in ["close reader", "clear focus", "back ask", "follow"] {
+                assert!(
+                    esc.action.contains(meaning),
+                    "Esc row omits {meaning:?}: {}",
+                    esc.action
+                );
+            }
         }
     }
 
