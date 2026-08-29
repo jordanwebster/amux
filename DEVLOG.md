@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The theme substrate clears the workspace lint gate.** Default
+theme selection now uses Rust's derived default, base-key normalization uses
+the `Option` early-return operator, and the semantic style methods reserved for
+the upcoming shared frame and block painters carry narrow dead-code allowances
+that can be removed as each painter adopts them.
+
+---
+
 2026-08-29 — **Screenshot manifests survive repeatable capture workflows.** A
 render now replaces the manifest entry for its output filename, and a repeated
 render-set replaces the receipt with the same set name. Replaying evidence into

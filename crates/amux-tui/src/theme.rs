@@ -187,7 +187,11 @@ impl Theme {
         token.resolve(self.mode)
     }
 
+    // These semantic styles define the shared frame and block painter API
+    // before those painters arrive. Keep each allowance local so it disappears
+    // as soon as its painter starts using the method.
     /// The terminal background.
+    #[allow(dead_code)]
     pub(crate) fn background(self) -> Style {
         Style::default().bg(self.color(self.tokens.background))
     }
@@ -237,16 +241,19 @@ impl Theme {
     }
 
     /// The filled user-message and composer surface.
+    #[allow(dead_code)]
     pub(crate) fn user_surface(self) -> Style {
         self.text().bg(self.color(self.tokens.user_surface))
     }
 
     /// The filled diff and ask-panel surface.
+    #[allow(dead_code)]
     pub(crate) fn panel(self) -> Style {
         self.text().bg(self.color(self.tokens.panel))
     }
 
     /// The bar at the left edge of a user surface.
+    #[allow(dead_code)]
     pub(crate) fn accent_bar(self) -> Style {
         Style::default()
             .fg(self.color(self.tokens.accent))
@@ -254,6 +261,7 @@ impl Theme {
     }
 
     /// The bar marking the focused feed block.
+    #[allow(dead_code)]
     pub(crate) fn focus_bar(self) -> Style {
         Style::default().fg(self.color(self.tokens.focus))
     }
@@ -287,6 +295,7 @@ impl Theme {
     }
 
     /// The numbered diff gutter on the panel surface.
+    #[allow(dead_code)]
     pub(crate) fn gutter(self) -> Style {
         Style::default()
             .fg(self.color(self.tokens.gutter))
@@ -385,9 +394,7 @@ pub fn parse_theme_file(yaml: &str) -> Result<ThemeFile, ThemeError> {
 }
 
 fn normalize_base_key(key: &str) -> Option<String> {
-    let Some(suffix) = key.strip_prefix("base") else {
-        return None;
-    };
+    let suffix = key.strip_prefix("base")?;
     let index = (suffix.len() == 2)
         .then(|| u8::from_str_radix(suffix, 16).ok())
         .flatten()

@@ -154,17 +154,12 @@ pub enum OpenMode {
 }
 
 /// A shipped theme name or a YAML theme file path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ThemeSetting {
+    #[default]
     Dark,
     Light,
     File(PathBuf),
-}
-
-impl Default for ThemeSetting {
-    fn default() -> Self {
-        Self::Dark
-    }
 }
 
 impl Serialize for ThemeSetting {
