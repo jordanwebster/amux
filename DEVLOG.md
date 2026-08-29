@@ -5243,3 +5243,10 @@ terminal; and a content-validating cache reuses paint only while the entry,
 width, theme, and expansion state still match. Claude and Codex enter the
 shell through temporary opaque blocks, which removes their outer borders
 without normalizing either agent's native content.
+
+2026-08-29 — **Unified diff inputs as independently numbered rows.** Claude's
+typed hunks and Codex's unified-patch text now enter one row vocabulary with
+separate old/new gutters and explicit metadata, context, added, and removed
+kinds. Counters reset per hunk and advance independently, while line content
+stays verbatim for the painter; malformed or headerless patches produce no
+rows rather than speculative output.

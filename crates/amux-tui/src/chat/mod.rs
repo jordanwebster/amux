@@ -5,6 +5,7 @@
 pub(crate) mod blocks;
 pub(crate) mod claude;
 mod codex;
+pub mod diff;
 pub(crate) mod frame;
 pub(crate) mod inline;
 pub(crate) mod viewport;
@@ -14,7 +15,6 @@ use amux_ui::{
     StructuredProtocol, Why, message_digest,
 };
 use chrono::{DateTime, Utc};
-pub use claude::diff;
 use crossterm::event::KeyEvent;
 use ratatui::text::Line;
 
