@@ -1,4 +1,5 @@
 mod manifest;
+mod registry;
 pub mod transport;
 
 use std::path::Path;
@@ -8,6 +9,7 @@ pub use manifest::{
     RedactionSummary, SourceKind, Verification, append_verification, load_recording,
     migrate_legacy_manifest,
 };
+pub use registry::{RegistryRow, SpecEntry, below_minimum, orphan_recordings, registry_rows};
 pub use transport::{
     ReplayAdvance, ReplayClock, ReplayController, ReplayError, ReplayNotificationIgnore,
     ReplayOptions, ReplayPeek, ReplayReport, ReplayTiming, ReplayTransport, ReplayWriteMismatch,

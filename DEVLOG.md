@@ -5156,3 +5156,9 @@ global causal ordering. Completion reports every unread or unwritten event,
 unused transport, trailing output, notification skip, delivery failure and
 write mismatch; a wrong write returns an I/O error with its expected and actual
 payloads in the report instead of panicking the specification process.
+
+2026-08-29 — **Made corpus provenance inspectable at the registry boundary.**
+Provider registries can now list each specification beside its recording,
+capture version and later live-verification ledger. Shared checks walk nested
+fixture roots deterministically to expose unclaimed recording directories and
+captures older than a provider's declared minimum.
