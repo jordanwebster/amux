@@ -712,7 +712,7 @@ mod tests {
     use super::*;
     use crate::chat::FeedScroll;
     use crate::chat::claude::render;
-    use crate::chat::frame::{FrameSpacing, compose_chat_frame, feed_metrics};
+    use crate::chat::frame::{FrameSpacing, PaintCache, compose_chat_frame, feed_metrics};
     use crate::chat::viewport::{FeedViewport, apply_scroll};
 
     fn agent_id() -> amux_ui::AgentId {
@@ -1054,7 +1054,8 @@ mod tests {
             theme: crate::render::Theme::default(),
             now: t(0),
         };
-        let parts = render::claude_frame_parts(model, chat, feed, &ctx);
+        let mut cache = PaintCache::default();
+        let parts = render::claude_frame_parts(model, chat, feed, &mut cache, &ctx);
         let geometry = render::geometry(model, chat, VIEWPORT, true);
         let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &geometry);
         apply_scroll(
@@ -2101,7 +2102,8 @@ mod tests {
             now: t(60),
         };
         let viewport = FeedViewport::following();
-        let parts = render::claude_frame_parts(&model, &chat, &viewport, &ctx);
+        let mut cache = PaintCache::default();
+        let parts = render::claude_frame_parts(&model, &chat, &viewport, &mut cache, &ctx);
         let frame = compose_chat_frame(parts, &viewport, ctx.theme, ctx.viewport);
         let text: String = frame
             .iter()

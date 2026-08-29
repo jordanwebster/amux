@@ -347,13 +347,11 @@ fn mark_focused(line: Line<'static>, theme: Theme) -> Line<'static> {
 
 /// Paint/reuse counters for the most recently measured frame interval.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct PaintStats {
     pub painted: usize,
     pub reused: usize,
 }
 
-#[allow(dead_code)]
 struct CachedBlock {
     content: Box<dyn Any>,
     width: usize,
@@ -364,7 +362,6 @@ struct CachedBlock {
 
 /// Memoized block painting, validated against all paint-affecting inputs.
 #[derive(Default)]
-#[allow(dead_code)]
 pub(crate) struct PaintCache {
     entries: HashMap<BlockKey, CachedBlock>,
     stats: PaintStats,
@@ -379,7 +376,6 @@ impl fmt::Debug for PaintCache {
     }
 }
 
-#[allow(dead_code)]
 impl PaintCache {
     pub(crate) fn get_or_paint<K: PartialEq + Clone + 'static>(
         &mut self,

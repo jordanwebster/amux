@@ -20,7 +20,7 @@ pub mod terminal;
 pub mod theme;
 pub mod view;
 
-pub use chat::ChatView;
+pub use chat::{ChatView, PaintStats};
 pub use render::{FrameContext, build_lines, render};
 pub use run::{AttachReturn, TuiConfig, run_fleet};
 pub use terminal::{

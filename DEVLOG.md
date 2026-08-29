@@ -5576,3 +5576,11 @@ registry now includes Claude and Codex long feeds paused exactly twelve rows
 back by real wheel events. Text and semantic style-map goldens cover both
 paused screens and the finished help overlay, while focused assertions keep
 the honest scrolled-back wording and effective copy chord visible.
+
+2026-08-29 — **Kept full-feed painting under budget.** Claude and Codex now
+memoize native feed-entry paints inside renderer-local chat state, while row
+metrics reuse those painted blocks. At 1,000 entries and 120×40, release-mode
+median steady frames measured 1.305 ms for Claude and 1.779 ms for Codex on
+this machine. Structural tests also prove composer input and wheel scrolling
+paint zero feed blocks after warm-up, row counting adds no paint pass, and
+cold and warm frames are identical.

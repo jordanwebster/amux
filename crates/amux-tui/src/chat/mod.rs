@@ -18,7 +18,10 @@ use amux_ui::{
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
-use frame::{FeedMetrics, FrameSpacing, PaintedBlock, compose_chat_frame, feed_metrics};
+pub use frame::PaintStats;
+use frame::{
+    FeedMetrics, FrameSpacing, PaintCache, PaintedBlock, compose_chat_frame, feed_metrics,
+};
 use ratatui::text::Line;
 use viewport::{FeedViewport, apply_scroll, move_focus, toggle_focused_run};
 
@@ -53,7 +56,7 @@ struct CachedFeedMetrics {
 
 /// Renderer-local state for one structured chat. Native sub-state remains
 /// namespaced; dispatch is exhaustive at this one additive seam.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ChatView {
     pub agent: AgentId,
     pub(crate) viewport: FeedViewport,
@@ -62,6 +65,19 @@ pub struct ChatView {
     /// handling consumes this instead of walking and painting the feed a
     /// second time merely to discover its scroll bounds.
     feed_metrics: RefCell<Option<CachedFeedMetrics>>,
+    paint_cache: RefCell<PaintCache>,
+}
+
+impl Clone for ChatView {
+    fn clone(&self) -> Self {
+        Self {
+            agent: self.agent,
+            viewport: self.viewport.clone(),
+            inner: self.inner.clone(),
+            feed_metrics: RefCell::new(None),
+            paint_cache: RefCell::new(PaintCache::default()),
+        }
+    }
 }
 
 impl ChatView {
@@ -80,6 +96,7 @@ impl ChatView {
             viewport: FeedViewport::following(),
             inner,
             feed_metrics: RefCell::new(None),
+            paint_cache: RefCell::new(PaintCache::default()),
         })
     }
 
@@ -90,6 +107,7 @@ impl ChatView {
             viewport: FeedViewport::following(),
             inner: AgentChatView::Claude(claude::View::open(agent, leader, kitty)),
             feed_metrics: RefCell::new(None),
+            paint_cache: RefCell::new(PaintCache::default()),
         }
     }
 
@@ -99,6 +117,7 @@ impl ChatView {
             viewport: FeedViewport::following(),
             inner: AgentChatView::Codex(codex::View::open(agent, leader, kitty)),
             feed_metrics: RefCell::new(None),
+            paint_cache: RefCell::new(PaintCache::default()),
         }
     }
 
@@ -139,6 +158,19 @@ impl ChatView {
             view.configuration_label = label;
             self.feed_metrics.get_mut().take();
         }
+    }
+
+    #[cfg(feature = "fixtures")]
+    pub fn paint_stats(&self) -> PaintStats {
+        self.paint_cache.borrow().stats()
+    }
+
+    #[cfg(feature = "fixtures")]
+    pub fn feed_total_rows(&self) -> Option<usize> {
+        self.feed_metrics
+            .borrow()
+            .as_ref()
+            .map(|cached| cached.metrics.total_rows)
     }
 
     pub fn reconcile(&mut self, model: &Model) {
@@ -186,10 +218,12 @@ impl ChatView {
         };
         let parts = match &self.inner {
             AgentChatView::Claude(view) => {
-                claude::claude_frame_parts(model, view, &self.viewport, &ctx)
+                let mut cache = self.paint_cache.borrow_mut();
+                claude::claude_frame_parts(model, view, &self.viewport, &mut cache, &ctx)
             }
             AgentChatView::Codex(view) => {
-                codex::codex_frame_parts(model, view, &self.viewport, &ctx)
+                let mut cache = self.paint_cache.borrow_mut();
+                codex::codex_frame_parts(model, view, &self.viewport, &mut cache, &ctx)
             }
         };
         let geometry = match &self.inner {
@@ -404,10 +438,17 @@ pub(crate) fn build_chat_lines(
     if width < MIN_WIDTH || height < MIN_HEIGHT {
         return vec![Line::from("amux: terminal too small")];
     }
+    let mut cache = chat.paint_cache.borrow_mut();
+    cache.reset_stats();
     let parts = match &chat.inner {
-        AgentChatView::Claude(view) => claude::claude_frame_parts(model, view, &chat.viewport, ctx),
-        AgentChatView::Codex(view) => codex::codex_frame_parts(model, view, &chat.viewport, ctx),
+        AgentChatView::Claude(view) => {
+            claude::claude_frame_parts(model, view, &chat.viewport, &mut cache, ctx)
+        }
+        AgentChatView::Codex(view) => {
+            codex::codex_frame_parts(model, view, &chat.viewport, &mut cache, ctx)
+        }
     };
+    drop(cache);
     let overlaid = parts.overlay.is_some();
     let banner = parts.banner.is_some();
     let paused_geometry = match &chat.inner {

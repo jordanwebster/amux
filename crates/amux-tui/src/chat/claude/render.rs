@@ -28,7 +28,8 @@ use crate::chat::claude::runs::{ClaudeItem, fold_runs};
 use crate::chat::claude::{View, ask_ui, panel, reader};
 use crate::chat::diff::diff_rows_from_claude;
 use crate::chat::frame::{
-    BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintedBlock, chat_geometry,
+    BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintCache, PaintedBlock,
+    chat_geometry,
 };
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
@@ -61,6 +62,7 @@ pub(crate) fn claude_frame_parts(
     model: &Model,
     chat: &View,
     viewport: &FeedViewport,
+    cache: &mut PaintCache,
     ctx: &FrameContext,
 ) -> ChatFrameParts {
     let width = ctx.viewport.0 as usize;
@@ -98,7 +100,7 @@ pub(crate) fn claude_frame_parts(
             blocks: if loading {
                 Vec::new()
             } else {
-                feed_blocks(model, chat, viewport, theme, width)
+                feed_blocks(model, chat, viewport, cache, theme, width)
             },
             history_truncated: model
                 .claude(chat.agent)
@@ -526,6 +528,7 @@ fn feed_blocks(
     model: &Model,
     chat: &View,
     viewport: &FeedViewport,
+    cache: &mut PaintCache,
     theme: Theme,
     width: usize,
 ) -> Vec<PaintedBlock> {
@@ -546,7 +549,18 @@ fn feed_blocks(
         match item {
             ClaudeItem::Entry(id) => {
                 if let Some(entry) = entries.get(&id) {
-                    blocks.push(entry_block(entry, theme, width, plan_hint, reports));
+                    blocks.push(
+                        cache
+                            .get_or_paint(
+                                BlockKey(entry.id),
+                                *entry,
+                                width,
+                                theme,
+                                chat.reports_open,
+                                || entry_block(entry, theme, width, plan_hint, reports),
+                            )
+                            .clone(),
+                    );
                 }
             }
             ClaudeItem::Run {
@@ -554,35 +568,65 @@ fn feed_blocks(
                 summary,
                 members,
             } => {
-                let painted: Vec<PaintedBlock> = members
+                let member_entries: Vec<FeedEntry> = members
                     .iter()
                     .filter_map(|id| entries.get(id))
-                    .map(|entry| entry_block(entry, theme, width, plan_hint, reports))
+                    .map(|entry| (*entry).clone())
                     .collect();
                 // An open run offers to shut again, not to open twice.
                 let expanded = viewport.expanded.contains(&key);
-                blocks.push(paint_exploration_run(
-                    BlockKey(key.0),
-                    key,
-                    &summary,
-                    &painted,
-                    expanded,
-                    &eff.fold_hint(expanded),
-                    theme,
-                    width,
-                ));
+                let hint = eff.fold_hint(expanded);
+                let content = (
+                    summary.clone(),
+                    member_entries.clone(),
+                    plan_hint,
+                    chat.reports_open,
+                    chat.leader,
+                    hint.clone(),
+                );
+                blocks.push(
+                    cache
+                        .get_or_paint(
+                            BlockKey(key.0),
+                            &content,
+                            width,
+                            theme,
+                            expanded,
+                            || {
+                                let painted: Vec<PaintedBlock> = member_entries
+                                    .iter()
+                                    .map(|entry| {
+                                        entry_block(entry, theme, width, plan_hint, reports)
+                                    })
+                                    .collect();
+                                paint_exploration_run(
+                                    BlockKey(key.0),
+                                    key,
+                                    &summary,
+                                    &painted,
+                                    expanded,
+                                    &hint,
+                                    theme,
+                                    width,
+                                )
+                            },
+                        )
+                        .clone(),
+                );
             }
         }
     }
     for (index, echo) in layer.pending_echoes().iter().enumerate() {
-        blocks.push(paint_user_prompt(
-            BlockKey(ECHO_KEY_BASE - index as u64),
-            &echo.text,
-            true,
-            theme,
-            width,
-        ));
+        let key = BlockKey(ECHO_KEY_BASE - index as u64);
+        blocks.push(
+            cache
+                .get_or_paint(key, echo, width, theme, false, || {
+                    paint_user_prompt(key, &echo.text, true, theme, width)
+                })
+                .clone(),
+        );
     }
+    cache.retain(&blocks.iter().map(|block| block.key).collect::<Vec<_>>());
     blocks
 }
 

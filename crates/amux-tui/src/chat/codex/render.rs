@@ -28,7 +28,8 @@ use crate::chat::blocks::{
 };
 use crate::chat::diff::diff_rows_from_patch;
 use crate::chat::frame::{
-    BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintedBlock, chat_geometry,
+    BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintCache, PaintedBlock,
+    chat_geometry,
 };
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph};
@@ -56,6 +57,7 @@ pub(crate) fn codex_frame_parts(
     model: &Model,
     chat: &View,
     viewport: &FeedViewport,
+    cache: &mut PaintCache,
     ctx: &FrameContext,
 ) -> ChatFrameParts {
     let width = ctx.viewport.0 as usize;
@@ -87,7 +89,7 @@ pub(crate) fn codex_frame_parts(
             blocks: if loading {
                 Vec::new()
             } else {
-                feed_blocks(model, chat, theme, width)
+                feed_blocks(model, chat, cache, theme, width)
             },
             history_truncated: model
                 .codex(chat.agent)
@@ -727,15 +729,34 @@ fn armed_quit_line(theme: Theme) -> Line<'static> {
 /// Every feed block, in file order. Codex has no read-only exploration
 /// kind to fold: every command and every file change is consequential,
 /// so each one keeps a block of its own.
-fn feed_blocks(model: &Model, chat: &View, theme: Theme, width: usize) -> Vec<PaintedBlock> {
+fn feed_blocks(
+    model: &Model,
+    chat: &View,
+    cache: &mut PaintCache,
+    theme: Theme,
+    width: usize,
+) -> Vec<PaintedBlock> {
     let Some(layer) = model.codex(chat.agent) else {
         return Vec::new();
     };
     let reports = MessageView::new(model, chat.agent, chat.reports_open, chat.leader);
-    layer
+    let blocks: Vec<_> = layer
         .entries()
-        .map(|entry| entry_block(entry, theme, width, reports))
-        .collect()
+        .map(|entry| {
+            cache
+                .get_or_paint(
+                    BlockKey(entry.id),
+                    entry,
+                    width,
+                    theme,
+                    chat.reports_open,
+                    || entry_block(entry, theme, width, reports),
+                )
+                .clone()
+        })
+        .collect();
+    cache.retain(&blocks.iter().map(|block| block.key).collect::<Vec<_>>());
+    blocks
 }
 
 /// Join a second painted block onto the first: some entries say one
