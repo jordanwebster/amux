@@ -57,6 +57,10 @@ enum Commands {
         /// Agent type: claude, codex, or test-agent (test-agent only in dev builds)
         agent_type: String,
 
+        /// Claude driver (Claude agents only; defaults to pty)
+        #[arg(long, value_enum)]
+        driver: Option<CliClaudeDriver>,
+
         /// Session name (optional human-readable name)
         #[arg(long)]
         name: Option<String>,
@@ -270,6 +274,21 @@ enum CliDebugFormat {
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
+enum CliClaudeDriver {
+    Pty,
+    Sdk,
+}
+
+impl From<CliClaudeDriver> for amux::ClaudeDriver {
+    fn from(value: CliClaudeDriver) -> Self {
+        match value {
+            CliClaudeDriver::Pty => Self::Pty,
+            CliClaudeDriver::Sdk => Self::Sdk,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
 enum CliCodexApprovalPolicy {
     Untrusted,
     OnRequest,
@@ -411,6 +430,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         Commands::Ui => ui::run(config).await?,
         Commands::New {
             agent_type,
+            driver,
             name,
             model,
             approval_policy,
@@ -425,6 +445,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 move || async move {
                     let agent_type = configure_agent_type(
                         parse_agent_type(&agent_type)?,
+                        driver,
                         model,
                         approval_policy,
                         sandbox_policy,
@@ -1040,23 +1061,46 @@ fn parse_agent_type(s: &str) -> Result<AgentType> {
 
 fn configure_agent_type(
     agent_type: AgentType,
+    driver: Option<CliClaudeDriver>,
     model: Option<String>,
     approval_policy: Option<CliCodexApprovalPolicy>,
     sandbox_policy: Option<CliCodexSandboxPolicy>,
 ) -> Result<AgentType> {
     match agent_type {
+        AgentType::Claude { .. } => {
+            if model.is_some() || approval_policy.is_some() || sandbox_policy.is_some() {
+                return Err(anyhow!(
+                    "--model, --approval-policy, and --sandbox-policy require agent type `codex`"
+                ));
+            }
+            Ok(AgentType::Claude {
+                driver: driver.unwrap_or(CliClaudeDriver::Pty).into(),
+            })
+        }
         AgentType::Codex {
             resume_thread_id, ..
-        } => Ok(AgentType::Codex {
-            model,
-            approval_policy: approval_policy.map(|value| value.as_str().to_string()),
-            sandbox_policy: sandbox_policy.map(|value| value.as_str().to_string()),
-            resume_thread_id,
-        }),
-        _other if model.is_some() || approval_policy.is_some() || sandbox_policy.is_some() => Err(
-            anyhow!("--model, --approval-policy, and --sandbox-policy require agent type `codex`"),
-        ),
-        other => Ok(other),
+        } => {
+            if driver.is_some() {
+                return Err(anyhow!("--driver requires agent type `claude`"));
+            }
+            Ok(AgentType::Codex {
+                model,
+                approval_policy: approval_policy.map(|value| value.as_str().to_string()),
+                sandbox_policy: sandbox_policy.map(|value| value.as_str().to_string()),
+                resume_thread_id,
+            })
+        }
+        AgentType::TestAgent { command } => {
+            if driver.is_some() {
+                return Err(anyhow!("--driver requires agent type `claude`"));
+            }
+            if model.is_some() || approval_policy.is_some() || sandbox_policy.is_some() {
+                return Err(anyhow!(
+                    "--model, --approval-policy, and --sandbox-policy require agent type `codex`"
+                ));
+            }
+            Ok(AgentType::TestAgent { command })
+        }
     }
 }
 
@@ -1271,6 +1315,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_claude_driver_and_defaults_to_pty() {
+        for (args, expected) in [
+            (vec!["amux", "new", "claude"], amux::ClaudeDriver::Pty),
+            (
+                vec!["amux", "new", "claude", "--driver", "pty"],
+                amux::ClaudeDriver::Pty,
+            ),
+            (
+                vec!["amux", "new", "claude", "--driver", "sdk"],
+                amux::ClaudeDriver::Sdk,
+            ),
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            let Some(Commands::New {
+                agent_type,
+                driver,
+                model,
+                approval_policy,
+                sandbox_policy,
+                ..
+            }) = cli.command
+            else {
+                panic!("expected new command");
+            };
+            let configured = configure_agent_type(
+                parse_agent_type(&agent_type).unwrap(),
+                driver,
+                model,
+                approval_policy,
+                sandbox_policy,
+            )
+            .unwrap();
+            assert_eq!(configured, AgentType::Claude { driver: expected });
+        }
+
+        assert!(Cli::try_parse_from(["amux", "new", "claude", "--driver", "unknown"]).is_err());
+    }
+
+    #[test]
     fn parses_and_applies_codex_creation_options() {
         let cli = Cli::try_parse_from([
             "amux",
@@ -1286,6 +1369,7 @@ mod tests {
         .unwrap();
         let Some(Commands::New {
             agent_type,
+            driver,
             model,
             approval_policy,
             sandbox_policy,
@@ -1296,6 +1380,7 @@ mod tests {
         };
         let configured = configure_agent_type(
             parse_agent_type(&agent_type).unwrap(),
+            driver,
             model,
             approval_policy,
             sandbox_policy,
@@ -1384,12 +1469,26 @@ mod tests {
             AgentType::Claude {
                 driver: amux::ClaudeDriver::Pty,
             },
+            None,
             Some("gpt-5.4".to_string()),
             None,
             None,
         )
         .unwrap_err();
         assert!(error.to_string().contains("require agent type `codex`"));
+    }
+
+    #[test]
+    fn claude_driver_rejects_other_agent_kinds() {
+        let error = configure_agent_type(
+            parse_agent_type("codex").unwrap(),
+            Some(CliClaudeDriver::Sdk),
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "--driver requires agent type `claude`");
     }
 
     #[test]

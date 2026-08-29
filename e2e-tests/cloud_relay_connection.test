@@ -86,7 +86,7 @@ Pairing mode ended.
 > amux list
 @@retry 8000 200
 Running agents:
-  cloud-remote - $dir_a.path
+  cloud-remote [test-agent] - $dir_a.path
 
 @Tb
 > amux attach cloud-remote

@@ -128,6 +128,14 @@ envelopes through `AgentService.SendMessage` inside the same authenticated
 tunnels as every other peer call. Parent edges, work status, create/delete
 lifecycle, and provider carriers are specified in [`A2A.md`](./A2A.md).
 
+Agent sessions use a typed wire within those calls. Each agent carries a closed
+kind: Claude with either the PTY or SDK driver, Codex, or test-agent. Session
+subscription, output, input, and control messages select a protocol-specific
+protobuf `oneof`; the agent kind determines which selections are exposed, and
+the daemon returns a typed refusal when a caller selects one the kind does not
+support. The provider protocol details will be expanded with the provider-crate
+documentation.
+
 ## What this protocol deliberately does not have
 
 Route lists, link names, prepend-on-forward, split-horizon, hop caps, route

@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Agent kinds and session protocols are closed across the wire.**
+Claude now carries its PTY or SDK driver in the agent kind, while Codex and the
+test agent are distinct variants; each kind derives the protocols it exposes.
+Session protobufs select typed protocol arguments, output, and input through
+oneofs, daemon plane lookup refuses unsupported selections with a typed error,
+and the UI chooses its layer exhaustively from the kind. `amux new claude`
+accepts `--driver pty|sdk` with PTY as the default, `amux list` prints the kind
+and driver, and SDK-driven Claude sessions render an explicit unsupported chat
+placeholder until that layer gains a reader.
+
+---
+
 2026-08-29 — **The chat layer comes from the agent's kind, and an unread
 protocol renders as one.** The UI no longer sniffs a layer out of advertised
 protocol strings: a kind determines its layer, and a Claude driven through

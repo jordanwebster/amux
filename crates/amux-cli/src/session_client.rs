@@ -531,11 +531,12 @@ impl ListRender<'_> {
             })
         });
         self.lines.push(format!(
-            "{}{}{}{} - {}{}",
+            "{}{}{}{} [{}] - {}{}",
             "  ".repeat(depth + 1),
             display_name(agent),
             family.unwrap_or_default(),
             label,
+            agent.kind,
             agent.working_dir.display(),
             working.unwrap_or_default()
         ));
@@ -1242,13 +1243,13 @@ mod attach {
         assert_eq!(
             lines[0],
             format!(
-                "  alpha ⋯2 - {} · coordinating the release 2m",
+                "  alpha ⋯2 [test-agent] - {} · coordinating the release 2m",
                 std::env::temp_dir().display()
             )
         );
         assert_eq!(
             lines[1],
-            format!("  solo - {}", std::env::temp_dir().display())
+            format!("  solo [test-agent] - {}", std::env::temp_dir().display())
         );
         assert!(!lines.iter().any(|line| line.contains("private detail")));
     }
@@ -1264,9 +1265,31 @@ mod attach {
 
         let lines = super::agent_list_lines(&agents, true, now);
         assert_eq!(lines.len(), 3);
-        assert!(lines[0].starts_with("  alpha ⋯2 - "));
-        assert!(lines[1].starts_with("    beta - "));
-        assert!(lines[2].starts_with("      gamma - "));
+        assert!(lines[0].starts_with("  alpha ⋯2 [test-agent] - "));
+        assert!(lines[1].starts_with("    beta [test-agent] - "));
+        assert!(lines[2].starts_with("      gamma [test-agent] - "));
+    }
+
+    #[test]
+    fn list_names_every_kind_and_claude_driver() {
+        let mut pty = listed_agent(1, "claude-pty");
+        pty.kind = amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        };
+        let mut sdk = listed_agent(2, "claude-sdk");
+        sdk.kind = amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Sdk,
+        };
+        let mut codex = listed_agent(3, "codex");
+        codex.kind = amux::AgentKind::Codex;
+        let test_agent = listed_agent(4, "test");
+
+        let lines =
+            super::agent_list_lines(&[pty, sdk, codex, test_agent], false, chrono::Utc::now());
+        assert!(lines.iter().any(|line| line.contains("[claude/pty]")));
+        assert!(lines.iter().any(|line| line.contains("[claude/sdk]")));
+        assert!(lines.iter().any(|line| line.contains("[codex]")));
+        assert!(lines.iter().any(|line| line.contains("[test-agent]")));
     }
 
     #[test]
@@ -1535,6 +1558,11 @@ mod attach {
                 "cycle {cycle}: {outcome:?}"
             );
         }
+
+        client
+            .delete_agent(agent)
+            .await
+            .expect("clean up PTY agent after stress cycles");
     }
 
     /// The terminal-hygiene byte sequences, asserted through a real vt100
