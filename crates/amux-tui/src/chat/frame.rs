@@ -5,13 +5,27 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::ops::Range;
 
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::FeedScroll;
 use super::blocks::RunKey;
 use super::viewport::FeedViewport;
 use crate::render::{Theme, clip_to_width, str_width};
 use crate::theme::{ColorMode, ThemeName};
+
+/// Columns every feed row keeps clear at its left edge. Column 0 is the
+/// mark column — where a block wears the accent bar of a user surface or
+/// the focus bar when it is selected — and column 1 separates that mark
+/// from the text. Because the mark is drawn into a column the painters
+/// already left empty, selecting a block never shifts its content
+/// sideways, and the screen keeps a straight left edge with no border
+/// and no chrome gutter.
+pub(crate) const CONTENT_INDENT: usize = 2;
+
+/// The glyph both left-edge marks are drawn with.
+pub(crate) const MARK_GLYPH: &str = "\u{258e}";
 
 /// Renderer-local identity for one painted block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -52,7 +66,13 @@ pub(crate) struct FrameSpacing {
 }
 
 impl FrameSpacing {
-    /// Default spacing for full-screen composition.
+    /// Chosen by eye at 120x40 against the idle Claude and Codex screens.
+    /// One blank row under the header is enough to lift it off the feed
+    /// once the old rule is gone; a second reads as a gap rather than a
+    /// margin on a screen this short. One blank row between blocks keeps
+    /// a long feed legible without halving how much of it fits, and one
+    /// above the bottom block separates what the agent said from what
+    /// the person is typing.
     pub(crate) const DEFAULT: Self = Self {
         header_gap: 1,
         block_gap: 1,
@@ -68,6 +88,15 @@ pub(crate) struct ChatGeometry {
     pub(crate) feed_top: usize,
     pub(crate) feed_rows: usize,
     pub(crate) bottom_top: usize,
+}
+
+impl ChatGeometry {
+    /// The width a block painter may fill: everything but the left mark
+    /// column and its separator. Used by the agent adapters.
+    #[allow(dead_code)]
+    pub(crate) fn feed_width(&self) -> usize {
+        self.width.saturating_sub(CONTENT_INDENT)
+    }
 }
 
 /// Compute the full-screen frame budget without inspecting agent content.
@@ -156,15 +185,12 @@ pub(crate) fn compose_chat_frame(
     );
     if parts.feed.history_truncated {
         boundary.push((
-            Line::from(Span::styled("─ earlier history unavailable", theme.muted())),
+            indented_row("⋯ earlier history unavailable", theme.muted(), theme),
             None,
         ));
     }
     if parts.feed.loading {
-        boundary.push((
-            Line::from(Span::styled("⟳ loading session…", theme.muted())),
-            None,
-        ));
+        boundary.push((indented_row("⟳ loading session…", theme.muted(), theme), None));
     }
     let boundary_rows = boundary.len();
     let mut feed = Vec::with_capacity(metrics.total_rows);
@@ -197,7 +223,7 @@ pub(crate) fn compose_chat_frame(
         .take(geometry.feed_rows)
         .map(|(line, key)| {
             if key == viewport.focus {
-                focus_line(line, theme)
+                mark_focused(line, theme)
             } else {
                 line
             }
@@ -213,10 +239,11 @@ pub(crate) fn compose_chat_frame(
     lines.extend((0..spacing.header_gap).map(|_| Line::default()));
     lines.extend(window);
     if paused {
-        lines.push(Line::from(Span::styled(
-            "─ ↓ following paused · pgdn to resume",
+        lines.push(indented_row(
+            "↓ following paused · pgdn to resume",
             theme.muted(),
-        )));
+            theme,
+        ));
     }
     if let Some(activity) = parts.activity {
         lines.push(activity);
@@ -286,7 +313,10 @@ fn fit_frame(
 }
 
 fn fit_line(mut line: Line<'static>, width: usize, theme: Theme) -> Line<'static> {
-    line = line.patch_style(theme.background());
+    // Every row of the screen is body text on the background token, so a
+    // span that names no colour is still a token the style map can read
+    // rather than whatever the terminal happens to default to.
+    line = line.patch_style(theme.text().patch(theme.background()));
     let mut used = 0;
     for span in &mut line.spans {
         let span_width = str_width(&span.content);
@@ -304,10 +334,43 @@ fn fit_line(mut line: Line<'static>, width: usize, theme: Theme) -> Line<'static
     line
 }
 
-fn focus_line(line: Line<'static>, theme: Theme) -> Line<'static> {
+/// One indented row of plain text — the shape the shell's own rows take,
+/// so the boundary and paused rows line up with painted block content.
+fn indented_row(text: &str, style: Style, theme: Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(" ".repeat(CONTENT_INDENT), theme.background()),
+        Span::styled(text.to_string(), style),
+    ])
+}
+
+/// Draw the focus bar into the mark column of one row of the focused
+/// block. It overwrites that column instead of being inserted, so
+/// focusing a block never pushes its text one cell to the right.
+fn mark_focused(line: Line<'static>, theme: Theme) -> Line<'static> {
     let mut spans = Vec::with_capacity(line.spans.len() + 1);
-    spans.push(Span::styled("▎", theme.focus_bar()));
-    spans.extend(line.spans);
+    spans.push(Span::styled(MARK_GLYPH, theme.focus_bar()));
+    let mut marked = false;
+    for span in line.spans {
+        if marked || str_width(&span.content) == 0 {
+            spans.push(span);
+            continue;
+        }
+        marked = true;
+        let text = span.content.into_owned();
+        let Some(first) = text.graphemes(true).next() else {
+            continue;
+        };
+        // A wide grapheme that gave up one of its two cells leaves a hole;
+        // a space keeps everything after it in the same column.
+        let mut rest = String::new();
+        if str_width(first) > 1 {
+            rest.push(' ');
+        }
+        rest.push_str(&text[first.len()..]);
+        if !rest.is_empty() {
+            spans.push(Span::styled(rest, span.style));
+        }
+    }
     Line { spans, ..line }
 }
 
@@ -660,6 +723,74 @@ mod tests {
         ));
         assert!(!middle.iter().any(|line| line.contains("earlier history")));
         assert!(!middle.iter().any(|line| line.contains("loading session")));
+    }
+
+    #[test]
+    fn a_full_screen_frame_is_borderless_and_starts_with_the_header() {
+        let mut parts = parts(vec![
+            block(1, &["  first block"]),
+            block(2, &["  second block"]),
+        ]);
+        parts.banner = Some(Line::from("  a child is waiting"));
+        parts.activity = Some(Line::from("  working · 4s"));
+        parts.feed.history_truncated = true;
+        parts.feed.loading = true;
+        let mut viewport = FeedViewport::following();
+        viewport.scroll = FeedScroll::Paused {
+            top_line: 0,
+            entry_watermark: 0,
+        };
+        viewport.focus = Some(BlockKey(1));
+
+        let theme = Theme::default();
+        let frame = compose_chat_frame(parts, &viewport, theme, (120, 40));
+        let rendered = texts(&frame);
+
+        assert_eq!(frame.len(), 40);
+        assert!(rendered[0].starts_with("header"), "{:?}", rendered[0]);
+        for (row, line) in frame.iter().enumerate() {
+            assert_eq!(
+                str_width(&rendered[row]),
+                120,
+                "row {row} must fill the width: {:?}",
+                rendered[row]
+            );
+            let first = rendered[row].chars().next().expect("a filled row");
+            assert!(
+                !"┌┐└┘├┤┬┴┼│─═║╭╮╰╯".contains(first),
+                "row {row} starts with chrome: {:?}",
+                rendered[row]
+            );
+            for span in &line.spans {
+                assert!(
+                    !span.content.contains('│'),
+                    "row {row} keeps a border glyph: {:?}",
+                    rendered[row]
+                );
+            }
+        }
+        assert!(
+            rendered
+                .iter()
+                .any(|row| row.starts_with("\u{258e} first block")),
+            "the focused block wears the mark in column 0: {rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|row| row.starts_with("  second block")),
+            "an unfocused block keeps the mark column clear: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn the_focus_mark_does_not_shift_the_row_it_marks() {
+        let theme = Theme::default();
+        let marked = mark_focused(Line::from("  wide 世 row".to_string()), theme);
+        let plain = Line::from("  wide 世 row".to_string());
+        assert_eq!(
+            str_width(&line_text(&marked)),
+            str_width(&line_text(&plain))
+        );
+        assert_eq!(line_text(&marked), "\u{258e} wide 世 row");
     }
 
     #[test]

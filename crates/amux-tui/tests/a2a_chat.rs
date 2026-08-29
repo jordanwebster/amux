@@ -453,9 +453,11 @@ fn assert_surface(name: &str, model: &Model, view: &ViewState, height: u16) {
 }
 
 fn header_of(model: &Model, view: &ViewState) -> String {
+    // The chat is full-screen: the header is the very first row, with no
+    // border above it.
     buffer_text(&render_buffer(model, view, Theme::default(), HEIGHT))
         .lines()
-        .nth(1)
+        .next()
         .expect("the header row")
         .to_string()
 }

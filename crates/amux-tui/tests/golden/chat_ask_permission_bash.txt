@@ -1,20 +1,20 @@
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ fix-auth · claude @ mbp                                     chat · needs you │
-│──────────────────────────────────────────────────────────────────────────────│
-│                                                                              │
-│   The cap belongs in RetryConfig; I'll thread it through SyncOptions.        │
-│                                                                              │
-│ ✔ Read sync/config.rs                                                        │
-│ ▸ Bash cargo check -p amux-sync                                              │
-│   └ running                                                                  │
-│──────────────────────────────────────────────────────────────────────────────│
-│ ⚠ permission — Bash                                                          │
-│                                                                              │
-│   $ cargo test -p amux-sync -- --nocapture                                   │
-│                                                                              │
-│ › 1. Allow once                                                              │
-│   2. Always allow access to /work from this project                          │
-│   3. Deny — tell the agent why (optional)                                    │
-│                                                                              │
-│   1-3/↑↓ select · enter confirm · esc back (never answers)                   │
-└──────────────────────────────────────────────────────────────────────────────┘
+ fix-auth · claude @ mbp                                     chat · needs you   
+                                                                                
+──────────────────────────────────────────────────────────────────────────────  
+                                                                                
+   The cap belongs in RetryConfig; I'll thread it through SyncOptions.          
+                                                                                
+ ✔ Read sync/config.rs                                                          
+ ▸ Bash cargo check -p amux-sync                                                
+   └ running                                                                    
+──────────────────────────────────────────────────────────────────────────────  
+ ⚠ permission — Bash                                                            
+                                                                                
+   $ cargo test -p amux-sync -- --nocapture                                     
+                                                                                
+ › 1. Allow once                                                                
+   2. Always allow access to /work from this project                            
+   3. Deny — tell the agent why (optional)                                      
+                                                                                
+   1-3/↑↓ select · enter confirm · esc back (never answers)                     
+                                                                                

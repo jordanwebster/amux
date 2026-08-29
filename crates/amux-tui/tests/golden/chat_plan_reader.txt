@@ -1,24 +1,24 @@
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ plan                                                           lines 1-14/31 │
-│──────────────────────────────────────────────────────────────────────────────│
-│ ## Approach                                                                  │
-│                                                                              │
-│ 1. Wrap Client::reconnect in retry_with_backoff                              │
-│ - exponential base 200 ms, cap 5 s, jitter bounded                           │
-│ 2. Thread RetryConfig through SyncOptions                                    │
-│ 3. Spec chapter sync::retry — cold start, mid-stream drop, give-up-after-cap │
-│                                                                              │
-│ ## Out of scope                                                              │
-│                                                                              │
-│ - relay-side backpressure                                                    │
-│                                                                              │
-│ Step detail 1: keep the reader scrolling.                                    │
-│ Step detail 2: keep the reader scrolling.                                    │
-│ Step detail 3: keep the reader scrolling.                                    │
-│──────────────────────────────────────────────────────────────────────────────│
-│ › 1. Approve — auto       agent proceeds, edits apply without asking         │
-│   2. Approve — manual     agent asks before each edit                        │
-│   3. Request changes      feedback required                                  │
-│                                                                              │
-│   ↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)   │
-└──────────────────────────────────────────────────────────────────────────────┘
+ plan                                                           lines 1-14/31   
+                                                                                
+──────────────────────────────────────────────────────────────────────────────  
+ ## Approach                                                                    
+                                                                                
+ 1. Wrap Client::reconnect in retry_with_backoff                                
+ - exponential base 200 ms, cap 5 s, jitter bounded                             
+ 2. Thread RetryConfig through SyncOptions                                      
+ 3. Spec chapter sync::retry — cold start, mid-stream drop, give-up-after-cap   
+                                                                                
+ ## Out of scope                                                                
+                                                                                
+ - relay-side backpressure                                                      
+                                                                                
+ Step detail 1: keep the reader scrolling.                                      
+ Step detail 2: keep the reader scrolling.                                      
+ Step detail 3: keep the reader scrolling.                                      
+──────────────────────────────────────────────────────────────────────────────  
+ › 1. Approve — auto       agent proceeds, edits apply without asking           
+   2. Approve — manual     agent asks before each edit                          
+   3. Request changes      feedback required                                    
+                                                                                
+   ↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)     
+                                                                                

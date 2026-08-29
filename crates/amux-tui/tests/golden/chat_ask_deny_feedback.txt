@@ -1,20 +1,20 @@
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ fix-auth · claude @ mbp                                     chat · needs you │
-│──────────────────────────────────────────────────────────────────────────────│
-│                                                                              │
-│ ~ thought for 6s                                                             │
-│                                                                              │
-│   The cap belongs in RetryConfig; I'll thread it through SyncOptions.        │
-│                                                                              │
-│ ✔ Read sync/config.rs                                                        │
-│ ▸ Bash cargo check -p amux-sync                                              │
-│   └ running                                                                  │
-│──────────────────────────────────────────────────────────────────────────────│
-│ ⚠ permission — Edit sync/config.rs (+4 -1)                                   │
-│                                                                              │
-│   Deny — tell the agent why (optional)                                       │
-│                                                                              │
-│ › use a u16 instead▌                                                         │
-│                                                                              │
-│   enter deny (empty = plain deny) · esc back (never answers)                 │
-└──────────────────────────────────────────────────────────────────────────────┘
+ fix-auth · claude @ mbp                                     chat · needs you   
+                                                                                
+──────────────────────────────────────────────────────────────────────────────  
+                                                                                
+ ~ thought for 6s                                                               
+                                                                                
+   The cap belongs in RetryConfig; I'll thread it through SyncOptions.          
+                                                                                
+ ✔ Read sync/config.rs                                                          
+ ▸ Bash cargo check -p amux-sync                                                
+   └ running                                                                    
+──────────────────────────────────────────────────────────────────────────────  
+ ⚠ permission — Edit sync/config.rs (+4 -1)                                     
+                                                                                
+   Deny — tell the agent why (optional)                                         
+                                                                                
+ › use a u16 instead▌                                                           
+                                                                                
+   enter deny (empty = plain deny) · esc back (never answers)                   
+                                                                                

@@ -1,24 +1,24 @@
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ plan                                                           lines 1-15/31 │
-│──────────────────────────────────────────────────────────────────────────────│
-│ ## Approach                                                                  │
-│                                                                              │
-│ 1. Wrap Client::reconnect in retry_with_backoff                              │
-│ - exponential base 200 ms, cap 5 s, jitter bounded                           │
-│ 2. Thread RetryConfig through SyncOptions                                    │
-│ 3. Spec chapter sync::retry — cold start, mid-stream drop, give-up-after-cap │
-│                                                                              │
-│ ## Out of scope                                                              │
-│                                                                              │
-│ - relay-side backpressure                                                    │
-│                                                                              │
-│ Step detail 1: keep the reader scrolling.                                    │
-│ Step detail 2: keep the reader scrolling.                                    │
-│ Step detail 3: keep the reader scrolling.                                    │
-│ Step detail 4: keep the reader scrolling.                                    │
-│──────────────────────────────────────────────────────────────────────────────│
-│   Request changes — tell the agent what to change (required)                 │
-│ › sequence the rollout store by store▌                                       │
-│                                                                              │
-│   enter request changes · esc back (keeps text)                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+ plan                                                           lines 1-15/31   
+                                                                                
+──────────────────────────────────────────────────────────────────────────────  
+ ## Approach                                                                    
+                                                                                
+ 1. Wrap Client::reconnect in retry_with_backoff                                
+ - exponential base 200 ms, cap 5 s, jitter bounded                             
+ 2. Thread RetryConfig through SyncOptions                                      
+ 3. Spec chapter sync::retry — cold start, mid-stream drop, give-up-after-cap   
+                                                                                
+ ## Out of scope                                                                
+                                                                                
+ - relay-side backpressure                                                      
+                                                                                
+ Step detail 1: keep the reader scrolling.                                      
+ Step detail 2: keep the reader scrolling.                                      
+ Step detail 3: keep the reader scrolling.                                      
+ Step detail 4: keep the reader scrolling.                                      
+──────────────────────────────────────────────────────────────────────────────  
+   Request changes — tell the agent what to change (required)                   
+ › sequence the rollout store by store▌                                         
+                                                                                
+   enter request changes · esc back (keeps text)                                
+                                                                                

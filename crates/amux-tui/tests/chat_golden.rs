@@ -489,6 +489,21 @@ fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
     out
 }
 
+/// The full-screen frame has no border to catch an overrun, so the proof
+/// that a wide grapheme never straddles the right edge is the last column
+/// itself: every row ends on one whole single-cell symbol.
+fn assert_last_column_is_whole(buffer: &ratatui::buffer::Buffer) {
+    let last = buffer.area.width - 1;
+    for y in 0..buffer.area.height {
+        let symbol = buffer.cell((last, y)).expect("last column cell").symbol();
+        assert_eq!(
+            unicode_width::UnicodeWidthStr::width(symbol),
+            1,
+            "row {y} must end on one whole cell, got {symbol:?}"
+        );
+    }
+}
+
 /// One char per cell classifying its semantic token application — the surface
 /// text goldens cannot see.
 fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
@@ -1171,13 +1186,7 @@ fn chat_ask_permission_edit_cjk() {
     let model = fold(msgs);
     let view = reconciled_view(&model);
     let buffer = render_buffer(&model, &view, 80, 22, Theme::default(), WORKING_NOW);
-    for y in 0..22u16 {
-        let symbol = buffer.cell((79, y)).expect("border cell").symbol();
-        assert!(
-            matches!(symbol, "│" | "┐" | "┘"),
-            "row {y} must end with a border cell, got {symbol:?}"
-        );
-    }
+    assert_last_column_is_whole(&buffer);
     assert_golden("chat_ask_permission_edit_cjk", &buffer_text(&buffer));
 }
 
@@ -1950,13 +1959,7 @@ fn chat_unicode_width() {
         .composer_mut()
         .insert_str("繁体字と emoji 🚀 のドラフト");
     let buffer = render_buffer(&model, &view, 80, 22, Theme::default(), IDLE_NOW);
-    for y in 0..22u16 {
-        let symbol = buffer.cell((79, y)).expect("border cell").symbol();
-        assert!(
-            matches!(symbol, "│" | "┐" | "┘"),
-            "row {y} must end with a border cell, got {symbol:?}"
-        );
-    }
+    assert_last_column_is_whole(&buffer);
     assert_golden("chat_unicode", &buffer_text(&buffer));
 }
 
@@ -2054,16 +2057,24 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
             for (model, view, now) in &states {
                 let rendered = render_frame(model, view, width, height, now);
                 if width >= MIN_WIDTH && height >= MIN_HEIGHT {
+                    // The chat is full-screen now: instead of a border
+                    // surviving at the last row, every row of every size
+                    // is filled edge to edge and none of them opens with
+                    // chrome.
                     let lines: Vec<&str> = rendered.lines().collect();
                     assert_eq!(lines.len(), height as usize);
-                    assert!(
-                        lines[height as usize - 1].starts_with('└'),
-                        "bottom border survives at {width}x{height}"
-                    );
-                    assert!(
-                        lines[height as usize - 2].starts_with('│'),
-                        "footer row survives at {width}x{height}"
-                    );
+                    for (row, line) in lines.iter().enumerate() {
+                        assert_eq!(
+                            line.chars().count(),
+                            width as usize,
+                            "row {row} is not filled at {width}x{height}"
+                        );
+                        let first = line.chars().next().expect("a filled row");
+                        assert!(
+                            !"┌┐└┘├┤┬┴┼│".contains(first),
+                            "row {row} opens with chrome at {width}x{height}: {line:?}"
+                        );
+                    }
                 }
             }
         }

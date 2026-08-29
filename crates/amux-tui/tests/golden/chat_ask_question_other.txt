@@ -1,18 +1,18 @@
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ fix-auth · claude @ mbp                                     chat · needs you │
-│──────────────────────────────────────────────────────────────────────────────│
-│                                                                              │
-│ ✔ Read sync/config.rs                                                        │
-│ ▸ Bash cargo check -p amux-sync                                              │
-│   └ running                                                                  │
-│──────────────────────────────────────────────────────────────────────────────│
-│ ? question                                                                   │
-│                                                                              │
-│   Which color do you prefer?                                                 │
-│                                                                              │
-│   1. Red       warm, loud                                                    │
-│   2. Blue      cool, calm                                                    │
-│ › 3. Other…    › a warm ochre▌                                               │
-│                                                                              │
-│   enter save · esc back (keeps text)                                         │
-└──────────────────────────────────────────────────────────────────────────────┘
+ fix-auth · claude @ mbp                                     chat · needs you   
+                                                                                
+──────────────────────────────────────────────────────────────────────────────  
+                                                                                
+ ✔ Read sync/config.rs                                                          
+ ▸ Bash cargo check -p amux-sync                                                
+   └ running                                                                    
+──────────────────────────────────────────────────────────────────────────────  
+ ? question                                                                     
+                                                                                
+   Which color do you prefer?                                                   
+                                                                                
+   1. Red       warm, loud                                                      
+   2. Blue      cool, calm                                                      
+ › 3. Other…    › a warm ochre▌                                                 
+                                                                                
+   enter save · esc back (keeps text)                                           
+                                                                                

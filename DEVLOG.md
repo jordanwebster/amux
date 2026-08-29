@@ -4,6 +4,28 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The chat composes as one full-screen frame.** The shell now
+orders the header, an optional family banner, the feed, the paused rule, the
+activity row and the bottom block with no border, no chrome gutter and no rule
+under the header, and fills every row edge to edge with body text on the
+background token so the style map reads a token rather than the terminal's
+default. Every feed row keeps its first two columns clear: column 0 is where a
+block wears the accent bar of a user surface or the focus bar when it is
+selected, so marking a block overwrites that column instead of pushing the text
+sideways. The retained-history and loading rows join the paused rule as plain
+muted rows at the same indent. Spacing is one blank row under the header,
+between blocks and above the bottom block — judged at 120x40 against the idle
+Claude and Codex screens, where a second row reads as a gap rather than a
+margin on a screen this short.
+
+The chat, Codex and agent-family goldens are regenerated for the borderless
+frame, and the two assertions that used the border as a sentinel are rewritten
+to state what the full-screen frame actually promises: every row filled to the
+width with no chrome in its first column, and a last column that always ends on
+one whole single-cell symbol so a wide grapheme still cannot straddle the edge.
+
+---
+
 2026-08-29 — **The theme substrate clears the workspace lint gate.** Default
 theme selection now uses Rust's derived default, base-key normalization uses
 the `Option` early-return operator, and the semantic style methods reserved for

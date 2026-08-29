@@ -1,18 +1,18 @@
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ ci-triage · claude @ mbp                             chat · read-only · idle │
-│──────────────────────────────────────────────────────────────────────────────│
-│ › fix the flaky teardown                                                     │
-│                                                                              │
-│   The flake is a teardown race in the testnet harness; serializing the       │
-│   shutdown.                                                                  │
-│                                                                              │
-│ ✔ Bash cargo test -p amux --test spec                                        │
-│   └ 2 failed: token_refresh, expired_session                                 │
-│                                                                              │
-│ ─ turn · 1m 30s ─────────────────────────────────────────────────────────────│
-│                                                                              │
-│                                                                              │
-│ ⊘ read-only — you are observing this session                                 │
-│                                                                              │
-│   pgup/pgdn scroll · q back to fleet                                         │
-└──────────────────────────────────────────────────────────────────────────────┘
+ ci-triage · claude @ mbp                             chat · read-only · idle   
+                                                                                
+──────────────────────────────────────────────────────────────────────────────  
+ › fix the flaky teardown                                                       
+                                                                                
+   The flake is a teardown race in the testnet harness; serializing the         
+   shutdown.                                                                    
+                                                                                
+ ✔ Bash cargo test -p amux --test spec                                          
+   └ 2 failed: token_refresh, expired_session                                   
+                                                                                
+ ─ turn · 1m 30s ─────────────────────────────────────────────────────────────  
+                                                                                
+                                                                                
+ ⊘ read-only — you are observing this session                                   
+                                                                                
+   pgup/pgdn scroll · q back to fleet                                           
+                                                                                

@@ -35,4 +35,5 @@ signal-hook = { workspace = true }
 [dev-dependencies]
 amux-tui = { path = ".", features = ["fixtures"] }
 uuid = { workspace = true }
+unicode-width = "0.2"
 vt100 = "0.15"
