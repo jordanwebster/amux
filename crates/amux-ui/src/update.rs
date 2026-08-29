@@ -69,7 +69,7 @@ fn ensure_stream(
     if card.agent.readonly && wanted == StreamWanted::InventoryPolicy {
         return None;
     }
-    let layer = AgentLayer::from_protocols(&card.agent.io_protocols)?;
+    let layer = AgentLayer::from_protocols(&card.agent.io_protocols())?;
     let protocol = layer.protocol();
     let reopen = match model.streams.get(&agent_id) {
         None => true,
@@ -417,7 +417,7 @@ fn with_layer(model: &mut Model, agent: amux::AgentId, step: impl FnOnce(&mut Ag
         let Some(card) = model.agents.get_mut(&agent) else {
             return;
         };
-        let Some(selected) = AgentLayer::from_protocols(&card.agent.io_protocols) else {
+        let Some(selected) = AgentLayer::from_protocols(&card.agent.io_protocols()) else {
             return;
         };
         let layer = card.layer.get_or_insert(selected);

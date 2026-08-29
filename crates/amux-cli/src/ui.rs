@@ -82,7 +82,9 @@ async fn run_inner(
             amux::OpenMode::Raw => amux_tui::OpenMode::RawAttach,
             amux::OpenMode::Chat => amux_tui::OpenMode::Chat,
         },
-        default_agent_type: amux::AgentType::Claude,
+        default_agent_type: amux::AgentType::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        },
         initial_chat,
         initial_chat_configuration,
     };

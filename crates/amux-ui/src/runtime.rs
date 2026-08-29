@@ -1021,11 +1021,7 @@ mod tests {
             name: Some("projection-test".to_string()),
             command: "codex".to_string(),
             working_dir: PathBuf::from("/work"),
-            agent_type: "codex".to_string(),
-            io_protocols: vec![
-                "terminal_v1".to_string(),
-                crate::codex::PROTOCOL.to_string(),
-            ],
+            kind: amux::AgentKind::Codex,
             readonly: false,
             args: Vec::new(),
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
@@ -1041,11 +1037,9 @@ mod tests {
             name: Some("dispatch-clock-test".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/work"),
-            agent_type: "claude".to_string(),
-            io_protocols: vec![
-                "terminal_v1".to_string(),
-                crate::claude::PROTOCOL.to_string(),
-            ],
+            kind: amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
             readonly: false,
             args: Vec::new(),
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),

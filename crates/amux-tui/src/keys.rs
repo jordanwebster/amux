@@ -411,11 +411,9 @@ mod tests {
             name: Some("fix-auth".to_string()),
             command: "claude".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
-            agent_type: "claude".to_string(),
-            io_protocols: vec![
-                "terminal_v1".to_string(),
-                "claude_pty_transcript_v1".to_string(),
-            ],
+            kind: amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
             readonly,
             args: Vec::new(),
             created_at: chrono::DateTime::from_timestamp(1_755_000_000, 0).expect("epoch"),

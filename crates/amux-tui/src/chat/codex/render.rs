@@ -193,7 +193,7 @@ fn header_line(
         let host = model.host_name(card.agent.host_id).unwrap_or("?");
         push_span(&mut line, GLYPH_COL, card.display_name(), theme.text());
         line.spans.push(Span::styled(
-            format!(" · {} @ {host}", card.agent.agent_type),
+            format!(" · {} @ {host}", card.agent.kind.provider()),
             theme.muted(),
         ));
         line.spans.push(Span::styled(

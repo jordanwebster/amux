@@ -564,7 +564,7 @@ fn fleet_row_line(
             push_span(
                 &mut line,
                 TYPE_COL,
-                clip(&card.agent.agent_type, TYPE_WIDTH),
+                clip(card.agent.kind.provider(), TYPE_WIDTH),
                 base.add_modifier(Modifier::DIM),
             );
             let host = model
@@ -969,7 +969,7 @@ fn confirm_delete_row(
     push_span(&mut line, NAME_COL + indent, card.display_name(), plain());
     let mut detail = format!(
         " · {} · {}",
-        card.agent.agent_type,
+        card.agent.kind.provider(),
         model.status_label_for(card)
     );
     if let Some(claim) = card.working_on() {

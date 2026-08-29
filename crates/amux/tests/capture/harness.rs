@@ -652,7 +652,9 @@ impl CaptureSession {
                 agent_id,
                 host_id: None,
                 name: Some(agent_name.clone()),
-                agent_type: AgentType::Claude,
+                agent_type: AgentType::Claude {
+                    driver: amux::ClaudeDriver::Pty,
+                },
                 working_dir,
                 terminal_size: Some(TerminalSize {
                     rows: 45,

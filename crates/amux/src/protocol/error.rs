@@ -3,6 +3,8 @@ use prost::Message as ProstMessage;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::agents::{AgentKind, Protocol};
+
 use super::amux::v1::{
     AmbiguousAgentName, Error, ErrorCode, ErrorDetail, ProtocolVersionMismatch,
     SequenceNumberMismatch, UpdateRequired,
@@ -24,6 +26,9 @@ pub enum ProtocolError {
     /// The request payload or arguments are invalid.
     #[error("{message}")]
     InvalidArgument { message: String },
+    /// The requested protocol is not part of the agent kind's closed surface.
+    #[error("{kind} does not expose `{protocol}`")]
+    NotExposed { kind: AgentKind, protocol: Protocol },
     /// The requested resource already exists.
     #[error("{message}")]
     AlreadyExists { message: String },
@@ -92,6 +97,7 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
         ProtocolError::Unimplemented { message } => simple_error(10, message.clone()),
         ProtocolError::Cancelled { message } => simple_error(1, message.clone()),
         ProtocolError::InvalidArgument { message } => simple_error(2, message.clone()),
+        ProtocolError::NotExposed { .. } => simple_error(7, error.to_string()),
         ProtocolError::AlreadyExists { message } => simple_error(4, message.clone()),
         ProtocolError::PermissionDenied { message } => simple_error(5, message.clone()),
         ProtocolError::FailedPrecondition { message } => simple_error(7, message.clone()),
@@ -224,6 +230,11 @@ pub(crate) fn protocol_status(error: ProtocolError) -> tonic::Status {
         ProtocolError::InvalidArgument { message } => {
             protocol_status_with_details(tonic::Code::InvalidArgument, message, details)
         }
+        ProtocolError::NotExposed { .. } => protocol_status_with_details(
+            tonic::Code::FailedPrecondition,
+            error.to_string(),
+            details,
+        ),
         ProtocolError::AlreadyExists { message } => {
             protocol_status_with_details(tonic::Code::AlreadyExists, message, details)
         }

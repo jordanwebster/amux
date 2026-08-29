@@ -6,6 +6,7 @@ pub(crate) mod codex;
 mod events;
 #[cfg(feature = "local-agents")]
 mod hook;
+mod kind;
 mod log_source;
 mod naming;
 #[cfg(feature = "local-agents")]
@@ -30,6 +31,7 @@ pub use events::AgentEvent;
 pub(crate) use events::{agent_event_from_wire, agent_event_to_wire};
 #[cfg(feature = "local-agents")]
 pub(crate) use hook::{ExternalHookBootstrap, HookError, HookOutcome};
+pub use kind::{AgentKind, ClaudeDriver, Protocol};
 pub(crate) use log_source::StructuredLogSource;
 pub(crate) use naming::LocalAgentNameSource;
 #[cfg(feature = "local-agents")]
@@ -43,7 +45,7 @@ pub(crate) use session::mcp_launch_route_for_tests;
 pub(crate) use session::{
     AgentBackend, AgentDeliveryTarget, AgentDeps, AgentSession, Delivery, DeliveryError,
     DeliveryLiveness, McpLaunchRoute, RawPtyTarget, StructuredInput, agent_from_suspended,
-    bootstrap_external_hook, new_agent, terminal_io_protocols,
+    bootstrap_external_hook, new_agent,
 };
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]

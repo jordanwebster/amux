@@ -65,7 +65,7 @@ async fn handle_session_event(
             agent_type,
             args,
         } => {
-            if matches!(agent_type, AgentType::Claude)
+            if matches!(agent_type, AgentType::Claude { .. })
                 && args.contains(&"--fork-session".to_string())
                 && let Some(pos) = args.iter().position(|a| a == "--resume")
                 && let Some(source_id_str) = args.get(pos + 1)
@@ -130,7 +130,7 @@ pub(super) fn parent_envelope(
                 .name()
                 .map(str::to_string)
                 .unwrap_or_else(|| session.agent_id().to_string()),
-            kind: session.agent_type().to_string(),
+            kind: session.kind().provider().to_string(),
         }),
         to: session.parent()?,
         kind,
@@ -170,7 +170,7 @@ pub(crate) async fn create_agent_record(
         });
     let spawn_deps = {
         let deps = agent_state.read().await.deps.clone();
-        if matches!(&agent_type, AgentType::Claude) {
+        if matches!(&agent_type, AgentType::Claude { .. }) {
             deps.for_claude_spawn().await
         } else {
             deps
@@ -728,7 +728,9 @@ mod tests {
                     agent_id,
                     host_id: None,
                     name: Some("not-ready".to_string()),
-                    agent_type: AgentType::Claude,
+                    agent_type: AgentType::Claude {
+                        driver: crate::agents::ClaudeDriver::Pty,
+                    },
                     working_dir: std::env::temp_dir(),
                     terminal_size: None,
                     args: vec![],

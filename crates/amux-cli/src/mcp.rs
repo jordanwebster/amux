@@ -396,7 +396,12 @@ impl ToolBackend for ClientBackend {
                         .map(|agent| agent.host_id)
                 })?;
                 let (agent_type, args) = match kind {
-                    SpawnKind::Claude => (AgentType::Claude, Vec::new()),
+                    SpawnKind::Claude => (
+                        AgentType::Claude {
+                            driver: amux::ClaudeDriver::Pty,
+                        },
+                        Vec::new(),
+                    ),
                     SpawnKind::Codex => (
                         AgentType::Codex {
                             model: None,
@@ -483,7 +488,7 @@ impl ClientBackend {
                 let host = hosts.get(&agent.host_id);
                 json!({
                     "name": display_agent_name(agent),
-                    "kind": agent.agent_type,
+                    "kind": agent.kind,
                     "host": host.map(|host| host.name.clone()).unwrap_or_else(|| agent.host_id.to_string()),
                     "alive": host.is_some_and(|host| host.online),
                     "working_on": agent.working_on.as_ref().map(|work| work.text.clone()),
@@ -622,8 +627,7 @@ mod tests {
             name: Some(name.to_string()),
             command: "test".to_string(),
             working_dir: PathBuf::from("/work"),
-            agent_type: "test".to_string(),
-            io_protocols: Vec::new(),
+            kind: amux::AgentKind::TestAgent,
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
@@ -1036,8 +1040,9 @@ mod tests {
             name: Some("parent".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/parent/work"),
-            agent_type: "claude".to_string(),
-            io_protocols: Vec::new(),
+            kind: amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),

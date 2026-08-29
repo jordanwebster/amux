@@ -208,7 +208,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     // Codex's primary attach surface is the native structured screen. Raw
     // mode remains available from the fleet (Enter with the shipped raw
     // default, `o` when chat is configured as the default).
-    if agent.agent_type == "codex" {
+    if matches!(agent.kind, amux::AgentKind::Codex) {
         return crate::ui::run_for_agent(config.clone(), agent.id, None).await;
     }
 
@@ -1013,7 +1013,12 @@ mod attach {
             super::codex_configuration_label(&selected).as_deref(),
             Some("model=gpt-5.4 · approval=never · sandbox=workspace-write")
         );
-        assert_eq!(super::codex_configuration_label(&AgentType::Claude), None);
+        assert_eq!(
+            super::codex_configuration_label(&AgentType::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            }),
+            None
+        );
     }
 
     #[test]
@@ -1197,8 +1202,7 @@ mod attach {
             name: Some(name.to_string()),
             command: "test-agent".to_string(),
             working_dir: std::env::temp_dir(),
-            agent_type: "test-agent".to_string(),
-            io_protocols: Vec::new(),
+            kind: amux::AgentKind::TestAgent,
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
@@ -1629,8 +1633,9 @@ mod attach {
             name: Some("faraway".to_string()),
             command: "claude".to_string(),
             working_dir: std::env::temp_dir(),
-            agent_type: "claude".to_string(),
-            io_protocols: Vec::new(),
+            kind: amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),

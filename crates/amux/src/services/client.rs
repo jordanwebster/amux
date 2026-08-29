@@ -822,7 +822,7 @@ impl wire::client_service_server::ClientService for ClientService {
                             agent_id: parent.id,
                             host_id: parent.host_id,
                             name: parent.name.unwrap_or_else(|| parent.id.to_string()),
-                            kind: parent.agent_type,
+                            kind: parent.kind.provider().to_string(),
                         }),
                         to: AgentParent {
                             agent_id: child.id,
@@ -991,7 +991,7 @@ impl wire::client_service_server::ClientService for ClientService {
                     agent_id: agent.id,
                     host_id: agent.host_id,
                     name: agent.name.unwrap_or_else(|| agent.id.to_string()),
-                    kind: agent.agent_type,
+                    kind: agent.kind.provider().to_string(),
                 })
             }
             None => envelope::Sender::Human,
@@ -2777,8 +2777,7 @@ mod tests {
             name: Some(name.to_string()),
             command: "test-agent".to_string(),
             working_dir: PathBuf::from("/tmp"),
-            agent_type: "test-agent".to_string(),
-            io_protocols: vec!["test_echo_v1".to_string()],
+            kind: crate::AgentKind::TestAgent,
             readonly: false,
             args: Vec::new(),
             created_at: Utc.timestamp_millis_opt(0).single().unwrap(),
@@ -2790,13 +2789,17 @@ mod tests {
     #[test]
     fn public_create_rpc_applies_claude_parent_permission_inheritance() {
         let mut caller = agent(1, 2, "parent");
-        caller.agent_type = AGENT_TYPE_CLAUDE.to_string();
+        caller.kind = crate::AgentKind::Claude {
+            driver: crate::ClaudeDriver::Pty,
+        };
         caller.working_dir = PathBuf::from("/parent/work");
         let mut request = crate::client::client_create_request_to_wire(crate::CreateAgentRequest {
             agent_id: Uuid::from_u128(10),
             host_id: None,
             name: Some("child".to_string()),
-            agent_type: crate::AgentType::Claude,
+            agent_type: crate::AgentType::Claude {
+                driver: crate::ClaudeDriver::Pty,
+            },
             working_dir: caller.working_dir.clone(),
             terminal_size: None,
             args: vec!["--model".to_string(), "sonnet".to_string()],
@@ -2829,7 +2832,7 @@ mod tests {
     #[test]
     fn public_create_rpc_applies_codex_parent_policy_inheritance() {
         let mut caller = agent(3, 4, "parent");
-        caller.agent_type = crate::agents::AGENT_TYPE_CODEX.to_string();
+        caller.kind = crate::AgentKind::Codex;
         let mut request = crate::client::client_create_request_to_wire(crate::CreateAgentRequest {
             agent_id: Uuid::from_u128(11),
             host_id: None,

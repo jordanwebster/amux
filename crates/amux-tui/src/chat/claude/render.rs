@@ -481,7 +481,7 @@ fn header_line(
             .to_string();
         push_span(&mut line, GLYPH_COL, card.display_name(), theme.text());
         line.spans.push(Span::styled(
-            format!(" · {} @ {host}", card.agent.agent_type),
+            format!(" · {} @ {host}", card.agent.kind.provider()),
             theme.muted(),
         ));
         line.spans.push(Span::styled(

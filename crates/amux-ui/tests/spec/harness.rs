@@ -80,11 +80,9 @@ pub fn an_agent(name: &str, on: &str) -> Agent {
         name: Some(name.to_string()),
         command: "claude".to_string(),
         working_dir: std::path::PathBuf::from("/work"),
-        agent_type: "claude".to_string(),
-        io_protocols: vec![
-            "terminal_v1".to_string(),
-            "claude_pty_transcript_v1".to_string(),
-        ],
+        kind: amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        },
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
@@ -101,8 +99,7 @@ pub fn a_codex_agent(name: &str, on: &str) -> Agent {
         name: Some(name.to_string()),
         command: "codex".to_string(),
         working_dir: std::path::PathBuf::from("/work"),
-        agent_type: "codex".to_string(),
-        io_protocols: vec!["terminal_v1".to_string(), "codex_sdk_v1".to_string()],
+        kind: amux::AgentKind::Codex,
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
@@ -158,7 +155,9 @@ pub fn create_cmd(name: &str, host: Option<&str>) -> Command {
     Command::CreateAgent {
         host: host.map(host_id),
         name: name.to_string(),
-        agent_type: amux::AgentType::Claude,
+        agent_type: amux::AgentType::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        },
         working_dir: std::path::PathBuf::from("/work"),
     }
 }

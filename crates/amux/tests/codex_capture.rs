@@ -692,8 +692,12 @@ fn main() -> anyhow::Result<()> {
             .into_iter()
             .find(|agent| agent.parent.is_some_and(|edge| edge.agent_id == parent))
             .context("spawned Claude child missing from family inventory")?;
-        if child.agent_type != "claude" {
-            bail!("spawned child was {}, expected claude", child.agent_type);
+        if child.kind
+            != (amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            })
+        {
+            bail!("spawned child was {}, expected claude/pty", child.kind);
         }
         let child_id = child.id;
         harness.client().delete_agent(parent).await?;

@@ -16,8 +16,8 @@ use super::name_sniffer::spawn_name_sniffer;
 use crate::agents::claude::ClaudeVersionCache;
 use crate::agents::claude::transcript_ingest::TranscriptIngest;
 use crate::agents::{
-    AgentParent, CreateAgentRequest, LocalAgentNameSource, McpLaunchRoute, PtyHandle, SessionEvent,
-    StopPolicy, StructuredLogSource, TerminalSize, spawn_pty_agent,
+    AgentParent, AgentType, ClaudeDriver, CreateAgentRequest, LocalAgentNameSource, McpLaunchRoute,
+    PtyHandle, SessionEvent, StopPolicy, StructuredLogSource, TerminalSize, spawn_pty_agent,
 };
 use crate::debug::DebugView;
 
@@ -79,6 +79,7 @@ fn claude_spawn_env(agent_id: Uuid, host_id: Uuid) -> [(&'static str, String); 3
 }
 
 pub(crate) struct ClaudeSession {
+    pub(in crate::agents) driver: ClaudeDriver,
     pub(in crate::agents) agent_id: Uuid,
     pub(in crate::agents) name: Option<String>,
     pub(in crate::agents) command: String,
@@ -119,7 +120,12 @@ impl ClaudeSession {
         claude_version_cache: ClaudeVersionCache,
         mcp_launch_route: McpLaunchRoute,
     ) -> Self {
+        let driver = match &req.agent_type {
+            AgentType::Claude { driver } => *driver,
+            _ => unreachable!("ClaudeSession requires a Claude agent type"),
+        };
         Self {
+            driver,
             agent_id: req.agent_id,
             name: req.name.clone(),
             command: "claude".to_string(),
@@ -157,7 +163,12 @@ impl ClaudeSession {
         claude_version_cache: ClaudeVersionCache,
         mcp_launch_route: McpLaunchRoute,
     ) -> Self {
+        let driver = match &req.agent_type {
+            AgentType::Claude { driver } => *driver,
+            _ => unreachable!("ClaudeSession requires a Claude agent type"),
+        };
         Self {
+            driver,
             agent_id: req.agent_id,
             name: req.name.clone(),
             command: "claude".to_string(),
@@ -192,6 +203,7 @@ impl ClaudeSession {
     pub(in crate::agents) fn new_readonly(agent_id: Uuid, working_dir: PathBuf) -> Self {
         let claude_version_cache = ClaudeVersionCache::default();
         Self {
+            driver: ClaudeDriver::Pty,
             agent_id,
             name: None,
             command: "claude".to_string(),
@@ -282,6 +294,9 @@ impl ClaudeSession {
     /// when the process exits. If `session_id` is set, passes `--resume <id>`.
     /// Extra args from creation are appended.
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+        if self.driver == ClaudeDriver::Sdk {
+            return Err(anyhow::anyhow!("Claude SDK agents are not implemented yet"));
+        }
         let claude_version = self.claude_version_cache.current();
         let args = self.spawn_args(claude_version.as_deref())?;
         let host_id = self
@@ -685,7 +700,9 @@ mod tests {
             agent_id,
             host_id: None,
             name: name.map(str::to_string),
-            agent_type: AgentType::Claude,
+            agent_type: AgentType::Claude {
+                driver: crate::agents::ClaudeDriver::Pty,
+            },
             working_dir: PathBuf::from("/work"),
             terminal_size: None,
             args: args.into_iter().map(str::to_string).collect(),

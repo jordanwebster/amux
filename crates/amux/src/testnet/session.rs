@@ -472,7 +472,9 @@ impl Daemon {
                 agent_id: child_id,
                 host_id: None,
                 name: Some("claude-child".to_string()),
-                agent_type: AgentType::Claude,
+                agent_type: AgentType::Claude {
+                    driver: crate::ClaudeDriver::Pty,
+                },
                 working_dir: std::env::temp_dir(),
                 terminal_size: None,
                 args: Vec::new(),

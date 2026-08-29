@@ -1008,7 +1008,9 @@ fn parse_agent_type(s: &str) -> Result<AgentType> {
         .unwrap_or(false);
 
     match s.to_lowercase().as_str() {
-        "claude" => Ok(AgentType::Claude),
+        "claude" => Ok(AgentType::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        }),
         "codex" => Ok(AgentType::Codex {
             model: None,
             approval_policy: None,
@@ -1378,9 +1380,15 @@ mod tests {
 
     #[test]
     fn codex_creation_options_reject_other_agents() {
-        let error =
-            configure_agent_type(AgentType::Claude, Some("gpt-5.4".to_string()), None, None)
-                .unwrap_err();
+        let error = configure_agent_type(
+            AgentType::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
+            Some("gpt-5.4".to_string()),
+            None,
+            None,
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("require agent type `codex`"));
     }
 

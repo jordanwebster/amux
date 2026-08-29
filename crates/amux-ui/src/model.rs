@@ -242,7 +242,7 @@ impl AgentCard {
     /// The native structured protocol selected from this agent's advertised
     /// protocols, when it is one this UI knows how to render.
     pub fn structured_protocol(&self) -> Option<StructuredProtocol> {
-        select_structured_protocol(&self.agent.io_protocols)
+        select_structured_protocol(&self.agent.io_protocols())
     }
 
     /// The Claude chat layer's feed facts, when the agent's structured
@@ -1266,7 +1266,7 @@ impl Model {
 /// the wire's `agent_type` string).
 pub fn agent_type_label(agent_type: &amux::AgentType) -> &'static str {
     match agent_type {
-        amux::AgentType::Claude => "claude",
+        amux::AgentType::Claude { .. } => "claude",
         amux::AgentType::Codex { .. } => "codex",
         #[allow(unreachable_patterns)]
         _ => "test-agent",
@@ -1333,11 +1333,9 @@ mod tests {
             name: Some("fix-auth-bug".to_string()),
             command: "claude".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
-            agent_type: "claude".to_string(),
-            io_protocols: vec![
-                "terminal_v1".to_string(),
-                crate::claude::PROTOCOL.to_string(),
-            ],
+            kind: amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
             readonly: false,
             args: Vec::new(),
             created_at: t0(),
@@ -1468,10 +1466,7 @@ mod tests {
     fn detects_codex_projection_disagreement() {
         let mut model = coherent_model();
         let card = model.agents.get_mut(&agent_id()).unwrap();
-        card.agent.io_protocols = vec![
-            "terminal_v1".to_string(),
-            crate::codex::PROTOCOL.to_string(),
-        ];
+        card.agent.kind = amux::AgentKind::Codex;
         card.layer = Some(AgentLayer::Codex(CodexLayer::default()));
         for event in [
             StreamMsg::Opened { truncated: false },

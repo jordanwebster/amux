@@ -18,9 +18,9 @@ use uuid::Uuid;
 
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agents::{
-    AGENT_TYPE_TEST_AGENT, AgentBackend, AgentDeliveryTarget, AgentParent, CreateAgentRequest,
-    Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource, SessionEvent, StopPolicy,
-    StructuredLogSource, TerminalSize, terminal_io_protocols,
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CreateAgentRequest, Delivery,
+    DeliveryError, DeliveryLiveness, LocalAgentNameSource, SessionEvent, StopPolicy,
+    StructuredLogSource, TerminalSize,
 };
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
@@ -262,25 +262,12 @@ impl AgentBackend for TestAgentSession {
         TestAgentSession::stop(self).await;
     }
 
-    fn agent_type(&self) -> &'static str {
-        AGENT_TYPE_TEST_AGENT
+    fn kind(&self) -> AgentKind {
+        AgentKind::TestAgent
     }
 
     fn parent(&self) -> Option<AgentParent> {
         self.parent
-    }
-
-    fn io_protocols(&self) -> Vec<String> {
-        #[cfg(any(test, feature = "testnet"))]
-        {
-            let mut protocols = terminal_io_protocols(self.pty.as_ref());
-            protocols.push(io::TEST_ECHO_V1.to_string());
-            protocols
-        }
-        #[cfg(not(any(test, feature = "testnet")))]
-        {
-            terminal_io_protocols(self.pty.as_ref())
-        }
     }
 
     fn log_source(&self) -> Option<StructuredLogSource> {

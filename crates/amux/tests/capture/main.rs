@@ -1297,8 +1297,8 @@ async fn a2a_roundtrip(
                 .is_some_and(|parent| parent.agent_id == parent_id)
         })
         .context("spawned Codex child missing from family inventory")?;
-    if child.agent_type != "codex" {
-        bail!("spawned child was {}, expected codex", child.agent_type);
+    if child.kind != amux::AgentKind::Codex {
+        bail!("spawned child was {}, expected codex", child.kind);
     }
     let child_id = child.id;
     let keys = session.close().await?;
@@ -3027,11 +3027,11 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
     };
     if !external.readonly
         || !external
-            .io_protocols
+            .io_protocols()
             .iter()
             .any(|protocol| protocol == PTY_TRANSCRIPT_V1)
         || external
-            .io_protocols
+            .io_protocols()
             .iter()
             .any(|protocol| protocol == amux::terminal_io::TERMINAL_V1)
     {

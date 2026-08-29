@@ -10,7 +10,9 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::agents::{Agent, AgentEvent, AgentParent, AgentType, LocalAgentNameSource, WorkingOn};
+use crate::agents::{
+    Agent, AgentEvent, AgentKind, AgentParent, AgentType, LocalAgentNameSource, WorkingOn,
+};
 
 /// Internal agent metadata owned by the runtime.
 #[derive(Debug, Clone)]
@@ -20,8 +22,7 @@ pub(crate) struct AgentRecord {
     pub(crate) name: Option<String>,
     pub(crate) command: String,
     pub(crate) working_dir: PathBuf,
-    pub(crate) agent_type: String,
-    pub(crate) io_protocols: Vec<String>,
+    pub(crate) kind: AgentKind,
     pub(crate) readonly: bool,
     pub(crate) args: Vec<String>,
     pub(crate) created_at: DateTime<Utc>,
@@ -51,8 +52,7 @@ impl From<&AgentRecord> for Agent {
             name: agent.name.clone(),
             command: agent.command.clone(),
             working_dir: agent.working_dir.clone(),
-            agent_type: agent.agent_type.clone(),
-            io_protocols: agent.io_protocols.clone(),
+            kind: agent.kind,
             readonly: agent.readonly,
             args: agent.args.clone(),
             created_at: agent.created_at,
@@ -70,8 +70,7 @@ impl From<AgentRecord> for Agent {
             name: agent.name,
             command: agent.command,
             working_dir: agent.working_dir,
-            agent_type: agent.agent_type,
-            io_protocols: agent.io_protocols.clone(),
+            kind: agent.kind,
             readonly: agent.readonly,
             args: agent.args,
             created_at: agent.created_at,

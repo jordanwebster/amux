@@ -6,7 +6,7 @@ use prost::Message as ProstMessage;
 use protocol_wire::DeleteAgentRequest;
 use uuid::Uuid;
 
-use super::{Agent, AgentParent, SessionCloseReason, SubscribeSessionEvent, WorkingOn};
+use super::{Agent, AgentKind, AgentParent, SessionCloseReason, SubscribeSessionEvent, WorkingOn};
 use crate::agents::{RenameAgentRequest, TerminalSize};
 use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use crate::protocol::wire::{self as protocol_wire, pb};
@@ -359,8 +359,13 @@ pub(crate) fn agent_to_wire(
         name: agent.name.clone(),
         command: agent.command.clone(),
         working_dir: path_to_proto_string("Agent.working_dir", &agent.working_dir)?,
-        agent_type: agent.agent_type.clone(),
-        io_protocols: agent.io_protocols.clone(),
+        agent_type: agent.kind.provider().to_string(),
+        io_protocols: agent
+            .kind
+            .protocols()
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         readonly: agent.readonly,
         args: agent.args.clone(),
         created_at_unix_ms: agent.created_at.timestamp_millis(),
@@ -380,14 +385,16 @@ pub(crate) fn agent_from_wire(
     let parent = agent.parent.map(agent_parent_from_wire).transpose()?;
     let working_on = agent.working_on.map(working_on_from_wire).transpose()?;
 
+    let kind = AgentKind::from_legacy(&agent.agent_type, &agent.io_protocols)
+        .map_err(protocol_wire::DecodeError::Invalid)?;
+
     Ok(Agent {
         id: required_uuid_from_bytes("agent_id", agent.agent_id)?,
         host_id: required_uuid_from_bytes("host_id", agent.host_id)?,
         name: agent.name,
         command: agent.command,
         working_dir: PathBuf::from(agent.working_dir),
-        agent_type: agent.agent_type,
-        io_protocols: agent.io_protocols,
+        kind,
         readonly: agent.readonly,
         args: agent.args,
         created_at,
@@ -493,8 +500,7 @@ mod tests {
             name: Some("child".to_string()),
             command: "codex".to_string(),
             working_dir: PathBuf::from("/tmp/work"),
-            agent_type: "codex".to_string(),
-            io_protocols: vec!["codex_sdk_v1".to_string()],
+            kind: AgentKind::Codex,
             readonly: false,
             args: vec!["--model".to_string(), "gpt-5.6".to_string()],
             created_at: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
@@ -665,8 +671,9 @@ mod tests {
             name: None,
             command: "claude".to_string(),
             working_dir: PathBuf::from(OsString::from_vec(vec![0xff])),
-            agent_type: "claude".to_string(),
-            io_protocols: vec!["terminal_v1".to_string()],
+            kind: AgentKind::Claude {
+                driver: crate::agents::ClaudeDriver::Pty,
+            },
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),

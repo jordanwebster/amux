@@ -284,7 +284,9 @@ mod tests {
                 agent_id: recipient_id,
                 host_id: None,
                 name: Some("recipient".to_string()),
-                agent_type: AgentType::Claude,
+                agent_type: AgentType::Claude {
+                    driver: crate::agents::ClaudeDriver::Pty,
+                },
                 working_dir: PathBuf::from("/work"),
                 terminal_size: None,
                 args: Vec::new(),

@@ -8,11 +8,10 @@ use uuid::Uuid;
 
 use super::ClaudeSession;
 use super::inbox::ClaudeDeliveryTarget;
-use crate::agents::claude::io;
 use crate::agents::{
-    AGENT_TYPE_CLAUDE, AgentBackend, AgentDeliveryTarget, AgentParent, HookEnvironment, HookError,
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, HookEnvironment, HookError,
     HookOutcome, LocalAgentNameSource, PtyHandle, SessionEvent, SpawnInheritance, StopPolicy,
-    StructuredInput, StructuredLogSource, terminal_io_protocols,
+    StructuredInput, StructuredLogSource,
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
@@ -62,8 +61,10 @@ impl AgentBackend for ClaudeSession {
         ClaudeSession::stop(self, policy).await;
     }
 
-    fn agent_type(&self) -> &'static str {
-        AGENT_TYPE_CLAUDE
+    fn kind(&self) -> AgentKind {
+        AgentKind::Claude {
+            driver: self.driver,
+        }
     }
 
     fn spawn_inheritance(&self) -> SpawnInheritance {
@@ -75,12 +76,6 @@ impl AgentBackend for ClaudeSession {
 
     fn parent(&self) -> Option<AgentParent> {
         self.parent
-    }
-
-    fn io_protocols(&self) -> Vec<String> {
-        let mut protocols = terminal_io_protocols(self.pty.as_ref());
-        protocols.push(io::PTY_TRANSCRIPT_V1.to_string());
-        protocols
     }
 
     fn log_source(&self) -> Option<StructuredLogSource> {
@@ -124,6 +119,7 @@ impl AgentBackend for ClaudeSession {
             )
         })?;
         Ok(SuspendedAgent::Claude {
+            driver: self.driver,
             agent_id: self.agent_id,
             name: self.name.clone(),
             name_source: name_source.into(),
@@ -152,7 +148,8 @@ mod tests {
 
     use super::*;
     use crate::agents::{
-        AgentParent, AgentType, CreateAgentRequest, Delivery, DeliveryLiveness, HookEnvironment,
+        AgentParent, AgentType, ClaudeDriver, CreateAgentRequest, Delivery, DeliveryLiveness,
+        HookEnvironment,
     };
     use crate::envelope::{Envelope, EnvelopeKind, Sender};
 
@@ -166,7 +163,9 @@ mod tests {
                 agent_id: recipient_id,
                 host_id: None,
                 name: Some("recipient".to_string()),
-                agent_type: AgentType::Claude,
+                agent_type: AgentType::Claude {
+                    driver: ClaudeDriver::Pty,
+                },
                 working_dir: PathBuf::from("/work"),
                 terminal_size: None,
                 args: Vec::new(),
@@ -221,7 +220,9 @@ mod tests {
                 agent_id: recipient_id,
                 host_id: None,
                 name: Some("recipient".to_string()),
-                agent_type: AgentType::Claude,
+                agent_type: AgentType::Claude {
+                    driver: ClaudeDriver::Pty,
+                },
                 working_dir: dir.path().to_path_buf(),
                 terminal_size: None,
                 args: Vec::new(),

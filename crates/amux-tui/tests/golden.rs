@@ -81,11 +81,13 @@ fn an_agent(name: &str, agent_type: &str, on: &str) -> Agent {
         name: Some(name.to_string()),
         command: agent_type.to_string(),
         working_dir: std::path::PathBuf::from("/work"),
-        agent_type: agent_type.to_string(),
-        io_protocols: vec![
-            "terminal_v1".to_string(),
-            "claude_pty_transcript_v1".to_string(),
-        ],
+        kind: match agent_type {
+            "claude" => amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
+            "codex" => amux_ui::AgentKind::Codex,
+            other => panic!("unsupported fixture kind {other}"),
+        },
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
@@ -389,7 +391,9 @@ fn fleet_attention_badges() {
         command: Command::CreateAgent {
             host: Some(host_id("nova")),
             name: "claude-4".to_string(),
-            agent_type: amux_ui::AgentType::Claude,
+            agent_type: amux_ui::AgentType::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
             working_dir: std::path::PathBuf::from("/work"),
         },
     });
@@ -605,7 +609,9 @@ fn op_pending_and_failed() {
             command: Command::CreateAgent {
                 host: Some(host_id("nova")),
                 name: "claude-3".to_string(),
-                agent_type: amux_ui::AgentType::Claude,
+                agent_type: amux_ui::AgentType::Claude {
+                    driver: amux_ui::ClaudeDriver::Pty,
+                },
                 working_dir: std::path::PathBuf::from("/work"),
             },
         },
@@ -616,7 +622,9 @@ fn op_pending_and_failed() {
         command: Command::CreateAgent {
             host: Some(host_id("nova")),
             name: "claude-4".to_string(),
-            agent_type: amux_ui::AgentType::Claude,
+            agent_type: amux_ui::AgentType::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
             working_dir: std::path::PathBuf::from("/work"),
         },
     });

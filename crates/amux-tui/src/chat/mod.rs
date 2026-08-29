@@ -511,8 +511,13 @@ mod tests {
                     name: Some("protocol-test".to_string()),
                     command: "test-agent".to_string(),
                     working_dir: "/work".into(),
-                    agent_type: "test-agent".to_string(),
-                    io_protocols: vec![protocol.to_string()],
+                    kind: match protocol {
+                        amux_ui::claude::PROTOCOL => amux_ui::AgentKind::Claude {
+                            driver: amux_ui::ClaudeDriver::Pty,
+                        },
+                        amux_ui::codex::PROTOCOL => amux_ui::AgentKind::Codex,
+                        _ => amux_ui::AgentKind::TestAgent,
+                    },
                     readonly: false,
                     args: Vec::new(),
                     created_at: at(0),

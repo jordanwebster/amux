@@ -17,13 +17,14 @@ use tokio::task::AbortHandle;
 use uuid::Uuid;
 
 use super::CODEX_RAW_THREAD_NOT_READY;
-use super::io::{self, CodexSdkV1Input};
+#[cfg(test)]
+use super::io;
+use super::io::CodexSdkV1Input;
 use crate::agent_tools;
 use crate::agents::{
-    AGENT_TYPE_CODEX, AgentBackend, AgentDeliveryTarget, AgentParent, CodexInput,
-    CreateAgentRequest, Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource,
-    McpLaunchRoute, PtyHandle, RawPtyTarget, SessionEvent, SpawnInheritance, StopPolicy,
-    StructuredLogSource, spawn_pty_agent,
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CodexInput, CreateAgentRequest,
+    Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource, McpLaunchRoute, PtyHandle,
+    RawPtyTarget, SessionEvent, SpawnInheritance, StopPolicy, StructuredLogSource, spawn_pty_agent,
 };
 use crate::envelope::{Envelope, Sender};
 use crate::suspend::SuspendedAgent;
@@ -1862,8 +1863,8 @@ impl AgentBackend for CodexSession {
         self.log_source.close().await;
     }
 
-    fn agent_type(&self) -> &'static str {
-        AGENT_TYPE_CODEX
+    fn kind(&self) -> AgentKind {
+        AgentKind::Codex
     }
 
     fn spawn_inheritance(&self) -> SpawnInheritance {
@@ -1876,13 +1877,6 @@ impl AgentBackend for CodexSession {
 
     fn parent(&self) -> Option<AgentParent> {
         self.parent
-    }
-
-    fn io_protocols(&self) -> Vec<String> {
-        vec![
-            io::CODEX_SDK_V1.to_string(),
-            crate::agents::terminal_io::TERMINAL_V1.to_string(),
-        ]
     }
 
     fn log_source(&self) -> Option<StructuredLogSource> {
@@ -2669,7 +2663,7 @@ mod tests {
         assert!(session.pty_handle().unwrap().is_none());
         assert_eq!(
             session.io_protocols(),
-            [io::CODEX_SDK_V1, crate::agents::terminal_io::TERMINAL_V1]
+            [crate::agents::terminal_io::TERMINAL_V1, io::CODEX_SDK_V1]
         );
     }
 

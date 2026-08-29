@@ -1028,16 +1028,23 @@ pub(crate) fn client_create_request_to_wire(
     request: CreateAgentRequest,
 ) -> Result<wire::ClientCreateAgentRequest, ClientError> {
     let agent = match request.agent_type {
-        crate::agents::AgentType::Claude => {
-            wire::client_create_agent_request::Agent::Claude(wire::ClaudeCreateConfig {
-                working_dir: path_to_wire_string(
-                    method::CLIENT_CREATE_NAME,
-                    "ClientCreateAgentRequest.working_dir",
-                    &request.working_dir,
-                )?,
-                args: request.args,
-                initial_terminal_size: request.terminal_size.map(terminal_size_to_wire),
-            })
+        crate::agents::AgentType::Claude {
+            driver: crate::agents::ClaudeDriver::Pty,
+        } => wire::client_create_agent_request::Agent::Claude(wire::ClaudeCreateConfig {
+            working_dir: path_to_wire_string(
+                method::CLIENT_CREATE_NAME,
+                "ClientCreateAgentRequest.working_dir",
+                &request.working_dir,
+            )?,
+            args: request.args,
+            initial_terminal_size: request.terminal_size.map(terminal_size_to_wire),
+        }),
+        crate::agents::AgentType::Claude {
+            driver: crate::agents::ClaudeDriver::Sdk,
+        } => {
+            return Err(ClientError::Protocol(ProtocolError::Unimplemented {
+                message: "Claude SDK agents are not implemented yet".to_string(),
+            }));
         }
         crate::agents::AgentType::Codex {
             model,
@@ -1625,7 +1632,9 @@ mod tests {
             agent_id: Uuid::new_v4(),
             host_id: None,
             name: None,
-            agent_type: crate::agents::AgentType::Claude,
+            agent_type: crate::agents::AgentType::Claude {
+                driver: crate::agents::ClaudeDriver::Pty,
+            },
             working_dir: OsString::from_vec(vec![0xff]).into(),
             terminal_size: None,
             args: Vec::new(),
