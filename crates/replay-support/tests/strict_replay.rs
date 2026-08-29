@@ -344,3 +344,67 @@ async fn strict_replay_builds_named_transports_over_a_recording() {
 
     replay.controller.finish().unwrap();
 }
+
+#[tokio::test]
+async fn strict_replay_validates_named_transport_writes_in_recorded_order() {
+    let mut replay = strict_replay(
+        &recording(vec![
+            event(10, IoDirection::Write, "alpha-write", "alpha"),
+            event(20, IoDirection::Write, "beta-write", "beta"),
+        ]),
+        ReplayOptions::default(),
+    );
+    let mut alpha = replay.transports.remove("alpha").unwrap();
+    let mut beta = replay.transports.remove("beta").unwrap();
+
+    alpha.writer.write_all(b"alpha-write\n").await.unwrap();
+    alpha.writer.flush().await.unwrap();
+    beta.writer.write_all(b"beta-write\n").await.unwrap();
+    beta.writer.flush().await.unwrap();
+
+    let report = replay.controller.finish().unwrap();
+    assert_eq!(report.validated_writes, 2);
+}
+
+#[tokio::test]
+async fn strict_replay_validates_named_transport_writes_in_reverse_order() {
+    let mut replay = strict_replay(
+        &recording(vec![
+            event(10, IoDirection::Write, "alpha-write", "alpha"),
+            event(20, IoDirection::Write, "beta-write", "beta"),
+        ]),
+        ReplayOptions::default(),
+    );
+    let mut alpha = replay.transports.remove("alpha").unwrap();
+    let mut beta = replay.transports.remove("beta").unwrap();
+
+    beta.writer.write_all(b"beta-write\n").await.unwrap();
+    beta.writer.flush().await.unwrap();
+    alpha.writer.write_all(b"alpha-write\n").await.unwrap();
+    alpha.writer.flush().await.unwrap();
+
+    let report = replay.controller.finish().unwrap();
+    assert_eq!(report.validated_writes, 2);
+}
+
+#[tokio::test]
+async fn strict_replay_named_transport_mismatch_reports_its_own_expectation() {
+    let mut replay = strict_replay(
+        &recording(vec![
+            event(10, IoDirection::Write, "alpha-write", "alpha"),
+            event(20, IoDirection::Write, "beta-write", "beta"),
+        ]),
+        ReplayOptions::default(),
+    );
+    let mut beta = replay.transports.remove("beta").unwrap();
+
+    beta.writer.write_all(b"wrong-beta-write\n").await.unwrap();
+    assert!(beta.writer.flush().await.is_err());
+
+    let error = replay.controller.finish().unwrap_err();
+    assert_eq!(error.report.write_mismatches.len(), 1);
+    let mismatch = &error.report.write_mismatches[0];
+    assert_eq!(mismatch.index, 1);
+    assert_eq!(mismatch.expected, "beta-write");
+    assert_eq!(mismatch.actual, "wrong-beta-write");
+}

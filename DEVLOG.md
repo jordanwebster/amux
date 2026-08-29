@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **Strict replay accounts for writes per named transport.**
+Concurrent write origins are now deduplicated within each transport, so two
+independent channels may arrive in either order while each channel's own
+ordering remains strict. A mismatched named write reports that transport's
+expectation and global recording index.
+
+---
+
 2026-08-29 — **Codex raw PTY detach has a synchronous termination floor.**
 The final raw-terminal lease now signals the hosted process group with
 SIGTERM before it asks Tokio to await and escalate shutdown. Detach therefore

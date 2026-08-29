@@ -654,24 +654,25 @@ impl AsyncWrite for ReplayWriter {
             }
 
             let write_idx = state.validated_writes;
-            let Some(hit) = concurrent_writes_from(&state, write_idx)
-                .into_iter()
-                .filter(|&candidate| {
-                    this.transport_id.as_ref().is_none_or(|transport_id| {
-                        state.expected_writes[candidate].transport_id == *transport_id
-                    })
+            let candidates = concurrent_writes_from(&state, write_idx);
+            let mut transport_candidates = candidates.iter().copied().filter(|&candidate| {
+                this.transport_id.as_ref().is_none_or(|transport_id| {
+                    state.expected_writes[candidate].transport_id == *transport_id
                 })
+            });
+            let expected_idx = transport_candidates.clone().next().unwrap_or(write_idx);
+            let Some(hit) = transport_candidates
                 .find(|&candidate| write_equals(&line, &state.expected_writes[candidate].line))
             else {
-                let expected = state.expected_writes[write_idx].clone();
+                let expected = state.expected_writes[expected_idx].clone();
                 state.write_mismatches.push(ReplayWriteMismatch {
-                    index: write_idx,
+                    index: expected_idx,
                     expected: expected.line,
                     actual: line,
                 });
                 return std::task::Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("replay write mismatch at index {write_idx}"),
+                    format!("replay write mismatch at index {expected_idx}"),
                 )));
             };
 
@@ -750,11 +751,13 @@ fn concurrent_writes_from(state: &ReplayState, frontier: usize) -> Vec<usize> {
             break;
         }
         if !state.matched_writes[index] {
-            let origin = write_origin(&state.expected_writes[index].line);
-            if !candidates
-                .iter()
-                .any(|&candidate| write_origin(&state.expected_writes[candidate].line) == origin)
-            {
+            let write = &state.expected_writes[index];
+            let origin = write_origin(&write.line);
+            if !candidates.iter().any(|&candidate| {
+                let candidate = &state.expected_writes[candidate];
+                candidate.transport_id == write.transport_id
+                    && write_origin(&candidate.line) == origin
+            }) {
                 candidates.push(index);
             }
         }
