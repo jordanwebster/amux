@@ -259,51 +259,6 @@ pub(crate) fn compose_chat_frame(
     fit_frame(lines, geometry.width, geometry.height, theme)
 }
 
-/// Put a legacy native frame behind the shared shell as one opaque block.
-pub(crate) fn compose_opaque_chat_frame(
-    mut native: Vec<Line<'static>>,
-    theme: Theme,
-    size: (u16, u16),
-) -> Vec<Line<'static>> {
-    if native.first().is_some_and(is_top_border) {
-        native.remove(0);
-    }
-    if native.last().is_some_and(is_bottom_border) {
-        native.pop();
-    }
-    for line in &mut native {
-        strip_side_borders(line);
-    }
-    let header = if native.is_empty() {
-        Line::default()
-    } else {
-        native.remove(0)
-    };
-    let copy_text = native.iter().map(line_text).collect::<Vec<_>>().join("\n");
-    compose_chat_frame(
-        ChatFrameParts {
-            header,
-            banner: None,
-            feed: FeedBlocks {
-                blocks: vec![PaintedBlock {
-                    key: BlockKey(0),
-                    lines: native,
-                    copy_text,
-                    run: None,
-                }],
-                history_truncated: false,
-                loading: false,
-            },
-            activity: None,
-            bottom: Vec::new(),
-            overlay: None,
-        },
-        &FeedViewport::following(),
-        theme,
-        size,
-    )
-}
-
 fn fit_frame(
     mut lines: Vec<Line<'static>>,
     width: usize,
@@ -380,29 +335,9 @@ fn mark_focused(line: Line<'static>, theme: Theme) -> Line<'static> {
     Line { spans, ..line }
 }
 
-fn line_text(line: &Line<'_>) -> String {
-    line.spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect()
-}
 
-fn is_top_border(line: &Line<'_>) -> bool {
-    line_text(line).starts_with('┌')
-}
 
-fn is_bottom_border(line: &Line<'_>) -> bool {
-    line_text(line).starts_with('└')
-}
 
-fn strip_side_borders(line: &mut Line<'static>) {
-    if line.spans.first().is_some_and(|span| span.content == "│") {
-        line.spans.remove(0);
-    }
-    if line.spans.last().is_some_and(|span| span.content == "│") {
-        line.spans.pop();
-    }
-}
 
 /// Paint/reuse counters for the most recently measured frame interval.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -492,60 +427,6 @@ impl PaintCache {
     }
 }
 
-// Compatibility budget used by the native renderers until their adapters
-// hand independently painted frame parts to this module.
-pub(crate) const FIXED_TOP: usize = 3;
-
-pub(crate) fn extra_rows(working: bool, paused: bool) -> usize {
-    usize::from(working || paused) + usize::from(working)
-}
-
-pub(crate) struct ChatLayout {
-    pub(crate) height: usize,
-    pub(crate) bottom_rows: usize,
-    pub(crate) working: bool,
-    pub(crate) paused: bool,
-    pub(crate) banner: bool,
-}
-
-impl ChatLayout {
-    fn feed_height_for(&self, paused: bool) -> usize {
-        self.height.saturating_sub(
-            FIXED_TOP
-                + 1
-                + usize::from(self.banner)
-                + extra_rows(self.working, paused)
-                + self.bottom_rows,
-        )
-    }
-
-    pub(crate) fn feed_height(&self) -> usize {
-        self.feed_height_for(self.paused)
-    }
-
-    pub(crate) fn feed_height_when_paused(&self) -> usize {
-        self.feed_height_for(true)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct FrameRows {
-    pub(crate) height: usize,
-    pub(crate) working: bool,
-    pub(crate) paused: bool,
-    pub(crate) banner: bool,
-}
-
-impl FrameRows {
-    pub(crate) fn bottom_max(self) -> usize {
-        self.height
-            .saturating_sub(
-                FIXED_TOP + 1 + usize::from(self.banner) + extra_rows(self.working, self.paused),
-            )
-            .max(1)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -578,8 +459,19 @@ mod tests {
         }
     }
 
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
     fn texts(lines: &[Line<'_>]) -> Vec<String> {
         lines.iter().map(line_text).collect()
+    }
+
+    fn paint(key: BlockKey, label: &str) -> PaintedBlock {
+        block(key.0, &[label])
     }
 
     #[test]
@@ -820,39 +712,6 @@ mod tests {
         assert_eq!(line_text(&marked), "\u{258e} wide 世 row");
     }
 
-    #[test]
-    fn opaque_native_frame_loses_every_outer_border() {
-        let native = vec![
-            Line::from("┌──────────┐"),
-            Line::from(vec![
-                Span::raw("│"),
-                Span::raw("header    "),
-                Span::raw("│"),
-            ]),
-            Line::from(vec![
-                Span::raw("│"),
-                Span::raw("body      "),
-                Span::raw("│"),
-            ]),
-            Line::from("└──────────┘"),
-        ];
-        let rendered = texts(&compose_opaque_chat_frame(
-            native,
-            Theme::default(),
-            (12, 4),
-        ));
-        assert_eq!(rendered.len(), 4);
-        assert!(rendered[0].starts_with("header"));
-        assert!(
-            rendered
-                .iter()
-                .all(|line| !matches!(line.chars().next(), Some('┌' | '└' | '│')))
-        );
-    }
-
-    fn paint(key: BlockKey, label: &str) -> PaintedBlock {
-        block(key.0, &[label])
-    }
 
     #[test]
     fn cache_hits_and_content_changes_miss() {

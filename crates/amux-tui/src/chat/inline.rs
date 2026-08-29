@@ -18,13 +18,13 @@ use amux_ui::claude::AskState;
 use amux_ui::claude::encoding::{self, AskAnswer};
 use amux_ui::{AgentId, ClaudeCommand, CodexCommand, Command, Model, StructuredProtocol};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 
 use crate::chat::claude::ask_ui::{AskKeyOutcome, AskUi};
 use crate::chat::claude::panel;
 use crate::chat::codex::render::{ApprovalView, approval_panel};
 use crate::composer::Composer;
-use crate::render::{Theme, finish_line, new_line, str_width};
+use crate::render::{Theme, push_span};
 
 /// A child's ask docked in its parent's chat: whose it is, and the
 /// child's layer's own panel state for it.
@@ -221,36 +221,30 @@ pub(crate) fn panel_lines(
                 ask,
                 width,
                 theme,
+                quit_guard_armed,
             );
-            // The Codex layer still opens its panel with the plain
-            // takeover rule; replacing it costs no rows and puts the
-            // attribution exactly where the boundary already is.
-            let attribution = attribution_rule(&name, width, theme);
-            match lines.first_mut() {
-                Some(first) => *first = attribution,
-                None => lines.push(attribution),
-            }
+            // The Codex layer paints its own panel; the attribution goes
+            // where the panel's title is, so the guest's rows say whose
+            // they are before they say anything else.
+            let attribution = attribution_row(&name, theme);
+            lines.insert(0, attribution);
             lines
         }
     }
 }
 
-/// `─ answering test-runner ────────────────── esc back ─`
+/// `answering test-runner · esc back` — the row above a guest panel.
 ///
-/// Saturating, because the width is not always a width a frame could be
-/// drawn at: `layout` asks the bottom block how many rows it wants at
-/// whatever viewport it was handed, and that question is asked before the
-/// too-small notice takes over.
-fn attribution_rule(name: &str, width: usize, theme: Theme) -> Line<'static> {
-    let mut line = new_line();
-    let right = " esc back ─";
-    let mut text = format!("─ answering {name} ");
-    while 1 + str_width(&text) + str_width(right) < width.saturating_sub(1) {
-        text.push('─');
-    }
-    text.push_str(right);
-    line.spans.push(Span::styled(text, theme.muted()));
-    finish_line(&mut line, width);
+/// Without it the human would be looking at an ask panel in a chat and
+/// have every reason to read it as this agent's.
+fn attribution_row(name: &str, theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(
+        &mut line,
+        crate::chat::blocks::GLYPH_COL,
+        format!("answering {name} · esc back"),
+        theme.muted(),
+    );
     line
 }
 

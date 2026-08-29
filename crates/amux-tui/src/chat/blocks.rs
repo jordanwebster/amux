@@ -123,21 +123,27 @@ fn glyph_rows(
         .collect()
 }
 
-/// A dim `└ …` continuation under a tool line.
+/// Dim `└ …` continuations under a tool line. Each line of the source is
+/// its own fact and gets its own marker; only a fact too wide for the
+/// row wraps without one, so a stack of facts never reads as one
+/// sentence that happened to break.
 fn continuation_rows(text: &str, theme: Theme, width: usize) -> Vec<Line<'static>> {
-    markdown::plain_rows(text, cont_width(width), theme.muted())
-        .into_iter()
-        .enumerate()
-        .map(|(index, spans)| {
+    let mut lines = Vec::new();
+    for fact in text.lines() {
+        for (index, spans) in markdown::plain_rows(fact, cont_width(width), theme.muted())
+            .into_iter()
+            .enumerate()
+        {
             let mut line = Line::default();
             if index == 0 {
                 push_span(&mut line, TEXT_COL, "└", theme.muted());
             }
             pad_to(&mut line, CONT_COL);
             line.spans.extend(spans);
-            line
-        })
-        .collect()
+            lines.push(line);
+        }
+    }
+    lines
 }
 
 /// A muted rule that starts at the glyph column and runs to the right
@@ -253,10 +259,13 @@ pub(crate) fn paint_assistant(
 }
 
 /// The thinking marker: one muted row, no surface. A thought is a fact
-/// about how long the agent spent, not something to read.
+/// about how long the agent spent, not something to read — but an agent
+/// that publishes a summary of what it thought has said something, and
+/// that goes on the same dim continuation a tool's outcome uses.
 pub(crate) fn paint_thinking(
     key: BlockKey,
     label: &str,
+    detail: Option<&str>,
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
@@ -267,7 +276,11 @@ pub(crate) fn paint_thinking(
         clip_to_width(label, width.saturating_sub(GLYPH_COL + 1)).to_string(),
         theme.muted(),
     );
-    block(key, vec![line])
+    let mut lines = vec![line];
+    if let Some(detail) = detail {
+        lines.extend(continuation_rows(detail, theme, width));
+    }
+    block(key, lines)
 }
 
 /// A tool one-liner: outcome glyph, what it did, and the dim `└` line
@@ -802,7 +815,7 @@ mod tests {
             ),
             (
                 "thinking",
-                paint_thinking(key(), "~ thought for 6s", theme, width),
+                paint_thinking(key(), "~ thought for 6s", None, theme, width),
             ),
             (
                 "tool",

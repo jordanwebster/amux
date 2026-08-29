@@ -15,16 +15,16 @@
                                                                                         
                                                                                         
                                                                                         
-│─ answering test-runner ─────────────────────────────────────────────────── esc back ─│
-│ ⚠ approval — command                                                                  
-│ $ cargo test --workspace                                                              
-│   └ cwd /work                                                                         
-│   └ Run the repository test suite?                                                    
-│                                                                                       
-│ › 1. accept once                                                                      
-│   2. decline                                                                          
-│                                                                                       
-│   ↑↓/1-9 select · enter confirm · ctrl+x interrupt                                    
+  answering test-runner · esc back                                                      
+    approval — command                                                                  
+                                                                                        
+    $ cargo test --workspace                                                            
+      └ cwd /work                                                                       
+      └ Run the repository test suite?                                                  
+                                                                                        
+    › 1. accept once                                                                    
+      2. decline                                                                        
+    ↑↓/1-9 select · enter confirm · ctrl+x interrupt                                    
 --- styles ---
 ..eeeeeeeeeeeeeeeemmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...........................mmmmmmmmmmm.
 ..w.wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww......................
@@ -42,13 +42,13 @@ AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................
 ........................................................................................
 ........................................................................................
-?mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm?
-?.w.....................................................................................
-?.m.cccccccccccccccccccccc..............................................................
-?...m.mmmmmmmmm.........................................................................
-?...m.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm....................................................
-?.......................................................................................
-?.......................................................................................
-?.......................................................................................
-?.......................................................................................
-?...mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm....................................
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm......................................................
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP

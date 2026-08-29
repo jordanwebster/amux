@@ -651,7 +651,7 @@ fn entry_block(
             if thinking.redacted {
                 text.push_str(" · redacted");
             }
-            paint_thinking(key, &text, theme, width)
+            paint_thinking(key, &text, None, theme, width)
         }
         FeedEntryKind::Turn(turn) => {
             let duration = match &turn.duration {

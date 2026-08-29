@@ -4,6 +4,24 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The Codex chat joins the shared frame, and the last native
+frame is gone.** The Codex adapter walks its own typed entries and hands the
+shared shell finished blocks from the same painter kit the Claude chat uses:
+every command and every file change keeps a block of its own — Codex has no
+read-only exploration kind to fold — and a file change's patch now goes
+through the shared patch rows and the unified-diff painter instead of a raw
+`└` preview. Approvals paint as panels; a denied or abandoned unit states what
+was settled as a plain fact rather than wearing a work glyph as though it were
+still on its way. Reasoning is a thinking marker with its summary on the
+continuation, boundaries are rules, and the blocked-input notice moved onto the
+panel surface beside the approvals. The session's configuration line took the
+banner row under the header. With both adapters migrated, the compatibility
+layer that let a native bordered frame sit behind the shell — the opaque-frame
+composer, the old row budget and its layout types — is deleted. Nothing under
+`crates/amux-ui` changed.
+
+---
+
 2026-08-29 — **The Claude chat now draws through the shared frame.**
 The Claude adapter no longer builds its own bordered frame. It walks its own
 fold of exploration runs, formats each entry's words, and hands the shared

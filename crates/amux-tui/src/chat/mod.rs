@@ -169,26 +169,12 @@ pub(crate) fn build_chat_lines(
     chat: &ChatView,
     ctx: &FrameContext,
 ) -> Vec<Line<'static>> {
+    // Both screens compose themselves through the shared shell and place
+    // their own diagnostic banner; nothing is left for this seam to do
+    // but pick the adapter.
     match &chat.inner {
-        // The Claude screen composes itself through the shared shell and
-        // places its own diagnostic banner; nothing is left for this seam
-        // to patch.
         AgentChatView::Claude(view) => claude::build_chat_lines(model, view, ctx),
-        AgentChatView::Codex(view) => {
-            let mut lines = codex::build_chat_lines(model, view, ctx);
-            // The native frame reserves a row for a chrome rule under the
-            // header — the row after the child-ask banner when there is
-            // one. Replace THAT row with the sticky diagnostic banner,
-            // without changing any row accounting and without covering a
-            // child who is waiting on a person; provider renderers
-            // consume the Model fact but never inspect invariants.
-            let rule = 2 + usize::from(family_banner(model, chat.agent).is_some());
-            if model.has_invariant_warning() && lines.len() > rule {
-                lines[rule] =
-                    crate::render::invariant_warning_line(ctx.viewport.0 as usize, ctx.theme.warn());
-            }
-            frame::compose_opaque_chat_frame(lines, ctx.theme, ctx.viewport)
-        }
+        AgentChatView::Codex(view) => codex::build_chat_lines(model, view, ctx),
     }
 }
 

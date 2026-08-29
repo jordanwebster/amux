@@ -327,8 +327,7 @@ fn scroll_keys(chat: &mut View, model: &Model, key: &KeyEvent, viewport: (u16, u
 }
 
 fn metrics(chat: &View, model: &Model, viewport: (u16, u16)) -> (usize, usize) {
-    let layout = render::layout(model, chat, viewport);
-    let feed_h = layout.feed_height_when_paused().max(1);
+    let feed_h = render::feed_rows_when_paused(model, chat, viewport).max(1);
     (feed_h.saturating_sub(1).max(1), feed_h)
 }
 
