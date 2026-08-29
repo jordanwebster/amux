@@ -5292,3 +5292,8 @@ recording also replays strictly through an injected `codex::Session` and the
 real amux backend, reproducing one committed full-fidelity row fixture byte for
 byte. The UI folds those derived rows, while daemon-authored A2A rows remain an
 explicit separate fixture.
+
+2026-08-30 — **Retired the last hand-captured Codex row projections.** Backend
+unit tests keep direct coverage of daemon-authored delivery rows, while the
+derived-rows integration boundary now exclusively owns complete provider
+recording replay and byte-for-byte fixture reproduction.
