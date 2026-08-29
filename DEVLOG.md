@@ -4,6 +4,28 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-29 — **The fleet is painted from the same tokens as the chat.** Every
+cell of the fleet screen — the border, the title, the rows, the badges, the
+banner, the filter, the status line and the key hints — now names a semantic
+theme token instead of a colour literal or a bare DIM modifier. The screen
+keeps its outer border and its column grid; what changed is where its colours
+come from, so a palette swap reaches the fleet the same way it reaches the
+chat, and the light and dark themes produce identical style maps in their own
+colours.
+
+The selected row is marked with the chat's focus bar in the focus token
+rather than an arrow, so moving between the two screens reads as one idiom.
+An offline host's row is de-emphasis all the way across on the muted token,
+which is what the DIM modifier was approximating.
+
+The fleet style-map goldens now classify each cell through `Theme::classify`,
+the same classifier the chat goldens use: a cell painted from a literal shows
+up as `?` rather than passing for a token. That change also earned the theme
+its last unused semantic style a caller, so no style method carries a
+dead-code allowance any more.
+
+---
+
 2026-08-29 — **Wheel scrolling now leaves a replayable visual record.** The
 committed screenshot tool builds each native chat's 1,000-entry fixture and
 routes twelve upward and twelve downward wheel events through the production

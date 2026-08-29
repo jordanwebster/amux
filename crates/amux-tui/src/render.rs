@@ -3,6 +3,12 @@
 //! The layout grid reproduces the aligned frames in the TUI V1 spec
 //! verbatim; the tier-3 golden tests lock every screen. The chrome draws on
 //! the alternate screen only and never writes terminal scrollback.
+//!
+//! Every cell here takes its colour from a `Theme` token, never a literal
+//! and never a bare DIM modifier, so the fleet and the chat are the same
+//! product in whichever palette the person chose — and so the style-map
+//! goldens, which classify each cell back to its token, can tell a stray
+//! literal from a deliberate one.
 
 use amux_ui::{
     AgentId, AgentPhase, Attention, Command, Connection, DisconnectReason, Model, Why,
@@ -10,7 +16,7 @@ use amux_ui::{
 };
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -56,6 +62,10 @@ const MIN_FRAME_WIDTH: usize = RIGHT_INFO_FROM_EDGE;
 /// Key hints in the status line (col 25 leaves two clear columns after the
 /// widest normal left status, and `q quit` still fits the 68-col frame).
 const HINTS_COL: usize = 25;
+/// The bar marking the selected row. The chat marks its focused block with
+/// this same glyph in the same token, so a person moving between the two
+/// screens reads one idiom rather than two.
+const SELECTION_BAR: &str = "\u{258e}";
 
 /// Persistent diagnostic chrome shown after the runtime observes structural
 /// Model incoherence. The Model supplies only the sticky fact; all native
@@ -84,14 +94,6 @@ pub fn render(model: &Model, view: &ViewState, ctx: &FrameContext, frame: &mut F
     frame.render_widget(Paragraph::new(lines), frame.area());
 }
 
-fn dim() -> Style {
-    Style::default().add_modifier(Modifier::DIM)
-}
-
-fn plain() -> Style {
-    Style::default()
-}
-
 /// Build the full frame as styled lines (the whole chrome is text — no
 /// nested widgets, so goldens control every cell). The chat screen, when
 /// open, replaces the fleet inside the same chrome.
@@ -103,6 +105,7 @@ pub fn build_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec<L
 }
 
 fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec<Line<'static>> {
+    let theme = ctx.theme;
     let width = ctx.viewport.0 as usize;
     let height = ctx.viewport.1 as usize;
     if width < MIN_FRAME_WIDTH || height < CHROME_ROWS {
@@ -113,11 +116,11 @@ fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec
     let capacity = list_capacity(ctx.viewport.1);
     let mut lines = Vec::with_capacity(height);
 
-    lines.push(title_line(width));
-    lines.push(filter_line(model, view, width, rows.len()));
-    lines.push(blank_line(width));
+    lines.push(title_line(width, theme));
+    lines.push(filter_line(model, view, width, rows.len(), theme));
+    lines.push(blank_line(width, theme));
 
-    let mut list_lines = match screen_state(model, view, &rows) {
+    let mut list_lines = match screen_state(model, view, &rows, theme) {
         ScreenState::Fleet => {
             // Key handling clamps scroll/selection, but a subscription-driven
             // fleet shrink can land between keypresses: clamp the stale
@@ -134,24 +137,26 @@ fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec
             }
             list
         }
-        ScreenState::Help => help_lines(model, view, width),
+        ScreenState::Help => help_lines(model, view, theme),
         ScreenState::ConfirmDelete { agent } => {
             confirm_delete_lines(model, ctx, agent, width, capacity)
         }
-        ScreenState::Message(message_lines) => centered_lines(&message_lines, width, capacity),
+        ScreenState::Message(message_lines) => {
+            centered_lines(&message_lines, width, capacity, theme)
+        }
     };
     list_lines.truncate(capacity);
     for line in &mut list_lines {
-        finish_line(line, width);
+        finish_line(line, width, theme);
     }
     lines.extend(list_lines);
     while lines.len() < height - 3 {
-        lines.push(blank_line(width));
+        lines.push(blank_line(width, theme));
     }
 
-    lines.push(banner_line(model, width));
-    lines.push(status_line(model, view, width));
-    lines.push(bottom_border(width));
+    lines.push(banner_line(model, width, theme));
+    lines.push(status_line(model, view, width, theme));
+    lines.push(bottom_border(width, theme));
     lines
 }
 
@@ -169,13 +174,18 @@ enum ScreenState {
     Message(Vec<(String, Style)>),
 }
 
-fn screen_state(model: &Model, view: &ViewState, rows: &[VisibleRow<'_>]) -> ScreenState {
+fn screen_state(
+    model: &Model,
+    view: &ViewState,
+    rows: &[VisibleRow<'_>],
+    theme: Theme,
+) -> ScreenState {
     if view.mode == Mode::Help {
         return ScreenState::Help;
     }
     match model.connection() {
         Connection::Connecting => {
-            return ScreenState::Message(vec![("Starting daemon… ◌".to_string(), plain())]);
+            return ScreenState::Message(vec![("Starting daemon… ◌".to_string(), theme.text())]);
         }
         Connection::Disconnected { reason } => {
             let detail = match reason {
@@ -193,8 +203,11 @@ fn screen_state(model: &Model, view: &ViewState, rows: &[VisibleRow<'_>]) -> Scr
                 }
             };
             return ScreenState::Message(vec![
-                (detail, Style::default().fg(Color::Red)),
-                ("start it with: amux server start".to_string(), dim()),
+                (detail, theme.error()),
+                (
+                    "start it with: amux server start".to_string(),
+                    theme.muted(),
+                ),
             ]);
         }
         Connection::Connected { .. } => {}
@@ -211,7 +224,7 @@ fn screen_state(model: &Model, view: &ViewState, rows: &[VisibleRow<'_>]) -> Scr
         return ScreenState::Fleet;
     }
     if !model.is_synchronized() {
-        return ScreenState::Message(vec![("Loading… ◌".to_string(), dim())]);
+        return ScreenState::Message(vec![("Loading… ◌".to_string(), theme.muted())]);
     }
     if model.fleet_agent_count() == 0 && view.filter.is_empty() {
         let host = model
@@ -220,43 +233,65 @@ fn screen_state(model: &Model, view: &ViewState, rows: &[VisibleRow<'_>]) -> Scr
             .unwrap_or("this host")
             .to_string();
         return ScreenState::Message(vec![
-            (format!("Press n to create one on {host},"), plain()),
-            ("or pair a device: amux pair --help".to_string(), dim()),
+            (format!("Press n to create one on {host},"), theme.text()),
+            (
+                "or pair a device: amux pair --help".to_string(),
+                theme.muted(),
+            ),
         ]);
     }
     if !view.filter.is_empty() {
-        return ScreenState::Message(vec![("no matches".to_string(), dim())]);
+        return ScreenState::Message(vec![("no matches".to_string(), theme.muted())]);
     }
     ScreenState::Fleet
 }
 
-fn title_line(width: usize) -> Line<'static> {
-    let mut line = String::from("┌ amux ");
-    while line.chars().count() < width - 1 {
-        line.push('─');
+/// The top border, with the product name reading as the screen's title —
+/// the same emphasis the chat header gives the agent it is showing.
+fn title_line(width: usize, theme: Theme) -> Line<'static> {
+    let mut rule = String::new();
+    while rule.chars().count() + str_width("┌ amux ") < width - 1 {
+        rule.push('─');
     }
-    line.push('┐');
-    Line::from(Span::styled(line, dim()))
+    rule.push('┐');
+    let mut line = Line::from(vec![
+        Span::styled("┌ ", theme.muted()),
+        Span::styled("amux", theme.emphasis()),
+        Span::styled(" ", theme.muted()),
+        Span::styled(rule, theme.muted()),
+    ]);
+    line.style = base_style(theme);
+    line
 }
 
-pub(crate) fn bottom_border(width: usize) -> Line<'static> {
+fn bottom_border(width: usize, theme: Theme) -> Line<'static> {
     let mut line = String::from("└");
     while line.chars().count() < width - 1 {
         line.push('─');
     }
     line.push('┘');
-    Line::from(Span::styled(line, dim()))
+    let mut line = Line::from(Span::styled(line, theme.muted()));
+    line.style = base_style(theme);
+    line
 }
 
-pub(crate) fn blank_line(width: usize) -> Line<'static> {
-    let mut line = new_line();
-    finish_line(&mut line, width);
+fn blank_line(width: usize, theme: Theme) -> Line<'static> {
+    let mut line = new_line(theme);
+    finish_line(&mut line, width, theme);
     line
 }
 
 /// A content line: left border plus spans; `finish_line` pads and closes it.
-pub(crate) fn new_line() -> Line<'static> {
-    Line::from(vec![Span::styled("│", dim())])
+fn new_line(theme: Theme) -> Line<'static> {
+    Line::from(vec![Span::styled("│", theme.muted())])
+}
+
+/// The style every fleet row rests on: body text over the background token,
+/// so a span that names no colour still names a token the style map can
+/// read rather than whatever the terminal happens to default to. The chat
+/// fills its rows the same way.
+fn base_style(theme: Theme) -> Style {
+    theme.text().patch(theme.background())
 }
 
 /// Display width in terminal cells — the measurement every wrap, pad, and
@@ -322,7 +357,8 @@ pub(crate) fn push_right(line: &mut Line<'static>, text: String, width: usize, s
 /// block at whatever viewport it was handed, before the too-small notice
 /// takes over — and a measurement must not be able to bring the process
 /// down.
-pub(crate) fn finish_line(line: &mut Line<'static>, width: usize) {
+fn finish_line(line: &mut Line<'static>, width: usize, theme: Theme) {
+    line.style = base_style(theme).patch(line.style);
     let budget = width.saturating_sub(1);
     pad_to(line, budget);
     // Drop overflow defensively, by display cells: goldens keep us honest
@@ -341,7 +377,7 @@ pub(crate) fn finish_line(line: &mut Line<'static>, width: usize) {
     // A clipped wide grapheme can leave a one-cell gap; re-pad so the
     // border never drifts out of the last column.
     pad_to(line, budget);
-    line.spans.push(Span::styled("│", dim()));
+    line.spans.push(Span::styled("│", theme.muted()));
 }
 
 fn clip(text: &str, max: usize) -> String {
@@ -354,19 +390,30 @@ fn clip(text: &str, max: usize) -> String {
     clipped
 }
 
-fn filter_line(model: &Model, view: &ViewState, width: usize, visible: usize) -> Line<'static> {
-    let mut line = new_line();
+fn filter_line(
+    model: &Model,
+    view: &ViewState,
+    width: usize,
+    visible: usize,
+    theme: Theme,
+) -> Line<'static> {
+    let mut line = new_line(theme);
     match &view.mode {
         Mode::Filter => {
-            push_span(&mut line, MARKER_COL, ">", plain());
-            push_span(&mut line, BADGE_COL, format!("{}▌", view.filter), plain());
+            push_span(&mut line, MARKER_COL, ">", theme.text());
+            push_span(
+                &mut line,
+                BADGE_COL,
+                format!("{}▌", view.filter),
+                theme.text(),
+            );
         }
         _ if !view.filter.is_empty() => {
-            push_span(&mut line, MARKER_COL, "/", dim());
-            push_span(&mut line, BADGE_COL, view.filter.clone(), plain());
+            push_span(&mut line, MARKER_COL, "/", theme.muted());
+            push_span(&mut line, BADGE_COL, view.filter.clone(), theme.text());
         }
         _ => {
-            push_span(&mut line, MARKER_COL, "/", dim());
+            push_span(&mut line, MARKER_COL, "/", theme.muted());
         }
     }
     let info = if view.mode == Mode::Filter || !view.filter.is_empty() {
@@ -374,33 +421,33 @@ fn filter_line(model: &Model, view: &ViewState, width: usize, visible: usize) ->
     } else {
         format!("{} agents", model.fleet_agent_count())
     };
-    push_span(&mut line, width - RIGHT_INFO_FROM_EDGE, info, dim());
-    finish_line(&mut line, width);
+    push_span(&mut line, width - RIGHT_INFO_FROM_EDGE, info, theme.muted());
+    finish_line(&mut line, width, theme);
     line
 }
 
-fn badge_for(model: &Model, card: &amux_ui::AgentCard) -> (&'static str, Style) {
+fn badge_for(model: &Model, card: &amux_ui::AgentCard, theme: Theme) -> (&'static str, Style) {
     if let AgentPhase::Exited { .. } = card.phase
         && model.host_online(card.agent.host_id)
     {
-        return (" ", plain());
+        return (" ", theme.text());
     }
-    badge_glyph(model.effective_attention(card))
+    badge_glyph(model.effective_attention(card), theme)
 }
 
 /// The badge an attention wears. A folded family's row wears the loudest
 /// one anywhere inside it, drawn from this same table — so a shut family
 /// and the child hiding in it never disagree about how loud it is.
-fn badge_glyph(attention: Attention) -> (&'static str, Style) {
+fn badge_glyph(attention: Attention, theme: Theme) -> (&'static str, Style) {
     match attention {
-        Attention::Unknown => ("–", dim()),
-        Attention::Idle => (" ", plain()),
-        Attention::Working => ("⋯", dim()),
+        Attention::Unknown => ("–", theme.muted()),
+        Attention::Idle => (" ", theme.text()),
+        Attention::Working => ("⋯", theme.muted()),
         Attention::NeedsYou {
             why: Why::Permission,
-        } => ("!", Style::default().fg(Color::Red)),
-        Attention::NeedsYou { why: Why::Question } => ("?", Style::default().fg(Color::Yellow)),
-        Attention::NeedsYou { why: Why::Finished } => ("✓", Style::default().fg(Color::Green)),
+        } => ("!", theme.error()),
+        Attention::NeedsYou { why: Why::Question } => ("?", theme.warn()),
+        Attention::NeedsYou { why: Why::Finished } => ("✓", theme.ok()),
     }
 }
 
@@ -425,6 +472,7 @@ fn fleet_row_line(
     row: &VisibleRow<'_>,
     selected: bool,
 ) -> Line<'static> {
+    let theme = ctx.theme;
     let width = ctx.viewport.0 as usize;
     let show_status = width >= STATUS_MIN_FRAME_WIDTH;
     let show_working = width >= WORKING_MIN_FRAME_WIDTH;
@@ -432,20 +480,25 @@ fn fleet_row_line(
         (&view.mode, row),
         (Mode::Rename { agent, .. }, VisibleRow::Agent(agent_row)) if *agent == agent_row.card.agent.id
     );
-    let mut line = new_line();
+    let mut line = new_line(theme);
     if selected && !renaming {
-        push_span(&mut line, MARKER_COL, "▸", plain());
+        push_span(&mut line, MARKER_COL, SELECTION_BAR, theme.focus_bar());
     }
     match row {
         VisibleRow::Agent(agent_row) => {
             let card = agent_row.card;
             let offline = !model.host_online(card.agent.host_id);
-            let base = if offline { dim() } else { plain() };
+            // An offline host's row is all de-emphasis: nothing on it is
+            // current, so no cell on it claims the body-text token.
+            let base = if offline { theme.muted() } else { theme.text() };
+            // The elaborating cells — type, age, status, what it says it is
+            // doing — are de-emphasis on every row, online or not.
+            let detail = theme.muted();
             // A folded family wears the family's badge, not the parent's:
             // the row is standing in for everyone behind it.
             let (badge, badge_style) = match agent_row.folded {
-                Some(folded) => badge_glyph(folded.attention),
-                None => badge_for(model, card),
+                Some(folded) => badge_glyph(folded.attention, theme),
+                None => badge_for(model, card, theme),
             };
             if badge != " " {
                 push_span(&mut line, BADGE_COL, badge, badge_style);
@@ -467,14 +520,13 @@ fn fleet_row_line(
             };
             push_span(&mut line, NAME_COL + indent, name, base);
             if !marker.is_empty() {
-                line.spans
-                    .push(Span::styled(marker, base.add_modifier(Modifier::DIM)));
+                line.spans.push(Span::styled(marker, detail));
             }
             push_span(
                 &mut line,
                 TYPE_COL,
                 clip(&card.agent.agent_type, TYPE_WIDTH),
-                base.add_modifier(Modifier::DIM),
+                detail,
             );
             let host = model
                 .host_name(card.agent.host_id)
@@ -485,26 +537,21 @@ fn fleet_row_line(
                 &mut line,
                 AGE_COL,
                 clip(&format_relative_age(ctx.now, card.last_activity), AGE_WIDTH),
-                base.add_modifier(Modifier::DIM),
+                detail,
             );
             if show_status {
                 push_span(
                     &mut line,
                     STATUS_COL,
                     clip(&model.status_label_for(card), STATUS_WIDTH),
-                    base.add_modifier(Modifier::DIM),
+                    detail,
                 );
             }
             if show_working
                 && let Some(text) =
                     working_text(card, ctx.now, width.saturating_sub(2 + WORKING_COL))
             {
-                push_span(
-                    &mut line,
-                    WORKING_COL,
-                    text,
-                    base.add_modifier(Modifier::DIM),
-                );
+                push_span(&mut line, WORKING_COL, text, detail);
             }
         }
         VisibleRow::PendingCreate {
@@ -512,59 +559,59 @@ fn fleet_row_line(
             agent_type,
             host,
         } => {
-            push_span(&mut line, BADGE_COL, "◌", dim());
+            push_span(&mut line, BADGE_COL, "◌", theme.muted());
             push_span(
                 &mut line,
                 NAME_COL,
                 clip(&format!("{name} (creating…)"), NAME_WIDTH),
-                dim(),
+                theme.muted(),
             );
             push_span(
                 &mut line,
                 TYPE_COL,
                 clip(agent_type_label(agent_type), TYPE_WIDTH),
-                dim(),
+                theme.muted(),
             );
             let host = host
                 .or(model.local_host_id())
                 .and_then(|id| model.host_name(id))
                 .unwrap_or("?")
                 .to_string();
-            push_span(&mut line, HOST_COL, clip(&host, HOST_WIDTH), dim());
-            push_span(&mut line, AGE_COL, "—", dim());
+            push_span(&mut line, HOST_COL, clip(&host, HOST_WIDTH), theme.muted());
+            push_span(&mut line, AGE_COL, "—", theme.muted());
         }
     }
     line
 }
 
-fn banner_line(model: &Model, width: usize) -> Line<'static> {
+fn banner_line(model: &Model, width: usize, theme: Theme) -> Line<'static> {
     if model.has_invariant_warning() {
-        return invariant_warning_line(width, Style::default().fg(Color::Yellow));
+        return invariant_warning_line(width, theme);
     }
-    let mut line = new_line();
+    let mut line = new_line(theme);
     if model.cloud_subscription_required() && model.is_connected() {
         push_span(
             &mut line,
             MARKER_COL,
             "⚠ subscription required · amux.sh/account · local agents fine",
-            Style::default().fg(Color::Yellow),
+            theme.warn(),
         );
     } else if model.cloud_auth_required() && model.is_connected() {
         push_span(
             &mut line,
             MARKER_COL,
             "⚠ cloud: auth required — run `amux init` · local agents fine",
-            Style::default().fg(Color::Yellow),
+            theme.warn(),
         );
     }
-    finish_line(&mut line, width);
+    finish_line(&mut line, width, theme);
     line
 }
 
-pub(crate) fn invariant_warning_line(width: usize, style: Style) -> Line<'static> {
-    let mut line = new_line();
-    push_span(&mut line, MARKER_COL, INVARIANT_WARNING, style);
-    finish_line(&mut line, width);
+fn invariant_warning_line(width: usize, theme: Theme) -> Line<'static> {
+    let mut line = new_line(theme);
+    push_span(&mut line, MARKER_COL, INVARIANT_WARNING, theme.warn());
+    finish_line(&mut line, width, theme);
     line
 }
 
@@ -603,54 +650,44 @@ fn command_verb(command: &Command) -> &'static str {
     }
 }
 
-fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
-    let mut line = new_line();
+fn status_line(model: &Model, view: &ViewState, width: usize, theme: Theme) -> Line<'static> {
+    let mut line = new_line(theme);
 
     // The armed quit guard replaces the hint line in warning color: a
     // second Ctrl+C within the window quits; any other key (or the
     // timeout tick) disarms and the hints return.
     if view.quit_guard.is_armed() {
-        push_span(
-            &mut line,
-            MARKER_COL,
-            "⚠",
-            Style::default().fg(Color::Yellow),
-        );
-        push_span(
-            &mut line,
-            BADGE_COL,
-            QuitGuard::HINT,
-            Style::default().fg(Color::Yellow),
-        );
-        finish_line(&mut line, width);
+        push_span(&mut line, MARKER_COL, "⚠", theme.warn());
+        push_span(&mut line, BADGE_COL, QuitGuard::HINT, theme.warn());
+        finish_line(&mut line, width, theme);
         return line;
     }
     if let Some(notice) = &view.notice {
-        push_span(&mut line, MARKER_COL, "✗", Style::default().fg(Color::Red));
-        push_span(&mut line, BADGE_COL, notice.clone(), plain());
-        finish_line(&mut line, width);
+        push_span(&mut line, MARKER_COL, "✗", theme.error());
+        push_span(&mut line, BADGE_COL, notice.clone(), theme.text());
+        finish_line(&mut line, width, theme);
         return line;
     }
     if let Some((verb, message)) = active_failure(model, view) {
-        push_span(&mut line, MARKER_COL, "✗", Style::default().fg(Color::Red));
+        push_span(&mut line, MARKER_COL, "✗", theme.error());
         push_span(
             &mut line,
             BADGE_COL,
             format!("{verb} failed: {message}"),
-            plain(),
+            theme.text(),
         );
-        finish_line(&mut line, width);
+        finish_line(&mut line, width, theme);
         return line;
     }
     if let Mode::ConfirmDelete { name, .. } = &view.mode {
+        push_span(&mut line, MARKER_COL, "●", theme.ok());
         push_span(
             &mut line,
-            MARKER_COL,
-            "●",
-            Style::default().fg(Color::Green),
+            BADGE_COL,
+            format!("delete {name}? y/n"),
+            theme.text(),
         );
-        push_span(&mut line, BADGE_COL, format!("delete {name}? y/n"), plain());
-        finish_line(&mut line, width);
+        finish_line(&mut line, width, theme);
         return line;
     }
 
@@ -658,21 +695,13 @@ fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
         Connection::Connected { .. } => {
             let hosts = model.host_count();
             let plural = if hosts == 1 { "" } else { "s" };
-            (
-                "●",
-                Style::default().fg(Color::Green),
-                format!("connected · {hosts} host{plural}"),
-            )
+            ("●", theme.ok(), format!("connected · {hosts} host{plural}"))
         }
-        Connection::Connecting => ("◌", dim(), "connecting".to_string()),
-        Connection::Disconnected { .. } => (
-            "✗",
-            Style::default().fg(Color::Red),
-            "disconnected".to_string(),
-        ),
+        Connection::Connecting => ("◌", theme.muted(), "connecting".to_string()),
+        Connection::Disconnected { .. } => ("✗", theme.error(), "disconnected".to_string()),
     };
     push_span(&mut line, MARKER_COL, dot, dot_style);
-    push_span(&mut line, BADGE_COL, summary, plain());
+    push_span(&mut line, BADGE_COL, summary, theme.text());
 
     let hints = match &view.mode {
         // `z` joins the row only where something folds, and only when
@@ -696,9 +725,9 @@ fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
         Mode::Help => "any key to close",
     };
     if !hints.is_empty() && fits(hints, width) {
-        push_span(&mut line, HINTS_COL, hints, dim());
+        push_span(&mut line, HINTS_COL, hints, theme.muted());
     }
-    finish_line(&mut line, width);
+    finish_line(&mut line, width, theme);
     line
 }
 
@@ -722,7 +751,7 @@ fn has_families(model: &Model) -> bool {
 /// rows appear only when the probe succeeded, the configured leader
 /// substitutes into chords, and the entry rows name the effective modes
 /// (P10: hints tell the truth).
-fn help_lines(model: &Model, view: &ViewState, _width: usize) -> Vec<Line<'static>> {
+fn help_lines(model: &Model, view: &ViewState, theme: Theme) -> Vec<Line<'static>> {
     let sections = crate::bindings::fleet_sections(
         &crate::bindings::Effective::new(view.kitty, view.leader),
         view.default_open_mode,
@@ -731,19 +760,25 @@ fn help_lines(model: &Model, view: &ViewState, _width: usize) -> Vec<Line<'stati
     let mut lines = Vec::new();
     for (index, section) in sections.iter().enumerate() {
         if index > 0 {
-            lines.push(new_line());
+            lines.push(new_line(theme));
         }
         for binding in &section.bindings {
-            let mut line = new_line();
+            let mut line = new_line(theme);
             push_span(
                 &mut line,
                 BADGE_COL,
                 format!("{:<14}", binding.keys),
-                plain(),
+                theme.text(),
             );
-            push_span(&mut line, BADGE_COL + 14, binding.action.clone(), dim());
+            push_span(
+                &mut line,
+                BADGE_COL + 14,
+                binding.action.clone(),
+                theme.muted(),
+            );
             if let Some(mark) = tier_mark(binding.tier) {
-                line.spans.push(Span::styled(format!(" · {mark}"), dim()));
+                line.spans
+                    .push(Span::styled(format!(" · {mark}"), theme.muted()));
             }
             lines.push(line);
         }
@@ -789,14 +824,10 @@ fn confirm_delete_lines(
         .filter(|member| model.effective_attention(member.card) == Attention::Working)
         .count();
 
-    let mut lines = vec![blank_line(width)];
-    let mut heading = new_line();
-    push_span(
-        &mut heading,
-        MARKER_COL,
-        "⚠",
-        Style::default().fg(Color::Yellow),
-    );
+    let theme = ctx.theme;
+    let mut lines = vec![blank_line(width, theme)];
+    let mut heading = new_line(theme);
+    push_span(&mut heading, MARKER_COL, "⚠", theme.warn());
     push_span(
         &mut heading,
         BADGE_COL,
@@ -806,10 +837,10 @@ fn confirm_delete_lines(
             1 => format!("deleting {name} also deletes the agent under it:"),
             n => format!("deleting {name} also deletes the {n} agents under it:"),
         },
-        plain(),
+        theme.text(),
     );
     lines.push(heading);
-    lines.push(blank_line(width));
+    lines.push(blank_line(width, theme));
 
     // Three rows are spent on chrome above and two on the tail; whatever
     // is left goes to the list. A confirmation that quietly drops names
@@ -825,27 +856,24 @@ fn confirm_delete_lines(
         lines.push(confirm_delete_row(model, ctx, member, width));
     }
     if shown < family.len() {
-        let mut more = new_line();
+        let mut more = new_line(theme);
         push_span(
             &mut more,
             NAME_COL,
             format!("… and {} more", family.len() - shown),
-            dim(),
+            theme.muted(),
         );
         lines.push(more);
     }
 
-    lines.push(blank_line(width));
-    let mut tail = new_line();
+    lines.push(blank_line(width, theme));
+    let mut tail = new_line(theme);
     let (text, style) = match working {
-        0 => ("none of them is working".to_string(), dim()),
-        1 => (
-            "1 is working — deleting stops it".to_string(),
-            Style::default().fg(Color::Yellow),
-        ),
+        0 => ("none of them is working".to_string(), theme.muted()),
+        1 => ("1 is working — deleting stops it".to_string(), theme.warn()),
         n => (
             format!("{n} are working — deleting stops them"),
-            Style::default().fg(Color::Yellow),
+            theme.warn(),
         ),
     };
     push_span(&mut tail, BADGE_COL, text, style);
@@ -863,19 +891,20 @@ fn confirm_delete_row(
     member: &amux_ui::FamilyMember<'_>,
     width: usize,
 ) -> Line<'static> {
+    let theme = ctx.theme;
     let card = member.card;
     let attention = model.effective_attention(card);
     let indent = member.depth.saturating_sub(1) * FAMILY_INDENT;
-    let mut line = new_line();
+    let mut line = new_line(theme);
     if attention == Attention::Working {
-        push_span(
-            &mut line,
-            BADGE_COL + indent,
-            "●",
-            Style::default().fg(Color::Yellow),
-        );
+        push_span(&mut line, BADGE_COL + indent, "●", theme.warn());
     }
-    push_span(&mut line, NAME_COL + indent, card.display_name(), plain());
+    push_span(
+        &mut line,
+        NAME_COL + indent,
+        card.display_name(),
+        theme.text(),
+    );
     let mut detail = format!(
         " · {} · {}",
         card.agent.agent_type,
@@ -891,7 +920,7 @@ fn confirm_delete_row(
     let room = width.saturating_sub(2 + line_len(&line));
     line.spans.push(Span::styled(
         clip_to_width(&detail, room).to_string(),
-        dim(),
+        theme.muted(),
     ));
     line
 }
@@ -900,14 +929,15 @@ fn centered_lines(
     messages: &[(String, Style)],
     width: usize,
     capacity: usize,
+    theme: Theme,
 ) -> Vec<Line<'static>> {
     let top = capacity.saturating_sub(messages.len()) / 2;
     let mut lines = Vec::new();
     for _ in 0..top {
-        lines.push(new_line());
+        lines.push(new_line(theme));
     }
     for (text, style) in messages {
-        let mut line = new_line();
+        let mut line = new_line(theme);
         let col = (width.saturating_sub(text.chars().count())) / 2;
         push_span(&mut line, col.max(MARKER_COL), text.clone(), *style);
         lines.push(line);

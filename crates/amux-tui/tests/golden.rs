@@ -15,7 +15,6 @@ use amux_ui::{
 use chrono::{DateTime, TimeDelta, Utc};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::style::{Color, Modifier};
 use uuid::Uuid;
 
 // --- fixture builders (mirroring the amux-ui spec harness) ----------------
@@ -282,21 +281,15 @@ fn render_frame(model: &Model, view: &ViewState, width: u16, height: u16) -> Str
     out
 }
 
-/// One class letter per cell: what the text goldens cannot see. Same
-/// classes the chat style goldens use.
-fn buffer_styles(buffer: &ratatui::buffer::Buffer) -> String {
+/// One class letter per cell: what the text goldens cannot see. The theme
+/// itself names the class, so a cell painted from a colour literal instead
+/// of a token shows up as `?` rather than passing for one.
+fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
     let mut out = String::new();
     for y in 0..buffer.area.height {
         for x in 0..buffer.area.width {
             let style = buffer.cell((x, y)).expect("cell in area").style();
-            out.push(match style.fg {
-                Some(Color::Red) => 'r',
-                Some(Color::Yellow) => 'y',
-                Some(Color::Green) => 'g',
-                Some(Color::DarkGray) => 'a',
-                _ if style.add_modifier.contains(Modifier::DIM) => 'd',
-                _ => '.',
-            });
+            out.push(theme.classify(style));
         }
         out.push('\n');
     }
@@ -528,8 +521,8 @@ fn stale_scroll_after_fleet_shrink_clamps_at_render() {
     };
     let rendered = render_frame(&model, &stale, 68, 11);
     assert!(
-        rendered.contains("▸"),
-        "the selection marker survives the shrink"
+        rendered.contains('\u{258e}'),
+        "the selection bar survives the shrink"
     );
     assert_eq!(rendered, render_frame(&model, &clamped, 68, 11));
 }
@@ -636,41 +629,36 @@ fn help_overlay() {
 
 // --- style assertions (what the text goldens cannot see) ------------------
 
+/// The badge and the offline row name tokens, not colour literals: the
+/// error token carries the permission badge, and an offline host's row
+/// falls back to muted rather than wearing a DIM modifier over body text.
 #[test]
-fn badge_styles_and_offline_dim() {
+fn badges_and_offline_rows_wear_semantic_tokens() {
     let mut msgs = fleet_msgs();
     msgs.push(server(ServerMsg::HostUpserted {
         host: an_offline_host("hetzner"),
     }));
     let model = fold(msgs);
     let view = view_default();
-    let backend = TestBackend::new(68, 11);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    let ctx = FrameContext {
-        viewport: (68, 11),
-        theme: Theme::default(),
-        now: at(NOW),
-    };
-    terminal
-        .draw(|frame| render(&model, &view, &ctx, frame))
-        .expect("draw");
-    let buffer = terminal.backend().buffer();
+    let theme = Theme::default();
+    let buffer = render_buffer(&model, &view, 68, 11, theme);
 
-    // Row 3 is the permission row: `!` badge is red.
+    // Row 3 is the permission row: the `!` badge is the error token.
     let badge = buffer.cell((4, 3)).expect("badge cell");
     assert_eq!(badge.symbol(), "!");
-    assert_eq!(badge.style().fg, Some(Color::Red));
+    assert_eq!(theme.classify(badge.style()), 'x', "the badge is an error");
 
-    // Offline-host rows render dim (name cell of an offline row).
+    // Offline-host rows render muted (name cell of an offline row).
     let offline_name = (0..11u16)
         .find_map(|y| {
             let cell = buffer.cell((6, y))?;
-            (cell.symbol() == "m").then_some(buffer.cell((6, y)).expect("cell"))
+            (cell.symbol() == "m").then_some(cell)
         })
         .expect("migration-plan row present");
-    assert!(
-        offline_name.style().add_modifier.contains(Modifier::DIM),
-        "offline rows are dim"
+    assert_eq!(
+        theme.classify(offline_name.style()),
+        'm',
+        "an offline row is de-emphasis all the way across"
     );
 }
 
@@ -776,32 +764,22 @@ fn a2a_fleet_family_60col() {
     assert_golden("a2a_fleet_family_60col", &rendered);
 }
 
-/// The fleet's styles are fixed rather than themed (see `Theme`), so these
-/// two goldens are the standing proof that a light terminal gets exactly
-/// the frame a dark one does — including the family badge.
+/// Every cell of the fleet comes from a semantic token, so the two themes
+/// produce the same class map: a light terminal gets the same frame a dark
+/// one does, family badge included, in its own colours.
 #[test]
 fn a2a_fleet_family_styles_dark() {
     let view = expanded_view(&["refactor-tunnels"]);
-    let styles = buffer_styles(&render_buffer(
-        &family_model(),
-        &view,
-        80,
-        14,
-        Theme::default(),
-    ));
+    let theme = Theme::default();
+    let styles = buffer_styles(&render_buffer(&family_model(), &view, 80, 14, theme), theme);
     assert_golden("a2a_fleet_family_styles_dark", &styles);
 }
 
 #[test]
 fn a2a_fleet_family_styles_light() {
     let view = expanded_view(&["refactor-tunnels"]);
-    let styles = buffer_styles(&render_buffer(
-        &family_model(),
-        &view,
-        80,
-        14,
-        Theme::light(ColorMode::TrueColor),
-    ));
+    let theme = Theme::light(ColorMode::TrueColor);
+    let styles = buffer_styles(&render_buffer(&family_model(), &view, 80, 14, theme), theme);
     assert_golden("a2a_fleet_family_styles_light", &styles);
 }
 
@@ -1090,8 +1068,18 @@ fn a2a_delete_confirm_frame() {
 fn a2a_delete_confirm_styles() {
     let model = family_model();
     let view = confirming_delete(&model, "refactor-tunnels");
-    let styles = buffer_styles(&render_buffer(&model, &view, 80, 14, Theme::default()));
+    let theme = Theme::default();
+    let styles = buffer_styles(&render_buffer(&model, &view, 80, 14, theme), theme);
     assert_golden("a2a_delete_confirm_styles", &styles);
+}
+
+#[test]
+fn a2a_delete_confirm_styles_light() {
+    let model = family_model();
+    let view = confirming_delete(&model, "refactor-tunnels");
+    let theme = Theme::light(ColorMode::TrueColor);
+    let styles = buffer_styles(&render_buffer(&model, &view, 80, 14, theme), theme);
+    assert_golden("a2a_delete_confirm_styles_light", &styles);
 }
 
 // --- hints tell the truth about the family keys ---------------------------

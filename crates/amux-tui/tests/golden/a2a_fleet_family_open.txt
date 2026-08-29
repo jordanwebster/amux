@@ -1,7 +1,7 @@
 ┌ amux ────────────────────────────────────────────────────────────────────────┐
 │ /                                                                8 agents    │
 │                                                                              │
-│ ▸ ⋯ refactor-tunnels      claude   nova       12s   working    split th… 15m │
+│ ▎ ⋯ refactor-tunnels      claude   nova       12s   working    split th… 15m │
 │   ✓   write-the-docs      claude   nova       5m    finished   document … 4m │
 │   ⋯   test-runner         codex    nova       30s   working    run the t… 1m │
 │   !     flake-hunter      codex    nova       20s   permission               │

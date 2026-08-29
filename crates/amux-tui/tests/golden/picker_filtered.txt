@@ -1,7 +1,7 @@
 ┌ amux ────────────────────────────────────────────────────────────┐
 │ > auth▌                                              1/5         │
 │                                                                  │
-│ ▸ ! fix-auth-bug          claude   nova       2m    permission   │
+│ ▎ ! fix-auth-bug          claude   nova       2m    permission   │
 │                                                                  │
 │                                                                  │
 │                                                                  │

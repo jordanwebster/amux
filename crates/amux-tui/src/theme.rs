@@ -192,11 +192,11 @@ impl Theme {
         token.resolve(self.mode)
     }
 
-    // These semantic styles define the shared frame and block painter API
-    // before those painters arrive. Keep each allowance local so it disappears
-    // as soon as its painter starts using the method.
+    // These semantic styles are the whole vocabulary the chat and the fleet
+    // may paint from: naming a token here rather than a colour literal is
+    // what makes a palette swap a data change and a token rename a compile
+    // error. Every one of them has a caller.
     /// The terminal background.
-    #[allow(dead_code)]
     pub(crate) fn background(self) -> Style {
         Style::default().bg(self.color(self.tokens.background))
     }
@@ -246,19 +246,16 @@ impl Theme {
     }
 
     /// The filled user-message and composer surface.
-    #[allow(dead_code)]
     pub(crate) fn user_surface(self) -> Style {
         self.text().bg(self.color(self.tokens.user_surface))
     }
 
     /// The filled diff and ask-panel surface.
-    #[allow(dead_code)]
     pub(crate) fn panel(self) -> Style {
         self.text().bg(self.color(self.tokens.panel))
     }
 
     /// The bar at the left edge of a user surface.
-    #[allow(dead_code)]
     pub(crate) fn accent_bar(self) -> Style {
         Style::default()
             .fg(self.color(self.tokens.accent))
@@ -266,7 +263,6 @@ impl Theme {
     }
 
     /// The bar marking the focused feed block.
-    #[allow(dead_code)]
     pub(crate) fn focus_bar(self) -> Style {
         Style::default().fg(self.color(self.tokens.focus))
     }
@@ -300,7 +296,6 @@ impl Theme {
     }
 
     /// The numbered diff gutter on the panel surface.
-    #[allow(dead_code)]
     pub(crate) fn gutter(self) -> Style {
         Style::default()
             .fg(self.color(self.tokens.gutter))

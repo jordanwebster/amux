@@ -5,7 +5,7 @@
 │   ? migration-plan        claude   hetzner    45s   question     │
 │   ✓ nightly-refactor      codex    hetzner    3m    finished     │
 │   ⋯ refactor-tunnels      claude   nova       12s   working      │
-│ ▸   docs-cleanup          claude   nova       1h    idle         │
+│ ▎   docs-cleanup          claude   nova       1h    idle         │
 │                                                                  │
 │ ● delete docs-cleanup? y/n                                       │
 └──────────────────────────────────────────────────────────────────┘
