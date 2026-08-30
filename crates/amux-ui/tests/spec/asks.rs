@@ -14,7 +14,8 @@
 
 use amux_ui::Msg;
 use amux_ui::claude::{
-    Ask, AskArtifact, AskKind, AskState, AskWhy, ClaudeLayer, DiffMagnitude, ToolInvocation,
+    Ask, AskArtifact, AskKind, AskState, AskWhy, ClaudeLayer, DiffMagnitude, SuggestionDestination,
+    SuggestionKind, ToolInvocation,
 };
 use serde_json::json;
 
@@ -67,8 +68,46 @@ fn a_permission_hook_extracts_one_pending_ask_despite_duplicate_delivery() {
         1,
         "the hook's permission_suggestions ride the ask (the menu is generated from them)"
     );
-    assert_eq!(suggestions[0].kind.as_deref(), Some("addDirectories"));
-    assert_eq!(suggestions[0].destination.as_deref(), Some("session"));
+    assert_eq!(suggestions[0].kind, Some(SuggestionKind::AddDirectories));
+    assert_eq!(
+        suggestions[0].destination,
+        Some(SuggestionDestination::Session)
+    );
+}
+
+#[test]
+fn unknown_suggestion_discriminants_remain_typed_raw_tags() {
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                json!({"type":"amux.transcript_ready"}),
+                json!({
+                    "type":"hook.permission_request",
+                    "tool_name":"Bash",
+                    "tool_input":{"command":"echo hi"},
+                    "permission_suggestions":[{
+                        "type":"futureScope",
+                        "destination":"workspace",
+                        "directories":["/work"]
+                    }]
+                }),
+            ],
+        )],
+    ]));
+    let AskKind::Permission { suggestions, .. } = &head(&model).kind else {
+        panic!("permission ask");
+    };
+    assert_eq!(
+        suggestions[0].kind,
+        Some(SuggestionKind::Unknown("futureScope".to_string()))
+    );
+    assert_eq!(
+        suggestions[0].destination,
+        Some(SuggestionDestination::Unknown("workspace".to_string()))
+    );
 }
 
 /// When the transcript tail catches up, the unpaired `tool_use` in the

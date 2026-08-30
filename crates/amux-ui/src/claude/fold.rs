@@ -25,9 +25,10 @@ use super::{
     MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry,
     PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED,
     STRUCTURED_PATCH_BYTES_RETAINED, STRUCTURED_PATCH_HUNKS_RETAINED,
-    STRUCTURED_PATCH_LINES_RETAINED, SlotState, SuccessFacts, SuggestionFact,
-    TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource,
-    TurnDuration, TurnEntry, UnrecognizedEntry, envelope,
+    STRUCTURED_PATCH_LINES_RETAINED, SlotState, SuccessFacts, SuggestionDestination,
+    SuggestionFact, SuggestionKind, TaskNotificationEntry, ThinkingEntry, ToolEntry,
+    ToolInvocation, ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry,
+    envelope,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -291,8 +292,14 @@ fn extract_suggestions(row: &Value) -> Vec<SuggestionFact> {
             suggestions
                 .iter()
                 .map(|suggestion| SuggestionFact {
-                    kind: string_of(suggestion, "type"),
-                    destination: string_of(suggestion, "destination"),
+                    kind: suggestion
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(SuggestionKind::from_wire),
+                    destination: suggestion
+                        .get("destination")
+                        .and_then(Value::as_str)
+                        .map(SuggestionDestination::from_wire),
                     directories: suggestion
                         .get("directories")
                         .and_then(Value::as_array)

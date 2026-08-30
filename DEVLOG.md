@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Typed Claude permission suggestion discriminants.**
+Suggestion kinds and destinations now fold into Claude-native known/unknown
+enums, recognizing directory grants and session scope while retaining every
+unfamiliar tag verbatim. The terminal scope label matches those enums instead
+of comparing provider strings, and the encoder continues to derive its
+verified menu digits solely from the suggestion count.
+
 2026-08-30 — **Typed Codex sends and gave both chats one send sentence.**
 Recognized Codex calls to amux's `send` tool now retain typed recipients and
 text, while malformed argument shapes remain raw amux-tool facts. Claude and

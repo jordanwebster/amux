@@ -10,7 +10,8 @@
 
 use amux_ui::claude::encoding::{self, AskAnswer, PermissionAnswer, PlanAnswer};
 use amux_ui::claude::{
-    Ask, AskArtifact, AskKind, AskState, QuestionFact, SuggestionFact, ToolInvocation,
+    Ask, AskArtifact, AskKind, AskState, QuestionFact, SuggestionDestination, SuggestionFact,
+    SuggestionKind, ToolInvocation,
 };
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -162,14 +163,16 @@ fn scoped_label(suggestions: &[SuggestionFact]) -> String {
     let Some(suggestion) = suggestions.first() else {
         return "Allow — apply the suggested rule".to_string();
     };
-    if suggestion.kind.as_deref() == Some("addDirectories") && !suggestion.directories.is_empty() {
+    if suggestion.kind.as_ref() == Some(&SuggestionKind::AddDirectories)
+        && !suggestion.directories.is_empty()
+    {
         return format!(
             "Always allow access to {} from this project",
             suggestion.directories.join(", ")
         );
     }
-    match suggestion.destination.as_deref() {
-        Some("session") => "Allow for this session".to_string(),
+    match suggestion.destination.as_ref() {
+        Some(SuggestionDestination::Session) => "Allow for this session".to_string(),
         _ => "Allow — apply the suggested rule".to_string(),
     }
 }
