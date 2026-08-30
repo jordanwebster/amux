@@ -5555,3 +5555,10 @@ claims retain their explicit Sonnet provenance. Compact recordings preserve four
 completed turns and recognize Claude's in-place compact boundary even when the
 transcript path does not change; every passing capture carries matching baked
 keymap verification evidence.
+
+2026-08-30 — **Expanded the Claude PTY corpus around derived chat boundaries.**
+Five additional semantic specifications preserve multiline prompt identity,
+the Read/Edit/Bash tool-result shapes, automatic plan approval followed by an
+unprompted edit, two-question tab navigation, and single-question Other text.
+Each claim records through the provider PTY session and replays through the same
+strict three-transport boundary at Claude Code 2.1.251.

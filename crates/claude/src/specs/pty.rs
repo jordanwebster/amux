@@ -23,7 +23,12 @@ const DEFAULT_WAIT: Duration = Duration::from_secs(600);
 const WAIT_ENV: &str = "CLAUDE_PTY_SPEC_TIMEOUT_SECS";
 const STALL_DIAGNOSTIC_ENV: &str = "CLAUDE_PTY_STALL_DIAGNOSTIC";
 const SONNET: &str = "claude-sonnet-5";
-const SONNET_FALLBACK_SPECS: &[&str] = &["plan_approve", "plan_request_changes", "question_mixed"];
+const SONNET_FALLBACK_SPECS: &[&str] = &[
+    "plan_approve",
+    "plan_auto",
+    "plan_request_changes",
+    "question_mixed",
+];
 
 type SpecFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
@@ -53,10 +58,13 @@ macro_rules! definition {
 
 static DEFINITIONS: &[PtySpecDef] = &[
     definition!(prompt, &[], prompt),
+    definition!(prompt_multiline, &[], prompt_multiline),
+    definition!(tools, &["--dangerously-skip-permissions"], tools),
     definition!(permission_allow_once, &[], permission_allow_once),
     definition!(permission_allow_scoped, &[], permission_allow_scoped),
     definition!(permission_deny_feedback, &[], permission_deny_feedback),
     definition!(plan_approve, &["--permission-mode", "plan"], plan_approve),
+    definition!(plan_auto, &["--permission-mode", "plan"], plan_auto),
     definition!(
         plan_request_changes,
         &["--permission-mode", "plan"],
@@ -65,22 +73,29 @@ static DEFINITIONS: &[PtySpecDef] = &[
     definition!(question_single, &[], question_single),
     definition!(question_multi_other, &[], question_multi_other),
     definition!(question_mixed, &[], question_mixed),
+    definition!(question_tabs, &[], question_tabs),
+    definition!(question_other_single, &[], question_other_single),
     definition!(interrupt, &["--dangerously-skip-permissions"], interrupt),
     definition!(mode_cycle, &[], mode_cycle),
     definition!(compact_relink, &[], compact_relink),
     definition!(clear_relink, &[], clear_relink),
 ];
 
-static REGISTRY: [SpecEntry; 13] = [
+static REGISTRY: [SpecEntry; 18] = [
     entry("prompt"),
+    entry("prompt_multiline"),
+    entry("tools"),
     entry("permission_allow_once"),
     entry("permission_allow_scoped"),
     entry("permission_deny_feedback"),
     entry("plan_approve"),
+    entry("plan_auto"),
     entry("plan_request_changes"),
     entry("question_single"),
     entry("question_multi_other"),
     entry("question_mixed"),
+    entry("question_tabs"),
+    entry("question_other_single"),
     entry("interrupt"),
     entry("mode_cycle"),
     entry("compact_relink"),
@@ -637,6 +652,57 @@ fn successful_tool_result(row: &serde_json::Value, tool_use_id: &str) -> bool {
             })
 }
 
+fn structured_patch_changes(
+    row: &serde_json::Value,
+    tool_use_id: &str,
+    old_line: &str,
+    new_line: &str,
+) -> bool {
+    successful_tool_result(row, tool_use_id)
+        && row
+            .pointer("/toolUseResult/structuredPatch")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|patches| {
+                patches.iter().any(|patch| {
+                    patch
+                        .get("lines")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|lines| {
+                            lines.iter().any(|line| line.as_str() == Some(old_line))
+                                && lines.iter().any(|line| line.as_str() == Some(new_line))
+                        })
+                })
+            })
+}
+
+fn bash_stdout_equals(row: &serde_json::Value, tool_use_id: &str, expected: &str) -> bool {
+    successful_tool_result(row, tool_use_id)
+        && row
+            .pointer("/toolUseResult/stdout")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|stdout| stdout.trim_end() == expected)
+}
+
+fn user_prompt_equals(row: &serde_json::Value, expected: &str) -> bool {
+    row.get("type").and_then(serde_json::Value::as_str) == Some("user")
+        && row
+            .pointer("/message/content")
+            .and_then(serde_json::Value::as_str)
+            == Some(expected)
+}
+
+fn question_result_has_answers(row: &serde_json::Value, expected: &[(&str, &str)]) -> bool {
+    row.get("type").and_then(serde_json::Value::as_str) == Some("user")
+        && row
+            .pointer("/toolUseResult/answers")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|answers| {
+                expected.iter().all(|(question, answer)| {
+                    answers.get(*question).and_then(serde_json::Value::as_str) == Some(*answer)
+                })
+            })
+}
+
 async fn prompt(session: &mut PtySpecSession) -> Result<(), String> {
     const MARKER: &str = "PTY_SPEC_PROMPT_OK";
     session
@@ -647,6 +713,64 @@ async fn prompt(session: &mut PtySpecSession) -> Result<(), String> {
     session
         .wait_transcript(|row| assistant_contains(row, MARKER))
         .await?;
+    Ok(())
+}
+
+async fn prompt_multiline(session: &mut PtySpecSession) -> Result<(), String> {
+    const TEXT: &str = "Reply exactly PTY_SPEC_MULTILINE_OK and nothing else.\nThis second line is part of one prompt.";
+    session
+        .send(Intent::Prompt {
+            text: TEXT.to_owned(),
+        })
+        .await?;
+    session
+        .wait_transcript(|row| user_prompt_equals(row, TEXT))
+        .await?;
+    session
+        .wait_transcript(|row| assistant_contains(row, "PTY_SPEC_MULTILINE_OK"))
+        .await?;
+    Ok(())
+}
+
+async fn tools(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "First use Read to inspect config.txt. Then use Edit to change its only line from VALUE=1 to VALUE=2. Then use Bash to run exactly: cat config.txt. Do all three in this turn, in that order, then stop."
+                .to_owned(),
+        })
+        .await?;
+
+    for tool_name in ["Read", "Edit", "Bash"] {
+        session
+            .wait_hook(|hook| {
+                matches!(hook, crate::hooks::HookPayload::PreToolUse { tool_name: observed, .. } if observed == tool_name)
+            })
+            .await?;
+        let tool_use_id = session
+            .tool_use_id(tool_name)
+            .ok_or_else(|| format!("{tool_name} PreToolUse hook omitted its tool-use id"))?
+            .to_owned();
+        match tool_name {
+            "Read" => {
+                session
+                    .wait_transcript(|row| successful_tool_result(row, &tool_use_id))
+                    .await?;
+            }
+            "Edit" => {
+                session
+                    .wait_transcript(|row| {
+                        structured_patch_changes(row, &tool_use_id, "-VALUE=1", "+VALUE=2")
+                    })
+                    .await?;
+            }
+            "Bash" => {
+                session
+                    .wait_transcript(|row| bash_stdout_equals(row, &tool_use_id, "VALUE=2"))
+                    .await?;
+            }
+            _ => unreachable!("fixed tool sequence"),
+        }
+    }
     Ok(())
 }
 
@@ -750,6 +874,59 @@ async fn plan_approve(session: &mut PtySpecSession) -> Result<(), String> {
     Ok(())
 }
 
+async fn plan_auto(session: &mut PtySpecSession) -> Result<(), String> {
+    let ask = plan_ask(session).await?;
+    let exit_plan_tool_use_id = session
+        .tool_use_id("ExitPlanMode")
+        .ok_or_else(|| "ExitPlanMode PreToolUse hook omitted its tool-use id".to_owned())?
+        .to_owned();
+    session
+        .send(Intent::Answer {
+            ask_id: ask.id,
+            answer: AskAnswer::Plan(PlanAnswer::ApproveAuto),
+        })
+        .await?;
+    session
+        .wait_transcript(|row| successful_tool_result(row, &exit_plan_tool_use_id))
+        .await?;
+
+    let mut edit_tool_use_id = None;
+    loop {
+        match session.next().await? {
+            PtyEvent::Ask(ask) => {
+                return Err(format!(
+                    "ApproveAuto produced a further ask before the planned edit landed: {:?}",
+                    ask.kind
+                ));
+            }
+            PtyEvent::Hook(crate::hooks::HookPayload::PreToolUse { tool_name, .. })
+                if tool_name == "Edit" =>
+            {
+                edit_tool_use_id = session.tool_use_id("Edit").map(str::to_owned);
+                if edit_tool_use_id.is_none() {
+                    return Err("Edit PreToolUse hook omitted its tool-use id".to_owned());
+                }
+            }
+            PtyEvent::Transcript { row, .. }
+                if edit_tool_use_id.as_ref().is_some_and(|tool_use_id| {
+                    structured_patch_changes(row.as_value(), tool_use_id, "-CURRENT", "+UPDATED")
+                }) =>
+            {
+                return Ok(());
+            }
+            PtyEvent::Hook(crate::hooks::HookPayload::Stop { .. }) => {
+                return Err("Claude stopped before the automatically approved edit landed".into());
+            }
+            PtyEvent::Exited(status) => {
+                return Err(format!(
+                    "Claude exited before the automatically approved edit landed: {status:?}"
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
 async fn plan_request_changes(session: &mut PtySpecSession) -> Result<(), String> {
     const FEEDBACK: &str = "Also explain why the change is needed";
     let ask = plan_ask(session).await?;
@@ -849,6 +1026,86 @@ async fn question_mixed(session: &mut PtySpecSession) -> Result<(), String> {
     Ok(())
 }
 
+async fn question_tabs(session: &mut PtySpecSession) -> Result<(), String> {
+    const COLOR_QUESTION: &str = "Which color do you prefer?";
+    const SIZE_QUESTION: &str = "Which size fits best?";
+    let ask = question_ask(
+        session,
+        "Use one AskUserQuestion call containing exactly two single-select questions. First: header Color, question 'Which color do you prefer?', options Red and Blue. Second: header Size, question 'Which size fits best?', options Small and Large. Then repeat both answers.",
+    )
+    .await?;
+    let questions = match &ask.kind {
+        AskKind::Question { questions } => questions,
+        _ => unreachable!("question_ask returned a question"),
+    };
+    if questions.len() != 2
+        || questions
+            .iter()
+            .any(|question| question.multi_select || question.options != 2)
+    {
+        return Err(format!(
+            "two-question single-select ask had unexpected shape: {questions:?}"
+        ));
+    }
+    session
+        .send(Intent::Answer {
+            ask_id: ask.id,
+            answer: AskAnswer::Question(QuestionResponse {
+                answers: vec![
+                    QuestionAnswer {
+                        selected: vec![0],
+                        other: None,
+                    },
+                    QuestionAnswer {
+                        selected: vec![1],
+                        other: None,
+                    },
+                ],
+            }),
+        })
+        .await?;
+    session
+        .wait_transcript(|row| {
+            question_result_has_answers(row, &[(COLOR_QUESTION, "Red"), (SIZE_QUESTION, "Large")])
+        })
+        .await?;
+    Ok(())
+}
+
+async fn question_other_single(session: &mut PtySpecSession) -> Result<(), String> {
+    const QUESTION: &str = "Which color do you prefer?";
+    const OTHER: &str = "a warm ochre";
+    let ask = question_ask(
+        session,
+        "Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer.",
+    )
+    .await?;
+    let questions = match &ask.kind {
+        AskKind::Question { questions } => questions,
+        _ => unreachable!("question_ask returned a question"),
+    };
+    if questions.len() != 1 || questions[0].multi_select || questions[0].options != 2 {
+        return Err(format!(
+            "single-select Other ask had unexpected shape: {questions:?}"
+        ));
+    }
+    session
+        .send(Intent::Answer {
+            ask_id: ask.id,
+            answer: AskAnswer::Question(QuestionResponse {
+                answers: vec![QuestionAnswer {
+                    selected: Vec::new(),
+                    other: Some(OTHER.to_owned()),
+                }],
+            }),
+        })
+        .await?;
+    session
+        .wait_transcript(|row| question_result_has_answers(row, &[(QUESTION, OTHER)]))
+        .await?;
+    Ok(())
+}
+
 async fn interrupt(session: &mut PtySpecSession) -> Result<(), String> {
     session
         .send(Intent::Prompt {
@@ -928,14 +1185,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "prompt",
+                "prompt_multiline",
+                "tools",
                 "permission_allow_once",
                 "permission_allow_scoped",
                 "permission_deny_feedback",
                 "plan_approve",
+                "plan_auto",
                 "plan_request_changes",
                 "question_single",
                 "question_multi_other",
                 "question_mixed",
+                "question_tabs",
+                "question_other_single",
                 "interrupt",
                 "mode_cycle",
                 "compact_relink",
@@ -949,7 +1211,12 @@ mod tests {
     fn sonnet_fallback_is_limited_to_specs_haiku_does_not_drive_reliably() {
         assert_eq!(
             SONNET_FALLBACK_SPECS,
-            &["plan_approve", "plan_request_changes", "question_mixed"]
+            &[
+                "plan_approve",
+                "plan_auto",
+                "plan_request_changes",
+                "question_mixed"
+            ]
         );
         assert!(
             registry()
