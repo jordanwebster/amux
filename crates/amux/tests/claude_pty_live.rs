@@ -5,21 +5,18 @@
 //!
 //! ```text
 //! cargo build -p amux-cli
-//! AMUX_CAPTURE_OUT=target/capture timeout 600 \
-//!     cargo test -p amux --test capture -- pong
+//! AMUX_LIVE_OUT=target/claude-pty-live timeout 600 \
+//!     cargo test -p amux --test claude_pty_live -- semantic_chat
 //! ```
 //!
-//! `h-all` runs H.1–H.9 (H.5 has three independently reported legs). `all`
-//! additionally runs the stable capture regressions retained from Phases 0
-//! and 3; `probes` runs deliberately non-gating investigations of currently
-//! unverified Claude menus. Every scenario has one row in [`SCENARIOS`]: id,
-//! requirement, model policy, timeout, and runner cannot drift apart.
+//! `all` runs every maintained process-level scenario. Every scenario has one
+//! row in [`SCENARIOS`], so its name, model policy, timeout, and runner cannot
+//! drift apart.
 //!
 //! Environment:
-//! - `AMUX_CAPTURE_OUT`   output dir (default `target/capture/<unix-secs>`)
-//! - `AMUX_CAPTURE_MODEL` claude model (default `haiku`; owner directive —
-//!   rerun a tool-unreliable scenario with `sonnet` and the meta records it)
-//! - `AMUX_CAPTURE_POISON=0` disables the poisoned-daemon env (default ON:
+//! - `AMUX_LIVE_OUT` output dir (default `target/claude-pty-live/<unix-secs>`)
+//! - `AMUX_CLAUDE_LIVE_MODEL` claude model (default `haiku`)
+//! - `AMUX_CLAUDE_LIVE_POISON=0` disables the poisoned-daemon env (default ON:
 //!   every run doubles as a live check of the child-session-marker scrub)
 //!
 //! Each scenario writes `<name>.rows.jsonl` (raw stream capture),
@@ -28,18 +25,26 @@
 //! A failure always prints the assertion and this capture path. Taxonomy
 //! drift is written beside the run as data and never changes its exit code.
 
-mod graduate;
+#[path = "claude_pty_live/args.rs"]
+mod args;
+#[path = "codex_live/depfile.rs"]
+mod depfile;
+#[path = "claude_pty_live/harness.rs"]
 mod harness;
+#[path = "claude_pty_live/redact.rs"]
 mod redact;
+#[path = "claude_pty_live/structure.rs"]
 mod structure;
+#[path = "claude_pty_live/taxonomy.rs"]
 mod taxonomy;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use amux::claude_io::ClaudePtyTranscriptV1Action as Act;
 use anyhow::{Context, Result, bail};
-use harness::{CaptureSession, DaemonEnv, Scratch, ScratchDaemon, claude_version};
+use harness::{
+    CaptureSession, DaemonEnv, PtyTestAction as Act, Scratch, ScratchDaemon, claude_version,
+};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
 const TURN_TIMEOUT: Duration = Duration::from_secs(240);
@@ -50,8 +55,11 @@ const ASK_TIMEOUT: Duration = Duration::from_secs(180);
 /// are dropped by claude's TUI.
 const MENU_SETTLE: Duration = Duration::from_millis(1500);
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Scenario {
+    SemanticChat,
+    TwoTerminalFanout,
     Pong,
     Tools,
     Permission,
@@ -89,199 +97,70 @@ struct ScenarioSpec {
     kind: Scenario,
     default_model: &'static str,
     timeout: Duration,
-    in_h_suite: bool,
-    probe: bool,
 }
 
-const fn scenario(
-    name: &'static str,
-    requirement: &'static str,
-    kind: Scenario,
-    in_h_suite: bool,
-) -> ScenarioSpec {
+const fn scenario(name: &'static str, requirement: &'static str, kind: Scenario) -> ScenarioSpec {
     ScenarioSpec {
         name,
         requirement,
         kind,
         default_model: "haiku",
         timeout: Duration::from_secs(360),
-        in_h_suite,
-        probe: false,
     }
 }
 
-const fn probe(name: &'static str, requirement: &'static str, kind: Scenario) -> ScenarioSpec {
-    ScenarioSpec {
-        probe: true,
-        ..scenario(name, requirement, kind, false)
-    }
-}
-
-/// The one scenario grammar. Supporting captures are kept in the same table
-/// as H.1–H.9 so selection, provenance, timeout policy, and dispatch share a
-/// single source of truth.
+/// Process facts that recording replay cannot carry, plus one end-to-end
+/// semantic chat covering every intent family at the daemon boundary.
 const SCENARIOS: &[ScenarioSpec] = &[
-    scenario("pong", "H.1", Scenario::Pong, true),
-    scenario("question_single", "H.2", Scenario::QuestionSingle, true),
-    scenario("question_multi", "H.3", Scenario::QuestionMulti, true),
-    scenario("permission", "H.4", Scenario::Permission, true),
-    scenario("plan_auto", "H.5/approve-auto", Scenario::PlanAuto, true),
     scenario(
-        "plan_approve",
-        "H.5/approve-manual",
-        Scenario::PlanManual,
-        true,
+        "semantic_chat",
+        "semantic PTY chat intents",
+        Scenario::SemanticChat,
     ),
+    scenario("stale_seq", "stale structured sequence", Scenario::StaleSeq),
     scenario(
-        "plan_reject",
-        "H.5/request-changes",
-        Scenario::PlanChanges,
-        true,
+        "two_terminal_fanout",
+        "two-terminal byte fanout",
+        Scenario::TwoTerminalFanout,
     ),
-    scenario("interrupt", "H.6", Scenario::Interrupt, true),
-    scenario("stale_seq", "H.7", Scenario::StaleSeq, true),
-    scenario("subscriptions", "H.8", Scenario::Subscriptions, true),
     ScenarioSpec {
         name: "external_readonly",
-        requirement: "H.9",
+        requirement: "external read-only hook discovery",
         kind: Scenario::ExternalReadonly,
         default_model: "not-applicable",
         timeout: Duration::from_secs(120),
-        in_h_suite: true,
-        probe: false,
     },
-    scenario("tools", "support/tool-pairing", Scenario::Tools, false),
-    scenario(
-        "compact",
-        "support/manual-compact",
-        Scenario::Compact,
-        false,
-    ),
-    scenario(
-        "permission_session",
-        "support/permission-scope",
-        Scenario::PermissionSession,
-        false,
-    ),
-    scenario(
-        "permission_deny_feedback",
-        "support/permission-feedback",
-        Scenario::PermissionDenyFeedback,
-        false,
-    ),
-    scenario(
-        "question_tabs",
-        "support/question-tabs",
-        Scenario::QuestionTabs,
-        false,
-    ),
-    scenario(
-        "question_other_single",
-        "support/question-other",
-        Scenario::QuestionOtherSingle,
-        false,
-    ),
-    scenario(
-        "question_mixed",
-        "support/question-mixed",
-        Scenario::QuestionMixed,
-        false,
-    ),
-    scenario("mode_cycle", "support/D4", Scenario::ModeCycle, false),
-    scenario(
-        "prompt_multiline",
-        "support/B1-multiline",
-        Scenario::PromptMultiline,
-        false,
-    ),
-    probe(
-        "permission_multi_probe",
-        "probe/permission-suggestions>=2",
-        Scenario::PermissionMultiProbe,
-    ),
-    probe(
-        "question_chat_probe",
-        "probe/question-chat-about-this",
-        Scenario::QuestionChatProbe,
-    ),
     scenario(
         "a2a_socket_delivery",
-        "a2a/socket-delivery",
+        "A2A native socket delivery",
         Scenario::A2aSocketDelivery,
-        false,
     ),
     scenario(
         "a2a_pty_delivery",
-        "a2a/pty-delivery",
+        "A2A PTY paste fallback",
         Scenario::A2aPtyDelivery,
-        false,
     ),
+    scenario("a2a_mcp_tools", "agent MCP tools", Scenario::A2aMcpTools),
     scenario(
-        "a2a_stop_payload",
-        "a2a/stop-payload",
-        Scenario::A2aStopPayload,
-        false,
-    ),
-    scenario(
-        "a2a_mcp_tools",
-        "a2a/mcp-tools",
-        Scenario::A2aMcpTools,
-        false,
-    ),
-    scenario(
-        "a2a_session_registry",
-        "a2a/session-registry",
-        Scenario::A2aSessionRegistry,
-        false,
-    ),
-    scenario(
-        "a2a_roundtrip",
-        "H.10 cross-kind child completion round trip",
+        "cross_kind_completion",
+        "cross-kind child completion round trip",
         Scenario::A2aRoundtrip,
-        true,
     ),
 ];
 
 fn main() -> Result<()> {
     validate_scenario_grammar()?;
-    let scenario_names: Vec<String> = std::env::args()
-        .skip(1)
-        .filter(|arg| !arg.starts_with('-'))
+    let scenario_names = std::env::args().skip(1).collect::<Vec<_>>();
+    let known = SCENARIOS.iter().map(|spec| spec.name).collect::<Vec<_>>();
+    let selected = args::select(&scenario_names, &known)
+        .map_err(anyhow::Error::msg)?
+        .into_iter()
+        .map(|index| &SCENARIOS[index])
         .collect();
-    if scenario_names.first().is_some_and(|arg| arg == "tooling") {
-        return run_tooling(&scenario_names[1..]);
-    }
     if scenario_names.is_empty() {
-        println!(
-            "capture: no scenarios named; skipping (opt-in real-Claude harness — \
-             pass `h-all`, `all`, `probes`, or scenario names)"
-        );
+        println!("{}", args::USAGE);
         return Ok(());
     }
-    if scenario_names.iter().all(|name| name.starts_with("a2a_"))
-        && scenario_names
-            .iter()
-            .all(|name| SCENARIOS.iter().all(|scenario| scenario.name != name))
-    {
-        return Ok(());
-    }
-    let selected: Vec<&ScenarioSpec> = if scenario_names.iter().any(|name| name == "all") {
-        SCENARIOS.iter().filter(|spec| !spec.probe).collect()
-    } else if scenario_names.iter().any(|name| name == "h-all") {
-        SCENARIOS.iter().filter(|spec| spec.in_h_suite).collect()
-    } else if scenario_names.iter().any(|name| name == "probes") {
-        SCENARIOS.iter().filter(|spec| spec.probe).collect()
-    } else {
-        let mut selected = Vec::new();
-        for name in &scenario_names {
-            let Some(known) = SCENARIOS.iter().find(|known| known.name == name) else {
-                let names: Vec<_> = SCENARIOS.iter().map(|spec| spec.name).collect();
-                bail!("unknown scenario '{name}'; known: {names:?}");
-            };
-            selected.push(known);
-        }
-        selected
-    };
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -299,15 +178,6 @@ fn validate_scenario_grammar() -> Result<()> {
             bail!("scenario {} has incomplete execution policy", spec.name);
         }
     }
-    for requirement in 1..=9 {
-        let prefix = format!("H.{requirement}");
-        if !SCENARIOS
-            .iter()
-            .any(|spec| spec.in_h_suite && spec.requirement.starts_with(&prefix))
-        {
-            bail!("scenario grammar has no {prefix} leg");
-        }
-    }
     Ok(())
 }
 
@@ -315,81 +185,31 @@ fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-v1")
 }
 
-fn a2a_fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/a2a")
-}
-
 fn semantics_markdown() -> &'static str {
-    include_str!("../../../../docs/CLAUDE_TRANSCRIPT.md")
-}
-
-fn run_tooling(args: &[String]) -> Result<()> {
-    let Some(command) = args.first().map(String::as_str) else {
-        bail!("tooling requires verify, drift, graduate, or graduate-a2a");
-    };
-    let Some(run_dir) = args.get(1).map(structure::workspace_path) else {
-        bail!("tooling {command} requires RUN_DIR");
-    };
-    match command {
-        "drift" => {
-            let report = taxonomy::write_report(&run_dir, &fixture_dir(), semantics_markdown())?;
-            print!("{}", report.render());
-        }
-        "verify" | "graduate" | "graduate-a2a" => {
-            let scenarios = tooling_scenarios(&run_dir, &args[2..])?;
-            if command == "graduate" {
-                // `graduate` re-verifies internally before copying any bytes.
-                graduate::graduate(&run_dir, &fixture_dir(), &scenarios)?;
-                println!("graduated fixtures: {scenarios:?}");
-            } else if command == "graduate-a2a" {
-                graduate::graduate_a2a(&run_dir, &a2a_fixture_dir(), &scenarios)?;
-                println!("graduated A2A fixtures: {scenarios:?}");
-            } else {
-                graduate::verify_run(&run_dir, &scenarios)?;
-                println!("verified fixture candidates: {scenarios:?}");
-            }
-        }
-        other => bail!(
-            "unknown tooling command '{other}' (expected verify, drift, graduate, graduate-a2a)"
-        ),
-    }
-    Ok(())
-}
-
-fn tooling_scenarios(run_dir: &Path, requested: &[String]) -> Result<Vec<String>> {
-    if !requested.is_empty() {
-        return Ok(requested.to_vec());
-    }
-    let mut scenarios = Vec::new();
-    for entry in std::fs::read_dir(run_dir)? {
-        let name = entry?.file_name().to_string_lossy().to_string();
-        if let Some(name) = name.strip_suffix(".meta.json") {
-            scenarios.push(name.to_string());
-        }
-    }
-    scenarios.sort();
-    if scenarios.is_empty() {
-        bail!("no scenario metadata found in {}", run_dir.display());
-    }
-    Ok(scenarios)
+    include_str!("../../../docs/CLAUDE_TRANSCRIPT.md")
 }
 
 async fn run(scenarios: Vec<&ScenarioSpec>) -> Result<()> {
-    let out = match std::env::var("AMUX_CAPTURE_OUT") {
+    let out = match std::env::var("AMUX_LIVE_OUT") {
         Ok(dir) => structure::workspace_path(dir),
-        Err(_) => structure::workspace_path("target/capture").join(format!(
+        Err(_) => structure::workspace_path("target/claude-pty-live").join(format!(
             "{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs()
         )),
     };
-    let model_override = std::env::var("AMUX_CAPTURE_MODEL").ok();
-    let poisoned = std::env::var("AMUX_CAPTURE_POISON").as_deref() != Ok("0");
+    let model_override = std::env::var("AMUX_CLAUDE_LIVE_MODEL").ok();
+    let poisoned = std::env::var("AMUX_CLAUDE_LIVE_POISON").as_deref() != Ok("0");
+
+    let version = claude_version();
+    let header_model = model_override
+        .as_deref()
+        .unwrap_or_else(|| scenarios.first().map_or("haiku", |spec| spec.default_model));
+    println!("provider=claude version={version} model={header_model}");
 
     let scratch = Scratch::create(out.clone())?;
     let daemon = harness::start_daemon(&scratch, &DaemonEnv { poisoned }).await?;
-    let version = claude_version();
     println!("capture: daemon up (poisoned={poisoned}), claude: {version}");
     println!("capture: output dir {}", out.display());
 
@@ -503,7 +323,7 @@ fn finalize(
         "captured_at": chrono::Utc::now().to_rfc3339(),
         "claude_version": version,
         "model": model,
-        "harness": format!("cargo test -p amux --test capture -- {scenario}"),
+        "harness": format!("cargo test -p amux --test claude_pty_live -- {scenario}"),
         "poisoned_daemon_env": poisoned,
         "notes": notes,
         "failure": failure,
@@ -522,6 +342,8 @@ async fn run_scenario(
     model: &str,
 ) -> Result<serde_json::Value> {
     match scenario {
+        Scenario::SemanticChat => semantic_chat(daemon, scratch, model).await,
+        Scenario::TwoTerminalFanout => two_terminal_fanout(daemon, scratch, model).await,
         Scenario::Pong => pong(daemon, scratch, model).await,
         Scenario::Tools => tools(daemon, scratch, model).await,
         Scenario::Permission => permission(daemon, scratch, model).await,
@@ -611,6 +433,53 @@ fn tool_use_ids(rows: &[harness::Row], name: &str) -> Vec<String> {
     rows.iter()
         .filter_map(|row| row.tool_use_id(name))
         .collect()
+}
+
+fn hook_ask_id(row: &harness::Row) -> Option<String> {
+    row.json
+        .get("tool_use_id")
+        .or_else(|| row.json.get("prompt_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            let session = row.json.get("session_id")?.as_str()?;
+            let tool = row.json.get("tool_name")?.as_str()?;
+            Some(format!("permission:{session}:{tool}"))
+        })
+}
+
+async fn wait_for_hook_ask(
+    session: &CaptureSession,
+    from: usize,
+    tool: &str,
+) -> Result<(usize, String)> {
+    let index = session
+        .wait_for_row(from, ASK_TIMEOUT, &format!("{tool} ask"), |row| {
+            row.is_permission_request_for(tool)
+        })
+        .await?;
+    let rows = session.snapshot().await;
+    let id = hook_ask_id(&rows[index - 1])
+        .ok_or_else(|| anyhow::anyhow!("{tool} ask has no semantic correlation id"))?;
+    Ok((index, id))
+}
+
+async fn wait_for_question_ask(session: &CaptureSession, from: usize) -> Result<(usize, String)> {
+    let index = session
+        .wait_for_row(from, ASK_TIMEOUT, "AskUserQuestion transcript ask", |row| {
+            row.is_tool_use("AskUserQuestion")
+        })
+        .await?;
+    let rows = session.snapshot().await;
+    let id = rows[index - 1]
+        .tool_use_id("AskUserQuestion")
+        .ok_or_else(|| anyhow::anyhow!("AskUserQuestion transcript ask has no id"))?;
+    session
+        .wait_for_row(from, ASK_TIMEOUT, "AskUserQuestion menu", |row| {
+            row.is_permission_request_for("AskUserQuestion")
+        })
+        .await?;
+    Ok((index, id))
 }
 
 fn tool_result_block<'a>(
@@ -993,7 +862,7 @@ async fn a2a_mcp_tools(
     model: &str,
 ) -> Result<serde_json::Value> {
     let log = scratch.projects.join("a2a_mcp_tools/mcp-requests.jsonl");
-    let stub = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/capture/stub_mcp.py");
+    let stub = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/claude_pty_live/stub_mcp.py");
     let config = serde_json::json!({
         "mcpServers": {
             "amux": {
@@ -1329,6 +1198,257 @@ fn question_tool_input(rows: &[harness::Row]) -> Option<&serde_json::Value> {
 }
 
 /// H.1 — prompt round trip.
+/// One live session that proves every user-facing PTY operation crosses the
+/// daemon as a typed semantic intent. Raw terminal input is reserved for the
+/// startup trust dialog in [`CaptureSession::prepare_for_first_prompt`].
+async fn semantic_chat(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    use amux::claude_io::{
+        AskAnswer, Intent, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
+    };
+
+    let (mut session, mut cursor) = open(
+        daemon,
+        scratch,
+        "semantic_chat",
+        &[],
+        model,
+        "Use Bash to run `printf allowed > allowed.txt`, then stop.",
+    )
+    .await?;
+
+    let (next, allow_id) = wait_for_hook_ask(&session, cursor, "Bash").await?;
+    cursor = next;
+    tokio::time::sleep(MENU_SETTLE).await;
+    session
+        .send_intent(
+            "allow Bash once",
+            Intent::Answer {
+                ask_id: allow_id,
+                answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+            },
+        )
+        .await?;
+    cursor = session.wait_for_turn_end(cursor, TURN_TIMEOUT).await?;
+
+    session
+        .send_prompt("Use Bash to run `printf denied > denied.txt`, then stop.")
+        .await?;
+    let (next, deny_id) = wait_for_hook_ask(&session, cursor, "Bash").await?;
+    cursor = next;
+    tokio::time::sleep(MENU_SETTLE).await;
+    session
+        .send_intent(
+            "deny Bash with feedback",
+            Intent::Answer {
+                ask_id: deny_id,
+                answer: AskAnswer::Permission(PermissionAnswer::Deny {
+                    feedback: Some("Do not create denied.txt; explain the refusal.".to_owned()),
+                }),
+            },
+        )
+        .await?;
+    cursor = session.wait_for_turn_end(cursor, TURN_TIMEOUT).await?;
+
+    session
+        .send_prompt(
+            "Use AskUserQuestion to ask one single-select question with exactly two options. \
+             Header: Color. Question: Which color? Options: Red, Blue. Then stop.",
+        )
+        .await?;
+    let (next, question_id) = wait_for_question_ask(&session, cursor).await?;
+    cursor = next;
+    tokio::time::sleep(MENU_SETTLE).await;
+    session
+        .send_intent(
+            "answer single-select question",
+            Intent::Answer {
+                ask_id: question_id,
+                answer: AskAnswer::Question(QuestionResponse {
+                    answers: vec![QuestionAnswer {
+                        selected: vec![0],
+                        other: None,
+                    }],
+                }),
+            },
+        )
+        .await?;
+    cursor = session.wait_for_turn_end(cursor, TURN_TIMEOUT).await?;
+
+    session
+        .send_prompt(
+            "Use AskUserQuestion to ask one multi-select question with exactly three options. \
+             Header: Tools. Question: Which tools? Options: Hammer, Saw, Drill. Then stop.",
+        )
+        .await?;
+    let (next, question_id) = wait_for_question_ask(&session, cursor).await?;
+    cursor = next;
+    tokio::time::sleep(MENU_SETTLE).await;
+    session
+        .send_intent(
+            "answer multi-select question with Other",
+            Intent::Answer {
+                ask_id: question_id,
+                answer: AskAnswer::Question(QuestionResponse {
+                    answers: vec![QuestionAnswer {
+                        selected: vec![0, 1],
+                        other: Some("Torque wrench".to_owned()),
+                    }],
+                }),
+            },
+        )
+        .await?;
+    cursor = session.wait_for_turn_end(cursor, TURN_TIMEOUT).await?;
+
+    session
+        .send_intent("cycle permission mode", Intent::CyclePermissionMode)
+        .await?;
+    session
+        .send_intent(
+            "cycle permission mode into plan",
+            Intent::CyclePermissionMode,
+        )
+        .await?;
+    session
+        .send_prompt(
+            "Plan a README update for config.txt. Do not ask questions. Use ExitPlanMode when ready.",
+        )
+        .await?;
+    let (next, plan_id) = wait_for_hook_ask(&session, cursor, "ExitPlanMode").await?;
+    cursor = next;
+    tokio::time::sleep(MENU_SETTLE).await;
+    session
+        .send_intent(
+            "request plan changes with feedback",
+            Intent::Answer {
+                ask_id: plan_id,
+                answer: AskAnswer::Plan(PlanAnswer::RequestChanges {
+                    feedback: "Also document the meaning of VALUE.".to_owned(),
+                }),
+            },
+        )
+        .await?;
+    let (next, _) =
+        wait_for_plan_resolution(&session, cursor, structure::PlanOutcome::Rejected).await?;
+    cursor = next;
+    session
+        .send_intent("interrupt replanning", Intent::Interrupt)
+        .await?;
+    session
+        .wait_for_row(cursor, ASK_TIMEOUT, "interrupt input result", |row| {
+            row.row_type() == "amux.claude.input_result"
+                && row.json.get("program").and_then(serde_json::Value::as_str) == Some("interrupt")
+        })
+        .await?;
+
+    let rows = session.snapshot().await;
+    let programs = rows
+        .iter()
+        .filter(|row| row.row_type() == "amux.claude.input_result")
+        .filter_map(|row| row.json.get("program").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for expected in [
+        "prompt",
+        "permission_menu",
+        "question_form",
+        "mode_cycle",
+        "plan_menu",
+        "interrupt",
+    ] {
+        if !programs.iter().any(|program| program == expected) {
+            bail!("semantic chat did not record the {expected} input program: {programs:?}");
+        }
+    }
+    if !scratch.projects.join("semantic_chat/allowed.txt").exists() {
+        bail!("semantic permission allow did not create allowed.txt");
+    }
+    if scratch.projects.join("semantic_chat/denied.txt").exists() {
+        bail!("semantic permission deny unexpectedly created denied.txt");
+    }
+    let keys = session.close().await?;
+    Ok(serde_json::json!({
+        "keys": keys,
+        "assertions": {
+            "input_programs": programs,
+            "allowed_file": true,
+            "denied_file": false,
+        }
+    }))
+}
+
+/// Two independent terminal subscribers must receive the same live PTY turn.
+async fn two_terminal_fanout(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    use amux::terminal_io::TERMINAL_V1;
+    use amux::{SubscribeSessionEvent, SubscribeSessionRequest};
+
+    let (mut session, cursor) = open(
+        daemon,
+        scratch,
+        "two_terminal_fanout",
+        &[],
+        model,
+        "Reply with exactly FIRST and nothing else.",
+    )
+    .await?;
+    let cursor = wait_for_turn_duration(&session, cursor).await?;
+    let primary_before = session.raw_len().await;
+    let mut second = daemon
+        .client
+        .subscribe_session(SubscribeSessionRequest {
+            agent: session.agent_name().into(),
+            io_protocol: TERMINAL_V1.to_owned(),
+            args: None,
+        })
+        .await
+        .context("subscribe second terminal")?;
+
+    session
+        .send_prompt("Reply with exactly FANOUT and nothing else.")
+        .await?;
+    wait_for_turn_duration(&session, cursor).await?;
+    let deadline = std::time::Instant::now() + TURN_TIMEOUT;
+    let second_bytes = loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            bail!("second terminal subscriber received no PTY output");
+        }
+        match tokio::time::timeout(remaining, second.recv()).await?? {
+            SubscribeSessionEvent::Output { payload } if !payload.is_empty() => {
+                break payload.len();
+            }
+            SubscribeSessionEvent::Closed { .. } => {
+                bail!("second terminal subscriber closed before output")
+            }
+            _ => {}
+        }
+    };
+    let primary_after = session.raw_len().await;
+    if primary_after <= primary_before {
+        bail!("primary terminal subscriber did not advance during fanout turn");
+    }
+    let streams_open = session.streams_open();
+    if !streams_open {
+        bail!("primary terminal or transcript subscriber closed during fanout");
+    }
+    let keys = session.close().await?;
+    Ok(serde_json::json!({
+        "keys": keys,
+        "assertions": {
+            "primary_bytes_added": primary_after - primary_before,
+            "second_bytes_observed": second_bytes,
+            "primary_streams_open": streams_open,
+        }
+    }))
+}
+
 async fn pong(daemon: &ScratchDaemon, scratch: &Scratch, model: &str) -> Result<serde_json::Value> {
     let (session, index) = open(
         daemon,
@@ -3102,7 +3222,9 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
     let payload = amux::claude_io::encode_pty_transcript_v1_input(
         amux::claude_io::ClaudePtyTranscriptV1Input {
             expected_seq: latest_seq,
-            actions: vec![Act::Write(b"x".to_vec())],
+            intent: amux::claude_io::Intent::Prompt {
+                text: "readonly sessions refuse semantic input".to_owned(),
+            },
         },
     );
     let readonly_error = daemon

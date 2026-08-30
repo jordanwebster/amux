@@ -23,8 +23,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use amux::claude_io::{
-    ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Input, PTY_TRANSCRIPT_V1,
-    decode_pty_transcript_v1_output, encode_pty_transcript_v1_input,
+    ClaudePtyTranscriptV1Input, Intent, PTY_TRANSCRIPT_V1, decode_pty_transcript_v1_output,
+    encode_pty_transcript_v1_input,
 };
 use amux::terminal_io::TERMINAL_V1;
 use amux::{
@@ -35,6 +35,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use tokio::sync::Mutex;
 use tokio::task::{AbortHandle, JoinHandle};
 use uuid::Uuid;
+
+use super::depfile::assert_binary_is_current;
 
 #[derive(Default)]
 pub(super) struct RecorderState {
@@ -73,6 +75,12 @@ impl Drop for LiveRecorder {
 pub(super) struct RecorderTasks {
     raw: Option<JoinHandle<()>>,
     rows: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone)]
+pub enum PtyTestAction {
+    Write(Vec<u8>),
+    DelayMs(u64),
 }
 
 impl RecorderTasks {
@@ -551,12 +559,7 @@ impl Drop for ScratchDaemon {
 pub async fn start_daemon(scratch: &Scratch, env: &DaemonEnv) -> Result<ScratchDaemon> {
     let target_debug = target_debug_dir()?;
     let amux = target_debug.join("amux");
-    if !amux.exists() {
-        bail!(
-            "amux binary missing at {} — run `cargo build -p amux-cli` first",
-            amux.display()
-        );
-    }
+    assert_binary_is_current(&amux)?;
 
     let mut cmd = Command::new(&amux);
     cmd.args(["server", "start", "--foreground"])
@@ -790,6 +793,10 @@ impl CaptureSession {
         self.agent_id
     }
 
+    pub fn agent_name(&self) -> &str {
+        &self.agent_name
+    }
+
     pub async fn current_seq(&self) -> u64 {
         self.rows.lock().await.last().map_or(0, |row| row.seq)
     }
@@ -838,7 +845,7 @@ impl CaptureSession {
                 tokio::time::sleep(Duration::from_millis(800)).await;
                 self.send_keys(
                     "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
-                    vec![ClaudePtyTranscriptV1Action::Write(b"\r".to_vec())],
+                    vec![PtyTestAction::Write(b"\r".to_vec())],
                 )
                 .await?;
                 trust_answered = true;
@@ -855,7 +862,7 @@ impl CaptureSession {
                 tokio::time::sleep(Duration::from_millis(800)).await;
                 self.send_keys(
                     "external instructions dialog: Enter (allow checked-out AGENTS.md)",
-                    vec![ClaudePtyTranscriptV1Action::Write(b"\r".to_vec())],
+                    vec![PtyTestAction::Write(b"\r".to_vec())],
                 )
                 .await?;
                 imports_answered = true;
@@ -917,22 +924,32 @@ impl CaptureSession {
         .await
     }
 
-    /// Inject keystrokes under the seq guard, with server-side pacing.
-    /// `note` records the intent in the keys log that lands in the meta file.
-    pub async fn send_keys(
-        &mut self,
-        note: &str,
-        actions: Vec<ClaudePtyTranscriptV1Action>,
-    ) -> Result<()> {
+    /// Drive the raw terminal for process-level scenarios that explicitly
+    /// exercise terminal fanout, socket fallback, or raw attach.
+    pub async fn send_keys(&mut self, note: &str, actions: Vec<PtyTestAction>) -> Result<()> {
         let printable: Vec<String> = actions
             .iter()
             .map(|action| match action {
-                ClaudePtyTranscriptV1Action::Write(bytes) => {
+                PtyTestAction::Write(bytes) => {
                     format!("write {:?}", String::from_utf8_lossy(bytes))
                 }
-                ClaudePtyTranscriptV1Action::DelayMs(ms) => format!("delay {ms}ms"),
+                PtyTestAction::DelayMs(ms) => format!("delay {ms}ms"),
             })
             .collect();
+        for action in actions {
+            match action {
+                PtyTestAction::Write(bytes) => self.send_raw(&bytes).await?,
+                PtyTestAction::DelayMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
+            }
+        }
+        self.keys_log.push(serde_json::json!({
+            "note": note,
+            "raw_actions": printable,
+        }));
+        Ok(())
+    }
+
+    pub async fn send_intent(&mut self, note: &str, intent: Intent) -> Result<()> {
         let input_id = Uuid::new_v4().as_bytes().to_vec();
         for attempt in 0..5 {
             let expected_seq = self
@@ -944,7 +961,7 @@ impl CaptureSession {
                 .unwrap_or(0);
             let payload = encode_pty_transcript_v1_input(ClaudePtyTranscriptV1Input {
                 expected_seq,
-                actions: actions.clone(),
+                intent: intent.clone(),
             });
             let result = self
                 .client
@@ -959,7 +976,7 @@ impl CaptureSession {
                 Ok(()) => {
                     self.keys_log.push(serde_json::json!({
                         "note": note,
-                        "actions": printable,
+                        "intent": intent,
                         "seq_retries": attempt,
                     }));
                     return Ok(());
@@ -992,13 +1009,11 @@ impl CaptureSession {
 
     /// Type a prompt and submit it with CR.
     pub async fn send_prompt(&mut self, prompt: &str) -> Result<()> {
-        self.send_keys(
+        self.send_intent(
             &format!("prompt: {prompt}"),
-            vec![
-                ClaudePtyTranscriptV1Action::Write(prompt.as_bytes().to_vec()),
-                ClaudePtyTranscriptV1Action::DelayMs(300),
-                ClaudePtyTranscriptV1Action::Write(b"\r".to_vec()),
-            ],
+            Intent::Prompt {
+                text: prompt.to_owned(),
+            },
         )
         .await
     }

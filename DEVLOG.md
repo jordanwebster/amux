@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Claude PTY process checks have a focused live suite.** The
+former capture harness is now the opt-in `claude_pty_live` target with a
+validated `all | <scenario>...` grammar. Provider behavior covered by the
+Claude crate's recordings is no longer duplicated as fixture-driven waiter
+tests; the retained suite exercises daemon-only facts such as stale sequence
+rejection, two-terminal fanout, read-only hook discovery, cross-kind
+completion and both A2A carriers. Its semantic chat drives every interactive
+operation as a typed intent and records the daemon's keymap and input-result
+rows. The live harness also refuses to run a stale prebuilt daemon using the
+same depfile guard as the Codex suite.
+
+---
+
 2026-08-30 — **Claude PTY behavior has an executable specification boundary.**
 The Claude crate now registers one live-and-replay specification for every
 semantic chat intent and transcript relink. Live runs go through the hosted

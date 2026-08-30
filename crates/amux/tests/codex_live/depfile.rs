@@ -34,7 +34,7 @@ pub(crate) fn assert_binary_is_current_from_depfile(amux: &Path, depfile: &Path)
             })?;
         if modified > built {
             bail!(
-                "{} is older than dependency {}; run `cargo build -p amux-cli` — the Codex live suite \
+                "{} is older than dependency {}; run `cargo build -p amux-cli` — the live suite \
                  drives the prebuilt binary and would otherwise report on code it never ran",
                 amux.display(),
                 path.display()
