@@ -53,7 +53,8 @@ printf '%s\n' \
     "CARGO_HOME=$offline_cargo_home" \
     "RUSTUP_HOME=$offline_rustup_home" \
     "PATH=$offline_path" \
-    "CARGO_NET_OFFLINE=true"
+    "CARGO_NET_OFFLINE=true" \
+    "AMUX_OFFLINE=1"
 
 run_sandboxed() {
     /usr/bin/sandbox-exec -f "$offline_profile" \
@@ -65,6 +66,7 @@ run_sandboxed() {
         RUSTUP_HOME="$offline_rustup_home" \
         PATH="$offline_path" \
         CARGO_NET_OFFLINE=true \
+        AMUX_OFFLINE=1 \
         "$@"
 }
 

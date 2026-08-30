@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Made the workspace test task explicit offline.** The ordinary
+task still runs every workspace target, while the credential-empty sandbox
+first compiles every target and then runs all tests except ten cases whose
+contract requires an internet TCP socket. Nine daemon unit tests and the
+embedded update-poll integration test are named at the runner boundary, so
+offline success cannot silently omit newly added tests. Claude PTY keymap
+tests now also follow the current verified ledger and valid user-keymap rules.
+
+---
+
 2026-08-30 — **Made Claude keymap delays virtual during replay.** PTY sessions
 now receive timing behavior with the rest of their source bundle. Live sessions
 still sleep for each bounded keymap delay, while recording-backed sessions

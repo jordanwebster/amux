@@ -1205,7 +1205,8 @@ mod tests {
         let keymap = replay.read().await.unwrap().payload;
         assert_eq!(keymap["type"], "amux.claude.keymap");
         assert_eq!(keymap["keymap"]["name"], "claude-2.1");
-        assert_eq!(keymap["basis"]["basis"], "in_range");
+        assert_eq!(keymap["basis"]["basis"], "verified");
+        assert_eq!(keymap["basis"]["version"], "2.1.251");
         let result = replay.read().await.unwrap().payload;
         assert_eq!(result["type"], "amux.claude.input_result");
         assert_eq!(result["intent"]["intent"], "prompt");
@@ -1220,13 +1221,15 @@ mod tests {
         let user_dir = crate::keymap_dir(data_dir.path());
         std::fs::create_dir_all(&user_dir).unwrap();
         let user_file = user_dir.join("claude-2.1.toml");
-        std::fs::write(
-            &user_file,
-            BAKED_KEYMAPS[0]
-                .1
-                .replace("after_paste = 400", "after_paste = 777"),
-        )
-        .unwrap();
+        let mut user_keymap = BAKED_KEYMAPS[0]
+            .1
+            .replace("after_paste = 400", "after_paste = 777");
+        let verified_start = user_keymap.find("verified = ").unwrap();
+        let verified_end = user_keymap[verified_start..]
+            .find('\n')
+            .map_or(user_keymap.len(), |offset| verified_start + offset);
+        user_keymap.replace_range(verified_start..verified_end, "verified = []");
+        std::fs::write(&user_file, user_keymap).unwrap();
 
         let deps = crate::agents::AgentDeps::new(
             data_dir.path().join("runtime"),

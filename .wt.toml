@@ -27,7 +27,7 @@ prevent_idle_sleep: false
 run = "cargo build --workspace"
 
 [task.test]
-run = "timeout 900 cargo test --workspace --all-targets"
+run = "scripts/workspace-test.sh"
 
 [task.lint]
 run = "cargo clippy --workspace --all-targets --features amux/testnet -- -D warnings"
