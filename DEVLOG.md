@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Put landed patch retention on the feed's memory scale.** Each
+Claude edit now keeps at most 16 hunks, 64 rows, and 8 KiB of patch text: enough
+for a substantial transcript preview without multiplying 64 KiB across every
+retained feed entry. The truncation fact now reports actual discarded content,
+including malformed hunks inside the retained head, without blaming a harmless
+malformed value beyond an already-full hunk budget. Patch tests live after all
+production items so all-target linting sees a conventional module boundary.
+
 2026-08-31 — **Kept approval evidence inside every diff preview.** Docked
 previews now fall back to the first wrapped screen lines when their first
 source row is taller than the remaining budget, so the remainder notice can

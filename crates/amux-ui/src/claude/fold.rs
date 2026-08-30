@@ -905,17 +905,25 @@ fn structured_patch_document(patch: &[Value]) -> Document {
     let mut retained_bytes = 0usize;
 
     'hunks: for value in patch {
-        if document.hunks.len() == STRUCTURED_PATCH_HUNKS_RETAINED {
-            document.truncated = true;
-            break;
-        }
         let (Some(old_start), Some(new_start), Some(source_lines)) = (
             u64_of(value, "oldStart").and_then(|n| u32::try_from(n).ok()),
             u64_of(value, "newStart").and_then(|n| u32::try_from(n).ok()),
             value.get("lines").and_then(Value::as_array),
         ) else {
+            document.truncated |= document.hunks.len() < STRUCTURED_PATCH_HUNKS_RETAINED
+                && value
+                    .get("lines")
+                    .and_then(Value::as_array)
+                    .is_some_and(|lines| !lines.is_empty());
             continue;
         };
+        if document.hunks.len() == STRUCTURED_PATCH_HUNKS_RETAINED {
+            if !source_lines.is_empty() {
+                document.truncated = true;
+                break;
+            }
+            continue;
+        }
         let (derived_old_count, derived_new_count) = patch_hunk_counts(source_lines);
         let old_count = u64_of(value, "oldLines")
             .and_then(|n| u32::try_from(n).ok())
@@ -925,7 +933,11 @@ fn structured_patch_document(patch: &[Value]) -> Document {
             .unwrap_or(derived_new_count);
         let mut lines = Vec::new();
 
-        for line in source_lines.iter().filter_map(Value::as_str) {
+        for source_line in source_lines {
+            let Some(line) = source_line.as_str() else {
+                document.truncated = true;
+                continue;
+            };
             if retained_lines == STRUCTURED_PATCH_LINES_RETAINED
                 || retained_bytes == STRUCTURED_PATCH_BYTES_RETAINED
             {
@@ -955,9 +967,11 @@ fn structured_patch_document(patch: &[Value]) -> Document {
             } else {
                 line.to_string()
             };
-            retained_bytes += retained.len();
-            retained_lines += 1;
-            lines.push(retained);
+            if !retained.is_empty() || line.is_empty() {
+                retained_bytes += retained.len();
+                retained_lines += 1;
+                lines.push(retained);
+            }
 
             if byte_count > room {
                 document.hunks.push(Hunk {
@@ -1011,66 +1025,6 @@ fn structured_hunk_header(
     new_count: u32,
 ) -> String {
     format!("@@ -{old_start},{old_count} +{new_start},{new_count} @@")
-}
-
-#[cfg(test)]
-mod patch_tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn retained_patch_rows_are_bounded_without_bounding_magnitude() {
-        let line_count = STRUCTURED_PATCH_LINES_RETAINED + 5;
-        let lines: Vec<Value> = (0..line_count)
-            .map(|index| Value::String(format!("+line {index}")))
-            .collect();
-        let patch = vec![json!({
-            "oldStart": 1,
-            "oldLines": 0,
-            "newStart": 1,
-            "newLines": line_count,
-            "lines": lines,
-        })];
-
-        assert_eq!(patch_magnitude(&patch), (line_count as u64, 0));
-        let document = structured_patch_document(&patch);
-        assert!(document.truncated);
-        assert_eq!(document.line_count(), STRUCTURED_PATCH_LINES_RETAINED);
-        let expected_header = format!("@@ -1,0 +1,{line_count} @@");
-        assert_eq!(
-            document.hunks[0].header.as_deref(),
-            Some(expected_header.as_str())
-        );
-    }
-
-    #[test]
-    fn retained_patch_hunks_and_bytes_have_independent_caps() {
-        let patch: Vec<Value> = (0..=STRUCTURED_PATCH_HUNKS_RETAINED)
-            .map(|index| {
-                json!({
-                    "oldStart": index + 1,
-                    "newStart": index + 1,
-                    "lines": ["+x"],
-                })
-            })
-            .collect();
-        let document = structured_patch_document(&patch);
-        assert!(document.truncated);
-        assert_eq!(document.hunks.len(), STRUCTURED_PATCH_HUNKS_RETAINED);
-
-        let wide = "🦀".repeat(STRUCTURED_PATCH_BYTES_RETAINED);
-        let document = structured_patch_document(&[json!({
-            "oldStart": 1,
-            "newStart": 1,
-            "lines": [format!("+{wide}")],
-        })]);
-        assert!(document.truncated);
-        let retained = &document.hunks[0].lines[0];
-        assert!(retained.len() <= STRUCTURED_PATCH_BYTES_RETAINED);
-        assert!(retained.len() > STRUCTURED_PATCH_BYTES_RETAINED - '🦀'.len_utf8());
-        assert!(retained.is_char_boundary(retained.len()));
-    }
 }
 
 fn retain_plan(layer: &mut ClaudeLayer, tool_use_id: &str, row: &Value) {
@@ -1607,4 +1561,93 @@ fn entry_kind(layer: &ClaudeLayer, id: u64) -> Option<&FeedEntryKind> {
     let front = layer.entries.front()?.id;
     let index = id.checked_sub(front)? as usize;
     layer.entries.get(index).map(|entry| &entry.kind)
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn retained_patch_rows_are_bounded_without_bounding_magnitude() {
+        let line_count = STRUCTURED_PATCH_LINES_RETAINED + 5;
+        let lines: Vec<Value> = (0..line_count)
+            .map(|index| Value::String(format!("+line {index}")))
+            .collect();
+        let patch = vec![json!({
+            "oldStart": 1,
+            "oldLines": 0,
+            "newStart": 1,
+            "newLines": line_count,
+            "lines": lines,
+        })];
+
+        assert_eq!(patch_magnitude(&patch), (line_count as u64, 0));
+        let document = structured_patch_document(&patch);
+        assert!(document.truncated);
+        assert_eq!(document.line_count(), STRUCTURED_PATCH_LINES_RETAINED);
+        let expected_header = format!("@@ -1,0 +1,{line_count} @@");
+        assert_eq!(
+            document.hunks[0].header.as_deref(),
+            Some(expected_header.as_str())
+        );
+    }
+
+    #[test]
+    fn retained_patch_hunks_and_bytes_have_independent_caps() {
+        let patch: Vec<Value> = (0..=STRUCTURED_PATCH_HUNKS_RETAINED)
+            .map(|index| {
+                json!({
+                    "oldStart": index + 1,
+                    "newStart": index + 1,
+                    "lines": ["+x"],
+                })
+            })
+            .collect();
+        let document = structured_patch_document(&patch);
+        assert!(document.truncated);
+        assert_eq!(document.hunks.len(), STRUCTURED_PATCH_HUNKS_RETAINED);
+
+        let wide = "🦀".repeat(STRUCTURED_PATCH_BYTES_RETAINED);
+        let document = structured_patch_document(&[json!({
+            "oldStart": 1,
+            "newStart": 1,
+            "lines": [format!("+{wide}")],
+        })]);
+        assert!(document.truncated);
+        let retained = &document.hunks[0].lines[0];
+        assert!(retained.len() <= STRUCTURED_PATCH_BYTES_RETAINED);
+        assert!(retained.len() > STRUCTURED_PATCH_BYTES_RETAINED - '🦀'.len_utf8());
+        assert!(retained.is_char_boundary(retained.len()));
+    }
+
+    #[test]
+    fn malformed_hunks_state_only_real_retention_loss() {
+        let valid: Vec<Value> = (0..STRUCTURED_PATCH_HUNKS_RETAINED)
+            .map(|index| {
+                json!({
+                    "oldStart": index + 1,
+                    "newStart": index + 1,
+                    "lines": ["+x"],
+                })
+            })
+            .collect();
+        let mut trailing_malformed = valid.clone();
+        trailing_malformed.push(json!({"lines": ["+unlocated"]}));
+        assert!(!structured_patch_document(&trailing_malformed).truncated);
+
+        let mut trailing_bodyless = valid.clone();
+        trailing_bodyless.push(json!({"oldStart": 20, "newStart": 20}));
+        assert!(!structured_patch_document(&trailing_bodyless).truncated);
+
+        let malformed_inside_capacity = [
+            json!({"oldStart": 1, "newStart": 1, "lines": ["+kept"]}),
+            json!({"lines": ["+unlocated"]}),
+            json!({"oldStart": 2, "newStart": 2, "lines": ["+also kept"]}),
+        ];
+        let document = structured_patch_document(&malformed_inside_capacity);
+        assert!(document.truncated);
+        assert_eq!(document.hunks.len(), 2);
+    }
 }

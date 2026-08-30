@@ -118,12 +118,13 @@ pub(crate) const IDLE_FACT_DECAY_SECS: i64 = 60;
 /// The full text stays on disk behind the Effect seam.
 const OUTPUT_HEAD_MAX: usize = 400;
 
-/// A landed patch is retained as a head for feed previews. These independent
-/// caps keep one unusually fragmented or wide patch from consuming the feed's
-/// entire memory budget.
-pub(crate) const STRUCTURED_PATCH_HUNKS_RETAINED: usize = 64;
-pub(crate) const STRUCTURED_PATCH_LINES_RETAINED: usize = 512;
-pub(crate) const STRUCTURED_PATCH_BYTES_RETAINED: usize = 64 * 1024;
+/// A landed patch is retained as a head for feed previews. Eight KiB holds
+/// roughly a hundred ordinary terminal rows, enough for useful transcript
+/// inspection beyond the eight-row feed preview without letting 1,000
+/// retained entries turn wide patches into an unbounded per-agent cost.
+pub(crate) const STRUCTURED_PATCH_HUNKS_RETAINED: usize = 16;
+pub(crate) const STRUCTURED_PATCH_LINES_RETAINED: usize = 64;
+pub(crate) const STRUCTURED_PATCH_BYTES_RETAINED: usize = 8 * 1024;
 
 /// One feed entry: a single rendered unit (`docs/CHAT.md` §Vocabulary).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
