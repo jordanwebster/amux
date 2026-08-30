@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Claude PTY hosting now crosses one provider session boundary.**
+The amux Claude runtime is reduced to its backend, wire codec, delivery carrier,
+and suspend record. Live, replay-injected, external read-only, and testnet
+sessions all consume `claude::pty::Session`; raw terminal access adapts the
+provider control handle while transcript and hook events feed the structured
+plane. Managed hook commands forward directly to the session socket, leaving
+the daemon hook RPC for externally started Claude processes.
+
+---
+
 2026-08-29 — **Codex specifications now share their live and replay path.**
 The feature-gated `codex::specs` registry covers initialization, turns,
 approvals, interruption, list/resume, dynamic tools, idle and busy injection,

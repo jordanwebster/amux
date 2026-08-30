@@ -3,10 +3,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(any(debug_assertions, test, feature = "testnet"))]
+#[cfg(any(test, feature = "testnet"))]
 use anyhow::anyhow;
 use anyhow::{Context, Result};
-#[cfg(any(debug_assertions, test, feature = "testnet"))]
+#[cfg(any(test, feature = "testnet"))]
 use tokio::sync::mpsc;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -20,7 +20,8 @@ const TERMINATE_GRACE: Duration = Duration::from_millis(250);
 #[derive(Clone)]
 enum HostedPty {
     Process(Arc<pty_host::PtyProcess>),
-    #[cfg(any(debug_assertions, test, feature = "testnet"))]
+    Claude(claude::pty::Control),
+    #[cfg(any(test, feature = "testnet"))]
     TestEcho(mpsc::Sender<Vec<u8>>),
 }
 
@@ -32,7 +33,23 @@ pub(crate) struct PtyHandle {
 }
 
 impl PtyHandle {
-    #[cfg(any(debug_assertions, test, feature = "testnet"))]
+    pub(crate) fn from_claude(control: claude::pty::Control) -> Option<Self> {
+        let mut output = control.terminal_output()?;
+        let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
+        let output_buffer = buffer.clone();
+        tokio::spawn(async move {
+            while let Some(bytes) = output.recv().await {
+                output_buffer.write(bytes.to_vec()).await;
+            }
+            output_buffer.close().await;
+        });
+        Some(Self {
+            hosted: HostedPty::Claude(control),
+            buffer,
+        })
+    }
+
+    #[cfg(any(test, feature = "testnet"))]
     pub(crate) fn test_echo() -> Self {
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
         let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
@@ -54,7 +71,12 @@ impl PtyHandle {
     pub(crate) async fn send_input(&self, data: Vec<u8>) -> Result<()> {
         match &self.hosted {
             HostedPty::Process(process) => process.handle.write(&data).await.map_err(Into::into),
-            #[cfg(any(debug_assertions, test, feature = "testnet"))]
+            HostedPty::Claude(control) => control
+                .send(vec![claude::pty::PtyInput::Bytes(data)])
+                .await
+                .map(|_| ())
+                .map_err(Into::into),
+            #[cfg(any(test, feature = "testnet"))]
             HostedPty::TestEcho(input_tx) => input_tx
                 .send(data)
                 .await
@@ -76,7 +98,10 @@ impl PtyHandle {
                 .handle
                 .resize(pty_size(size))
                 .context("failed to resize pty"),
-            #[cfg(any(debug_assertions, test, feature = "testnet"))]
+            HostedPty::Claude(control) => control
+                .resize(pty_size(size))
+                .context("failed to resize Claude PTY"),
+            #[cfg(any(test, feature = "testnet"))]
             HostedPty::TestEcho(_) => Ok(()),
         }
     }
@@ -98,7 +123,15 @@ impl PtyHandle {
                 )
                 .await;
             }
-            #[cfg(any(debug_assertions, test, feature = "testnet"))]
+            HostedPty::Claude(control) => {
+                control
+                    .clone()
+                    .stop(pty_host::Terminate::Graceful {
+                        grace: TERMINATE_GRACE,
+                    })
+                    .await;
+            }
+            #[cfg(any(test, feature = "testnet"))]
             HostedPty::TestEcho(_) => {}
         }
         self.buffer.close().await;
@@ -112,7 +145,12 @@ impl PtyHandle {
                 .handle
                 .signal_process_group(signal)
                 .map_err(Into::into),
-            #[cfg(any(debug_assertions, test, feature = "testnet"))]
+            HostedPty::Claude(control) => control
+                .terminal()
+                .ok_or_else(|| anyhow::anyhow!("Claude session has no live PTY handle"))?
+                .signal_process_group(signal)
+                .map_err(Into::into),
+            #[cfg(any(test, feature = "testnet"))]
             HostedPty::TestEcho(_) => Ok(()),
         }
     }

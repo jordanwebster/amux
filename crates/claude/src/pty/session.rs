@@ -96,7 +96,7 @@ impl TranscriptSource {
         )
     }
 
-    fn live() -> Self {
+    pub fn live() -> Self {
         let (row_tx, rows) = mpsc::channel(CHANNEL_CAPACITY);
         let (path_tx, mut path_rx) = mpsc::unbounded_channel::<PathBuf>();
         let relink = Arc::new(move |path| {
@@ -402,12 +402,20 @@ impl Control {
 
 pub async fn spawn(launch: &Launch, size: pty_host::PtySize) -> Result<Session, SpawnError> {
     let version = probe_version(&launch.binary).await?;
+    spawn_with_version(launch, size, version)
+}
+
+/// Spawn a live session when the host has already completed its shared
+/// version probe.
+pub fn spawn_with_version(
+    launch: &Launch,
+    size: pty_host::PtySize,
+    version: ClaudeVersion,
+) -> Result<Session, SpawnError> {
     let hook_dir = std::env::temp_dir()
         .join("amux-claude-hooks")
         .join(launch.session_id.to_string());
-    let receiver = HookReceiver::bind(&hook_dir)
-        .await
-        .map_err(SpawnError::Hook)?;
+    let receiver = HookReceiver::bind_sync(&hook_dir).map_err(SpawnError::Hook)?;
     let hook_path = receiver.path.clone();
     let process = pty_host::spawn(pty_host::PtySpawn {
         command: launch.binary.clone(),

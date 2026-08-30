@@ -9,7 +9,7 @@
 //! the agent_id so the server can create a readonly session.
 
 use std::collections::HashMap;
-use std::io::{self, BufRead};
+use std::io::{self, Read};
 
 use amux::Config;
 use anyhow::Result;
@@ -30,14 +30,14 @@ pub fn handle_claude_hook(config: &Config) {
 }
 
 fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
-    // Read stdin first — we need the hook data for both amux-managed and external sessions
-    let stdin = io::stdin();
-    let mut input = String::new();
-    for line in stdin.lock().lines() {
-        input.push_str(&line?);
+    let mut payload = Vec::new();
+    io::stdin().lock().read_to_end(&mut payload)?;
+
+    if let Some(socket) = std::env::var_os("CLAUDE_HOOK_SOCKET") {
+        return claude::hooks::forward(&payload, std::path::Path::new(&socket));
     }
 
-    let raw: Value = match serde_json::from_str(&input) {
+    let raw: Value = match serde_json::from_slice(&payload) {
         Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "hook parse failed");

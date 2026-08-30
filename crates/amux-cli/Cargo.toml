@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 amux = { workspace = true }
+claude = { workspace = true }
 amux-tui = { workspace = true }
 amux-ui = { workspace = true }
 tokio = { workspace = true }

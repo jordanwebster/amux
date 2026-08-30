@@ -730,13 +730,13 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let mut session = ClaudeSession::new(
+        let session = ClaudeSession::new(
             &req,
             std::env::temp_dir(),
             ClaudeVersionCache::default(),
             mcp_launch_route_for_tests(Uuid::new_v4()),
         );
-        session.session_id = Some(Uuid::new_v4());
+        session.set_session_id_for_tests(Uuid::new_v4());
 
         let suspended = session.suspended_state().unwrap();
 

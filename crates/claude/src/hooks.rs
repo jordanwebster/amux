@@ -192,13 +192,15 @@ pub struct HookReceiver {
 
 impl HookReceiver {
     #[cfg(unix)]
-    pub async fn bind(dir: &Path) -> Result<Self, std::io::Error> {
+    pub fn bind_sync(dir: &Path) -> Result<Self, std::io::Error> {
         use tokio::io::AsyncReadExt;
         use tokio::net::UnixListener;
 
-        tokio::fs::create_dir_all(dir).await?;
+        std::fs::create_dir_all(dir)?;
         let path = dir.join(format!("claude-hook-{}.sock", Uuid::new_v4()));
-        let listener = UnixListener::bind(&path)?;
+        let listener = std::os::unix::net::UnixListener::bind(&path)?;
+        listener.set_nonblocking(true)?;
+        let listener = UnixListener::from_std(listener)?;
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(async move {
             loop {
@@ -219,6 +221,19 @@ impl HookReceiver {
             payloads: Mutex::new(Some(rx)),
             task,
         })
+    }
+
+    #[cfg(not(unix))]
+    pub fn bind_sync(_dir: &Path) -> Result<Self, std::io::Error> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Claude hook sockets require Unix",
+        ))
+    }
+
+    #[cfg(unix)]
+    pub async fn bind(dir: &Path) -> Result<Self, std::io::Error> {
+        Self::bind_sync(dir)
     }
 
     #[cfg(not(unix))]

@@ -1,0 +1,971 @@
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow};
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use claude::hooks::HookPayload;
+use claude::pty::{
+    Control, HookSource, PtyEvent, PtyInput, PtySource, Session, Sources, TranscriptSource,
+};
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
+use serde_json::{Value, json};
+use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc;
+use tokio::task::AbortHandle;
+use uuid::Uuid;
+
+use super::delivery::ClaudeDeliveryTarget;
+use super::suspend::{ClaudeSuspendRecord, sanitize_resume_args};
+use crate::agents::claude::ClaudeVersionCache;
+use crate::agents::{
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, AgentRecord, AgentType,
+    ClaudeDriver, CreateAgentRequest, HookEnvironment, HookError, HookOutcome,
+    LocalAgentNameSource, McpLaunchRoute, Plane, Protocol, PtyHandle, RawPtyTarget, SessionEvent,
+    SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent, StructuredLogSource,
+    TerminalSize,
+};
+use crate::debug::DebugView;
+use crate::protocol::ProtocolError;
+use crate::suspend::SuspendedAgent;
+
+const STRUCTURED_LOG_RETENTION: usize = 1000;
+const HOOK_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
+const MESSAGING_SOCKET_ENV: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
+const MESSAGING_TOKEN_ENV: &str = "CLAUDE_CODE_MESSAGING_TOKEN";
+const MESSAGING_SOCKET_MIN_VERSION: semver::Version = semver::Version::new(2, 1, 224);
+
+#[derive(Clone)]
+pub(super) struct MessagingCredentials {
+    pub socket_path: PathBuf,
+    pub token: String,
+}
+
+#[derive(Default)]
+struct Runtime {
+    control: Option<Control>,
+    pty: Option<PtyHandle>,
+    hook_tx: Option<mpsc::Sender<HookPayload>>,
+    messaging: Option<MessagingCredentials>,
+    session_id: Option<Uuid>,
+    last_hook: Option<(u64, tokio::time::Instant)>,
+}
+
+pub(crate) struct ClaudePtyBackend {
+    driver: ClaudeDriver,
+    agent_id: Uuid,
+    name: Option<String>,
+    command: String,
+    working_dir: PathBuf,
+    readonly: bool,
+    args: Vec<String>,
+    terminal_size: Option<TerminalSize>,
+    runtime_dir: PathBuf,
+    version_cache: ClaudeVersionCache,
+    launch_route: Option<McpLaunchRoute>,
+    parent: Option<AgentParent>,
+    name_source: LocalAgentNameSource,
+    created_at: DateTime<Utc>,
+    log: StructuredLogSource,
+    runtime: Arc<Mutex<Runtime>>,
+    delivery_ready: Arc<AtomicBool>,
+    injected: Option<Session>,
+    started: bool,
+    ingest_abort: Option<AbortHandle>,
+}
+
+impl ClaudePtyBackend {
+    pub(in crate::agents) fn new(
+        req: &CreateAgentRequest,
+        runtime_dir: PathBuf,
+        version_cache: ClaudeVersionCache,
+        launch_route: McpLaunchRoute,
+    ) -> Self {
+        let driver = match req.agent_type {
+            AgentType::Claude { driver } => driver,
+            _ => unreachable!("Claude backend requires a Claude request"),
+        };
+        Self {
+            driver,
+            agent_id: req.agent_id,
+            name: req.name.clone(),
+            command: "claude".to_string(),
+            working_dir: req.working_dir.clone(),
+            readonly: false,
+            args: req.args.clone(),
+            terminal_size: req.terminal_size,
+            runtime_dir,
+            version_cache,
+            launch_route: Some(launch_route),
+            parent: req.parent,
+            name_source: if req.name.is_some() {
+                LocalAgentNameSource::Amux
+            } else {
+                LocalAgentNameSource::Unset
+            },
+            created_at: Utc::now(),
+            log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
+            runtime: Arc::new(Mutex::new(Runtime::default())),
+            delivery_ready: Arc::new(AtomicBool::new(false)),
+            injected: None,
+            started: false,
+            ingest_abort: None,
+        }
+    }
+
+    pub(in crate::agents) fn from_suspended(
+        req: &CreateAgentRequest,
+        name_source: LocalAgentNameSource,
+        session_id: Uuid,
+        created_at: DateTime<Utc>,
+        runtime_dir: PathBuf,
+        version_cache: ClaudeVersionCache,
+        launch_route: McpLaunchRoute,
+    ) -> Self {
+        let mut backend = Self::new(req, runtime_dir, version_cache, launch_route);
+        backend.args = sanitize_resume_args(backend.args);
+        backend.name_source = name_source;
+        backend.created_at = created_at;
+        backend
+            .runtime
+            .lock()
+            .expect("Claude runtime poisoned")
+            .session_id = Some(session_id);
+        backend
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn with_session(record: AgentRecord, session: Session) -> Self {
+        debug_assert_eq!(
+            record.kind,
+            AgentKind::Claude {
+                driver: ClaudeDriver::Pty
+            }
+        );
+        Self {
+            driver: ClaudeDriver::Pty,
+            agent_id: record.id,
+            name: record.name.clone(),
+            command: record.command,
+            working_dir: record.working_dir,
+            readonly: record.readonly,
+            args: record.args,
+            terminal_size: None,
+            runtime_dir: std::env::temp_dir(),
+            version_cache: ClaudeVersionCache::default(),
+            launch_route: None,
+            parent: record.parent,
+            name_source: if record.name.is_some() {
+                LocalAgentNameSource::Amux
+            } else {
+                LocalAgentNameSource::Unset
+            },
+            created_at: record.created_at,
+            log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
+            runtime: Arc::new(Mutex::new(Runtime::default())),
+            delivery_ready: Arc::new(AtomicBool::new(false)),
+            injected: Some(session),
+            started: false,
+            ingest_abort: None,
+        }
+    }
+
+    fn new_readonly(agent_id: Uuid, working_dir: PathBuf) -> Self {
+        let (session, hook_tx) = external_session();
+        let record = AgentRecord {
+            id: agent_id,
+            host_id: Uuid::nil(),
+            name: None,
+            command: "claude".to_string(),
+            working_dir,
+            kind: AgentKind::Claude {
+                driver: ClaudeDriver::Pty,
+            },
+            readonly: true,
+            args: Vec::new(),
+            created_at: Utc::now(),
+            parent: None,
+            working_on: None,
+        };
+        let mut backend = Self::with_session(record, session);
+        backend
+            .runtime
+            .lock()
+            .expect("Claude runtime poisoned")
+            .hook_tx = Some(hook_tx);
+        let (event_tx, _event_rx) = mpsc::channel(1);
+        let handle = backend
+            .activate_injected(&event_tx)
+            .expect("fresh external session activates");
+        backend.ingest_abort = Some(handle.abort_handle());
+        backend
+    }
+
+    #[cfg(any(debug_assertions, test))]
+    pub(crate) fn for_protocol_tests(
+        req: &CreateAgentRequest,
+        runtime_dir: PathBuf,
+        version_cache: ClaudeVersionCache,
+        launch_route: McpLaunchRoute,
+    ) -> Self {
+        Self::scripted(req, runtime_dir, version_cache, launch_route)
+    }
+
+    #[cfg(feature = "testnet")]
+    pub(crate) fn scripted_for_testnet(
+        req: &CreateAgentRequest,
+        runtime_dir: PathBuf,
+        version_cache: ClaudeVersionCache,
+        launch_route: McpLaunchRoute,
+    ) -> Self {
+        Self::scripted(req, runtime_dir, version_cache, launch_route)
+    }
+
+    #[cfg(any(debug_assertions, test, feature = "testnet"))]
+    pub(super) fn scripted(
+        req: &CreateAgentRequest,
+        runtime_dir: PathBuf,
+        version_cache: ClaudeVersionCache,
+        launch_route: McpLaunchRoute,
+    ) -> Self {
+        let (session, hook_tx) = scripted_session();
+        let mut backend = Self::new(req, runtime_dir, version_cache, launch_route);
+        backend.injected = Some(session);
+        backend
+            .runtime
+            .lock()
+            .expect("Claude runtime poisoned")
+            .hook_tx = Some(hook_tx);
+        backend.delivery_ready.store(true, Ordering::Release);
+        let (event_tx, _event_rx) = mpsc::channel(1);
+        let handle = backend
+            .activate_injected(&event_tx)
+            .expect("scripted session activates");
+        backend.ingest_abort = Some(handle.abort_handle());
+        backend
+    }
+
+    fn activate_injected(
+        &mut self,
+        event_tx: &mpsc::Sender<SessionEvent>,
+    ) -> Result<tokio::task::JoinHandle<()>> {
+        let session = self
+            .injected
+            .take()
+            .context("Claude provider session is unavailable")?;
+        self.activate(session, event_tx)
+    }
+
+    fn activate(
+        &mut self,
+        session: Session,
+        event_tx: &mpsc::Sender<SessionEvent>,
+    ) -> Result<tokio::task::JoinHandle<()>> {
+        let Session {
+            mut events,
+            control,
+        } = session;
+        let pty = (!self.readonly)
+            .then(|| PtyHandle::from_claude(control.clone()))
+            .flatten();
+        {
+            let mut runtime = self.runtime.lock().expect("Claude runtime poisoned");
+            runtime.control = Some(control);
+            runtime.pty = pty;
+        }
+        let runtime = self.runtime.clone();
+        let log = self.log.clone();
+        let ready = self.delivery_ready.clone();
+        let version_cache = self.version_cache.clone();
+        let event_tx = event_tx.clone();
+        let agent_id = self.agent_id;
+        Ok(tokio::spawn(async move {
+            let mut names = NameState::default();
+            while let Some(event) = events.recv().await {
+                match event {
+                    PtyEvent::Ready { .. }
+                    | PtyEvent::Ask(_)
+                    | PtyEvent::InputResult(_)
+                    | PtyEvent::Delivery(_) => {}
+                    PtyEvent::Relink { reason, .. } => {
+                        if !matches!(reason, claude::pty::RelinkReason::Initial) {
+                            log.clear().await;
+                        }
+                    }
+                    PtyEvent::Transcript { row, .. } => {
+                        let value = row.into_value();
+                        version_cache.observe_transcript_row(&value);
+                        if value.get("type").and_then(Value::as_str)
+                            == Some("amux.transcript_ready")
+                        {
+                            ready.store(true, Ordering::Release);
+                        }
+                        if let Some((name, source)) = names.observe(&value) {
+                            let _ = event_tx
+                                .send(SessionEvent::NameCandidateChanged {
+                                    agent_id,
+                                    name,
+                                    source,
+                                })
+                                .await;
+                        }
+                        log.write(value).await;
+                    }
+                    PtyEvent::Hook(hook) => {
+                        ingest_hook(agent_id, &runtime, &log, &ready, &event_tx, hook).await;
+                    }
+                    PtyEvent::Exited(_) => break,
+                }
+            }
+            log.close().await;
+        }))
+    }
+
+    fn launch(&self) -> Result<claude::launch::Launch> {
+        let route = self
+            .launch_route
+            .as_ref()
+            .context("managed Claude session is missing its MCP launch route")?;
+        route
+            .validate()
+            .context("managed Claude MCP launch route is no longer valid")?;
+        let mut args = claude::launch::without_managed_spawn_args(&self.args);
+        let user_settings = claude::launch::take_settings_args(&mut args)?;
+        args.extend([
+            "--name".to_string(),
+            self.name
+                .clone()
+                .unwrap_or_else(|| self.agent_id.to_string()),
+        ]);
+        if self
+            .version_cache
+            .current()
+            .is_some_and(|version| version.0 >= MESSAGING_SOCKET_MIN_VERSION)
+        {
+            args.extend([
+                "--messaging-socket-path".to_string(),
+                self.runtime_dir
+                    .join(format!("amux-{}.sock", self.agent_id))
+                    .to_string_lossy()
+                    .into_owned(),
+            ]);
+        }
+        let executable = route
+            .executable()
+            .to_str()
+            .context("the running amux executable path is not valid UTF-8")?;
+        let socket = route
+            .socket_path()
+            .to_str()
+            .context("the daemon socket path is not valid UTF-8")?;
+        let mut env = serde_json::Map::from_iter([
+            (
+                "AMUX_AGENT_ID".to_string(),
+                Value::String(self.agent_id.to_string()),
+            ),
+            (
+                "AMUX_HOST_ID".to_string(),
+                Value::String(route.host_id().to_string()),
+            ),
+        ]);
+        if let Some(path) = route.config_path() {
+            env.insert(
+                "AMUX_CONFIG".to_string(),
+                Value::String(
+                    path.to_str()
+                        .context("the amux config path is not valid UTF-8")?
+                        .to_string(),
+                ),
+            );
+        }
+        let hook_command = vec![
+            executable.to_string(),
+            "hooks".to_string(),
+            "claude".to_string(),
+        ];
+        let settings = claude::launch::merged_settings(
+            claude::launch::load_user_settings(&self.working_dir, &user_settings)?,
+            &claude::launch::ManagedSettings {
+                hook_command: hook_command.clone(),
+                mcp_servers: Vec::new(),
+            },
+        );
+        let mcp_servers = vec![claude::launch::McpServerConfig {
+            name: "amux".to_string(),
+            config: json!({"command": executable, "args": ["mcp", "agent", "--socket-path", socket], "env": env}),
+        }];
+        let session_id = self
+            .runtime
+            .lock()
+            .expect("Claude runtime poisoned")
+            .session_id
+            .unwrap_or(self.agent_id);
+        Ok(claude::launch::Launch {
+            binary: self.command.clone().into(),
+            cwd: self.working_dir.clone(),
+            args,
+            session_id,
+            resume: session_id != self.agent_id,
+            settings,
+            hook_command,
+            mcp_servers,
+            env_scrub: claude::launch::CHILD_SESSION_ENV_SCRUB,
+        })
+    }
+
+    pub(crate) async fn bootstrap_external_hook(
+        agent_id: Uuid,
+        payload: &[u8],
+        env: &HookEnvironment,
+    ) -> std::result::Result<Option<Self>, HookError> {
+        let hook = parse_hook(payload)?;
+        if matches!(
+            hook,
+            HookPayload::Unknown { .. } | HookPayload::SessionEnd(_)
+        ) {
+            return Ok(None);
+        }
+        let mut backend = Self::new_readonly(agent_id, hook.common().cwd.clone());
+        backend.sync_messaging(env);
+        backend.send_hook(hook).await?;
+        Ok(Some(backend))
+    }
+
+    fn sync_messaging(&mut self, env: &HookEnvironment) {
+        let credentials = env
+            .get(MESSAGING_SOCKET_ENV)
+            .filter(|v| !v.is_empty())
+            .zip(env.get(MESSAGING_TOKEN_ENV).filter(|v| !v.is_empty()))
+            .map(|(path, token)| MessagingCredentials {
+                socket_path: path.into(),
+                token: token.clone(),
+            });
+        if let Some(credentials) = credentials {
+            self.runtime
+                .lock()
+                .expect("Claude runtime poisoned")
+                .messaging = Some(credentials);
+        }
+    }
+
+    async fn send_hook(&self, hook: HookPayload) -> std::result::Result<(), HookError> {
+        let tx = self
+            .runtime
+            .lock()
+            .expect("Claude runtime poisoned")
+            .hook_tx
+            .clone();
+        tx.ok_or_else(|| HookError::InvalidPayload {
+            message: "Claude hook source is unavailable".to_string(),
+        })?
+        .send(hook)
+        .await
+        .map_err(|_| HookError::InvalidPayload {
+            message: "Claude hook source is closed".to_string(),
+        })
+    }
+
+    pub(super) fn delivery_snapshot(
+        &self,
+    ) -> (
+        bool,
+        Option<Control>,
+        Option<MessagingCredentials>,
+        Arc<AtomicBool>,
+    ) {
+        let runtime = self.runtime.lock().expect("Claude runtime poisoned");
+        (
+            self.readonly,
+            runtime.control.clone(),
+            runtime.messaging.clone(),
+            self.delivery_ready.clone(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_session_id_for_tests(&self, session_id: Uuid) {
+        self.runtime
+            .lock()
+            .expect("Claude runtime poisoned")
+            .session_id = Some(session_id);
+    }
+
+    fn input_target(&self) -> ClaudeInputTarget {
+        ClaudeInputTarget {
+            readonly: self.readonly,
+            runtime: self.runtime.clone(),
+            log: self.log.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentBackend for ClaudePtyBackend {
+    fn agent_id(&self) -> Uuid {
+        self.agent_id
+    }
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+    fn set_local_name(&mut self, name: Option<String>, source: LocalAgentNameSource) {
+        self.name = name;
+        self.name_source = source;
+    }
+    fn command(&self) -> &str {
+        &self.command
+    }
+    fn working_dir(&self) -> &Path {
+        &self.working_dir
+    }
+    fn readonly(&self) -> bool {
+        self.readonly
+    }
+    fn args(&self) -> &[String] {
+        &self.args
+    }
+    fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+
+    fn start(
+        &mut self,
+        event_tx: &mpsc::Sender<SessionEvent>,
+    ) -> Result<tokio::task::JoinHandle<()>> {
+        if self.started {
+            return Err(anyhow!("Claude session {} already started", self.agent_id));
+        }
+        if self.driver == ClaudeDriver::Sdk {
+            return Err(anyhow!("Claude SDK agents are not implemented yet"));
+        }
+        self.started = true;
+        if self.injected.is_some() {
+            return self.activate_injected(event_tx);
+        }
+        let version = self
+            .version_cache
+            .current()
+            .context("Claude version probe did not complete")?;
+        let launch = self.launch()?;
+        let size = self.terminal_size.unwrap_or_default();
+        let session = claude::pty::spawn_with_version(
+            &launch,
+            pty_host::PtySize {
+                rows: size.rows,
+                cols: size.cols,
+            },
+            version,
+        )?;
+        self.activate(session, event_tx)
+    }
+
+    async fn stop(&self, _policy: StopPolicy) {
+        if let Some(abort) = &self.ingest_abort {
+            abort.abort();
+        }
+        let pty = self
+            .runtime
+            .lock()
+            .expect("Claude runtime poisoned")
+            .pty
+            .clone();
+        if let Some(pty) = pty {
+            pty.close().await;
+        }
+        self.log.close().await;
+    }
+
+    fn kind(&self) -> AgentKind {
+        AgentKind::Claude {
+            driver: self.driver,
+        }
+    }
+
+    fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError> {
+        match (self.driver, protocol) {
+            (ClaudeDriver::Pty, Protocol::TerminalV1) => self
+                .runtime
+                .lock()
+                .expect("Claude runtime poisoned")
+                .pty
+                .clone()
+                .map(RawPtyTarget::Existing)
+                .map(Plane::Terminal)
+                .ok_or_else(|| ProtocolError::FailedPrecondition {
+                    message: "Claude PTY is not active".to_string(),
+                }),
+            (ClaudeDriver::Pty, Protocol::ClaudePtyTranscriptV1)
+            | (ClaudeDriver::Sdk, Protocol::ClaudeSdkV1) => Ok(Plane::Structured {
+                log: self.log.clone(),
+                input: Box::new(self.input_target()),
+            }),
+            (
+                ClaudeDriver::Pty,
+                Protocol::ClaudeSdkV1 | Protocol::CodexSdkV1 | Protocol::TestEchoV1,
+            )
+            | (
+                ClaudeDriver::Sdk,
+                Protocol::TerminalV1
+                | Protocol::ClaudePtyTranscriptV1
+                | Protocol::CodexSdkV1
+                | Protocol::TestEchoV1,
+            ) => Err(ProtocolError::NotExposed {
+                kind: self.kind(),
+                protocol,
+            }),
+        }
+    }
+
+    fn spawn_inheritance(&self) -> SpawnInheritance {
+        SpawnInheritance {
+            claude_permission_args: crate::agent_tools::claude_permission_args(&self.args),
+            ..SpawnInheritance::default()
+        }
+    }
+    fn parent(&self) -> Option<AgentParent> {
+        self.parent
+    }
+    fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
+        Box::new(ClaudeDeliveryTarget::new(self))
+    }
+
+    async fn handle_hook_payload(
+        &mut self,
+        payload: &[u8],
+        env: &HookEnvironment,
+    ) -> std::result::Result<HookOutcome, HookError> {
+        let hook = parse_hook(payload)?;
+        self.sync_messaging(env);
+        let unknown = matches!(hook, HookPayload::Unknown { .. });
+        let withdraw = self.readonly && matches!(hook, HookPayload::SessionEnd(_));
+        let completion = match &hook {
+            HookPayload::Stop {
+                last_assistant_message,
+                ..
+            } => last_assistant_message.clone(),
+            _ => None,
+        };
+        if !unknown {
+            self.send_hook(hook).await?;
+        }
+        Ok(if unknown {
+            HookOutcome::Noop
+        } else if withdraw {
+            HookOutcome::WithdrawSession
+        } else if let Some(text) = completion {
+            HookOutcome::Completed { text }
+        } else {
+            HookOutcome::KeepSession
+        })
+    }
+
+    fn local_name_source(&self) -> Option<LocalAgentNameSource> {
+        Some(self.name_source)
+    }
+
+    fn suspended_state(&self) -> Result<SuspendedAgent> {
+        let session_id = self.runtime.lock().expect("Claude runtime poisoned").session_id
+            .ok_or_else(|| anyhow!("cannot suspend claude agent {}: no session_id (SessionStart hook not received)", self.agent_id))?;
+        Ok(ClaudeSuspendRecord {
+            driver: self.driver,
+            agent_id: self.agent_id,
+            name: self.name.clone(),
+            name_source: self.name_source,
+            working_dir: self.working_dir.clone(),
+            terminal_size: self.terminal_size,
+            created_at: self.created_at,
+            args: self.args.clone(),
+            session_id,
+            parent: self.parent,
+        }
+        .into())
+    }
+
+    fn debug_json(&self, verbose: bool) -> serde_json::Result<Value> {
+        serde_json::to_value(DebugView::new(self, verbose))
+    }
+}
+
+struct ClaudeInputTarget {
+    readonly: bool,
+    runtime: Arc<Mutex<Runtime>>,
+    log: StructuredLogSource,
+}
+
+#[async_trait]
+impl StructuredInput for ClaudeInputTarget {
+    async fn send(&self, input: StructuredInputEvent) -> std::result::Result<(), ProtocolError> {
+        let StructuredInputEvent::ClaudePty {
+            client_seq,
+            payload,
+        } = input
+        else {
+            return Err(ProtocolError::InvalidArgument {
+                message: "Claude PTY input target received another protocol's input".to_string(),
+            });
+        };
+        if self.readonly {
+            return Err(ProtocolError::ServerError {
+                message: "session is readonly".to_string(),
+            });
+        }
+        let current_seq = self.log.current_seq().await;
+        if client_seq != current_seq {
+            return Err(ProtocolError::SequenceNumberMismatch {
+                client_seq,
+                current_seq,
+            });
+        }
+        let program: Vec<PtyInput> =
+            serde_json::from_value(payload).map_err(|error| ProtocolError::InvalidArgument {
+                message: format!("invalid pty input: {error}"),
+            })?;
+        let control = self
+            .runtime
+            .lock()
+            .expect("Claude runtime poisoned")
+            .control
+            .clone()
+            .ok_or_else(|| ProtocolError::ServerError {
+                message: "structured input requires an active PTY".to_string(),
+            })?;
+        control
+            .send(program)
+            .await
+            .map(|_| ())
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })
+    }
+}
+
+async fn ingest_hook(
+    agent_id: Uuid,
+    runtime: &Arc<Mutex<Runtime>>,
+    log: &StructuredLogSource,
+    ready: &Arc<AtomicBool>,
+    event_tx: &mpsc::Sender<SessionEvent>,
+    hook: HookPayload,
+) {
+    let common = hook.common();
+    runtime.lock().expect("Claude runtime poisoned").session_id = Some(common.session_id);
+    let tag = match &hook {
+        HookPayload::SessionStart(_) => {
+            ready.store(true, Ordering::Release);
+            return;
+        }
+        HookPayload::SessionEnd(_) | HookPayload::Unknown { .. } => return,
+        HookPayload::PermissionRequest { .. } => "hook.permission_request",
+        HookPayload::Stop {
+            last_assistant_message,
+            ..
+        } => {
+            if let Some(text) = last_assistant_message.clone() {
+                let _ = event_tx
+                    .send(SessionEvent::Completed { agent_id, text })
+                    .await;
+            }
+            "hook.stop"
+        }
+        HookPayload::Notification { .. } => "hook.notification",
+        HookPayload::UserPromptSubmit(_) => "hook.user_prompt_submit",
+        HookPayload::PreToolUse { .. } => "hook.pre_tool_use",
+        HookPayload::PostToolUse { .. } => "hook.post_tool_use",
+    };
+    let fingerprint = hook_fingerprint(hook.raw());
+    let now = tokio::time::Instant::now();
+    let duplicate = {
+        let mut state = runtime.lock().expect("Claude runtime poisoned");
+        let duplicate = state
+            .last_hook
+            .is_some_and(|(last, at)| last == fingerprint && now - at <= HOOK_DEDUPE_WINDOW);
+        state.last_hook = Some((fingerprint, now));
+        duplicate
+    };
+    if duplicate {
+        return;
+    }
+    let mut value = hook.raw().clone();
+    if let Some(object) = value.as_object_mut() {
+        object.insert("type".to_string(), json!(tag));
+    }
+    log.write(value).await;
+}
+
+fn hook_fingerprint(value: &Value) -> u64 {
+    value
+        .to_string()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        })
+}
+
+fn parse_hook(payload: &[u8]) -> std::result::Result<HookPayload, HookError> {
+    claude::hooks::parse(payload).map_err(|error| HookError::InvalidPayload {
+        message: error.to_string(),
+    })
+}
+
+#[derive(Default)]
+struct NameState {
+    slug: Option<String>,
+    agent: Option<String>,
+    emitted: Option<(String, LocalAgentNameSource)>,
+}
+impl NameState {
+    fn observe(&mut self, value: &Value) -> Option<(String, LocalAgentNameSource)> {
+        if value.get("type").and_then(Value::as_str) == Some("agent-name") {
+            self.agent = value
+                .get("agentName")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        } else if let Some(slug) = value.get("slug").and_then(Value::as_str) {
+            self.slug = Some(slug.to_string());
+        } else {
+            return None;
+        }
+        let candidate = self
+            .agent
+            .as_ref()
+            .map(|name| (name.clone(), LocalAgentNameSource::ProviderName))
+            .or_else(|| {
+                self.slug
+                    .as_ref()
+                    .map(|name| (name.clone(), LocalAgentNameSource::ProviderSlug))
+            })?;
+        if self.emitted.as_ref() == Some(&candidate) {
+            None
+        } else {
+            self.emitted = Some(candidate.clone());
+            Some(candidate)
+        }
+    }
+}
+
+fn external_session() -> (Session, mpsc::Sender<HookPayload>) {
+    let (_output_tx, output) = mpsc::channel(1);
+    let (hooks, hook_tx) = HookSource::channel(64);
+    let session = claude::pty::from_sources(Sources {
+        pty: PtySource {
+            output,
+            writer: Box::new(tokio::io::sink()),
+            handle: None,
+            exit: Box::pin(std::future::pending()),
+        },
+        hooks,
+        transcript: TranscriptSource::live(),
+        version: claude::version::ClaudeVersion(semver::Version::new(0, 0, 0)),
+    });
+    (session, hook_tx)
+}
+
+#[cfg(any(debug_assertions, test, feature = "testnet"))]
+fn scripted_session() -> (Session, mpsc::Sender<HookPayload>) {
+    let (output_tx, output) = mpsc::channel(64);
+    let (writer, mut echo) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        let mut bytes = vec![0; 4096];
+        loop {
+            match echo.read(&mut bytes).await {
+                Ok(0) | Err(_) => break,
+                Ok(count)
+                    if output_tx
+                        .send(bytes[..count].to_vec().into())
+                        .await
+                        .is_err() =>
+                {
+                    break;
+                }
+                Ok(_) => {}
+            }
+        }
+    });
+    let (hooks, hook_tx) = HookSource::channel(64);
+    let session = claude::pty::from_sources(Sources {
+        pty: PtySource {
+            output,
+            writer: Box::new(writer),
+            handle: None,
+            exit: Box::pin(std::future::pending()),
+        },
+        hooks,
+        transcript: TranscriptSource::live(),
+        version: claude::version::ClaudeVersion(semver::Version::new(0, 0, 0)),
+    });
+    (session, hook_tx)
+}
+
+impl Serialize for DebugView<'_, ClaudePtyBackend> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let runtime = self.inner.runtime.lock().expect("Claude runtime poisoned");
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("kind", "claude")?;
+        if let Some(session_id) = runtime.session_id {
+            map.serialize_entry("session_id", &session_id)?;
+        }
+        map.serialize_entry("readonly", &self.inner.readonly)?;
+        map.serialize_entry("has_pty", &runtime.pty.is_some())?;
+        map.serialize_entry("has_messaging_credentials", &runtime.messaging.is_some())?;
+        if self.verbose {
+            map.serialize_entry("structured_seq", &0u64)?;
+        }
+        map.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resume_args_drop_session_selectors() {
+        assert_eq!(
+            sanitize_resume_args(vec![
+                "--model".into(),
+                "sonnet".into(),
+                "--resume".into(),
+                "old".into(),
+                "--fork-session".into()
+            ]),
+            vec!["--model", "sonnet"]
+        );
+    }
+
+    #[tokio::test]
+    async fn injected_session_drives_structured_and_terminal_planes() {
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: None,
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Pty,
+            },
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        };
+        let backend = ClaudePtyBackend::scripted(
+            &req,
+            PathBuf::from("/tmp"),
+            ClaudeVersionCache::default(),
+            crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
+        );
+        assert!(matches!(
+            backend.plane(Protocol::TerminalV1),
+            Ok(Plane::Terminal(_))
+        ));
+        assert!(matches!(
+            backend.plane(Protocol::ClaudePtyTranscriptV1),
+            Ok(Plane::Structured { .. })
+        ));
+        assert!(matches!(
+            backend.plane(Protocol::ClaudeSdkV1),
+            Err(ProtocolError::NotExposed { .. })
+        ));
+    }
+}

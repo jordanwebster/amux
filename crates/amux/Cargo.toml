@@ -6,13 +6,12 @@ description = "Agent multiplexer - library for building amux clients and servers
 
 [features]
 default = ["local-agents"]
-# Local agent hosting: PTY-backed Claude/test-agent process spawning (pulls
-# `portable-pty`, a native dependency) and the Codex app-server client
+# Local agent hosting: provider-backed Claude/test-agent PTY sessions and the Codex app-server client
 # (`codex`, which brings its WebSocket stack). Default-on for the desktop daemon;
 # embedded mobile clients build with `default-features = false`. The daemonish
 # behaviors (direct reachability, self-update poll) are NOT gated here — they
 # are a runtime builder/config choice, independent of this feature.
-local-agents = ["dep:pty-host", "dep:codex"]
+local-agents = ["claude/pty", "dep:pty-host", "dep:codex"]
 # Compiles the in-process spec-test harness (`amux::testnet`) into the
 # library. Test-only; never enable in production builds.
 testnet = ["dep:tempfile", "local-agents"]

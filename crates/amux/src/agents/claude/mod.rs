@@ -1,12 +1,14 @@
-//! Claude agent runtime: session lifecycle, hook handling, and transcript tailing.
+//! Thin host adapter over the canonical Claude provider crate.
 
 pub mod io;
 #[cfg(feature = "local-agents")]
-mod session;
+mod delivery;
 #[cfg(feature = "local-agents")]
-mod transcript_ingest;
+mod pty_backend;
+#[cfg(feature = "local-agents")]
+mod suspend;
 
 #[cfg(feature = "local-agents")]
 pub(crate) use claude::version::VersionCache as ClaudeVersionCache;
 #[cfg(feature = "local-agents")]
-pub(crate) use session::ClaudeSession;
+pub(crate) use pty_backend::ClaudePtyBackend as ClaudeSession;

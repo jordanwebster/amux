@@ -81,6 +81,7 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
+ "claude",
  "crossterm",
  "libc",
  "qrcode",
