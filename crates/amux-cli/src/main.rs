@@ -1522,7 +1522,7 @@ mod tests {
                 .command,
             Some(Commands::Keymap {
                 command: KeymapCommands::Add { file }
-            }) if file == PathBuf::from("custom.toml")
+            }) if file.as_os_str() == "custom.toml"
         ));
         assert!(matches!(
             Cli::try_parse_from(["amux", "keymap", "remove", "custom"])

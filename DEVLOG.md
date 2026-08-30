@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Kept resumed Claude PTY construction behind agent
+dependencies.** The resume path now accepts the canonical dependency bundle
+that its caller already owns, rather than expanding runtime, version, launch
+and keymap services into parallel arguments. This keeps fresh and resumed PTY
+sessions wired from the same dependency source and restores warning-clean
+workspace linting.
+
+---
+
 2026-08-30 — **Made the workspace test task explicit offline.** The ordinary
 task still runs every workspace target, while the credential-empty sandbox
 first compiles every target and then runs all tests except ten cases whose

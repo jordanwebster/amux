@@ -97,6 +97,14 @@ mod tests {
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
+    type ManagedSession = (
+        ClaudePtyBackend,
+        mpsc::Sender<claude::hooks::HookPayload>,
+        mpsc::Sender<(PathBuf, claude::transcript::TranscriptRow)>,
+        tokio::io::DuplexStream,
+        tokio::task::JoinHandle<()>,
+    );
+
     fn envelope(id: Uuid, recipient: Uuid) -> Envelope {
         Envelope {
             id,
@@ -116,13 +124,7 @@ mod tests {
         }
     }
 
-    fn managed_session() -> (
-        ClaudePtyBackend,
-        mpsc::Sender<claude::hooks::HookPayload>,
-        mpsc::Sender<(PathBuf, claude::transcript::TranscriptRow)>,
-        tokio::io::DuplexStream,
-        tokio::task::JoinHandle<()>,
-    ) {
+    fn managed_session() -> ManagedSession {
         let (_output_tx, output) = mpsc::channel(1);
         let (writer, peer) = tokio::io::duplex(64 * 1024);
         let (hooks, hook_tx) = claude::pty::HookSource::channel(8);

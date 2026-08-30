@@ -465,10 +465,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                     name_source.into(),
                     session_id,
                     created_at,
-                    deps.runtime_dir.clone(),
-                    deps.claude_version_cache.clone(),
-                    deps.mcp_launch_route.clone(),
-                    deps.claude_user_keymap_dir.clone(),
+                    deps,
                 )),
                 ClaudeDriver::Sdk => Box::new(ClaudeSdkBackend::from_suspended(
                     &req,

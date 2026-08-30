@@ -22,7 +22,7 @@ use super::io as pty_io;
 use super::suspend::{ClaudeSuspendRecord, sanitize_resume_args};
 use crate::agents::claude::ClaudeVersionCache;
 use crate::agents::{
-    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, AgentRecord, AgentType,
+    AgentBackend, AgentDeliveryTarget, AgentDeps, AgentKind, AgentParent, AgentRecord, AgentType,
     ClaudeDriver, CreateAgentRequest, HookEnvironment, HookError, HookOutcome,
     LocalAgentNameSource, McpLaunchRoute, Plane, Protocol, PtyHandle, RawPtyTarget, SessionEvent,
     SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent, StructuredLogSource,
@@ -122,17 +122,14 @@ impl ClaudePtyBackend {
         name_source: LocalAgentNameSource,
         session_id: Uuid,
         created_at: DateTime<Utc>,
-        runtime_dir: PathBuf,
-        version_cache: ClaudeVersionCache,
-        launch_route: McpLaunchRoute,
-        user_keymap_dir: PathBuf,
+        deps: &AgentDeps,
     ) -> Self {
         let mut backend = Self::new(
             req,
-            runtime_dir,
-            version_cache,
-            launch_route,
-            user_keymap_dir,
+            deps.runtime_dir.clone(),
+            deps.claude_version_cache.clone(),
+            deps.mcp_launch_route.clone(),
+            deps.claude_user_keymap_dir.clone(),
         );
         backend.args = sanitize_resume_args(backend.args);
         backend.name_source = name_source;
@@ -1045,6 +1042,13 @@ impl Serialize for DebugView<'_, ClaudePtyBackend> {
 mod tests {
     use super::*;
 
+    type InjectedBackend = (
+        ClaudePtyBackend,
+        mpsc::Sender<HookPayload>,
+        mpsc::Sender<(PathBuf, claude::transcript::TranscriptRow)>,
+        tokio::task::JoinHandle<()>,
+    );
+
     fn hook_payload(name: &str, session_id: Uuid, path: &str) -> HookPayload {
         let raw = json!({
             "hook_event_name": name,
@@ -1057,12 +1061,7 @@ mod tests {
         claude::hooks::parse(raw.to_string().as_bytes()).unwrap()
     }
 
-    fn injected_backend() -> (
-        ClaudePtyBackend,
-        mpsc::Sender<HookPayload>,
-        mpsc::Sender<(PathBuf, claude::transcript::TranscriptRow)>,
-        tokio::task::JoinHandle<()>,
-    ) {
+    fn injected_backend() -> InjectedBackend {
         let (_output_tx, output) = mpsc::channel(1);
         let (hooks, hook_tx) = HookSource::channel(8);
         let (transcript, row_tx, _paths) = TranscriptSource::channel(8);
