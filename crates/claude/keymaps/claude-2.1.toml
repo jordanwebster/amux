@@ -1,0 +1,60 @@
+name = "claude-2.1"
+applies_to = ">=2.1.228, <2.2.0"
+verified = []
+programs = {}
+
+[provenance]
+recorded_version = "2.1.228"
+model = "haiku"
+dates = ["2026-08-11", "2026-08-12"]
+specs = [
+    "prompt_multiline",
+    "permission",
+    "permission_session",
+    "permission_deny_feedback",
+    "question_single",
+    "question_tabs",
+    "question_other_single",
+    "question_multi",
+    "question_mixed",
+    "plan_auto",
+    "plan_approve",
+    "plan_reject",
+    "interrupt",
+    "mode_cycle",
+]
+
+[keys]
+escape = [27]
+enter = [13]
+tab = [9]
+space = [32]
+down = [27, 91, 66]
+shift_tab = [27, 91, 90]
+paste_begin = [27, 91, 50, 48, 48, 126]
+paste_end = [27, 91, 50, 48, 49, 126]
+
+[delays]
+after_paste = 400
+after_toggle = 400
+after_move = 300
+after_tab = 800
+after_editor_open = 800
+before_submit = 400
+after_review_open = 1000
+after_deny = 1500
+after_menu_text_open = 800
+after_other_save = 600
+
+[menus.permission.entries]
+allow_once = 1
+allow_scoped = 2
+deny = 3
+
+[menus.plan.entries]
+approve_auto = 1
+approve_manual = 2
+request_changes = 3
+
+[verified_shapes.permission_menu]
+permission_suggestions = [1]

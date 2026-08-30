@@ -5431,3 +5431,9 @@ input-resolved Write permission with observed tool output, interruption,
 authenticated delivery from a second agent, and suspend plus resume across a
 daemon restart. Its redacted `claude_sdk_v1` recording preserves the recipient
 message row and the resumed session's explicit gap-to-ready boundary.
+
+2026-08-30 — **Moved Claude PTY key tables into a versioned keymap.** The
+provider crate now strictly loads the closed key, delay, menu, shape, and
+program vocabularies from TOML. The baked Claude 2.1 data preserves the live
+verified encoder tables behind a bounded version range, while user files are
+prevented from claiming capture verification provenance.

@@ -5,7 +5,7 @@ edition.workspace = true
 
 [features]
 default = []
-pty = ["dep:bytes", "dep:pty-host", "dep:replay-support"]
+pty = ["dep:bytes", "dep:pty-host", "dep:replay-support", "dep:toml"]
 specs = ["dep:chrono", "dep:replay-support", "dep:tempfile"]
 
 [dependencies]
@@ -23,6 +23,7 @@ thiserror.workspace = true
 tempfile = { workspace = true, optional = true }
 tokio.workspace = true
 tokio-util.workspace = true
+toml = { workspace = true, optional = true }
 uuid.workspace = true
 
 [dev-dependencies]
