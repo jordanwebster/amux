@@ -284,6 +284,7 @@ pub(crate) fn mcp_launch_route_for_tests(host_id: Uuid) -> McpLaunchRoute {
 #[derive(Clone)]
 pub(crate) struct AgentDeps {
     pub(crate) runtime_dir: std::path::PathBuf,
+    pub(crate) claude_user_keymap_dir: std::path::PathBuf,
     pub(crate) claude_version_cache: ClaudeVersionCache,
     #[cfg(unix)]
     pub(crate) codex_client: Arc<CodexClient>,
@@ -295,11 +296,13 @@ impl AgentDeps {
         runtime_dir: std::path::PathBuf,
         codex_private_socket: std::path::PathBuf,
         mcp_launch_route: McpLaunchRoute,
+        claude_user_keymap_dir: std::path::PathBuf,
     ) -> Self {
         #[cfg(not(unix))]
         let _ = codex_private_socket;
         Self {
             runtime_dir,
+            claude_user_keymap_dir,
             claude_version_cache: ClaudeVersionCache::default(),
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
@@ -405,6 +408,7 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
             deps.runtime_dir.clone(),
             deps.claude_version_cache.clone(),
             deps.mcp_launch_route.clone(),
+            deps.claude_user_keymap_dir.clone(),
         ))),
         AgentType::Claude {
             driver: ClaudeDriver::Sdk,
@@ -464,6 +468,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                     deps.runtime_dir.clone(),
                     deps.claude_version_cache.clone(),
                     deps.mcp_launch_route.clone(),
+                    deps.claude_user_keymap_dir.clone(),
                 )),
                 ClaudeDriver::Sdk => Box::new(ClaudeSdkBackend::from_suspended(
                     &req,
@@ -666,6 +671,7 @@ mod tests {
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
             mcp_launch_route_for_tests(Uuid::new_v4()),
+            std::env::temp_dir().join("amux-test-keymaps"),
         );
         let session = agent_from_suspended(sa, &deps);
 
@@ -708,6 +714,7 @@ mod tests {
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
             mcp_launch_route_for_tests(Uuid::new_v4()),
+            std::env::temp_dir().join("amux-test-keymaps"),
         );
 
         let session = agent_from_suspended(suspended, &deps);
@@ -753,6 +760,7 @@ mod tests {
             std::env::temp_dir(),
             ClaudeVersionCache::default(),
             mcp_launch_route_for_tests(Uuid::new_v4()),
+            std::env::temp_dir().join("amux-test-keymaps"),
         );
         session.set_session_id_for_tests(Uuid::new_v4());
 

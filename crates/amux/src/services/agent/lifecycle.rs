@@ -668,6 +668,7 @@ mod tests {
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
             crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
+            std::env::temp_dir().join("amux-test-keymaps"),
         ))));
         let (event_tx, _event_rx) = mpsc::channel(16);
         let host_id = Uuid::new_v4();
@@ -717,6 +718,7 @@ mod tests {
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
             crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
+            std::env::temp_dir().join("amux-test-keymaps"),
         ))));
         let host_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();

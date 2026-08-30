@@ -7,6 +7,7 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use claude::hooks::{HookPayload, MessagingCredentials};
+use claude::pty::keymap::{BAKED_KEYMAPS, KeymapSources};
 use claude::pty::{Control, HookSource, PtyEvent, PtySource, Session, Sources, TranscriptSource};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
@@ -57,6 +58,7 @@ pub(crate) struct ClaudePtyBackend {
     args: Vec<String>,
     terminal_size: Option<TerminalSize>,
     runtime_dir: PathBuf,
+    keymaps: KeymapSources,
     version_cache: ClaudeVersionCache,
     launch_route: Option<McpLaunchRoute>,
     parent: Option<AgentParent>,
@@ -76,6 +78,7 @@ impl ClaudePtyBackend {
         runtime_dir: PathBuf,
         version_cache: ClaudeVersionCache,
         launch_route: McpLaunchRoute,
+        user_keymap_dir: PathBuf,
     ) -> Self {
         let driver = match req.agent_type {
             AgentType::Claude { driver } => driver,
@@ -92,6 +95,10 @@ impl ClaudePtyBackend {
             args: req.args.clone(),
             terminal_size: req.terminal_size,
             runtime_dir,
+            keymaps: KeymapSources {
+                baked: BAKED_KEYMAPS,
+                user_dir: Some(user_keymap_dir),
+            },
             version_cache,
             launch_route: Some(launch_route),
             parent: req.parent,
@@ -118,8 +125,15 @@ impl ClaudePtyBackend {
         runtime_dir: PathBuf,
         version_cache: ClaudeVersionCache,
         launch_route: McpLaunchRoute,
+        user_keymap_dir: PathBuf,
     ) -> Self {
-        let mut backend = Self::new(req, runtime_dir, version_cache, launch_route);
+        let mut backend = Self::new(
+            req,
+            runtime_dir,
+            version_cache,
+            launch_route,
+            user_keymap_dir,
+        );
         backend.args = sanitize_resume_args(backend.args);
         backend.name_source = name_source;
         backend.created_at = created_at;
@@ -149,6 +163,7 @@ impl ClaudePtyBackend {
             args: record.args,
             terminal_size: None,
             runtime_dir: std::env::temp_dir(),
+            keymaps: KeymapSources::default(),
             version_cache: ClaudeVersionCache::default(),
             launch_route: None,
             parent: record.parent,
@@ -204,8 +219,15 @@ impl ClaudePtyBackend {
         runtime_dir: PathBuf,
         version_cache: ClaudeVersionCache,
         launch_route: McpLaunchRoute,
+        user_keymap_dir: PathBuf,
     ) -> Self {
-        Self::scripted(req, runtime_dir, version_cache, launch_route)
+        Self::scripted(
+            req,
+            runtime_dir,
+            version_cache,
+            launch_route,
+            user_keymap_dir,
+        )
     }
 
     #[cfg(feature = "testnet")]
@@ -214,8 +236,15 @@ impl ClaudePtyBackend {
         runtime_dir: PathBuf,
         version_cache: ClaudeVersionCache,
         launch_route: McpLaunchRoute,
+        user_keymap_dir: PathBuf,
     ) -> Self {
-        Self::scripted(req, runtime_dir, version_cache, launch_route)
+        Self::scripted(
+            req,
+            runtime_dir,
+            version_cache,
+            launch_route,
+            user_keymap_dir,
+        )
     }
 
     #[cfg(any(debug_assertions, test, feature = "testnet"))]
@@ -224,9 +253,16 @@ impl ClaudePtyBackend {
         runtime_dir: PathBuf,
         version_cache: ClaudeVersionCache,
         launch_route: McpLaunchRoute,
+        user_keymap_dir: PathBuf,
     ) -> Self {
-        let (session, hook_tx) = scripted_session();
-        let mut backend = Self::new(req, runtime_dir, version_cache, launch_route);
+        let mut backend = Self::new(
+            req,
+            runtime_dir,
+            version_cache,
+            launch_route,
+            user_keymap_dir,
+        );
+        let (session, hook_tx) = scripted_session(&backend.keymaps);
         backend.injected = Some(session);
         backend
             .runtime
@@ -546,7 +582,7 @@ impl AgentBackend for ClaudePtyBackend {
         let size = self.terminal_size.unwrap_or_default();
         let session = claude::pty::spawn_with_version(
             &launch,
-            &claude::pty::keymap::KeymapSources::default(),
+            &self.keymaps,
             pty_host::PtySize {
                 rows: size.rows,
                 cols: size.cols,
@@ -937,7 +973,7 @@ fn external_session() -> (Session, mpsc::Sender<HookPayload>) {
 }
 
 #[cfg(any(debug_assertions, test, feature = "testnet"))]
-fn scripted_session() -> (Session, mpsc::Sender<HookPayload>) {
+fn scripted_session(keymaps: &KeymapSources) -> (Session, mpsc::Sender<HookPayload>) {
     let (output_tx, output) = mpsc::channel(64);
     let (writer, mut echo) = tokio::io::duplex(64 * 1024);
     tokio::spawn(async move {
@@ -968,9 +1004,9 @@ fn scripted_session() -> (Session, mpsc::Sender<HookPayload>) {
             },
             hooks,
             transcript: TranscriptSource::live(),
-            version: claude::version::ClaudeVersion(semver::Version::new(0, 0, 0)),
+            version: claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
         },
-        &claude::pty::keymap::KeymapSources::default(),
+        keymaps,
     );
     (session, hook_tx)
 }
@@ -1106,6 +1142,7 @@ mod tests {
             PathBuf::from("/tmp"),
             ClaudeVersionCache::default(),
             crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
+            PathBuf::from("/tmp/amux-test-keymaps"),
         );
         assert!(matches!(
             backend.plane(Protocol::TerminalV1),
@@ -1162,6 +1199,82 @@ mod tests {
         assert_eq!(result["intent"]["text"], "hello");
         assert_eq!(result["program"], "prompt");
         assert!(result["bytes_written"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn managed_session_resolves_the_user_keymap_carried_by_agent_deps() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let user_dir = crate::keymap_dir(data_dir.path());
+        std::fs::create_dir_all(&user_dir).unwrap();
+        let user_file = user_dir.join("claude-2.1.toml");
+        std::fs::write(
+            &user_file,
+            BAKED_KEYMAPS[0]
+                .1
+                .replace("after_paste = 400", "after_paste = 777"),
+        )
+        .unwrap();
+
+        let deps = crate::agents::AgentDeps::new(
+            data_dir.path().join("runtime"),
+            data_dir.path().join("codex.sock"),
+            crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
+            user_dir.clone(),
+        );
+        let sources = KeymapSources {
+            baked: BAKED_KEYMAPS,
+            user_dir: Some(deps.claude_user_keymap_dir.clone()),
+        };
+        let expected = claude::pty::keymap::resolve(
+            &sources,
+            &claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
+        )
+        .unwrap();
+        let baked = claude::pty::keymap::resolve(
+            &KeymapSources::default(),
+            &claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
+        )
+        .unwrap();
+        assert_ne!(
+            expected.keymap.digest, baked.keymap.digest,
+            "the installed delay change must produce a distinct identity"
+        );
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: Some("user-keymap".to_string()),
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Pty,
+            },
+            working_dir: data_dir.path().to_path_buf(),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        };
+        let backend = ClaudePtyBackend::scripted(
+            &req,
+            deps.runtime_dir,
+            deps.claude_version_cache,
+            deps.mcp_launch_route,
+            deps.claude_user_keymap_dir,
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while backend.log.current_seq().await < 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("initial user keymap row was not ingested");
+        let (mut replay, _) = backend.log.subscribe_with_query(None).await.unwrap();
+        let row = replay.read().await.unwrap().payload;
+
+        assert_eq!(row["type"], "amux.claude.keymap");
+        assert_eq!(row["keymap"]["digest"], expected.keymap.digest);
+        assert_eq!(row["keymap"]["source"]["source"], "user");
+        assert_eq!(row["keymap"]["source"]["path"].as_str(), user_file.to_str());
+        assert_eq!(row["basis"]["basis"], "in_range");
     }
 
     #[tokio::test(start_paused = true)]

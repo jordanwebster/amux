@@ -725,11 +725,10 @@ pub(super) async fn open_in_process_protocol_plane(
                 message: error.to_string(),
             }
         })?;
-    let host = PtyAgentHost::new_with_mcp_launch_route(route).map_err(|error| {
-        ProtocolError::ServerError {
+    let host = PtyAgentHost::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir))
+        .map_err(|error| ProtocolError::ServerError {
             message: error.to_string(),
-        }
-    })?;
+        })?;
     let agent_id = Uuid::new_v4();
     let agent_type = match kind {
         crate::agents::AgentKind::Claude { driver } => AgentType::Claude { driver },
@@ -764,6 +763,7 @@ pub(super) async fn open_in_process_protocol_plane(
                 deps.runtime_dir.clone(),
                 deps.claude_version_cache.clone(),
                 deps.mcp_launch_route.clone(),
+                deps.claude_user_keymap_dir.clone(),
             );
             Box::new(session)
         }
@@ -815,11 +815,10 @@ pub(super) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
             message: error.to_string(),
         }
     })?;
-    let host = PtyAgentHost::new_with_mcp_launch_route(route).map_err(|error| {
-        ProtocolError::ServerError {
+    let host = PtyAgentHost::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir))
+        .map_err(|error| ProtocolError::ServerError {
             message: error.to_string(),
-        }
-    })?;
+        })?;
     let request = CreateAgentRequest {
         agent_id: Uuid::new_v4(),
         host_id: None,

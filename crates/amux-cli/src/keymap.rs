@@ -1,5 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use amux::keymap_dir;
 use anyhow::{Context, Result, anyhow};
 use claude::pty::keymap::{KeymapFile, KeymapSource, KeymapSources, available, load, resolve};
 use claude::version::{ClaudeVersion, probe_version};
@@ -20,10 +21,6 @@ pub async fn run(command: KeymapCommands, data_dir: &Path) -> Result<()> {
         KeymapCommands::Dir => println!("{}", keymap_dir(data_dir).display()),
     }
     Ok(())
-}
-
-fn keymap_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join("keymaps")
 }
 
 fn sources(data_dir: &Path) -> KeymapSources {
@@ -127,6 +124,8 @@ fn keymap_error(error: claude::pty::keymap::KeymapError) -> anyhow::Error {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     const BAKED: &str = claude::pty::keymap::BAKED_KEYMAPS[0].1;
@@ -168,7 +167,10 @@ mod tests {
         assert!(added.contains(&installed.display().to_string()));
         assert!(installed.is_file());
         let output = list_output(dir.path(), &"2.1.251".parse().unwrap()).unwrap();
-        assert!(output.contains("user:"));
+        assert!(output.contains(&format!(
+            "claude-2.1\tuser:{}\t>=2.1.228, <2.2.0\tInRange",
+            installed.display()
+        )));
         assert!(
             show_keymap(dir.path(), "claude-2.1")
                 .unwrap()

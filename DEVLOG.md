@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Hosted Claude sessions use installed user keymaps.** The daemon
+now carries the configured data directory's keymap path into each PTY backend,
+including resumed and testnet sessions. The CLI and daemon share one canonical
+path helper, so `amux keymap` source and basis output describes the same file
+whose digest appears in the session's keymap row.
+
+---
+
 2026-08-30 — **Claude keymap metadata stays outside the chat transcript.**
 The UI now folds keymap-selection and semantic-input result rows as daemon
 control facts. They add no unrecognized feed entries and do not make a fresh

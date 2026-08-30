@@ -217,6 +217,7 @@ mod tests {
             PathBuf::from("/tmp"),
             crate::agents::claude::ClaudeVersionCache::default(),
             crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
+            PathBuf::from("/tmp/amux-test-keymaps"),
         );
         let envelope = crate::envelope::Envelope {
             id: Uuid::new_v4(),
