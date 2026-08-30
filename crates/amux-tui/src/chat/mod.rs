@@ -529,11 +529,7 @@ impl<'m> MessageView<'m> {
     }
 
     pub(crate) fn sender(&self, from: &str) -> String {
-        sender_marker(
-            self.model,
-            self.agent,
-            self.model.agent_message_sender(from),
-        )
+        sender_marker(self.model, self.agent, Model::agent_message_sender(from))
     }
 
     /// The rows a message's body makes (U4). An ordinary message shows

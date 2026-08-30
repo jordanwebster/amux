@@ -462,8 +462,8 @@ impl AskContext {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AskAction {
-    /// Retained verbatim for Answer paths that can round-trip opaque choices;
-    /// renderers use only `meaning`.
+    /// Retained as the opaque provider fact for dumps and agreement checks;
+    /// renderers and answer dispatch use only typed `meaning`.
     pub wire: Value,
     pub meaning: AskActionMeaning,
 }
@@ -481,9 +481,10 @@ pub enum AskActionMeaning {
         amendment: NetworkPolicyAmendment,
         proposed: bool,
     },
+    EmptyObject,
     UnknownObject {
         kind: String,
-        scalar_detail: String,
+        scalar_details: Vec<String>,
     },
     UnknownScalar {
         detail: String,
@@ -496,6 +497,7 @@ impl AskAction {
             AskActionMeaning::Scalar { decision } => Some(decision),
             AskActionMeaning::AcceptWithExecpolicyAmendment { .. }
             | AskActionMeaning::ApplyNetworkPolicyAmendment { .. }
+            | AskActionMeaning::EmptyObject
             | AskActionMeaning::UnknownObject { .. }
             | AskActionMeaning::UnknownScalar { .. } => None,
         }
@@ -513,14 +515,11 @@ fn classify_ask_action(wire: &Value, context: &AskContext) -> AskActionMeaning {
     }
     let Some(object) = wire.as_object() else {
         return AskActionMeaning::UnknownScalar {
-            detail: scalar_detail(wire),
+            detail: scalar_details(wire).join(" · "),
         };
     };
     let Some((kind, body)) = object.iter().next() else {
-        return AskActionMeaning::UnknownObject {
-            kind: String::new(),
-            scalar_detail: String::new(),
-        };
+        return AskActionMeaning::EmptyObject;
     };
     if object.len() == 1 {
         match kind.as_str() {
@@ -536,17 +535,32 @@ fn classify_ask_action(wire: &Value, context: &AskContext) -> AskActionMeaning {
                 return AskActionMeaning::AcceptWithExecpolicyAmendment { matches_proposal };
             }
             "applyNetworkPolicyAmendment" => {
-                if let Some(amendment) = network_policy_amendment(body) {
-                    let proposed = match context {
-                        AskContext::Command {
-                            proposed_network_policy_amendments,
-                            ..
-                        } => proposed_network_policy_amendments.contains(&amendment),
-                        _ => false,
+                let amendment = network_policy_amendment(body);
+                if let AskContext::Command {
+                    proposed_network_policy_amendments,
+                    ..
+                } = context
+                {
+                    if let Some(amendment) = amendment.as_ref() {
+                        let proposed = proposed_network_policy_amendments.contains(amendment);
+                        return AskActionMeaning::ApplyNetworkPolicyAmendment {
+                            amendment: amendment.clone(),
+                            proposed,
+                        };
+                    }
+                    return AskActionMeaning::UnknownObject {
+                        kind: sanitize_decision_text(kind),
+                        scalar_details: Vec::new(),
                     };
-                    return AskActionMeaning::ApplyNetworkPolicyAmendment {
-                        amendment,
-                        proposed,
+                }
+                if let Some(amendment) = amendment {
+                    let action = match amendment.action {
+                        NetworkPolicyAction::Allow => "allow",
+                        NetworkPolicyAction::Deny => "deny",
+                    };
+                    return AskActionMeaning::UnknownObject {
+                        kind: sanitize_decision_text(kind),
+                        scalar_details: vec![amendment.host, action.to_string()],
                     };
                 }
             }
@@ -555,7 +569,7 @@ fn classify_ask_action(wire: &Value, context: &AskContext) -> AskActionMeaning {
     }
     AskActionMeaning::UnknownObject {
         kind: sanitize_decision_text(kind),
-        scalar_detail: scalar_detail(body),
+        scalar_details: scalar_details(body),
     }
 }
 
@@ -580,7 +594,7 @@ fn network_policy_amendment(value: &Value) -> Option<NetworkPolicyAmendment> {
     Some(NetworkPolicyAmendment { host, action })
 }
 
-fn scalar_detail(value: &Value) -> String {
+fn scalar_details(value: &Value) -> Vec<String> {
     fn collect(value: &Value, scalars: &mut Vec<String>) {
         match value {
             Value::Null => {}
@@ -607,7 +621,7 @@ fn scalar_detail(value: &Value) -> String {
 
     let mut scalars = Vec::new();
     collect(value, &mut scalars);
-    sanitize_decision_text(&scalars.join(" · "))
+    scalars
 }
 
 fn sanitize_decision_text(value: &str) -> String {
@@ -1550,6 +1564,46 @@ mod tests {
         let kinds = kinds(&layer);
         assert!(kinds.contains(&"codex-duplicate-ask"));
         assert!(kinds.contains(&"codex-duplicate-input"));
+    }
+
+    #[test]
+    fn network_amendment_edge_cases_preserve_contextual_fallback_facts() {
+        let command = AskContext::Command {
+            item_id: "command".to_string(),
+            command: "cargo test".to_string(),
+            cwd: None,
+            reason: None,
+            proposed_execpolicy_amendment: None,
+            proposed_network_policy_amendments: Vec::new(),
+        };
+        let malformed = json!({
+            "applyNetworkPolicyAmendment": {"network_policy_amendment": {"host": 7}}
+        });
+        assert_eq!(
+            classify_ask_action(&malformed, &command),
+            AskActionMeaning::UnknownObject {
+                kind: "applyNetworkPolicyAmendment".to_string(),
+                scalar_details: Vec::new(),
+            }
+        );
+
+        let file_change = AskContext::FileChange {
+            item_id: "patch".to_string(),
+            reason: None,
+            changes: Vec::new(),
+        };
+        let parseable = json!({
+            "applyNetworkPolicyAmendment": {
+                "network_policy_amendment": {"host": "crates.io", "action": "allow"}
+            }
+        });
+        assert_eq!(
+            classify_ask_action(&parseable, &file_change),
+            AskActionMeaning::UnknownObject {
+                kind: "applyNetworkPolicyAmendment".to_string(),
+                scalar_details: vec!["crates.io".to_string(), "allow".to_string()],
+            }
+        );
     }
 
     #[test]

@@ -731,7 +731,7 @@ impl Model {
 
     /// Interpret the sender field from amux's own envelope vocabulary while
     /// retaining malformed, human, and otherwise non-address values verbatim.
-    pub fn agent_message_sender<'a>(&self, from: &'a str) -> AgentMessageSender<'a> {
+    pub fn agent_message_sender(from: &str) -> AgentMessageSender<'_> {
         let Some((name, host)) = from.rsplit_once('/') else {
             return AgentMessageSender::Raw(from);
         };

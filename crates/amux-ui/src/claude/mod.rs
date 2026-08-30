@@ -463,7 +463,14 @@ fn count_exploration<'a>(
             }
         }
         ToolInvocation::Query { .. } => *searches += 1,
-        _ => unreachable!("only exploration invocations are counted"),
+        ToolInvocation::Edit { .. }
+        | ToolInvocation::Write { .. }
+        | ToolInvocation::Bash { .. }
+        | ToolInvocation::AmuxSend { .. }
+        | ToolInvocation::Task { .. }
+        | ToolInvocation::Question { .. }
+        | ToolInvocation::Plan { .. }
+        | ToolInvocation::Other => {}
     }
 }
 

@@ -1265,23 +1265,20 @@ fn decision_label(meaning: &AskActionMeaning) -> String {
         AskActionMeaning::ApplyNetworkPolicyAmendment {
             proposed: false, ..
         } => "applyNetworkPolicyAmendment".to_string(),
+        AskActionMeaning::EmptyObject => "unavailable choice".to_string(),
         AskActionMeaning::UnknownObject {
             kind,
-            scalar_detail,
+            scalar_details,
         } => {
-            if kind.is_empty() {
-                return "unavailable choice".to_string();
-            }
-            let kind = bounded_label_segment(&sanitize_label_text(kind), DECISION_KIND_MAX);
-            let detail =
-                bounded_label_segment(&sanitize_label_text(scalar_detail), DECISION_DETAIL_MAX);
+            let kind = bounded_label_segment(kind, DECISION_KIND_MAX);
+            let detail = bounded_label_segment(&scalar_details.join(" · "), DECISION_DETAIL_MAX);
             if detail.is_empty() {
                 kind
             } else {
                 format!("{kind} · {detail}")
             }
         }
-        AskActionMeaning::UnknownScalar { detail } => sanitize_label_text(detail),
+        AskActionMeaning::UnknownScalar { detail } => detail.clone(),
     };
     bounded_decision_label(&label)
 }
@@ -1468,9 +1465,10 @@ mod tests {
 
         let fallback = decision_label(&AskActionMeaning::UnknownObject {
             kind: "future Policy".to_string(),
-            scalar_detail:
-                "deploy quoted value with a deliberately very long scalar explanation · 7"
-                    .to_string(),
+            scalar_details: vec![
+                "deploy quoted value with a deliberately very long scalar explanation".to_string(),
+                "7".to_string(),
+            ],
         });
         assert!(fallback.starts_with("future Policy · "));
         assert!(fallback.contains("deploy quoted value"));
@@ -1480,6 +1478,17 @@ mod tests {
             !fallback
                 .chars()
                 .any(|character| matches!(character, '{' | '}' | '"'))
+        );
+        assert_eq!(
+            decision_label(&AskActionMeaning::UnknownObject {
+                kind: "applyNetworkPolicyAmendment".to_string(),
+                scalar_details: vec!["crates.io".to_string(), "allow".to_string()],
+            }),
+            "applyNetworkPolicyAme… · crates.io · allow"
+        );
+        assert_eq!(
+            decision_label(&AskActionMeaning::EmptyObject),
+            "unavailable choice"
         );
     }
 

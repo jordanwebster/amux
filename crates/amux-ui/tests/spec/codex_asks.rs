@@ -209,7 +209,7 @@ fn unknown_object_decisions_retain_only_terminal_safe_meaning_beside_raw_wire() 
         action.meaning,
         AskActionMeaning::UnknownObject {
             kind: "future Policy".to_string(),
-            scalar_detail: "7 · deploy quoted value with care".to_string(),
+            scalar_details: vec!["7".to_string(), "deploy quoted value with care".to_string(),],
         }
     );
     assert_eq!(
@@ -219,6 +219,31 @@ fn unknown_object_decisions_retain_only_terminal_safe_meaning_beside_raw_wire() 
         },"attempt":7}}),
         "the opaque answer payload remains available without being a renderer surface"
     );
+}
+
+#[test]
+fn every_scalar_action_meaning_agrees_with_its_wire_choice() {
+    let mut rows = ask_rows(json!(7));
+    *rows.last_mut().expect("approval") = json!({
+        "type":"amux.codex_approval_required",
+        "request_id":7,
+        "availableDecisions":[
+            "accept",
+            "acceptForSession",
+            "decline",
+            "cancel",
+            {"futureChoice":{"detail":"visible but disabled"}}
+        ]
+    });
+    let model = model(rows);
+    let actions = &codex_layer(&model, AGENT).ask_head().expect("ask").actions;
+
+    assert!(actions.iter().all(|action| match &action.meaning {
+        AskActionMeaning::Scalar { decision } => {
+            action.wire == json!(decision.wire_value())
+        }
+        _ => true,
+    }));
 }
 
 #[test]

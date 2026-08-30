@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Made deliberate typed splits prove their agreement.** Codex
+approval specs now verify every scalar meaning maps back to its exact wire
+choice. Unknown object details remain typed as separate sanitized scalars, an
+empty object has its own meaning, and network-amendment fallbacks preserve the
+provider's context-sensitive labels. Exploration counting is exhaustive
+without a latent panic, and the sender projection no longer pretends to read
+model state.
+
 2026-08-31 — **Made wheel hit-testing consume the painted frame cache.** The
 cached feed metrics now carry both following and paused geometries derived from
 the same frame parts. Mouse wheel events reuse that layout and its row metrics,
