@@ -29,11 +29,12 @@ esac
 
 cd "$repo_root"
 
-# Some developer checkouts configure a shared Cargo build directory that is
-# unavailable inside a sandbox. Evidence is self-contained, so keep its build
-# artifacts in this checkout unless the caller selected another target dir.
+# A developer's global CARGO_BUILD_BUILD_DIR may point outside this checkout,
+# where a restricted run cannot write. Evidence must be reproducible from a
+# clean checkout, so build artifacts stay local unless the caller chose a
+# target directory explicitly.
 unset CARGO_BUILD_BUILD_DIR
-: "${CARGO_TARGET_DIR:=$repo_root/target/autopilot}"
+: "${CARGO_TARGET_DIR:=$repo_root/target/tui-evidence}"
 export CARGO_TARGET_DIR
 
 shot() {
