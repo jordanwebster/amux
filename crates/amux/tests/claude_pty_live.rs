@@ -464,22 +464,45 @@ async fn wait_for_hook_ask(
     Ok((index, id))
 }
 
-async fn wait_for_question_ask(session: &CaptureSession, from: usize) -> Result<(usize, String)> {
+/// Claude Code can defer its assistant tool-use transcript row until the
+/// question menu is answered. The permission hook is therefore the live ask
+/// boundary; callers separately require the transcript row after answering.
+async fn wait_for_question_menu(session: &CaptureSession, from: usize) -> Result<(usize, String)> {
     let index = session
-        .wait_for_row(from, ASK_TIMEOUT, "AskUserQuestion transcript ask", |row| {
-            row.is_tool_use("AskUserQuestion")
-        })
-        .await?;
-    let rows = session.snapshot().await;
-    let id = rows[index - 1]
-        .tool_use_id("AskUserQuestion")
-        .ok_or_else(|| anyhow::anyhow!("AskUserQuestion transcript ask has no id"))?;
-    session
         .wait_for_row(from, ASK_TIMEOUT, "AskUserQuestion menu", |row| {
             row.is_permission_request_for("AskUserQuestion")
         })
         .await?;
+    let rows = session.snapshot().await;
+    let id = hook_ask_id(&rows[index - 1])
+        .ok_or_else(|| anyhow::anyhow!("AskUserQuestion menu has no semantic correlation id"))?;
     Ok((index, id))
+}
+
+async fn wait_for_question_transcript(session: &CaptureSession, from: usize) -> Result<usize> {
+    session
+        .wait_for_row(from, ASK_TIMEOUT, "AskUserQuestion transcript ask", |row| {
+            row.is_tool_use("AskUserQuestion")
+        })
+        .await
+}
+
+async fn wait_for_input_result(
+    session: &CaptureSession,
+    from: usize,
+    program: &str,
+) -> Result<usize> {
+    session
+        .wait_for_row(
+            from,
+            ASK_TIMEOUT,
+            &format!("{program} input result"),
+            |row| {
+                row.row_type() == "amux.claude.input_result"
+                    && row.json.get("program").and_then(serde_json::Value::as_str) == Some(program)
+            },
+        )
+        .await
 }
 
 fn tool_result_block<'a>(
@@ -1232,6 +1255,7 @@ async fn semantic_chat(
             },
         )
         .await?;
+    cursor = wait_for_input_result(&session, cursor, "permission_menu").await?;
     cursor = session.wait_for_turn_end(cursor, TURN_TIMEOUT).await?;
 
     session
@@ -1251,6 +1275,7 @@ async fn semantic_chat(
             },
         )
         .await?;
+    cursor = wait_for_input_result(&session, cursor, "permission_menu").await?;
     cursor = session.wait_for_turn_end(cursor, TURN_TIMEOUT).await?;
 
     session
@@ -1259,7 +1284,7 @@ async fn semantic_chat(
              Header: Color. Question: Which color? Options: Red, Blue. Then stop.",
         )
         .await?;
-    let (next, question_id) = wait_for_question_ask(&session, cursor).await?;
+    let (next, question_id) = wait_for_question_menu(&session, cursor).await?;
     cursor = next;
     tokio::time::sleep(MENU_SETTLE).await;
     session
@@ -1276,6 +1301,10 @@ async fn semantic_chat(
             },
         )
         .await?;
+    let transcript_cursor = wait_for_question_transcript(&session, cursor).await?;
+    cursor = wait_for_input_result(&session, cursor, "question_form")
+        .await?
+        .max(transcript_cursor);
     cursor = session.wait_for_turn_end(cursor, TURN_TIMEOUT).await?;
 
     session
@@ -1284,7 +1313,7 @@ async fn semantic_chat(
              Header: Tools. Question: Which tools? Options: Hammer, Saw, Drill. Then stop.",
         )
         .await?;
-    let (next, question_id) = wait_for_question_ask(&session, cursor).await?;
+    let (next, question_id) = wait_for_question_menu(&session, cursor).await?;
     cursor = next;
     tokio::time::sleep(MENU_SETTLE).await;
     session
@@ -1301,6 +1330,10 @@ async fn semantic_chat(
             },
         )
         .await?;
+    let transcript_cursor = wait_for_question_transcript(&session, cursor).await?;
+    cursor = wait_for_input_result(&session, cursor, "question_form")
+        .await?
+        .max(transcript_cursor);
     cursor = session.wait_for_turn_end(cursor, TURN_TIMEOUT).await?;
 
     session

@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **The live semantic chat follows Claude's question boundary.**
+Claude Code may expose an `AskUserQuestion` menu through its permission hook
+before persisting the corresponding assistant tool-use transcript row. The
+live suite now answers the hook-derived semantic ask first, then requires the
+deferred transcript row before continuing. Turn waits also begin after their
+semantic input-result rows, so deny-with-feedback cannot make the next prompt
+race an earlier tool-rejection turn end.
+
+---
+
 2026-08-30 — **Added a credential-empty offline workspace runner.** Commands
 can now be run with fresh home directories for Claude and Codex, Cargo's
 offline mode enabled, and outbound networking denied by the macOS sandbox.
