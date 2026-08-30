@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Derived Claude rows name the current verified keymap.** The
+chat-v1 fixtures were regenerated through the Claude PTY recordings after the
+probe updated the baked keymap's verification ledger. Their semantic keymap
+and input-result rows now carry that keymap's current digest, so replay through
+the daemon reproduces every checked-in fixture byte for byte again.
+
+---
+
 2026-08-30 — **The live semantic chat follows Claude's question boundary.**
 Claude Code may expose an `AskUserQuestion` menu through its permission hook
 before persisting the corresponding assistant tool-use transcript row. The
