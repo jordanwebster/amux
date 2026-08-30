@@ -13,9 +13,10 @@
 //! This module is part of the pure reducer core: no IO, no clocks, no
 //! randomness may be imported here.
 
-use crate::diff::{Document, Hunk, Numbering};
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
+
+use crate::diff::{Document, Hunk, Numbering};
 
 /// How many unchanged lines surround a change in the computed preview —
 /// jsdiff's own default, and what every observed `structuredPatch` uses.

@@ -542,10 +542,7 @@ fn conversation_chain(entries: &[Value]) -> Vec<&Value> {
     };
     let mut result = Vec::new();
     let mut visited = HashSet::new();
-    loop {
-        let Some(uuid) = string(current, "uuid") else {
-            break;
-        };
+    while let Some(uuid) = string(current, "uuid") {
         if !visited.insert(uuid) {
             break;
         }

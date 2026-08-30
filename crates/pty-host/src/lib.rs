@@ -169,7 +169,6 @@ impl PtyHandle {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
                 .kill()
-                .map_err(anyhow_to_io)
                 .map_err(PtyError::Io)
         }
     }

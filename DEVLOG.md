@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Restored a green CI run.** Four independent breakages had
+accumulated across the last three merges to main. The Claude history walk
+now expresses its parent chain as a `while let`, which the linter demands
+over a `loop` whose only exit is a leading `let`-else. The non-unix PTY
+signal path stopped funnelling `ChildKiller::kill` through the anyhow
+converter: that call already yields an `io::Error`, so only Windows ever
+saw the type mismatch. The CLI's two exhaustive matches over `AgentType`
+now carry the same `debug_assertions`-or-`test` gate as the `TestAgent`
+variant itself, so release builds no longer name a variant that does not
+exist there. Formatting was reapplied with nightly rustfmt, the version CI
+checks against. Nightly formatting, both clippy configurations, the
+workspace suite, the spec suite, a workspace release build, and a
+`pty-host` check against the Windows MSVC target all pass locally.
+
 2026-08-31 — **Merged provider crates through the typed UI boundary.** The
 provider side's closed agent kinds, semantic Claude intents, answer-module
 rename, provider-plane fixture paths, and SDK placeholder now apply to the

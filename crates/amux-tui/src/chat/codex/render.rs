@@ -25,10 +25,9 @@ use crate::chat::blocks::{
     paint_compaction_rule, paint_composer_block, paint_error, paint_header, paint_mcp_startup,
     paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
-use crate::chat::diff as diff_painter;
 use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
-use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph};
+use crate::chat::{FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph};
 use crate::markdown;
 use crate::render::{FrameContext, Theme, clip_to_width, pad_to, push_span, str_width};
 use crate::view::QuitGuard;
@@ -1434,8 +1433,9 @@ fn rule_row(width: usize, theme: Theme) -> Line<'static> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::*;
     use amux_ui::codex::McpServerStartup;
+
+    use super::*;
 
     #[test]
     fn typed_decision_labels_keep_terminal_wording_and_bounds() {

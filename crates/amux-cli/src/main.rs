@@ -1125,6 +1125,7 @@ fn configure_agent_type(
                 resume_thread_id,
             })
         }
+        #[cfg(any(debug_assertions, test))]
         AgentType::TestAgent { command } => {
             if driver.is_some() {
                 return Err(anyhow!("--driver requires agent type `claude`"));

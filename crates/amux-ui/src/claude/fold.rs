@@ -15,8 +15,6 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::diff::{Document, Hunk, Numbering};
-
 use super::artifact::{self, AskArtifact};
 use super::{
     ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, ApiErrorEntry, Ask, AskKind, AskState,
@@ -30,6 +28,7 @@ use super::{
     ToolInvocation, ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry,
     envelope,
 };
+use crate::diff::{Document, Hunk, Numbering};
 
 // --- tolerant readers -------------------------------------------------------
 

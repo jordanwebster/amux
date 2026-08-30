@@ -203,6 +203,7 @@ fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
             amux::AgentKind::Claude { driver: *driver }.exposes(amux::Protocol::TerminalV1)
         }
         AgentType::Codex { .. } => amux::AgentKind::Codex.exposes(amux::Protocol::TerminalV1),
+        #[cfg(any(debug_assertions, test))]
         AgentType::TestAgent { .. } => {
             amux::AgentKind::TestAgent.exposes(amux::Protocol::TerminalV1)
         }

@@ -25,10 +25,11 @@ use crate::chat::blocks::{
     paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude::{View, ask_ui, panel, reader};
-use crate::chat::diff as diff_painter;
 use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
-use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
+use crate::chat::{
+    FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph, subagent_marker,
+};
 use crate::render::{FrameContext, Theme, line_len, push_span, str_width};
 use crate::view::QuitGuard;
 
