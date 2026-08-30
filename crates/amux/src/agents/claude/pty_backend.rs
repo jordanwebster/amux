@@ -920,6 +920,78 @@ impl Serialize for DebugView<'_, ClaudePtyBackend> {
 mod tests {
     use super::*;
 
+    fn hook_payload(name: &str, session_id: Uuid, path: &str) -> HookPayload {
+        let raw = json!({
+            "hook_event_name": name,
+            "session_id": session_id,
+            "transcript_path": path,
+            "cwd": "/tmp",
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo one"},
+        });
+        claude::hooks::parse(raw.to_string().as_bytes()).unwrap()
+    }
+
+    fn injected_backend() -> (
+        ClaudePtyBackend,
+        mpsc::Sender<HookPayload>,
+        mpsc::Sender<(PathBuf, claude::transcript::TranscriptRow)>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (_output_tx, output) = mpsc::channel(1);
+        let (hooks, hook_tx) = HookSource::channel(8);
+        let (transcript, row_tx, _paths) = TranscriptSource::channel(8);
+        let session = claude::pty::from_sources(Sources {
+            pty: PtySource {
+                output,
+                writer: Box::new(tokio::io::sink()),
+                handle: None,
+                exit: Box::pin(std::future::pending()),
+            },
+            hooks,
+            transcript,
+            version: claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
+        });
+        let record = AgentRecord {
+            id: Uuid::new_v4(),
+            host_id: Uuid::new_v4(),
+            name: None,
+            command: "claude".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            kind: AgentKind::Claude {
+                driver: ClaudeDriver::Pty,
+            },
+            readonly: false,
+            args: Vec::new(),
+            created_at: Utc::now(),
+            parent: None,
+            working_on: None,
+        };
+        let mut backend = ClaudePtyBackend::with_session(record, session);
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let ingest = backend.start(&event_tx).unwrap();
+        (backend, hook_tx, row_tx, ingest)
+    }
+
+    async fn wait_for_session_id(backend: &ClaudePtyBackend, expected: Uuid) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if backend
+                    .runtime
+                    .lock()
+                    .expect("Claude runtime poisoned")
+                    .session_id
+                    == Some(expected)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("hook session id was not ingested");
+    }
+
     #[test]
     fn resume_args_drop_session_selectors() {
         assert_eq!(
@@ -967,5 +1039,107 @@ mod tests {
             backend.plane(Protocol::ClaudeSdkV1),
             Err(ProtocolError::NotExposed { .. })
         ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn duplicate_hook_is_suppressed_inside_window_and_admitted_afterward() {
+        let agent_id = Uuid::new_v4();
+        let runtime = Arc::new(Mutex::new(Runtime::default()));
+        let log = StructuredLogSource::new(8);
+        let ready = Arc::new(AtomicBool::new(false));
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let hook = hook_payload("PermissionRequest", Uuid::new_v4(), "/tmp/one");
+
+        ingest_hook(agent_id, &runtime, &log, &ready, &event_tx, hook.clone()).await;
+        ingest_hook(agent_id, &runtime, &log, &ready, &event_tx, hook.clone()).await;
+        assert_eq!(log.current_seq().await, 1);
+
+        tokio::time::advance(HOOK_DEDUPE_WINDOW + Duration::from_millis(1)).await;
+        ingest_hook(agent_id, &runtime, &log, &ready, &event_tx, hook).await;
+        assert_eq!(log.current_seq().await, 2);
+    }
+
+    #[tokio::test]
+    async fn external_readonly_backend_refuses_the_terminal_plane() {
+        let backend = ClaudePtyBackend::new_readonly(Uuid::new_v4(), PathBuf::from("/tmp"));
+
+        assert!(matches!(
+            backend.plane(Protocol::TerminalV1),
+            Err(ProtocolError::FailedPrecondition { message })
+                if message == "Claude PTY is not active"
+        ));
+        assert!(matches!(
+            backend.plane(Protocol::ClaudePtyTranscriptV1),
+            Ok(Plane::Structured { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn non_initial_relink_discards_previous_generation_rows() {
+        let (backend, hooks, rows, _ingest) = injected_backend();
+        let first_session = Uuid::new_v4();
+        hooks
+            .send(hook_payload(
+                "SessionStart",
+                first_session,
+                "/tmp/transcript-one.jsonl",
+            ))
+            .await
+            .unwrap();
+        wait_for_session_id(&backend, first_session).await;
+
+        rows.send((
+            PathBuf::from("/tmp/transcript-one.jsonl"),
+            claude::transcript::TranscriptRow::parse(json!({
+                "type": "assistant",
+                "generation": "old",
+            })),
+        ))
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while backend.log.current_seq().await != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let second_session = Uuid::new_v4();
+        hooks
+            .send(hook_payload(
+                "SessionStart",
+                second_session,
+                "/tmp/transcript-two.jsonl",
+            ))
+            .await
+            .unwrap();
+        wait_for_session_id(&backend, second_session).await;
+        rows.send((
+            PathBuf::from("/tmp/transcript-two.jsonl"),
+            claude::transcript::TranscriptRow::parse(json!({
+                "type": "assistant",
+                "generation": "new",
+            })),
+        ))
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while backend.log.current_seq().await != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let (mut replay, seq) = backend.log.subscribe_with_query(None).await.unwrap();
+        assert_eq!(seq, 2, "clearing retains the monotonic sequence");
+        assert_eq!(replay.read().await.unwrap().payload["generation"], "new");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), replay.read())
+                .await
+                .is_err(),
+            "rows from the prior transcript generation must not replay"
+        );
     }
 }

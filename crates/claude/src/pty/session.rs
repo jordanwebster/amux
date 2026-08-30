@@ -1030,6 +1030,69 @@ mod tests {
         assert_eq!(pasted, b"\x1b[200~message\x1b[201~\r");
     }
 
+    #[test]
+    fn paste_program_normalizes_controls_without_exposing_terminal_input() {
+        assert_eq!(
+            paste_program("tab\there\r\nreturn\r escape\x1b[201~rest\0"),
+            vec![
+                PtyInput::Bytes(b"\x1b[200~tab here\nreturn\n escape[201~rest\x1b[201~".to_vec()),
+                PtyInput::Delay(400),
+                PtyInput::Bytes(b"\r".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn socket_confirmation_requires_a_row_attributable_to_the_envelope() {
+        let confirmation = uuid::Uuid::new_v4().to_string();
+        assert!(row_confirms_delivery(
+            &serde_json::json!({
+                "type": "queue-operation",
+                "operation": "enqueue",
+                "content": format!("<cross-session-message>[amux id={confirmation}]"),
+            }),
+            &confirmation,
+        ));
+        assert!(row_confirms_delivery(
+            &serde_json::json!({
+                "type": "user",
+                "origin": {"kind": "peer"},
+                "message": {"content": format!("native {confirmation}")},
+            }),
+            &confirmation,
+        ));
+        assert!(row_confirms_delivery(
+            &serde_json::json!({
+                "type": "attachment",
+                "attachment": {
+                    "type": "queued_command",
+                    "prompt": format!("queued {confirmation}"),
+                },
+            }),
+            &confirmation,
+        ));
+        assert!(!row_confirms_delivery(
+            &serde_json::json!({
+                "type": "queue-operation",
+                "operation": "enqueue",
+                "content": format!("[amux id={}]", uuid::Uuid::new_v4()),
+            }),
+            &confirmation,
+        ));
+        assert!(!row_confirms_delivery(
+            &serde_json::json!({"type": "queue-operation", "operation": "dequeue"}),
+            &confirmation,
+        ));
+        assert!(!row_confirms_delivery(
+            &serde_json::json!({
+                "type": "user",
+                "origin": {"kind": "human"},
+                "message": {"content": confirmation},
+            }),
+            &confirmation,
+        ));
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn socket_delivery_confirms_by_transcript_and_falls_back_to_paste() {

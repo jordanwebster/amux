@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Claude PTY invariants remain covered at their new boundaries.**
+Provider tests prove paste sanitization and transcript-attributed socket
+confirmation. Adapter tests again prove hook deduplication, external terminal
+refusal, and structured-log generation clearing after a transcript relink.
+
+---
+
 2026-08-30 — **Managed Claude hooks retain native messaging delivery.** The
 per-session hook socket now carries Claude's messaging socket and token in a
 private provider envelope while preserving the original hook payload for
