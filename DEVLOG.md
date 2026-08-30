@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Derived chat geometry from the frame being painted.**
+Claude and Codex frame parts now feed one layout source for composition,
+scroll bounds, and mouse hit-testing, so adapters no longer reconstruct
+banner, activity, and bottom-row facts from the Model. Scroll metrics retain
+their deliberate paused-layout counterfactual because entering pause adds a
+screen row.
+
 2026-08-30 — **Asked each native layer whether completions can fold.**
 Claude and Codex now each project whether a retained completion report has
 content behind its first visible line, using the shared envelope presentation

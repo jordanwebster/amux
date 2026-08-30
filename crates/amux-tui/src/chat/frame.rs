@@ -50,6 +50,24 @@ pub(crate) struct ChatFrameParts {
     pub(crate) overlay: Option<Vec<Line<'static>>>,
 }
 
+impl ChatFrameParts {
+    /// Derive layout from the same optional rows and bottom block that will
+    /// be composed. `target_paused` may differ from the current viewport:
+    /// scroll metrics deliberately measure the paused layout while following
+    /// because the first scroll action adds the paused rule row, and its
+    /// bounds must describe the layout that action enters.
+    pub(crate) fn geometry(&self, viewport: (u16, u16), target_paused: bool) -> ChatGeometry {
+        chat_geometry(
+            viewport,
+            FrameSpacing::DEFAULT,
+            self.banner.is_some(),
+            self.activity.is_some(),
+            target_paused,
+            self.bottom.len(),
+        )
+    }
+}
+
 /// Painted feed blocks and facts about their retained-history boundary.
 pub(crate) struct FeedBlocks {
     pub(crate) blocks: Vec<PaintedBlock>,
@@ -106,7 +124,7 @@ impl ChatGeometry {
 }
 
 /// Compute the full-screen frame budget without inspecting agent content.
-pub(crate) fn chat_geometry(
+fn chat_geometry(
     viewport: (u16, u16),
     spacing: FrameSpacing,
     banner: bool,
@@ -176,14 +194,7 @@ pub(crate) fn compose_chat_frame(
 ) -> Vec<Line<'static>> {
     let paused = matches!(viewport.scroll, FeedScroll::Paused { .. });
     let spacing = FrameSpacing::DEFAULT;
-    let geometry = chat_geometry(
-        size,
-        spacing,
-        parts.banner.is_some(),
-        parts.activity.is_some(),
-        paused,
-        parts.bottom.len(),
-    );
+    let geometry = parts.geometry(size, paused);
 
     if let Some(overlay) = parts.overlay {
         return fit_frame(overlay, geometry.width, geometry.height, theme);
@@ -432,8 +443,8 @@ impl PaintCache {
 #[cfg(test)]
 #[test]
 fn geometry_identical_for_claude_and_codex_fixtures_at_120_by_40() {
-    use crate::chat::AgentChatView;
     use crate::fixtures::{NamedState, fixture};
+    use crate::render::FrameContext;
 
     let claude = fixture(NamedState::ClaudeIdle);
     let mut codex = fixture(NamedState::CodexIdle);
@@ -446,14 +457,13 @@ fn geometry_identical_for_claude_and_codex_fixtures_at_120_by_40() {
 
     let geometry = |fixture: &crate::fixtures::Fixture| {
         let chat = fixture.view.chat.as_ref().expect("fixture opens a chat");
-        match &chat.inner {
-            AgentChatView::Claude(view) => {
-                crate::chat::claude::geometry(&fixture.model, view, (120, 40), false)
-            }
-            AgentChatView::Codex(view) => {
-                crate::chat::codex::geometry(&fixture.model, view, (120, 40), false)
-            }
-        }
+        let ctx = FrameContext {
+            viewport: (120, 40),
+            theme: Theme::default(),
+            now: chrono::Utc::now(),
+        };
+        let mut cache = PaintCache::default();
+        super::frame_parts(&fixture.model, chat, &mut cache, &ctx).geometry((120, 40), false)
     };
 
     assert_eq!(geometry(&claude), geometry(&codex));
@@ -508,7 +518,11 @@ mod tests {
 
     #[test]
     fn geometry_at_120_by_40_accounts_for_every_optional_row() {
-        let geometry = chat_geometry((120, 40), FrameSpacing::DEFAULT, true, true, true, 4);
+        let mut parts = parts(Vec::new());
+        parts.banner = Some(Line::from("banner"));
+        parts.activity = Some(Line::from("activity"));
+        parts.bottom = vec![Line::default(); 4];
+        let geometry = parts.geometry((120, 40), true);
         assert_eq!(
             geometry,
             ChatGeometry {

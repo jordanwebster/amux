@@ -26,7 +26,6 @@ use amux_ui::{AgentId, Attention, Command, Model, OpId, OpOutcome};
 use ask_ui::AskUi;
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 use reader::{ReaderSource, ReaderView};
-pub(in crate::chat) use render::geometry;
 pub(crate) use render::{ask_panel_lines, claude_frame_parts};
 
 use crate::chat::inline::InlineAsk;

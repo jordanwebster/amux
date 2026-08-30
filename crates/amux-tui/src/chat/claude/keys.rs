@@ -1056,7 +1056,7 @@ mod tests {
         };
         let mut cache = PaintCache::default();
         let parts = render::claude_frame_parts(model, chat, feed, &mut cache, &ctx);
-        let geometry = render::geometry(model, chat, VIEWPORT, true);
+        let geometry = parts.geometry(VIEWPORT, true);
         let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &geometry);
         apply_scroll(
             feed,

@@ -20,7 +20,8 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 pub use frame::PaintStats;
 use frame::{
-    FeedMetrics, FrameSpacing, PaintCache, PaintedBlock, compose_chat_frame, feed_metrics,
+    ChatFrameParts, FeedMetrics, FrameSpacing, PaintCache, PaintedBlock, compose_chat_frame,
+    feed_metrics,
 };
 use ratatui::text::Line;
 use viewport::{FeedViewport, apply_scroll, move_focus, toggle_focused_run};
@@ -76,6 +77,22 @@ impl Clone for ChatView {
             inner: self.inner.clone(),
             feed_metrics: RefCell::new(None),
             paint_cache: RefCell::new(PaintCache::default()),
+        }
+    }
+}
+
+fn frame_parts(
+    model: &Model,
+    chat: &ChatView,
+    cache: &mut PaintCache,
+    ctx: &FrameContext,
+) -> ChatFrameParts {
+    match &chat.inner {
+        AgentChatView::Claude(view) => {
+            claude::claude_frame_parts(model, view, &chat.viewport, cache, ctx)
+        }
+        AgentChatView::Codex(view) => {
+            codex::codex_frame_parts(model, view, &chat.viewport, cache, ctx)
         }
     }
 }
@@ -222,20 +239,10 @@ impl ChatView {
             theme: Theme::default(),
             now,
         };
-        let parts = match &self.inner {
-            AgentChatView::Claude(view) => {
-                let mut cache = self.paint_cache.borrow_mut();
-                claude::claude_frame_parts(model, view, &self.viewport, &mut cache, &ctx)
-            }
-            AgentChatView::Codex(view) => {
-                let mut cache = self.paint_cache.borrow_mut();
-                codex::codex_frame_parts(model, view, &self.viewport, &mut cache, &ctx)
-            }
-        };
-        let geometry = match &self.inner {
-            AgentChatView::Claude(view) => claude::geometry(model, view, viewport, true),
-            AgentChatView::Codex(view) => codex::geometry(model, view, viewport, true),
-        };
+        let mut cache = self.paint_cache.borrow_mut();
+        let parts = frame_parts(model, self, &mut cache, &ctx);
+        drop(cache);
+        let geometry = parts.geometry(viewport, true);
         let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &geometry);
         self.feed_metrics.replace(Some(CachedFeedMetrics {
             viewport,
@@ -405,20 +412,18 @@ pub fn handle_chat_mouse(
         MouseEventKind::ScrollDown => viewport::ScrollIntent::Rows(3),
         _ => return false,
     };
-    let geometry = match &chat.inner {
-        AgentChatView::Claude(view) => claude::geometry(
-            model,
-            view,
-            size,
-            matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
-        ),
-        AgentChatView::Codex(view) => codex::geometry(
-            model,
-            view,
-            size,
-            matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
-        ),
+    let ctx = FrameContext {
+        viewport: size,
+        theme: Theme::default(),
+        now: Utc::now(),
     };
+    let mut cache = chat.paint_cache.borrow_mut();
+    let parts = frame_parts(model, chat, &mut cache, &ctx);
+    drop(cache);
+    let geometry = parts.geometry(
+        size,
+        matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
+    );
     let row = event.row as usize;
     if chat.overlay_open()
         || row < geometry.feed_top
@@ -451,21 +456,11 @@ pub(crate) fn build_chat_lines(
     }
     let mut cache = chat.paint_cache.borrow_mut();
     cache.reset_stats();
-    let parts = match &chat.inner {
-        AgentChatView::Claude(view) => {
-            claude::claude_frame_parts(model, view, &chat.viewport, &mut cache, ctx)
-        }
-        AgentChatView::Codex(view) => {
-            codex::codex_frame_parts(model, view, &chat.viewport, &mut cache, ctx)
-        }
-    };
+    let parts = frame_parts(model, chat, &mut cache, ctx);
     drop(cache);
     let overlaid = parts.overlay.is_some();
     let banner = parts.banner.is_some();
-    let paused_geometry = match &chat.inner {
-        AgentChatView::Claude(view) => claude::geometry(model, view, ctx.viewport, true),
-        AgentChatView::Codex(view) => codex::geometry(model, view, ctx.viewport, true),
-    };
+    let paused_geometry = parts.geometry(ctx.viewport, true);
     let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &paused_geometry);
     let blocks = parts.feed.blocks.clone();
     chat.feed_metrics.replace(Some(CachedFeedMetrics {

@@ -26,10 +26,7 @@ use crate::chat::blocks::{
 };
 use crate::chat::claude::{View, ask_ui, panel, reader};
 use crate::chat::diff as diff_painter;
-use crate::chat::frame::{
-    BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintCache, PaintedBlock,
-    chat_geometry,
-};
+use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
 use crate::render::{FrameContext, Theme, line_len, push_span, str_width};
@@ -112,40 +109,6 @@ pub(crate) fn claude_frame_parts(
         bottom,
         overlay,
     }
-}
-
-// --- geometry the key handler shares ----------------------------------------
-
-fn spacing() -> FrameSpacing {
-    FrameSpacing::DEFAULT
-}
-
-/// The frame budget at this viewport, under the given pause state.
-pub(in crate::chat) fn geometry(
-    model: &Model,
-    chat: &View,
-    viewport: (u16, u16),
-    paused: bool,
-) -> ChatGeometry {
-    let theme = Theme::default();
-    let width = viewport.0 as usize;
-    let height = viewport.1 as usize;
-    let working = matches!(
-        amux_ui::claude::phase(model, chat.agent),
-        ChatPhase::Working
-    );
-    // Geometry is theme-independent (tokens change styles, never cells —
-    // test-locked), so the bottom's row count comes from the default
-    // theme.
-    let bottom = bottom_block(model, chat, theme, width, height, paused);
-    chat_geometry(
-        viewport,
-        spacing(),
-        family_banner(model, chat.agent).is_some(),
-        working,
-        paused,
-        bottom.len(),
-    )
 }
 
 // --- the header and the rows around the feed --------------------------------

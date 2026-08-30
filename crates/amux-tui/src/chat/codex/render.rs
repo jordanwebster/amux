@@ -26,10 +26,7 @@ use crate::chat::blocks::{
     paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::diff as diff_painter;
-use crate::chat::frame::{
-    BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintCache, PaintedBlock,
-    chat_geometry,
-};
+use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph};
 use crate::markdown;
@@ -98,28 +95,6 @@ pub(crate) fn codex_frame_parts(
             .help
             .then(|| help_overlay(model, chat, theme, width, height)),
     }
-}
-
-// --- geometry the key handler shares ----------------------------------------
-
-pub(in crate::chat) fn geometry(
-    model: &Model,
-    chat: &View,
-    viewport: (u16, u16),
-    paused: bool,
-) -> ChatGeometry {
-    let theme = Theme::default();
-    let width = viewport.0 as usize;
-    let height = viewport.1 as usize;
-    let banner = family_banner(model, chat.agent).is_some() || chat.configuration_label.is_some();
-    chat_geometry(
-        viewport,
-        FrameSpacing::DEFAULT,
-        banner,
-        active_phase(&amux_ui::codex::phase(model, chat.agent)),
-        paused,
-        bottom_block(model, chat, theme, width, height, paused).len(),
-    )
 }
 
 // --- the header and the rows around the feed --------------------------------
