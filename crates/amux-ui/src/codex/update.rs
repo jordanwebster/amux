@@ -127,7 +127,7 @@ fn update_answer(
     if !ask
         .actions
         .iter()
-        .any(|action| action.decision == Some(decision))
+        .any(|action| action.decision() == Some(decision))
     {
         return refuse(
             model,

@@ -326,7 +326,11 @@ pub(crate) fn handle_key(model: &Model, inline: &mut InlineAsk, key: &KeyEvent) 
                     if !allows_answer {
                         return InlineOutcome::Handled;
                     }
-                    match ask.actions.get(*cursor).and_then(|action| action.decision) {
+                    match ask
+                        .actions
+                        .get(*cursor)
+                        .and_then(|action| action.decision())
+                    {
                         Some(decision) => {
                             InlineOutcome::Dispatch(Command::Codex(CodexCommand::Answer {
                                 agent: child,

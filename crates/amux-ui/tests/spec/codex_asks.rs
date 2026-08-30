@@ -6,7 +6,8 @@
 //! no answerable obligation in V1.
 
 use amux_ui::codex::{
-    ApprovalResolution, AskContext, CodexDecision, CodexPhase, FeedEntryKind, WorkState,
+    ApprovalResolution, AskActionMeaning, AskContext, CodexDecision, CodexPhase, FeedEntryKind,
+    NetworkPolicyAction, NetworkPolicyAmendment, WorkState,
 };
 use amux_ui::{Attention, Why};
 use serde_json::{Value, json};
@@ -70,9 +71,9 @@ fn raw_and_synthesized_rows_form_one_answerable_obligation() {
     assert_eq!(ask.actions.len(), 3);
     assert_eq!(ask.actions[0].wire, json!("accept"));
     assert_eq!(ask.actions[2].wire, json!("cancel"));
-    assert!(ask.actions[0].decision.is_some());
+    assert!(ask.actions[0].decision().is_some());
     assert!(
-        ask.actions[1].decision.is_none(),
+        ask.actions[1].decision().is_none(),
         "object choice visible but disabled"
     );
     assert!(
@@ -119,13 +120,104 @@ fn dynamic_tool_calls_supply_the_backends_binary_actions() {
     assert_eq!(
         ask.actions
             .iter()
-            .map(|action| (action.wire.clone(), action.decision))
+            .map(|action| (action.wire.clone(), action.decision()))
             .collect::<Vec<_>>(),
         vec![
             (json!("accept"), Some(CodexDecision::Accept)),
             (json!("decline"), Some(CodexDecision::Decline)),
         ],
         "the layer supplies exactly the binary decisions accepted by the backend"
+    );
+}
+
+#[test]
+fn object_decisions_are_classified_against_typed_command_proposals() {
+    let rows = vec![
+        json!({"type":"amux.codex_ready"}),
+        json!({"type":"turn/started","turn":{"id":"turn-1","status":"inProgress"}}),
+        json!({"type":"item/started","item":{"id":"exec-1","type":"commandExecution",
+            "command":"cargo test","status":"inProgress"}}),
+        json!({"type":"item/commandExecution/requestApproval","itemId":"exec-1",
+            "command":"cargo test",
+            "proposedExecpolicyAmendment":["cargo","test"],
+            "proposedNetworkPolicyAmendments":[{"host":"crates.io","action":"allow"}]}),
+        json!({"type":"amux.codex_approval_required","request_id":"typed",
+        "availableDecisions":[
+            "accept",
+            {"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["cargo","test"]}},
+            {"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["cargo","nextest"]}},
+            {"applyNetworkPolicyAmendment":{"network_policy_amendment":{
+                "host":"crates.io","action":"allow"}}},
+            {"applyNetworkPolicyAmendment":{"network_policy_amendment":{
+                "host":"example.com","action":"deny"}}}
+        ]}),
+    ];
+    let model = model(rows);
+    let actions = &codex_layer(&model, AGENT).ask_head().expect("ask").actions;
+    assert_eq!(
+        actions
+            .iter()
+            .map(|action| &action.meaning)
+            .collect::<Vec<_>>(),
+        vec![
+            &AskActionMeaning::Scalar {
+                decision: CodexDecision::Accept,
+            },
+            &AskActionMeaning::AcceptWithExecpolicyAmendment {
+                matches_proposal: true,
+            },
+            &AskActionMeaning::AcceptWithExecpolicyAmendment {
+                matches_proposal: false,
+            },
+            &AskActionMeaning::ApplyNetworkPolicyAmendment {
+                amendment: NetworkPolicyAmendment {
+                    host: "crates.io".to_string(),
+                    action: NetworkPolicyAction::Allow,
+                },
+                proposed: true,
+            },
+            &AskActionMeaning::ApplyNetworkPolicyAmendment {
+                amendment: NetworkPolicyAmendment {
+                    host: "example.com".to_string(),
+                    action: NetworkPolicyAction::Deny,
+                },
+                proposed: false,
+            },
+        ]
+    );
+    assert!(
+        actions
+            .iter()
+            .skip(1)
+            .all(|action| action.decision().is_none())
+    );
+}
+
+#[test]
+fn unknown_object_decisions_retain_only_terminal_safe_meaning_beside_raw_wire() {
+    let mut rows = ask_rows(json!(7));
+    *rows.last_mut().expect("approval") = json!({
+        "type":"amux.codex_approval_required",
+        "request_id":7,
+        "availableDecisions":[{"future{Policy}":{"nested":{
+            "detail":"deploy {quoted} \"value\" with care"
+        },"attempt":7}}]
+    });
+    let model = model(rows);
+    let action = &codex_layer(&model, AGENT).ask_head().expect("ask").actions[0];
+    assert_eq!(
+        action.meaning,
+        AskActionMeaning::UnknownObject {
+            kind: "future Policy".to_string(),
+            scalar_detail: "7 · deploy quoted value with care".to_string(),
+        }
+    );
+    assert_eq!(
+        action.wire,
+        json!({"future{Policy}":{"nested":{
+            "detail":"deploy {quoted} \"value\" with care"
+        },"attempt":7}}),
+        "the opaque answer payload remains available without being a renderer surface"
     );
 }
 

@@ -390,10 +390,9 @@ pub struct Ask {
     pub seq: u64,
     pub request_id: Value,
     pub context: AskContext,
-    /// Choices interpreted for V1. Usually these mirror the wire value;
-    /// dynamic tool calls are the explicit exception because upstream sends
-    /// `null` while the backend accepts the layer-supplied binary decisions.
-    /// Unknown/object wire choices remain visible with `decision: None`.
+    /// Choices interpreted for V1. Dynamic tool calls are the explicit
+    /// exception because upstream sends `null` while the backend accepts the
+    /// layer-supplied binary decisions.
     pub actions: Vec<AskAction>,
 }
 
@@ -452,8 +451,166 @@ impl AskContext {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AskAction {
+    /// Retained verbatim for Answer paths that can round-trip opaque choices;
+    /// renderers use only `meaning`.
     pub wire: Value,
-    pub decision: Option<CodexDecision>,
+    pub meaning: AskActionMeaning,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "meaning", rename_all = "snake_case")]
+pub enum AskActionMeaning {
+    Scalar {
+        decision: CodexDecision,
+    },
+    AcceptWithExecpolicyAmendment {
+        matches_proposal: bool,
+    },
+    ApplyNetworkPolicyAmendment {
+        amendment: NetworkPolicyAmendment,
+        proposed: bool,
+    },
+    UnknownObject {
+        kind: String,
+        scalar_detail: String,
+    },
+    UnknownScalar {
+        detail: String,
+    },
+}
+
+impl AskAction {
+    pub fn decision(&self) -> Option<CodexDecision> {
+        match self.meaning {
+            AskActionMeaning::Scalar { decision } => Some(decision),
+            AskActionMeaning::AcceptWithExecpolicyAmendment { .. }
+            | AskActionMeaning::ApplyNetworkPolicyAmendment { .. }
+            | AskActionMeaning::UnknownObject { .. }
+            | AskActionMeaning::UnknownScalar { .. } => None,
+        }
+    }
+
+    pub(crate) fn from_wire(wire: Value, context: &AskContext) -> Self {
+        let meaning = classify_ask_action(&wire, context);
+        Self { wire, meaning }
+    }
+}
+
+fn classify_ask_action(wire: &Value, context: &AskContext) -> AskActionMeaning {
+    if let Some(decision) = wire.as_str().and_then(CodexDecision::from_wire) {
+        return AskActionMeaning::Scalar { decision };
+    }
+    let Some(object) = wire.as_object() else {
+        return AskActionMeaning::UnknownScalar {
+            detail: scalar_detail(wire),
+        };
+    };
+    let Some((kind, body)) = object.iter().next() else {
+        return AskActionMeaning::UnknownObject {
+            kind: String::new(),
+            scalar_detail: String::new(),
+        };
+    };
+    if object.len() == 1 {
+        match kind.as_str() {
+            "acceptWithExecpolicyAmendment" => {
+                let amendment = execpolicy_amendment(body);
+                let matches_proposal = match context {
+                    AskContext::Command {
+                        proposed_execpolicy_amendment: Some(proposed),
+                        ..
+                    } => amendment.as_ref() == Some(proposed),
+                    _ => false,
+                };
+                return AskActionMeaning::AcceptWithExecpolicyAmendment { matches_proposal };
+            }
+            "applyNetworkPolicyAmendment" => {
+                if let Some(amendment) = network_policy_amendment(body) {
+                    let proposed = match context {
+                        AskContext::Command {
+                            proposed_network_policy_amendments,
+                            ..
+                        } => proposed_network_policy_amendments.contains(&amendment),
+                        _ => false,
+                    };
+                    return AskActionMeaning::ApplyNetworkPolicyAmendment {
+                        amendment,
+                        proposed,
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+    AskActionMeaning::UnknownObject {
+        kind: sanitize_decision_text(kind),
+        scalar_detail: scalar_detail(body),
+    }
+}
+
+fn execpolicy_amendment(value: &Value) -> Option<Vec<String>> {
+    value
+        .get("execpolicy_amendment")?
+        .as_array()?
+        .iter()
+        .map(Value::as_str)
+        .map(|value| value.map(str::to_owned))
+        .collect()
+}
+
+fn network_policy_amendment(value: &Value) -> Option<NetworkPolicyAmendment> {
+    let amendment = value.get("network_policy_amendment")?;
+    let host = amendment.get("host")?.as_str()?.to_string();
+    let action = match amendment.get("action")?.as_str()? {
+        "allow" => NetworkPolicyAction::Allow,
+        "deny" => NetworkPolicyAction::Deny,
+        _ => return None,
+    };
+    Some(NetworkPolicyAmendment { host, action })
+}
+
+fn scalar_detail(value: &Value) -> String {
+    fn collect(value: &Value, scalars: &mut Vec<String>) {
+        match value {
+            Value::Null => {}
+            Value::Bool(value) => scalars.push(value.to_string()),
+            Value::Number(value) => scalars.push(value.to_string()),
+            Value::String(value) => {
+                let value = sanitize_decision_text(value);
+                if !value.is_empty() {
+                    scalars.push(value);
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    collect(value, scalars);
+                }
+            }
+            Value::Object(values) => {
+                for value in values.values() {
+                    collect(value, scalars);
+                }
+            }
+        }
+    }
+
+    let mut scalars = Vec::new();
+    collect(value, &mut scalars);
+    sanitize_decision_text(&scalars.join(" · "))
+}
+
+fn sanitize_decision_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            '{' | '}' | '"' => ' ',
+            character if character.is_control() => ' ',
+            character => character,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1073,7 +1073,7 @@ fn fold_approval_required(layer: &mut CodexLayer, seq: u64, row: &Value) {
             .into_iter()
             .map(|decision| AskAction {
                 wire: Value::String(decision.wire_value().to_string()),
-                decision: Some(decision),
+                meaning: AskActionMeaning::Scalar { decision },
             })
             .collect()
     } else {
@@ -1082,10 +1082,7 @@ fn fold_approval_required(layer: &mut CodexLayer, seq: u64, row: &Value) {
             .into_iter()
             .flatten()
             .cloned()
-            .map(|wire| AskAction {
-                decision: wire.as_str().and_then(CodexDecision::from_wire),
-                wire,
-            })
+            .map(|wire| AskAction::from_wire(wire, &context))
             .collect()
     };
     layer.asks.retain(|ask| ask.request_id != request_id);
@@ -1577,7 +1574,9 @@ mod tests {
                 },
                 actions: vec![AskAction {
                     wire: json!("accept"),
-                    decision: Some(CodexDecision::Accept),
+                    meaning: AskActionMeaning::Scalar {
+                        decision: CodexDecision::Accept,
+                    },
                 }],
             });
         }

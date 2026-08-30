@@ -277,7 +277,7 @@ fn approval_key(
                 return None;
             }
             let action = ask.actions.get(chat.approval_cursor)?;
-            let decision = action.decision?;
+            let decision = action.decision()?;
             return Some(UiAction::Dispatch(Command::Codex(CodexCommand::Answer {
                 agent: chat.agent,
                 request_id: ask.request_id.clone(),

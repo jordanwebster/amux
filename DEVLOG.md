@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Made Codex approval meaning a typed client-state fact.**
+Codex ask actions now retain their opaque wire choice beside an exhaustive
+meaning: scalar decisions, exec-policy amendments checked against the stated
+proposal, typed network amendments with proposal agreement, or a sanitized
+unknown fallback. Answer validation and terminal labels consume that meaning,
+so the renderer no longer walks approval JSON while preserving the existing
+wording, bounds, and disabled-object behavior.
+
 2026-08-30 — **Projected Claude exploration runs from typed feed facts.**
 `ClaudeLayer::feed_items()` now lazily groups consecutive read and search
 entries from the fold's own grouping fact and Claude-native classification,

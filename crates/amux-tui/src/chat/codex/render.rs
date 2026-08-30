@@ -9,10 +9,10 @@
 //! entries without reconstructing a second semantic model.
 
 use amux_ui::codex::{
-    ApprovalResolution, Ask, AskContext, BoundaryEntry, CodexPhase, ErrorSeverity, FeedEntry,
-    FeedEntryKind, ItemFinality, McpStartupEntry, McpStartupStatus, MessagePhase,
-    NetworkPolicyAction, NetworkPolicyAmendment, PromptPart, PromptSource, TokenUsage, TurnStatus,
-    WorkEntry, WorkKind, WorkOutcome, WorkState,
+    ApprovalResolution, Ask, AskActionMeaning, AskContext, BoundaryEntry, CodexPhase,
+    ErrorSeverity, FeedEntry, FeedEntryKind, ItemFinality, McpStartupEntry, McpStartupStatus,
+    MessagePhase, NetworkPolicyAction, PromptPart, PromptSource, TokenUsage, TurnStatus, WorkEntry,
+    WorkKind, WorkOutcome, WorkState,
 };
 use amux_ui::{AgentId, Model};
 use ratatui::style::Style;
@@ -387,7 +387,7 @@ fn approval_actions(
     let mut lines = Vec::new();
     for (index, action) in ask.actions.iter().enumerate() {
         let mut line = Line::default();
-        let supported = action.decision.is_some();
+        let supported = action.decision().is_some();
         let selectable = allows_answer && supported;
         if selectable && index == view.cursor {
             push_span(&mut line, 0, "›", theme.text());
@@ -398,12 +398,7 @@ fn approval_actions(
             theme.muted()
         };
         push_span(&mut line, 2, format!("{}.", index + 1), style);
-        push_span(
-            &mut line,
-            5,
-            decision_label(&ask.context, &action.wire),
-            style,
-        );
+        push_span(&mut line, 5, decision_label(&action.meaning), style);
         if !supported {
             line.spans
                 .push(Span::styled(" · unavailable in V1", theme.muted()));
@@ -1281,122 +1276,55 @@ fn json_text(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<invalid json>".to_string())
 }
 
-fn decision_label(context: &AskContext, value: &Value) -> String {
-    match value.as_str() {
-        Some("accept") => "accept once".to_string(),
-        Some("acceptForSession") => "accept for session".to_string(),
-        Some("decline") => "decline".to_string(),
-        Some("cancel") => "cancel".to_string(),
-        Some(other) => other.to_string(),
-        None => object_decision_label(context, value),
-    }
-}
-
-fn object_decision_label(context: &AskContext, value: &Value) -> String {
-    let Some(object) = value.as_object() else {
-        return bounded_decision_label(&scalar_detail(value));
-    };
-    let Some((kind, body)) = object.iter().next() else {
-        return "unavailable choice".to_string();
-    };
-    if object.len() == 1 {
-        match (kind.as_str(), context) {
-            (
-                "acceptWithExecpolicyAmendment",
-                AskContext::Command {
-                    proposed_execpolicy_amendment: Some(proposed),
-                    ..
-                },
-            ) if wire_execpolicy_amendment(body).as_ref() == Some(proposed) => {
-                return "accept and allow similar commands".to_string();
-            }
-            (
-                "applyNetworkPolicyAmendment",
-                AskContext::Command {
-                    proposed_network_policy_amendments,
-                    ..
-                },
-            ) => {
-                if let Some(amendment) = wire_network_policy_amendment(body)
-                    && proposed_network_policy_amendments.contains(&amendment)
-                {
-                    let action = match amendment.action {
-                        NetworkPolicyAction::Allow => "allow",
-                        NetworkPolicyAction::Deny => "deny",
-                    };
-                    return bounded_decision_label(&format!(
-                        "apply network policy change · {action} {}",
-                        sanitize_label_text(&amendment.host)
-                    ));
-                }
-                return bounded_decision_label(&sanitize_label_text(kind));
-            }
-            ("acceptWithExecpolicyAmendment", _) => {
-                return bounded_decision_label(&sanitize_label_text(kind));
-            }
-            _ => {}
+fn decision_label(meaning: &AskActionMeaning) -> String {
+    let label = match meaning {
+        AskActionMeaning::Scalar { decision } => match decision {
+            amux_ui::CodexDecision::Accept => "accept once".to_string(),
+            amux_ui::CodexDecision::AcceptForSession => "accept for session".to_string(),
+            amux_ui::CodexDecision::Decline => "decline".to_string(),
+            amux_ui::CodexDecision::Cancel => "cancel".to_string(),
+        },
+        AskActionMeaning::AcceptWithExecpolicyAmendment {
+            matches_proposal: true,
+        } => "accept and allow similar commands".to_string(),
+        AskActionMeaning::AcceptWithExecpolicyAmendment {
+            matches_proposal: false,
+        } => "acceptWithExecpolicyAmendment".to_string(),
+        AskActionMeaning::ApplyNetworkPolicyAmendment {
+            amendment,
+            proposed: true,
+        } => {
+            let action = match amendment.action {
+                NetworkPolicyAction::Allow => "allow",
+                NetworkPolicyAction::Deny => "deny",
+            };
+            format!(
+                "apply network policy change · {action} {}",
+                sanitize_label_text(&amendment.host)
+            )
         }
-    }
-
-    let kind = bounded_label_segment(&sanitize_label_text(kind), DECISION_KIND_MAX);
-    let detail = bounded_label_segment(&scalar_detail(body), DECISION_DETAIL_MAX);
-    let label = if detail.is_empty() {
-        kind
-    } else {
-        format!("{kind} · {detail}")
+        AskActionMeaning::ApplyNetworkPolicyAmendment {
+            proposed: false, ..
+        } => "applyNetworkPolicyAmendment".to_string(),
+        AskActionMeaning::UnknownObject {
+            kind,
+            scalar_detail,
+        } => {
+            if kind.is_empty() {
+                return "unavailable choice".to_string();
+            }
+            let kind = bounded_label_segment(&sanitize_label_text(kind), DECISION_KIND_MAX);
+            let detail =
+                bounded_label_segment(&sanitize_label_text(scalar_detail), DECISION_DETAIL_MAX);
+            if detail.is_empty() {
+                kind
+            } else {
+                format!("{kind} · {detail}")
+            }
+        }
+        AskActionMeaning::UnknownScalar { detail } => sanitize_label_text(detail),
     };
     bounded_decision_label(&label)
-}
-
-fn wire_execpolicy_amendment(value: &Value) -> Option<Vec<String>> {
-    value
-        .get("execpolicy_amendment")?
-        .as_array()?
-        .iter()
-        .map(Value::as_str)
-        .map(|value| value.map(str::to_owned))
-        .collect()
-}
-
-fn wire_network_policy_amendment(value: &Value) -> Option<NetworkPolicyAmendment> {
-    let amendment = value.get("network_policy_amendment")?;
-    let host = amendment.get("host")?.as_str()?.to_string();
-    let action = match amendment.get("action")?.as_str()? {
-        "allow" => NetworkPolicyAction::Allow,
-        "deny" => NetworkPolicyAction::Deny,
-        _ => return None,
-    };
-    Some(NetworkPolicyAmendment { host, action })
-}
-
-fn scalar_detail(value: &Value) -> String {
-    fn collect(value: &Value, scalars: &mut Vec<String>) {
-        match value {
-            Value::Null => {}
-            Value::Bool(value) => scalars.push(value.to_string()),
-            Value::Number(value) => scalars.push(value.to_string()),
-            Value::String(value) => {
-                let value = sanitize_label_text(value);
-                if !value.is_empty() {
-                    scalars.push(value);
-                }
-            }
-            Value::Array(values) => {
-                for value in values {
-                    collect(value, scalars);
-                }
-            }
-            Value::Object(values) => {
-                for value in values.values() {
-                    collect(value, scalars);
-                }
-            }
-        }
-    }
-
-    let mut scalars = Vec::new();
-    collect(value, &mut scalars);
-    sanitize_label_text(&scalars.join(" · "))
 }
 
 fn sanitize_label_text(value: &str) -> String {
@@ -1550,63 +1478,41 @@ fn rule_row(width: usize, theme: Theme) -> Line<'static> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use amux_ui::codex::McpServerStartup;
-    use serde_json::json;
-
     use super::*;
-
-    fn command_context() -> AskContext {
-        AskContext::Command {
-            item_id: "exec-1".to_string(),
-            command: "cargo test".to_string(),
-            cwd: Some("/work".to_string()),
-            reason: Some("run tests?".to_string()),
-            proposed_execpolicy_amendment: Some(vec!["cargo".to_string(), "test".to_string()]),
-            proposed_network_policy_amendments: vec![NetworkPolicyAmendment {
-                host: "crates.io".to_string(),
-                action: NetworkPolicyAction::Allow,
-            }],
-        }
-    }
+    use amux_ui::codex::McpServerStartup;
 
     #[test]
-    fn object_decision_labels_use_typed_proposals_and_bound_unknown_scalars() {
-        let context = command_context();
+    fn typed_decision_labels_keep_terminal_wording_and_bounds() {
         assert_eq!(
-            decision_label(
-                &context,
-                &json!({"acceptWithExecpolicyAmendment":{
-                    "execpolicy_amendment":["cargo","test"]
-                }})
-            ),
+            decision_label(&AskActionMeaning::AcceptWithExecpolicyAmendment {
+                matches_proposal: true,
+            }),
             "accept and allow similar commands"
         );
         assert_eq!(
-            decision_label(
-                &context,
-                &json!({"applyNetworkPolicyAmendment":{
-                    "network_policy_amendment":{"host":"crates.io","action":"allow"}
-                }})
-            ),
+            decision_label(&AskActionMeaning::ApplyNetworkPolicyAmendment {
+                amendment: amux_ui::codex::NetworkPolicyAmendment {
+                    host: "crates.io".to_string(),
+                    action: NetworkPolicyAction::Allow,
+                },
+                proposed: true,
+            }),
             "apply network policy change · allow crates.io"
         );
         assert_eq!(
-            decision_label(
-                &context,
-                &json!({"acceptWithExecpolicyAmendment":{
-                    "execpolicy_amendment":["mismatched"]
-                }})
-            ),
+            decision_label(&AskActionMeaning::AcceptWithExecpolicyAmendment {
+                matches_proposal: false,
+            }),
             "acceptWithExecpolicyAmendment",
-            "a known wire kind is not trusted without its typed proposal"
+            "a known choice is not trusted without its typed proposal"
         );
 
-        let fallback = decision_label(
-            &context,
-            &json!({"future{Policy}":{"nested":{
-                "detail":"deploy {quoted} \"value\" with a deliberately very long scalar explanation"
-            },"attempt":7}}),
-        );
+        let fallback = decision_label(&AskActionMeaning::UnknownObject {
+            kind: "future Policy".to_string(),
+            scalar_detail:
+                "deploy quoted value with a deliberately very long scalar explanation · 7"
+                    .to_string(),
+        });
         assert!(fallback.starts_with("future Policy · "));
         assert!(fallback.contains("deploy quoted value"));
         assert!(fallback.ends_with('…'));

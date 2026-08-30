@@ -429,7 +429,7 @@ fn object_approval_choices_stay_disabled_and_unknown_labels_are_safe() {
         .and_then(|layer| layer.ask_head())
         .expect("approval ask");
     assert!(
-        ask.actions[1].decision.is_none(),
+        ask.actions[1].decision().is_none(),
         "human labels must not make object choices actionable"
     );
     let mut chat =
@@ -469,7 +469,7 @@ fn object_approval_choices_stay_disabled_and_unknown_labels_are_safe() {
         network
             .codex(agent_id())
             .and_then(|layer| layer.ask_head())
-            .is_some_and(|ask| ask.actions[1].decision.is_none()),
+            .is_some_and(|ask| ask.actions[1].decision().is_none()),
         "a human network label must not make its object choice actionable"
     );
 
@@ -504,7 +504,7 @@ fn object_approval_choices_stay_disabled_and_unknown_labels_are_safe() {
         unknown
             .codex(agent_id())
             .and_then(|layer| layer.ask_head())
-            .is_some_and(|ask| ask.actions[1].decision.is_none()),
+            .is_some_and(|ask| ask.actions[1].decision().is_none()),
         "the unknown object remains disabled"
     );
 }
