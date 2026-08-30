@@ -158,6 +158,12 @@ carriage-return line endings become newlines; other control characters except
 newline are dropped. The remaining message is still delivered. Claude queues
 input received during a running turn.
 
+SDK-driven Claude sessions use the generic `<amux>` envelope as a stream-JSON
+user message. Once the provider session has emitted its ready row, accepted
+delivery writes an `amux.claude_sdk.message` row containing the complete
+daemon-authored envelope and `delivery: "stream"`. That recipient-owned row is
+the durable delivery record; no sender-side row is treated as evidence.
+
 ### Codex
 
 amux first calls `thread/inject_items` with a user-role message. If the thread

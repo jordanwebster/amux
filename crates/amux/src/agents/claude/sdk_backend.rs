@@ -21,12 +21,14 @@ use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use uuid::Uuid;
 
+use super::sdk_delivery::ClaudeSdkDeliveryTarget;
 use super::sdk_io::{ClaudeSdkSynthesized, ClaudeSdkV1Input, ClaudeSdkV1Row};
 use super::suspend::{ClaudeSuspendRecord, sanitize_resume_args};
 use crate::agents::{
-    AgentBackend, AgentKind, AgentParent, AgentRecord, AgentType, ClaudeDriver, CreateAgentRequest,
-    LocalAgentNameSource, McpLaunchRoute, Plane, Protocol, SessionEvent, SpawnInheritance,
-    StopPolicy, StructuredInput, StructuredInputEvent, StructuredLogSource,
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, AgentRecord, AgentType,
+    ClaudeDriver, CreateAgentRequest, LocalAgentNameSource, McpLaunchRoute, Plane, Protocol,
+    SessionEvent, SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent,
+    StructuredLogSource,
 };
 use crate::debug::DebugView;
 use crate::protocol::ProtocolError;
@@ -35,12 +37,13 @@ use crate::suspend::SuspendedAgent;
 const STRUCTURED_LOG_RETENTION: usize = 8192;
 
 #[derive(Default)]
-struct Runtime {
-    control: Option<Control>,
-    session_id: Option<Uuid>,
-    pending_permissions: HashSet<String>,
-    inflight_inputs: usize,
-    exited: bool,
+pub(super) struct Runtime {
+    pub(super) control: Option<Control>,
+    pub(super) session_id: Option<Uuid>,
+    pub(super) pending_permissions: HashSet<String>,
+    pub(super) inflight_inputs: usize,
+    pub(super) ready: bool,
+    pub(super) exited: bool,
 }
 
 pub(crate) struct ClaudeSdkBackend {
@@ -159,6 +162,10 @@ impl ClaudeSdkBackend {
             input_done: self.input_done.clone(),
             log: self.log.clone(),
         }
+    }
+
+    pub(super) fn delivery_snapshot(&self) -> (Arc<Mutex<Runtime>>, StructuredLogSource) {
+        (self.runtime.clone(), self.log.clone())
     }
 
     fn query_options(&self) -> Result<QueryOptions> {
@@ -362,6 +369,7 @@ async fn ingest_session(
         },
     )
     .await;
+    runtime.lock().expect("Claude SDK runtime poisoned").ready = true;
 
     while let Some(event) = events.next().await {
         match event {
@@ -763,6 +771,10 @@ impl AgentBackend for ClaudeSdkBackend {
 
     fn parent(&self) -> Option<AgentParent> {
         self.parent
+    }
+
+    fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
+        Box::new(ClaudeSdkDeliveryTarget::new(self))
     }
 
     fn local_name_source(&self) -> Option<LocalAgentNameSource> {

@@ -5388,3 +5388,9 @@ typed input resolves them, and forwards prompts and interrupts through the
 provider control handle. Hook, elicitation and user-dialog requests remain
 observable while receiving the documented non-interactive defaults, and the
 SDK path has no transcript-file dependency.
+
+2026-08-30 — **Added stream delivery for SDK-driven Claude agents.** Delivery
+becomes live only after the provider ready row, sends the same authenticated
+envelope used by the other backends through stream input, and records the
+accepted message on the recipient's `claude_sdk_v1` log. Exited sessions refuse
+delivery instead of accepting messages that can no longer be observed.
