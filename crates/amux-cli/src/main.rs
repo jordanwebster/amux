@@ -2,6 +2,7 @@ mod auth;
 mod client_common;
 mod hooks;
 mod init;
+mod keymap;
 mod mcp;
 mod server_client;
 mod session_client;
@@ -104,6 +105,12 @@ enum Commands {
         /// Show child agents, indented beneath their parent
         #[arg(long)]
         all: bool,
+    },
+
+    /// Manage Claude PTY keymaps
+    Keymap {
+        #[command(subcommand)]
+        command: KeymapCommands,
     },
 
     /// Manage the amux server lifecycle
@@ -229,6 +236,33 @@ enum PeerCommands {
         /// Peer host ID or unique display name
         peer: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum KeymapCommands {
+    /// List effective keymaps and their basis for the installed Claude version
+    List,
+
+    /// Print an effective keymap
+    Show {
+        /// Declared keymap name
+        name: String,
+    },
+
+    /// Validate and install a user keymap
+    Add {
+        /// TOML keymap file
+        file: PathBuf,
+    },
+
+    /// Remove an installed user keymap
+    Remove {
+        /// Declared keymap name
+        name: String,
+    },
+
+    /// Print the user keymap directory
+    Dir,
 }
 
 #[derive(Debug, Subcommand)]
@@ -465,6 +499,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             session_client::remove_agent(&target, force, &config).await?
         }
         Commands::List { all } => session_client::list_agents(all, &config).await?,
+        Commands::Keymap { command } => keymap::run(command, &config.data_dir).await?,
         Commands::Server { command } => match command {
             ServerCommands::Start {
                 cloud, foreground, ..
@@ -1461,6 +1496,50 @@ mod tests {
             panic!("expected list command");
         };
         assert!(all);
+    }
+
+    #[test]
+    fn keymap_subcommands_parse_their_targets() {
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "list"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::List
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "show", "claude-2.1"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::Show { name }
+            }) if name == "claude-2.1"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "add", "custom.toml"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::Add { file }
+            }) if file == PathBuf::from("custom.toml")
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "remove", "custom"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::Remove { name }
+            }) if name == "custom"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "dir"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::Dir
+            })
+        ));
     }
 
     #[test]

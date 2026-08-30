@@ -5461,3 +5461,10 @@ answer intents into provider-owned terminal programs. Input results identify
 the keymap, evidence basis, and fixed program, while unknown asks, mismatched
 answers, unsafe text, unverified menu shapes, and unavailable keymaps remain
 typed refusals before terminal input is written.
+
+2026-08-30 — **Completed the semantic PTY keymap milestone.** The CLI now
+lists effective baked and user keymaps with their source, applicable Claude
+range, and installed-version evidence basis; it can print, validate and add,
+remove, or locate the user keymap directory. User files are installed by their
+declared name only after the provider loader accepts them, so malformed data
+and hand-authored verification claims never enter session resolution.

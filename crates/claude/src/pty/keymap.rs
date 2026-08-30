@@ -238,6 +238,17 @@ pub enum Basis {
     Unknown,
 }
 
+impl std::fmt::Display for Basis {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Verified(version) => write!(formatter, "Verified({version})"),
+            Self::InRange => formatter.write_str("InRange"),
+            Self::Extrapolated { from } => write!(formatter, "Extrapolated(from {from})"),
+            Self::Unknown => formatter.write_str("Unknown"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Extrapolation {
@@ -266,6 +277,13 @@ impl Default for KeymapSources {
             user_dir: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeymapFile {
+    pub id: KeymapId,
+    pub applies_to: VersionReq,
+    pub contents: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,6 +338,22 @@ pub enum KeymapError {
     ProgramTableViolation { program: String },
     #[error("no keymaps are available for Claude {0}")]
     NoKeymaps(Version),
+}
+
+impl KeymapError {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Io(..) => "Io",
+            Self::Parse { .. } => "Parse",
+            Self::UnknownProgram(_) => "UnknownProgram",
+            Self::UnknownStep(_) => "UnknownStep",
+            Self::UnknownKey(_) => "UnknownKey",
+            Self::BadRange(_) => "BadRange",
+            Self::HandVerified { .. } => "HandVerified",
+            Self::ProgramTableViolation { .. } => "ProgramTableViolation",
+            Self::NoKeymaps(_) => "NoKeymaps",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -383,6 +417,18 @@ pub fn load_str(source: &str, origin: &str, kind: KeymapSource) -> Result<Keymap
 struct LoadedKeymap {
     keymap: Keymap,
     id: KeymapId,
+    contents: String,
+}
+
+pub fn available(sources: &KeymapSources) -> Result<Vec<KeymapFile>, KeymapError> {
+    Ok(load_sources(sources)?
+        .into_values()
+        .map(|loaded| KeymapFile {
+            id: loaded.id,
+            applies_to: loaded.keymap.applies_to,
+            contents: loaded.contents,
+        })
+        .collect())
 }
 
 /// Resolves the keymap and records why it was selected for an observed version.
@@ -484,6 +530,7 @@ fn load_sources(sources: &KeymapSources) -> Result<BTreeMap<String, LoadedKeymap
             LoadedKeymap {
                 id: keymap_id(&keymap.name, KeymapSource::Baked, contents.as_bytes()),
                 keymap,
+                contents: (*contents).to_owned(),
             },
         );
     }
@@ -518,6 +565,7 @@ fn load_sources(sources: &KeymapSources) -> Result<BTreeMap<String, LoadedKeymap
             LoadedKeymap {
                 id: keymap_id(&keymap.name, source, contents.as_bytes()),
                 keymap,
+                contents,
             },
         );
     }
