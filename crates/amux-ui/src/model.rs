@@ -482,6 +482,29 @@ pub enum AgentMessagePresentation {
     Notice,
 }
 
+/// The sender named by an amux message envelope.
+///
+/// Parsed addresses retain the original text beside their typed parts so a
+/// client can pass through an address whose host is not in its inventory
+/// without normalizing or shortening it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentMessageSender<'a> {
+    Address {
+        name: &'a str,
+        host: HostId,
+        raw: &'a str,
+    },
+    Raw(&'a str),
+}
+
+impl<'a> AgentMessageSender<'a> {
+    pub fn raw(self) -> &'a str {
+        match self {
+            Self::Address { raw, .. } | Self::Raw(raw) => raw,
+        }
+    }
+}
+
 /// The closed form of a message body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MessageDigest<'a> {
@@ -696,6 +719,22 @@ impl Model {
 
     pub fn host_name(&self, id: HostId) -> Option<&str> {
         self.hosts.get(&id).map(|host| host.entry.name.as_str())
+    }
+
+    /// Interpret the sender field from amux's own envelope vocabulary while
+    /// retaining malformed, human, and otherwise non-address values verbatim.
+    pub fn agent_message_sender<'a>(&self, from: &'a str) -> AgentMessageSender<'a> {
+        let Some((name, host)) = from.rsplit_once('/') else {
+            return AgentMessageSender::Raw(from);
+        };
+        let Ok(host) = host.parse::<HostId>() else {
+            return AgentMessageSender::Raw(from);
+        };
+        AgentMessageSender::Address {
+            name,
+            host,
+            raw: from,
+        }
     }
 
     /// A host we know nothing about counts as offline.

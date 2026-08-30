@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Typed amux envelope senders before terminal formatting.**
+The Model now projects each retained sender string as either an amux address
+with a typed host id or exact passthrough text. The terminal still suppresses
+same-host names and chooses `name @ host` wording, but it no longer parses the
+wire address and unresolved hosts still display precisely what arrived.
+
 2026-08-30 — **Typed Claude permission suggestion discriminants.**
 Suggestion kinds and destinations now fold into Claude-native known/unknown
 enums, recognizing directory grants and session scope while retaining every

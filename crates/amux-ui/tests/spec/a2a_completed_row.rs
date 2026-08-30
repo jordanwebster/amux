@@ -9,7 +9,9 @@
 
 use amux_ui::claude::ClaudeLayer;
 use amux_ui::codex::CodexLayer;
-use amux_ui::{AgentMessageKind, AgentMessagePresentation, Model, Msg, message_digest};
+use amux_ui::{
+    AgentMessageKind, AgentMessagePresentation, AgentMessageSender, Model, Msg, message_digest,
+};
 use serde_json::json;
 
 use crate::harness::*;
@@ -166,6 +168,32 @@ fn a2a_completed_row_leaves_a_message_alone() {
     let (kind, text) = &messages[0];
     assert_eq!(kind.presentation(), AgentMessagePresentation::Inbound);
     assert_eq!(text, "how far along?");
+}
+
+/// Sender addresses are amux envelope facts, including their host identity;
+/// values outside that vocabulary remain exact passthrough text.
+#[test]
+fn a2a_completed_row_types_sender_addresses_without_losing_raw_values() {
+    let model = fold(claude_sequence());
+    let raw = "scribe/00000000-0000-0000-0000-00000000cafe";
+    assert_eq!(
+        model.agent_message_sender(raw),
+        AgentMessageSender::Address {
+            name: "scribe",
+            host: "00000000-0000-0000-0000-00000000cafe"
+                .parse()
+                .expect("valid host id"),
+            raw,
+        }
+    );
+    assert_eq!(
+        model.agent_message_sender("human"),
+        AgentMessageSender::Raw("human")
+    );
+    assert_eq!(
+        model.agent_message_sender("scribe/not-a-host"),
+        AgentMessageSender::Raw("scribe/not-a-host")
+    );
 }
 
 /// The same three envelopes reach a Codex parent by a different carrier

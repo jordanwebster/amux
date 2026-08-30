@@ -13,8 +13,8 @@ pub(crate) mod viewport;
 use std::cell::RefCell;
 
 use amux_ui::{
-    AgentId, AgentMessageKind, AgentMessagePresentation, Command, FamilyNeed, Model, OpId,
-    StructuredProtocol, Why, message_digest,
+    AgentId, AgentMessageKind, AgentMessagePresentation, AgentMessageSender, Command, FamilyNeed,
+    Model, OpId, StructuredProtocol, Why, message_digest,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
@@ -508,7 +508,11 @@ impl<'m> MessageView<'m> {
     }
 
     pub(crate) fn sender(&self, from: &str) -> String {
-        sender_marker(self.model, self.agent, from)
+        sender_marker(
+            self.model,
+            self.agent,
+            self.model.agent_message_sender(from),
+        )
     }
 
     /// The rows a message's body makes (U4). An ordinary message shows
@@ -570,21 +574,21 @@ pub(crate) fn message_glyph(
 }
 
 /// Who a message came from, in words (U4): the sender's name, and the
-/// host only when it is not this agent's own. The wire carries
-/// `name/<host uuid>` because that pair is the address a reply is sent
-/// to; a chat row is for a person, and a person reading their own
-/// machine's name in every row learns nothing from it.
+/// host only when it is not this agent's own. A chat row is for a person,
+/// and a person reading their own machine's name in every row learns
+/// nothing from it.
 ///
 /// A host this inventory cannot name is left exactly as it arrived. An
 /// address nobody here can resolve is still the truth about where the
 /// message came from, and shortening it to the half we recognise would
 /// be inventing agreement.
-pub(crate) fn sender_marker(model: &Model, agent: AgentId, from: &str) -> String {
-    let Some((name, host)) = from.rsplit_once('/') else {
-        return from.to_string();
-    };
-    let Ok(host) = host.parse::<amux_ui::HostId>() else {
-        return from.to_string();
+pub(crate) fn sender_marker(
+    model: &Model,
+    agent: AgentId,
+    sender: AgentMessageSender<'_>,
+) -> String {
+    let AgentMessageSender::Address { name, host, .. } = sender else {
+        return sender.raw().to_string();
     };
     if model
         .agent(agent)
@@ -594,7 +598,7 @@ pub(crate) fn sender_marker(model: &Model, agent: AgentId, from: &str) -> String
     }
     match model.host_name(host) {
         Some(host_name) => format!("{name} @ {host_name}"),
-        None => from.to_string(),
+        None => sender.raw().to_string(),
     }
 }
 
