@@ -245,13 +245,6 @@ fn sdk_chat_renders_the_unsupported_placeholder() {
         text.contains("claude_sdk_v1"),
         "and name the protocol: {text}"
     );
-    // The completion page shows the operator the frame a person would see.
-    let evidence = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.autopilot/evidence/sdk-driver-tui-placeholder.txt");
-    if let Some(dir) = evidence.parent() {
-        std::fs::create_dir_all(dir).expect("evidence directory");
-    }
-    std::fs::write(&evidence, &text).expect("write evidence");
 }
 
 /// A child's ask still reaches this parent: the family banner is chrome,

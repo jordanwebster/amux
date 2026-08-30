@@ -9,7 +9,9 @@ Creating or attaching to a Claude SDK agent now enters the structured TUI
 layer even when raw attach is configured as the default. Fleet entry keys
 derive raw-attach availability from the agent kind's protocol set, so an SDK
 agent never requests `terminal_v1`; its unsupported placeholder remains
-stream-free and the daemon's typed protocol refusal stays intact.
+stream-free and the daemon's typed protocol refusal stays intact. A live
+worktree-daemon capture now proves both explicit attach and fleet entry render
+that placeholder without a subscription error or daemon crash.
 
 ---
 
