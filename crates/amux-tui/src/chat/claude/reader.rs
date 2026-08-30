@@ -162,7 +162,7 @@ fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'stat
                 })
                 .collect()
         }
-        Body::Diff(artifact) => diff::reader_rows(artifact, width, theme),
+        Body::Diff(artifact) => crate::chat::diff::reader_rows(artifact, width, theme),
         Body::NewFile(content) => diff::new_file_rows(content, width, theme, true),
     }
 }

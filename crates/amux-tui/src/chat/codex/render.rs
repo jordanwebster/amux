@@ -25,7 +25,7 @@ use crate::chat::blocks::{
     paint_compaction_rule, paint_composer_block, paint_error, paint_header, paint_mcp_startup,
     paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
-use crate::chat::diff::diff_rows_from_patch;
+use crate::chat::diff as diff_painter;
 use crate::chat::frame::{
     BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintCache, PaintedBlock,
     chat_geometry,
@@ -43,9 +43,8 @@ const DECISION_KIND_MAX: usize = 22;
 const DECISION_DETAIL_MAX: usize = DECISION_LABEL_MAX - DECISION_KIND_MAX - 3;
 const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
-/// Rows of a file change's patch a feed block shows before it says the
-/// rest is in the sandbox, not on screen.
-const PATCH_PREVIEW_ROWS: usize = 12;
+/// Screen rows of a file change's patch retained in the feed block.
+const PATCH_PREVIEW_BUDGET: usize = 12;
 
 // --- the frame --------------------------------------------------------------
 
@@ -1134,17 +1133,20 @@ fn work_block(key: BlockKey, work: &WorkEntry, theme: Theme, width: usize) -> Pa
         width,
     );
     if let Some((title, patch_head, truncated)) = patch {
-        let rows = diff_rows_from_patch(patch_head, truncated);
+        let document = amux_ui::diff::parse_unified_patch(patch_head, truncated);
+        let rows = document.rows();
         if !rows.is_empty() {
-            let shown = rows.len().min(PATCH_PREVIEW_ROWS);
-            let title = if truncated || rows.len() > shown {
+            let painted =
+                diff_painter::paint_rows(&rows, theme, blocks::panel_body_width(width), 0, true);
+            let (body, screen_cut) = painted.into_screen_head(PATCH_PREVIEW_BUDGET);
+            let title = if document.truncated || screen_cut {
                 format!("{title} · patch preview")
             } else {
                 title
             };
             block = merged(
                 block,
-                blocks::paint_unified_diff(key, &title, &rows[..shown], theme, width),
+                blocks::paint_unified_diff(key, &title, body, theme, width),
             );
         }
     }

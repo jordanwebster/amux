@@ -2,6 +2,7 @@
                                                             
     └ running                                               
                                                             
+    permission — Edit sync/config.rs (+4 -1)                
                                                             
       pub struct RetryConfig {                              
      -    pub max_attempts: u8,                             
@@ -10,8 +11,7 @@
      +    pub retry_budget: u32,                            
      +    pub on_exhausted: Behavior,                       
           pub base_delay: Duration,                         
-          pub max_delay: Duration,                          
-      ⋮ +1 more lines · f full diff                         
+      ⋮ +2 more lines · f full diff                         
                                                             
     › 1. Allow once                                         
       2. Always allow access to /work from this project     

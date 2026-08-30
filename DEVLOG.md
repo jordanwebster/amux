@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Unified terminal diff painting around typed rows.** Every
+unified-diff surface now passes `amux-ui` row facts through one terminal
+painter with independent old and new gutters, wrapped content, and blank
+continuation gutters. Docked and feed preview limits are applied after
+wrapping, while remainder words and budgets remain presentation policy. Claude
+landed Edit patches now use that same path beneath their outcome row, and the
+fullscreen reader no longer maintains a separate line-number walk.
+
 2026-08-30 — **Kept Claude's landed patch instead of only its totals.** A
 successful Edit or Write now retains the typed, absolutely numbered
 `structuredPatch` document beside its full-sidecar magnitude. The retained

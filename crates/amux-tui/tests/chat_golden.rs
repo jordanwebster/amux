@@ -229,6 +229,25 @@ fn edit_sidecar(path: &str, added: usize, removed: usize) -> Value {
     json!({"filePath": path, "structuredPatch": [{"lines": lines}]})
 }
 
+fn landed_edit_sidecar(path: &str) -> Value {
+    json!({
+        "filePath": path,
+        "structuredPatch": [{
+            "oldStart": 12,
+            "oldLines": 3,
+            "newStart": 20,
+            "newLines": 4,
+            "lines": [
+                " fn retry(config: &RetryConfig) {",
+                "-    sleep(Duration::from_secs(1));",
+                "+    sleep(config.next_delay());",
+                "+    attempts += 1;",
+                " }",
+            ],
+        }],
+    })
+}
+
 // --- ask fixtures (hook rows per transcript-semantics §18) -------------------
 
 /// A `hook.permission_request` row with `count` copies of the verified
@@ -1140,6 +1159,42 @@ fn chat_tools_edge() {
     ));
     let rendered = render_frame(&fold(msgs), &chat_view(), 80, 40, IDLE_NOW);
     assert_golden("chat_tools_edge", &rendered);
+}
+
+/// Claude's post-hoc `structuredPatch` remains visible below the landed file
+/// change and uses the same independent gutters as Codex patches.
+#[test]
+fn chat_landed_edit_patch() {
+    let mut msgs = base_msgs();
+    msgs.extend(opened(false));
+    msgs.push(batch(
+        "2026-08-12T09:02:00Z",
+        1,
+        vec![
+            ready_row(),
+            mode_row("acceptEdits"),
+            prompt_row(1, "2026-08-12T09:00:00Z", "make retry delay configurable"),
+            tool_use_row(
+                2,
+                "2026-08-12T09:00:05Z",
+                "msg_61",
+                vec![tool_use(
+                    "toolu_61",
+                    "Edit",
+                    json!({"file_path": "sync/retry.rs", "old_string": "old", "new_string": "new"}),
+                )],
+            ),
+            tool_result_row(
+                3,
+                "2026-08-12T09:00:06Z",
+                vec![tool_result("toolu_61", "ok")],
+                Some(landed_edit_sidecar("sync/retry.rs")),
+            ),
+            turn_duration_row(4, "2026-08-12T09:00:07Z", 7_000),
+        ],
+    ));
+    let rendered = render_frame(&fold(msgs), &chat_view(), 120, 20, IDLE_NOW);
+    assert_golden("chat_landed_edit_patch", &rendered);
 }
 
 /// A pending permission ask docks its panel over the composer area (C1):

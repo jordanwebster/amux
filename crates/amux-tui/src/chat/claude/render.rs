@@ -26,7 +26,7 @@ use crate::chat::blocks::{
 };
 use crate::chat::claude::runs::{ClaudeItem, fold_runs};
 use crate::chat::claude::{View, ask_ui, panel, reader};
-use crate::chat::diff::diff_rows_from_claude;
+use crate::chat::diff as diff_painter;
 use crate::chat::frame::{
     BlockKey, ChatFrameParts, ChatGeometry, FeedBlocks, FrameSpacing, PaintCache, PaintedBlock,
     chat_geometry,
@@ -44,9 +44,8 @@ const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
 /// lines").
 const PLAN_PREVIEW_LINES: usize = 6;
 
-/// Diff rows a docked ask shows before it states the remainder and names
-/// the reader.
-const DIFF_PREVIEW_ROWS: usize = 8;
+/// Screen rows a diff preview may occupy, including its remainder row.
+const DIFF_PREVIEW_BUDGET: usize = 8;
 
 /// Synthetic keys for the blocks no entry owns. Pending echoes count
 /// down from the top of the space so they can never collide with an
@@ -310,12 +309,13 @@ pub(crate) fn ask_panel_lines(
     width: usize,
 ) -> Vec<Line<'static>> {
     if let Some(AskArtifact::Diff(artifact)) = &ask.artifact {
-        let rows = diff_rows_from_claude(artifact);
-        let shown = rows.len().min(DIFF_PREVIEW_ROWS);
         let body_width = blocks::panel_body_width(width);
-        let mut body = blocks::diff_body_rows(&rows[..shown], theme, body_width);
-        if rows.len() > shown {
-            body.push(remainder_row(rows.len() - shown, "f full diff", theme));
+        let preview =
+            diff_painter::paint_rows(&artifact.document.rows(), theme, body_width, 0, true)
+                .into_preview(DIFF_PREVIEW_BUDGET);
+        let mut body = preview.lines;
+        if preview.hidden > 0 {
+            body.push(remainder_row(preview.hidden, "f full diff", theme));
         }
         body.append(&mut parts.body);
         parts.body = body;
@@ -791,12 +791,13 @@ fn tool_block(
                     file_path,
                     added,
                     removed,
+                    document,
                     ..
                 },
         },
     ) = (&tool.invocation, &tool.outcome)
     {
-        return paint_file_change(
+        let mut block = paint_file_change(
             key,
             tool.name.as_deref().unwrap_or("edit"),
             file_path,
@@ -805,6 +806,22 @@ fn tool_block(
             theme,
             width,
         );
+        let rows = document.rows();
+        if !rows.is_empty() {
+            let painted =
+                diff_painter::paint_rows(&rows, theme, blocks::panel_body_width(width), 0, true);
+            let (body, screen_cut) = painted.into_screen_head(DIFF_PREVIEW_BUDGET);
+            let title = if document.truncated || screen_cut {
+                format!("{file_path} · patch preview")
+            } else {
+                file_path.to_string()
+            };
+            append_block(
+                &mut block,
+                blocks::paint_unified_diff(key, &title, body, theme, width),
+            );
+        }
+        return block;
     }
 
     let (glyph, glyph_style) = outcome_glyph(tool, theme);
@@ -836,6 +853,14 @@ fn tool_block(
         block.copy_text.push_str(&preview.copy_text);
     }
     block
+}
+
+fn append_block(block: &mut PaintedBlock, tail: PaintedBlock) {
+    block.lines.extend(tail.lines);
+    if !tail.copy_text.is_empty() {
+        block.copy_text.push('\n');
+        block.copy_text.push_str(&tail.copy_text);
+    }
 }
 
 /// The tool line's text: name, target, FACT magnitude (never recomputed —

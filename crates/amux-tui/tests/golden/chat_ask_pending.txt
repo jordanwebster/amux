@@ -26,6 +26,7 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
+                                                                                                                        
     ✔ allowed once — Edit sync/config.rs (+4 -1) · sending…                                                             
                                                                                                                         
       pub struct RetryConfig {                                                                                          
@@ -35,6 +36,5 @@
      +    pub retry_budget: u32,                                                                                        
      +    pub on_exhausted: Behavior,                                                                                   
           pub base_delay: Duration,                                                                                     
-          pub max_delay: Duration,                                                                                      
-      ⋮ +1 more lines · f full diff                                                                                     
+      ⋮ +2 more lines · f full diff                                                                                     
     answer sent — awaiting confirmation                                                                                 

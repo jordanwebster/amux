@@ -28,7 +28,6 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use super::diff::{DiffRow, DiffRowKind};
 use super::frame::{BlockKey, PaintedBlock};
 use crate::markdown;
 use crate::render::{
@@ -716,18 +715,11 @@ pub(crate) fn paint_ask_panel(
     block(key, lines)
 }
 
-/// A unified diff in one column, with the old and new line numbers side
-/// by side in the gutter.
-///
-/// Only the rows that changed carry a tint, so a hunk reads as a few
-/// coloured lines inside a quiet panel rather than a wall of colour. A
-/// long line is cut at the right edge instead of wrapped: a diff whose
-/// rows do not line up with its gutter is harder to read than one that
-/// admits it is showing you the beginning of the line.
+/// Put already-painted unified-diff rows under a titled panel surface.
 pub(crate) fn paint_unified_diff(
     key: BlockKey,
     title: &str,
-    rows: &[DiffRow],
+    body: Vec<Line<'static>>,
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
@@ -737,11 +729,7 @@ pub(crate) fn paint_unified_diff(
         surface,
         width,
     )];
-    lines.extend(
-        diff_body_rows(rows, theme, panel_body_width(width))
-            .into_iter()
-            .map(|line| tinted(line, surface, width)),
-    );
+    lines.extend(body.into_iter().map(|line| tinted(line, surface, width)));
     block(key, lines)
 }
 
@@ -749,52 +737,6 @@ pub(crate) fn paint_unified_diff(
 /// its tint starts at. Adapters formatting panel bodies measure with it.
 pub(crate) fn panel_body_width(width: usize) -> usize {
     width.saturating_sub(TEXT_COL)
-}
-
-/// The rows of a unified diff at a panel's text column, before the panel
-/// tint: the numbered gutter, then the row itself carrying its own
-/// class colour to the right edge. `paint_unified_diff` tints them under
-/// a title; an ask panel puts the same rows inside its own body, where
-/// the diff has to sit above the answers rather than below them.
-pub(crate) fn diff_body_rows(rows: &[DiffRow], theme: Theme, width: usize) -> Vec<Line<'static>> {
-    // A diff whose rows carry no numbers gets no gutter: an empty column
-    // of nothing pushes the code right for a gutter that will never say
-    // anything.
-    let widest = rows
-        .iter()
-        .flat_map(|row| [row.old, row.new])
-        .flatten()
-        .map(|number| number.to_string().len())
-        .max();
-    let digits = widest.unwrap_or(0).max(2);
-    let gutter = widest.map(|_| digits * 2 + 1).unwrap_or(0);
-
-    rows.iter()
-        .map(|row| {
-            let style = match row.kind {
-                DiffRowKind::Meta => theme.diff_meta(),
-                DiffRowKind::Context => theme.diff_context(),
-                DiffRowKind::Added => theme.diff_added(),
-                DiffRowKind::Removed => theme.diff_removed(),
-            };
-            let mut line = Line::default();
-            if gutter > 0 {
-                let numbers = format!(
-                    "{:>digits$} {:>digits$}",
-                    row.old.map(|n| n.to_string()).unwrap_or_default(),
-                    row.new.map(|n| n.to_string()).unwrap_or_default(),
-                );
-                line.spans.push(Span::styled(numbers, theme.gutter()));
-            }
-            let room = width.saturating_sub(gutter + 1);
-            line.spans.push(Span::styled(
-                format!(" {}", clip_to_width(&row.text, room)),
-                style,
-            ));
-            fill(&mut line, width, style);
-            line
-        })
-        .collect()
 }
 
 fn plural(count: usize, one: &str, many: &str) -> String {
@@ -806,7 +748,10 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use amux_ui::diff::{RowFact as DiffRow, RowKind as DiffRowKind};
+
     use super::*;
+    use crate::chat::diff;
     use crate::render::str_width;
 
     fn key() -> BlockKey {
@@ -1156,7 +1101,9 @@ mod tests {
     #[test]
     fn only_changed_rows_are_tinted_and_the_gutter_stays_on_the_panel() {
         let theme = Theme::default();
-        let painted = paint_unified_diff(key(), "✎ src/sync/client.rs", &a_hunk(), theme, 60);
+        let rows = a_hunk();
+        let body = diff::paint_rows(&rows, theme, panel_body_width(60), 0, true).into_lines();
+        let painted = paint_unified_diff(key(), "✎ src/sync/client.rs", body, theme, 60);
         let rows: Vec<String> = classes(&painted.lines, theme)
             .lines()
             .map(str::to_string)
@@ -1194,7 +1141,7 @@ mod tests {
     }
 
     #[test]
-    fn a_long_diff_line_is_clipped_rather_than_wrapped() {
+    fn a_long_diff_line_wraps_with_blank_continuation_gutters() {
         let theme = Theme::default();
         let rows = vec![DiffRow {
             old: None,
@@ -1202,9 +1149,21 @@ mod tests {
             kind: DiffRowKind::Added,
             text: format!("+{}", "x".repeat(200)),
         }];
-        let painted = paint_unified_diff(key(), "✎ long.rs", &rows, theme, 40);
-        assert_eq!(painted.lines.len(), 2, "one title row and one diff row");
-        assert_eq!(line_len(&painted.lines[1]), 40);
+        let body = diff::paint_rows(&rows, theme, panel_body_width(40), 0, true).into_lines();
+        let painted = paint_unified_diff(key(), "✎ long.rs", body, theme, 40);
+        assert!(painted.lines.len() > 2, "the long source row wraps");
+        assert!(
+            painted.lines[2]
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .starts_with("    "),
+            "the continuation has no repeated gutter"
+        );
+        for line in &painted.lines {
+            assert_eq!(line_len(line), 40);
+        }
     }
 
     #[test]
