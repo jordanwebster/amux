@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Added a credential-empty offline workspace runner.** Commands
+can now be run with fresh home directories for Claude and Codex, Cargo's
+offline mode enabled, and outbound networking denied by the macOS sandbox.
+The runner preserves the installed Rust toolchains and command path, permits
+Unix-domain sockets used by local integration tests, prints the effective
+environment, and checks its own TCP isolation before executing a command.
+
+---
+
 2026-08-30 — **Claude PTY process checks have a focused live suite.** The
 former capture harness is now the opt-in `claude_pty_live` target with a
 validated `all | <scenario>...` grammar. Provider behavior covered by the
