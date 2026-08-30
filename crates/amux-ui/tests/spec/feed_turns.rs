@@ -178,7 +178,6 @@ fn an_interrupt_closes_the_tool_request_and_infers_the_turn() {
             "unrecognized",
             "unrecognized",
             "prompt",
-            "unrecognized",
             "thinking",
             "tool",
             "interruption",
@@ -449,6 +448,31 @@ fn session_state_rows_fold_to_latest_wins_facts() {
             .as_deref(),
         Some("bypassPermissions")
     );
+}
+
+/// PreToolUse and PostToolUse duplicate the transcript's typed tool blocks.
+/// They never add a second tool or an unrecognized feed entry
+/// (docs/CHAT.md §The feed).
+#[test]
+fn tool_lifecycle_hooks_are_known_session_fact_rows() {
+    let rows = chat_rows("tools");
+    for row_type in ["hook.pre_tool_use", "hook.post_tool_use"] {
+        assert!(
+            rows.iter().any(|row| row["type"] == row_type),
+            "the provider fixture exercises {row_type}"
+        );
+    }
+
+    let model = fold(chat_feed("fix-auth-bug", "tools"));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let unrecognized: Vec<_> = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Unrecognized(row) => row.row_type.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(unrecognized, vec!["atis-latch", "bridge-session"]);
 }
 
 const REVIEW_SESSION: &str = "22222222-2222-4222-8222-222222222222";

@@ -5619,3 +5619,10 @@ matches the baked keymap of the same name, then strips that evidence before
 installing the user override. Altered or hand-authored verification remains a
 typed refusal, while listings report the shipped Claude 2.1.251 basis as
 verified.
+
+2026-08-30 — **Folded Claude tool lifecycle hooks as typed session facts.**
+Managed PTY settings register both pre- and post-tool hooks, and the chat fold
+now consumes them without rendering duplicate or unrecognized tool entries;
+transient hook-local modes do not replace transcript session state.
+Fixture-backed feed specs keep provider hook rows covered while preserving
+genuinely unknown `atis-latch` and `bridge-session` entries.

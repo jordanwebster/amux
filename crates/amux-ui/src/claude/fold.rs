@@ -126,6 +126,11 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
             }
             return;
         }
+        // Tool lifecycle hooks duplicate facts carried by the transcript's
+        // tool-use and tool-result blocks. Their permission mode may be a
+        // transient tool-local value, so the session-state row remains the
+        // authority and these hooks fold to nothing.
+        Some("hook.pre_tool_use") | Some("hook.post_tool_use") => return,
         // Notification wording is forbidden interpretation ground (E2): the
         // plan-approval notification says "needs your approval" with no
         // "permission" substring (fixture-verified). Every signal it could

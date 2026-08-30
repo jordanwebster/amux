@@ -319,6 +319,8 @@ mod tests {
             settings["hooks"]["SessionStart"][0]["hooks"][0]["command"],
             "'/Applications/amux tool' hooks claude"
         );
+        assert!(settings["hooks"]["PreToolUse"].is_array());
+        assert!(settings["hooks"]["PostToolUse"].is_array());
     }
 
     #[test]
