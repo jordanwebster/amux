@@ -875,6 +875,7 @@ mod tests {
             transcript_path: PathBuf::from(path),
             cwd: PathBuf::from("/tmp"),
             permission_mode: None,
+            messaging: None,
             raw,
         })
     }

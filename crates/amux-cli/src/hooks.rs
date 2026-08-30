@@ -1,9 +1,9 @@
 //! Claude Code hook handler (client-side).
 //!
 //! Invoked through the managed session's absolute amux route by Claude Code's
-//! hook system. Reads hook event JSON from stdin, connects to the local server, sends a
-//! HandleHook command fire-and-forget (no ack wait). Exits immediately with
-//! code 0 and no stdout so Claude Code is never blocked.
+//! hook system. Reads hook event JSON from stdin and forwards it to either the
+//! managed session's hook socket or the daemon. Exits immediately with code 0
+//! and no stdout so Claude Code is never blocked.
 //!
 //! For external sessions (no AMUX_AGENT_ID), uses the hook's session_id as
 //! the agent_id so the server can create a readonly session.
@@ -34,7 +34,15 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     io::stdin().lock().read_to_end(&mut payload)?;
 
     if let Some(socket) = std::env::var_os("CLAUDE_HOOK_SOCKET") {
-        return claude::hooks::forward(&payload, std::path::Path::new(&socket));
+        let env = messaging_environment();
+        return match messaging_credentials(&env) {
+            Some(credentials) => claude::hooks::forward_with_messaging(
+                &payload,
+                std::path::Path::new(&socket),
+                &credentials,
+            ),
+            None => claude::hooks::forward(&payload, std::path::Path::new(&socket)),
+        };
     }
 
     let raw: Value = match serde_json::from_slice(&payload) {
@@ -77,6 +85,21 @@ fn messaging_environment_with(
         .collect()
 }
 
+fn messaging_credentials(
+    env: &HashMap<String, String>,
+) -> Option<claude::hooks::MessagingCredentials> {
+    env.get("CLAUDE_CODE_MESSAGING_SOCKET")
+        .filter(|value| !value.is_empty())
+        .zip(
+            env.get("CLAUDE_CODE_MESSAGING_TOKEN")
+                .filter(|value| !value.is_empty()),
+        )
+        .map(|(socket_path, token)| claude::hooks::MessagingCredentials {
+            socket_path: socket_path.into(),
+            token: token.clone(),
+        })
+}
+
 async fn send_hook_event(
     config: &Config,
     payload: Vec<u8>,
@@ -114,5 +137,29 @@ mod tests {
             Some(&"secret".to_string())
         );
         assert!(!forwarded.contains_key("CLAUDE_CONFIG_DIR"));
+        let credentials = messaging_credentials(&forwarded).unwrap();
+        assert_eq!(
+            credentials.socket_path,
+            std::path::PathBuf::from("/runtime/claude.sock")
+        );
+        assert_eq!(credentials.token, "secret");
+    }
+
+    #[test]
+    fn requires_both_messaging_values() {
+        let only_socket = HashMap::from([(
+            "CLAUDE_CODE_MESSAGING_SOCKET".to_string(),
+            "/runtime/claude.sock".to_string(),
+        )]);
+        assert!(messaging_credentials(&only_socket).is_none());
+
+        let empty_token = HashMap::from([
+            (
+                "CLAUDE_CODE_MESSAGING_SOCKET".to_string(),
+                "/runtime/claude.sock".to_string(),
+            ),
+            ("CLAUDE_CODE_MESSAGING_TOKEN".to_string(), String::new()),
+        ]);
+        assert!(messaging_credentials(&empty_token).is_none());
     }
 }

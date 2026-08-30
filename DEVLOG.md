@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Managed Claude hooks retain native messaging delivery.** The
+per-session hook socket now carries Claude's messaging socket and token in a
+private provider envelope while preserving the original hook payload for
+structured rows. Managed PTY sessions that observe both credentials use the
+native socket carrier; sessions without them continue to use safe PTY paste.
+
+---
+
 2026-08-30 — **The Claude SDK corpus has its first live drift ledger.**
 Claude Code 2.1.251 exercised all 23 specifications: 20 retained their 2.1.247
 recordings and gained verification entries, `history/resumed_at` alone was

@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use claude::hooks::HookPayload;
+use claude::hooks::{HookPayload, MessagingCredentials};
 use claude::pty::{
     Control, HookSource, PtyEvent, PtyInput, PtySource, Session, Sources, TranscriptSource,
 };
@@ -37,12 +37,6 @@ const HOOK_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
 const MESSAGING_SOCKET_ENV: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
 const MESSAGING_TOKEN_ENV: &str = "CLAUDE_CODE_MESSAGING_TOKEN";
 const MESSAGING_SOCKET_MIN_VERSION: semver::Version = semver::Version::new(2, 1, 224);
-
-#[derive(Clone)]
-pub(super) struct MessagingCredentials {
-    pub socket_path: PathBuf,
-    pub token: String,
-}
 
 #[derive(Default)]
 struct Runtime {
@@ -750,7 +744,13 @@ async fn ingest_hook(
     hook: HookPayload,
 ) {
     let common = hook.common();
-    runtime.lock().expect("Claude runtime poisoned").session_id = Some(common.session_id);
+    {
+        let mut state = runtime.lock().expect("Claude runtime poisoned");
+        state.session_id = Some(common.session_id);
+        if let Some(messaging) = &common.messaging {
+            state.messaging = Some(messaging.clone());
+        }
+    }
     let tag = match &hook {
         HookPayload::SessionStart(_) => {
             ready.store(true, Ordering::Release);
