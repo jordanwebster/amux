@@ -20,8 +20,8 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 pub use frame::PaintStats;
 use frame::{
-    ChatFrameParts, FeedMetrics, FrameSpacing, PaintCache, PaintedBlock, compose_chat_frame,
-    feed_metrics,
+    ChatFrameParts, ChatGeometry, FeedMetrics, FrameSpacing, PaintCache, PaintedBlock,
+    compose_chat_frame, feed_metrics,
 };
 use ratatui::text::Line;
 use viewport::{FeedViewport, apply_scroll, move_focus, toggle_focused_run};
@@ -53,6 +53,18 @@ struct CachedFeedMetrics {
     viewport: (u16, u16),
     metrics: FeedMetrics,
     blocks: Vec<PaintedBlock>,
+    following_geometry: ChatGeometry,
+    paused_geometry: ChatGeometry,
+}
+
+impl CachedFeedMetrics {
+    fn geometry(&self, paused: bool) -> ChatGeometry {
+        if paused {
+            self.paused_geometry
+        } else {
+            self.following_geometry
+        }
+    }
 }
 
 /// Renderer-local state for one structured chat. Native sub-state remains
@@ -223,11 +235,17 @@ impl ChatView {
         self.quit_guard_mut().expire(now)
     }
 
-    fn metrics_for(&self, model: &Model, viewport: (u16, u16), now: DateTime<Utc>) -> FeedMetrics {
+    fn layout_for(
+        &self,
+        model: &Model,
+        viewport: (u16, u16),
+        now: DateTime<Utc>,
+        target_paused: bool,
+    ) -> (FeedMetrics, ChatGeometry) {
         if let Some(cached) = self.feed_metrics.borrow().as_ref()
             && cached.viewport == viewport
         {
-            return cached.metrics.clone();
+            return (cached.metrics.clone(), cached.geometry(target_paused));
         }
 
         // An input can arrive before the first frame, including in tests.
@@ -242,14 +260,26 @@ impl ChatView {
         let mut cache = self.paint_cache.borrow_mut();
         let parts = frame_parts(model, self, &mut cache, &ctx);
         drop(cache);
-        let geometry = parts.geometry(viewport, true);
-        let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &geometry);
+        let following_geometry = parts.geometry(viewport, false);
+        let paused_geometry = parts.geometry(viewport, true);
+        let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &paused_geometry);
+        let geometry = if target_paused {
+            paused_geometry
+        } else {
+            following_geometry
+        };
         self.feed_metrics.replace(Some(CachedFeedMetrics {
             viewport,
             metrics: metrics.clone(),
             blocks: parts.feed.blocks,
+            following_geometry,
+            paused_geometry,
         }));
-        metrics
+        (metrics, geometry)
+    }
+
+    fn metrics_for(&self, model: &Model, viewport: (u16, u16), now: DateTime<Utc>) -> FeedMetrics {
+        self.layout_for(model, viewport, now, true).0
     }
 
     fn pending_leader(&self) -> bool {
@@ -412,16 +442,10 @@ pub fn handle_chat_mouse(
         MouseEventKind::ScrollDown => viewport::ScrollIntent::Rows(3),
         _ => return false,
     };
-    let ctx = FrameContext {
-        viewport: size,
-        theme: Theme::default(),
-        now: Utc::now(),
-    };
-    let mut cache = chat.paint_cache.borrow_mut();
-    let parts = frame_parts(model, chat, &mut cache, &ctx);
-    drop(cache);
-    let geometry = parts.geometry(
+    let (metrics, geometry) = chat.layout_for(
+        model,
         size,
+        Utc::now(),
         matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
     );
     let row = event.row as usize;
@@ -432,7 +456,6 @@ pub fn handle_chat_mouse(
         return false;
     }
 
-    let metrics = chat.metrics_for(model, size, Utc::now());
     apply_scroll(
         &mut chat.viewport,
         &metrics,
@@ -460,6 +483,7 @@ pub(crate) fn build_chat_lines(
     drop(cache);
     let overlaid = parts.overlay.is_some();
     let banner = parts.banner.is_some();
+    let following_geometry = parts.geometry(ctx.viewport, false);
     let paused_geometry = parts.geometry(ctx.viewport, true);
     let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &paused_geometry);
     let blocks = parts.feed.blocks.clone();
@@ -467,6 +491,8 @@ pub(crate) fn build_chat_lines(
         viewport: ctx.viewport,
         metrics,
         blocks,
+        following_geometry,
+        paused_geometry,
     }));
 
     let mut lines = compose_chat_frame(parts, &chat.viewport, ctx.theme, ctx.viewport);
@@ -902,6 +928,20 @@ mod tests {
                 block(2, "middle block"),
                 block(3, "newest block"),
             ],
+            following_geometry: super::frame::ChatGeometry {
+                width: 120,
+                height: 40,
+                feed_top: 2,
+                feed_rows: 21,
+                bottom_top: 39,
+            },
+            paused_geometry: super::frame::ChatGeometry {
+                width: 120,
+                height: 40,
+                feed_top: 2,
+                feed_rows: 20,
+                bottom_top: 39,
+            },
         }));
     }
 
@@ -991,6 +1031,20 @@ mod tests {
                     ranges: Vec::new(),
                 },
                 blocks: Vec::new(),
+                following_geometry: super::frame::ChatGeometry {
+                    width: 120,
+                    height: 40,
+                    feed_top: 2,
+                    feed_rows: 21,
+                    bottom_top: 39,
+                },
+                paused_geometry: super::frame::ChatGeometry {
+                    width: 120,
+                    height: 40,
+                    feed_top: 2,
+                    feed_rows: 20,
+                    bottom_top: 39,
+                },
             }));
 
             super::handle_chat_key(
@@ -1207,7 +1261,22 @@ mod tests {
                     ranges: Vec::new(),
                 },
                 blocks: Vec::new(),
+                following_geometry: super::frame::ChatGeometry {
+                    width: 120,
+                    height: 40,
+                    feed_top: 2,
+                    feed_rows: 21,
+                    bottom_top: 39,
+                },
+                paused_geometry: super::frame::ChatGeometry {
+                    width: 120,
+                    height: 40,
+                    feed_top: 2,
+                    feed_rows: 20,
+                    bottom_top: 39,
+                },
             }));
+            let paint_stats = chat.paint_cache.borrow().stats();
             let event = |kind, row| MouseEvent {
                 kind,
                 column: 5,
@@ -1244,6 +1313,7 @@ mod tests {
                 chat.viewport.scroll,
                 FeedScroll::Paused { top_line: 77, .. }
             ));
+            assert_eq!(chat.paint_cache.borrow().stats(), paint_stats);
             assert!(super::handle_chat_mouse(
                 &mut chat,
                 &model,

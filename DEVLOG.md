@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Made wheel hit-testing consume the painted frame cache.** The
+cached feed metrics now carry both following and paused geometries derived from
+the same frame parts. Mouse wheel events reuse that layout and its row metrics,
+including the deliberate paused counterfactual, instead of rebuilding headers,
+overlays, bottom rows, and every cached feed block merely to locate the feed.
+
 2026-08-31 — **Put landed patch retention on the feed's memory scale.** Each
 Claude edit now keeps at most 16 hunks, 64 rows, and 8 KiB of patch text: enough
 for a substantial transcript preview without multiplying 64 KiB across every
