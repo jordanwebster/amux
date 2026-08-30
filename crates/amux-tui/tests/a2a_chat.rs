@@ -872,7 +872,7 @@ fn conversation_msgs() -> Vec<Msg> {
     rows.extend(claude_send_rows(
         13,
         "test-runner",
-        "rerun with --nocapture",
+        "\n  \nrerun with --nocapture\nthen report",
     ));
     msgs.push(batch(LEAD, NOW - 10, rows));
 
@@ -882,7 +882,10 @@ fn conversation_msgs() -> Vec<Msg> {
         vec![
             codex_message_row("message", "refactor-tunnels", "rerun with --nocapture"),
             codex_message_row("completed", "flake-hunter", REPORT),
-            codex_send_row("refactor-tunnels", "green, 0 flakes in 20 runs"),
+            codex_send_row(
+                "refactor-tunnels",
+                "\n  \ngreen, 0 flakes in 20 runs\nready to merge",
+            ),
         ],
     ));
     msgs

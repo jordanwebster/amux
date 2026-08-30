@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Typed Codex sends and gave both chats one send sentence.**
+Recognized Codex calls to amux's `send` tool now retain typed recipients and
+text, while malformed argument shapes remain raw amux-tool facts. Claude and
+Codex send rows share one terminal formatter that selects the first non-empty
+trimmed line, so leading blank lines can no longer produce an empty visible
+summary. Both agent-to-agent fixtures now exercise that rule without changing
+their expected frames.
+
 2026-08-30 — **Made Codex approval meaning a typed client-state fact.**
 Codex ask actions now retain their opaque wire choice beside an exhaustive
 meaning: scalar decisions, exec-policy amendments checked against the stated

@@ -92,6 +92,26 @@ fn tool_sequence() -> Vec<Msg> {
     ])
 }
 
+fn send_sequence() -> Vec<Msg> {
+    seq([
+        codex_base(AGENT),
+        vec![batch(
+            AGENT,
+            35,
+            vec![mcp_row(
+                "completed",
+                "send-1",
+                amux::agent_tools::MCP_SERVER_NAME,
+                "send",
+                json!({
+                    "arguments": {"to": "reviewer", "text": "\n  \nreview the patch"},
+                    "status": "completed"
+                }),
+            )],
+        )],
+    ])
+}
+
 fn messages(layer: &CodexLayer) -> Vec<AgentMessageEntry> {
     layer
         .entries()
@@ -201,6 +221,37 @@ fn a2a_codex_inbound_folds_an_amux_mcp_tool_call() {
         }
     );
     assert!(model.check_invariants().is_empty());
+}
+
+#[test]
+fn a2a_codex_inbound_types_recognized_sends_and_keeps_unknown_shapes_raw() {
+    let mut msgs = send_sequence();
+    msgs.extend(seq([vec![batch(
+        AGENT,
+        36,
+        vec![mcp_row(
+            "completed",
+            "send-raw",
+            amux::agent_tools::MCP_SERVER_NAME,
+            "send",
+            json!({
+                "arguments": {"to": "reviewer", "text": ["not", "a", "string"]},
+                "status": "completed"
+            }),
+        )],
+    )]]));
+    let model = fold(msgs);
+    let work = work(codex_layer(&model, AGENT));
+    assert!(matches!(
+        &work[0].kind,
+        WorkKind::AmuxSend { to, text, success: Some(true) }
+            if to == "reviewer" && text == "\n  \nreview the patch"
+    ));
+    assert!(matches!(
+        &work[1].kind,
+        WorkKind::AmuxTool { tool, arguments, success: Some(true) }
+            if tool == "send" && arguments["text"].is_array()
+    ));
 }
 
 /// A call still in flight is amux's work with no verdict yet, rather than a
@@ -368,5 +419,6 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         ("a2a_codex_inbound::structural_fixture", fixture_sequence()),
         ("a2a_codex_inbound::amux_mcp_tool", tool_sequence()),
+        ("a2a_codex_inbound::typed_amux_send", send_sequence()),
     ]
 }

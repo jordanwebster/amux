@@ -1056,21 +1056,19 @@ fn work_block(key: BlockKey, work: &WorkEntry, theme: Theme, width: usize) -> Pa
             arguments,
             success,
         } => {
-            // U4: a send is the outbound half of a conversation — one
-            // directional glyph, who it went to, and a summary of what
-            // left. The other amux tools keep the generic tool shape:
-            // spawning and stopping are work, not talk.
-            let label = match (tool.as_str(), send_summary(arguments)) {
-                ("send", Some(summary)) => summary,
-                _ => {
-                    detail.push(json_text(arguments));
-                    format!("amux {tool} · {state}")
-                }
-            };
+            detail.push(json_text(arguments));
             if let Some(success) = success {
                 detail.push(format!("success {success}"));
             }
-            label
+            format!("amux {tool} · {state}")
+        }
+        // A send is the outbound half of a conversation — one directional
+        // glyph, who it went to, and a summary of what left.
+        WorkKind::AmuxSend { to, text, success } => {
+            if let Some(success) = success {
+                detail.push(format!("success {success}"));
+            }
+            crate::chat::format_amux_send(Some(to), Some(text))
         }
         WorkKind::DynamicTool {
             tool,
@@ -1160,6 +1158,7 @@ fn work_subject(kind: &WorkKind) -> String {
         WorkKind::Plan { .. } => "plan update".to_string(),
         WorkKind::McpTool { server, tool, .. } => format!("MCP {server}::{tool}"),
         WorkKind::AmuxTool { tool, .. } => format!("amux {tool}"),
+        WorkKind::AmuxSend { to, .. } => format!("send to {to}"),
         WorkKind::DynamicTool {
             tool, namespace, ..
         } => namespace
@@ -1169,21 +1168,6 @@ fn work_subject(kind: &WorkKind) -> String {
         WorkKind::WebSearch { query, .. } => format!("web search “{query}”"),
         WorkKind::UnsupportedUserInput { .. } => "user input request".to_string(),
         WorkKind::Other { item_type, .. } => format!("Codex item {item_type}"),
-    }
-}
-
-/// `→ name · what left`, from a send call's own arguments. `None` when
-/// the call did not name a recipient — an argument shape amux did not
-/// write is better shown raw than summarized into a claim.
-fn send_summary(arguments: &Value) -> Option<String> {
-    let to = arguments.get("to")?.as_str()?;
-    match arguments
-        .get("text")
-        .and_then(Value::as_str)
-        .and_then(|text| text.lines().find(|line| !line.trim().is_empty()))
-    {
-        Some(head) => Some(format!("→ {to} · {}", head.trim())),
-        None => Some(format!("→ {to}")),
     }
 }
 

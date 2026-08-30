@@ -574,6 +574,18 @@ fn mcp_tool_kind(item: &Value) -> WorkKind {
             .iter()
             .any(|definition| definition.name == tool)
     {
+        if tool == "send"
+            && let (Some(to), Some(text)) = (
+                arguments.get("to").and_then(Value::as_str),
+                arguments.get("text").and_then(Value::as_str),
+            )
+        {
+            return WorkKind::AmuxSend {
+                to: to.to_string(),
+                text: text.to_string(),
+                success: mcp_tool_success(item, error.as_ref()),
+            };
+        }
         return WorkKind::AmuxTool {
             tool,
             arguments,

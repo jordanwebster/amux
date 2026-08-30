@@ -752,6 +752,17 @@ pub(crate) fn subagent_marker(model: &Model, agent: AgentId) -> String {
     }
 }
 
+/// The shared terminal sentence for a typed amux send. Agent folds retain
+/// different native call types, but the outbound conversation row is one TUI
+/// idiom and must never choose a blank line as its visible summary.
+pub(crate) fn format_amux_send(to: Option<&str>, text: Option<&str>) -> String {
+    let target = to.unwrap_or("an agent");
+    match text.and_then(|text| text.lines().find(|line| !line.trim().is_empty())) {
+        Some(head) => format!("→ {target} · {}", head.trim()),
+        None => format!("→ {target}"),
+    }
+}
+
 pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
     match model
         .agent(agent)
@@ -781,7 +792,9 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use super::{AgentChatView, ChatView, FeedScroll, build_chat_lines, entry_watermark};
+    use super::{
+        AgentChatView, ChatView, FeedScroll, build_chat_lines, entry_watermark, format_amux_send,
+    };
     use crate::chat::blocks::RunKey;
     use crate::chat::frame::{BlockKey, PaintedBlock};
     use crate::render::{FrameContext, INVARIANT_WARNING, Theme, str_width};
@@ -961,6 +974,19 @@ mod tests {
         let codex =
             ChatView::open(&codex, codex_agent, 'a', false).expect("known Codex protocol opens");
         assert!(matches!(codex.inner, AgentChatView::Codex(_)));
+    }
+
+    #[test]
+    fn amux_send_summary_uses_the_first_non_empty_line_for_both_adapters() {
+        assert_eq!(
+            format_amux_send(
+                Some("runner"),
+                Some("\n  \n  rerun with --nocapture  \nignored")
+            ),
+            "→ runner · rerun with --nocapture"
+        );
+        assert_eq!(format_amux_send(Some("runner"), Some("\n  \n")), "→ runner");
+        assert_eq!(format_amux_send(None, None), "→ an agent");
     }
 
     #[test]

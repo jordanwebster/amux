@@ -274,6 +274,11 @@ pub enum WorkKind {
         arguments: Value,
         success: Option<bool>,
     },
+    AmuxSend {
+        to: String,
+        text: String,
+        success: Option<bool>,
+    },
     /// One of amux's own agent tools, reached through the MCP server amux
     /// runs for the thread. Separated from `McpTool` because these are the
     /// fleet acting on itself — spawning, stopping and messaging agents the
