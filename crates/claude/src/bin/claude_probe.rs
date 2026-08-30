@@ -27,6 +27,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         run_spec_mcp_server();
         return Ok(());
     }
+    if let (Some(entry), Some(out)) = (
+        std::env::var_os("CLAUDE_PROBE_CAPTURE_ENTRY"),
+        std::env::var_os("CLAUDE_PROBE_CAPTURE_OUT"),
+    ) {
+        let entry = find_entry(entry.to_str().ok_or("capture entry is not UTF-8")?)?;
+        let capture = capture_direct(entry).await?;
+        let out = PathBuf::from(out);
+        std::fs::create_dir_all(&out)?;
+        write_events(&out.join("io.jsonl"), &capture.events)?;
+        std::fs::write(out.join("spawn.jsonl"), &capture.spawn)?;
+        std::fs::write(
+            out.join("capture.json"),
+            serde_json::to_vec(&CaptureMetadata::from(&capture))?,
+        )?;
+        return Ok(());
+    }
 
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     match args.as_slice() {
@@ -132,6 +148,7 @@ async fn run_probe(out: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         dir: out,
         results: Vec::new(),
     };
+    println!("provider=claude version={} driver=sdk", run.version);
 
     let (probe_path, drift_path) = probe(
         &mut run,
@@ -195,7 +212,53 @@ struct Capture {
     scratch: PathBuf,
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct CaptureMetadata {
+    version: Version,
+    model: String,
+    session_ids: Vec<String>,
+    scratch: PathBuf,
+}
+
+impl From<&Capture> for CaptureMetadata {
+    fn from(capture: &Capture) -> Self {
+        Self {
+            version: capture.version.clone(),
+            model: capture.report.model.clone(),
+            session_ids: capture.report.session_ids.clone(),
+            scratch: capture.scratch.clone(),
+        }
+    }
+}
+
 async fn capture(entry: SpecEntry) -> Result<Capture, Box<dyn std::error::Error>> {
+    let isolated = tempfile::Builder::new()
+        .prefix("claude-sdk-capture-result-")
+        .tempdir()?;
+    let status = tokio::process::Command::new(std::env::current_exe()?)
+        .env("CLAUDE_PROBE_CAPTURE_ENTRY", entry.name)
+        .env("CLAUDE_PROBE_CAPTURE_OUT", isolated.path())
+        .status()
+        .await?;
+    if !status.success() {
+        return Err(format!("live capture subprocess exited with {status}").into());
+    }
+    let metadata: CaptureMetadata =
+        serde_json::from_slice(&std::fs::read(isolated.path().join("capture.json"))?)?;
+    Ok(Capture {
+        report: claude::specs::RunReport {
+            provider_version: None,
+            model: metadata.model,
+            session_ids: metadata.session_ids,
+        },
+        version: metadata.version,
+        events: replay_support::load_script(isolated.path().join("io.jsonl")),
+        spawn: std::fs::read(isolated.path().join("spawn.jsonl"))?,
+        scratch: metadata.scratch,
+    })
+}
+
+async fn capture_direct(entry: SpecEntry) -> Result<Capture, Box<dyn std::error::Error>> {
     let binary = claude_binary();
     let version = claude::version::probe_version(&binary).await?.0;
     let scratch = tempfile::Builder::new()
@@ -211,7 +274,9 @@ async fn capture(entry: SpecEntry) -> Result<Capture, Box<dyn std::error::Error>
 
     let old_path = std::env::var_os("PATH");
     let mut paths = vec![helpers];
-    paths.extend(std::env::split_paths(old_path.as_deref().unwrap_or_default()));
+    paths.extend(std::env::split_paths(
+        old_path.as_deref().unwrap_or_default(),
+    ));
     let helper_path = std::env::join_paths(paths)?;
     let proxy = std::env::current_exe()?;
     // Capture is deliberately serial: these variables are inherited by the
@@ -252,10 +317,7 @@ async fn capture(entry: SpecEntry) -> Result<Capture, Box<dyn std::error::Error>
     })
 }
 
-async fn record_one(
-    entry: SpecEntry,
-    root: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut capture = capture(entry).await?;
     let redaction = sanitize(
         &mut capture.events,
@@ -419,8 +481,16 @@ async fn run_capture_proxy() -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
             let content = line.trim_end_matches('\n');
-            let row = io_row(start.elapsed().as_micros() as u64, "stdin", content, &stdin_transport);
-            stdin_tx.send(row.to_string()).await.map_err(io::Error::other)?;
+            let row = io_row(
+                start.elapsed().as_micros() as u64,
+                "stdin",
+                content,
+                &stdin_transport,
+            );
+            stdin_tx
+                .send(row.to_string())
+                .await
+                .map_err(io::Error::other)?;
             child_input.write_all(line.as_bytes()).await?;
             child_input.flush().await?;
         }
@@ -438,8 +508,16 @@ async fn run_capture_proxy() -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
             let content = line.trim_end_matches('\n');
-            let row = io_row(start.elapsed().as_micros() as u64, "stdout", content, &stdout_transport);
-            stdout_tx.send(row.to_string()).await.map_err(io::Error::other)?;
+            let row = io_row(
+                start.elapsed().as_micros() as u64,
+                "stdout",
+                content,
+                &stdout_transport,
+            );
+            stdout_tx
+                .send(row.to_string())
+                .await
+                .map_err(io::Error::other)?;
             output.write_all(line.as_bytes()).await?;
             output.flush().await?;
         }
@@ -470,7 +548,12 @@ fn io_row(us: u64, direction: &str, line: &str, transport: &str) -> serde_json::
     });
     if let Some(session_id) = serde_json::from_str::<serde_json::Value>(line)
         .ok()
-        .and_then(|value| value.get("session_id").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .and_then(|value| {
+            value
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
     {
         row["session_id"] = serde_json::Value::String(session_id);
     }
@@ -478,7 +561,10 @@ fn io_row(us: u64, direction: &str, line: &str, transport: &str) -> serde_json::
 }
 
 fn append_json(path: &Path, value: &serde_json::Value) -> io::Result<()> {
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     writeln!(file, "{value}")
 }
 
@@ -523,21 +609,30 @@ fn run_spec_mcp_server() {
                 }],
             }),
             (Some("tools/call"), Some(_)) => {
-                let word = message.pointer("/params/arguments/word")
-                    .and_then(serde_json::Value::as_str).unwrap_or("nothing").to_owned();
+                let word = message
+                    .pointer("/params/arguments/word")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("nothing")
+                    .to_owned();
                 outgoing_id += 1;
                 let answer = elicit(&mut stdout, &mut lines, outgoing_id, &word);
                 serde_json::json!({"content": [{"type": "text", "text": answer}]})
             }
             _ => {
-                respond(&mut stdout, serde_json::json!({
-                    "jsonrpc": "2.0", "id": id,
-                    "error": {"code": -32601, "message": "method not found"},
-                }));
+                respond(
+                    &mut stdout,
+                    serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32601, "message": "method not found"},
+                    }),
+                );
                 continue;
             }
         };
-        respond(&mut stdout, serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}));
+        respond(
+            &mut stdout,
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        );
     }
 }
 
@@ -547,17 +642,20 @@ fn elicit(
     id: i64,
     word: &str,
 ) -> String {
-    respond(stdout, serde_json::json!({
-        "jsonrpc": "2.0", "id": id, "method": "elicitation/create",
-        "params": {
-            "message": format!("Confirm the word {word}."),
-            "requestedSchema": {
-                "type": "object",
-                "properties": {"confirmed": {"type": "string"}},
-                "required": ["confirmed"],
+    respond(
+        stdout,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": "elicitation/create",
+            "params": {
+                "message": format!("Confirm the word {word}."),
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": {"confirmed": {"type": "string"}},
+                    "required": ["confirmed"],
+                },
             },
-        },
-    }));
+        }),
+    );
     while let Some(Ok(line)) = lines.next() {
         let Ok(message) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
             continue;
@@ -565,9 +663,15 @@ fn elicit(
         if message.get("id").and_then(serde_json::Value::as_i64) != Some(id) {
             continue;
         }
-        return match message.pointer("/result/action").and_then(serde_json::Value::as_str) {
-            Some("accept") => message.pointer("/result/content/confirmed")
-                .and_then(serde_json::Value::as_str).unwrap_or(word).to_owned(),
+        return match message
+            .pointer("/result/action")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("accept") => message
+                .pointer("/result/content/confirmed")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(word)
+                .to_owned(),
             other => format!("elicitation {}", other.unwrap_or("unanswered")),
         };
     }
@@ -586,7 +690,9 @@ fn claude_binary() -> PathBuf {
 }
 
 fn owner_home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
 }
 
 fn secret_values() -> Vec<String> {

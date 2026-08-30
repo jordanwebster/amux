@@ -75,7 +75,10 @@ async fn replay(name: &str) {
         Ok(outcome) => outcome,
         Err(_) => {
             let report = controller.finish().err().map(|error| error.report);
-            panic!("{} stalled after {SPEC_TIMEOUT:?}; replay={report:?}", entry.name);
+            panic!(
+                "{} stalled after {SPEC_TIMEOUT:?}; replay={report:?}",
+                entry.name
+            );
         }
     };
     if let Err(error) = outcome {
@@ -89,9 +92,12 @@ async fn replay(name: &str) {
 }
 
 #[test]
-fn sdk_corpus_is_migrated_inventoried_and_unorphaned() {
+fn sdk_corpus_is_inventoried_current_and_unorphaned() {
     let root = fixtures_root();
-    assert_eq!(orphan_recordings(&root, sdk_registry()), Vec::<String>::new());
+    assert_eq!(
+        orphan_recordings(&root, sdk_registry()),
+        Vec::<String>::new()
+    );
     let minimum = Version::parse(MINIMUM_SUPPORTED).expect("minimum is semantic");
     assert_eq!(below_minimum(&root, &minimum), Vec::new());
 
@@ -100,12 +106,22 @@ fn sdk_corpus_is_migrated_inventoried_and_unorphaned() {
             .unwrap_or_else(|error| panic!("load {}: {error}", entry.name));
         assert_eq!(recording.manifest.spec, entry.name);
         assert_eq!(recording.manifest.recorded.provider, "claude");
-        assert_eq!(recording.manifest.recorded.version, minimum);
-        assert!(recording.manifest.verified.is_empty());
-        assert!(matches!(
-            recording.manifest.recorded.source_kind,
-            SourceKind::Migrated { .. }
-        ));
+        assert!(recording.manifest.recorded.version >= minimum);
+        assert!(
+            recording
+                .manifest
+                .verified
+                .iter()
+                .all(|verification| verification.version == Version::new(2, 1, 251))
+        );
+        match recording.manifest.recorded.source_kind {
+            SourceKind::Migrated { .. } => {
+                assert_eq!(recording.manifest.recorded.version, minimum)
+            }
+            SourceKind::LiveCapture => {
+                assert_eq!(recording.manifest.recorded.version, Version::new(2, 1, 251))
+            }
+        }
         assert!(recording.manifest.content.contains_key("io.jsonl"));
         assert!(recording.manifest.content.contains_key("spawn.jsonl"));
     }

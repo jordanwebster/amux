@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **The Claude SDK corpus has its first live drift ledger.**
+Claude Code 2.1.251 exercised all 23 specifications: 20 retained their 2.1.247
+recordings and gained verification entries, `history/resumed_at` alone was
+re-recorded, and the MCP reconnect and elicitation claims remain explicit
+failures in the probe report. The run wrote additive drift for every claim and
+recorded that an SDK-only registry verifies no PTY keymap. Live captures now
+run in isolated subprocesses so a failed assertion remains one durable probe
+result even though the workspace dev profile uses aborting panics.
+
+---
+
 2026-08-30 — **Claude PTY hosting now crosses one provider session boundary.**
 The amux Claude runtime is reduced to its backend, wire codec, delivery carrier,
 and suspend record. Live, replay-injected, external read-only, and testnet

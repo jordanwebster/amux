@@ -12,7 +12,13 @@
       }
     }
   },
-  "verified": [],
+  "verified": [
+    {
+      "version": "2.1.251",
+      "at": "2026-08-30T00:16:37.633518Z",
+      "run_id": "b95b4d5f-7439-4d9f-b5c9-bf0fd760ace6"
+    }
+  ],
   "content": {
     "io.jsonl": "sha256:f508eed59104d71c165ed418e9c36a281e989c07c10a665e10da53a99758d76b",
     "spawn.jsonl": "sha256:e2574eb7a85f6f932642870ab89dbc1e3d4415f4b7f7ffd75e4460fab780c25f"
