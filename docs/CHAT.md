@@ -417,8 +417,9 @@ There are three native producers feeding one pure row painter:
   feed line's `(+9 -2)`. The transcript already states every landed
   edit; the client never recomputes one.
 - **Codex landed changes** (feed): the Codex layer parses its native unified
-  patch into the same numbered row facts. Headerless or malformed patch text
-  yields no speculative diff rows; the file-change line remains visible.
+  patch into the same numbered row facts. Headerless or bodyless malformed
+  patch text yields no speculative diff rows; a hunk with valid body rows
+  retains that observed prefix and states that the preview is incomplete.
 - **Ask-time** (permission panel): no hunks exist yet — the Claude hook
   carries only `old_string`/`new_string` — so the mini-diff is
   computed in the fold (`similar`, line-level, context 3) and

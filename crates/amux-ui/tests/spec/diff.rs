@@ -137,13 +137,13 @@ fn a_complete_hunk_survives_an_unknown_trailer() {
 }
 
 #[test]
-fn empty_header_only_and_malformed_patches_have_no_rows() {
+fn empty_headerless_and_bodyless_malformed_patches_have_no_rows() {
     for patch in [
         "",
         "diff --git a/a b/a\n--- a/file\n+++ b/file",
         "--- a/file\n+++ b/file\n-old\n+new",
         "@@ -x,2 +1,2 @@\n-old\n+new",
-        "@@ -1,2 +1,2 @@\n-old\n+new",
+        "@@ -1,2 +1,2 @@",
     ] {
         assert!(
             parse_unified_patch(patch, false).rows().is_empty(),
@@ -153,19 +153,34 @@ fn empty_header_only_and_malformed_patches_have_no_rows() {
 }
 
 #[test]
-fn a_truncated_tail_hunk_parses_as_far_as_the_head_reaches() {
-    let patch = "@@ -10,3 +20,4 @@\n kept\n-old\n+new";
-    assert!(parse_unified_patch(patch, false).is_empty());
+fn an_incomplete_hunk_retains_its_observed_prefix_and_states_the_cut() {
+    let document = parse_unified_patch("@@ -1,2 +1,2 @@\n-old\n+new", false);
 
-    let document = parse_unified_patch(patch, true);
     assert!(document.truncated);
     assert_eq!(
         document.rows(),
         vec![
-            row(None, None, RowKind::Meta, "@@ -10,3 +20,4 @@"),
-            row(Some(10), Some(20), RowKind::Context, " kept"),
-            row(Some(11), None, RowKind::Removed, "-old"),
-            row(None, Some(21), RowKind::Added, "+new"),
+            row(None, None, RowKind::Meta, "@@ -1,2 +1,2 @@"),
+            row(Some(1), None, RowKind::Removed, "-old"),
+            row(None, Some(1), RowKind::Added, "+new"),
         ]
     );
+}
+
+#[test]
+fn a_truncated_tail_hunk_parses_as_far_as_the_head_reaches() {
+    let patch = "@@ -10,3 +20,4 @@\n kept\n-old\n+new";
+    for source_was_truncated in [false, true] {
+        let document = parse_unified_patch(patch, source_was_truncated);
+        assert!(document.truncated);
+        assert_eq!(
+            document.rows(),
+            vec![
+                row(None, None, RowKind::Meta, "@@ -10,3 +20,4 @@"),
+                row(Some(10), Some(20), RowKind::Context, " kept"),
+                row(Some(11), None, RowKind::Removed, "-old"),
+                row(None, Some(21), RowKind::Added, "+new"),
+            ]
+        );
+    }
 }

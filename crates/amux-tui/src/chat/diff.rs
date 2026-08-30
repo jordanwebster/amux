@@ -62,6 +62,9 @@ impl PaintedDiff {
         let mut shown = 0usize;
         for row in self.rows {
             if lines.len() + row.len() > available {
+                if lines.is_empty() {
+                    lines.extend(row.into_iter().take(available));
+                }
                 break;
             }
             lines.extend(row);
@@ -363,5 +366,20 @@ mod tests {
             "the wrapped first row consumes two rows"
         );
         assert_eq!(preview.hidden, 2);
+    }
+
+    #[test]
+    fn preview_keeps_screen_lines_when_the_first_source_row_exceeds_the_budget() {
+        let rows = vec![RowFact {
+            old: None,
+            new: Some(9),
+            kind: RowKind::Added,
+            text: format!("+{}", "x".repeat(1_000)),
+        }];
+        let preview = paint_rows(&rows, Theme::default(), 120, 0, false).into_preview(8);
+
+        assert_eq!(preview.lines.len(), 7);
+        assert_eq!(preview.hidden, 1);
+        assert!(text_of(&preview.lines)[0].starts_with("    9 +"));
     }
 }

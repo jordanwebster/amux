@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Kept approval evidence inside every diff preview.** Docked
+previews now fall back to the first wrapped screen lines when their first
+source row is taller than the remaining budget, so the remainder notice can
+never replace all visible change content. Unified patches also retain valid
+numbered body rows from an incomplete hunk and mark that document truncated;
+headerless and bodyless malformed input still invents nothing.
+
 2026-08-30 — **Sited the triggers for three deliberate presentation splits.**
 The status label, Codex MCP startup facts, and family need projection now each
 state when another consumer should split shared precedence from renderer words

@@ -138,19 +138,18 @@ impl RowFact {
 /// Parse a bounded unified-patch head into typed hunks.
 ///
 /// File headers and other preamble are ignored. A hunk is retained only when
-/// it contains at least one valid body row and consumes its declared ranges;
-/// the final hunk may consume fewer rows when `truncated` says its missing tail
-/// was outside the retained head.
+/// it contains at least one valid body row. When its declared ranges are not
+/// consumed, the observed prefix remains useful but the document is marked
+/// truncated so no consumer can mistake it for the complete change.
 pub fn parse_unified_patch(head: &str, truncated: bool) -> Document {
     let mut hunks = Vec::new();
     let mut pending: Option<PendingHunk> = None;
+    let mut incomplete = false;
 
     for text in head.lines() {
         if let Some(ranges) = hunk_ranges(text) {
-            if let Some(previous) = pending.take()
-                && previous.complete()
-            {
-                hunks.push(previous.finish());
+            if let Some(previous) = pending.take() {
+                retain_observed_hunk(previous, &mut hunks, &mut incomplete);
             }
             pending = Some(PendingHunk::new(text, ranges));
             continue;
@@ -165,23 +164,27 @@ pub fn parse_unified_patch(head: &str, truncated: bool) -> Document {
         }
         if !hunk.push(text) {
             let previous = pending.take().expect("the pending hunk exists");
-            if previous.complete() {
-                hunks.push(previous.finish());
-            }
+            retain_observed_hunk(previous, &mut hunks, &mut incomplete);
         }
     }
 
-    if let Some(last) = pending
-        && (last.complete() || (truncated && last.valid_truncated_tail()))
-    {
-        hunks.push(last.finish());
+    if let Some(last) = pending {
+        retain_observed_hunk(last, &mut hunks, &mut incomplete);
     }
 
     Document {
         numbering: Numbering::Absolute,
         hunks,
-        truncated,
+        truncated: truncated || incomplete,
     }
+}
+
+fn retain_observed_hunk(hunk: PendingHunk, hunks: &mut Vec<Hunk>, incomplete: &mut bool) {
+    if !hunk.has_valid_prefix() {
+        return;
+    }
+    *incomplete |= !hunk.complete();
+    hunks.push(hunk.finish());
 }
 
 #[derive(Clone, Copy)]
@@ -239,7 +242,7 @@ impl PendingHunk {
         self.body_rows > 0 && self.old_left == 0 && self.new_left == 0
     }
 
-    fn valid_truncated_tail(&self) -> bool {
+    fn has_valid_prefix(&self) -> bool {
         self.body_rows > 0
     }
 
