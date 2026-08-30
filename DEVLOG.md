@@ -5437,3 +5437,11 @@ provider crate now strictly loads the closed key, delay, menu, shape, and
 program vocabularies from TOML. The baked Claude 2.1 data preserves the live
 verified encoder tables behind a bounded version range, while user files are
 prevented from claiming capture verification provenance.
+
+2026-08-30 — **Interpreted Claude PTY intents through fixed keymap programs.**
+The provider owns the closed intent-to-program table and rejects keymaps that
+remap its six roots or introduce recursive calls. Typed ask facts drive bounded
+question iteration and per-question cursor movement, while every free-text
+source is validated before its complete byte program is exposed. Exact tests
+preserve the former prompt, permission, plan, question, interrupt, and mode
+cycle bytes and delays.

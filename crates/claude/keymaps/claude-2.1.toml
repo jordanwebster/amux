@@ -1,7 +1,14 @@
 name = "claude-2.1"
 applies_to = ">=2.1.228, <2.2.0"
 verified = []
-programs = {}
+
+[intent_programs]
+prompt = "prompt"
+interrupt = "interrupt"
+mode_cycle = "mode_cycle"
+permission = "permission_menu"
+plan = "plan_menu"
+question = "question_form"
 
 [provenance]
 recorded_version = "2.1.228"
@@ -58,3 +65,99 @@ request_changes = 3
 
 [verified_shapes.permission_menu]
 permission_suggestions = [1]
+
+[programs.prompt]
+stability = "stable"
+steps = [
+    { step = "paste", text = "prompt_text" },
+    { step = "delay", delay = "after_paste" },
+    { step = "key", key = "enter" },
+]
+
+[programs.interrupt]
+stability = "stable"
+steps = [{ step = "key", key = "escape" }]
+
+[programs.mode_cycle]
+stability = "stable"
+steps = [{ step = "key", key = "shift_tab" }]
+
+[programs.permission_menu]
+stability = "menu"
+steps = [
+    { step = "digit", digit = { source = "menu_entry", menu = "permission", entry = "allow_once" } },
+    { step = "digit", digit = { source = "suggestion" } },
+    { step = "digit", digit = { source = "menu_entry", menu = "permission", entry = "deny" } },
+    { step = "if", cond = "has_feedback", then = [
+        { step = "delay", delay = "after_deny" },
+        { step = "paste", text = "deny_feedback" },
+        { step = "delay", delay = "after_paste" },
+        { step = "key", key = "enter" },
+    ] },
+]
+
+[programs.plan_menu]
+stability = "menu"
+steps = [
+    { step = "digit", digit = { source = "menu_entry", menu = "plan", entry = "approve_auto" } },
+    { step = "digit", digit = { source = "menu_entry", menu = "plan", entry = "approve_manual" } },
+    { step = "digit", digit = { source = "menu_entry", menu = "plan", entry = "request_changes" } },
+    { step = "if", cond = "has_feedback", then = [
+        { step = "delay", delay = "after_menu_text_open" },
+        { step = "type", text = "plan_feedback" },
+        { step = "delay", delay = "before_submit" },
+        { step = "key", key = "enter" },
+    ] },
+]
+
+[programs.question_form]
+stability = "menu"
+steps = [
+    { step = "for_each", over = "questions", steps = [
+        { step = "if", cond = "is_first", then = [], otherwise = [
+            { step = "delay", delay = "after_tab" },
+        ] },
+        { step = "if", cond = "multi_select", then = [
+            { step = "for_each", over = "selected_options", steps = [
+                { step = "move_to", row = "selected_option" },
+                { step = "key", key = "space" },
+                { step = "delay", delay = "after_toggle" },
+            ] },
+            { step = "if", cond = "has_other", then = [
+                { step = "move_to", row = "other_row" },
+                { step = "key", key = "enter" },
+                { step = "delay", delay = "after_editor_open" },
+                { step = "type", text = "other_text" },
+                { step = "delay", delay = "before_submit" },
+                { step = "key", key = "enter" },
+                { step = "delay", delay = "after_other_save" },
+                { step = "key", key = "space" },
+                { step = "delay", delay = "after_toggle" },
+            ] },
+            { step = "key", key = "tab" },
+        ], otherwise = [
+            { step = "if", cond = "has_other", then = [
+                { step = "digit", digit = { source = "other_row" } },
+                { step = "delay", delay = "after_editor_open" },
+                { step = "type", text = "other_text" },
+                { step = "delay", delay = "before_submit" },
+                { step = "key", key = "enter" },
+            ], otherwise = [
+                { step = "for_each", over = "selected_options", steps = [
+                    { step = "digit", digit = { source = "selected_option" } },
+                ] },
+            ] },
+        ] },
+    ] },
+    { step = "if", cond = "single_question_single_select", then = [], otherwise = [
+        { step = "if", cond = "last_question_multi", then = [
+            { step = "delay", delay = "after_tab" },
+            { step = "key", key = "enter" },
+            { step = "delay", delay = "after_review_open" },
+            { step = "key", key = "enter" },
+        ], otherwise = [
+            { step = "delay", delay = "after_tab" },
+            { step = "key", key = "enter" },
+        ] },
+    ] },
+]

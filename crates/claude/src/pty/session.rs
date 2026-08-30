@@ -174,10 +174,18 @@ pub struct AskFacts {
     pub kind: AskKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct AskId(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl std::fmt::Display for AskId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AskKind {
     Permission {
         tool_name: String,
@@ -189,10 +197,58 @@ pub enum AskKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct QuestionFact {
     pub options: usize,
     pub multi_select: bool,
+}
+
+/// Semantic input accepted by a Claude PTY session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "intent", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Intent {
+    Prompt { text: String },
+    Interrupt,
+    CyclePermissionMode,
+    Answer { ask_id: AskId, answer: AskAnswer },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "answer", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AskAnswer {
+    Permission(PermissionAnswer),
+    Plan(PlanAnswer),
+    Question(QuestionResponse),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "permission", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PermissionAnswer {
+    AllowOnce,
+    AllowScoped { suggestion: usize },
+    Deny { feedback: Option<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "plan", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlanAnswer {
+    ApproveAuto,
+    ApproveManual,
+    RequestChanges { feedback: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionResponse {
+    pub answers: Vec<QuestionAnswer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionAnswer {
+    pub selected: Vec<usize>,
+    pub other: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,6 +291,17 @@ pub enum DeliveryOutcome {
 
 #[derive(Debug, thiserror::Error)]
 pub enum InputError {
+    #[error("unknown Claude ask '{0}'")]
+    UnknownAsk(AskId),
+    #[error("unverified keymap shape for {program:?}: {reason}")]
+    UnverifiedShape {
+        program: super::keymap::ProgramName,
+        reason: String,
+    },
+    #[error("unsafe PTY input text: {reason}")]
+    UnsafeText { reason: String },
+    #[error("answer does not fit the ask: {detail}")]
+    AnswerMismatchesAsk { detail: String },
     #[error("PTY input failed: {0}")]
     Io(#[from] std::io::Error),
 }
