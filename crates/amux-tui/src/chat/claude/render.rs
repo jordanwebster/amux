@@ -791,6 +791,7 @@ fn tool_block(
                     file_path,
                     added,
                     removed,
+                    ..
                 },
         },
     ) = (&tool.invocation, &tool.outcome)
@@ -850,6 +851,7 @@ fn tool_main_text(tool: &ToolEntry) -> String {
                         file_path,
                         added,
                         removed,
+                        ..
                     },
             },
         ) => format!("{name} {file_path} {}", fmt_magnitude(*added, *removed)),

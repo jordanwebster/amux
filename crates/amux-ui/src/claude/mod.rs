@@ -114,6 +114,13 @@ pub(crate) const IDLE_FACT_DECAY_SECS: i64 = 60;
 /// The full text stays on disk behind the Effect seam.
 const OUTPUT_HEAD_MAX: usize = 400;
 
+/// A landed patch is retained as a head for feed previews. These independent
+/// caps keep one unusually fragmented or wide patch from consuming the feed's
+/// entire memory budget.
+pub(crate) const STRUCTURED_PATCH_HUNKS_RETAINED: usize = 64;
+pub(crate) const STRUCTURED_PATCH_LINES_RETAINED: usize = 512;
+pub(crate) const STRUCTURED_PATCH_CHARS_RETAINED: usize = 64 * 1024;
+
 /// One feed entry: a single rendered unit (`docs/CHAT.md` §Vocabulary).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FeedEntry {
@@ -386,6 +393,7 @@ pub enum SuccessFacts {
         file_path: String,
         added: u64,
         removed: u64,
+        document: crate::diff::Document,
     },
     /// AskUserQuestion answers, keyed by the question TEXT (Phase 0
     /// capture correction), multi-select joined into one string.

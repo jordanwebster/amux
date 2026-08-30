@@ -15,15 +15,19 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::diff::{Document, Hunk, Numbering};
+
 use super::artifact::{self, AskArtifact};
 use super::{
     ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, ApiErrorEntry, Ask, AskKind, AskState,
     ClaudeLayer, CompactSummaryEntry, CompactionEntry, FEED_RETAINED, FeedEntry, FeedEntryKind,
     InterruptionEntry, InterruptionKind, MESSAGES_RETAINED, MessageEntry, MessageFinality,
     MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry,
-    PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED, SlotState,
-    SuccessFacts, SuggestionFact, TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolInvocation,
-    ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry, envelope,
+    PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED,
+    STRUCTURED_PATCH_CHARS_RETAINED, STRUCTURED_PATCH_HUNKS_RETAINED,
+    STRUCTURED_PATCH_LINES_RETAINED, SlotState, SuccessFacts, SuggestionFact,
+    TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource,
+    TurnDuration, TurnEntry, UnrecognizedEntry, envelope,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -804,6 +808,7 @@ fn success_facts(row: &Value, block: &Value) -> SuccessFacts {
                 file_path: file_path.to_string(),
                 added,
                 removed,
+                document: structured_patch_document(patch),
             };
         }
         if let Some(answers) = sidecar.get("answers").and_then(Value::as_object) {
@@ -878,6 +883,183 @@ fn patch_magnitude(patch: &[Value]) -> (u64, u64) {
         }
     }
     (added, removed)
+}
+
+/// Typed, bounded head of jsdiff's `structuredPatch` hunks. Magnitude is
+/// folded separately from the complete sidecar, so bounding presentation
+/// bytes cannot change the landed change counts.
+fn structured_patch_document(patch: &[Value]) -> Document {
+    let mut document = Document {
+        numbering: Numbering::Absolute,
+        hunks: Vec::new(),
+        truncated: false,
+    };
+    let mut retained_lines = 0usize;
+    let mut retained_chars = 0usize;
+
+    'hunks: for value in patch {
+        if document.hunks.len() == STRUCTURED_PATCH_HUNKS_RETAINED {
+            document.truncated = true;
+            break;
+        }
+        let (Some(old_start), Some(new_start), Some(source_lines)) = (
+            u64_of(value, "oldStart").and_then(|n| u32::try_from(n).ok()),
+            u64_of(value, "newStart").and_then(|n| u32::try_from(n).ok()),
+            value.get("lines").and_then(Value::as_array),
+        ) else {
+            continue;
+        };
+        let (derived_old_count, derived_new_count) = patch_hunk_counts(source_lines);
+        let old_count = u64_of(value, "oldLines")
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(derived_old_count);
+        let new_count = u64_of(value, "newLines")
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(derived_new_count);
+        let mut lines = Vec::new();
+
+        for line in source_lines.iter().filter_map(Value::as_str) {
+            if retained_lines == STRUCTURED_PATCH_LINES_RETAINED
+                || retained_chars == STRUCTURED_PATCH_CHARS_RETAINED
+            {
+                document.truncated = true;
+                if !lines.is_empty() {
+                    document.hunks.push(Hunk {
+                        old_start,
+                        new_start,
+                        header: Some(structured_hunk_header(
+                            old_start, old_count, new_start, new_count,
+                        )),
+                        lines,
+                    });
+                }
+                break 'hunks;
+            }
+
+            let room = STRUCTURED_PATCH_CHARS_RETAINED - retained_chars;
+            let char_count = line.chars().count();
+            let retained = if char_count > room {
+                document.truncated = true;
+                line.chars().take(room).collect()
+            } else {
+                line.to_string()
+            };
+            retained_chars += retained.chars().count();
+            retained_lines += 1;
+            lines.push(retained);
+
+            if char_count > room {
+                document.hunks.push(Hunk {
+                    old_start,
+                    new_start,
+                    header: Some(structured_hunk_header(
+                        old_start, old_count, new_start, new_count,
+                    )),
+                    lines,
+                });
+                break 'hunks;
+            }
+        }
+
+        if !lines.is_empty() {
+            document.hunks.push(Hunk {
+                old_start,
+                new_start,
+                header: Some(structured_hunk_header(
+                    old_start, old_count, new_start, new_count,
+                )),
+                lines,
+            });
+        }
+    }
+
+    document
+}
+
+fn patch_hunk_counts(lines: &[Value]) -> (u32, u32) {
+    let mut old = 0u32;
+    let mut new = 0u32;
+    for line in lines.iter().filter_map(Value::as_str) {
+        match line.as_bytes().first() {
+            Some(b' ') => {
+                old = old.saturating_add(1);
+                new = new.saturating_add(1);
+            }
+            Some(b'-') => old = old.saturating_add(1),
+            Some(b'+') => new = new.saturating_add(1),
+            _ => {}
+        }
+    }
+    (old, new)
+}
+
+fn structured_hunk_header(
+    old_start: u32,
+    old_count: u32,
+    new_start: u32,
+    new_count: u32,
+) -> String {
+    format!("@@ -{old_start},{old_count} +{new_start},{new_count} @@")
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn retained_patch_rows_are_bounded_without_bounding_magnitude() {
+        let line_count = STRUCTURED_PATCH_LINES_RETAINED + 5;
+        let lines: Vec<Value> = (0..line_count)
+            .map(|index| Value::String(format!("+line {index}")))
+            .collect();
+        let patch = vec![json!({
+            "oldStart": 1,
+            "oldLines": 0,
+            "newStart": 1,
+            "newLines": line_count,
+            "lines": lines,
+        })];
+
+        assert_eq!(patch_magnitude(&patch), (line_count as u64, 0));
+        let document = structured_patch_document(&patch);
+        assert!(document.truncated);
+        assert_eq!(document.line_count(), STRUCTURED_PATCH_LINES_RETAINED);
+        let expected_header = format!("@@ -1,0 +1,{line_count} @@");
+        assert_eq!(
+            document.hunks[0].header.as_deref(),
+            Some(expected_header.as_str())
+        );
+    }
+
+    #[test]
+    fn retained_patch_hunks_and_characters_have_independent_caps() {
+        let patch: Vec<Value> = (0..=STRUCTURED_PATCH_HUNKS_RETAINED)
+            .map(|index| {
+                json!({
+                    "oldStart": index + 1,
+                    "newStart": index + 1,
+                    "lines": ["+x"],
+                })
+            })
+            .collect();
+        let document = structured_patch_document(&patch);
+        assert!(document.truncated);
+        assert_eq!(document.hunks.len(), STRUCTURED_PATCH_HUNKS_RETAINED);
+
+        let wide = "x".repeat(STRUCTURED_PATCH_CHARS_RETAINED + 5);
+        let document = structured_patch_document(&[json!({
+            "oldStart": 1,
+            "newStart": 1,
+            "lines": [format!("+{wide}")],
+        })]);
+        assert!(document.truncated);
+        assert_eq!(
+            document.hunks[0].lines[0].chars().count(),
+            STRUCTURED_PATCH_CHARS_RETAINED
+        );
+    }
 }
 
 fn retain_plan(layer: &mut ClaudeLayer, tool_use_id: &str, row: &Value) {

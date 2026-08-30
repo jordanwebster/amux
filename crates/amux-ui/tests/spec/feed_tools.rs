@@ -12,6 +12,7 @@ use amux_ui::Msg;
 use amux_ui::claude::{
     ClaudeLayer, FeedEntryKind, SuccessFacts, ToolEntry, ToolInvocation, ToolOutcome,
 };
+use amux_ui::diff::{Document, Hunk, Numbering};
 use serde_json::json;
 
 use crate::harness::*;
@@ -59,6 +60,16 @@ fn read_edit_bash_pair_with_typed_result_facts() {
                 file_path: "[SCRATCH]/projects/tools/config.txt".to_string(),
                 added: 1,
                 removed: 1,
+                document: Document {
+                    numbering: Numbering::Absolute,
+                    hunks: vec![Hunk {
+                        old_start: 1,
+                        new_start: 1,
+                        header: Some("@@ -1,1 +1,1 @@".to_string()),
+                        lines: vec!["-VALUE=1".to_string(), "+VALUE=2".to_string()],
+                    }],
+                    truncated: false,
+                },
             }
         },
         "the feed line's (+1 -1) is the sidecar's FACT, never recomputed"
@@ -217,13 +228,23 @@ fn a_created_file_states_its_line_count_as_the_magnitude() {
         .find(|tool| matches!(tool.invocation, ToolInvocation::Write { .. }))
         .expect("the Write line");
     let ToolOutcome::Success {
-        facts: SuccessFacts::Edit { added, removed, .. },
+        facts:
+            SuccessFacts::Edit {
+                added,
+                removed,
+                document,
+                ..
+            },
     } = &write.outcome
     else {
         panic!("patch facts: {:?}", write.outcome);
     };
     assert_eq!(*added, 20, "the created plan file's line count");
     assert_eq!(*removed, 0);
+    assert!(
+        document.is_empty(),
+        "an empty structured patch has no hunks"
+    );
 }
 
 /// Grouping is a fold-computed fact (B4): strictly consecutive read/search

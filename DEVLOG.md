@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Kept Claude's landed patch instead of only its totals.** A
+successful Edit or Write now retains the typed, absolutely numbered
+`structuredPatch` document beside its full-sidecar magnitude. The retained
+preview is independently bounded by hunk count, row count, and character count;
+crossing any bound marks the document truncated while the `(+A -R)` totals
+still come from every source row. Created files continue to state their content
+line count and carry no invented hunk when Claude supplies an empty patch.
+
 2026-08-30 — **Made unified diffs a client-state fact.** Unified-patch syntax
 and its independent old/new line walk now live in `amux-ui`, where Claude's
 structured hunks and Codex's patch text can become the same neutral document
