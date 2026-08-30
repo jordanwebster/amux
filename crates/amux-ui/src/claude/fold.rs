@@ -189,6 +189,12 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
         }
         Some("ai-title") => layer.session.ai_title = string_of(row, "aiTitle"),
         Some("agent-name") => layer.session.agent_name = string_of(row, "agentName"),
+        // Cloud-bridge registration (`bridge-session`), its `atis-latch`
+        // companion, and the user-set `custom-title` sibling of `ai-title`:
+        // session-state bookkeeping (§10) carrying identity a chat entry
+        // could never show. Known, no reader in V1 — absorbed like `mode`,
+        // never feed entries.
+        Some("atis-latch") | Some("bridge-session") | Some("custom-title") => {}
         // Queue lifecycle and DAG-leaf bookkeeping: known, no feed target
         // in V1 (queueing is a reserved door).
         Some("last-prompt") | Some("queue-operation") => {}

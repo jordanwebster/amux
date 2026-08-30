@@ -46,10 +46,7 @@ fn hook_stop_is_a_presignal_not_a_marker() {
         "pong",
         ChatAnchor::StopHook(0),
     ));
-    assert_eq!(
-        kind_words(&model, "fix-auth-bug"),
-        vec!["unrecognized", "unrecognized", "prompt"]
-    );
+    assert_eq!(kind_words(&model, "fix-auth-bug"), vec!["prompt"]);
     let layer = claude_layer(&model, "fix-auth-bug");
     assert!(layer.turn_end_presignal());
     let unrecognized: Vec<_> = layer
@@ -59,7 +56,11 @@ fn hook_stop_is_a_presignal_not_a_marker() {
             _ => None,
         })
         .collect();
-    assert_eq!(unrecognized, vec!["atis-latch", "bridge-session"]);
+    assert_eq!(
+        unrecognized,
+        Vec::<&str>::new(),
+        "bridge bookkeeping absorbs to session state, not feed entries"
+    );
     let prompt = layer
         .entries()
         .find_map(|entry| match &entry.kind {
@@ -82,7 +83,7 @@ fn the_permission_fixtures_fold_to_the_documented_feed() {
     let allowed = fold(chat_feed("fix-auth-bug", "permission"));
     assert_eq!(
         kind_words(&allowed, "fix-auth-bug"),
-        vec!["unrecognized", "unrecognized", "prompt", "thinking", "tool",]
+        vec!["prompt", "thinking", "tool"]
     );
 
     let denied = fold(chat_feed_through(
@@ -92,15 +93,7 @@ fn the_permission_fixtures_fold_to_the_documented_feed() {
     ));
     assert_eq!(
         kind_words(&denied, "fix-auth-bug"),
-        vec![
-            "unrecognized",
-            "unrecognized",
-            "prompt",
-            "thinking",
-            "tool",
-            "interruption",
-            "turn",
-        ]
+        vec!["prompt", "thinking", "tool", "interruption", "turn"]
     );
 }
 
@@ -333,15 +326,7 @@ fn an_interrupt_closes_the_tool_request_and_infers_the_turn() {
     let model = fold(chat_feed("fix-auth-bug", "interrupt"));
     assert_eq!(
         kind_words(&model, "fix-auth-bug"),
-        vec![
-            "unrecognized",
-            "unrecognized",
-            "prompt",
-            "thinking",
-            "tool",
-            "interruption",
-            "turn",
-        ]
+        vec!["prompt", "thinking", "tool", "interruption", "turn",]
     );
     let layer = claude_layer(&model, "fix-auth-bug");
     let interruption = layer
@@ -379,8 +364,6 @@ fn compaction_folds_to_boundary_plus_summary() {
     assert_eq!(
         kind_words(&model, "fix-auth-bug"),
         vec![
-            "unrecognized",
-            "unrecognized",
             "prompt",
             "thinking",
             "message",
@@ -631,7 +614,7 @@ fn tool_lifecycle_hooks_are_known_session_fact_rows() {
             _ => None,
         })
         .collect();
-    assert_eq!(unrecognized, vec!["atis-latch", "bridge-session"]);
+    assert_eq!(unrecognized, Vec::<&str>::new());
 }
 
 const REVIEW_SESSION: &str = "22222222-2222-4222-8222-222222222222";
@@ -880,4 +863,56 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
             ]),
         ),
     ]
+}
+/// Every row type the committed provider fixtures deliver is classified:
+/// it folds to a typed feed entry, a session fact, or a documented
+/// absorption — never to an unrecognized entry. A new provider row shape
+/// landing in a fixture turns this red until the fold names it. Genuinely
+/// unknown shapes keep their explicit unrecognized rendering (G1),
+/// exercised with synthetic rows in `feed_edges`.
+#[test]
+fn every_fixture_row_type_is_classified() {
+    let chat = [
+        "pong",
+        "tools",
+        "permission",
+        "question_single",
+        "question_multi",
+        "interrupt",
+        "plan_approve",
+        "plan_reject",
+        "compact",
+        "clear",
+        "mode_cycle",
+        "permission_session",
+        "permission_deny_feedback",
+        "question_tabs",
+        "question_mixed",
+        "question_other_single",
+        "plan_auto",
+        "prompt_multiline",
+    ];
+    let a2a = ["socket_delivery", "pty_delivery", "mcp_tools"];
+    let fixtures = chat
+        .iter()
+        .map(|name| (*name, chat_rows(name)))
+        .chain(a2a.iter().map(|name| (*name, a2a_rows(name))));
+    for (name, rows) in fixtures {
+        let model = fold(seq([
+            chat_base("fix-auth-bug"),
+            vec![batch("fix-auth-bug", 10, rows)],
+        ]));
+        let layer = claude_layer(&model, "fix-auth-bug");
+        let unrecognized: Vec<_> = layer
+            .entries()
+            .filter_map(|entry| match &entry.kind {
+                FeedEntryKind::Unrecognized(row) => Some(row.row_type.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            unrecognized.is_empty(),
+            "{name}: unclassified fixture rows {unrecognized:?}"
+        );
+    }
 }

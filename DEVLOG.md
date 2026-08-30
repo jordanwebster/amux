@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Classified the bridge bookkeeping rows and locked fixture
+coverage.** `bridge-session`, its `atis-latch` companion, and the user-set
+`custom-title` sibling of `ai-title` are session-state rows carrying only
+session and bridge identity, so the fold now absorbs them like `mode`
+instead of rendering unrecognized feed entries — every committed capture
+opened with two noise rows at the top of its chat. A new spec,
+`every_fixture_row_type_is_classified`, folds all twenty-one committed
+provider fixtures and fails on any unrecognized entry, so the next provider
+row shape that lands in a capture must be named in the fold before it
+ships; genuinely unknown shapes keep their explicit unrecognized rendering,
+still exercised synthetically in `feed_edges`.
+
 2026-08-30 — **Merged the provider-crates flight into the rewritten TUI.**
 One merge commit reconciles two flights that grew from the same base:
 main's shared full-screen presentation (borderless frame, block kit,
