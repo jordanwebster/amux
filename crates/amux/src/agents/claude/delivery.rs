@@ -127,17 +127,20 @@ mod tests {
         let (writer, peer) = tokio::io::duplex(64 * 1024);
         let (hooks, hook_tx) = claude::pty::HookSource::channel(8);
         let (transcript, row_tx, _paths) = claude::pty::TranscriptSource::channel(8);
-        let session = claude::pty::from_sources(claude::pty::Sources {
-            pty: claude::pty::PtySource {
-                output,
-                writer: Box::new(writer),
-                handle: None,
-                exit: Box::pin(std::future::pending()),
+        let session = claude::pty::from_sources(
+            claude::pty::Sources {
+                pty: claude::pty::PtySource {
+                    output,
+                    writer: Box::new(writer),
+                    handle: None,
+                    exit: Box::pin(std::future::pending()),
+                },
+                hooks,
+                transcript,
+                version: claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
             },
-            hooks,
-            transcript,
-            version: claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
-        });
+            &claude::pty::keymap::KeymapSources::default(),
+        );
         let id = Uuid::new_v4();
         let record = AgentRecord {
             id,

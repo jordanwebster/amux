@@ -5453,3 +5453,11 @@ Resolution distinguishes range compatibility, exact live verification,
 same-minor extrapolation, and unknown versions; stable programs remain usable
 while menu programs refuse unsafe extrapolation or hook-observed shapes that
 the selected keymap has not verified.
+
+2026-08-30 — **Sent semantic intents through Claude PTY sessions.** Each
+session resolves and publishes its versioned keymap at startup and after every
+transcript relink, then turns prompt, interrupt, mode-cycle, and ask-referenced
+answer intents into provider-owned terminal programs. Input results identify
+the keymap, evidence basis, and fixed program, while unknown asks, mismatched
+answers, unsafe text, unverified menu shapes, and unavailable keymaps remain
+typed refusals before terminal input is written.

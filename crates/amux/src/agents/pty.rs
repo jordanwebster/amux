@@ -72,7 +72,7 @@ impl PtyHandle {
         match &self.hosted {
             HostedPty::Process(process) => process.handle.write(&data).await.map_err(Into::into),
             HostedPty::Claude(control) => control
-                .send(vec![claude::pty::PtyInput::Bytes(data)])
+                .send_program(vec![claude::pty::PtyInput::Bytes(data)])
                 .await
                 .map(|_| ())
                 .map_err(Into::into),

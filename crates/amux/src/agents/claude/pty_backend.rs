@@ -283,6 +283,7 @@ impl ClaudePtyBackend {
                 match event {
                     PtyEvent::Ready { .. }
                     | PtyEvent::Ask(_)
+                    | PtyEvent::Keymap(_)
                     | PtyEvent::InputResult(_)
                     | PtyEvent::Delivery(_) => {}
                     PtyEvent::Relink { reason, .. } => {
@@ -544,6 +545,7 @@ impl AgentBackend for ClaudePtyBackend {
         let size = self.terminal_size.unwrap_or_default();
         let session = claude::pty::spawn_with_version(
             &launch,
+            &claude::pty::keymap::KeymapSources::default(),
             pty_host::PtySize {
                 rows: size.rows,
                 cols: size.cols,
@@ -724,7 +726,7 @@ impl StructuredInput for ClaudeInputTarget {
                 message: "structured input requires an active PTY".to_string(),
             })?;
         control
-            .send(program)
+            .send_program(program)
             .await
             .map(|_| ())
             .map_err(|error| ProtocolError::ServerError {
@@ -846,17 +848,20 @@ impl NameState {
 fn external_session() -> (Session, mpsc::Sender<HookPayload>) {
     let (_output_tx, output) = mpsc::channel(1);
     let (hooks, hook_tx) = HookSource::channel(64);
-    let session = claude::pty::from_sources(Sources {
-        pty: PtySource {
-            output,
-            writer: Box::new(tokio::io::sink()),
-            handle: None,
-            exit: Box::pin(std::future::pending()),
+    let session = claude::pty::from_sources(
+        Sources {
+            pty: PtySource {
+                output,
+                writer: Box::new(tokio::io::sink()),
+                handle: None,
+                exit: Box::pin(std::future::pending()),
+            },
+            hooks,
+            transcript: TranscriptSource::live(),
+            version: claude::version::ClaudeVersion(semver::Version::new(0, 0, 0)),
         },
-        hooks,
-        transcript: TranscriptSource::live(),
-        version: claude::version::ClaudeVersion(semver::Version::new(0, 0, 0)),
-    });
+        &claude::pty::keymap::KeymapSources::default(),
+    );
     (session, hook_tx)
 }
 
@@ -882,17 +887,20 @@ fn scripted_session() -> (Session, mpsc::Sender<HookPayload>) {
         }
     });
     let (hooks, hook_tx) = HookSource::channel(64);
-    let session = claude::pty::from_sources(Sources {
-        pty: PtySource {
-            output,
-            writer: Box::new(writer),
-            handle: None,
-            exit: Box::pin(std::future::pending()),
+    let session = claude::pty::from_sources(
+        Sources {
+            pty: PtySource {
+                output,
+                writer: Box::new(writer),
+                handle: None,
+                exit: Box::pin(std::future::pending()),
+            },
+            hooks,
+            transcript: TranscriptSource::live(),
+            version: claude::version::ClaudeVersion(semver::Version::new(0, 0, 0)),
         },
-        hooks,
-        transcript: TranscriptSource::live(),
-        version: claude::version::ClaudeVersion(semver::Version::new(0, 0, 0)),
-    });
+        &claude::pty::keymap::KeymapSources::default(),
+    );
     (session, hook_tx)
 }
 
@@ -939,17 +947,20 @@ mod tests {
         let (_output_tx, output) = mpsc::channel(1);
         let (hooks, hook_tx) = HookSource::channel(8);
         let (transcript, row_tx, _paths) = TranscriptSource::channel(8);
-        let session = claude::pty::from_sources(Sources {
-            pty: PtySource {
-                output,
-                writer: Box::new(tokio::io::sink()),
-                handle: None,
-                exit: Box::pin(std::future::pending()),
+        let session = claude::pty::from_sources(
+            Sources {
+                pty: PtySource {
+                    output,
+                    writer: Box::new(tokio::io::sink()),
+                    handle: None,
+                    exit: Box::pin(std::future::pending()),
+                },
+                hooks,
+                transcript,
+                version: claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
             },
-            hooks,
-            transcript,
-            version: claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
-        });
+            &claude::pty::keymap::KeymapSources::default(),
+        );
         let record = AgentRecord {
             id: Uuid::new_v4(),
             host_id: Uuid::new_v4(),

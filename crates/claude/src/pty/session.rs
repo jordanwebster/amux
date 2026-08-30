@@ -1,5 +1,6 @@
 //! One Claude PTY event stream paired with its control handle.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -163,6 +164,7 @@ pub enum PtyEvent {
         transcript_path: PathBuf,
         reason: RelinkReason,
     },
+    Keymap(super::keymap::Resolved),
     InputResult(InputResult),
     Delivery(DeliveryOutcome),
     Exited(pty_host::ExitStatus),
@@ -266,10 +268,14 @@ pub enum PtyInput {
     Delay(u32),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InputResult {
+    pub intent: Intent,
+    pub keymap: super::keymap::KeymapId,
+    pub basis: super::keymap::Basis,
+    pub program: super::keymap::ProgramName,
     pub bytes_written: usize,
-    pub steps: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -302,8 +308,13 @@ pub enum InputError {
     UnsafeText { reason: String },
     #[error("answer does not fit the ask: {detail}")]
     AnswerMismatchesAsk { detail: String },
+    #[error("no keymap for Claude {version} can answer {program:?}")]
+    NoKeymap {
+        version: ClaudeVersion,
+        program: super::keymap::ProgramName,
+    },
     #[error("PTY input failed: {0}")]
-    Io(#[from] std::io::Error),
+    Pty(#[from] pty_host::PtyError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -329,25 +340,107 @@ pub struct Session {
     pub control: Control,
 }
 
+struct ActiveKeymap {
+    resolved: super::keymap::Resolved,
+    keymap: super::keymap::Keymap,
+}
+
+struct SemanticState {
+    version: ClaudeVersion,
+    active: Option<ActiveKeymap>,
+    asks: HashMap<AskId, AskKind>,
+}
+
 #[derive(Clone)]
 pub struct Control {
     writer: Arc<tokio::sync::Mutex<Box<dyn AsyncWrite + Unpin + Send>>>,
     terminal_output: Arc<Mutex<Option<mpsc::Receiver<Bytes>>>>,
     terminal: Option<pty_host::PtyHandle>,
     events: mpsc::Sender<PtyEvent>,
+    semantic: Arc<Mutex<SemanticState>>,
+    send_lock: Arc<tokio::sync::Mutex<()>>,
     confirmations: broadcast::Sender<Value>,
     exit: watch::Receiver<Option<pty_host::ExitStatus>>,
 }
 
 impl Control {
-    pub async fn send(&self, program: Vec<PtyInput>) -> Result<InputResult, InputError> {
+    pub async fn send(&self, intent: Intent) -> Result<InputResult, InputError> {
+        let _send = self.send_lock.lock().await;
+        let (ask, resolved, keymap, program) = {
+            let semantic = self.semantic.lock().expect("semantic state mutex poisoned");
+            let ask = match &intent {
+                Intent::Answer { ask_id, .. } => Some(
+                    semantic
+                        .asks
+                        .get(ask_id)
+                        .cloned()
+                        .ok_or_else(|| InputError::UnknownAsk(ask_id.clone()))?,
+                ),
+                _ => None,
+            };
+            let program = super::keymap::program_for(&intent, ask.as_ref())?;
+            let active = semantic
+                .active
+                .as_ref()
+                .ok_or_else(|| InputError::NoKeymap {
+                    version: semantic.version.clone(),
+                    program,
+                })?;
+            (ask, active.resolved.clone(), active.keymap.clone(), program)
+        };
+        let prompt = match &intent {
+            Intent::Prompt { text } => Some(text.as_str()),
+            _ => None,
+        };
+        let answer = match &intent {
+            Intent::Answer { answer, .. } => Some(answer),
+            _ => None,
+        };
+        let steps = super::keymap::encode(
+            &keymap,
+            &resolved,
+            program,
+            &super::keymap::Environment {
+                ask: ask.as_ref(),
+                answer,
+                prompt,
+            },
+        )?;
+        let bytes_written = self.write_key_steps(&steps).await?;
+        if let Intent::Answer { ask_id, .. } = &intent {
+            self.semantic
+                .lock()
+                .expect("semantic state mutex poisoned")
+                .asks
+                .remove(ask_id);
+        }
+        let result = InputResult {
+            intent,
+            keymap: resolved.keymap,
+            basis: resolved.basis,
+            program,
+            bytes_written,
+        };
+        let _ = self
+            .events
+            .send(PtyEvent::InputResult(result.clone()))
+            .await;
+        Ok(result)
+    }
+
+    /// Writes daemon-owned terminal or delivery bytes without representing
+    /// them as semantic user input.
+    pub async fn send_program(&self, program: Vec<PtyInput>) -> Result<usize, InputError> {
         let mut writer = self.writer.lock().await;
         let mut bytes_written = 0;
         for step in &program {
             match step {
                 PtyInput::Bytes(bytes) => {
-                    writer.write_all(bytes).await?;
-                    writer.flush().await?;
+                    writer
+                        .write_all(bytes)
+                        .await
+                        .map_err(pty_host::PtyError::Io)?;
+                    writer.flush().await.map_err(pty_host::PtyError::Io)?;
                     bytes_written += bytes.len();
                 }
                 PtyInput::Delay(ms) => {
@@ -356,15 +449,31 @@ impl Control {
                 }
             }
         }
-        let result = InputResult {
-            bytes_written,
-            steps: program.len(),
-        };
-        let _ = self
-            .events
-            .send(PtyEvent::InputResult(result.clone()))
-            .await;
-        Ok(result)
+        Ok(bytes_written)
+    }
+
+    async fn write_key_steps(&self, steps: &[super::keymap::KeyStep]) -> Result<usize, InputError> {
+        let mut writer = self.writer.lock().await;
+        let mut bytes_written = 0;
+        for step in steps {
+            match step {
+                super::keymap::KeyStep::Write(bytes) => {
+                    writer
+                        .write_all(bytes)
+                        .await
+                        .map_err(pty_host::PtyError::Io)?;
+                    writer.flush().await.map_err(pty_host::PtyError::Io)?;
+                    bytes_written += bytes.len();
+                }
+                super::keymap::KeyStep::Delay(delay) => {
+                    tokio::time::sleep(
+                        (*delay).min(Duration::from_millis(u64::from(MAX_DELAY_MS))),
+                    )
+                    .await;
+                }
+            }
+        }
+        Ok(bytes_written)
     }
 
     pub fn resize(&self, size: pty_host::PtySize) -> Result<(), pty_host::PtyError> {
@@ -381,7 +490,7 @@ impl Control {
     ) -> Result<DeliveryOutcome, DeliveryError> {
         let outcome = match carrier {
             Carrier::Pty => {
-                self.send(paste_program(text))
+                self.send_program(paste_program(text))
                     .await
                     .map_err(|e| DeliveryError::Failed(e.to_string()))?;
                 DeliveryOutcome::Pty
@@ -397,7 +506,7 @@ impl Control {
                 {
                     Ok(()) => DeliveryOutcome::Socket,
                     Err(reason) => {
-                        self.send(paste_program(text))
+                        self.send_program(paste_program(text))
                             .await
                             .map_err(|e| DeliveryError::Failed(e.to_string()))?;
                         DeliveryOutcome::PtyFallback { reason }
@@ -467,15 +576,20 @@ impl Control {
     }
 }
 
-pub async fn spawn(launch: &Launch, size: pty_host::PtySize) -> Result<Session, SpawnError> {
+pub async fn spawn(
+    launch: &Launch,
+    keymaps: &super::keymap::KeymapSources,
+    size: pty_host::PtySize,
+) -> Result<Session, SpawnError> {
     let version = probe_version(&launch.binary).await?;
-    spawn_with_version(launch, size, version)
+    spawn_with_version(launch, keymaps, size, version)
 }
 
 /// Spawn a live session when the host has already completed its shared
 /// version probe.
 pub fn spawn_with_version(
     launch: &Launch,
+    keymaps: &super::keymap::KeymapSources,
     size: pty_host::PtySize,
     version: ClaudeVersion,
 ) -> Result<Session, SpawnError> {
@@ -499,20 +613,23 @@ pub fn spawn_with_version(
     let handle = process.handle.clone();
     let writer = writer_for_handle(handle.clone());
     let mut exit = process.exit;
-    Ok(from_sources(Sources {
-        pty: PtySource {
-            output,
-            writer,
-            handle: Some(handle),
-            exit: Box::pin(async move { exit.wait().await }),
+    Ok(from_sources(
+        Sources {
+            pty: PtySource {
+                output,
+                writer,
+                handle: Some(handle),
+                exit: Box::pin(async move { exit.wait().await }),
+            },
+            hooks: HookSource::from_receiver(receiver),
+            transcript: TranscriptSource::live(),
+            version,
         },
-        hooks: HookSource::from_receiver(receiver),
-        transcript: TranscriptSource::live(),
-        version,
-    }))
+        keymaps,
+    ))
 }
 
-pub fn from_sources(sources: Sources) -> Session {
+pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) -> Session {
     let Sources {
         pty,
         hooks,
@@ -537,12 +654,28 @@ pub fn from_sources(sources: Sources) -> Session {
     let (event_tx, events) = mpsc::channel(CHANNEL_CAPACITY);
     let (confirmation_tx, _) = broadcast::channel(CHANNEL_CAPACITY);
     let (exit_tx, exit_rx) = watch::channel(None);
+    let initial = super::keymap::resolve_session(keymaps, &version).ok();
+    let initial_event = initial.as_ref().map(|(resolved, _)| resolved.clone());
+    let semantic = Arc::new(Mutex::new(SemanticState {
+        version: version.clone(),
+        active: initial.map(|(resolved, keymap)| ActiveKeymap { resolved, keymap }),
+        asks: HashMap::new(),
+    }));
 
     event_tx
-        .try_send(PtyEvent::Ready { version })
+        .try_send(PtyEvent::Ready {
+            version: version.clone(),
+        })
         .expect("new PTY event channel has capacity for readiness");
+    if let Some(resolved) = initial_event {
+        event_tx
+            .try_send(PtyEvent::Keymap(resolved))
+            .expect("new PTY event channel has capacity for its keymap");
+    }
 
     let tx = event_tx.clone();
+    let semantic_for_hooks = semantic.clone();
+    let keymaps = keymaps.clone();
     tokio::spawn(async move {
         let _receiver = receiver;
         let mut current_path = None;
@@ -562,21 +695,33 @@ pub fn from_sources(sources: Sources) -> Session {
                 {
                     break;
                 }
+                let resolved = refresh_keymap(&semantic_for_hooks, &keymaps);
+                if let Some(resolved) = resolved
+                    && tx.send(PtyEvent::Keymap(resolved)).await.is_err()
+                {
+                    break;
+                }
             }
             let ask = ask_from_hook(&hook);
             if tx.send(PtyEvent::Hook(hook)).await.is_err() {
                 break;
             }
-            if let Some(ask) = ask
-                && tx.send(PtyEvent::Ask(ask)).await.is_err()
-            {
-                break;
+            if let Some(ask) = ask {
+                semantic_for_hooks
+                    .lock()
+                    .expect("semantic state mutex poisoned")
+                    .asks
+                    .insert(ask.id.clone(), ask.kind.clone());
+                if tx.send(PtyEvent::Ask(ask)).await.is_err() {
+                    break;
+                }
             }
         }
     });
 
     let tx = event_tx.clone();
     let confirmations = confirmation_tx.clone();
+    let semantic_for_rows = semantic.clone();
     tokio::spawn(async move {
         let _task = task;
         while let Some((path, row)) = rows.recv().await {
@@ -585,10 +730,15 @@ pub fn from_sources(sources: Sources) -> Session {
             if tx.send(PtyEvent::Transcript { path, row }).await.is_err() {
                 break;
             }
-            if let Some(ask) = ask
-                && tx.send(PtyEvent::Ask(ask)).await.is_err()
-            {
-                break;
+            if let Some(ask) = ask {
+                semantic_for_rows
+                    .lock()
+                    .expect("semantic state mutex poisoned")
+                    .asks
+                    .insert(ask.id.clone(), ask.kind.clone());
+                if tx.send(PtyEvent::Ask(ask)).await.is_err() {
+                    break;
+                }
             }
         }
     });
@@ -607,6 +757,8 @@ pub fn from_sources(sources: Sources) -> Session {
             terminal_output: Arc::new(Mutex::new(Some(output))),
             terminal: handle,
             events: event_tx,
+            semantic,
+            send_lock: Arc::new(tokio::sync::Mutex::new(())),
             confirmations: confirmation_tx,
             exit: exit_rx,
         },
@@ -616,6 +768,7 @@ pub fn from_sources(sources: Sources) -> Session {
 pub fn from_recording(
     replay: &mut replay_support::StrictReplay,
     manifest: &replay_support::Manifest,
+    keymaps: &super::keymap::KeymapSources,
 ) -> Result<Session, SpawnError> {
     let pty = replay
         .transports
@@ -644,21 +797,35 @@ pub fn from_recording(
     tokio::spawn(async move {
         pump_transcript(transcript.reader, row_tx, fallback).await;
     });
-    Ok(from_sources(Sources {
-        pty: PtySource {
-            output,
-            writer: pty.writer,
-            handle: None,
-            exit: Box::pin(async move {
-                exit_rx
-                    .await
-                    .unwrap_or_else(|_| pty_host::ExitStatus::with_signal("replay closed"))
-            }),
+    Ok(from_sources(
+        Sources {
+            pty: PtySource {
+                output,
+                writer: pty.writer,
+                handle: None,
+                exit: Box::pin(async move {
+                    exit_rx
+                        .await
+                        .unwrap_or_else(|_| pty_host::ExitStatus::with_signal("replay closed"))
+                }),
+            },
+            hooks: hook_source,
+            transcript: TranscriptSource::recorded(rows),
+            version: ClaudeVersion(manifest.recorded.version.clone()),
         },
-        hooks: hook_source,
-        transcript: TranscriptSource::recorded(rows),
-        version: ClaudeVersion(manifest.recorded.version.clone()),
-    }))
+        keymaps,
+    ))
+}
+
+fn refresh_keymap(
+    semantic: &Mutex<SemanticState>,
+    keymaps: &super::keymap::KeymapSources,
+) -> Option<super::keymap::Resolved> {
+    let mut semantic = semantic.lock().expect("semantic state mutex poisoned");
+    let active = super::keymap::resolve_session(keymaps, &semantic.version).ok();
+    let event = active.as_ref().map(|(resolved, _)| resolved.clone());
+    semantic.active = active.map(|(resolved, keymap)| ActiveKeymap { resolved, keymap });
+    event
 }
 
 pub fn paste_program(text: &str) -> Vec<PtyInput> {
@@ -954,13 +1121,24 @@ mod tests {
             .expect("event stream remains open")
     }
 
+    fn from_test_sources(sources: Sources) -> Session {
+        from_sources(sources, &super::super::keymap::KeymapSources::default())
+    }
+
     #[tokio::test]
     async fn sources_emit_ready_compact_clear_relinks_and_exit() {
         let (sources, hooks, _rows, mut paths, _writer, exit) = source_bundle();
-        let mut session = from_sources(sources);
+        let mut session = from_test_sources(sources);
         assert!(matches!(
             next(&mut session.events).await,
             PtyEvent::Ready { .. }
+        ));
+        assert!(matches!(
+            next(&mut session.events).await,
+            PtyEvent::Keymap(super::super::keymap::Resolved {
+                basis: super::super::keymap::Basis::InRange,
+                ..
+            })
         ));
 
         hooks
@@ -975,6 +1153,10 @@ mod tests {
             }
         ));
         assert_eq!(paths.recv().await.unwrap(), PathBuf::from("/tmp/one"));
+        assert!(matches!(
+            next(&mut session.events).await,
+            PtyEvent::Keymap(_)
+        ));
         assert!(matches!(next(&mut session.events).await, PtyEvent::Hook(_)));
 
         hooks
@@ -988,6 +1170,10 @@ mod tests {
                 ..
             }
         ));
+        assert!(matches!(
+            next(&mut session.events).await,
+            PtyEvent::Keymap(_)
+        ));
         assert!(matches!(next(&mut session.events).await, PtyEvent::Hook(_)));
         hooks
             .send(session_start("/tmp/three", "clear"))
@@ -999,6 +1185,10 @@ mod tests {
                 reason: RelinkReason::Clear,
                 ..
             }
+        ));
+        assert!(matches!(
+            next(&mut session.events).await,
+            PtyEvent::Keymap(_)
         ));
 
         exit.send(pty_host::ExitStatus::with_exit_code(7)).unwrap();
@@ -1013,7 +1203,8 @@ mod tests {
     #[tokio::test]
     async fn hooks_and_transcript_tool_uses_derive_ask_facts() {
         let (sources, hooks, rows, _paths, _writer, _exit) = source_bundle();
-        let mut session = from_sources(sources);
+        let mut session = from_test_sources(sources);
+        let _ = next(&mut session.events).await;
         let _ = next(&mut session.events).await;
         let raw = serde_json::json!({
             "hook_event_name":"PermissionRequest",
@@ -1021,6 +1212,7 @@ mod tests {
             "transcript_path":"/tmp/one",
             "cwd":"/tmp",
             "tool_name":"Bash",
+            "tool_use_id":"permission-1",
             "tool_input":{},
             "permission_suggestions":[{"type":"addDirectories","directories":["/tmp"],"destination":"session"}],
         });
@@ -1030,6 +1222,7 @@ mod tests {
             .unwrap();
         loop {
             if let PtyEvent::Ask(ask) = next(&mut session.events).await {
+                assert_eq!(ask.id, AskId("permission-1".to_owned()));
                 assert!(matches!(
                     ask.kind,
                     AskKind::Permission {
@@ -1065,24 +1258,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn control_sends_fixed_program_and_paste_delivery() {
+    async fn control_sends_semantic_intent_and_paste_delivery() {
         let (sources, _hooks, _rows, _paths, mut peer, _exit) = source_bundle();
-        let session = from_sources(sources);
-        let result = session
-            .control
-            .send(vec![PtyInput::Bytes(b"hello".to_vec())])
-            .await
-            .unwrap();
-        assert_eq!(
-            result,
-            InputResult {
-                bytes_written: 5,
-                steps: 1
-            }
-        );
-        let mut bytes = [0; 5];
+        let mut session = from_test_sources(sources);
+        let _ = next(&mut session.events).await;
+        let initial = next(&mut session.events).await;
+        let PtyEvent::Keymap(resolved) = initial else {
+            panic!("session did not emit its keymap");
+        };
+        let intent = Intent::Prompt {
+            text: "hello".to_owned(),
+        };
+        let result = session.control.send(intent.clone()).await.unwrap();
+        assert_eq!(result.intent, intent);
+        assert_eq!(result.keymap, resolved.keymap);
+        assert_eq!(result.basis, resolved.basis);
+        assert_eq!(result.program, super::super::keymap::ProgramName::Prompt);
+        assert_eq!(result.bytes_written, b"\x1b[200~hello\x1b[201~\r".len());
+        let mut bytes = vec![0; result.bytes_written];
         peer.read_exact(&mut bytes).await.unwrap();
-        assert_eq!(&bytes, b"hello");
+        assert_eq!(&bytes, b"\x1b[200~hello\x1b[201~\r");
+        assert!(matches!(
+            next(&mut session.events).await,
+            PtyEvent::InputResult(event) if event == result
+        ));
 
         assert_eq!(
             session
@@ -1095,6 +1294,208 @@ mod tests {
         let mut pasted = vec![0; b"\x1b[200~message\x1b[201~\r".len()];
         peer.read_exact(&mut pasted).await.unwrap();
         assert_eq!(pasted, b"\x1b[200~message\x1b[201~\r");
+    }
+
+    #[tokio::test]
+    async fn answer_intents_use_and_consume_ask_ids() {
+        let (sources, _hooks, rows, _paths, _peer, _exit) = source_bundle();
+        let mut session = from_test_sources(sources);
+        let _ = next(&mut session.events).await;
+        let _ = next(&mut session.events).await;
+        rows.send((
+            PathBuf::from("/tmp/one"),
+            TranscriptRow::parse(serde_json::json!({
+                "type":"assistant",
+                "message":{"content":[{
+                    "type":"tool_use",
+                    "id":"question-1",
+                    "name":"AskUserQuestion",
+                    "input":{"questions":[{"options":[{},{}],"multiSelect":false}]}
+                }]}
+            })),
+        ))
+        .await
+        .unwrap();
+        assert!(matches!(
+            next(&mut session.events).await,
+            PtyEvent::Transcript { .. }
+        ));
+        assert!(matches!(next(&mut session.events).await, PtyEvent::Ask(_)));
+
+        let intent = Intent::Answer {
+            ask_id: AskId("question-1".to_owned()),
+            answer: AskAnswer::Question(QuestionResponse {
+                answers: vec![QuestionAnswer {
+                    selected: vec![1],
+                    other: None,
+                }],
+            }),
+        };
+        let result = session.control.send(intent.clone()).await.unwrap();
+        assert_eq!(result.intent, intent);
+        assert_eq!(
+            result.program,
+            super::super::keymap::ProgramName::QuestionForm
+        );
+        assert!(matches!(
+            session.control.send(result.intent).await,
+            Err(InputError::UnknownAsk(AskId(ref id))) if id == "question-1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn semantic_input_errors_remain_typed() {
+        let (sources, _hooks, rows, _paths, _peer, _exit) = source_bundle();
+        let mut session = from_test_sources(sources);
+        let _ = next(&mut session.events).await;
+        let _ = next(&mut session.events).await;
+
+        assert!(matches!(
+            session
+                .control
+                .send(Intent::Prompt {
+                    text: "bad\u{1b}".to_owned()
+                })
+                .await,
+            Err(InputError::UnsafeText { .. })
+        ));
+        assert!(matches!(
+            session
+                .control
+                .send(Intent::Answer {
+                    ask_id: AskId("missing".to_owned()),
+                    answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+                })
+                .await,
+            Err(InputError::UnknownAsk(AskId(ref id))) if id == "missing"
+        ));
+
+        rows.send((
+            PathBuf::from("/tmp/one"),
+            TranscriptRow::parse(serde_json::json!({
+                "type":"assistant",
+                "message":{"content":[{
+                    "type":"tool_use",
+                    "id":"plan-1",
+                    "name":"ExitPlanMode",
+                    "input":{}
+                }]}
+            })),
+        ))
+        .await
+        .unwrap();
+        let _ = next(&mut session.events).await;
+        let _ = next(&mut session.events).await;
+        assert!(matches!(
+            session
+                .control
+                .send(Intent::Answer {
+                    ask_id: AskId("plan-1".to_owned()),
+                    answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+                })
+                .await,
+            Err(InputError::AnswerMismatchesAsk { .. })
+        ));
+
+        let (sources, hooks, _rows, _paths, _peer, _exit) = source_bundle();
+        let mut session = from_test_sources(sources);
+        let _ = next(&mut session.events).await;
+        let _ = next(&mut session.events).await;
+        let raw = serde_json::json!({
+            "hook_event_name":"PermissionRequest",
+            "session_id":"00000000-0000-0000-0000-000000000001",
+            "transcript_path":"/tmp/one",
+            "cwd":"/tmp",
+            "tool_name":"Bash",
+            "tool_use_id":"permission-7",
+            "tool_input":{},
+            "permission_suggestions": vec![serde_json::json!({
+                "type":"addDirectories",
+                "directories":["/tmp"],
+                "destination":"session"
+            }); 7],
+        });
+        hooks
+            .send(crate::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .await
+            .unwrap();
+        loop {
+            if matches!(next(&mut session.events).await, PtyEvent::Ask(_)) {
+                break;
+            }
+        }
+        assert!(matches!(
+            session
+                .control
+                .send(Intent::Answer {
+                    ask_id: AskId("permission-7".to_owned()),
+                    answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+                })
+                .await,
+            Err(InputError::UnverifiedShape { .. })
+        ));
+
+        let (sources, _hooks, _rows, _paths, _peer, _exit) = source_bundle();
+        let session = from_sources(
+            sources,
+            &super::super::keymap::KeymapSources {
+                baked: &[],
+                user_dir: None,
+            },
+        );
+        assert!(matches!(
+            session
+                .control
+                .send(Intent::Prompt {
+                    text: "hello".to_owned()
+                })
+                .await,
+            Err(InputError::NoKeymap {
+                program: super::super::keymap::ProgramName::Prompt,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn relink_reloads_keymap_sources_and_emits_the_new_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("claude.toml");
+        let original = super::super::keymap::BAKED_KEYMAPS[0].1;
+        std::fs::write(&path, original).unwrap();
+        let keymaps = super::super::keymap::KeymapSources {
+            baked: super::super::keymap::BAKED_KEYMAPS,
+            user_dir: Some(dir.path().to_path_buf()),
+        };
+        let (sources, hooks, _rows, _paths, _peer, _exit) = source_bundle();
+        let mut session = from_sources(sources, &keymaps);
+        let _ = next(&mut session.events).await;
+        let PtyEvent::Keymap(initial) = next(&mut session.events).await else {
+            panic!("session did not emit its initial keymap");
+        };
+        assert!(matches!(
+            initial.keymap.source,
+            super::super::keymap::KeymapSource::User(_)
+        ));
+
+        std::fs::write(
+            &path,
+            original.replace("after_paste = 400", "after_paste = 401"),
+        )
+        .unwrap();
+        hooks
+            .send(session_start("/tmp/relinked", "compact"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            next(&mut session.events).await,
+            PtyEvent::Relink { .. }
+        ));
+        let PtyEvent::Keymap(relinked) = next(&mut session.events).await else {
+            panic!("relink did not emit a keymap");
+        };
+        assert_ne!(relinked.keymap.digest, initial.keymap.digest);
+        assert_eq!(relinked.basis, initial.basis);
     }
 
     #[test]
@@ -1172,7 +1573,7 @@ mod tests {
         let socket_path = dir.path().join("message.sock");
         let listener = UnixListener::bind(&socket_path).unwrap();
         let (sources, _hooks, rows, _paths, mut peer, _exit) = source_bundle();
-        let session = from_sources(sources);
+        let session = from_test_sources(sources);
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut lines = tokio::io::BufReader::new(stream).lines();

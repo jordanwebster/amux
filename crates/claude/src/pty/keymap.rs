@@ -388,6 +388,26 @@ struct LoadedKeymap {
 /// Resolves the keymap and records why it was selected for an observed version.
 pub fn resolve(sources: &KeymapSources, observed: &ClaudeVersion) -> Result<Resolved, KeymapError> {
     let loaded = load_sources(sources)?;
+    let (selected, basis) = select(&loaded, observed)?;
+    Ok(resolved(selected, basis, &observed.0))
+}
+
+pub(crate) fn resolve_session(
+    sources: &KeymapSources,
+    observed: &ClaudeVersion,
+) -> Result<(Resolved, Keymap), KeymapError> {
+    let loaded = load_sources(sources)?;
+    let (selected, basis) = select(&loaded, observed)?;
+    Ok((
+        resolved(selected, basis, &observed.0),
+        selected.keymap.clone(),
+    ))
+}
+
+fn select<'a>(
+    loaded: &'a BTreeMap<String, LoadedKeymap>,
+    observed: &ClaudeVersion,
+) -> Result<(&'a LoadedKeymap, Basis), KeymapError> {
     let observed = &observed.0;
     if loaded.is_empty() {
         return Err(KeymapError::NoKeymaps(observed.clone()));
@@ -404,11 +424,7 @@ pub fn resolve(sources: &KeymapSources, observed: &ClaudeVersion) -> Result<Reso
         })
         .max_by_key(|candidate| candidate.keymap.provenance.recorded_version.clone())
     {
-        return Ok(resolved(
-            selected,
-            Basis::Verified(observed.clone()),
-            observed,
-        ));
+        return Ok((selected, Basis::Verified(observed.clone())));
     }
 
     // A range is the evidence basis only until a keymap gains a live-verified
@@ -421,7 +437,7 @@ pub fn resolve(sources: &KeymapSources, observed: &ClaudeVersion) -> Result<Reso
         })
         .max_by_key(|candidate| candidate.keymap.provenance.recorded_version.clone())
     {
-        return Ok(resolved(selected, Basis::InRange, observed));
+        return Ok((selected, Basis::InRange));
     }
 
     let anchor = loaded
@@ -449,18 +465,14 @@ pub fn resolve(sources: &KeymapSources, observed: &ClaudeVersion) -> Result<Reso
                 .min_by(|(_, left), (_, right)| left.cmp(right))
         });
     if let Some((selected, from)) = anchor {
-        return Ok(resolved(
-            selected,
-            Basis::Extrapolated { from: from.clone() },
-            observed,
-        ));
+        return Ok((selected, Basis::Extrapolated { from: from.clone() }));
     }
 
     let selected = loaded
         .values()
         .max_by_key(|candidate| candidate.keymap.provenance.recorded_version.clone())
         .expect("empty sources returned above");
-    Ok(resolved(selected, Basis::Unknown, observed))
+    Ok((selected, Basis::Unknown))
 }
 
 fn load_sources(sources: &KeymapSources) -> Result<BTreeMap<String, LoadedKeymap>, KeymapError> {
