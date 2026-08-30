@@ -28,38 +28,54 @@ async fn every_recorded_pty_specification_replays_strictly() {
         return;
     }
     for entry in pty_registry() {
-        eprintln!("replaying PTY {}", entry.name);
-        let recording = load_recording(&root.join(entry.recording))
-            .unwrap_or_else(|error| panic!("load {}: {error}", entry.name));
-        assert!(
-            entry
-                .allowed_models
-                .contains(&recording.manifest.recorded.model.as_str()),
-            "{} was recorded with disallowed model {}",
-            entry.name,
-            recording.manifest.recorded.model
-        );
-        let replay = strict_replay(&recording, ReplayOptions::default());
-        let report = tokio::time::timeout(
-            SPEC_TIMEOUT,
-            claude::specs::pty::run(
-                entry,
-                claude::specs::pty::Source::Recorded {
-                    replay,
-                    manifest: Box::new(recording.manifest),
-                    keymaps: claude::pty::keymap::KeymapSources::default(),
-                },
-            ),
-        )
-        .await
-        .unwrap_or_else(|_| panic!("{} stalled after {SPEC_TIMEOUT:?}", entry.name))
-        .unwrap_or_else(|error| panic!("{error}"));
-        assert!(
-            report.replay.is_some_and(|report| report.is_complete()),
-            "{} did not return a complete replay report",
-            entry.name
-        );
+        replay_pty(entry).await;
     }
+}
+
+#[tokio::test]
+#[cfg(feature = "pty")]
+async fn plan_approve_pty_replays_strictly() {
+    let entry = pty_registry()
+        .iter()
+        .find(|entry| entry.name == "plan_approve")
+        .expect("plan_approve remains registered");
+    replay_pty(entry).await;
+}
+
+#[cfg(feature = "pty")]
+async fn replay_pty(entry: &replay_support::SpecEntry) {
+    let root = claude::specs::pty::fixtures_root();
+    eprintln!("replaying PTY {}", entry.name);
+    let recording = load_recording(&root.join(entry.recording))
+        .unwrap_or_else(|error| panic!("load {}: {error}", entry.name));
+    assert!(
+        entry
+            .allowed_models
+            .contains(&recording.manifest.recorded.model.as_str()),
+        "{} was recorded with disallowed model {}",
+        entry.name,
+        recording.manifest.recorded.model
+    );
+    let replay = strict_replay(&recording, ReplayOptions::default());
+    let report = tokio::time::timeout(
+        SPEC_TIMEOUT,
+        claude::specs::pty::run(
+            entry,
+            claude::specs::pty::Source::Recorded {
+                replay,
+                manifest: Box::new(recording.manifest),
+                keymaps: claude::pty::keymap::KeymapSources::default(),
+            },
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("{} stalled after {SPEC_TIMEOUT:?}", entry.name))
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        report.replay.is_some_and(|report| report.is_complete()),
+        "{} did not return a complete replay report",
+        entry.name
+    );
 }
 
 #[tokio::test]

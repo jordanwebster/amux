@@ -5531,3 +5531,18 @@ ask-referenced answer intents under its sequence guard; raw bytes remain a
 terminal-protocol concern. The daemon forwards those intents through the
 provider control handle and publishes resolved-keymap and successful-input
 rows on the same sequenced transcript stream.
+
+2026-08-30 — **Recorded live Claude PTY question and plan-change behavior.**
+Claude Code 2.1.251 can expose `AskUserQuestion` through its permission hook
+before flushing the corresponding transcript row, so the provider now derives
+the typed question shape from either boundary. Live Sonnet recordings preserve
+mixed-question selections and plan feedback under strict replay, while the
+capture tooling appends their evidence to the baked keymap provenance.
+
+2026-08-30 — **Recorded manual Claude plan approval at the PTY boundary.** The
+spec recorder now leaves a complete IO diagnostic when a live claim stalls and
+supports a bounded timeout override. Plan approval waits for the menu to settle,
+transcript tailing preserves fragmented JSONL appends, and the specification
+correlates the successful result with the ExitPlanMode hook's tool-use ID. The
+Claude Code 2.1.251 Sonnet capture replays strictly and carries matching keymap
+provenance.

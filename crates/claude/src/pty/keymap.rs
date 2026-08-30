@@ -159,6 +159,7 @@ string_enum!(DelayName {
     BeforeSubmit,
     AfterReviewOpen,
     AfterDeny,
+    BeforePlanApproval,
     AfterMenuTextOpen,
     AfterOtherSave,
 });
@@ -423,15 +424,15 @@ pub fn load_str(source: &str, origin: &str, kind: KeymapSource) -> Result<Keymap
 pub(crate) fn append_verified(path: &Path, entry: VerifiedVersion) -> Result<(), KeymapError> {
     let contents = std::fs::read_to_string(path)
         .map_err(|error| KeymapError::Io(path.to_path_buf(), error))?;
-    let mut document = contents
+    let document = contents
         .parse::<toml::Value>()
         .map_err(|error| KeymapError::Parse {
             origin: path.display().to_string(),
             reason: error.to_string(),
         })?;
     let verified = document
-        .get_mut("verified")
-        .and_then(toml::Value::as_array_mut)
+        .get("verified")
+        .and_then(toml::Value::as_array)
         .ok_or_else(|| KeymapError::Parse {
             origin: path.display().to_string(),
             reason: "field 'verified' must be an array".to_owned(),
@@ -443,11 +444,30 @@ pub(crate) fn append_verified(path: &Path, entry: VerifiedVersion) -> Result<(),
     if verified.iter().any(|candidate| candidate == &value) {
         return Ok(());
     }
-    verified.push(value);
-    let rendered = toml::to_string_pretty(&document).map_err(|error| KeymapError::Parse {
+    let encoded = value.to_string();
+    let line_start = contents
+        .find("verified = [")
+        .ok_or_else(|| KeymapError::Parse {
+            origin: path.display().to_string(),
+            reason: "field 'verified' must be a top-level inline array".to_owned(),
+        })?;
+    let line_end = contents[line_start..]
+        .find('\n')
+        .map_or(contents.len(), |offset| line_start + offset);
+    let line = &contents[line_start..line_end];
+    let close = line.rfind(']').ok_or_else(|| KeymapError::Parse {
         origin: path.display().to_string(),
-        reason: format!("could not render verified entry: {error}"),
+        reason: "field 'verified' must be a one-line array".to_owned(),
     })?;
+    let insertion = line_start + close;
+    let separator = if line[..close].trim_end().ends_with('[') {
+        ""
+    } else {
+        ", "
+    };
+    let mut rendered = contents.clone();
+    rendered.insert_str(insertion, &format!("{separator}{encoded}"));
+    load_str(&rendered, &path.display().to_string(), KeymapSource::Baked)?;
     let temporary = path.with_extension("toml.tmp");
     std::fs::write(&temporary, rendered)
         .map_err(|error| KeymapError::Io(temporary.clone(), error))?;
@@ -1444,7 +1464,9 @@ mod format {
 
         assert_eq!(keymap.name, "claude-2.1");
         assert_eq!(keymap.applies_to.to_string(), ">=2.1.228, <2.2.0");
-        assert!(keymap.verified.is_empty());
+        assert!(keymap.verified.iter().any(|entry| {
+            entry.version == "2.1.251".parse().unwrap() && entry.spec == "prompt"
+        }));
         assert_eq!(keymap.keys[&KeyName::ShiftTab], b"\x1b[Z");
         assert_eq!(keymap.delays[&DelayName::AfterDeny], 1_500);
         assert_eq!(keymap.delays[&DelayName::AfterOtherSave], 600);
@@ -1480,12 +1502,7 @@ mod format {
 
     #[test]
     fn user_files_cannot_claim_verification() {
-        let source = BAKED.replacen(
-            "verified = []",
-            "verified = [{ version = \"2.1.251\", run_id = \"probe-1\", spec = \"prompt\" }]",
-            1,
-        );
-        let error = load_str(&source, "user.toml", user_source()).expect_err("must refuse");
+        let error = load_str(BAKED, "user.toml", user_source()).expect_err("must refuse");
         assert!(matches!(
             error,
             KeymapError::HandVerified { ref origin } if origin == "user.toml"
@@ -1794,7 +1811,7 @@ mod interpret {
                 Some(&ask),
             )
             .expect("auto"),
-            vec![write(b"1")]
+            vec![delay(800), write(b"1")]
         );
         assert_eq!(
             encoded(
@@ -1802,7 +1819,7 @@ mod interpret {
                 Some(&ask),
             )
             .expect("manual"),
-            vec![write(b"2")]
+            vec![delay(800), write(b"2")]
         );
         assert_eq!(
             encoded(
@@ -2081,18 +2098,14 @@ mod resolve {
         ClaudeVersion(value.parse().expect("test version"))
     }
 
-    fn verified_sources() -> KeymapSources {
-        let contents = BAKED.replacen(
-            "verified = []",
-            "verified = [{ version = \"2.1.251\", run_id = \"probe-1\", spec = \"prompt\" }]",
-            1,
-        );
-        let contents = Box::leak(contents.into_boxed_str());
-        let baked = Box::leak(Box::new([("fixture/claude-2.1.toml", contents as &str)]));
-        KeymapSources {
-            baked,
-            user_dir: None,
-        }
+    fn without_verified_entries() -> String {
+        let start = BAKED.find("verified = ").unwrap();
+        let end = BAKED[start..]
+            .find('\n')
+            .map_or(BAKED.len(), |offset| start + offset);
+        let mut contents = BAKED.to_owned();
+        contents.replace_range(start..end, "verified = []");
+        contents
     }
 
     fn assert_allowed(resolved: &Resolved, program: ProgramName) {
@@ -2116,43 +2129,14 @@ mod resolve {
     }
 
     #[test]
-    fn shipped_baked_set_uses_range_then_unknown_without_verified_versions() {
+    fn shipped_baked_set_uses_verified_anchor_and_bounded_extrapolation() {
         let sources = KeymapSources::default();
-        let in_range = resolve(&sources, &version("2.1.240")).expect("in range");
-        assert_eq!(in_range.basis, Basis::InRange);
-        assert_eq!(in_range.keymap.name, "claude-2.1");
-        assert_eq!(in_range.keymap.source, KeymapSource::Baked);
-        assert!(in_range.keymap.digest.starts_with("sha256:"));
-        assert_eq!(in_range.keymap.digest.len(), 71);
-        for (_, program) in PROGRAM_TABLE {
-            assert_allowed(&in_range, *program);
-        }
-
-        for observed in ["2.2.0", "1.0.0"] {
-            let unknown = resolve(&sources, &version(observed)).expect("unknown fallback");
-            assert_eq!(unknown.basis, Basis::Unknown);
-            for program in [
-                ProgramName::Prompt,
-                ProgramName::Interrupt,
-                ProgramName::ModeCycle,
-            ] {
-                assert_allowed(&unknown, program);
-            }
-            for program in [
-                ProgramName::PermissionMenu,
-                ProgramName::PlanMenu,
-                ProgramName::QuestionForm,
-            ] {
-                assert_refused(&unknown, program);
-            }
-        }
-    }
-
-    #[test]
-    fn verified_anchor_is_exact_then_nearest_extrapolation() {
-        let sources = verified_sources();
-        let exact = resolve(&sources, &version("2.1.251")).expect("exact");
+        let exact = resolve(&sources, &version("2.1.251")).expect("verified version");
         assert_eq!(exact.basis, Basis::Verified("2.1.251".parse().unwrap()));
+        assert_eq!(exact.keymap.name, "claude-2.1");
+        assert_eq!(exact.keymap.source, KeymapSource::Baked);
+        assert!(exact.keymap.digest.starts_with("sha256:"));
+        assert_eq!(exact.keymap.digest.len(), 71);
         for (_, program) in PROGRAM_TABLE {
             assert_allowed(&exact, *program);
         }
@@ -2176,29 +2160,28 @@ mod resolve {
             }
         );
         assert_allowed(&next_minor, ProgramName::Prompt);
-        assert_refused(&next_minor, ProgramName::PermissionMenu);
-
-        let below_every_anchor = resolve(&sources, &version("1.0.0")).expect("above fallback");
-        assert_eq!(
-            below_every_anchor.basis,
-            Basis::Extrapolated {
-                from: "2.1.251".parse().unwrap()
-            }
-        );
+        for program in [
+            ProgramName::PermissionMenu,
+            ProgramName::PlanMenu,
+            ProgramName::QuestionForm,
+        ] {
+            assert_refused(&next_minor, program);
+        }
     }
 
     #[test]
     fn user_name_shadows_baked_and_identity_includes_content_digest() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("my-local-name.toml");
-        let contents = BAKED.replacen("after_paste = 400", "after_paste = 777", 1);
+        let contents =
+            without_verified_entries().replacen("after_paste = 400", "after_paste = 777", 1);
         std::fs::write(&path, &contents).unwrap();
         let sources = KeymapSources {
             baked: BAKED_KEYMAPS,
             user_dir: Some(directory.path().to_path_buf()),
         };
 
-        let baked = resolve(&KeymapSources::default(), &version("2.1.240")).unwrap();
+        let baked = resolve(&KeymapSources::default(), &version("2.1.251")).unwrap();
         let selected = resolve(&sources, &version("2.1.240")).expect("user override");
         assert_eq!(selected.keymap.name, "claude-2.1");
         assert_eq!(selected.keymap.source, KeymapSource::User(path.clone()));
@@ -2219,8 +2202,8 @@ mod resolve {
             user_dir: Some(PathBuf::from("definitely-missing-user-keymaps")),
         };
         assert_eq!(
-            resolve(&sources, &version("2.1.240")).unwrap().basis,
-            Basis::InRange
+            resolve(&sources, &version("2.1.251")).unwrap().basis,
+            Basis::Verified("2.1.251".parse().unwrap())
         );
     }
 
@@ -2250,7 +2233,7 @@ mod resolve {
             InputError::UnverifiedShape {
                 program: ProgramName::PermissionMenu,
                 ref reason,
-            } if reason.contains("no verified Claude version")
+            } if reason.contains("outside observed minor")
         ));
     }
 

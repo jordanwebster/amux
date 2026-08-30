@@ -840,12 +840,17 @@ impl CaptureSession {
             let screen = self.raw_screen.lock().await.clone();
             let seen_trust_prompt = screen.contains("safety") && screen.contains("folder");
             // The composer footer hint ("... for agents") marks a live prompt.
-            let composer_up = screen.contains("for agents");
+            let composer_up = screen.contains("for agents")
+                || (screen.contains("Try") && screen.contains("shift+tab"));
             if !trust_answered && seen_trust_prompt && !composer_up {
                 tokio::time::sleep(Duration::from_millis(800)).await;
                 self.send_keys(
-                    "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
-                    vec![PtyTestAction::Write(b"\r".to_vec())],
+                    "workspace trust dialog: Down to 'Yes, I trust this folder', Enter",
+                    vec![
+                        PtyTestAction::Write(b"\x1b[B".to_vec()),
+                        PtyTestAction::DelayMs(300),
+                        PtyTestAction::Write(b"\r".to_vec()),
+                    ],
                 )
                 .await?;
                 trust_answered = true;

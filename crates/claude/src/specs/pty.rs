@@ -1,6 +1,6 @@
 //! Executable specifications for Claude Code's interactive PTY boundary.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -19,7 +19,11 @@ use crate::pty::{
 
 use super::{ALLOWED_MODELS, HAIKU, SpecFailure};
 
-const WAIT: Duration = Duration::from_secs(120);
+const DEFAULT_WAIT: Duration = Duration::from_secs(600);
+const WAIT_ENV: &str = "CLAUDE_PTY_SPEC_TIMEOUT_SECS";
+const STALL_DIAGNOSTIC_ENV: &str = "CLAUDE_PTY_STALL_DIAGNOSTIC";
+const SONNET: &str = "claude-sonnet-5";
+const SONNET_FALLBACK_SPECS: &[&str] = &["plan_approve", "plan_request_changes", "question_mixed"];
 
 type SpecFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
@@ -102,7 +106,12 @@ pub fn prepare_launch(entry: &SpecEntry, launch: &mut Launch) -> Result<(), Spec
         .args
         .extend(definition.args.iter().map(|arg| (*arg).to_owned()));
     if !launch.args.iter().any(|arg| arg == "--model") {
-        launch.args.extend(["--model".to_owned(), HAIKU.to_owned()]);
+        let model = if SONNET_FALLBACK_SPECS.contains(&entry.name) {
+            SONNET
+        } else {
+            HAIKU
+        };
+        launch.args.extend(["--model".to_owned(), model.to_owned()]);
     }
     Ok(())
 }
@@ -131,6 +140,7 @@ pub struct RunReport {
 
 pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFailure> {
     let definition = definition_for(entry)?;
+    let wait = claim_wait(entry)?;
     let (session, capture, controller, provider_version, model, session_id) = match source {
         Source::Live {
             mut launch,
@@ -201,16 +211,48 @@ pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFai
         })
     });
     let mut session = PtySpecSession::new(session, capture.clone());
-    tokio::time::timeout(WAIT, (definition.run)(&mut session))
-        .await
-        .map_err(|_| failure(entry, format!("stalled after {WAIT:?}")))?
-        .map_err(|claim| failure(entry, claim))?;
-    session.drain_quiet().await;
+    let claim = tokio::time::timeout(wait, async {
+        session.prepare_for_prompt().await?;
+        (definition.run)(&mut session).await
+    })
+    .await;
+    if matches!(claim, Ok(Ok(()))) {
+        session.drain_quiet().await;
+    }
+    if claim.is_err() {
+        // The timed-out future is gone, so drain anything already queued before
+        // killing the provider and freezing the diagnostic capture.
+        session.drain_quiet().await;
+    }
+    let timeout_tail = claim.is_err().then(|| session.screen_tail());
     let _ = tokio::time::timeout(
         Duration::from_secs(5),
         session.control.stop(pty_host::Terminate::Kill),
     )
     .await;
+    let stall_diagnostic = if claim.is_err() {
+        capture
+            .as_ref()
+            .map(|capture| persist_stall_diagnostic(entry, &capture.events()))
+    } else {
+        None
+    };
+    claim
+        .map_err(|_| {
+            let diagnostic = match stall_diagnostic {
+                Some(Ok(path)) => format!("; diagnostic={}", path.display()),
+                Some(Err(error)) => format!("; diagnostic write failed: {error}"),
+                None => "; diagnostic unavailable for recorded source".to_owned(),
+            };
+            failure(
+                entry,
+                format!(
+                    "stalled after {wait:?}{diagnostic}; terminal tail={:?}",
+                    timeout_tail.unwrap_or_default()
+                ),
+            )
+        })?
+        .map_err(|claim| failure(entry, claim))?;
     if let Some(driver) = replay_driver {
         tokio::time::timeout(Duration::from_secs(5), driver)
             .await
@@ -232,6 +274,66 @@ pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFai
         io: capture.map_or_else(Vec::new, |capture| capture.events()),
         replay,
     })
+}
+
+fn claim_wait(entry: &SpecEntry) -> Result<Duration, SpecFailure> {
+    let Some(raw) = std::env::var_os(WAIT_ENV) else {
+        return Ok(DEFAULT_WAIT);
+    };
+    let raw = raw
+        .to_str()
+        .ok_or_else(|| failure(entry, format!("{WAIT_ENV} is not UTF-8")))?;
+    let seconds = raw.parse::<u64>().map_err(|error| {
+        failure(
+            entry,
+            format!("{WAIT_ENV} must be a positive integer: {error}"),
+        )
+    })?;
+    if seconds == 0 {
+        return Err(failure(
+            entry,
+            format!("{WAIT_ENV} must be a positive integer"),
+        ));
+    }
+    Ok(Duration::from_secs(seconds))
+}
+
+fn persist_stall_diagnostic(entry: &SpecEntry, events: &[IoEvent]) -> std::io::Result<PathBuf> {
+    let path = std::env::var_os(STALL_DIAGNOSTIC_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::temp_dir().join(format!(
+                "claude-pty-{}-stall-{}.jsonl",
+                entry.name,
+                std::process::id()
+            ))
+        });
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut output = String::new();
+    for event in events {
+        let mut row = serde_json::json!({
+            "us": event.us,
+            "dir": match event.direction {
+                IoDirection::Write => "stdin",
+                IoDirection::Read => "stdout",
+            },
+            "line": event.line,
+        });
+        if let Some(transport_id) = &event.transport_id {
+            row["transport_id"] = transport_id.clone().into();
+        }
+        if let Some(session_id) = &event.session_id {
+            row["session_id"] = session_id.clone().into();
+        }
+        output.push_str(&serde_json::to_string(&row).map_err(std::io::Error::other)?);
+        output.push('\n');
+    }
+    std::fs::write(&path, output)?;
+    Ok(path)
 }
 
 fn definition_for(entry: &SpecEntry) -> Result<&'static PtySpecDef, SpecFailure> {
@@ -286,7 +388,9 @@ struct PtySpecSession {
     events: crate::pty::EventStream,
     control: crate::pty::Control,
     capture: Option<Capture>,
+    screen: Arc<Mutex<String>>,
     pending: VecDeque<PtyEvent>,
+    tool_use_ids: HashMap<String, String>,
 }
 
 impl PtySpecSession {
@@ -304,24 +408,79 @@ impl PtySpecSession {
                     );
                 }
             });
-            if let Some(mut output) = session.control.terminal_output() {
-                tokio::spawn(async move {
-                    while let Some(bytes) = output.recv().await {
+        }
+        let screen = Arc::new(Mutex::new(String::new()));
+        if let Some(mut output) = session.control.terminal_output() {
+            let captured = capture.clone();
+            let observed_screen = Arc::clone(&screen);
+            tokio::spawn(async move {
+                while let Some(bytes) = output.recv().await {
+                    if let Some(capture) = &captured {
                         capture.push(
                             "pty",
                             IoDirection::Read,
                             crate::pty::encode_recording_bytes(&bytes),
                         );
                     }
-                });
-            }
+                    let mut screen = observed_screen.lock().expect("screen mutex poisoned");
+                    screen.push_str(&String::from_utf8_lossy(&bytes));
+                    if screen.len() > 256 * 1024 {
+                        let cut = screen.len() - 128 * 1024;
+                        screen.drain(..cut);
+                    }
+                }
+            });
         }
         Self {
             events: session.events,
             control: session.control,
             capture,
+            screen,
             pending: VecDeque::new(),
+            tool_use_ids: HashMap::new(),
         }
+    }
+
+    async fn prepare_for_prompt(&self) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut trust_answered = false;
+        loop {
+            let screen = self.screen.lock().expect("screen mutex poisoned").clone();
+            let composer_up = screen.contains("for agents")
+                || (screen.contains("Try") && screen.contains("shift+tab"));
+            if !trust_answered
+                && screen.contains("safety")
+                && screen.contains("folder")
+                && !composer_up
+            {
+                tokio::time::sleep(Duration::from_millis(800)).await;
+                self.control
+                    .send_program(vec![
+                        crate::pty::PtyInput::Bytes(b"\x1b[B".to_vec()),
+                        crate::pty::PtyInput::Delay(300),
+                        crate::pty::PtyInput::Bytes(b"\r".to_vec()),
+                    ])
+                    .await
+                    .map_err(|error| error.to_string())?;
+                trust_answered = true;
+                continue;
+            }
+            if composer_up {
+                tokio::time::sleep(Duration::from_millis(800)).await;
+                return Ok(());
+            }
+            if Instant::now() > deadline {
+                return Err("Claude composer did not appear after 60s".to_owned());
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    fn screen_tail(&self) -> String {
+        let screen = self.screen.lock().expect("screen mutex poisoned");
+        let mut tail = screen.chars().rev().take(4_000).collect::<Vec<_>>();
+        tail.reverse();
+        tail.into_iter().collect()
     }
 
     async fn next(&mut self) -> Result<PtyEvent, String> {
@@ -333,6 +492,17 @@ impl PtySpecSession {
                 .await
                 .ok_or_else(|| "PTY event stream ended".to_owned())?
         };
+        if let PtyEvent::Hook(crate::hooks::HookPayload::PreToolUse {
+            tool_name, common, ..
+        }) = &event
+            && let Some(tool_use_id) = common
+                .raw
+                .get("tool_use_id")
+                .and_then(serde_json::Value::as_str)
+        {
+            self.tool_use_ids
+                .insert(tool_name.clone(), tool_use_id.to_owned());
+        }
         if let Some(capture) = &self.capture {
             match &event {
                 PtyEvent::Hook(hook) => capture.push(
@@ -351,6 +521,10 @@ impl PtySpecSession {
         Ok(event)
     }
 
+    fn tool_use_id(&self, tool_name: &str) -> Option<&str> {
+        self.tool_use_ids.get(tool_name).map(String::as_str)
+    }
+
     async fn send(&self, intent: Intent) -> Result<(), String> {
         self.control
             .send(intent)
@@ -361,10 +535,17 @@ impl PtySpecSession {
 
     async fn wait_ask(&mut self, matches: impl Fn(&AskKind) -> bool) -> Result<AskFacts, String> {
         loop {
-            if let PtyEvent::Ask(ask) = self.next().await?
-                && matches(&ask.kind)
-            {
-                return Ok(ask);
+            match self.next().await? {
+                PtyEvent::Ask(ask) if matches(&ask.kind) => return Ok(ask),
+                PtyEvent::Hook(crate::hooks::HookPayload::Stop { .. }) => {
+                    return Err("Claude stopped the turn before producing the expected ask".into());
+                }
+                PtyEvent::Exited(status) => {
+                    return Err(format!(
+                        "Claude exited before producing the expected ask: {status:?}"
+                    ));
+                }
+                _ => {}
             }
         }
     }
@@ -441,6 +622,21 @@ fn tool_result_contains(row: &serde_json::Value, marker: &str) -> bool {
         && row.to_string().contains(marker)
 }
 
+fn successful_tool_result(row: &serde_json::Value, tool_use_id: &str) -> bool {
+    row.get("type").and_then(serde_json::Value::as_str) == Some("user")
+        && row
+            .pointer("/message/content")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|blocks| {
+                blocks.iter().any(|block| {
+                    block.get("type").and_then(serde_json::Value::as_str) == Some("tool_result")
+                        && block.get("tool_use_id").and_then(serde_json::Value::as_str)
+                            == Some(tool_use_id)
+                        && block.get("is_error").and_then(serde_json::Value::as_bool) != Some(true)
+                })
+            })
+}
+
 async fn prompt(session: &mut PtySpecSession) -> Result<(), String> {
     const MARKER: &str = "PTY_SPEC_PROMPT_OK";
     session
@@ -466,7 +662,11 @@ async fn permission_ask(session: &mut PtySpecSession, command: &str) -> Result<A
 }
 
 async fn permission_allow_once(session: &mut PtySpecSession) -> Result<(), String> {
-    let ask = permission_ask(session, "printf allow-once > allow-once.txt").await?;
+    let ask = permission_ask(
+        session,
+        "printf allow-once > allow-once.txt; printf allow-once",
+    )
+    .await?;
     session
         .send(Intent::Answer {
             ask_id: ask.id,
@@ -480,7 +680,11 @@ async fn permission_allow_once(session: &mut PtySpecSession) -> Result<(), Strin
 }
 
 async fn permission_allow_scoped(session: &mut PtySpecSession) -> Result<(), String> {
-    let ask = permission_ask(session, "printf allow-scoped > allow-scoped.txt").await?;
+    let ask = permission_ask(
+        session,
+        "printf allow-scoped > allow-scoped.txt; printf allow-scoped",
+    )
+    .await?;
     let suggestions = match ask.kind {
         AskKind::Permission { suggestions, .. } => suggestions,
         _ => 0,
@@ -520,7 +724,7 @@ async fn permission_deny_feedback(session: &mut PtySpecSession) -> Result<(), St
 async fn plan_ask(session: &mut PtySpecSession) -> Result<AskFacts, String> {
     session
         .send(Intent::Prompt {
-            text: "Plan a one-line README change, then call ExitPlanMode.".to_owned(),
+            text: "Plan changing README.md's only line from CURRENT to UPDATED, then call ExitPlanMode. Do not ask questions.".to_owned(),
         })
         .await?;
     session
@@ -530,6 +734,10 @@ async fn plan_ask(session: &mut PtySpecSession) -> Result<AskFacts, String> {
 
 async fn plan_approve(session: &mut PtySpecSession) -> Result<(), String> {
     let ask = plan_ask(session).await?;
+    let tool_use_id = session
+        .tool_use_id("ExitPlanMode")
+        .ok_or_else(|| "ExitPlanMode PreToolUse hook omitted its tool-use id".to_owned())?
+        .to_owned();
     session
         .send(Intent::Answer {
             ask_id: ask.id,
@@ -537,7 +745,7 @@ async fn plan_approve(session: &mut PtySpecSession) -> Result<(), String> {
         })
         .await?;
     session
-        .wait_transcript(|row| tool_result_contains(row, "ExitPlanMode"))
+        .wait_transcript(|row| successful_tool_result(row, &tool_use_id))
         .await?;
     Ok(())
 }
@@ -644,7 +852,7 @@ async fn question_mixed(session: &mut PtySpecSession) -> Result<(), String> {
 async fn interrupt(session: &mut PtySpecSession) -> Result<(), String> {
     session
         .send(Intent::Prompt {
-            text: "Use Bash to run exactly: sleep 30; printf SHOULD_NOT_FINISH. Do not do anything else.".to_owned(),
+            text: "Use Bash to run exactly: python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH. Do not do anything else.".to_owned(),
         })
         .await?;
     session
@@ -686,7 +894,9 @@ async fn completed_turn(session: &mut PtySpecSession) -> Result<(), String> {
 }
 
 async fn compact_relink(session: &mut PtySpecSession) -> Result<(), String> {
-    completed_turn(session).await?;
+    for _ in 0..4 {
+        completed_turn(session).await?;
+    }
     session
         .send(Intent::Prompt {
             text: "/compact".to_owned(),
@@ -733,5 +943,19 @@ mod tests {
             ]
         );
         assert_eq!(DEFINITIONS.len(), registry().len());
+    }
+
+    #[test]
+    fn sonnet_fallback_is_limited_to_specs_haiku_does_not_drive_reliably() {
+        assert_eq!(
+            SONNET_FALLBACK_SPECS,
+            &["plan_approve", "plan_request_changes", "question_mixed"]
+        );
+        assert!(
+            registry()
+                .iter()
+                .filter(|entry| !SONNET_FALLBACK_SPECS.contains(&entry.name))
+                .all(|entry| !entry.name.starts_with("plan_"))
+        );
     }
 }

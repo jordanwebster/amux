@@ -152,6 +152,9 @@ async fn tail_one(
     let mut eof_observed = false;
     loop {
         line.clear();
+        let Ok(line_start) = reader.stream_position().await else {
+            return TailOutcome::Closed;
+        };
         match reader.read_line(&mut line).await {
             Ok(0) => {
                 if !eof_observed {
@@ -168,6 +171,19 @@ async fn tail_one(
                 }
                 break;
             }
+            Ok(_) if !line.ends_with('\n') => {
+                if reader
+                    .seek(std::io::SeekFrom::Start(line_start))
+                    .await
+                    .is_err()
+                {
+                    return TailOutcome::Closed;
+                }
+                tokio::select! {
+                    changed = paths.changed() => return if changed.is_ok() { TailOutcome::Relink } else { TailOutcome::Closed },
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => continue,
+                }
+            }
             Ok(_) => {
                 eof_observed = false;
                 if send_line(&line, rows).await.is_err() {
@@ -179,6 +195,9 @@ async fn tail_one(
     }
     loop {
         line.clear();
+        let Ok(line_start) = reader.stream_position().await else {
+            return TailOutcome::Closed;
+        };
         match reader.read_line(&mut line).await {
             Ok(0) => {
                 tokio::select! {
@@ -190,6 +209,19 @@ async fn tail_one(
                             return TailOutcome::Closed;
                         }
                     }
+                }
+            }
+            Ok(_) if !line.ends_with('\n') => {
+                if reader
+                    .seek(std::io::SeekFrom::Start(line_start))
+                    .await
+                    .is_err()
+                {
+                    return TailOutcome::Closed;
+                }
+                tokio::select! {
+                    changed = paths.changed() => return if changed.is_ok() { TailOutcome::Relink } else { TailOutcome::Closed },
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => continue,
                 }
             }
             Ok(_) => {
@@ -291,5 +323,47 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(matches!(row, TranscriptRow::System(_)));
+    }
+
+    #[tokio::test]
+    async fn tailer_rewinds_an_incomplete_jsonl_append() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fragmented.jsonl");
+        tokio::fs::write(&path, "{\"type\":\"system\",\"subtype\":\"initial\"}\n")
+            .await
+            .unwrap();
+        let tailer = TranscriptTailer::follow(path.clone());
+        let mut rows = tailer.rows();
+        assert_eq!(rows.recv().await.unwrap().as_value()["subtype"], "initial");
+        assert_eq!(
+            rows.recv().await.unwrap().as_value()["type"],
+            "amux.transcript_ready"
+        );
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .await
+            .unwrap();
+        use tokio::io::AsyncWriteExt;
+        file.write_all(b"{\"type\":\"user\",\"uuid\":\"frag")
+            .await
+            .unwrap();
+        file.flush().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), rows.recv())
+                .await
+                .is_err(),
+            "an unterminated JSONL row must not be consumed"
+        );
+
+        file.write_all(b"mented\"}\n").await.unwrap();
+        file.flush().await.unwrap();
+        let row = tokio::time::timeout(Duration::from_secs(2), rows.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.as_value()["uuid"], "fragmented");
     }
 }

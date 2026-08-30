@@ -617,9 +617,8 @@ pub fn spawn_with_version(
     size: pty_host::PtySize,
     version: ClaudeVersion,
 ) -> Result<Session, SpawnError> {
-    let hook_dir = std::env::temp_dir()
-        .join("amux-claude-hooks")
-        .join(launch.session_id.to_string());
+    let session = launch.session_id.simple().to_string();
+    let hook_dir = std::env::temp_dir().join(format!("ac-{}", &session[..8]));
     let receiver = HookReceiver::bind_sync(&hook_dir).map_err(SpawnError::Hook)?;
     let hook_path = receiver.path.clone();
     let process = pty_host::spawn(pty_host::PtySpawn {
@@ -1018,8 +1017,8 @@ fn ask_from_hook(hook: &HookPayload) -> Option<AskFacts> {
     let HookPayload::PermissionRequest {
         common,
         tool_name,
+        tool_input,
         suggestions,
-        ..
     } = hook
     else {
         return None;
@@ -1031,14 +1030,42 @@ fn ask_from_hook(hook: &HookPayload) -> Option<AskFacts> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .unwrap_or_else(|| format!("permission:{}:{tool_name}", common.session_id));
-    Some(AskFacts {
-        id: AskId(id),
-        kind: AskKind::Permission {
+    let kind = if tool_name == "AskUserQuestion" {
+        AskKind::Question {
+            questions: question_facts(tool_input)?,
+        }
+    } else {
+        AskKind::Permission {
             tool_name: tool_name.clone(),
             suggestions: suggestions.len(),
             is_plan: tool_name == "ExitPlanMode",
-        },
+        }
+    };
+    Some(AskFacts {
+        id: AskId(id),
+        kind,
     })
+}
+
+fn question_facts(input: &Value) -> Option<Vec<QuestionFact>> {
+    Some(
+        input
+            .get("questions")?
+            .as_array()?
+            .iter()
+            .map(|question| QuestionFact {
+                options: question
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+                multi_select: question
+                    .get("multiSelect")
+                    .or_else(|| question.get("multi_select"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })
+            .collect(),
+    )
 }
 
 fn ask_from_transcript(row: &TranscriptRow) -> Option<AskFacts> {
@@ -1059,22 +1086,7 @@ fn ask_from_transcript(row: &TranscriptRow) -> Option<AskFacts> {
                 });
             }
             "AskUserQuestion" => {
-                let questions = block
-                    .pointer("/input/questions")
-                    .and_then(Value::as_array)?
-                    .iter()
-                    .map(|q| QuestionFact {
-                        options: q
-                            .get("options")
-                            .and_then(Value::as_array)
-                            .map_or(0, Vec::len),
-                        multi_select: q
-                            .get("multiSelect")
-                            .or_else(|| q.get("multi_select"))
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                    })
-                    .collect();
+                let questions = question_facts(block.get("input")?)?;
                 return Some(AskFacts {
                     id: AskId(id),
                     kind: AskKind::Question { questions },
@@ -1282,7 +1294,7 @@ mod tests {
         assert!(matches!(
             next(&mut session.events).await,
             PtyEvent::Keymap(super::super::keymap::Resolved {
-                basis: super::super::keymap::Basis::InRange,
+                basis: super::super::keymap::Basis::Verified(_),
                 ..
             })
         ));
@@ -1381,6 +1393,44 @@ mod tests {
             }
         }
 
+        let raw = serde_json::json!({
+            "hook_event_name":"PermissionRequest",
+            "session_id":"00000000-0000-0000-0000-000000000001",
+            "transcript_path":"/tmp/one",
+            "cwd":"/tmp",
+            "tool_name":"AskUserQuestion",
+            "tool_use_id":"question-hook-1",
+            "tool_input":{"questions":[
+                {"options":[{},{}],"multiSelect":false},
+                {"options":[{},{},{}],"multiSelect":true}
+            ]}
+        });
+        hooks
+            .send(crate::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .await
+            .unwrap();
+        loop {
+            if let PtyEvent::Ask(ask) = next(&mut session.events).await {
+                assert_eq!(ask.id, AskId("question-hook-1".to_owned()));
+                assert_eq!(
+                    ask.kind,
+                    AskKind::Question {
+                        questions: vec![
+                            QuestionFact {
+                                options: 2,
+                                multi_select: false,
+                            },
+                            QuestionFact {
+                                options: 3,
+                                multi_select: true,
+                            },
+                        ],
+                    }
+                );
+                break;
+            }
+        }
+
         let row = TranscriptRow::parse(serde_json::json!({
             "type":"assistant",
             "message":{"content":[{"type":"tool_use","id":"ask-1","name":"AskUserQuestion","input":{"questions":[{"options":[{},{}],"multiSelect":true}]}}]}
@@ -1401,6 +1451,49 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn manual_plan_answer_waits_for_the_approval_menu_to_settle() {
+        let (sources, hooks, _rows, _paths, mut peer, _exit) = source_bundle();
+        let mut session = from_test_sources(sources);
+        let _ = next(&mut session.events).await;
+        let _ = next(&mut session.events).await;
+        let raw = serde_json::json!({
+            "hook_event_name":"PermissionRequest",
+            "session_id":"00000000-0000-0000-0000-000000000001",
+            "transcript_path":"/tmp/one",
+            "cwd":"/tmp",
+            "prompt_id":"plan-prompt-1",
+            "permission_mode":"plan",
+            "tool_name":"ExitPlanMode",
+            "tool_input":{"plan":"Update README.md"},
+        });
+        hooks
+            .send(crate::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .await
+            .unwrap();
+        let ask = loop {
+            if let PtyEvent::Ask(ask) = next(&mut session.events).await {
+                break ask;
+            }
+        };
+        assert_eq!(ask.id, AskId("plan-prompt-1".to_owned()));
+
+        let started = tokio::time::Instant::now();
+        session
+            .control
+            .send(Intent::Answer {
+                ask_id: ask.id,
+                answer: AskAnswer::Plan(PlanAnswer::ApproveManual),
+            })
+            .await
+            .unwrap();
+
+        assert!(started.elapsed() >= Duration::from_millis(800));
+        let mut digit = [0];
+        peer.read_exact(&mut digit).await.unwrap();
+        assert_eq!(&digit, b"2");
     }
 
     #[tokio::test]
@@ -1608,7 +1701,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("claude.toml");
         let original = super::super::keymap::BAKED_KEYMAPS[0].1;
-        std::fs::write(&path, original).unwrap();
+        let verified_start = original.find("verified = ").unwrap();
+        let verified_end = original[verified_start..]
+            .find('\n')
+            .map_or(original.len(), |offset| verified_start + offset);
+        let mut user_keymap = original.to_owned();
+        user_keymap.replace_range(verified_start..verified_end, "verified = []");
+        std::fs::write(&path, &user_keymap).unwrap();
         let keymaps = super::super::keymap::KeymapSources {
             baked: super::super::keymap::BAKED_KEYMAPS,
             user_dir: Some(dir.path().to_path_buf()),
@@ -1626,7 +1725,7 @@ mod tests {
 
         std::fs::write(
             &path,
-            original.replace("after_paste = 400", "after_paste = 401"),
+            user_keymap.replace("after_paste = 400", "after_paste = 401"),
         )
         .unwrap();
         hooks

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -269,10 +270,11 @@ struct PtyCapture {
 async fn capture_pty(entry: SpecEntry) -> Result<PtyCapture, Box<dyn std::error::Error>> {
     let scratch = tempfile::Builder::new()
         .prefix("claude-pty-spec-")
-        .tempdir()?;
+        .tempdir_in("/tmp")?;
     let work = scratch.path().join("work");
     std::fs::create_dir_all(&work)?;
     std::fs::write(work.join("config.txt"), "VALUE=1\n")?;
+    std::fs::write(work.join("README.md"), "CURRENT\n")?;
     let hook_command = vec![
         std::env::current_exe()?.display().to_string(),
         "__pty-hook".to_owned(),
@@ -320,6 +322,7 @@ async fn capture_pty(entry: SpecEntry) -> Result<PtyCapture, Box<dyn std::error:
 async fn record_pty_one(entry: SpecEntry) -> Result<(), Box<dyn std::error::Error>> {
     let mut capture = capture_pty(entry).await?;
     let run_id = Uuid::new_v4().to_string();
+    stabilize_pty_transcript_paths(&mut capture.report.io)?;
     let redaction = sanitize(
         &mut capture.report.io,
         &Redaction {
@@ -380,6 +383,29 @@ async fn record_pty_one(entry: SpecEntry) -> Result<(), Box<dyn std::error::Erro
         capture.report.provider_version,
         run_id,
     )?;
+    Ok(())
+}
+
+fn stabilize_pty_transcript_paths(events: &mut [replay_support::IoEvent]) -> io::Result<()> {
+    let mut labels = BTreeMap::<String, String>::new();
+    for event in events {
+        let path_key = match event.transport_id.as_deref() {
+            Some("hook") => "transcript_path",
+            Some("transcript") => "path",
+            _ => continue,
+        };
+        let mut frame: serde_json::Value =
+            serde_json::from_str(&event.line).map_err(io::Error::other)?;
+        let path = frame.get_mut(path_key);
+        if let Some(serde_json::Value::String(path)) = path {
+            let next = labels.len() + 1;
+            let label = labels
+                .entry(path.clone())
+                .or_insert_with(|| format!("<TRANSCRIPT_{next}>"));
+            *path = label.clone();
+        }
+        event.line = serde_json::to_string(&frame).map_err(io::Error::other)?;
+    }
     Ok(())
 }
 
@@ -459,7 +485,32 @@ fn forward_pty_hook() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("CLAUDE_HOOK_SOCKET is not set")?;
     let mut payload = Vec::new();
     std::io::Read::read_to_end(&mut std::io::stdin(), &mut payload)?;
-    claude::hooks::forward(&payload, &socket)?;
+    let debug = std::env::var_os("CLAUDE_PTY_HOOK_DEBUG");
+    if let Some(path) = &debug {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        file.write_all(&payload)?;
+        file.write_all(b"\n")?;
+    }
+    let result = claude::hooks::forward(&payload, &socket);
+    if let Some(path) = debug {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "debug_socket": socket,
+                "debug_socket_exists": socket.exists(),
+                "debug_forward_error": result.as_ref().err().map(ToString::to_string),
+            })
+        )?;
+    }
+    result?;
     Ok(())
 }
 

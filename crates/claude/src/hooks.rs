@@ -259,7 +259,8 @@ impl HookReceiver {
         use tokio::net::UnixListener;
 
         std::fs::create_dir_all(dir)?;
-        let path = dir.join(format!("claude-hook-{}.sock", Uuid::new_v4()));
+        let nonce = Uuid::new_v4().simple().to_string();
+        let path = dir.join(format!("h-{}.sock", &nonce[..12]));
         let listener = std::os::unix::net::UnixListener::bind(&path)?;
         listener.set_nonblocking(true)?;
         let listener = UnixListener::from_std(listener)?;

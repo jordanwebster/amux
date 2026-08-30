@@ -275,14 +275,15 @@ fn managed_hook_settings(command: &[String]) -> Value {
     let registration = || {
         serde_json::json!([{"hooks": [{
             "type": "command",
-            "command": command,
-            "async": true
+            "command": command
         }]}])
     };
     serde_json::json!({"hooks": {
         "SessionStart": registration(),
         "SessionEnd": registration(),
         "PermissionRequest": registration(),
+        "PreToolUse": registration(),
+        "PostToolUse": registration(),
         "Stop": registration(),
         "Notification": registration()
     }})
