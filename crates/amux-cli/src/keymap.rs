@@ -2,7 +2,9 @@ use std::path::Path;
 
 use amux::keymap_dir;
 use anyhow::{Context, Result, anyhow};
-use claude::pty::keymap::{KeymapFile, KeymapSource, KeymapSources, available, load, resolve};
+use claude::pty::keymap::{
+    KeymapError, KeymapFile, KeymapSource, KeymapSources, available, load_str, resolve,
+};
 use claude::version::{ClaudeVersion, probe_version};
 
 use crate::KeymapCommands;
@@ -57,27 +59,71 @@ fn show_keymap(data_dir: &Path, name: &str) -> Result<String> {
 }
 
 fn add_keymap(data_dir: &Path, input: &Path) -> Result<String> {
+    let contents = std::fs::read_to_string(input)
+        .with_context(|| format!("failed to read keymap {}", input.display()))?;
+    let origin = input.display().to_string();
+    let candidate = load_str(&contents, &origin, KeymapSource::Baked).map_err(keymap_error)?;
+    let inherited_verification = claude::pty::keymap::BAKED_KEYMAPS
+        .iter()
+        .filter_map(|(baked_origin, baked_contents)| {
+            load_str(baked_contents, baked_origin, KeymapSource::Baked).ok()
+        })
+        .find(|baked| baked.name == candidate.name)
+        .is_some_and(|baked| baked.verified == candidate.verified);
+    if !candidate.verified.is_empty() && !inherited_verification {
+        return Err(keymap_error(KeymapError::HandVerified { origin }));
+    }
+
+    let installed_contents = if candidate.verified.is_empty() {
+        contents
+    } else {
+        strip_inherited_verification(&contents).ok_or_else(|| {
+            anyhow!("Parse: could not find the top-level verified ledger in '{origin}'")
+        })?
+    };
     let source = KeymapSource::User(input.to_path_buf());
-    let keymap = load(input, source).map_err(keymap_error)?;
+    let keymap = load_str(&installed_contents, &origin, source).map_err(keymap_error)?;
     validate_install_name(&keymap.name)?;
     let directory = keymap_dir(data_dir);
     std::fs::create_dir_all(&directory)
         .with_context(|| format!("failed to create keymap directory {}", directory.display()))?;
     let destination = directory.join(format!("{}.toml", keymap.name));
-    if input != destination {
-        std::fs::copy(input, &destination).with_context(|| {
-            format!(
-                "failed to copy keymap {} to {}",
-                input.display(),
-                destination.display()
-            )
-        })?;
-    }
+    std::fs::write(&destination, installed_contents).with_context(|| {
+        format!(
+            "failed to write keymap {} to {}",
+            input.display(),
+            destination.display()
+        )
+    })?;
     Ok(format!(
         "Added keymap {} at {}",
         keymap.name,
         destination.display()
     ))
+}
+
+fn strip_inherited_verification(contents: &str) -> Option<String> {
+    let start = contents
+        .lines()
+        .take_while(|line| !line.trim_start().starts_with('['))
+        .scan(0, |offset, line| {
+            let line_start = *offset;
+            *offset += line.len() + 1;
+            Some((line_start, line))
+        })
+        .find_map(|(offset, line)| {
+            line.trim_start()
+                .starts_with("verified =")
+                .then_some(offset)
+        })?;
+    let end = contents[start..]
+        .find('\n')
+        .map_or(contents.len(), |offset| start + offset);
+    let indentation =
+        &contents[start..][..contents[start..].len() - contents[start..].trim_start().len()];
+    let mut stripped = contents.to_owned();
+    stripped.replace_range(start..end, &format!("{indentation}verified = []"));
+    Some(stripped)
 }
 
 fn remove_keymap(data_dir: &Path, name: &str) -> Result<String> {
@@ -137,7 +183,7 @@ mod tests {
         assert!(output.contains("Claude 2.1.251"));
         assert!(output.contains("claude-2.1\tbaked"));
         assert!(output.contains(">=2.1.228, <2.2.0"));
-        assert!(output.contains("InRange"));
+        assert!(output.contains("Verified(2.1.251)"));
     }
 
     #[test]
@@ -166,6 +212,11 @@ mod tests {
         let installed = keymap_dir(dir.path()).join("claude-2.1.toml");
         assert!(added.contains(&installed.display().to_string()));
         assert!(installed.is_file());
+        assert!(
+            std::fs::read_to_string(&installed)
+                .unwrap()
+                .contains("verified = []")
+        );
         let output = list_output(dir.path(), &"2.1.251".parse().unwrap()).unwrap();
         assert!(output.contains(&format!(
             "claude-2.1\tuser:{}\t>=2.1.228, <2.2.0\tInRange",
@@ -195,8 +246,8 @@ mod tests {
 
         let hand_verified = dir.path().join("hand-verified.toml");
         let claimed = BAKED.replacen(
-            "verified = []",
-            "verified = [{ version = \"2.1.251\", run_id = \"manual\", spec = \"prompt\" }]",
+            "verified = [",
+            "verified = [{ version = \"2.1.251\", run_id = \"manual\", spec = \"prompt\" }, ",
             1,
         );
         std::fs::write(&hand_verified, claimed).unwrap();

@@ -5612,3 +5612,10 @@ drift reports at Claude Code 2.1.251; keymap resolution and format boundaries
 passed. The live semantic chat capture reached prompt and permission intents
 but timed out waiting for the `AskUserQuestion` transcript ask, so that defect
 is filed for repair rather than being reported as a passing end-to-end flow.
+
+2026-08-30 — **Made shipped keymaps usable as local override templates.** The
+keymap CLI accepts a copied baked verification ledger only when it exactly
+matches the baked keymap of the same name, then strips that evidence before
+installing the user override. Altered or hand-authored verification remains a
+typed refusal, while listings report the shipped Claude 2.1.251 basis as
+verified.
