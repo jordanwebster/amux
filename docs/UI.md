@@ -241,23 +241,34 @@ own renderers is a different surface (above).
   makes presentation policy or derives UX state. All interpretation
   happens in UI-layer folds at observation time.
 
-And in the other direction: views **format, never decide**. Any
-derivation a renderer wants — sorted fleet, display-name fallback,
-staleness — is computed in the Model, once. The boundary is elastic
-downward: the first time two renderers want the same derivation, it moves
-into the Model or the agent layer. Presentation frameworks may differ;
-derivations must not. Two clients computing the same derivation
-independently is how projection drift starts.
+And in the other direction: views **format typed facts; they do not
+recover them**. The UI layer owns provider and schema parsing, action and
+consent classification, provenance, ordering, domain coordinates, and
+every renderer-independent product semantic that this specification says
+all amux clients must share. Such a value may be a pure projection over
+retained typed state; it is stored during the fold only when the source or
+correlation would otherwise be lost. Renderers own the medium and the
+interaction: viewport and cell geometry, wrapping and clipping, theme,
+terminal capability, focus, scroll, navigation, input state, disclosure
+and preview budgets, wording, glyphs, pluralization, localization, and
+affordance hints. Mixed code splits at a typed boundary. Shared
+projections remain in per-agent vocabulary unless the concept exists
+independently of any agent, and raw typed content remains reachable beside
+opinionated projections; opaque action payloads may be retained for
+round-trip but are never a renderer interpretation surface. A second
+renderer is evidence that a projection is useful, not the trigger that
+makes it correct. Where a split is kept deliberately, an agreement test,
+not a comment, is the control.
 
 ## Chrome and native chats
 
 The amux TUI owns fleet chrome — attention, create/rename/delete, host state —
 and one full-screen frame shell shared by the native Claude and Codex chats.
 The shell owns geometry, windowing, scrolling, the composer, block focus, and
-theme. Each agent layer owns its native typed feed walk, content and panels,
-and its own keys; it hands already-painted blocks and agent-specific surfaces
-to the shell. The configured `chat`/`raw` default chooses an agent's normal
-entry mode; both remain available when the agent advertises them.
+theme. Each per-agent TUI adapter owns its native typed feed walk, content and
+panels, and its own keys; it hands already-painted blocks and agent-specific
+surfaces to the shell. The configured `chat`/`raw` default chooses an agent's
+normal entry mode; both remain available when the agent advertises them.
 
 Sharing this presentation shell is not content normalization. The shell never
 classifies a Claude transcript row or a Codex control-plane entry, and adding

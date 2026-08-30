@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Specified the typed-fact boundary for every amux client.**
+The UI specification now distinguishes renderer-independent fact recovery
+from medium and interaction policy, including lazy projections, raw fact
+reachability, per-agent vocabulary, opaque round-trip payloads, and agreement
+tests for deliberate splits. Native feed walks, panels, and keys are assigned
+to per-agent TUI adapters rather than the typed agent layers they consume.
+
 2026-08-30 — **Derived chat geometry from the frame being painted.**
 Claude and Codex frame parts now feed one layout source for composition,
 scroll bounds, and mouse hit-testing, so adapters no longer reconstruct
