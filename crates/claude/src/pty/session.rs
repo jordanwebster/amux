@@ -704,9 +704,15 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
         let mut current_path = None;
         while let Some(hook) = payloads.recv().await {
             let path = hook.common().transcript_path.clone();
-            if current_path.as_ref() != Some(&path) {
-                let reason = relink_reason(&hook, current_path.is_none());
-                relink(path.clone());
+            let path_changed = current_path.as_ref() != Some(&path);
+            let reason = relink_reason(&hook, current_path.is_none());
+            // Claude can compact a transcript in place. Its SessionStart source
+            // is therefore the relink boundary even when the path is unchanged.
+            let provider_relink = matches!(reason, RelinkReason::Compact | RelinkReason::Clear);
+            if path_changed || provider_relink {
+                if path_changed {
+                    relink(path.clone());
+                }
                 current_path = Some(path.clone());
                 if tx
                     .send(PtyEvent::Relink {
@@ -1318,7 +1324,7 @@ mod tests {
         assert!(matches!(next(&mut session.events).await, PtyEvent::Hook(_)));
 
         hooks
-            .send(session_start("/tmp/two", "compact"))
+            .send(session_start("/tmp/one", "compact"))
             .await
             .unwrap();
         assert!(matches!(
@@ -1333,6 +1339,7 @@ mod tests {
             PtyEvent::Keymap(_)
         ));
         assert!(matches!(next(&mut session.events).await, PtyEvent::Hook(_)));
+        assert!(paths.try_recv().is_err());
         hooks
             .send(session_start("/tmp/three", "clear"))
             .await

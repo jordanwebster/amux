@@ -5546,3 +5546,12 @@ transcript tailing preserves fragmented JSONL appends, and the specification
 correlates the successful result with the ExitPlanMode hook's tool-use ID. The
 Claude Code 2.1.251 Sonnet capture replays strictly and carries matching keymap
 provenance.
+
+2026-08-30 — **Completed the Claude PTY executable-specification corpus.** All
+thirteen interactive claims now have sanitized Claude Code 2.1.251 recordings
+that replay strictly across PTY, hook, and transcript transports. Haiku records
+the ordinary flows while the three model-sensitive plan and mixed-question
+claims retain their explicit Sonnet provenance. Compact recordings preserve four
+completed turns and recognize Claude's in-place compact boundary even when the
+transcript path does not change; every passing capture carries matching baked
+keymap verification evidence.
