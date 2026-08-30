@@ -1134,7 +1134,7 @@ fn work_block(key: BlockKey, work: &WorkEntry, theme: Theme, width: usize) -> Pa
         width,
     );
     if let Some((title, patch_head, truncated)) = patch {
-        let rows = diff_rows_from_patch(patch_head);
+        let rows = diff_rows_from_patch(patch_head, truncated);
         if !rows.is_empty() {
             let shown = rows.len().min(PATCH_PREVIEW_ROWS);
             let title = if truncated || rows.len() > shown {

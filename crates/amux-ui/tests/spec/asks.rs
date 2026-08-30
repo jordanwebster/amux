@@ -14,8 +14,7 @@
 
 use amux_ui::Msg;
 use amux_ui::claude::{
-    Ask, AskArtifact, AskKind, AskState, AskWhy, ClaudeLayer, DiffMagnitude, DiffNumbering,
-    ToolInvocation,
+    Ask, AskArtifact, AskKind, AskState, AskWhy, ClaudeLayer, DiffMagnitude, ToolInvocation,
 };
 use serde_json::json;
 
@@ -325,8 +324,8 @@ fn an_edit_ask_carries_the_computed_numberless_diff() {
         panic!("an Edit ask carries a diff artifact: {:?}", ask.artifact);
     };
     assert_eq!(
-        diff.numbering,
-        DiffNumbering::None,
+        diff.document.numbering,
+        amux_ui::diff::Numbering::None,
         "numbers are not a fact at ask time"
     );
     assert_eq!(
@@ -336,9 +335,9 @@ fn an_edit_ask_carries_the_computed_numberless_diff() {
             removed: 1
         }
     );
-    assert_eq!(diff.hunks.len(), 1);
+    assert_eq!(diff.document.hunks.len(), 1);
     assert_eq!(
-        diff.hunks[0].lines,
+        diff.document.hunks[0].lines,
         vec![
             " pub struct RetryConfig {",
             "-    pub max_attempts: u8,",

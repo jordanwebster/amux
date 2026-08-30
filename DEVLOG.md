@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Made unified diffs a client-state fact.** Unified-patch syntax
+and its independent old/new line walk now live in `amux-ui`, where Claude's
+structured hunks and Codex's patch text can become the same neutral document
+without acquiring shared agent vocabulary. The parser ignores headers that
+state no body, rejects malformed complete hunks, and retains the valid prefix
+of a deliberately truncated tail hunk. Numberless Claude previews preserve
+their epistemic boundary: no coordinate appears on a row or an invented range
+header, with only a bare `@@` marking a real boundary between hunks.
+
 2026-08-30 — **Gave every capture row room for its own glyphs.** The
 screenshot renderer clipped each glyph to its cell, and the cell was 20px tall
 with the baseline at 16 — but JetBrains Mono at the capture's font size asks for

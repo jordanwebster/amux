@@ -12,7 +12,8 @@
 use amux_tui::view::ViewState;
 use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
 use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer};
-use amux_ui::claude::{DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
+use amux_ui::claude::{DiffArtifact, DiffMagnitude};
+use amux_ui::diff::{Document, Hunk, Numbering};
 use amux_ui::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, OpId, ServerMsg, StreamEntry,
     StreamMsg, update,
@@ -1670,37 +1671,42 @@ fn chat_reader_newfile() {
 /// reading is a recorded door), so the body is golden-locked directly.
 fn numbered_diff() -> DiffArtifact {
     DiffArtifact {
-        numbering: DiffNumbering::Absolute,
+        document: Document {
+            numbering: Numbering::Absolute,
+            truncated: false,
+            hunks: vec![
+                Hunk {
+                    old_start: 14,
+                    new_start: 14,
+                    header: None,
+                    lines: vec![
+                        " pub struct RetryConfig {".to_string(),
+                        "-    pub max_attempts: u8,".to_string(),
+                        "+    pub max_attempts: u8,        // capped at 6".to_string(),
+                        "+    pub jitter_ms: u16,".to_string(),
+                        "     pub base_delay: Duration,".to_string(),
+                        " }".to_string(),
+                    ],
+                },
+                Hunk {
+                    old_start: 64,
+                    new_start: 65,
+                    header: None,
+                    lines: vec![
+                        " impl SyncOptions {".to_string(),
+                        "-    pub fn defaults() -> Self { Self { retries: 3 } }".to_string(),
+                        "+    pub fn defaults() -> Self {".to_string(),
+                        "+        Self { retries: RetryConfig::default() }".to_string(),
+                        "+    }".to_string(),
+                        " }".to_string(),
+                    ],
+                },
+            ],
+        },
         magnitude: DiffMagnitude::Fact {
             added: 4,
             removed: 2,
         },
-        hunks: vec![
-            DiffHunk {
-                old_start: 14,
-                new_start: 14,
-                lines: vec![
-                    " pub struct RetryConfig {".to_string(),
-                    "-    pub max_attempts: u8,".to_string(),
-                    "+    pub max_attempts: u8,        // capped at 6".to_string(),
-                    "+    pub jitter_ms: u16,".to_string(),
-                    "     pub base_delay: Duration,".to_string(),
-                    " }".to_string(),
-                ],
-            },
-            DiffHunk {
-                old_start: 64,
-                new_start: 65,
-                lines: vec![
-                    " impl SyncOptions {".to_string(),
-                    "-    pub fn defaults() -> Self { Self { retries: 3 } }".to_string(),
-                    "+    pub fn defaults() -> Self {".to_string(),
-                    "+        Self { retries: RetryConfig::default() }".to_string(),
-                    "+    }".to_string(),
-                    " }".to_string(),
-                ],
-            },
-        ],
     }
 }
 

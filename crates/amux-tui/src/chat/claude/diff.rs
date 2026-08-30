@@ -16,7 +16,8 @@
 //! Rows come back "open" (no padding, no right border): the frame
 //! assembler finishes every line once, like the feed.
 
-use amux_ui::claude::{DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
+use amux_ui::claude::{DiffArtifact, DiffMagnitude};
+use amux_ui::diff::{Hunk, Numbering};
 use ratatui::style::Style;
 use ratatui::text::Line;
 
@@ -88,7 +89,7 @@ fn expand_tabs(text: &str) -> String {
 /// Classify one hunk, walking the line numbers from its starts: context
 /// and `+` number by the NEW file, `-` by the OLD; a replaced pair repeats
 /// its number.
-fn hunk_rows(hunk: &DiffHunk, numbered: bool) -> Vec<Row> {
+fn hunk_rows(hunk: &Hunk, numbered: bool) -> Vec<Row> {
     let mut old = u64::from(hunk.old_start);
     let mut new = u64::from(hunk.new_start);
     hunk.lines
@@ -130,10 +131,11 @@ fn hunk_rows(hunk: &DiffHunk, numbered: bool) -> Vec<Row> {
 /// The number-gutter width: widest number the artifact will display
 /// (zero when numberless).
 fn gutter_width(artifact: &DiffArtifact) -> usize {
-    if artifact.numbering != DiffNumbering::Absolute {
+    if artifact.document.numbering != Numbering::Absolute {
         return 0;
     }
     artifact
+        .document
         .hunks
         .iter()
         .flat_map(|hunk| hunk_rows(hunk, true))
@@ -222,10 +224,10 @@ fn remainder_line(hidden: usize, affordance: &str, theme: Theme) -> Line<'static
 /// The full diff body for the reader: every hunk, `⋮` gaps, wrapped rows.
 /// No internal truncation — scroll is the size policy.
 pub fn reader_rows(artifact: &DiffArtifact, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    let numbered = artifact.numbering == DiffNumbering::Absolute;
+    let numbered = artifact.document.numbering == Numbering::Absolute;
     let gutter = gutter_width(artifact);
     let mut lines = Vec::new();
-    for (index, hunk) in artifact.hunks.iter().enumerate() {
+    for (index, hunk) in artifact.document.hunks.iter().enumerate() {
         if index > 0 {
             lines.push(gap_line(gutter, theme));
         }
@@ -287,28 +289,32 @@ pub(crate) fn new_file_preview(
     lines
 }
 
-fn new_file_hunk(content: &str) -> DiffHunk {
-    DiffHunk {
+fn new_file_hunk(content: &str) -> Hunk {
+    Hunk {
         old_start: 1,
         new_start: 1,
+        header: None,
         lines: content.lines().map(|line| format!("+{line}")).collect(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use amux_ui::claude::DiffNumbering;
+    use amux_ui::diff::Document;
 
     use super::*;
 
-    fn artifact(hunks: Vec<DiffHunk>, numbering: DiffNumbering) -> DiffArtifact {
+    fn artifact(hunks: Vec<Hunk>, numbering: Numbering) -> DiffArtifact {
         DiffArtifact {
-            numbering,
+            document: Document {
+                numbering,
+                hunks,
+                truncated: false,
+            },
             magnitude: DiffMagnitude::Fact {
                 added: 0,
                 removed: 0,
             },
-            hunks,
         }
     }
 
@@ -324,10 +330,11 @@ mod tests {
             .collect()
     }
 
-    fn hunk(old_start: u32, new_start: u32, lines: &[&str]) -> DiffHunk {
-        DiffHunk {
+    fn hunk(old_start: u32, new_start: u32, lines: &[&str]) -> Hunk {
+        Hunk {
             old_start,
             new_start,
+            header: None,
             lines: lines.iter().map(|line| line.to_string()).collect(),
         }
     }
@@ -343,7 +350,7 @@ mod tests {
                 14,
                 &[" ctx", "-old line", "+new line", "+extra", " tail"],
             )],
-            DiffNumbering::Absolute,
+            Numbering::Absolute,
         );
         let rows = text_of(&reader_rows(&a, 60, Theme::default()));
         assert_eq!(
@@ -363,10 +370,7 @@ mod tests {
     /// fact before the tool runs.
     #[test]
     fn numberless_rows_carry_the_sign_column_only() {
-        let a = artifact(
-            vec![hunk(1, 1, &[" ctx", "-old", "+new"])],
-            DiffNumbering::None,
-        );
+        let a = artifact(vec![hunk(1, 1, &[" ctx", "-old", "+new"])], Numbering::None);
         let rows = text_of(&reader_rows(&a, 40, Theme::default()));
         assert_eq!(rows, vec!["       ctx", "     - old", "     + new"]);
     }
@@ -377,7 +381,7 @@ mod tests {
     fn long_lines_wrap_with_a_blank_gutter() {
         let a = artifact(
             vec![hunk(9, 9, &["+abcdefghijklmnopqrstuvwxyz"])],
-            DiffNumbering::Absolute,
+            Numbering::Absolute,
         );
         let rows = text_of(&reader_rows(&a, 20, Theme::default()));
         assert_eq!(rows[0], "   9  + abcdefghijk");
@@ -394,7 +398,7 @@ mod tests {
                 hunk(2, 2, &[" a", "-b", "+B"]),
                 hunk(140, 140, &[" y", "+z"]),
             ],
-            DiffNumbering::Absolute,
+            Numbering::Absolute,
         );
         let rows = text_of(&reader_rows(&a, 40, Theme::default()));
         assert_eq!(
@@ -415,7 +419,7 @@ mod tests {
     fn a_single_hunk_renders_every_row() {
         let a = artifact(
             vec![hunk(1, 1, &[" c1", "-old", "+new", " c2"])],
-            DiffNumbering::None,
+            Numbering::None,
         );
         let lines = reader_rows(&a, 60, Theme::default());
         assert_eq!(lines.len(), 4, "every row of the hunk, nothing hidden");
@@ -451,7 +455,7 @@ mod tests {
     fn unknown_prefixes_render_verbatim() {
         let a = artifact(
             vec![hunk(1, 1, &["\\ No newline at end of file"])],
-            DiffNumbering::Absolute,
+            Numbering::Absolute,
         );
         let rows = text_of(&reader_rows(&a, 60, Theme::default()));
         assert_eq!(rows, vec!["       \\ No newline at end of file"]);

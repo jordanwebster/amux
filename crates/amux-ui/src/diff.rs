@@ -1,0 +1,293 @@
+//! Unified-diff facts shared by clients.
+//!
+//! This module interprets the patch format and walks its independent old and
+//! new coordinates. It deliberately has no rendering vocabulary: gutters,
+//! wrapping, clipping, colours, and preview budgets belong to each client.
+
+use serde::{Deserialize, Serialize};
+
+/// Whether a document states file positions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Numbering {
+    /// Hunk starts are absolute positions in the old and new files.
+    Absolute,
+    /// Hunk starts are relative to an unlocated snippet and must not surface.
+    None,
+}
+
+/// One unified-diff hunk in prefix-embedded form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hunk {
+    pub old_start: u32,
+    pub new_start: u32,
+    /// The exact `@@` header when the source supplied one. Documents built
+    /// from structured hunks synthesize the equivalent header during the row
+    /// walk, while numberless documents never invent coordinates.
+    pub header: Option<String>,
+    /// Rows retain their leading ` `, `-`, or `+`; unknown prefixes remain
+    /// verbatim metadata.
+    pub lines: Vec<String>,
+}
+
+/// A neutral unified-diff document.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Document {
+    pub numbering: Numbering,
+    pub hunks: Vec<Hunk>,
+    /// The supplied source was a bounded head rather than the complete patch.
+    pub truncated: bool,
+}
+
+impl Document {
+    /// Derive every numbered row in one walk over the retained hunks.
+    pub fn rows(&self) -> Vec<RowFact> {
+        let numbered = self.numbering == Numbering::Absolute;
+        let mut rows = Vec::new();
+
+        for (index, hunk) in self.hunks.iter().enumerate() {
+            if numbered {
+                let header = hunk.header.clone().unwrap_or_else(|| {
+                    let (old_count, new_count) = hunk_counts(&hunk.lines);
+                    format!(
+                        "@@ -{},{} +{},{} @@",
+                        hunk.old_start, old_count, hunk.new_start, new_count
+                    )
+                });
+                rows.push(RowFact::meta(header));
+            } else if index > 0 {
+                // The boundary between hunks is known even when their file
+                // positions are not. A bare marker states only that boundary.
+                rows.push(RowFact::meta("@@"));
+            }
+
+            let mut old = hunk.old_start;
+            let mut new = hunk.new_start;
+            for text in &hunk.lines {
+                let (kind, old_row, new_row) = match text.as_bytes().first() {
+                    Some(b' ') => {
+                        let row = (RowKind::Context, Some(old), Some(new));
+                        old = old.saturating_add(1);
+                        new = new.saturating_add(1);
+                        row
+                    }
+                    Some(b'+') => {
+                        let row = (RowKind::Added, None, Some(new));
+                        new = new.saturating_add(1);
+                        row
+                    }
+                    Some(b'-') => {
+                        let row = (RowKind::Removed, Some(old), None);
+                        old = old.saturating_add(1);
+                        row
+                    }
+                    _ => (RowKind::Meta, None, None),
+                };
+                rows.push(RowFact {
+                    old: old_row.filter(|_| numbered),
+                    new: new_row.filter(|_| numbered),
+                    kind,
+                    text: text.clone(),
+                });
+            }
+        }
+
+        rows
+    }
+
+    /// Body rows exclude the synthetic or retained hunk headers.
+    pub fn line_count(&self) -> usize {
+        self.hunks.iter().map(|hunk| hunk.lines.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hunks.is_empty()
+    }
+}
+
+/// Format-level meaning of a derived row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RowKind {
+    Meta,
+    Context,
+    Added,
+    Removed,
+}
+
+/// One row with independent old-file and new-file coordinates.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowFact {
+    pub old: Option<u32>,
+    pub new: Option<u32>,
+    pub kind: RowKind,
+    pub text: String,
+}
+
+impl RowFact {
+    fn meta(text: impl Into<String>) -> Self {
+        Self {
+            old: None,
+            new: None,
+            kind: RowKind::Meta,
+            text: text.into(),
+        }
+    }
+}
+
+/// Parse a bounded unified-patch head into typed hunks.
+///
+/// File headers and other preamble are ignored. A hunk is retained only when
+/// it contains at least one valid body row and consumes its declared ranges;
+/// the final hunk may consume fewer rows when `truncated` says its missing tail
+/// was outside the retained head.
+pub fn parse_unified_patch(head: &str, truncated: bool) -> Document {
+    let mut hunks = Vec::new();
+    let mut pending: Option<PendingHunk> = None;
+
+    for text in head.lines() {
+        if let Some(ranges) = hunk_ranges(text) {
+            if let Some(previous) = pending.take() {
+                if previous.complete() {
+                    hunks.push(previous.finish());
+                }
+            }
+            pending = Some(PendingHunk::new(text, ranges));
+            continue;
+        }
+
+        let Some(hunk) = pending.as_mut() else {
+            continue;
+        };
+        if hunk.complete() && is_file_header(text) {
+            hunks.push(pending.take().expect("the completed hunk exists").finish());
+            continue;
+        }
+        if !hunk.push(text) {
+            pending = None;
+        }
+    }
+
+    if let Some(last) = pending
+        && (last.complete() || (truncated && last.valid_truncated_tail()))
+    {
+        hunks.push(last.finish());
+    }
+
+    Document {
+        numbering: Numbering::Absolute,
+        hunks,
+        truncated,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Ranges {
+    old_start: u32,
+    old_count: u32,
+    new_start: u32,
+    new_count: u32,
+}
+
+struct PendingHunk {
+    header: String,
+    ranges: Ranges,
+    old_left: u32,
+    new_left: u32,
+    lines: Vec<String>,
+    body_rows: usize,
+}
+
+impl PendingHunk {
+    fn new(header: &str, ranges: Ranges) -> Self {
+        Self {
+            header: header.to_string(),
+            ranges,
+            old_left: ranges.old_count,
+            new_left: ranges.new_count,
+            lines: Vec::new(),
+            body_rows: 0,
+        }
+    }
+
+    fn push(&mut self, text: &str) -> bool {
+        match text.as_bytes().first() {
+            Some(b' ') if self.old_left > 0 && self.new_left > 0 => {
+                self.old_left -= 1;
+                self.new_left -= 1;
+                self.body_rows += 1;
+            }
+            Some(b'+') if self.new_left > 0 => {
+                self.new_left -= 1;
+                self.body_rows += 1;
+            }
+            Some(b'-') if self.old_left > 0 => {
+                self.old_left -= 1;
+                self.body_rows += 1;
+            }
+            Some(b'\\') if self.body_rows > 0 => {}
+            _ => return false,
+        }
+        self.lines.push(text.to_string());
+        true
+    }
+
+    fn complete(&self) -> bool {
+        self.body_rows > 0 && self.old_left == 0 && self.new_left == 0
+    }
+
+    fn valid_truncated_tail(&self) -> bool {
+        self.body_rows > 0
+    }
+
+    fn finish(self) -> Hunk {
+        Hunk {
+            old_start: self.ranges.old_start,
+            new_start: self.ranges.new_start,
+            header: Some(self.header),
+            lines: self.lines,
+        }
+    }
+}
+
+fn hunk_counts(lines: &[String]) -> (usize, usize) {
+    let mut old = 0;
+    let mut new = 0;
+    for line in lines {
+        match line.as_bytes().first() {
+            Some(b' ') => {
+                old += 1;
+                new += 1;
+            }
+            Some(b'-') => old += 1,
+            Some(b'+') => new += 1,
+            _ => {}
+        }
+    }
+    (old, new)
+}
+
+fn hunk_ranges(header: &str) -> Option<Ranges> {
+    let ranges = header.strip_prefix("@@ -")?;
+    let (old, ranges) = ranges.split_once(" +")?;
+    let (new, _) = ranges.split_once(" @@")?;
+    let (old_start, old_count) = parse_range(old)?;
+    let (new_start, new_count) = parse_range(new)?;
+    Some(Ranges {
+        old_start,
+        old_count,
+        new_start,
+        new_count,
+    })
+}
+
+fn parse_range(range: &str) -> Option<(u32, u32)> {
+    match range.split_once(',') {
+        Some((start, count)) => Some((start.parse().ok()?, count.parse().ok()?)),
+        None => Some((range.parse().ok()?, 1)),
+    }
+}
+
+fn is_file_header(text: &str) -> bool {
+    text.starts_with("diff --git ") || text.starts_with("--- ") || text.starts_with("+++ ")
+}

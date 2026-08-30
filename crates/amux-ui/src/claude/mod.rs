@@ -25,7 +25,7 @@ pub(crate) mod update;
 
 use std::collections::{BTreeSet, VecDeque};
 
-pub use artifact::{AskArtifact, DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
+pub use artifact::{AskArtifact, DiffArtifact, DiffMagnitude};
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

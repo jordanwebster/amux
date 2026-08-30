@@ -13,6 +13,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod diff;
 mod effect;
 mod model;
 mod msg;

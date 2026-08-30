@@ -1,53 +1,25 @@
 //! Ask-time artifacts (`docs/CHAT.md` §Diffs and the reader's artifacts).
 //!
-//! Two diff producers exist in the design, both Claude-layer folds: the
-//! post-hoc restatement of `toolUseResult.structuredPatch` (FACT — the
-//! transcript states every landed edit, and V1 consumes it only as the
-//! feed line's magnitude), and the ask-time preview computed here — the
-//! ONE place a diff is ever computed, because at ask time the transcript
+//! Claude produces the ask-time preview computed here — the one place a
+//! diff is ever computed, because at ask time the transcript
 //! states no diff at all: the hook carries only `old_string`/`new_string`
-//! (`notes/chat-v1/diff-rendering.md` §1.4). Absolute line numbers are
+//! (`docs/CHAT.md` §Unified diffs). Absolute line numbers are
 //! unavailable at ask time (locating the snippet would require reading the
 //! file, and a chat client can be relay-remote), so ask-time artifacts are
 //! numberless and their magnitude is an ESTIMATE — exact for single-site
 //! edits, wrong under `replace_all`, which therefore states
 //! "replaces every occurrence" instead of counts.
 //!
-//! The hunk model is jsdiff's `structuredPatch` shape (prefix char
-//! embedded in each line), so one renderer serves both producers when the
-//! post-hoc reading door opens.
-//!
 //! This module is part of the pure reducer core: no IO, no clocks, no
 //! randomness may be imported here.
 
+use crate::diff::{Document, Hunk, Numbering};
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 
 /// How many unchanged lines surround a change in the computed preview —
 /// jsdiff's own default, and what every observed `structuredPatch` uses.
 const CONTEXT_LINES: usize = 3;
-
-/// One hunk in jsdiff's `structuredPatch` shape: `lines` carry the prefix
-/// character embedded in the string — `' '` context, `'-'` removed, `'+'`
-/// added (any other prefix renders dim verbatim, tolerate-unknown).
-/// `old_start`/`new_start` are 1-based line numbers of the hunk's first
-/// row; for [`DiffNumbering::None`] artifacts they are snippet-relative
-/// and never rendered.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DiffHunk {
-    pub old_start: u32,
-    pub new_start: u32,
-    pub lines: Vec<String>,
-}
-
-/// Whether the hunks carry file-absolute line numbers (`structuredPatch`,
-/// FACT) or none (ask-time — numbers are not a fact before the tool runs).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DiffNumbering {
-    Absolute,
-    None,
-}
 
 /// The `(+a -r)` counts with their epistemic status (the fact-vs-inferred
 /// discipline applies to diffs too, diff-rendering §1.4).
@@ -64,21 +36,18 @@ pub enum DiffMagnitude {
     ReplacesEveryOccurrence,
 }
 
-/// A renderable diff: hunks plus how to number and how to state magnitude.
-/// The renderer is a pure function over this — one renderer, both
-/// producers.
+/// Claude's epistemic statement wrapped around neutral diff facts.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffArtifact {
-    pub numbering: DiffNumbering,
+    pub document: Document,
     pub magnitude: DiffMagnitude,
-    pub hunks: Vec<DiffHunk>,
 }
 
 impl DiffArtifact {
     /// Total diff body rows across all hunks — the remainder-line
     /// arithmetic's base (`⋮ +K more lines`).
     pub fn line_count(&self) -> usize {
-        self.hunks.iter().map(|hunk| hunk.lines.len()).sum()
+        self.document.line_count()
     }
 }
 
@@ -143,20 +112,24 @@ pub(crate) fn ask_time_diff(old: &str, new: &str, replace_all: bool) -> DiffArti
                 }
             }
         }
-        hunks.push(DiffHunk {
+        hunks.push(Hunk {
             old_start,
             new_start,
+            header: None,
             lines,
         });
     }
     DiffArtifact {
-        numbering: DiffNumbering::None,
+        document: Document {
+            numbering: Numbering::None,
+            hunks,
+            truncated: false,
+        },
         magnitude: if replace_all {
             DiffMagnitude::ReplacesEveryOccurrence
         } else {
             DiffMagnitude::Estimated { added, removed }
         },
-        hunks,
     }
 }
 
@@ -169,7 +142,7 @@ mod tests {
         let old = "pub struct RetryConfig {\n    pub max_attempts: u8,\n    pub base_delay: Duration,\n}\n";
         let new = "pub struct RetryConfig {\n    pub max_attempts: u8,        // capped at 6\n    pub jitter_ms: u16,\n    pub base_delay: Duration,\n}\n";
         let artifact = ask_time_diff(old, new, false);
-        assert_eq!(artifact.numbering, DiffNumbering::None);
+        assert_eq!(artifact.document.numbering, Numbering::None);
         assert_eq!(
             artifact.magnitude,
             DiffMagnitude::Estimated {
@@ -177,9 +150,9 @@ mod tests {
                 removed: 1
             }
         );
-        assert_eq!(artifact.hunks.len(), 1);
+        assert_eq!(artifact.document.hunks.len(), 1);
         assert_eq!(
-            artifact.hunks[0].lines,
+            artifact.document.hunks[0].lines,
             vec![
                 " pub struct RetryConfig {",
                 "-    pub max_attempts: u8,",
@@ -201,13 +174,13 @@ mod tests {
             .replace("line 18\n", "line 18 changed\n");
         let artifact = ask_time_diff(&old, &new, false);
         assert_eq!(
-            artifact.hunks.len(),
+            artifact.document.hunks.len(),
             2,
             "changes further apart than the context width form two hunks"
         );
-        assert_eq!(artifact.hunks[0].old_start, 1);
+        assert_eq!(artifact.document.hunks[0].old_start, 1);
         assert_eq!(
-            artifact.hunks[1].old_start, 16,
+            artifact.document.hunks[1].old_start, 16,
             "the second hunk opens at its own context start"
         );
         assert_eq!(
@@ -226,9 +199,9 @@ mod tests {
     #[test]
     fn a_newline_only_edit_states_the_missing_newline() {
         let artifact = ask_time_diff("VALUE=1", "VALUE=1\n", false);
-        assert_eq!(artifact.hunks.len(), 1);
+        assert_eq!(artifact.document.hunks.len(), 1);
         assert_eq!(
-            artifact.hunks[0].lines,
+            artifact.document.hunks[0].lines,
             vec!["-VALUE=1", "\\ No newline at end of file", "+VALUE=1",]
         );
         assert_eq!(
@@ -244,7 +217,7 @@ mod tests {
         // newline — the marker follows the added row.
         let artifact = ask_time_diff("VALUE=1\n", "VALUE=2", false);
         assert_eq!(
-            artifact.hunks[0].lines,
+            artifact.document.hunks[0].lines,
             vec!["-VALUE=1", "+VALUE=2", "\\ No newline at end of file",]
         );
     }
@@ -253,6 +226,10 @@ mod tests {
     fn replace_all_states_semantics_instead_of_counts() {
         let artifact = ask_time_diff("a\n", "b\n", true);
         assert_eq!(artifact.magnitude, DiffMagnitude::ReplacesEveryOccurrence);
-        assert_eq!(artifact.hunks.len(), 1, "the snippet diff still renders");
+        assert_eq!(
+            artifact.document.hunks.len(),
+            1,
+            "the snippet diff still renders"
+        );
     }
 }
