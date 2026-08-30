@@ -3,17 +3,17 @@
 //!
 //! Nothing here draws. Every row comes from the painter kit in
 //! `chat::blocks`, so the Claude and Codex screens cannot drift apart:
-//! this file decides what a block *is* — which entries fold into one
-//! exploration run, what a tool line says, which ask is docked — and the
-//! kit decides how it looks. Every fact rendered here comes from the
-//! Model; the code below formats and never decides.
+//! this file decides what a block *looks like* — what a tool line says and
+//! which ask is docked — and the kit decides how it is painted. Every fact
+//! rendered here comes from the Model; the code below formats and never
+//! recovers provider meaning.
 
 use std::collections::HashMap;
 
 use amux_ui::Model;
 use amux_ui::claude::{
-    Ask, AskArtifact, ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, SuccessFacts,
-    ToolEntry, ToolInvocation, ToolOutcome, TurnDuration,
+    Ask, AskArtifact, ChatPhase, FeedEntry, FeedEntryKind, FeedItem, InterruptionKind,
+    SuccessFacts, ToolEntry, ToolInvocation, ToolOutcome, TurnDuration,
 };
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -24,7 +24,6 @@ use crate::chat::blocks::{
     paint_file_change, paint_header, paint_plan, paint_subagent, paint_thinking, paint_tool_line,
     paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
-use crate::chat::claude::runs::{ClaudeItem, fold_runs};
 use crate::chat::claude::{View, ask_ui, panel, reader};
 use crate::chat::diff as diff_painter;
 use crate::chat::frame::{
@@ -46,6 +45,9 @@ const PLAN_PREVIEW_LINES: usize = 6;
 
 /// Screen rows a diff preview may occupy, including its remainder row.
 const DIFF_PREVIEW_BUDGET: usize = 8;
+
+/// Paths are a dense hint, not the run's full retained content.
+const RUN_PATH_PREVIEW: usize = 2;
 
 /// Synthetic keys for the blocks no entry owns. Pending echoes count
 /// down from the top of the space so they can never collide with an
@@ -550,30 +552,42 @@ fn feed_blocks(
     let eff = effective(chat);
 
     let mut blocks = Vec::new();
-    for item in fold_runs(model, agent) {
+    for item in layer.feed_items() {
         match item {
-            ClaudeItem::Entry(id) => {
-                if let Some(entry) = entries.get(&id) {
-                    blocks.push(
-                        cache
-                            .get_or_paint(
-                                BlockKey(entry.id),
-                                *entry,
-                                width,
-                                theme,
-                                chat.reports_open,
-                                || entry_block(entry, theme, width, plan_hint, reports),
-                            )
-                            .clone(),
-                    );
-                }
+            FeedItem::Entry(entry) => {
+                blocks.push(
+                    cache
+                        .get_or_paint(
+                            BlockKey(entry.id),
+                            entry,
+                            width,
+                            theme,
+                            chat.reports_open,
+                            || entry_block(entry, theme, width, plan_hint, reports),
+                        )
+                        .clone(),
+                );
             }
-            ClaudeItem::Run {
-                key,
-                summary,
-                members,
+            FeedItem::ExplorationRun {
+                id,
+                member_ids,
+                reads,
+                searches,
+                read_paths,
             } => {
-                let member_entries: Vec<FeedEntry> = members
+                let key = blocks::RunKey(id);
+                let first_paths = read_paths
+                    .iter()
+                    .take(RUN_PATH_PREVIEW)
+                    .map(|path| (*path).to_string())
+                    .collect::<Vec<_>>();
+                let summary = blocks::RunSummary {
+                    reads,
+                    searches,
+                    hidden: reads.saturating_sub(first_paths.len()),
+                    first_paths,
+                };
+                let member_entries: Vec<FeedEntry> = member_ids
                     .iter()
                     .filter_map(|id| entries.get(id))
                     .map(|entry| (*entry).clone())

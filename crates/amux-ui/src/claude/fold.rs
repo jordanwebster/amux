@@ -1368,10 +1368,7 @@ fn correlate_ask(
 }
 
 fn groupable(invocation: &ToolInvocation) -> bool {
-    matches!(
-        invocation,
-        ToolInvocation::Read { .. } | ToolInvocation::Query { .. }
-    )
+    invocation.is_exploration()
 }
 
 fn extract_invocation(name: &str, input: &Value) -> ToolInvocation {

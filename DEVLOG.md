@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Projected Claude exploration runs from typed feed facts.**
+`ClaudeLayer::feed_items()` now lazily groups consecutive read and search
+entries from the fold's own grouping fact and Claude-native classification,
+while `entries()` remains available unchanged. Runs expose stable identity,
+ordered membership, counts, and every stated read path; the terminal keeps
+only its two-path preview, hidden-count arithmetic, expansion state, glyphs,
+hints, and wording. The duplicate TUI fold and its stale dead-code allowances
+are gone, with the former renderer tests now locking the projection in the
+`amux-ui` spec suite.
+
 2026-08-30 — **Made the landed-patch byte bound exact.** The 64 KiB retained
 patch ceiling now counts UTF-8 bytes and backs up to a character boundary when
 the final row crosses it. Multibyte source text therefore cannot retain more

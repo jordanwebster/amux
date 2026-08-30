@@ -419,6 +419,7 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::feed_replay::sequences());
     sequences.extend(crate::feed_turns::sequences());
     sequences.extend(crate::feed_tools::sequences());
+    sequences.extend(crate::claude_runs::sequences());
     sequences.extend(crate::feed_edges::sequences());
     sequences.extend(crate::asks::sequences());
     sequences.extend(crate::phase::sequences());

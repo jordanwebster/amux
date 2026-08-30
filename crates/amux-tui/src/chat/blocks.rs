@@ -20,11 +20,6 @@
 //! painter leaves the background alone so the screen stays calm and the
 //! style map reads a plain row or a single foreground token.
 
-// The kit is complete before its callers are: the Claude and Codex
-// adapters adopt these painters next, and this allowance leaves with
-// them.
-#![allow(dead_code)]
-
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
@@ -38,8 +33,9 @@ use crate::render::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct RunKey(pub(crate) u64);
 
-/// What an adapter counted for one consecutive read/search/glob run.
-/// Counting is the adapter's job; this is only what the summary row says.
+/// Claude's run counts plus the renderer-selected path preview. The layer
+/// supplies every path; the cap and hidden-path arithmetic stay local because
+/// they define this terminal row's density.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RunSummary {
     pub(crate) reads: usize,

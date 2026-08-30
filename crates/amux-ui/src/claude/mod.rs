@@ -24,6 +24,7 @@ mod fold;
 pub(crate) mod update;
 
 use std::collections::{BTreeSet, VecDeque};
+use std::iter::Peekable;
 
 pub use artifact::{AskArtifact, DiffArtifact, DiffMagnitude};
 use chrono::{DateTime, TimeDelta, Utc};
@@ -351,6 +352,115 @@ pub enum ToolInvocation {
     },
     /// A tool this build does not know: name-only rendering.
     Other,
+}
+
+impl ToolInvocation {
+    fn is_exploration(&self) -> bool {
+        matches!(self, Self::Read { .. } | Self::Query { .. })
+    }
+}
+
+/// One native Claude entry, or a consecutive run of read-only exploration.
+/// Raw entries remain available through [`ClaudeLayer::entries`]; this
+/// projection states Claude's grouping semantics without imposing a shared
+/// feed vocabulary on other agent layers.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FeedItem<'a> {
+    Entry(&'a FeedEntry),
+    ExplorationRun {
+        /// Stable identity of the run: its first retained entry.
+        id: u64,
+        /// Entry identities in feed order.
+        member_ids: Vec<u64>,
+        reads: usize,
+        searches: usize,
+        /// Every path stated by a Read invocation, without a presentation cap.
+        read_paths: Vec<&'a str>,
+    },
+}
+
+/// Lazy projection over one Claude feed's declared exploration runs.
+pub struct FeedItems<'a> {
+    entries: Peekable<std::collections::vec_deque::Iter<'a, FeedEntry>>,
+}
+
+impl<'a> FeedItems<'a> {
+    fn new(entries: &'a VecDeque<FeedEntry>) -> Self {
+        Self {
+            entries: entries.iter().peekable(),
+        }
+    }
+}
+
+impl<'a> Iterator for FeedItems<'a> {
+    type Item = FeedItem<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let first = self.entries.next()?;
+        let Some(first_invocation) = exploration_invocation(first) else {
+            return Some(FeedItem::Entry(first));
+        };
+
+        let mut member_ids = vec![first.id];
+        let mut reads = 0;
+        let mut searches = 0;
+        let mut read_paths = Vec::new();
+        count_exploration(first_invocation, &mut reads, &mut searches, &mut read_paths);
+
+        while self.entries.peek().is_some_and(|entry| {
+            matches!(
+                &entry.kind,
+                FeedEntryKind::Tool(tool)
+                    if tool.group_with_previous && tool.invocation.is_exploration()
+            )
+        }) {
+            let entry = self
+                .entries
+                .next()
+                .expect("a peeked exploration entry remains available");
+            let invocation = exploration_invocation(entry)
+                .expect("grouped exploration entries retain their classification");
+            member_ids.push(entry.id);
+            count_exploration(invocation, &mut reads, &mut searches, &mut read_paths);
+        }
+
+        if member_ids.len() == 1 {
+            Some(FeedItem::Entry(first))
+        } else {
+            Some(FeedItem::ExplorationRun {
+                id: first.id,
+                member_ids,
+                reads,
+                searches,
+                read_paths,
+            })
+        }
+    }
+}
+
+fn exploration_invocation(entry: &FeedEntry) -> Option<&ToolInvocation> {
+    let FeedEntryKind::Tool(tool) = &entry.kind else {
+        return None;
+    };
+    tool.invocation.is_exploration().then_some(&tool.invocation)
+}
+
+fn count_exploration<'a>(
+    invocation: &'a ToolInvocation,
+    reads: &mut usize,
+    searches: &mut usize,
+    read_paths: &mut Vec<&'a str>,
+) {
+    match invocation {
+        ToolInvocation::Read { file_path } => {
+            *reads += 1;
+            if let Some(path) = file_path {
+                read_paths.push(path);
+            }
+        }
+        ToolInvocation::Query { .. } => *searches += 1,
+        _ => unreachable!("only exploration invocations are counted"),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1134,6 +1244,12 @@ impl ClaudeLayer {
     /// The feed, in file order.
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
         self.entries.iter()
+    }
+
+    /// The feed in file order with consecutive exploration entries grouped
+    /// under their first entry id. A lone read or search remains an entry.
+    pub fn feed_items(&self) -> FeedItems<'_> {
+        FeedItems::new(&self.entries)
     }
 
     pub fn entry_count(&self) -> usize {

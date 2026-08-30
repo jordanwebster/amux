@@ -34,6 +34,8 @@ mod feed_turns; // Chapter 7 — Chat feed: prompts, messages, markers
 
 mod feed_tools; // Chapter 8 — Chat feed: tool pairing, result facts
 
+mod claude_runs; // Claude feed projection: exploration runs beside raw entries
+
 mod feed_edges; // Chapter 9 — Chat feed: status, subagents, unknown rows
 
 mod wire_free; // Chapter 10 — Determinism: differential fold, replay, serde

@@ -216,11 +216,17 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::ExplorationExpanded => {
             let mut fixture = claude_fixture(gallery::exploration_rows());
             let chat = fixture.view.chat.as_mut().expect("Claude chat open");
-            let run = crate::chat::claude::runs::fold_runs(&fixture.model, chat.agent)
+            let run = fixture
+                .model
+                .claude(chat.agent)
+                .expect("Claude fixture has a layer")
+                .feed_items()
                 .into_iter()
                 .find_map(|item| match item {
-                    crate::chat::claude::runs::ClaudeItem::Run { key, .. } => Some(key),
-                    crate::chat::claude::runs::ClaudeItem::Entry(_) => None,
+                    amux_ui::claude::FeedItem::ExplorationRun { id, .. } => {
+                        Some(crate::chat::blocks::RunKey(id))
+                    }
+                    amux_ui::claude::FeedItem::Entry(_) => None,
                 })
                 .expect("exploration fixture has a folded run");
             chat.viewport.expanded.insert(run);
