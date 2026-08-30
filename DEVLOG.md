@@ -12,6 +12,13 @@ specifications with isolated provider homes and Cargo offline mode enabled.
 
 ---
 
+2026-08-30 — **Live Claude evidence rejects ownership identifiers.** The PTY
+capture redactor now shares replay-support's personal-identifier field rule,
+recursively replaces account, organization, and bridge-session values, and
+verifies that no matching field survives before evidence is written.
+
+---
+
 2026-08-30 — **Named derived rows by their provider plane.** The daemon row
 fixtures now live under `fixtures/rows/claude-pty`, `claude-sdk`, and `codex`,
 mirroring the recording owners in the canonical provider crates. Derivation,

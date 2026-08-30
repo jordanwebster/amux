@@ -39,7 +39,7 @@ fn sanitize_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionS
     match value {
         Value::Object(object) => {
             for (key, value) in object {
-                if is_personal_identifier_key(key, rules) && !value.is_null() {
+                if should_redact_personal_identifier(key, rules) && !value.is_null() {
                     if value.as_str() != Some(IDENTIFIER_PLACEHOLDER) {
                         *value = Value::String(IDENTIFIER_PLACEHOLDER.to_string());
                         summary.personal_identifiers += 1;
@@ -66,15 +66,20 @@ fn sanitize_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionS
     }
 }
 
-fn is_personal_identifier_key(key: &str, rules: &Redaction) -> bool {
-    is_builtin_personal_identifier_key(key)
+fn should_redact_personal_identifier(key: &str, rules: &Redaction) -> bool {
+    is_personal_identifier_key(key)
         || rules
             .personal_identifier_keys
             .iter()
             .any(|identifier_key| identifier_key == key)
 }
 
-fn is_builtin_personal_identifier_key(key: &str) -> bool {
+/// Whether a JSON field name conventionally identifies a person or their account.
+///
+/// Capture-specific field names remain on [`Redaction::personal_identifier_keys`].
+/// This shared rule is public so evidence tooling can reject the same account,
+/// organization, user, and bridge identifiers that corpus sanitization removes.
+pub fn is_personal_identifier_key(key: &str) -> bool {
     let normalized = normalized_key(key);
     normalized == "bridgesessionid"
         || matches!(

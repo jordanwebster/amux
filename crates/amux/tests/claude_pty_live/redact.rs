@@ -11,7 +11,8 @@
 //!    (see [`CONFIG_ATTACHMENT_TYPES`]).
 //! 2. **Scrub identifying substrings** from the rows that remain: the scratch
 //!    root (`[SCRATCH]`/`[SCRATCH-SLUG]`), the home dir (`[HOME]`/`[HOME-SLUG]`),
-//!    the username token (`[USER]`), the hostname (`[HOST]`).
+//!    the username token (`[USER]`), the hostname (`[HOST]`), and personal
+//!    account/organization/bridge identifiers (`[IDENTIFIER]`).
 //!
 //! Then the output is *verified*: any surviving config-bearing row, home
 //! dir, username token, tool-inventory / skill-description marker, or
@@ -21,6 +22,9 @@
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use serde_json::Value;
+
+const IDENTIFIER_PLACEHOLDER: &str = "[IDENTIFIER]";
 
 /// Attachment `attachment.type` values that carry the user's own
 /// configuration rather than scenario structure. Removed whole during
@@ -117,6 +121,67 @@ fn replace_word(haystack: &str, needle: &str, replacement: &str) -> String {
     out
 }
 
+fn redact_personal_identifiers(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                if replay_support::is_personal_identifier_key(key) && !value.is_null() {
+                    *value = Value::String(IDENTIFIER_PLACEHOLDER.to_string());
+                } else {
+                    redact_personal_identifiers(value);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                redact_personal_identifiers(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_personal_identifier_lines(input: &str) -> String {
+    let mut output = input
+        .lines()
+        .map(|line| {
+            let Ok(mut value) = serde_json::from_str::<Value>(line) else {
+                return line.to_string();
+            };
+            redact_personal_identifiers(&mut value);
+            serde_json::to_string(&value).expect("serializing a JSON value cannot fail")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if input.ends_with('\n') {
+        output.push('\n');
+    }
+    output
+}
+
+fn surviving_personal_identifier_keys(value: &Value, found: &mut Vec<String>) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                if replay_support::is_personal_identifier_key(key)
+                    && !value.is_null()
+                    && value.as_str() != Some(IDENTIFIER_PLACEHOLDER)
+                {
+                    found.push(key.clone());
+                } else {
+                    surviving_personal_identifier_keys(value, found);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                surviving_personal_identifier_keys(value, found);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn redact(raw: &str, scratch_root: &Path) -> Result<String> {
     // 1. Drop config-bearing attachment rows whole.
     let kept: Vec<&str> = raw
@@ -157,6 +222,7 @@ pub fn redact(raw: &str, scratch_root: &Path) -> Result<String> {
     if !hostname.is_empty() {
         out = out.replace(&hostname, "[HOST]");
     }
+    out = redact_personal_identifier_lines(&out);
 
     // 3. Neutralize tool-inventory *counts* that leak how many tools/skills the
     //    user has configured (e.g. a `ToolSearch` result's
@@ -205,6 +271,16 @@ fn verify(redacted: &str, scratch_root: &Path) -> Result<()> {
         if is_config_attachment_line(line) {
             violations.push("config-bearing attachment row survived the strip".to_string());
             break;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(line) {
+            let mut keys = Vec::new();
+            surviving_personal_identifier_keys(&value, &mut keys);
+            keys.sort();
+            keys.dedup();
+            violations.extend(
+                keys.into_iter()
+                    .map(|key| format!("personal identifier field '{key}' survived redaction")),
+            );
         }
     }
     // Tool-inventory / skill-listing content must not leak through any other
@@ -279,5 +355,55 @@ fn verify(redacted: &str, scratch_root: &Path) -> Result<()> {
         Ok(())
     } else {
         bail!("redaction verification failed: {violations:?}")
+    }
+}
+
+#[cfg(test)]
+// The harness-free live binary compiles this module with cfg(test), while the
+// separate redaction test target supplies the harness that executes it.
+#[allow(dead_code, unused_imports)]
+mod tests {
+    use super::*;
+
+    const BRIDGE_ROW: &str = r#"{"bridgeSessionId":"cse_private","lastSequenceNum":0,"ownerAccountUuid":"account-private","ownerOrganizationUuid":"organization-private","sessionId":"scenario-session","type":"bridge-session"}"#;
+
+    #[test]
+    fn verify_names_every_surviving_bridge_session_identifier() {
+        let error = verify(BRIDGE_ROW, Path::new("/capture"))
+            .expect_err("an unredacted bridge-session row must fail verification")
+            .to_string();
+
+        for key in [
+            "bridgeSessionId",
+            "ownerAccountUuid",
+            "ownerOrganizationUuid",
+        ] {
+            assert!(
+                error.contains(key),
+                "verification did not name {key}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn redact_scrubs_bridge_session_identifiers_but_keeps_scenario_session_id() {
+        let redacted = redact(BRIDGE_ROW, Path::new("/capture")).unwrap();
+
+        assert_eq!(redacted.matches(IDENTIFIER_PLACEHOLDER).count(), 3);
+        assert!(redacted.contains("scenario-session"));
+        assert!(!redacted.contains("cse_private"));
+        assert!(!redacted.contains("account-private"));
+        assert!(!redacted.contains("organization-private"));
+    }
+
+    #[test]
+    fn redact_applies_the_shared_identifier_rule_recursively() {
+        let raw = r#"{"payload":{"billingAccountName":"private-account","memberOrganizationId":"private-organization","sessionId":"scenario-session"}}"#;
+        let redacted = redact(raw, Path::new("/capture")).unwrap();
+
+        assert_eq!(redacted.matches(IDENTIFIER_PLACEHOLDER).count(), 2);
+        assert!(redacted.contains("scenario-session"));
+        assert!(!redacted.contains("private-account"));
+        assert!(!redacted.contains("private-organization"));
     }
 }
