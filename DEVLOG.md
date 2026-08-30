@@ -5445,3 +5445,11 @@ question iteration and per-question cursor movement, while every free-text
 source is validated before its complete byte program is exposed. Exact tests
 preserve the former prompt, permission, plan, question, interrupt, and mode
 cycle bytes and delays.
+
+2026-08-30 — **Resolved Claude keymaps from typed version evidence.** Baked and
+user-directory sources now merge by declared keymap name, with local data
+shadowing the shipped copy and every selection carrying its SHA-256 identity.
+Resolution distinguishes range compatibility, exact live verification,
+same-minor extrapolation, and unknown versions; stable programs remain usable
+while menu programs refuse unsafe extrapolation or hook-observed shapes that
+the selected keymap has not verified.

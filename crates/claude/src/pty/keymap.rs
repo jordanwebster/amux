@@ -7,8 +7,15 @@ use std::time::Duration;
 
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{AskAnswer, AskKind, InputError, Intent, PermissionAnswer, PlanAnswer, QuestionAnswer};
+use crate::version::ClaudeVersion;
+
+pub const BAKED_KEYMAPS: &[(&str, &str)] = &[(
+    "keymaps/claude-2.1.toml",
+    include_str!("../../keymaps/claude-2.1.toml"),
+)];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Keymap {
@@ -246,6 +253,21 @@ pub struct Resolved {
     pub stability_limits: BTreeMap<ProgramName, Extrapolation>,
 }
 
+#[derive(Debug, Clone)]
+pub struct KeymapSources {
+    pub baked: &'static [(&'static str, &'static str)],
+    pub user_dir: Option<PathBuf>,
+}
+
+impl Default for KeymapSources {
+    fn default() -> Self {
+        Self {
+            baked: BAKED_KEYMAPS,
+            user_dir: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyStep {
     Write(Vec<u8>),
@@ -296,6 +318,8 @@ pub enum KeymapError {
     HandVerified { origin: String },
     #[error("program table violates the fixed intent mapping at '{program}'")]
     ProgramTableViolation { program: String },
+    #[error("no keymaps are available for Claude {0}")]
+    NoKeymaps(Version),
 }
 
 #[derive(Debug, Deserialize)]
@@ -354,6 +378,189 @@ pub fn load_str(source: &str, origin: &str, kind: KeymapSource) -> Result<Keymap
         verified_shapes: raw.verified_shapes,
         programs: raw.programs,
     })
+}
+
+struct LoadedKeymap {
+    keymap: Keymap,
+    id: KeymapId,
+}
+
+/// Resolves the keymap and records why it was selected for an observed version.
+pub fn resolve(sources: &KeymapSources, observed: &ClaudeVersion) -> Result<Resolved, KeymapError> {
+    let loaded = load_sources(sources)?;
+    let observed = &observed.0;
+    if loaded.is_empty() {
+        return Err(KeymapError::NoKeymaps(observed.clone()));
+    }
+
+    if let Some(selected) = loaded
+        .values()
+        .filter(|candidate| {
+            candidate
+                .keymap
+                .verified
+                .iter()
+                .any(|verified| verified.version == *observed)
+        })
+        .max_by_key(|candidate| candidate.keymap.provenance.recorded_version.clone())
+    {
+        return Ok(resolved(
+            selected,
+            Basis::Verified(observed.clone()),
+            observed,
+        ));
+    }
+
+    // A range is the evidence basis only until a keymap gains a live-verified
+    // anchor. Later versions must say that they extrapolate from that anchor,
+    // even while the broad compatibility range still matches.
+    if let Some(selected) = loaded
+        .values()
+        .filter(|candidate| {
+            candidate.keymap.verified.is_empty() && candidate.keymap.applies_to.matches(observed)
+        })
+        .max_by_key(|candidate| candidate.keymap.provenance.recorded_version.clone())
+    {
+        return Ok(resolved(selected, Basis::InRange, observed));
+    }
+
+    let anchor = loaded
+        .values()
+        .flat_map(|candidate| {
+            candidate
+                .keymap
+                .verified
+                .iter()
+                .map(move |verified| (candidate, &verified.version))
+        })
+        .filter(|(_, version)| *version < observed)
+        .max_by(|(_, left), (_, right)| left.cmp(right))
+        .or_else(|| {
+            loaded
+                .values()
+                .flat_map(|candidate| {
+                    candidate
+                        .keymap
+                        .verified
+                        .iter()
+                        .map(move |verified| (candidate, &verified.version))
+                })
+                .filter(|(_, version)| *version > observed)
+                .min_by(|(_, left), (_, right)| left.cmp(right))
+        });
+    if let Some((selected, from)) = anchor {
+        return Ok(resolved(
+            selected,
+            Basis::Extrapolated { from: from.clone() },
+            observed,
+        ));
+    }
+
+    let selected = loaded
+        .values()
+        .max_by_key(|candidate| candidate.keymap.provenance.recorded_version.clone())
+        .expect("empty sources returned above");
+    Ok(resolved(selected, Basis::Unknown, observed))
+}
+
+fn load_sources(sources: &KeymapSources) -> Result<BTreeMap<String, LoadedKeymap>, KeymapError> {
+    let mut loaded = BTreeMap::new();
+    for (origin, contents) in sources.baked {
+        let keymap = load_str(contents, origin, KeymapSource::Baked)?;
+        loaded.insert(
+            keymap.name.clone(),
+            LoadedKeymap {
+                id: keymap_id(&keymap.name, KeymapSource::Baked, contents.as_bytes()),
+                keymap,
+            },
+        );
+    }
+
+    let Some(user_dir) = &sources.user_dir else {
+        return Ok(loaded);
+    };
+    let mut paths = match std::fs::read_dir(user_dir) {
+        Ok(entries) => entries
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.path())
+                    .map_err(|error| KeymapError::Io(user_dir.clone(), error))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(loaded),
+        Err(error) => return Err(KeymapError::Io(user_dir.clone(), error)),
+    };
+    paths.sort();
+    for path in paths {
+        if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
+            continue;
+        }
+        let contents =
+            std::fs::read_to_string(&path).map_err(|error| KeymapError::Io(path.clone(), error))?;
+        let source = KeymapSource::User(path.clone());
+        let keymap = load_str(&contents, &path.display().to_string(), source.clone())?;
+        // A user keymap shadows a baked keymap by its declared identity, not by
+        // a filename that can be renamed while installing it.
+        loaded.insert(
+            keymap.name.clone(),
+            LoadedKeymap {
+                id: keymap_id(&keymap.name, source, contents.as_bytes()),
+                keymap,
+            },
+        );
+    }
+    Ok(loaded)
+}
+
+fn keymap_id(name: &str, source: KeymapSource, contents: &[u8]) -> KeymapId {
+    let digest = Sha256::digest(contents);
+    let mut encoded = String::with_capacity(71);
+    encoded.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    KeymapId {
+        name: name.to_owned(),
+        source,
+        digest: encoded,
+    }
+}
+
+fn resolved(selected: &LoadedKeymap, basis: Basis, observed: &Version) -> Resolved {
+    let stability_limits = selected
+        .keymap
+        .programs
+        .iter()
+        .map(|(name, program)| {
+            let limit = match (&basis, program.stability) {
+                (Basis::Verified(_) | Basis::InRange, _) | (_, Stability::Stable) => {
+                    Extrapolation::Allowed
+                }
+                (Basis::Extrapolated { from }, Stability::Menu)
+                    if from.major == observed.major && from.minor == observed.minor =>
+                {
+                    Extrapolation::Allowed
+                }
+                (Basis::Extrapolated { from }, Stability::Menu) => Extrapolation::Refused {
+                    reason: format!(
+                        "menu program is verified at Claude {from}, outside observed minor {observed}"
+                    ),
+                },
+                (Basis::Unknown, Stability::Menu) => Extrapolation::Refused {
+                    reason: format!(
+                        "menu program has no verified Claude version for observed {observed}"
+                    ),
+                },
+            };
+            (*name, limit)
+        })
+        .collect();
+    Resolved {
+        keymap: selected.id.clone(),
+        basis,
+        stability_limits,
+    }
 }
 
 fn validate_program_table(raw: &RawKeymap) -> Result<(), KeymapError> {
@@ -538,10 +745,16 @@ pub fn program_for(intent: &Intent, ask: Option<&AskKind>) -> Result<ProgramName
 /// Interprets one fixed root against typed ask and answer facts.
 pub fn encode(
     keymap: &Keymap,
-    _resolved: &Resolved,
+    resolved: &Resolved,
     program: ProgramName,
     env: &Environment<'_>,
 ) -> Result<Vec<KeyStep>, InputError> {
+    if let Some(Extrapolation::Refused { reason }) = resolved.stability_limits.get(&program) {
+        return Err(InputError::UnverifiedShape {
+            program,
+            reason: reason.clone(),
+        });
+    }
     validate_environment(keymap, program, env)?;
     let Some(root) = keymap.programs.get(&program) else {
         return mismatch(format!("keymap has no {program:?} program"));
@@ -1160,7 +1373,10 @@ mod interpret {
                 digest: "test".to_owned(),
             },
             basis: Basis::InRange,
-            stability_limits: BTreeMap::new(),
+            stability_limits: PROGRAM_TABLE
+                .iter()
+                .map(|(_, program)| (*program, Extrapolation::Allowed))
+                .collect(),
         }
     }
 
@@ -1661,6 +1877,223 @@ mod interpret {
                 write(b" "),
                 write(b"\x1b"),
             ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod resolve {
+    use super::*;
+    use crate::pty::AskId;
+
+    const BAKED: &str = include_str!("../../keymaps/claude-2.1.toml");
+
+    fn version(value: &str) -> ClaudeVersion {
+        ClaudeVersion(value.parse().expect("test version"))
+    }
+
+    fn verified_sources() -> KeymapSources {
+        let contents = BAKED.replacen(
+            "verified = []",
+            "verified = [{ version = \"2.1.251\", run_id = \"probe-1\", spec = \"prompt\" }]",
+            1,
+        );
+        let contents = Box::leak(contents.into_boxed_str());
+        let baked = Box::leak(Box::new([("fixture/claude-2.1.toml", contents as &str)]));
+        KeymapSources {
+            baked,
+            user_dir: None,
+        }
+    }
+
+    fn assert_allowed(resolved: &Resolved, program: ProgramName) {
+        assert_eq!(
+            resolved.stability_limits.get(&program),
+            Some(&Extrapolation::Allowed),
+            "{program:?} should be allowed for {:?}",
+            resolved.basis
+        );
+    }
+
+    fn assert_refused(resolved: &Resolved, program: ProgramName) {
+        assert!(
+            matches!(
+                resolved.stability_limits.get(&program),
+                Some(Extrapolation::Refused { reason }) if !reason.is_empty()
+            ),
+            "{program:?} should be refused for {:?}",
+            resolved.basis
+        );
+    }
+
+    #[test]
+    fn shipped_baked_set_uses_range_then_unknown_without_verified_versions() {
+        let sources = KeymapSources::default();
+        let in_range = resolve(&sources, &version("2.1.240")).expect("in range");
+        assert_eq!(in_range.basis, Basis::InRange);
+        assert_eq!(in_range.keymap.name, "claude-2.1");
+        assert_eq!(in_range.keymap.source, KeymapSource::Baked);
+        assert!(in_range.keymap.digest.starts_with("sha256:"));
+        assert_eq!(in_range.keymap.digest.len(), 71);
+        for (_, program) in PROGRAM_TABLE {
+            assert_allowed(&in_range, *program);
+        }
+
+        for observed in ["2.2.0", "1.0.0"] {
+            let unknown = resolve(&sources, &version(observed)).expect("unknown fallback");
+            assert_eq!(unknown.basis, Basis::Unknown);
+            for program in [
+                ProgramName::Prompt,
+                ProgramName::Interrupt,
+                ProgramName::ModeCycle,
+            ] {
+                assert_allowed(&unknown, program);
+            }
+            for program in [
+                ProgramName::PermissionMenu,
+                ProgramName::PlanMenu,
+                ProgramName::QuestionForm,
+            ] {
+                assert_refused(&unknown, program);
+            }
+        }
+    }
+
+    #[test]
+    fn verified_anchor_is_exact_then_nearest_extrapolation() {
+        let sources = verified_sources();
+        let exact = resolve(&sources, &version("2.1.251")).expect("exact");
+        assert_eq!(exact.basis, Basis::Verified("2.1.251".parse().unwrap()));
+        for (_, program) in PROGRAM_TABLE {
+            assert_allowed(&exact, *program);
+        }
+
+        let same_minor = resolve(&sources, &version("2.1.260")).expect("same minor");
+        assert_eq!(
+            same_minor.basis,
+            Basis::Extrapolated {
+                from: "2.1.251".parse().unwrap()
+            }
+        );
+        for (_, program) in PROGRAM_TABLE {
+            assert_allowed(&same_minor, *program);
+        }
+
+        let next_minor = resolve(&sources, &version("2.2.0")).expect("next minor");
+        assert_eq!(
+            next_minor.basis,
+            Basis::Extrapolated {
+                from: "2.1.251".parse().unwrap()
+            }
+        );
+        assert_allowed(&next_minor, ProgramName::Prompt);
+        assert_refused(&next_minor, ProgramName::PermissionMenu);
+
+        let below_every_anchor = resolve(&sources, &version("1.0.0")).expect("above fallback");
+        assert_eq!(
+            below_every_anchor.basis,
+            Basis::Extrapolated {
+                from: "2.1.251".parse().unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn user_name_shadows_baked_and_identity_includes_content_digest() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("my-local-name.toml");
+        let contents = BAKED.replacen("after_paste = 400", "after_paste = 777", 1);
+        std::fs::write(&path, &contents).unwrap();
+        let sources = KeymapSources {
+            baked: BAKED_KEYMAPS,
+            user_dir: Some(directory.path().to_path_buf()),
+        };
+
+        let baked = resolve(&KeymapSources::default(), &version("2.1.240")).unwrap();
+        let selected = resolve(&sources, &version("2.1.240")).expect("user override");
+        assert_eq!(selected.keymap.name, "claude-2.1");
+        assert_eq!(selected.keymap.source, KeymapSource::User(path.clone()));
+        assert_ne!(selected.keymap.digest, baked.keymap.digest);
+        assert!(selected.keymap.digest.starts_with("sha256:"));
+        assert_eq!(
+            load(&path, KeymapSource::User(path.clone()))
+                .unwrap()
+                .delays[&DelayName::AfterPaste],
+            777
+        );
+    }
+
+    #[test]
+    fn missing_user_directory_is_an_empty_source() {
+        let sources = KeymapSources {
+            baked: BAKED_KEYMAPS,
+            user_dir: Some(PathBuf::from("definitely-missing-user-keymaps")),
+        };
+        assert_eq!(
+            resolve(&sources, &version("2.1.240")).unwrap().basis,
+            Basis::InRange
+        );
+    }
+
+    #[test]
+    fn resolution_limit_refuses_menu_before_encoding() {
+        let keymap = load_str(BAKED, "baked.toml", KeymapSource::Baked).unwrap();
+        let resolved = resolve(&KeymapSources::default(), &version("2.2.0")).unwrap();
+        let ask = AskKind::Permission {
+            tool_name: "Bash".to_owned(),
+            suggestions: 1,
+            is_plan: false,
+        };
+        let answer = AskAnswer::Permission(PermissionAnswer::AllowOnce);
+        let error = encode(
+            &keymap,
+            &resolved,
+            ProgramName::PermissionMenu,
+            &Environment {
+                ask: Some(&ask),
+                answer: Some(&answer),
+                prompt: None,
+            },
+        )
+        .expect_err("unknown menu must be refused");
+        assert!(matches!(
+            error,
+            InputError::UnverifiedShape {
+                program: ProgramName::PermissionMenu,
+                ref reason,
+            } if reason.contains("no verified Claude version")
+        ));
+    }
+
+    #[test]
+    fn permission_shape_refusal_names_hook_suggestion_count() {
+        let keymap = load_str(BAKED, "baked.toml", KeymapSource::Baked).unwrap();
+        let resolved = resolve(&KeymapSources::default(), &version("2.1.240")).unwrap();
+        let ask = AskKind::Permission {
+            tool_name: "Bash".to_owned(),
+            suggestions: 2,
+            is_plan: false,
+        };
+        let answer = AskAnswer::Permission(PermissionAnswer::AllowOnce);
+        let intent = Intent::Answer {
+            ask_id: AskId("permission-1".to_owned()),
+            answer: answer.clone(),
+        };
+        let program = program_for(&intent, Some(&ask)).unwrap();
+        let error = encode(
+            &keymap,
+            &resolved,
+            program,
+            &Environment {
+                ask: Some(&ask),
+                answer: Some(&answer),
+                prompt: None,
+            },
+        )
+        .expect_err("unverified hook shape must be refused");
+        assert_eq!(
+            error.to_string(),
+            "unverified keymap shape for PermissionMenu: permission menu with 2 suggestions is not verified"
         );
     }
 }
