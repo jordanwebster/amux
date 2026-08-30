@@ -1,10 +1,11 @@
 //! Thin host adapter over the canonical Claude provider crate.
 
-pub mod io;
 #[cfg(feature = "local-agents")]
 mod delivery;
+pub mod io;
 #[cfg(feature = "local-agents")]
 mod pty_backend;
+pub mod sdk_io;
 #[cfg(feature = "local-agents")]
 mod suspend;
 

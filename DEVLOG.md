@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Froze the Claude SDK daemon protocol vocabulary.** The
+`claude_sdk_v1` adapter now owns typed subscription replay, output and input
+codecs, including structured allow and deny permission decisions. Claude's
+stream-JSON values remain unchanged, while daemon-authored ready, gap,
+permission, input-result and A2A message rows occupy a closed namespace whose
+complete JSON shape is covered by unit tests.
+
+---
+
 2026-08-30 — **Claude SDK dispatch and lifecycle failures are executable
 contracts again.** The reshaped session boundary now proves malformed and
 empty-line accounting, pending-control cleanup, observable aborts, close under

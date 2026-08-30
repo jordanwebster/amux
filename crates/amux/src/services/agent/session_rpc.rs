@@ -2,7 +2,6 @@
 
 use std::future::Future;
 
-use prost::Message as _;
 use serde_json::json;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -13,6 +12,9 @@ use crate::agents::CodexRawPtyLease;
 use crate::agents::claude::io::{
     self as claude_io, ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Output,
     ClaudePtyTranscriptV1ReplayQuery,
+};
+use crate::agents::claude::sdk_io::{
+    self as claude_sdk_io, ClaudeSdkV1Output, ClaudeSdkV1ReplayQuery,
 };
 use crate::agents::codex::io::{self as codex_io, CodexSdkV1Output, CodexSdkV1ReplayQuery};
 use crate::agents::terminal_io::{self, TerminalV1Control, TerminalV1ReplayQuery};
@@ -302,24 +304,15 @@ fn structured_replay_query(
             Ok((query, args.terminal_size))
         }
         Protocol::ClaudeSdkV1 => {
-            let args = match request.args.as_deref() {
-                Some(args) => {
-                    crate::protocol::wire::ClaudeSdkV1Args::decode(args).map_err(|error| {
-                        ProtocolError::InvalidArgument {
-                            message: format!("invalid ClaudeSdkV1Args: {error}"),
-                        }
-                    })?
-                }
-                None => crate::protocol::wire::ClaudeSdkV1Args::default(),
-            };
-            let query = match args.replay_query.and_then(|query| query.query) {
+            let args = claude_sdk_io::decode_claude_sdk_v1_args(request.args.as_deref())?;
+            let query = match args.replay_query {
                 None => None,
-                Some(crate::protocol::wire::claude_sdk_v1_replay_query::Query::TailCount(
-                    count,
-                )) => Some(crate::agents::SequencedReplayQuery::Tail { count }),
-                Some(crate::protocol::wire::claude_sdk_v1_replay_query::Query::Since(seq)) => {
+                Some(ClaudeSdkV1ReplayQuery::Tail { count }) => {
+                    Some(crate::agents::SequencedReplayQuery::Tail { count })
+                }
+                Some(ClaudeSdkV1ReplayQuery::Since { seq_id }) => {
                     Some(crate::agents::SequencedReplayQuery::Since {
-                        seq: seq
+                        seq: seq_id
                             .checked_add(1)
                             .ok_or_else(|| out_of_range(request.protocol))?,
                     })
@@ -363,7 +356,16 @@ pub(super) async fn send_session_input(
             send_structured_session_input(host, request.agent_id, request.event).await
         }
         Protocol::ClaudeSdkV1 => {
-            let _input = structured_input_target(host, request.agent_id, request.protocol).await?;
+            let _target = structured_input_target(host, request.agent_id, request.protocol).await?;
+            let SessionInputEvent::Input { payload, .. } = request.event else {
+                return Err(ProtocolError::InvalidArgument {
+                    message: format!(
+                        "`{}` does not accept SendInput control events",
+                        request.protocol
+                    ),
+                });
+            };
+            let _input = claude_sdk_io::decode_claude_sdk_v1_input(&payload)?;
             Err(ProtocolError::Unimplemented {
                 message: "Claude SDK input is not implemented yet".to_string(),
             })
@@ -707,11 +709,10 @@ fn structured_output_event(
                 payload: payload_json,
             })
         }
-        Protocol::ClaudeSdkV1 => crate::protocol::wire::ClaudeSdkV1Output {
+        Protocol::ClaudeSdkV1 => claude_sdk_io::encode_claude_sdk_v1_output(ClaudeSdkV1Output {
             seq_id: output.seq,
             payload: payload_json,
-        }
-        .encode_to_vec(),
+        }),
         Protocol::CodexSdkV1 => codex_io::encode_codex_sdk_v1_output(CodexSdkV1Output {
             seq: output.seq,
             payload: payload_json,
