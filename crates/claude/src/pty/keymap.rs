@@ -414,6 +414,46 @@ pub fn load_str(source: &str, origin: &str, kind: KeymapSource) -> Result<Keymap
     })
 }
 
+/// Append evidence produced by a passing PTY specification to a baked keymap.
+///
+/// This is crate-private so the executable-specification probe remains the
+/// only authority that can mint a verified entry. User keymaps are rejected
+/// earlier by [`load_str`].
+#[cfg(feature = "specs")]
+pub(crate) fn append_verified(path: &Path, entry: VerifiedVersion) -> Result<(), KeymapError> {
+    let contents = std::fs::read_to_string(path)
+        .map_err(|error| KeymapError::Io(path.to_path_buf(), error))?;
+    let mut document = contents
+        .parse::<toml::Value>()
+        .map_err(|error| KeymapError::Parse {
+            origin: path.display().to_string(),
+            reason: error.to_string(),
+        })?;
+    let verified = document
+        .get_mut("verified")
+        .and_then(toml::Value::as_array_mut)
+        .ok_or_else(|| KeymapError::Parse {
+            origin: path.display().to_string(),
+            reason: "field 'verified' must be an array".to_owned(),
+        })?;
+    let value = toml::Value::try_from(&entry).map_err(|error| KeymapError::Parse {
+        origin: path.display().to_string(),
+        reason: format!("could not encode verified entry: {error}"),
+    })?;
+    if verified.iter().any(|candidate| candidate == &value) {
+        return Ok(());
+    }
+    verified.push(value);
+    let rendered = toml::to_string_pretty(&document).map_err(|error| KeymapError::Parse {
+        origin: path.display().to_string(),
+        reason: format!("could not render verified entry: {error}"),
+    })?;
+    let temporary = path.with_extension("toml.tmp");
+    std::fs::write(&temporary, rendered)
+        .map_err(|error| KeymapError::Io(temporary.clone(), error))?;
+    std::fs::rename(&temporary, path).map_err(|error| KeymapError::Io(path.to_path_buf(), error))
+}
+
 struct LoadedKeymap {
     keymap: Keymap,
     id: KeymapId,
@@ -960,6 +1000,95 @@ fn mismatch<T>(detail: impl Into<String>) -> Result<T, InputError> {
 fn unsafe_text(reason: impl Into<String>) -> InputError {
     InputError::UnsafeText {
         reason: reason.into(),
+    }
+}
+
+#[cfg(all(test, feature = "specs"))]
+mod provenance {
+    use super::*;
+
+    #[test]
+    fn baked_verified_entries_have_matching_recording_evidence() {
+        for (origin, contents) in BAKED_KEYMAPS {
+            let keymap = load_str(contents, origin, KeymapSource::Baked).unwrap();
+            for verified in keymap.verified {
+                let entry = crate::specs::pty_registry()
+                    .iter()
+                    .find(|entry| entry.name == verified.spec)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "baked keymap entry {} names unknown PTY spec {}",
+                            verified.version, verified.spec
+                        )
+                    });
+                let recording = replay_support::load_recording(
+                    &crate::specs::pty::fixtures_root().join(entry.recording),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "baked keymap entry {}/{}/{} has no recording: {error}",
+                        verified.version, verified.run_id, verified.spec
+                    )
+                });
+                let recorded_matches = recording.manifest.recorded.version == verified.version
+                    && recording
+                        .manifest
+                        .provider_extra
+                        .get("run_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(verified.run_id.as_str());
+                let verification_matches = recording.manifest.verified.iter().any(|evidence| {
+                    evidence.version == verified.version && evidence.run_id == verified.run_id
+                });
+                assert!(
+                    recorded_matches || verification_matches,
+                    "baked keymap entry {}/{}/{} has no matching Recorded or Verification evidence",
+                    verified.version,
+                    verified.run_id,
+                    verified.spec
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_spec_probe_calls_the_verified_writer() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let needle = ["keymap::append_", "verified("].concat();
+        let mut callers = Vec::new();
+        visit_rs(&root, &mut |path, source| {
+            for (index, line) in source.lines().enumerate() {
+                if line.contains(&needle) {
+                    callers.push((path.to_path_buf(), index + 1));
+                }
+            }
+        });
+        assert_eq!(
+            callers.len(),
+            1,
+            "unexpected verified writer calls: {callers:?}"
+        );
+        assert!(
+            callers[0].0.ends_with("specs/probe.rs"),
+            "verified writer authority escaped specs::probe: {callers:?}"
+        );
+    }
+
+    fn visit_rs(root: &Path, visit: &mut impl FnMut(&Path, &str)) {
+        let mut entries = std::fs::read_dir(root)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        entries.sort_by_key(std::fs::DirEntry::path);
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                visit_rs(&path, visit);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+                let source = std::fs::read_to_string(&path).unwrap();
+                visit(&path, &source);
+            }
+        }
     }
 }
 

@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Claude PTY behavior has an executable specification boundary.**
+The Claude crate now registers one live-and-replay specification for every
+semantic chat intent and transcript relink. Live runs go through the hosted
+PTY session while recording the actual PTY, hook and transcript transports;
+replay feeds those same frames through strict causal accounting. PTY bytes are
+hex-framed at the line-oriented replay boundary so prompts containing newlines
+and terminal controls remain exact. The probe is the sole authority that can
+append keymap verification, and provenance tests require every baked entry to
+name matching recording evidence before it can ship.
+
+---
+
 2026-08-30 — **Hosted Claude sessions use installed user keymaps.** The daemon
 now carries the configured data directory's keymap path into each PTY backend,
 including resumed and testnet sessions. The CLI and daemon share one canonical

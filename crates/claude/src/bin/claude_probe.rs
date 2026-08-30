@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
-use claude::specs::{SpecSource, execute, fixtures_root, sdk_registry};
+use claude::specs::{SpecSource, execute, fixtures_root, pty_registry, sdk_registry};
 use replay_support::{
     Manifest, ProbeAttempt, ProbeRun, Redaction, SourceKind, SpecEntry, append_verification,
     load_recording, migrate_legacy_manifest, probe, registry_rows, sanitize,
@@ -16,6 +16,9 @@ use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("__pty-hook") {
+        return forward_pty_hook();
+    }
     if std::env::var_os("CLAUDE_CAPTURE_PROXY").is_some() {
         return run_capture_proxy().await;
     }
@@ -46,8 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     match args.as_slice() {
-        [command] if command == "list" => list(),
-        [command, flag] if command == "list" && flag == "--sdk" => list(),
+        [command, rest @ ..] if command == "list" => list(rest),
         [command, rest @ ..] if command == "record" => record_command(rest).await,
         [command, rest @ ..] if command == "probe" => probe_command(rest).await,
         _ => Err(usage().into()),
@@ -55,11 +57,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn usage() -> &'static str {
-    "usage: claude-probe list [--sdk] | record --sdk <spec>... | probe --sdk [--out <dir>]"
+    "usage: claude-probe list [--sdk|--pty] | record (--sdk|--pty) <spec>... | probe [--sdk] [--pty] [--out <dir>]"
 }
 
-fn list() -> Result<(), Box<dyn std::error::Error>> {
-    for row in registry_rows(&fixtures_root(), sdk_registry())? {
+fn list(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let sdk = args.is_empty() || args.iter().any(|arg| arg == "--sdk");
+    let pty = args.is_empty() || args.iter().any(|arg| arg == "--pty");
+    if args.iter().any(|arg| arg != "--sdk" && arg != "--pty") {
+        return Err(usage().into());
+    }
+    if sdk {
+        list_registry("sdk", &fixtures_root(), sdk_registry())?;
+    }
+    if pty && claude::specs::pty::fixtures_root().exists() {
+        list_registry("pty", &claude::specs::pty::fixtures_root(), pty_registry())?;
+    } else if pty {
+        for entry in pty_registry() {
+            println!(
+                "driver=pty spec={} recording={} recorded=pending verified=[]",
+                entry.name, entry.recording
+            );
+        }
+    }
+    Ok(())
+}
+
+fn list_registry(
+    driver: &str,
+    root: &Path,
+    registry: &[SpecEntry],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for row in registry_rows(root, registry)? {
         let ledger = row
             .verified
             .iter()
@@ -67,7 +95,7 @@ fn list() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>()
             .join(",");
         println!(
-            "driver=sdk spec={} recording={} recorded={} verified=[{}]",
+            "driver={driver} spec={} recording={} recorded={} verified=[{}]",
             row.spec, row.recording, row.recorded, ledger
         );
     }
@@ -75,25 +103,37 @@ fn list() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn record_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let names = parse_sdk_names(args)?;
+    let (driver, names) = parse_record_names(args)?;
     if names.is_empty() {
         return Err(usage().into());
     }
     for name in names {
-        let entry = find_entry(name)?;
-        record_one(entry, &fixtures_root()).await?;
-        println!("driver=sdk spec={} outcome=recorded", entry.name);
+        match driver {
+            "sdk" => {
+                let entry = find_entry(name)?;
+                record_one(entry, &fixtures_root()).await?;
+                println!("driver=sdk spec={} outcome=recorded", entry.name);
+            }
+            "pty" => {
+                let entry = find_pty_entry(name)?;
+                record_pty_one(entry).await?;
+                println!("driver=pty spec={} outcome=recorded", entry.name);
+            }
+            _ => unreachable!(),
+        }
     }
     Ok(())
 }
 
 async fn probe_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut sdk = false;
+    let mut pty = false;
     let mut out = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--sdk" => sdk = true,
+            "--pty" => pty = true,
             "--out" if index + 1 < args.len() => {
                 index += 1;
                 out = Some(PathBuf::from(&args[index]));
@@ -102,28 +142,36 @@ async fn probe_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>
         }
         index += 1;
     }
-    if !sdk {
-        return Err("probe requires --sdk until the PTY registry lands".into());
+    if !sdk && !pty {
+        return Err("probe requires --sdk, --pty, or both".into());
     }
-    run_probe(out.unwrap_or_else(default_probe_dir)).await
+    let out = out.unwrap_or_else(default_probe_dir);
+    if sdk && pty {
+        run_probe(out.join("sdk")).await?;
+        run_pty_probe(out.join("pty")).await
+    } else if sdk {
+        run_probe(out).await
+    } else {
+        run_pty_probe(out).await
+    }
 }
 
-fn parse_sdk_names(args: &[String]) -> Result<Vec<&str>, Box<dyn std::error::Error>> {
-    let mut sdk = false;
+fn parse_record_names(args: &[String]) -> Result<(&str, Vec<&str>), Box<dyn std::error::Error>> {
+    let mut driver = None;
     let mut names = Vec::new();
     for arg in args {
-        if arg == "--sdk" {
-            sdk = true;
+        if arg == "--sdk" || arg == "--pty" {
+            let selected = arg.trim_start_matches('-');
+            if driver.replace(selected).is_some() {
+                return Err("record accepts exactly one of --sdk or --pty".into());
+            }
         } else if arg.starts_with('-') {
             return Err(usage().into());
         } else {
             names.push(arg.as_str());
         }
     }
-    if !sdk {
-        return Err("record requires --sdk".into());
-    }
-    Ok(names)
+    Ok((driver.ok_or("record requires --sdk or --pty")?, names))
 }
 
 fn find_entry(name: &str) -> Result<SpecEntry, Box<dyn std::error::Error>> {
@@ -132,6 +180,14 @@ fn find_entry(name: &str) -> Result<SpecEntry, Box<dyn std::error::Error>> {
         .copied()
         .find(|entry| entry.name == name || entry.recording == name)
         .ok_or_else(|| format!("unknown Claude SDK specification {name}").into())
+}
+
+fn find_pty_entry(name: &str) -> Result<SpecEntry, Box<dyn std::error::Error>> {
+    pty_registry()
+        .iter()
+        .copied()
+        .find(|entry| entry.name == name || entry.recording == name)
+        .ok_or_else(|| format!("unknown Claude PTY specification {name}").into())
 }
 
 async fn run_probe(out: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -201,6 +257,209 @@ async fn run_probe(out: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     println!("probe={}", probe_path.display());
     println!("drift={}", drift_path.display());
     println!("keymap=not-verified reason=sdk-only-probe");
+    Ok(())
+}
+
+struct PtyCapture {
+    report: claude::specs::pty::RunReport,
+    spawn: Vec<u8>,
+    scratch: PathBuf,
+}
+
+async fn capture_pty(entry: SpecEntry) -> Result<PtyCapture, Box<dyn std::error::Error>> {
+    let scratch = tempfile::Builder::new()
+        .prefix("claude-pty-spec-")
+        .tempdir()?;
+    let work = scratch.path().join("work");
+    std::fs::create_dir_all(&work)?;
+    std::fs::write(work.join("config.txt"), "VALUE=1\n")?;
+    let hook_command = vec![
+        std::env::current_exe()?.display().to_string(),
+        "__pty-hook".to_owned(),
+    ];
+    let managed = claude::launch::ManagedSettings {
+        hook_command: hook_command.clone(),
+        mcp_servers: Vec::new(),
+    };
+    let launch = claude::launch::Launch {
+        binary: claude_binary(),
+        cwd: work,
+        args: Vec::new(),
+        session_id: Uuid::new_v4(),
+        resume: false,
+        settings: claude::launch::merged_settings(None, &managed),
+        hook_command,
+        mcp_servers: Vec::new(),
+        env_scrub: claude::launch::CHILD_SESSION_ENV_SCRUB,
+    };
+    let mut spawn_launch = launch.clone();
+    claude::specs::pty::prepare_launch(&entry, &mut spawn_launch)?;
+    let spawn = serde_json::to_vec(&serde_json::json!({
+        "transport_id": "pty",
+        "argv": claude::launch::pty_spawn_args(&spawn_launch),
+    }))?;
+    let report = claude::specs::pty::run(
+        &entry,
+        claude::specs::pty::Source::Live {
+            launch,
+            keymaps: claude::pty::keymap::KeymapSources::default(),
+            size: pty_host::PtySize {
+                rows: 40,
+                cols: 120,
+            },
+        },
+    )
+    .await?;
+    Ok(PtyCapture {
+        report,
+        spawn,
+        scratch: scratch.path().to_path_buf(),
+    })
+}
+
+async fn record_pty_one(entry: SpecEntry) -> Result<(), Box<dyn std::error::Error>> {
+    let mut capture = capture_pty(entry).await?;
+    let run_id = Uuid::new_v4().to_string();
+    let redaction = sanitize(
+        &mut capture.report.io,
+        &Redaction {
+            home: owner_home(),
+            extra_paths: vec![capture.scratch.clone()],
+            secret_env: secret_values(),
+            personal_identifier_keys: Vec::new(),
+        },
+    );
+    let root = claude::specs::pty::fixtures_root();
+    std::fs::create_dir_all(&root)?;
+    let stage = root.join(format!(".{}.{}", entry.recording, Uuid::new_v4()));
+    std::fs::create_dir_all(&stage)?;
+    write_events(&stage.join("io.jsonl"), &capture.report.io)?;
+    let mut spawn = capture.spawn;
+    spawn.push(b'\n');
+    let spawn = sanitize_json_lines(&spawn, &capture.scratch)?;
+    std::fs::write(stage.join("spawn.jsonl"), spawn)?;
+    let legacy = serde_json::json!({
+        "schema_version": 1,
+        "spec": entry.name,
+        "claude_code_version": capture.report.provider_version.to_string(),
+        "model": capture.report.model,
+        "recorded_at": Utc::now().to_rfc3339(),
+        "session_ids": [capture.report.session_id],
+    });
+    let mut manifest = migrate_legacy_manifest(&legacy, "claude", &stage)?;
+    manifest.recorded.source_kind = SourceKind::LiveCapture;
+    manifest.observed = replay_support::observe(&capture.report.io);
+    manifest.redaction = redaction;
+    manifest
+        .provider_extra
+        .insert("run_id".to_owned(), run_id.clone().into());
+    write_manifest(&stage.join("manifest.json"), &manifest)?;
+
+    let recording = load_recording(&stage)?;
+    let replay =
+        replay_support::strict_replay(&recording, replay_support::ReplayOptions::default());
+    claude::specs::pty::run(
+        &entry,
+        claude::specs::pty::Source::Recorded {
+            replay,
+            manifest: Box::new(recording.manifest),
+            keymaps: claude::pty::keymap::KeymapSources::default(),
+        },
+    )
+    .await?;
+
+    let destination = root.join(entry.recording);
+    if destination.exists() {
+        std::fs::remove_dir_all(&destination)?;
+    }
+    std::fs::rename(&stage, &destination)?;
+    claude::specs::probe::append_recorded_pty(
+        &root,
+        &claude::specs::pty::baked_keymap_path(),
+        entry,
+        capture.report.provider_version,
+        run_id,
+    )?;
+    Ok(())
+}
+
+async fn run_pty_probe(out: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let version = claude::version::probe_version(&claude_binary()).await?.0;
+    let fixtures = Arc::new(claude::specs::pty::fixtures_root());
+    let live_fixtures = Arc::clone(&fixtures);
+    let pass_fixtures = Arc::clone(&fixtures);
+    let keymap = Arc::new(claude::specs::pty::baked_keymap_path());
+    let pass_keymap = Arc::clone(&keymap);
+    let mut run = ProbeRun {
+        run_id: Uuid::new_v4().to_string(),
+        provider: "claude".to_owned(),
+        version,
+        dir: out,
+        results: Vec::new(),
+    };
+    println!("provider=claude version={} driver=pty", run.version);
+    let (probe_path, drift_path) = probe(
+        &mut run,
+        pty_registry(),
+        move |entry| {
+            let fixtures = Arc::clone(&live_fixtures);
+            async move {
+                let recording =
+                    load_recording(&fixtures.join(entry.recording)).map_err(io::Error::other)?;
+                match capture_pty(entry).await {
+                    Ok(capture) => Ok(ProbeAttempt {
+                        claim: Ok(()),
+                        recorded: recording.manifest.observed,
+                        live: replay_support::observe(&capture.report.io),
+                        raw_payloads: 0,
+                    }),
+                    Err(error) => Ok(ProbeAttempt {
+                        claim: Err(error.to_string()),
+                        recorded: recording.manifest.observed,
+                        live: replay_support::Observed::default(),
+                        raw_payloads: 0,
+                    }),
+                }
+            }
+        },
+        move |entry, verification| {
+            let fixtures = Arc::clone(&pass_fixtures);
+            let keymap = Arc::clone(&pass_keymap);
+            async move {
+                claude::specs::probe::append_pty_verification(
+                    &fixtures,
+                    &keymap,
+                    entry,
+                    verification,
+                )
+            }
+        },
+        move |entry| async move {
+            record_pty_one(entry)
+                .await
+                .map_err(|error| io::Error::other(error.to_string()))
+        },
+    )
+    .await?;
+    for result in &run.results {
+        println!(
+            "driver=pty spec={} outcome={:?}",
+            result.spec, result.outcome
+        );
+    }
+    println!("probe={}", probe_path.display());
+    println!("drift={}", drift_path.display());
+    println!("keymap={}", keymap.display());
+    Ok(())
+}
+
+fn forward_pty_hook() -> Result<(), Box<dyn std::error::Error>> {
+    let socket = std::env::var_os("CLAUDE_HOOK_SOCKET")
+        .map(PathBuf::from)
+        .ok_or("CLAUDE_HOOK_SOCKET is not set")?;
+    let mut payload = Vec::new();
+    std::io::Read::read_to_end(&mut std::io::stdin(), &mut payload)?;
+    claude::hooks::forward(&payload, &socket)?;
     Ok(())
 }
 

@@ -3,6 +3,8 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+#[cfg(feature = "pty")]
+use claude::specs::pty_registry;
 use claude::specs::{MINIMUM_SUPPORTED, SpecSource, fixtures_root, run, sdk_registry};
 use replay_support::{
     ReplayOptions, SourceKind, below_minimum, load_recording, orphan_recordings, strict_replay,
@@ -15,6 +17,48 @@ const SPEC_TIMEOUT: Duration = Duration::from_secs(30);
 async fn every_registered_sdk_specification_replays_strictly() {
     for entry in sdk_registry() {
         replay(entry.name).await;
+    }
+}
+
+#[tokio::test]
+#[cfg(feature = "pty")]
+async fn every_recorded_pty_specification_replays_strictly() {
+    let root = claude::specs::pty::fixtures_root();
+    if !root.exists() {
+        return;
+    }
+    for entry in pty_registry() {
+        eprintln!("replaying PTY {}", entry.name);
+        let recording = load_recording(&root.join(entry.recording))
+            .unwrap_or_else(|error| panic!("load {}: {error}", entry.name));
+        assert!(
+            entry
+                .allowed_models
+                .contains(&recording.manifest.recorded.model.as_str()),
+            "{} was recorded with disallowed model {}",
+            entry.name,
+            recording.manifest.recorded.model
+        );
+        let replay = strict_replay(&recording, ReplayOptions::default());
+        let report = tokio::time::timeout(
+            SPEC_TIMEOUT,
+            claude::specs::pty::run(
+                entry,
+                claude::specs::pty::Source::Recorded {
+                    replay,
+                    manifest: Box::new(recording.manifest),
+                    keymaps: claude::pty::keymap::KeymapSources::default(),
+                },
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{} stalled after {SPEC_TIMEOUT:?}", entry.name))
+        .unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            report.replay.is_some_and(|report| report.is_complete()),
+            "{} did not return a complete replay report",
+            entry.name
+        );
     }
 }
 
@@ -124,5 +168,41 @@ fn sdk_corpus_is_inventoried_current_and_unorphaned() {
         }
         assert!(recording.manifest.content.contains_key("io.jsonl"));
         assert!(recording.manifest.content.contains_key("spawn.jsonl"));
+    }
+}
+
+#[test]
+#[cfg(feature = "pty")]
+fn recorded_pty_corpus_is_inventoried_current_and_unorphaned() {
+    let root = claude::specs::pty::fixtures_root();
+    if !root.exists() {
+        return;
+    }
+    assert_eq!(
+        orphan_recordings(&root, pty_registry()),
+        Vec::<String>::new()
+    );
+    let minimum = Version::parse(MINIMUM_SUPPORTED).expect("minimum is semantic");
+    assert_eq!(below_minimum(&root, &minimum), Vec::new());
+    for entry in pty_registry() {
+        let recording = load_recording(&root.join(entry.recording))
+            .unwrap_or_else(|error| panic!("load {}: {error}", entry.name));
+        assert_eq!(recording.manifest.spec, entry.name);
+        assert_eq!(recording.manifest.recorded.provider, "claude");
+        assert!(recording.manifest.recorded.version >= minimum);
+        assert_eq!(
+            recording.manifest.recorded.source_kind,
+            SourceKind::LiveCapture
+        );
+        assert_eq!(
+            recording
+                .io
+                .iter()
+                .filter_map(|event| event.transport_id.as_deref())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["hook", "pty", "transcript"]),
+            "{} does not carry all three PTY transports",
+            entry.name
+        );
     }
 }

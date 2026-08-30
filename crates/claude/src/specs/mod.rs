@@ -36,6 +36,10 @@ pub mod commands;
 pub mod configured;
 pub mod control;
 pub mod history;
+#[cfg(feature = "pty")]
+pub mod probe;
+#[cfg(feature = "pty")]
+pub mod pty;
 pub mod results;
 pub mod session;
 pub mod tools;
@@ -822,6 +826,11 @@ static SDK_REGISTRY: &[SpecEntry] = &[
 /// The donor's executable SDK specifications in stable reading order.
 pub fn sdk_registry() -> &'static [SpecEntry] {
     SDK_REGISTRY
+}
+
+#[cfg(feature = "pty")]
+pub fn pty_registry() -> &'static [SpecEntry] {
+    pty::registry()
 }
 
 pub fn fixtures_root() -> std::path::PathBuf {

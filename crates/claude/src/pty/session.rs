@@ -361,9 +361,31 @@ pub struct Control {
     send_lock: Arc<tokio::sync::Mutex<()>>,
     confirmations: broadcast::Sender<Value>,
     exit: watch::Receiver<Option<pty_host::ExitStatus>>,
+    write_observer: Arc<Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>>,
 }
 
 impl Control {
+    /// Attach the executable-spec recorder to the actual PTY write boundary.
+    /// Normal hosts never install an observer.
+    #[doc(hidden)]
+    pub fn observe_writes(&self, observer: mpsc::UnboundedSender<Vec<u8>>) {
+        *self
+            .write_observer
+            .lock()
+            .expect("PTY write observer mutex poisoned") = Some(observer);
+    }
+
+    fn observed_write(&self, bytes: &[u8]) {
+        if let Some(observer) = self
+            .write_observer
+            .lock()
+            .expect("PTY write observer mutex poisoned")
+            .as_ref()
+        {
+            let _ = observer.send(bytes.to_vec());
+        }
+    }
+
     pub async fn send(&self, intent: Intent) -> Result<InputResult, InputError> {
         let _send = self.send_lock.lock().await;
         let (ask, resolved, keymap, program) = {
@@ -441,6 +463,7 @@ impl Control {
                         .await
                         .map_err(pty_host::PtyError::Io)?;
                     writer.flush().await.map_err(pty_host::PtyError::Io)?;
+                    self.observed_write(bytes);
                     bytes_written += bytes.len();
                 }
                 PtyInput::Delay(ms) => {
@@ -463,6 +486,7 @@ impl Control {
                         .await
                         .map_err(pty_host::PtyError::Io)?;
                     writer.flush().await.map_err(pty_host::PtyError::Io)?;
+                    self.observed_write(bytes);
                     bytes_written += bytes.len();
                 }
                 super::keymap::KeyStep::Delay(delay) => {
@@ -761,6 +785,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
             send_lock: Arc::new(tokio::sync::Mutex::new(())),
             confirmations: confirmation_tx,
             exit: exit_rx,
+            write_observer: Arc::new(Mutex::new(None)),
         },
     }
 }
@@ -785,7 +810,7 @@ pub fn from_recording(
     let (output_tx, output) = mpsc::channel(CHANNEL_CAPACITY);
     let (exit_tx, exit_rx) = oneshot::channel();
     tokio::spawn(async move {
-        pump_bytes(pty.reader, output_tx).await;
+        pump_recorded_bytes(pty.reader, output_tx).await;
         let _ = exit_tx.send(pty_host::ExitStatus::with_exit_code(0));
     });
     let (hook_source, hook_tx) = HookSource::channel(CHANNEL_CAPACITY);
@@ -801,7 +826,7 @@ pub fn from_recording(
         Sources {
             pty: PtySource {
                 output,
-                writer: pty.writer,
+                writer: Box::new(RecordingFrameWriter::new(pty.writer)),
                 handle: None,
                 exit: Box::pin(async move {
                     exit_rx
@@ -815,6 +840,99 @@ pub fn from_recording(
         },
         keymaps,
     ))
+}
+
+/// Strict replay is line-oriented. PTY frames are hex-framed so arbitrary
+/// terminal bytes (including newlines) retain their exact boundaries.
+#[doc(hidden)]
+pub fn encode_recording_bytes(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(4 + bytes.len() * 2);
+    encoded.push_str("hex:");
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
+}
+
+fn decode_recording_bytes(line: &str) -> Option<Vec<u8>> {
+    let encoded = line.strip_prefix("hex:")?;
+    if encoded.len() % 2 != 0 {
+        return None;
+    }
+    (0..encoded.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&encoded[index..index + 2], 16).ok())
+        .collect()
+}
+
+struct RecordingFrameWriter {
+    inner: Box<dyn AsyncWrite + Unpin + Send>,
+    pending: Vec<u8>,
+    framed: Vec<u8>,
+    framed_offset: usize,
+}
+
+impl RecordingFrameWriter {
+    fn new(inner: Box<dyn AsyncWrite + Unpin + Send>) -> Self {
+        Self {
+            inner,
+            pending: Vec::new(),
+            framed: Vec::new(),
+            framed_offset: 0,
+        }
+    }
+}
+
+impl AsyncWrite for RecordingFrameWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.pending.extend_from_slice(bytes);
+        std::task::Poll::Ready(Ok(bytes.len()))
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.framed.is_empty() && !self.pending.is_empty() {
+            self.framed = encode_recording_bytes(&self.pending).into_bytes();
+            self.framed.push(b'\n');
+            self.pending.clear();
+            self.framed_offset = 0;
+        }
+        while self.framed_offset < self.framed.len() {
+            let offset = self.framed_offset;
+            let chunk = self.framed[offset..].to_vec();
+            match Pin::new(&mut self.inner).poll_write(cx, &chunk) {
+                std::task::Poll::Ready(Ok(0)) => {
+                    return std::task::Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "strict replay PTY frame write returned zero",
+                    )));
+                }
+                std::task::Poll::Ready(Ok(written)) => self.framed_offset += written,
+                std::task::Poll::Ready(Err(error)) => return std::task::Poll::Ready(Err(error)),
+                std::task::Poll::Pending => return std::task::Poll::Pending,
+            }
+        }
+        self.framed.clear();
+        self.framed_offset = 0;
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.as_mut().poll_flush(cx) {
+            std::task::Poll::Ready(Ok(())) => Pin::new(&mut self.inner).poll_shutdown(cx),
+            other => other,
+        }
+    }
 }
 
 fn refresh_keymap(
@@ -990,16 +1108,23 @@ fn row_confirms_delivery(row: &Value, confirmation: &str) -> bool {
     enqueued || peer_user || queued_command
 }
 
-async fn pump_bytes(
+async fn pump_recorded_bytes(
     mut reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send>,
     tx: mpsc::Sender<Bytes>,
 ) {
-    let mut buffer = [0; 4096];
+    let mut line = String::new();
     loop {
-        match reader.read(&mut buffer).await {
+        line.clear();
+        match reader.read_line(&mut line).await {
             Ok(0) | Err(_) => break,
-            Ok(n) if tx.send(Bytes::copy_from_slice(&buffer[..n])).await.is_err() => break,
-            Ok(_) => {}
+            Ok(_) => {
+                let Some(bytes) = decode_recording_bytes(line.trim_end_matches('\n')) else {
+                    continue;
+                };
+                if tx.send(Bytes::from(bytes)).await.is_err() {
+                    break;
+                }
+            }
         }
     }
 }
@@ -1056,6 +1181,27 @@ async fn pump_transcript(
 mod tests {
     use super::*;
     use crate::hooks::HookCommon;
+
+    #[tokio::test]
+    async fn recording_frames_preserve_arbitrary_pty_bytes() {
+        let bytes = b"first\nsecond\0\x1b[Z";
+        let encoded = encode_recording_bytes(bytes);
+        assert_eq!(
+            decode_recording_bytes(&encoded).as_deref(),
+            Some(bytes.as_slice())
+        );
+
+        let (inner, mut peer) = tokio::io::duplex(1024);
+        let mut writer = RecordingFrameWriter::new(Box::new(inner));
+        writer.write_all(bytes).await.unwrap();
+        writer.flush().await.unwrap();
+        let mut line = String::new();
+        tokio::io::BufReader::new(&mut peer)
+            .read_line(&mut line)
+            .await
+            .unwrap();
+        assert_eq!(line.trim_end(), encoded);
+    }
 
     type TestBundle = (
         Sources,
