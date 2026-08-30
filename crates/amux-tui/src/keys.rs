@@ -268,9 +268,11 @@ fn open_selected(view: &mut ViewState, model: &Model, other_mode: bool) -> Optio
     if other_mode {
         mode = mode.other();
     }
-    // A3: read-only agents open in chat only — raw attach is absent, not
-    // disabled, so every entry key opens the one mode that exists.
-    if card.agent.readonly {
+    // Read-only agents and kinds without terminal_v1 open in chat only —
+    // raw attach is absent, not disabled, so every entry key opens the one
+    // mode that exists. For an SDK-driven Claude this is the deliberate
+    // unsupported placeholder; opening it must not ask the daemon for a PTY.
+    if card.agent.readonly || !card.agent.kind.exposes(amux_ui::Protocol::TerminalV1) {
         mode = OpenMode::Chat;
     }
     Some(match mode {
@@ -394,7 +396,7 @@ mod tests {
 
     /// One synced host with one agent; `readonly` and `online` shape the
     /// A3 and offline cases.
-    fn entry_model(readonly: bool, online: bool) -> Model {
+    fn entry_model_with_kind(readonly: bool, online: bool, kind: amux_ui::AgentKind) -> Model {
         let mut model = Model::default();
         let host = amux_ui::HostEntry {
             id: Uuid::from_u128(1),
@@ -411,9 +413,7 @@ mod tests {
             name: Some("fix-auth".to_string()),
             command: "claude".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
-            kind: amux_ui::AgentKind::Claude {
-                driver: amux_ui::ClaudeDriver::Pty,
-            },
+            kind,
             readonly,
             args: Vec::new(),
             created_at: chrono::DateTime::from_timestamp(1_755_000_000, 0).expect("epoch"),
@@ -432,6 +432,16 @@ mod tests {
             update(&mut model, msg);
         }
         model
+    }
+
+    fn entry_model(readonly: bool, online: bool) -> Model {
+        entry_model_with_kind(
+            readonly,
+            online,
+            amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
+        )
     }
 
     fn enter() -> KeyEvent {
@@ -497,6 +507,33 @@ mod tests {
                 handle_key(&mut view, &model, key, 10, t(0)),
                 Some(UiAction::OpenChat(agent_id()))
             );
+        }
+    }
+
+    /// Claude's SDK driver exposes only claude_sdk_v1. Even when raw attach
+    /// is configured as the default, every entry key opens the typed SDK
+    /// placeholder instead of handing terminal_v1 to the attach callback.
+    #[test]
+    fn sdk_agents_open_in_chat_from_every_entry_key() {
+        let model = entry_model_with_kind(
+            false,
+            true,
+            amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Sdk,
+            },
+        );
+
+        for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+            let mut view = ViewState {
+                default_open_mode,
+                ..ViewState::default()
+            };
+            for key in [enter(), ctrl_enter(), o_key()] {
+                assert_eq!(
+                    handle_key(&mut view, &model, key, 10, t(0)),
+                    Some(UiAction::OpenChat(agent_id()))
+                );
+            }
         }
     }
 

@@ -63,6 +63,7 @@ pub async fn new_agent(
     config: &Config,
 ) -> Result<()> {
     let codex_configuration = codex_configuration_label(&agent_type);
+    let terminal_exposed = agent_type_exposes_terminal(&agent_type);
     let rpc = get_client(config).await?;
     let terminal_size = get_terminal_size();
     let working_dir = std::env::current_dir()?;
@@ -93,11 +94,17 @@ pub async fn new_agent(
                 .map_err(|error| anyhow!("failed to create agent: {error}"))
         },
         move |agent_id| async move {
-            match config.ui.default_open_mode {
-                amux::OpenMode::Chat => {
+            match (config.ui.default_open_mode, terminal_exposed) {
+                // Kinds without terminal_v1 still have a structured layer.
+                // For Claude/SDK that layer is the deliberate unsupported
+                // placeholder and intentionally opens no stream.
+                (_, false) => {
                     crate::ui::run_for_agent(config.clone(), agent_id, codex_configuration).await
                 }
-                amux::OpenMode::Raw => {
+                (amux::OpenMode::Chat, true) => {
+                    crate::ui::run_for_agent(config.clone(), agent_id, codex_configuration).await
+                }
+                (amux::OpenMode::Raw, true) => {
                     let identifier = AgentIdentifier::from(agent_id);
                     let outcome = if codex_configuration.is_some() {
                         attach_new_codex_terminal(
@@ -190,6 +197,22 @@ fn codex_configuration_label(agent_type: &AgentType) -> Option<String> {
     ))
 }
 
+fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
+    match agent_type {
+        AgentType::Claude { driver } => {
+            amux::AgentKind::Claude { driver: *driver }.exposes(amux::Protocol::TerminalV1)
+        }
+        AgentType::Codex { .. } => amux::AgentKind::Codex.exposes(amux::Protocol::TerminalV1),
+        AgentType::TestAgent { .. } => {
+            amux::AgentKind::TestAgent.exposes(amux::Protocol::TerminalV1)
+        }
+    }
+}
+
+fn attach_opens_chat(kind: &amux::AgentKind) -> bool {
+    matches!(kind, amux::AgentKind::Codex) || !kind.exposes(amux::Protocol::TerminalV1)
+}
+
 /// Attach to an existing agent
 pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     let retry_command = target
@@ -205,10 +228,11 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 
     tracing::info!(agent = %agent.id, "attaching");
 
-    // Codex's primary attach surface is the native structured screen. Raw
-    // mode remains available from the fleet (Enter with the shipped raw
-    // default, `o` when chat is configured as the default).
-    if matches!(agent.kind, amux::AgentKind::Codex) {
+    // Codex's primary attach surface is its native structured screen. A kind
+    // without terminal_v1 also opens its structured layer; for Claude/SDK
+    // that is the unsupported placeholder. Kinds that do expose a terminal
+    // keep raw attach here.
+    if attach_opens_chat(&agent.kind) {
         return crate::ui::run_for_agent(config.clone(), agent.id, None).await;
     }
 
@@ -1020,6 +1044,30 @@ mod attach {
             }),
             None
         );
+    }
+
+    #[test]
+    fn sdk_creation_and_existing_attach_open_chat_without_a_terminal() {
+        let sdk_type = AgentType::Claude {
+            driver: amux::ClaudeDriver::Sdk,
+        };
+        let sdk_kind = amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Sdk,
+        };
+        assert!(!super::agent_type_exposes_terminal(&sdk_type));
+        assert!(super::attach_opens_chat(&sdk_kind));
+
+        let pty_type = AgentType::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        };
+        let pty_kind = amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        };
+        assert!(super::agent_type_exposes_terminal(&pty_type));
+        assert!(!super::attach_opens_chat(&pty_kind));
+
+        assert!(super::attach_opens_chat(&amux::AgentKind::Codex));
+        assert!(!super::attach_opens_chat(&amux::AgentKind::TestAgent));
     }
 
     #[test]
