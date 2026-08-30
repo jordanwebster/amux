@@ -23,11 +23,17 @@ use thiserror::Error;
 pub const VIEWPORT: (u16, u16) = (120, 40);
 /// Pixel width of one terminal cell.
 pub const CELL_WIDTH: u32 = 10;
-/// Pixel height of one terminal cell.
-pub const CELL_HEIGHT: u32 = 20;
+/// Pixel height of one terminal cell. Glyphs are clipped to their own cell,
+/// so the cell must contain the font's whole vertical extent or every row
+/// loses the tips of its ascenders and the tails of its descenders. At
+/// `FONT_SIZE`, JetBrains Mono asks for 16.32px above the baseline and 4.80px
+/// below it, which needs 22 rather than the 20 an even 16px cell suggests.
+pub const CELL_HEIGHT: u32 = 22;
 
 const FONT_SIZE: f32 = 16.0;
-const BASELINE: i32 = 16;
+/// Distance from the top of a cell to the text baseline, leaving whole pixels
+/// for the ascent above it and the descent below it.
+const BASELINE: i32 = 17;
 const REGULAR_FONT: &[u8] = include_bytes!("../assets/JetBrainsMono-Regular.ttf");
 const BOLD_FONT: &[u8] = include_bytes!("../assets/JetBrainsMono-Bold.ttf");
 const ITALIC_FONT: &[u8] = include_bytes!("../assets/JetBrainsMono-Italic.ttf");

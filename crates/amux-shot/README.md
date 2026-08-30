@@ -28,6 +28,23 @@ wrapper:
 scripts/tui-evidence target/tui-evidence
 ```
 
+If your Cargo configuration shares one build cache across several checkouts of
+this repository — a `build.build-dir`, or a `CARGO_TARGET_DIR` pointing outside
+the checkout — the build can fail before it draws anything. The protobuf wire
+types are generated into `OUT_DIR` beneath that cache, so one checkout may
+compile against types generated from another checkout's `.proto` files, and the
+resulting errors name symbols that exist in neither tree. The same applies if
+the cache is simply not writable. Give the run its own directory:
+
+```sh
+CARGO_TARGET_DIR=target/shot cargo run -p amux-shot -- render claude-idle \
+  --out target/shot/claude-idle.png
+```
+
+`scripts/tui-evidence` already does this for you: it clears any inherited
+build-directory setting and defaults `CARGO_TARGET_DIR` to
+`target/tui-evidence`, so evidence stays reproducible from a clean checkout.
+
 The wrapper renders every declared set, records both agents' wheel sessions,
 captures the command help and fixture list, proves byte-for-byte repeatability,
 and records the debug and release paint benchmarks plus the theme-loader and

@@ -29,10 +29,12 @@ esac
 
 cd "$repo_root"
 
-# A developer's global CARGO_BUILD_BUILD_DIR may point outside this checkout,
-# where a restricted run cannot write. Evidence must be reproducible from a
-# clean checkout, so build artifacts stay local unless the caller chose a
-# target directory explicitly.
+# A developer's global CARGO_BUILD_BUILD_DIR may be shared across several
+# checkouts of this repository. The protobuf types are generated into OUT_DIR
+# under that cache, so a checkout can compile against wire types generated
+# from another checkout's .proto files and fail with errors that describe
+# neither tree. Evidence must be reproducible from a clean checkout, so build
+# artifacts stay local unless the caller chose a target directory explicitly.
 unset CARGO_BUILD_BUILD_DIR
 : "${CARGO_TARGET_DIR:=$repo_root/target/tui-evidence}"
 export CARGO_TARGET_DIR

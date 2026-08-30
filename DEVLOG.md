@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Gave every capture row room for its own glyphs.** The
+screenshot renderer clipped each glyph to its cell, and the cell was 20px tall
+with the baseline at 16 — but JetBrains Mono at the capture's font size asks for
+16.32px above the baseline and 4.80px below it. Every row lost the tips of its
+ascenders and the tails of its descenders, subtly enough to look like the font
+rather than the renderer. The cell is now 22px with the baseline at 17, so the
+whole vertical extent fits and captures stand at 1200x880 for the fixed 120x40
+viewport. Manifest and verification dimensions derive from the constant and
+followed without change. `amux-shot`'s README also now names the real hazard
+behind a shared Cargo build cache: the protobuf types are generated beneath it,
+so one checkout can compile against wire types generated from another
+checkout's .proto files and fail with errors that describe neither tree.
+
 2026-08-29 — **Made imported colour schemes readable.** A base16 file is
 authored for an editor, where the only thing painted on `base00` is code, so a
 scheme whose `base05` sits a few steps above its background left amux's
