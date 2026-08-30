@@ -5626,3 +5626,9 @@ now consumes them without rendering duplicate or unrecognized tool entries;
 transient hook-local modes do not replace transcript session state.
 Fixture-backed feed specs keep provider hook rows covered while preserving
 genuinely unknown `atis-latch` and `bridge-session` entries.
+
+2026-08-30 — **Refreshed the Claude specification registry evidence.** The
+registry transcript now reflects the current manifests: all eighteen PTY
+recordings show live verification at Claude Code 2.1.251, while the SDK rows
+retain their mixed migrated, re-recorded, passing, and still-unverified
+ledger history.
