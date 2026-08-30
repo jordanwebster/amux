@@ -96,6 +96,13 @@ name = "codex_live"
 path = "tests/codex_live.rs"
 harness = false
 
+# Maintained opt-in real-Claude SDK backend suite. With no arguments it prints
+# usage and exits without live work; see tests/claude_sdk_live.rs.
+[[test]]
+name = "claude_sdk_live"
+path = "tests/claude_sdk_live.rs"
+harness = false
+
 [build-dependencies]
 prost-build = { workspace = true }
 tonic-prost-build = { workspace = true }

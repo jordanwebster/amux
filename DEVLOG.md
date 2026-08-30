@@ -5406,3 +5406,10 @@ strictly replayed Claude SDK specifications now pass through the daemon backend
 to generate their committed `claude_sdk_v1` rows. Text, permission, interrupt,
 resume, and multi-turn fixtures reproduce byte for byte from the provider
 corpus instead of relying on hand-authored backend captures.
+
+2026-08-30 — **Proved the Claude SDK daemon boundary against Claude Code.** An
+opt-in live suite now drives a Haiku session through prompt completion, an
+input-resolved Write permission with observed tool output, interruption,
+authenticated delivery from a second agent, and suspend plus resume across a
+daemon restart. Its redacted `claude_sdk_v1` recording preserves the recipient
+message row and the resumed session's explicit gap-to-ready boundary.
