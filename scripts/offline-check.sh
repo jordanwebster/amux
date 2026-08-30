@@ -44,6 +44,9 @@ cat >"$offline_profile" <<'PROFILE'
 (deny network*)
 (allow network-outbound (remote unix-socket))
 (allow network-inbound (local unix-socket))
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-bind (local ip "localhost:*"))
 PROFILE
 
 printf '%s\n' \

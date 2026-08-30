@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Ran the complete workspace and protocol suites offline.** The
+offline sandbox now permits host-local loopback sockets while retaining its
+public-address TCP refusal. Workspace tests no longer skip network-shaped
+localhost coverage, and the TestNet runner executes all 58 protocol
+specifications with isolated provider homes and Cargo offline mode enabled.
+
+---
+
 2026-08-30 — **Named derived rows by their provider plane.** The daemon row
 fixtures now live under `fixtures/rows/claude-pty`, `claude-sdk`, and `codex`,
 mirroring the recording owners in the canonical provider crates. Derivation,
