@@ -5579,3 +5579,11 @@ sidecars. A single name table covers every provider specification exactly once;
 the external-readonly, stale-sequence, and subscription scenarios remain in
 the process-only live suite instead of synthetic row data. Keymap provenance
 now serializes its verified version as an explicit field at this boundary.
+
+2026-08-30 — **Rebased Claude fold specifications on the provider corpus.**
+The UI specification harness now cuts partial PTY recordings at named semantic
+anchors instead of row offsets. Permission allow and deny claims use their
+separate canonical recordings, captured content assertions reflect Claude Code
+2.1.251, and the new `atis-latch` and `bridge-session` rows remain explicitly
+visible as unrecognized entries. The fold implementation and TUI goldens are
+unchanged.

@@ -14,7 +14,7 @@
 //! pending state.
 //!
 //! Fixture-grounded: the permission / question_single / plan_approve /
-//! mode_cycle captures (claude 2.1.228) provide the asks, cursors, and
+//! mode_cycle recordings (Claude 2.1.251) provide the asks, cursors, and
 //! mode facts these flows drive.
 
 use amux_ui::claude::AskState;
@@ -120,7 +120,21 @@ fn answer_intent(ask_id: &str, answer: AskAnswer) -> Intent {
 
 /// The permission fixture's hook carries a `prompt_id` and no tool_use id,
 /// so that is the name the session knows every ask of that session by.
-const PERMISSION_ASK: &str = "a02371c5-2da6-4848-af75-180e3685a016";
+const PERMISSION_ASK: &str = "2974ae53-275b-4574-b836-d68d711dd08c";
+
+fn mode_cycle_rest() -> Vec<Msg> {
+    seq([
+        chat_base(AGENT),
+        vec![batch(
+            AGENT,
+            10,
+            vec![
+                chat_row("permission", ChatAnchor::PermissionMode(0)),
+                chat_row("permission", ChatAnchor::TranscriptReady),
+            ],
+        )],
+    ])
+}
 
 // --- prompts (B1/D2) --------------------------------------------------------
 
@@ -130,9 +144,7 @@ const PERMISSION_ASK: &str = "a02371c5-2da6-4848-af75-180e3685a016";
 /// normalized text (the reconciliation key).
 #[test]
 fn a_sent_prompt_becomes_a_prompt_intent_and_a_pending_echo() {
-    // The full permission fixture folds to an idle chat (turn closed by
-    // the authority); its 26 rows arrive as seqs 11..=36.
-    let mut msgs = chat_feed(AGENT, "permission");
+    let mut msgs = chat_feed(AGENT, "pong");
     msgs.push(send_prompt(1, "fix the sync bug\r\nthen run the tests"));
     let (model, effects) = fold_with_effects(msgs);
 
@@ -147,7 +159,11 @@ fn a_sent_prompt_becomes_a_prompt_intent_and_a_pending_echo() {
     );
 
     let (expected_seq, intent, retry_stale) = send_input_effect(&effects);
-    assert_eq!(expected_seq, 36, "the layer's cursor is the seq guard");
+    assert_eq!(
+        expected_seq,
+        10 + chat_rows("pong").len() as u64,
+        "the layer's cursor is the seq guard"
+    );
     assert!(
         !retry_stale,
         "a prompt is positional — it never auto-retries"
@@ -178,7 +194,7 @@ fn a_sent_prompt_becomes_a_prompt_intent_and_a_pending_echo() {
 #[test]
 fn the_transcript_row_reconciles_the_echo() {
     let text = "fix the sync bug";
-    let mut msgs = chat_feed(AGENT, "permission");
+    let mut msgs = chat_feed(AGENT, "pong");
     msgs.push(send_prompt(1, text));
     msgs.push(op_result(op(1), OpOutcome::InputSent));
     let (model, _) = fold_with_effects(msgs.clone());
@@ -196,7 +212,7 @@ fn the_transcript_row_reconciles_the_echo() {
         vec![json!({
             "type": "user",
             "uuid": "eeeeeeee-0000-4000-8000-000000000001",
-            "sessionId": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+            "sessionId": chat_session_id("pong"),
             "timestamp": "2026-08-12T09:00:00.000Z",
             "message": {"role": "user", "content": text},
             "origin": {"kind": "human"},
@@ -217,7 +233,7 @@ fn the_transcript_row_reconciles_the_echo() {
 /// there (D1) — the model carries the fact.
 #[test]
 fn a_failed_prompt_send_drops_the_echo_and_states_the_failure() {
-    let mut msgs = chat_feed(AGENT, "permission");
+    let mut msgs = chat_feed(AGENT, "pong");
     msgs.push(send_prompt(1, "fix the sync bug"));
     msgs.push(op_failed(op(1), "input raced the session — seq moved"));
     let model = fold(msgs);
@@ -240,7 +256,7 @@ fn a_failed_prompt_send_drops_the_echo_and_states_the_failure() {
 fn send_is_gated_by_phase() {
     // Working: the prompt row landed, no turn-end signal (permission
     // fixture cut mid-first-turn, before the hook).
-    let mut working = chat_feed_prefix(AGENT, "permission", 6);
+    let mut working = chat_feed_through(AGENT, "permission", ChatAnchor::Prompt(0));
     working.push(send_prompt(1, "another thought"));
     let (model, effects) = fold_with_effects(working);
     assert!(
@@ -254,7 +270,7 @@ fn send_is_gated_by_phase() {
     assert_eq!(failure_message(&model, 1), "send gated while working");
 
     // Needs-you: the ask panel owns the keystroke channel (C1).
-    let mut needs_you = chat_feed_prefix(AGENT, "permission", 8);
+    let mut needs_you = chat_feed_through(AGENT, "permission", ChatAnchor::PermissionRequest(0));
     needs_you.push(send_prompt(2, "hello"));
     let (model, effects) = fold_with_effects(needs_you);
     assert!(send_inputs(&effects).is_empty());
@@ -295,7 +311,7 @@ fn send_is_gated_by_phase() {
     assert_eq!(failure_message(&model, 3), "send gated while replaying");
 
     // An empty prompt is a typed refusal stated locally, not a round trip.
-    let mut empty = chat_feed(AGENT, "permission");
+    let mut empty = chat_feed(AGENT, "pong");
     empty.push(send_prompt(4, "   "));
     let (model, effects) = fold_with_effects(empty);
     assert!(send_inputs(&effects).is_empty());
@@ -314,7 +330,7 @@ fn send_is_gated_by_phase() {
 /// session. No effect, no echo, the gate stays open.
 #[test]
 fn a_prompt_carrying_the_paste_terminator_is_refused() {
-    let mut msgs = chat_feed(AGENT, "permission");
+    let mut msgs = chat_feed(AGENT, "pong");
     msgs.push(send_prompt(1, "benign start\u{1b}[201~1\r"));
     let (model, effects) = fold_with_effects(msgs);
     assert!(send_inputs(&effects).is_empty(), "no bytes leave");
@@ -412,12 +428,30 @@ fn an_answer_addressed_past_the_head_refuses_without_bytes() {
 /// the hook row alone — no wait for the transcript to correlate it.
 #[test]
 fn an_allow_once_answer_names_the_ask_and_flips_it_optimistic() {
-    let mut msgs = chat_feed_prefix(AGENT, "permission", 10);
+    let mut msgs = chat_feed_through(
+        AGENT,
+        "permission",
+        ChatAnchor::ToolUse {
+            name: "Bash",
+            occurrence: 0,
+        },
+    );
     msgs.push(allow_once(1, 0));
     let (model, effects) = fold_with_effects(msgs);
 
     let (expected_seq, intent, retry_stale) = send_input_effect(&effects);
-    assert_eq!(expected_seq, 20, "cursor after ten fixture rows");
+    assert_eq!(
+        expected_seq,
+        10 + chat_rows_through(
+            "permission",
+            ChatAnchor::ToolUse {
+                name: "Bash",
+                occurrence: 0,
+            },
+        )
+        .len() as u64,
+        "cursor at the correlated tool use"
+    );
     assert!(!retry_stale, "menu answers are positional");
     assert_eq!(
         intent,
@@ -448,14 +482,25 @@ fn an_allow_once_answer_names_the_ask_and_flips_it_optimistic() {
 /// entry) — the InputSent outcome resolved only the op.
 #[test]
 fn the_resolution_fact_confirms_the_optimistic_answer() {
-    let mut msgs = chat_feed_prefix(AGENT, "permission", 10);
+    let mut msgs = chat_feed_through(
+        AGENT,
+        "permission",
+        ChatAnchor::ToolUse {
+            name: "Bash",
+            occurrence: 0,
+        },
+    );
     msgs.push(allow_once(1, 0));
     msgs.push(op_result(op(1), OpOutcome::InputSent));
     let (mid, _) = fold_with_effects(msgs.clone());
     assert_eq!(the_layer(&mid).ask_count(), 1, "awaiting the fact");
 
     // The fixture's own resolution row (the non-error tool_result).
-    msgs.push(batch(AGENT, 21, chat_rows("permission")[10..11].to_vec()));
+    msgs.push(batch(
+        AGENT,
+        21,
+        vec![chat_row("permission", ChatAnchor::ToolResult(0))],
+    ));
     let model = fold(msgs);
     assert_eq!(the_layer(&model).ask_count(), 0, "confirmed and collapsed");
 }
@@ -465,7 +510,14 @@ fn the_resolution_fact_confirms_the_optimistic_answer() {
 /// accepts a fresh answer.
 #[test]
 fn a_failed_answer_send_resurfaces_the_ask() {
-    let mut msgs = chat_feed_prefix(AGENT, "permission", 10);
+    let mut msgs = chat_feed_through(
+        AGENT,
+        "permission",
+        ChatAnchor::ToolUse {
+            name: "Bash",
+            occurrence: 0,
+        },
+    );
     msgs.push(allow_once(1, 0));
     msgs.push(op_failed(op(1), "sequence number mismatch: input raced"));
     let (model, _) = fold_with_effects(msgs.clone());
@@ -499,10 +551,21 @@ fn a_failed_answer_send_resurfaces_the_ask() {
 /// answer resurrects nothing — the failure is still finished-op state.
 #[test]
 fn remote_resolution_wins_over_a_late_send_failure() {
-    let mut msgs = chat_feed_prefix(AGENT, "permission", 10);
+    let mut msgs = chat_feed_through(
+        AGENT,
+        "permission",
+        ChatAnchor::ToolUse {
+            name: "Bash",
+            occurrence: 0,
+        },
+    );
     msgs.push(allow_once(1, 0));
     // Another client's allow lands as the resolution row…
-    msgs.push(batch(AGENT, 21, chat_rows("permission")[10..11].to_vec()));
+    msgs.push(batch(
+        AGENT,
+        21,
+        vec![chat_row("permission", ChatAnchor::ToolResult(0))],
+    ));
     // …then the local send's failure arrives late.
     msgs.push(op_failed(op(1), "transport error: connection reset"));
     let model = fold(msgs);
@@ -520,7 +583,14 @@ fn remote_resolution_wins_over_a_late_send_failure() {
 #[test]
 fn misfitting_late_and_duplicate_answers_refuse_without_bytes() {
     // Mismatched kind: a plan answer to a Bash permission.
-    let mut msgs = chat_feed_prefix(AGENT, "permission", 10);
+    let mut msgs = chat_feed_through(
+        AGENT,
+        "permission",
+        ChatAnchor::ToolUse {
+            name: "Bash",
+            occurrence: 0,
+        },
+    );
     msgs.push(answer_ask(1, 0, AskAnswer::Plan(PlanAnswer::ApproveAuto)));
     let (model, effects) = fold_with_effects(msgs.clone());
     assert!(
@@ -544,7 +614,11 @@ fn misfitting_late_and_duplicate_answers_refuse_without_bytes() {
     );
 
     // Resolved: the whole fixture resolves both asks; answering is late.
-    let mut resolved = chat_feed(AGENT, "permission");
+    let mut resolved = chat_feed_through(
+        AGENT,
+        "permission_deny_feedback",
+        ChatAnchor::TurnDuration(0),
+    );
     resolved.push(allow_once(4, 0));
     let (model, effects) = fold_with_effects(resolved);
     assert!(send_inputs(&effects).is_empty());
@@ -553,7 +627,7 @@ fn misfitting_late_and_duplicate_answers_refuse_without_bytes() {
 
 #[test]
 fn a_prompt_echo_refuses_a_later_ask_answer_with_truthful_wording() {
-    let mut source = chat_feed(AGENT, "permission");
+    let mut source = chat_feed(AGENT, "pong");
     source.push(send_prompt(40, "next task"));
     source.push(batch(
         AGENT,
@@ -562,7 +636,7 @@ fn a_prompt_echo_refuses_a_later_ask_answer_with_truthful_wording() {
             "type": "hook.permission_request",
             "hook_event_name": "PermissionRequest",
             "prompt_id": "new-prompt-after-local-send",
-            "session_id": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+            "session_id": chat_session_id("pong"),
             "tool_name": "Bash",
             "tool_input": {"command": "echo new-request"},
             "permission_mode": "default",
@@ -599,7 +673,14 @@ fn a_prompt_echo_refuses_a_later_ask_answer_with_truthful_wording() {
 /// nothing about the menu's layout travels with it.
 #[test]
 fn question_and_plan_answers_dispatch_their_typed_selections() {
-    let mut question = chat_feed_prefix(AGENT, "question_single", 10);
+    let mut question = chat_feed_through(
+        AGENT,
+        "question_single",
+        ChatAnchor::ToolUse {
+            name: "AskUserQuestion",
+            occurrence: 0,
+        },
+    );
     question.push(answer_ask(
         1,
         0,
@@ -615,7 +696,7 @@ fn question_and_plan_answers_dispatch_their_typed_selections() {
     assert_eq!(
         intent,
         answer_intent(
-            "9e556025-5be6-4af5-90c5-c9a0bd764efc",
+            "22ec6db8-b8ed-4add-94d1-0a8c3d944e0a",
             AskAnswer::Question(QuestionResponse {
                 answers: vec![QuestionAnswer {
                     selected: vec![0],
@@ -626,14 +707,14 @@ fn question_and_plan_answers_dispatch_their_typed_selections() {
         "the chosen option travels, not the row it sits on"
     );
 
-    let mut plan = chat_feed_prefix(AGENT, "plan_approve", 19);
+    let mut plan = chat_feed_through(AGENT, "plan_approve", ChatAnchor::PermissionRequest(0));
     plan.push(answer_ask(2, 0, AskAnswer::Plan(PlanAnswer::ApproveManual)));
     let (model, effects) = fold_with_effects(plan);
     let (_, intent, _) = send_input_effect(&effects);
     assert_eq!(
         intent,
         answer_intent(
-            "145c6fd8-57d3-4b7e-bf1c-6d4237b42f19",
+            "389a1365-92b6-41f7-91e3-ec33c09165cd",
             AskAnswer::Plan(PlanAnswer::ApproveManual),
         )
     );
@@ -651,14 +732,17 @@ fn question_and_plan_answers_dispatch_their_typed_selections() {
 /// asks; the outcome only resolves the op.
 #[test]
 fn interrupt_dispatches_from_any_state_and_the_rows_close_the_asks() {
-    let mut msgs = chat_feed_prefix(AGENT, "permission", 8);
+    let mut msgs = chat_feed_through(AGENT, "permission", ChatAnchor::PermissionRequest(0));
     msgs.push(command(
         op(1),
         Command::Claude(ClaudeCommand::Interrupt { agent: agent() }),
     ));
     let (model, effects) = fold_with_effects(msgs.clone());
     let (expected_seq, intent, retry_stale) = send_input_effect(&effects);
-    assert_eq!(expected_seq, 18);
+    assert_eq!(
+        expected_seq,
+        10 + chat_rows_through("permission", ChatAnchor::PermissionRequest(0)).len() as u64
+    );
     assert!(retry_stale, "interrupt retries a stale seq mechanically");
     assert_eq!(intent, Intent::Interrupt);
     assert_eq!(the_layer(&model).ask_count(), 1, "dispatch closes nothing");
@@ -671,7 +755,7 @@ fn interrupt_dispatches_from_any_state_and_the_rows_close_the_asks() {
         vec![json!({
             "type": "user",
             "uuid": "eeeeeeee-0000-4000-8000-000000000003",
-            "sessionId": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+            "sessionId": chat_session_id("permission"),
             "timestamp": "2026-08-12T09:00:01.000Z",
             "message": {"role": "user", "content": [
                 {"type": "text", "text": "[Request interrupted by user for tool use]"}
@@ -684,7 +768,7 @@ fn interrupt_dispatches_from_any_state_and_the_rows_close_the_asks() {
 
 #[test]
 fn observation_only_refuses_every_claude_action_before_local_mutation() {
-    let mut source = chat_feed_prefix(AGENT, "permission", 8);
+    let mut source = chat_feed_through(AGENT, "permission", ChatAnchor::PermissionRequest(0));
     for message in &mut source {
         if let Msg::Server(amux_ui::ServerMsg::AgentUpserted { agent }) = message {
             agent.readonly = true;
@@ -753,7 +837,7 @@ fn observation_only_refuses_every_claude_action_before_local_mutation() {
 #[test]
 fn the_mode_cycle_dispatches_an_intent_and_the_hook_payload_carries_the_fact() {
     // After the first turn the fixture's session mode is `default`.
-    let mut msgs = chat_feed_prefix(AGENT, "mode_cycle", 11);
+    let mut msgs = mode_cycle_rest();
     msgs.push(command(
         op(1),
         Command::Claude(ClaudeCommand::CyclePermissionMode { agent: agent() }),
@@ -768,10 +852,13 @@ fn the_mode_cycle_dispatches_an_intent_and_the_hook_payload_carries_the_fact() {
         "no optimistic flip — the mode is fact-sourced"
     );
 
-    // The next turn's hook.stop states the cycled mode (rows 11..17
-    // include `hook.stop` with permission_mode `acceptEdits`).
+    // The recorded hook.stop states the cycled mode as `acceptEdits`.
     msgs.push(op_result(op(1), OpOutcome::InputSent));
-    msgs.push(batch(AGENT, 30, chat_rows("mode_cycle")[11..17].to_vec()));
+    msgs.push(batch(
+        AGENT,
+        30,
+        vec![chat_row("mode_cycle", ChatAnchor::StopHook(0))],
+    ));
     let model = fold(msgs);
     assert_eq!(
         the_layer(&model).session().permission_mode.as_deref(),
@@ -780,7 +867,7 @@ fn the_mode_cycle_dispatches_an_intent_and_the_hook_payload_carries_the_fact() {
     );
 
     // While an ask pends, CSI Z would navigate the form instead: refused.
-    let mut gated = chat_feed_prefix(AGENT, "permission", 8);
+    let mut gated = chat_feed_through(AGENT, "permission", ChatAnchor::PermissionRequest(0));
     gated.push(command(
         op(2),
         Command::Claude(ClaudeCommand::CyclePermissionMode { agent: agent() }),
@@ -797,7 +884,7 @@ fn the_mode_cycle_dispatches_an_intent_and_the_hook_payload_carries_the_fact() {
 
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     let prompt_flow = {
-        let mut msgs = chat_feed(AGENT, "permission");
+        let mut msgs = chat_feed(AGENT, "pong");
         msgs.push(send_prompt(1, "fix the sync bug"));
         msgs.push(op_result(op(1), OpOutcome::InputSent));
         msgs.push(batch(
@@ -806,7 +893,7 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
             vec![json!({
                 "type": "user",
                 "uuid": "eeeeeeee-0000-4000-8000-000000000001",
-                "sessionId": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+                "sessionId": chat_session_id("pong"),
                 "timestamp": "2026-08-12T09:00:00.000Z",
                 "message": {"role": "user", "content": "fix the sync bug"},
                 "origin": {"kind": "human"},
@@ -816,31 +903,60 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
         msgs
     };
     let answer_failure = {
-        let mut msgs = chat_feed_prefix(AGENT, "permission", 10);
+        let mut msgs = chat_feed_through(
+            AGENT,
+            "permission",
+            ChatAnchor::ToolUse {
+                name: "Bash",
+                occurrence: 0,
+            },
+        );
         msgs.push(allow_once(1, 0));
         msgs.push(op_failed(op(1), "sequence number mismatch: input raced"));
         msgs.push(allow_once(2, 0));
         msgs
     };
     let remote_wins = {
-        let mut msgs = chat_feed_prefix(AGENT, "permission", 10);
+        let mut msgs = chat_feed_through(
+            AGENT,
+            "permission",
+            ChatAnchor::ToolUse {
+                name: "Bash",
+                occurrence: 0,
+            },
+        );
         msgs.push(allow_once(1, 0));
-        msgs.push(batch(AGENT, 21, chat_rows("permission")[10..11].to_vec()));
+        msgs.push(batch(
+            AGENT,
+            21,
+            vec![chat_row("permission", ChatAnchor::ToolResult(0))],
+        ));
         msgs.push(op_failed(op(1), "transport error: connection reset"));
         msgs
     };
     let mode_cycle = {
-        let mut msgs = chat_feed_prefix(AGENT, "mode_cycle", 11);
+        let mut msgs = mode_cycle_rest();
         msgs.push(command(
             op(1),
             Command::Claude(ClaudeCommand::CyclePermissionMode { agent: agent() }),
         ));
         msgs.push(op_result(op(1), OpOutcome::InputSent));
-        msgs.push(batch(AGENT, 30, chat_rows("mode_cycle")[11..17].to_vec()));
+        msgs.push(batch(
+            AGENT,
+            30,
+            vec![chat_row("mode_cycle", ChatAnchor::StopHook(0))],
+        ));
         msgs
     };
     let question_answer = {
-        let mut msgs = chat_feed_prefix(AGENT, "question_single", 10);
+        let mut msgs = chat_feed_through(
+            AGENT,
+            "question_single",
+            ChatAnchor::ToolUse {
+                name: "AskUserQuestion",
+                occurrence: 0,
+            },
+        );
         msgs.push(answer_ask(
             1,
             0,

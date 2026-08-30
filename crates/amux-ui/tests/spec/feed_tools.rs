@@ -1,11 +1,11 @@
 //! Chapter 8 — The chat feed: tool pairing and result facts.
 //!
-//! `docs/CHAT.md` B4/B5/B6 against the Phase 0 fixtures. Pairing is FACT:
+//! `docs/CHAT.md` B4/B5/B6 against the derived provider fixtures. Pairing is FACT:
 //! `tool_use.id` ↔ the `tool_result` block's `tool_use_id`. File change
 //! magnitude restates the `toolUseResult.structuredPatch` sidecar
 //! verbatim; denial is the typed `toolDenialKind` fact, never an
 //! error-string sniff; question answers are keyed by the question TEXT
-//! (Phase 0 capture correction); an approved plan is retained as session
+//! (provider-capture correction); an approved plan is retained as session
 //! state keyed by tool_use id, outside feed windowing.
 
 use amux_ui::Msg;
@@ -38,7 +38,7 @@ fn read_edit_bash_pair_with_typed_result_facts() {
 
     assert!(matches!(
         &tools[0].invocation,
-        ToolInvocation::Read { file_path: Some(path) } if path.ends_with("config.txt")
+        ToolInvocation::Read { file_path: Some(path) } if path == "<MACHINE_PATH>"
     ));
     assert!(matches!(
         &tools[0].outcome,
@@ -50,13 +50,13 @@ fn read_edit_bash_pair_with_typed_result_facts() {
     assert!(matches!(
         &tools[1].invocation,
         ToolInvocation::Edit { file_path: Some(path), replace_all: false }
-            if path.ends_with("config.txt")
+            if path == "<MACHINE_PATH>"
     ));
     assert_eq!(
         tools[1].outcome,
         ToolOutcome::Success {
             facts: SuccessFacts::Edit {
-                file_path: "[SCRATCH]/projects/tools/config.txt".to_string(),
+                file_path: "<MACHINE_PATH>".to_string(),
                 added: 1,
                 removed: 1,
             }
@@ -79,15 +79,22 @@ fn read_edit_bash_pair_with_typed_result_facts() {
 
 /// Denial is typed (B5): `is_error:true` plus `toolDenialKind:
 /// "user-rejected"` — the allow in the same fixture is the non-error
-/// result of the tool actually running.
+/// result of the tool actually running, preserved in a separate recording.
 #[test]
 fn a_denied_tool_carries_the_typed_denial_kind() {
-    let model = fold(chat_feed("fix-auth-bug", "permission"));
-    let tools = tools_of(claude_layer(&model, "fix-auth-bug"));
-    assert_eq!(tools.len(), 2);
-    assert!(matches!(&tools[0].outcome, ToolOutcome::Success { .. }));
+    let allowed = fold(chat_feed("fix-auth-bug", "permission"));
+    let allowed_tools = tools_of(claude_layer(&allowed, "fix-auth-bug"));
+    assert_eq!(allowed_tools.len(), 1);
+    assert!(matches!(
+        &allowed_tools[0].outcome,
+        ToolOutcome::Success { .. }
+    ));
+
+    let denied = fold(chat_feed("fix-auth-bug", "permission_deny_feedback"));
+    let tools = tools_of(claude_layer(&denied, "fix-auth-bug"));
+    assert_eq!(tools.len(), 1);
     assert_eq!(
-        tools[1].outcome,
+        tools[0].outcome,
         ToolOutcome::Denied {
             kind: Some("user-rejected".to_string())
         }
@@ -96,7 +103,7 @@ fn a_denied_tool_carries_the_typed_denial_kind() {
 
 /// AskUserQuestion facts (single-select): options are `{label,
 /// description}` objects, and the answer object is keyed by the question
-/// TEXT, not the header (Phase 0 capture correction to B5).
+/// TEXT, not the header (provider-capture correction to B5).
 #[test]
 fn question_answers_are_keyed_by_question_text() {
     let model = fold(chat_feed("fix-auth-bug", "question_single"));
@@ -134,8 +141,7 @@ fn question_answers_are_keyed_by_question_text() {
 }
 
 /// Multi-select joins every selection — including the committed `Other…`
-/// free text — into ONE string, trailing space preserved (Phase 0
-/// capture).
+/// free text — into ONE string, trailing space preserved by the recording.
 #[test]
 fn multi_select_answers_join_into_one_string() {
     let model = fold(chat_feed("fix-auth-bug", "question_multi"));
@@ -146,8 +152,8 @@ fn multi_select_answers_join_into_one_string() {
     else {
         panic!("answered: {:?}", tools[0].outcome);
     };
-    assert_eq!(answers[0].question, "Which tools should I use?");
-    assert_eq!(answers[0].answer, "Hammer, Saw, a torque wrench ");
+    assert_eq!(answers[0].question, "Which tools would you like to use?");
+    assert_eq!(answers[0].answer, "Hammer, Saw, Torque wrench ");
 }
 
 /// ExitPlanMode approval (B6): the plan payload rides `tool_use.input`,
@@ -169,8 +175,8 @@ fn an_approved_plan_is_retained_as_session_state() {
     else {
         panic!("plan payload on the invocation: {:?}", plan_tool.invocation);
     };
-    assert_eq!(plan.chars().count(), 1071);
-    assert!(path.ends_with(".md"));
+    assert_eq!(plan.chars().count(), 267);
+    assert_eq!(path, "<MACHINE_PATH>");
     assert!(matches!(
         &plan_tool.outcome,
         ToolOutcome::Success {
@@ -222,7 +228,7 @@ fn a_created_file_states_its_line_count_as_the_magnitude() {
     else {
         panic!("patch facts: {:?}", write.outcome);
     };
-    assert_eq!(*added, 20, "the created plan file's line count");
+    assert_eq!(*added, 11, "the created plan file's line count");
     assert_eq!(*removed, 0);
 }
 

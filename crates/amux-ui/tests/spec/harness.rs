@@ -252,8 +252,8 @@ pub fn tick(at_seconds: i64) -> Msg {
 // --- Chat fixtures ----------------------------------------------------------
 
 /// Rows of a committed chat-v1 fixture: a redacted, provenance-stamped
-/// capture of the `claude_pty_transcript_v1` stream from a real claude
-/// (`crates/amux/tests/fixtures/chat-v1/`, Phase 0). Referenced across
+/// stream derived from a canonical Claude PTY provider recording
+/// (`crates/amux/tests/fixtures/chat-v1/`). Referenced across
 /// crates by compile-time include so the spec suite stays IO-free.
 pub fn chat_rows(fixture: &str) -> Vec<serde_json::Value> {
     let raw = match fixture {
@@ -274,6 +274,7 @@ pub fn chat_rows(fixture: &str) -> Vec<serde_json::Value> {
             include_str!("../../../amux/tests/fixtures/chat-v1/plan_reject.rows.jsonl")
         }
         "compact" => include_str!("../../../amux/tests/fixtures/chat-v1/compact.rows.jsonl"),
+        "clear" => include_str!("../../../amux/tests/fixtures/chat-v1/clear.rows.jsonl"),
         "mode_cycle" => include_str!("../../../amux/tests/fixtures/chat-v1/mode_cycle.rows.jsonl"),
         "permission_session" => {
             include_str!("../../../amux/tests/fixtures/chat-v1/permission_session.rows.jsonl")
@@ -300,6 +301,116 @@ pub fn chat_rows(fixture: &str) -> Vec<serde_json::Value> {
         .filter(|line| !line.trim().is_empty())
         .map(|line| serde_json::from_str(line).expect("fixture row parses"))
         .collect()
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ChatAnchor {
+    Prompt(usize),
+    PermissionMode(usize),
+    TranscriptReady,
+    PermissionRequest(usize),
+    ToolUse {
+        name: &'static str,
+        occurrence: usize,
+    },
+    ToolResult(usize),
+    StopHook(usize),
+    TurnDuration(usize),
+}
+
+fn chat_anchor_index(rows: &[serde_json::Value], anchor: ChatAnchor) -> usize {
+    let mut matched = 0;
+    rows.iter()
+        .position(|row| {
+            let is_match = match anchor {
+                ChatAnchor::Prompt(_) => row["type"] == "user" && row["origin"]["kind"] == "human",
+                ChatAnchor::PermissionMode(_) => row["type"] == "permission-mode",
+                ChatAnchor::TranscriptReady => row["type"] == "amux.transcript_ready",
+                ChatAnchor::PermissionRequest(_) => row["type"] == "hook.permission_request",
+                ChatAnchor::ToolUse { name, .. } => {
+                    row["message"]["content"].as_array().is_some_and(|content| {
+                        content
+                            .iter()
+                            .any(|block| block["type"] == "tool_use" && block["name"] == name)
+                    })
+                }
+                ChatAnchor::ToolResult(_) => {
+                    row["message"]["content"].as_array().is_some_and(|content| {
+                        content.iter().any(|block| block["type"] == "tool_result")
+                    })
+                }
+                ChatAnchor::StopHook(_) => row["type"] == "hook.stop",
+                ChatAnchor::TurnDuration(_) => {
+                    row["type"] == "system" && row["subtype"] == "turn_duration"
+                }
+            };
+            if !is_match {
+                return false;
+            }
+            let wanted = match anchor {
+                ChatAnchor::Prompt(occurrence)
+                | ChatAnchor::PermissionMode(occurrence)
+                | ChatAnchor::PermissionRequest(occurrence)
+                | ChatAnchor::ToolResult(occurrence)
+                | ChatAnchor::StopHook(occurrence)
+                | ChatAnchor::TurnDuration(occurrence) => occurrence,
+                ChatAnchor::ToolUse { occurrence, .. } => occurrence,
+                ChatAnchor::TranscriptReady => 0,
+            };
+            if matched == wanted {
+                true
+            } else {
+                matched += 1;
+                false
+            }
+        })
+        .unwrap_or_else(|| panic!("chat anchor {anchor:?} is absent"))
+}
+
+pub fn chat_row(fixture: &str, anchor: ChatAnchor) -> serde_json::Value {
+    let rows = chat_rows(fixture);
+    rows[chat_anchor_index(&rows, anchor)].clone()
+}
+
+pub fn chat_rows_before(fixture: &str, anchor: ChatAnchor) -> Vec<serde_json::Value> {
+    let rows = chat_rows(fixture);
+    rows[..chat_anchor_index(&rows, anchor)].to_vec()
+}
+
+pub fn chat_rows_through(fixture: &str, anchor: ChatAnchor) -> Vec<serde_json::Value> {
+    let rows = chat_rows(fixture);
+    rows[..=chat_anchor_index(&rows, anchor)].to_vec()
+}
+
+pub fn chat_rows_from_through(
+    fixture: &str,
+    start: ChatAnchor,
+    end: ChatAnchor,
+) -> Vec<serde_json::Value> {
+    let rows = chat_rows(fixture);
+    let start = chat_anchor_index(&rows, start);
+    let end = chat_anchor_index(&rows, end);
+    assert!(start <= end, "chat anchor range is ordered");
+    rows[start..=end].to_vec()
+}
+
+pub fn chat_feed_through(agent: &str, fixture: &str, anchor: ChatAnchor) -> Vec<Msg> {
+    seq([
+        chat_base(agent),
+        vec![batch(agent, 10, chat_rows_through(fixture, anchor))],
+    ])
+}
+
+pub fn chat_session_id(fixture: &str) -> String {
+    chat_rows(fixture)
+        .into_iter()
+        .find_map(|row| {
+            row.get("sessionId")
+                .or_else(|| row.get("session_id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .expect("chat fixture carries a session id")
 }
 
 /// Rows of a graduated a2a carrier capture: a redacted, provenance-stamped
@@ -340,15 +451,6 @@ pub fn chat_base(agent: &str) -> Vec<Msg> {
 /// The base plus one coalesced batch of a fixture's rows.
 pub fn chat_feed(agent: &str, fixture: &str) -> Vec<Msg> {
     seq([chat_base(agent), vec![batch(agent, 10, chat_rows(fixture))]])
-}
-
-/// The base plus a fixture PREFIX (rows before `end`): how the spec
-/// observes mid-lifecycle states on captured reality.
-pub fn chat_feed_prefix(agent: &str, fixture: &str, end: usize) -> Vec<Msg> {
-    seq([
-        chat_base(agent),
-        vec![batch(agent, 10, chat_rows(fixture)[..end].to_vec())],
-    ])
 }
 
 /// The folded Claude layer for an agent.

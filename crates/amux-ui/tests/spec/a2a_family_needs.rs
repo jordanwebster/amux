@@ -64,7 +64,11 @@ fn asking_family_sequence() -> Vec<Msg> {
         opened("tester"),
         vec![
             batch("scribe", 10, codex_approval_rows()),
-            batch("tester", 20, chat_rows("question_single")[..8].to_vec()),
+            batch(
+                "tester",
+                20,
+                chat_rows_through("question_single", ChatAnchor::PermissionRequest(0)),
+            ),
         ],
     ])
 }
@@ -118,7 +122,7 @@ fn buried_permission_sequence() -> Vec<Msg> {
         opened("builder"),
         opened("intern"),
         vec![
-            batch("reviewer", 10, chat_rows("permission")),
+            batch("reviewer", 10, chat_rows("pong")),
             batch("builder", 20, chat_rows("interrupt")),
             batch("intern", 30, codex_approval_rows()),
         ],
@@ -137,8 +141,16 @@ fn both_asking_sequence() -> Vec<Msg> {
         opened("lead"),
         opened("tester"),
         vec![
-            batch("lead", 10, chat_rows("permission")[..8].to_vec()),
-            batch("tester", 20, chat_rows("question_single")[..8].to_vec()),
+            batch(
+                "lead",
+                10,
+                chat_rows_through("permission", ChatAnchor::PermissionRequest(0)),
+            ),
+            batch(
+                "tester",
+                20,
+                chat_rows_through("question_single", ChatAnchor::PermissionRequest(0)),
+            ),
         ],
     ])
 }
