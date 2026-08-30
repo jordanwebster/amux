@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Claude SDK delivery rows represent accepted messages.** The
+recipient-owned `amux.claude_sdk.message` row is now written only after the
+provider accepts the stream prompt. A failed provider write returns the
+delivery error without leaving a row that falsely claims the message arrived.
+
+---
+
 2026-08-30 — **SDK-driven Claude agents open their typed placeholder.**
 Creating or attaching to a Claude SDK agent now enters the structured TUI
 layer even when raw attach is configured as the default. Fleet entry keys
