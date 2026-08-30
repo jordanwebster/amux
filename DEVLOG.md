@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Made the landed-patch byte bound exact.** The 64 KiB retained
+patch ceiling now counts UTF-8 bytes and backs up to a character boundary when
+the final row crosses it. Multibyte source text therefore cannot retain more
+memory than the stated cap, and truncation still leaves valid UTF-8 for every
+client projection and renderer.
+
 2026-08-30 — **Kept complete diffs ahead of unknown trailers.** A valid hunk
 is now committed as soon as later non-patch text proves the diff body has
 ended. Provider diagnostics and other unknown footer text therefore cannot
@@ -21,7 +27,7 @@ fullscreen reader no longer maintains a separate line-number walk.
 2026-08-30 — **Kept Claude's landed patch instead of only its totals.** A
 successful Edit or Write now retains the typed, absolutely numbered
 `structuredPatch` document beside its full-sidecar magnitude. The retained
-preview is independently bounded by hunk count, row count, and character count;
+preview is independently bounded by hunk count, row count, and byte count;
 crossing any bound marks the document truncated while the `(+A -R)` totals
 still come from every source row. Created files continue to state their content
 line count and carry no invented hunk when Claude supplies an empty patch.

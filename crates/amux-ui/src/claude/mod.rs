@@ -119,7 +119,7 @@ const OUTPUT_HEAD_MAX: usize = 400;
 /// entire memory budget.
 pub(crate) const STRUCTURED_PATCH_HUNKS_RETAINED: usize = 64;
 pub(crate) const STRUCTURED_PATCH_LINES_RETAINED: usize = 512;
-pub(crate) const STRUCTURED_PATCH_CHARS_RETAINED: usize = 64 * 1024;
+pub(crate) const STRUCTURED_PATCH_BYTES_RETAINED: usize = 64 * 1024;
 
 /// One feed entry: a single rendered unit (`docs/CHAT.md` §Vocabulary).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

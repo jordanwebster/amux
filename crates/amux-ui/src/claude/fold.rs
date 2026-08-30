@@ -24,7 +24,7 @@ use super::{
     InterruptionEntry, InterruptionKind, MESSAGES_RETAINED, MessageEntry, MessageFinality,
     MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry,
     PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED,
-    STRUCTURED_PATCH_CHARS_RETAINED, STRUCTURED_PATCH_HUNKS_RETAINED,
+    STRUCTURED_PATCH_BYTES_RETAINED, STRUCTURED_PATCH_HUNKS_RETAINED,
     STRUCTURED_PATCH_LINES_RETAINED, SlotState, SuccessFacts, SuggestionFact,
     TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource,
     TurnDuration, TurnEntry, UnrecognizedEntry, envelope,
@@ -895,7 +895,7 @@ fn structured_patch_document(patch: &[Value]) -> Document {
         truncated: false,
     };
     let mut retained_lines = 0usize;
-    let mut retained_chars = 0usize;
+    let mut retained_bytes = 0usize;
 
     'hunks: for value in patch {
         if document.hunks.len() == STRUCTURED_PATCH_HUNKS_RETAINED {
@@ -920,7 +920,7 @@ fn structured_patch_document(patch: &[Value]) -> Document {
 
         for line in source_lines.iter().filter_map(Value::as_str) {
             if retained_lines == STRUCTURED_PATCH_LINES_RETAINED
-                || retained_chars == STRUCTURED_PATCH_CHARS_RETAINED
+                || retained_bytes == STRUCTURED_PATCH_BYTES_RETAINED
             {
                 document.truncated = true;
                 if !lines.is_empty() {
@@ -936,19 +936,23 @@ fn structured_patch_document(patch: &[Value]) -> Document {
                 break 'hunks;
             }
 
-            let room = STRUCTURED_PATCH_CHARS_RETAINED - retained_chars;
-            let char_count = line.chars().count();
-            let retained = if char_count > room {
+            let room = STRUCTURED_PATCH_BYTES_RETAINED - retained_bytes;
+            let byte_count = line.len();
+            let retained = if byte_count > room {
                 document.truncated = true;
-                line.chars().take(room).collect()
+                let mut end = room;
+                while !line.is_char_boundary(end) {
+                    end -= 1;
+                }
+                line[..end].to_string()
             } else {
                 line.to_string()
             };
-            retained_chars += retained.chars().count();
+            retained_bytes += retained.len();
             retained_lines += 1;
             lines.push(retained);
 
-            if char_count > room {
+            if byte_count > room {
                 document.hunks.push(Hunk {
                     old_start,
                     new_start,
@@ -1034,7 +1038,7 @@ mod patch_tests {
     }
 
     #[test]
-    fn retained_patch_hunks_and_characters_have_independent_caps() {
+    fn retained_patch_hunks_and_bytes_have_independent_caps() {
         let patch: Vec<Value> = (0..=STRUCTURED_PATCH_HUNKS_RETAINED)
             .map(|index| {
                 json!({
@@ -1048,17 +1052,17 @@ mod patch_tests {
         assert!(document.truncated);
         assert_eq!(document.hunks.len(), STRUCTURED_PATCH_HUNKS_RETAINED);
 
-        let wide = "x".repeat(STRUCTURED_PATCH_CHARS_RETAINED + 5);
+        let wide = "🦀".repeat(STRUCTURED_PATCH_BYTES_RETAINED);
         let document = structured_patch_document(&[json!({
             "oldStart": 1,
             "newStart": 1,
             "lines": [format!("+{wide}")],
         })]);
         assert!(document.truncated);
-        assert_eq!(
-            document.hunks[0].lines[0].chars().count(),
-            STRUCTURED_PATCH_CHARS_RETAINED
-        );
+        let retained = &document.hunks[0].lines[0];
+        assert!(retained.len() <= STRUCTURED_PATCH_BYTES_RETAINED);
+        assert!(retained.len() > STRUCTURED_PATCH_BYTES_RETAINED - '🦀'.len_utf8());
+        assert!(retained.is_char_boundary(retained.len()));
     }
 }
 
