@@ -1,6 +1,6 @@
 # The amux protocol
 
-**Status**: implemented (2026-06-11). This is the protocol the daemon
+**Status**: implemented (2026-08-30). This is the protocol the daemon
 speaks; it is locked in by the prose spec suite in
 `crates/amux/tests/spec/`. The system around the wire — processes,
 servers, the dispatcher, trust storage, service surfaces — is described
@@ -128,13 +128,42 @@ envelopes through `AgentService.SendMessage` inside the same authenticated
 tunnels as every other peer call. Parent edges, work status, create/delete
 lifecycle, and provider carriers are specified in [`A2A.md`](./A2A.md).
 
-Agent sessions use a typed wire within those calls. Each agent carries a closed
-kind: Claude with either the PTY or SDK driver, Codex, or test-agent. Session
-subscription, output, input, and control messages select a protocol-specific
-protobuf `oneof`; the agent kind determines which selections are exposed, and
-the daemon returns a typed refusal when a caller selects one the kind does not
-support. The provider protocol details will be expanded with the provider-crate
-documentation.
+## Typed agent sessions
+
+Agent sessions use a typed wire within those calls. `AgentKind` is a closed
+protobuf `oneof`: Claude carries the required `ClaudeDriver` (`PTY` or `SDK`),
+while Codex and test-agent are distinct empty variants. Protocol availability
+is derived from that kind rather than advertised as a bag of strings:
+
+| agent kind | exposed protocols |
+|---|---|
+| Claude / PTY | `terminal_v1`, `claude_pty_transcript_v1` |
+| Claude / SDK | `claude_sdk_v1` |
+| Codex | `terminal_v1`, `codex_sdk_v1` |
+| test-agent | `terminal_v1`, `test_echo_v1` |
+
+`SubscribeSessionRequest.protocol`, `SessionOutput.output`, and
+`SendInputRequest.event` are protocol-specific protobuf `oneof`s. The routed
+`ClientSubscribeSessionRequest` and `ClientSendInputRequest` mirror those same
+variants with an `AgentRef`. Inputs therefore cannot be silently interpreted
+under the wrong provider protocol, and outputs retain their protocol type all
+the way to the client. `SessionControl` is a separate closed `oneof`; today its
+only variant is terminal resize.
+
+The daemon converts each selected variant to the closed Rust `Protocol` enum
+and exhaustively asks the backend for that plane. Selecting a well-formed
+protocol that the agent kind does not expose returns `ProtocolNotExposed`,
+carrying both the typed kind and `AgentProtocol` value. There is no fallback to
+another structured plane.
+
+Claude PTY input is typed one step further. `ClaudePtyTranscriptV1Input`
+carries `expected_seq` and an intent `oneof`: prompt, interrupt,
+permission-mode cycle, or an answer referencing an ask id. Only
+`TerminalV1Input` carries arbitrary bytes. Claude SDK input likewise has a
+closed prompt/interrupt/permission-decision `oneof`; Codex input has its own
+turn, steer, interrupt, and approval variants. The provider-crate ownership of
+these planes is described in [`PROVIDER_CRATES.md`](./PROVIDER_CRATES.md), and
+the semantic PTY encoding boundary in [`KEYMAPS.md`](./KEYMAPS.md).
 
 ## What this protocol deliberately does not have
 

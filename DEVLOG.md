@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Aligned the existing system documentation with provider
+crates.** Architecture now shows the provider-session, PTY-host and daemon
+adapter layers; the wire documents closed agent kinds and protocol payloads;
+Codex and Claude chat point to crate specifications, derived rows and focused
+live suites. The client guide names the typed Claude SDK placeholder, the A2A
+guide records the SDK stream carrier's recipient-owned row, and transcript
+provenance now distinguishes historical 2.1.228 findings from the current
+2.1.251 corpus. The amuxapp bridge remains explicitly broken until it adopts
+the typed wire.
+
+---
+
 2026-08-30 — **Bridge-session ownership identifiers are sanitized.** The
 shared replay sanitizer now treats bridge session ids and account,
 organization and user identity fields as personal identifiers, including

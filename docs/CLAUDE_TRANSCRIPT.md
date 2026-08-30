@@ -1,8 +1,9 @@
 # Claude Code transcript semantics — chat v1 grounding spec
 
 Status: from-first-principles spec of the transcript JSONL rows a chat
-client receives through amux's `claude_pty_transcript_v1` stream. Grounds
-requirements B2, B3, B7, C5, E1. Written 2026-08-11.
+client receives through amux's `claude_pty_transcript_v1` stream, refreshed
+against the executable Claude PTY corpus recorded at 2.1.251. Grounds
+requirements B2, B3, B7, C5, E1. Written 2026-08-11; refreshed 2026-08-30.
 
 The provider-neutral message envelope, delivery fallback, and family
 lifecycle are owned by [`A2A.md`](./A2A.md). This document owns only the
@@ -10,6 +11,11 @@ Claude rows those carriers produce.
 
 Evidence base:
 
+- The canonical 18-recording Claude PTY corpus under
+  `crates/claude/fixtures/pty/`, recorded at Claude Code **2.1.251** and
+  replayed by `claude::specs::pty`. The 18 committed `chat-v1` row fixtures
+  are derived from those recordings through the real provider session and
+  amux adapter; their sidecars name the source recording and version.
 - 13 main session files + 30+ subagent files under `~/.claude/projects/`
   (~10,100 rows), Claude Code versions **2.1.198, 2.1.220, 2.1.221,
   2.1.226, 2.1.227**. All quoted rows are structure-only; prose, paths,
@@ -33,15 +39,17 @@ Confidence vocabulary used throughout:
 - **FACT** — stated by a row field; no interpretation beyond reading it.
 - **INFERRED** — derived by a stated rule; failure modes listed.
 - **UNOBSERVED** — not present in local evidence; rule proposed from docs
-  only and must be confirmed by the real-Claude E2E suite (req. H).
+  only and must be confirmed by a provider specification or the opt-in
+  `claude_pty_live` suite (req. H).
 
 ---
 
 ## 1. What the client actually receives (the amux stream)
 
-The chat layer never reads the file. It receives, in order, from
-`StructuredLogSource` (`crates/amux/src/agents/log_source.rs`,
-`crates/amux/src/agents/claude/transcript.rs`):
+The chat layer never reads the file. `claude::pty::Session` owns the PTY, hook,
+and transcript sources; the thin adapter in
+`crates/amux/src/agents/claude/pty_backend.rs` publishes their ordered events
+through `StructuredLogSource`. The client receives:
 
 1. **Transcript rows** — each non-empty line of the linked JSONL file,
    parsed as opaque JSON, replayed from the start of the file (catch-up),
@@ -49,11 +57,17 @@ The chat layer never reads the file. It receives, in order, from
 2. **`{"type":"amux.transcript_ready"}`** — synthetic marker emitted once
    per link when catch-up reaches EOF. Everything before it is replay
    (B10's "loading"); everything after is live.
-3. **amux hook rows** — the raw Claude Code hook JSON with a `type` field
-   injected (`crates/amux/src/agents/claude/session/hooks.rs`):
-   `hook.permission_request`, `hook.stop`, `hook.notification`.
-   SessionStart/SessionEnd are consumed internally, not emitted.
-4. On **relink** (session file changes — `/clear`, resume, fork): the
+3. **amux hook rows** — typed `claude::hooks::HookPayload` values encoded by
+   the adapter with a `type` field: `hook.permission_request`, `hook.stop`,
+   `hook.notification`, `hook.user_prompt_submit`, `hook.pre_tool_use`, and
+   `hook.post_tool_use`. SessionStart/SessionEnd drive lifecycle and relink
+   internally rather than appearing as ordinary rows.
+4. **Semantic-input audit rows** — `amux.claude.keymap` names the resolved
+   keymap and basis at session start and relink;
+   `amux.claude.input_result` records each typed input's program and outcome.
+   The Claude UI fold consumes these as daemon facts rather than transcript
+   entries.
+5. On **relink** (session file changes — `/clear`, resume, fork): the
    buffer is cleared, the new file is replayed from its beginning, and a
    fresh `amux.transcript_ready` follows. Seq numbers keep increasing.
 
@@ -551,8 +565,11 @@ resurface path is purely client-side.
 
 ### 18a. Phase 0 capture corrections (claude 2.1.228, 2026-08-11)
 
-Fixtures: `crates/amux/tests/fixtures/chat-v1/`. Captured by the Phase 0
-harness driving a real claude; every quoted row is redacted structure.
+These findings were first established by the Phase 0 live harness at 2.1.228.
+The current files under `crates/amux/tests/fixtures/chat-v1/` are not those
+hand captures: they are derived from the canonical 2.1.251 provider recordings
+by `crates/amux/tests/derived_rows.rs`. Their sidecars are the authority for
+recording name and version; every quoted row remains redacted structure.
 
 - **AskUserQuestion `answers` is keyed by the question TEXT, not the header.**
   A single-select question with `header:"Color"`, `question:"Which color do
@@ -615,9 +632,9 @@ harness driving a real claude; every quoted row is redacted structure.
 
 ### 18b. Phase 1 fixture-read corrections (claude 2.1.228, 2026-08-12)
 
-Found while building the amux-ui Claude layer against the Phase 0 fixtures
-(`crates/amux/tests/fixtures/chat-v1/`); each item names the fixture that
-evidences it.
+Found while building the amux-ui Claude layer against the original Phase 0
+captures. Each named `chat-v1` fixture now points through its sidecar to a
+2.1.251 provider recording reproducing the same boundary claim.
 
 - **`agent-name` rows are BACK in 2.1.228** (`plan_approve` line 30:
   `{agentName, sessionId, type:"agent-name"}`). §3 lists the type as absent
@@ -737,12 +754,17 @@ evidence is the Phase 0 fixtures plus the live machine's own records.
 
 ### 18d. Phase 3 live keystroke verification (claude 2.1.228, 2026-08-12)
 
-Every C6 encoding was driven against a real claude by the extended capture
-harness (`crates/amux/tests/capture/`, scenarios `permission_session`,
+Every C6 encoding was originally driven against a real Claude Code 2.1.228
+process. The current executable evidence is the 2.1.251
+`claude::specs::pty` corpus: `permission_allow_scoped`,
 `permission_deny_feedback`, `question_tabs`, `question_other_single`,
-`question_mixed`, `plan_auto`, `mode_cycle`, `prompt_multiline`; all haiku;
-fixtures committed under `crates/amux/tests/fixtures/chat-v1/`). Findings,
-each fixture-evidenced:
+`question_mixed`, `plan_auto`, `mode_cycle`, and `prompt_multiline`, with the
+model recorded per manifest. `derived_rows` maps those provider recordings to
+the correspondingly named `chat-v1` fixtures (including
+`permission_session` for `permission_allow_scoped`) through the real session
+and adapter. Process-only stale-sequence, external-read-only, and terminal
+fan-out checks live in `claude_pty_live` and are deliberately not fixture
+pointers. Findings:
 
 - **D4 ANSWERED: mid-session Shift+Tab cycling emits NO `permission-mode`
   row.** Three CSI Z presses across two full turns wrote zero
@@ -868,8 +890,8 @@ Observed across 2.1.198 → 2.1.227 (five versions, one month):
   `attachment.type`, block type, `toolUseResult` shape → generic
   rendering; never gate on key-set equality; never crash on absent
   fields. Re-run this spec's sampling when `version` changes (the field
-  is on every uuid row — cheap to watch, and H's fixtures catch drift
-  first).
+  is on every uuid row — cheap to watch, and the provider specifications plus
+  drift probe catch changes first).
 
 ---
 
@@ -890,5 +912,5 @@ Observed across 2.1.198 → 2.1.227 (five versions, one month):
 | Phase: errored | `isApiErrorMessage:true` row | **FACT** | retry progress invisible; recovery only visible as the next normal assistant message |
 | Subagent status | launched: `toolUseResult.status:"async_launched"`; done: `status:"completed"` or task-notification user row; running: launched ∧ ¬done (+`pendingBackgroundAgentCount`) | **FACT** (launch/done) / **INFERRED** (running) | child files aren't tailed; a killed subagent may never emit a done artifact — staleness timer required |
 | Obligation pending→resolved (C5) | optimistic answer confirmed by §18 resolution row | **FACT** | plan-review flow **now OBSERVED** (§18/§18a): approve = tool_result success + canonical content (NOT a permission-mode change); reject = `is_error:true`. Send-failure has no transcript artifact (client-side resurface) |
-| Permission mode (D4) | latest `permission-mode` row | **FACT** (at emission) | re-emits mid-file at turn boundaries with the same value; a plan approve does not flip it (§18a). Mid-session *cycle* re-emission still unverified — E2E must confirm, else supplement with hook `permission_mode` |
+| Permission mode (D4) | latest hook `permission_mode`, with the latest `permission-mode` row as launch/bookkeeping state | **FACT** (at each emission) | a mid-session cycle emits no immediate `permission-mode` row (§18d); hook payloads provide the live value, while a later bookkeeping row may lag |
 | User prompt echo (B1) | match optimistic echo to user row (string content, `origin.kind:"human"`) | **FACT** | `origin` absent in ≤2.1.220 — fall back to string-content + non-meta discriminators |

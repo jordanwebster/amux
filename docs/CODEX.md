@@ -1,6 +1,7 @@
 # Codex in amux
 
-Status: implemented. This document owns the OpenAI Codex integration —
+Status: implemented (current provider baseline: codex-cli 0.150.1). This
+document owns the OpenAI Codex integration —
 which process owns what, the two planes a codex agent exposes, the row
 vocabulary on the structured plane, and the client-side layer that folds
 it. Companions: `docs/PROTOCOL.md` owns the wire, `docs/ARCHITECTURE.md`
@@ -9,24 +10,32 @@ owns the system, `docs/UI.md` owns the client layer's doctrine, and
 not imitate. `docs/A2A.md` owns the shared agent-message envelope, tools,
 and family lifecycle.
 
-The executable half of this document is `crates/amux-ui/tests/spec/`
-(`codex_feed`, `codex_asks`, `codex_write`, `codex_agreement`) plus the
-opt-in real-Codex C suite in `crates/amux/tests/codex_capture.rs`. Where
-prose and passing spec disagree, the spec wins.
+The executable half of this document is the canonical `codex` crate's
+recorded specifications, the amux backend derivation tests, the
+`crates/amux-ui/tests/spec/` folds (`codex_feed`, `codex_asks`,
+`codex_write`, `codex_agreement`), and the opt-in `codex_live` suite. Where
+prose and a passing specification disagree, the specification wins.
 
 ## What a codex agent is
 
 `amux new codex` creates an agent whose backend is a **thread on a Codex
 app-server**, not a PTY running a CLI. That is the whole reason codex
-needed its own integration rather than a config entry: Claude is a
-process amux owns and reads; codex is a *server* amux talks to, and the
-terminal UI is one of two consumers rather than the source of truth.
+needed its own integration rather than a config entry: Claude's drivers are
+processes amux owns, while codex is a *server* amux talks to, and the terminal
+UI is one of two consumers rather than the source of truth.
+
+Provider behavior lives in the repository's canonical `crates/codex` crate.
+Its public daemon boundary is
+`codex::Session { events: ThreadEventStream, control: ThreadControl }`.
+The code under `crates/amux/src/agents/codex` is an adapter that turns those
+events into amux rows, routes typed controls, implements delivery, and records
+the thread id for suspension; it is not a second provider implementation.
 
 ```
 amux daemon
-  └── CodexSession (one per agent)  ──┐
-  └── CodexSession                  ──┼──► one shared CodexClient
-  └── CodexSession                  ──┘      └── codex app-server (supervised)
+  └── codex::Session (one per agent)  ──┐
+  └── codex::Session                  ──┼──► one shared Codex client
+  └── codex::Session                  ──┘      └── codex app-server (supervised)
                                                    └── thread per agent
 ```
 
@@ -336,55 +345,34 @@ is absent.
 
 Four tiers, in increasing cost:
 
-1. **`crates/amux-ui/tests/spec/`** — pure reducer folds, no clock, no
-   IO. Every registered sequence is swept for invariant violations after
-   every Msg.
-2. **`crates/amux/tests/a2a_fixtures.rs`** — offline replay of the reduced,
-   version-pinned Codex MCP startup capture: fresh start, cold resume,
-   required-server success and failure, exact child environment, tool policy,
-   and startup status.
-3. **`crates/amux/tests/codex_capture_waiters.rs`** — the structural
-   waiters, driven offline from redacted rows captured off real failing
-   runs. No codex process, no credentials, no network.
-4. **`crates/amux/tests/codex_capture.rs`** — the **C suite**: opt-in,
-   real codex, fifteen scenarios (C.1–C.15) covering create+pong, approval
-   allow and deny *with filesystem assertions*, interrupt and reuse,
-   suspend/resume across a server restart (including the first post-restart
-   `resumed:true`, stable thread identity, and remembered context), real
-   process-group daemon recovery, raw+structured coexistence, two-subscriber
-   byte fanout, and
-   raw attach on an *unnamed* agent — the product default, and the one
-   parameter a hardcoded fixture hid for the whole of P9 — including
-   final-detach teardown and fresh raw reattach, plus unnamed zero-turn
-   suspend/resume. C.11 independently pins Codex's generic upstream
-   `dynamicTools` protocol (which amux does not register), C.12–C.14 pin idle
-   and busy injected messages plus final-assistant-message ordering at turn
-   completion, and C.15 covers a cross-kind child completion round trip.
-
-C.9 proves its independently checked process facts: final-detach process-group
-exit, a newly created raw process on reattach, and survival of the original
-structured stream. Its screen-content oracle did **not** establish that the
-resumed raw Codex composer is usable. The owner-authorized VT100 attempt was
-inconclusive and no further oracle is part of this close-out, so C.9 must not be
-cited as a composer witness.
-
-The C suite is inert in `cargo test --workspace` — with no scenario named
-it prints a skip note and exits 0 before creating a scratch directory,
-server, process, or request. `SCENARIOS` binds id, requirement, timeout
-and runner in one row so they cannot drift apart.
-
-It drives the prebuilt `target/debug/amux`, which `cargo test -p amux
---test codex_capture` does not rebuild, so a stale binary would report on
-code that is not in the tree — passing changes it never executed, and
-"passing" reverts too. The harness reads Cargo's `target/debug/amux.d`
-depfile and refuses to start when the binary is older than one of its
-actual prerequisites. This covers Rust, proto, plugin, and generated
-inputs without inventing a second workspace dependency graph.
+1. **`codex` unit tests and executable specifications.** Unit tests cover
+   framing and deterministic behavior. `codex::specs` runs one function per
+   claim either against codex-cli or against a strict recording. The registry
+   enforces its minimum supported version, allowed model, recording inventory,
+   and orphan checks. The committed corpus was recorded with codex-cli 0.150.1
+   and `gpt-5.6-luna` passed explicitly.
+2. **Daemon adapter derivation.** `crates/amux/tests/derived_rows.rs` opens
+   recorded `codex::Session`s, feeds them through the real amux adapter, and
+   proves the committed `codex_backend` rows reproduce byte for byte.
+   `a2a_fixtures` separately covers the thread-scoped MCP route and carrier
+   facts that belong at the daemon boundary.
+3. **`crates/amux-ui/tests/spec/`.** Pure reducer folds use the derived rows;
+   no clock or provider process is involved. Every registered sequence is
+   swept for invariant violations after every Msg.
+4. **`crates/amux/tests/codex_live.rs`.** The opt-in `codex_live` suite keeps
+   process-level facts that transport replay cannot prove: live create and
+   turn behavior, approvals with filesystem assertions, interrupt and reuse,
+   suspend/resume across app-server restart, raw and structured coexistence,
+   PTY fan-out and teardown, MCP tools, A2A injection, and cross-kind child
+   completion. It prints the observed codex-cli version and model first and is
+   inert when no scenario is named.
 
 ```sh
+timeout 900 cargo test -p codex --features specs --test spec_replay
+timeout 900 cargo test -p amux --test derived_rows codex
 cargo build -p amux-cli
-AMUX_CODEX_CAPTURE_DIR=target/codex-capture \
-  timeout 600 cargo test -p amux --test codex_capture -- c-all
+AMUX_CODEX_LIVE_MODEL=gpt-5.6-luna \
+  timeout 1500 cargo test -p amux --test codex_live -- all
 ```
 
 Two standing rules, both bought with pain elsewhere in this repo:
@@ -397,8 +385,11 @@ Two standing rules, both bought with pain elsewhere in this repo:
   never rolled forward wholesale. Graduation is a deliberate, separate,
   reviewed change.
 
-Every capture records codex version, model, date and scenario id.
-Upstream drift is recorded and diffed, never guessed at.
+Every recording carries provider version, model, capture date, a content
+inventory, and an append-only live-verification ledger. `codex-probe` lists the
+registry and runs the specifications against the installed binary; passing
+claims append the ledger, failing claims alone are re-recorded, and additive
+drift is written beside the run rather than guessed at.
 
 ## Decisions
 

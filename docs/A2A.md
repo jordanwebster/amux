@@ -108,7 +108,7 @@ refuses a family with a non-empty work claim unless `--force` is supplied.
 The owning daemon hands the envelope to the recipient's `AgentBackend`; each
 provider decides how its native session accepts input.
 
-### Claude
+### Claude PTY
 
 Every spawned Claude session receives an amux-owned `--name`. Claude Code
 versions at or above 2.1.224 also receive a per-agent
@@ -158,11 +158,20 @@ carriage-return line endings become newlines; other control characters except
 newline are dropped. The remaining message is still delivered. Claude queues
 input received during a running turn.
 
-SDK-driven Claude sessions use the generic `<amux>` envelope as a stream-JSON
-user message. Once the provider session has emitted its ready row, accepted
-delivery writes an `amux.claude_sdk.message` row containing the complete
-daemon-authored envelope and `delivery: "stream"`. That recipient-owned row is
-the durable delivery record; no sender-side row is treated as evidence.
+### Claude SDK
+
+The SDK driver is a separate carrier over the same daemon-authored envelope.
+Before the provider session emits ready its delivery target is pending; after
+exit it is unavailable. While live, the adapter formats the generic `<amux>`
+envelope as a stream-JSON user message and sends it through
+`claude::sdk::Control::prompt`. This uses the provider crate's ordinary control
+handle rather than a driver-specific path in fleet routing.
+
+Only provider acceptance completes delivery. After `Control::prompt` succeeds,
+the recipient log writes `amux.claude_sdk.message` with the complete envelope
+and `delivery: "stream"`. That row is the recipient-owned durable record. A
+sender response, attempted prompt, or pre-ready queue is never treated as
+delivery evidence.
 
 ### Codex
 
