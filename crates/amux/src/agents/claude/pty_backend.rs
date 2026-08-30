@@ -82,6 +82,7 @@ impl ClaudePtyBackend {
             AgentType::Claude { driver } => driver,
             _ => unreachable!("Claude backend requires a Claude request"),
         };
+        debug_assert_eq!(driver, ClaudeDriver::Pty);
         Self {
             driver,
             agent_id: req.agent_id,
@@ -530,9 +531,6 @@ impl AgentBackend for ClaudePtyBackend {
     ) -> Result<tokio::task::JoinHandle<()>> {
         if self.started {
             return Err(anyhow!("Claude session {} already started", self.agent_id));
-        }
-        if self.driver == ClaudeDriver::Sdk {
-            return Err(anyhow!("Claude SDK agents are not implemented yet"));
         }
         self.started = true;
         if self.injected.is_some() {

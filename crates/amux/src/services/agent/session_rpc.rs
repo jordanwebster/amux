@@ -772,7 +772,9 @@ pub(super) async fn open_in_process_protocol_plane(
     };
     let deps = host.state().read().await.deps.clone();
     let session: AgentSession = match kind {
-        crate::agents::AgentKind::Claude { .. } => {
+        crate::agents::AgentKind::Claude {
+            driver: ClaudeDriver::Pty,
+        } => {
             let session = crate::agents::claude::ClaudeSession::for_protocol_tests(
                 &request,
                 deps.runtime_dir.clone(),
@@ -781,7 +783,11 @@ pub(super) async fn open_in_process_protocol_plane(
             );
             Box::new(session)
         }
-        crate::agents::AgentKind::Codex | crate::agents::AgentKind::TestAgent => {
+        crate::agents::AgentKind::Claude {
+            driver: ClaudeDriver::Sdk,
+        }
+        | crate::agents::AgentKind::Codex
+        | crate::agents::AgentKind::TestAgent => {
             new_agent(&request, &deps).map_err(|error| ProtocolError::ServerError {
                 message: error.to_string(),
             })?
@@ -816,36 +822,44 @@ pub(super) async fn open_in_process_protocol_plane(
 
 #[cfg(debug_assertions)]
 pub(super) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
-    use super::LocalAgentHost;
-    use crate::agents::{ClaudeDriver, CreateAgentConfig, CreateAgentRpcRequest};
+    use crate::agents::{AgentType, ClaudeDriver, CreateAgentRequest, McpLaunchRoute, new_agent};
 
     let host_id = Uuid::new_v4();
     let config = crate::config::Config::default();
-    let route =
-        crate::agents::McpLaunchRoute::for_current_process(&config, host_id).map_err(|error| {
-            ProtocolError::ServerError {
-                message: error.to_string(),
-            }
-        })?;
+    let route = McpLaunchRoute::for_current_process(&config, host_id).map_err(|error| {
+        ProtocolError::ServerError {
+            message: error.to_string(),
+        }
+    })?;
     let host = PtyAgentHost::new_with_mcp_launch_route(route).map_err(|error| {
         ProtocolError::ServerError {
             message: error.to_string(),
         }
     })?;
-    host.create(CreateAgentRpcRequest {
+    let request = CreateAgentRequest {
         agent_id: Uuid::new_v4(),
+        host_id: None,
         name: Some("sdk-placeholder".to_string()),
         parent: None,
         initial_prompt: None,
-        agent: CreateAgentConfig::Claude {
+        agent_type: AgentType::Claude {
             driver: ClaudeDriver::Sdk,
-            working_dir: std::env::temp_dir(),
-            args: Vec::new(),
-            terminal_size: None,
         },
-    })
-    .await
-    .map(|_| ())
+        working_dir: std::env::temp_dir(),
+        args: Vec::new(),
+        terminal_size: None,
+    };
+    let state = host.state().read().await;
+    let session = new_agent(&request, &state.deps).map_err(|error| ProtocolError::ServerError {
+        message: error.to_string(),
+    })?;
+    debug_assert_eq!(
+        session.kind(),
+        crate::agents::AgentKind::Claude {
+            driver: ClaudeDriver::Sdk,
+        }
+    );
+    Ok(())
 }
 
 #[cfg(test)]

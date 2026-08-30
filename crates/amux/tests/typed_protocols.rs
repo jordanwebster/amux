@@ -71,12 +71,6 @@ async fn every_exposed_provider_protocol_opens_in_process() {
 }
 
 #[tokio::test]
-async fn sdk_claude_create_is_typed_unimplemented() {
-    let error = create_sdk().await.unwrap_err();
-
-    assert!(matches!(
-        error,
-        ProtocolError::Unimplemented { message }
-            if message == "Claude SDK agents are not implemented yet"
-    ));
+async fn sdk_claude_create_constructs_the_provider_backend() {
+    create_sdk().await.unwrap();
 }

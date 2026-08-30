@@ -1278,4 +1278,134 @@ mod tests {
             b"must not be opened"
         );
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sdk_suspend_restart_round_trip_resumes_by_session_id_and_orders_gap() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("state.yaml");
+        let argv = directory.path().join("resume-argv.txt");
+        let script = directory.path().join("fake-claude");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"req_0\",\"response\":{{\"commands\":[],\"agents\":[],\"output_style\":\"default\",\"available_output_styles\":[],\"models\":[],\"account\":{{}}}}}}}}'\nwhile IFS= read -r line; do :; done\n",
+                argv.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let agent_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+        let req = CreateAgentRequest {
+            agent_id,
+            host_id: None,
+            name: Some("resumed-sdk".to_string()),
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            working_dir: directory.path().to_path_buf(),
+            terminal_size: None,
+            args: vec!["--model".to_string(), "haiku".to_string()],
+            parent: None,
+            initial_prompt: None,
+        };
+        let initial = ClaudeSdkBackend::new(&req, mcp_launch_route_for_tests(Uuid::new_v4()));
+        initial
+            .runtime
+            .lock()
+            .expect("Claude SDK runtime poisoned")
+            .session_id = Some(session_id);
+        let suspended = initial.suspended_state().unwrap();
+        assert!(matches!(
+            &suspended,
+            SuspendedAgent::Claude {
+                driver: ClaudeDriver::Sdk,
+                agent_id: persisted_agent,
+                session_id: persisted_session,
+                ..
+            } if *persisted_agent == agent_id && *persisted_session == session_id
+        ));
+
+        crate::suspend::save_suspended(
+            &state_path,
+            &crate::suspend::SuspendedServerState {
+                agents: vec![suspended],
+            },
+        )
+        .unwrap();
+        let mut loaded = crate::suspend::load_suspended(&state_path).unwrap().agents;
+        let SuspendedAgent::Claude {
+            driver,
+            agent_id: restored_agent_id,
+            name,
+            name_source,
+            working_dir,
+            terminal_size,
+            args,
+            session_id: restored_session_id,
+            created_at: restored_created_at,
+            parent,
+            working_on: _,
+        } = loaded.pop().unwrap()
+        else {
+            panic!("expected persisted Claude SDK agent");
+        };
+        assert_eq!(driver, ClaudeDriver::Sdk);
+        assert_eq!(restored_agent_id, agent_id);
+        assert_eq!(restored_session_id, session_id);
+
+        let resumed_req = CreateAgentRequest {
+            agent_id: restored_agent_id,
+            host_id: None,
+            name,
+            agent_type: AgentType::Claude { driver },
+            working_dir,
+            terminal_size,
+            args,
+            parent,
+            initial_prompt: None,
+        };
+        let mut resumed = ClaudeSdkBackend::from_suspended(
+            &resumed_req,
+            name_source.into(),
+            restored_session_id,
+            restored_created_at,
+            mcp_launch_route_for_tests(Uuid::new_v4()),
+        );
+        resumed.command = script.to_string_lossy().into_owned();
+        let mut rows = resumed.log.subscribe().await.unwrap();
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let ingest = resumed.start(&event_tx).unwrap();
+
+        let gap = tokio::time::timeout(Duration::from_secs(5), rows.read())
+            .await
+            .unwrap()
+            .unwrap();
+        let ready = tokio::time::timeout(Duration::from_secs(5), rows.read())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(gap.payload["type"], "amux.claude_sdk.gap");
+        assert_eq!(
+            gap.payload["resumed_session_id"],
+            restored_session_id.to_string()
+        );
+        assert_eq!(ready.payload["type"], "amux.claude_sdk.ready");
+        assert_eq!(ready.payload["session_id"], restored_session_id.to_string());
+        assert_eq!(ready.payload["resumed"], true);
+
+        let arguments = std::fs::read_to_string(&argv).unwrap();
+        let arguments = arguments.lines().collect::<Vec<_>>();
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["--resume", restored_session_id.to_string().as_str()])
+        );
+        assert!(!arguments.contains(&"--session-id"));
+
+        resumed.stop(StopPolicy::Interrupt).await;
+        let _ = ingest.await;
+    }
 }

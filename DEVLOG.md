@@ -5394,3 +5394,9 @@ becomes live only after the provider ready row, sends the same authenticated
 envelope used by the other backends through stream input, and records the
 accepted message on the recipient's `claude_sdk_v1` log. Exited sessions refuse
 delivery instead of accepting messages that can no longer be observed.
+
+2026-08-30 — **Enabled Claude SDK creation and restart resume.** The daemon now
+accepts SDK-driven Claude creation from the same host path as other agents,
+persists the provider session ID during suspend, and resumes that ID through
+Claude's stream-JSON CLI. Resumed structured streams begin with an explicit gap
+row before their ready row so clients can distinguish the restart boundary.
