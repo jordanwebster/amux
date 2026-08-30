@@ -241,14 +241,23 @@ pub fn long_feed(protocol: StructuredProtocol, entries: usize) -> Fixture {
     rows.push(match protocol {
         StructuredProtocol::Claude => claude_ready(),
         StructuredProtocol::Codex => codex_ready(),
+        StructuredProtocol::ClaudeSdk => {
+            unreachable!("an SDK-driven chat has no native feed to fixture")
+        }
     });
     match protocol {
         StructuredProtocol::Claude => rows.extend((0..entries).map(claude_long_row)),
         StructuredProtocol::Codex => rows.extend((0..entries).map(codex_long_row)),
+        StructuredProtocol::ClaudeSdk => {
+            unreachable!("an SDK-driven chat has no native feed to fixture")
+        }
     }
     match protocol {
         StructuredProtocol::Claude => claude_fixture(rows),
         StructuredProtocol::Codex => codex_fixture(rows),
+        StructuredProtocol::ClaudeSdk => {
+            unreachable!("an SDK-driven chat has no native feed to fixture")
+        }
     }
 }
 
@@ -297,14 +306,26 @@ fn host_id() -> HostId {
 fn agent_id(protocol: StructuredProtocol) -> AgentId {
     match protocol {
         StructuredProtocol::Claude => AgentId::from_u128(7),
+        StructuredProtocol::ClaudeSdk => AgentId::from_u128(9),
         StructuredProtocol::Codex => AgentId::from_u128(8),
     }
 }
 
 fn agent(protocol: StructuredProtocol, name: &str) -> Agent {
-    let (command, wire_protocol) = match protocol {
-        StructuredProtocol::Claude => ("claude", "claude_pty_transcript_v1"),
-        StructuredProtocol::Codex => ("codex", "codex_sdk_v1"),
+    let (command, kind) = match protocol {
+        StructuredProtocol::Claude => (
+            "claude",
+            amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
+        ),
+        StructuredProtocol::ClaudeSdk => (
+            "claude",
+            amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Sdk,
+            },
+        ),
+        StructuredProtocol::Codex => ("codex", amux_ui::AgentKind::Codex),
     };
     Agent {
         id: agent_id(protocol),
@@ -312,8 +333,7 @@ fn agent(protocol: StructuredProtocol, name: &str) -> Agent {
         name: Some(name.to_string()),
         command: command.to_string(),
         working_dir: "/work/amux".into(),
-        agent_type: command.to_string(),
-        io_protocols: vec!["terminal_v1".to_string(), wire_protocol.to_string()],
+        kind,
         readonly: false,
         args: Vec::new(),
         created_at: at("2026-08-12T09:00:00Z"),

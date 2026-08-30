@@ -8,7 +8,7 @@
 //! pairing index, and a re-replay after source-shrink recovery folds
 //! idempotently by row uuid.
 
-use amux_ui::claude::{FeedEntryKind, ToolOutcome};
+use amux_ui::claude::{ChatPhase, FeedEntryKind, PhaseTag, ToolOutcome};
 use amux_ui::{Msg, StreamMsg};
 use serde_json::json;
 
@@ -28,6 +28,62 @@ fn a_fresh_session_is_empty_chat_not_loading() {
         "no transcript_ready before the first turn"
     );
     assert!(!layer.history_truncated());
+}
+
+/// Daemon-owned keymap metadata and input acknowledgements are structured
+/// control-plane rows, not transcript history. Seeing either in a fresh
+/// session must leave both the feed and the pre-live discriminator unchanged.
+#[test]
+fn keymap_rows_do_not_turn_a_fresh_session_into_replay() {
+    let keymap = json!({
+        "type": "amux.claude.keymap",
+        "keymap": {
+            "name": "claude-2.1",
+            "source": {"source": "baked"},
+            "digest": "sha256:test"
+        },
+        "basis": {"basis": "in_range"},
+        "stability_limits": {}
+    });
+    let input_result = json!({
+        "type": "amux.claude.input_result",
+        "intent": {"intent": "prompt", "text": "hello"},
+        "keymap": {
+            "name": "claude-2.1",
+            "source": {"source": "baked"},
+            "digest": "sha256:test"
+        },
+        "basis": {"basis": "in_range"},
+        "program": "prompt",
+        "bytes_written": 14
+    });
+    let keymap_only = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch("fix-auth-bug", 10, vec![keymap.clone()])],
+    ]));
+    assert_eq!(
+        amux_ui::claude::phase(&keymap_only, agent_id("fix-auth-bug")),
+        ChatPhase::Idle {
+            tag: PhaseTag::Inferred
+        },
+        "a keymap-only session keeps the fresh pre-live discriminator"
+    );
+
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch("fix-auth-bug", 10, vec![keymap, input_result])],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+
+    assert_eq!(layer.entry_count(), 0, "control rows add no feed entries");
+    assert_eq!(
+        amux_ui::claude::phase(&model, agent_id("fix-auth-bug")),
+        ChatPhase::Idle {
+            tag: PhaseTag::Inferred
+        },
+        "both control rows preserve the fresh session's pre-live discriminator"
+    );
+    assert!(!layer.transcript_ready());
 }
 
 /// The `amux.transcript_ready` marker separates replay from live; the pong
@@ -306,6 +362,20 @@ fn an_orphan_result_renders_result_only() {
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         ("feed_replay::fresh", chat_base("fix-auth-bug")),
+        (
+            "feed_replay::keymap_rows",
+            seq([
+                chat_base("fix-auth-bug"),
+                vec![batch(
+                    "fix-auth-bug",
+                    10,
+                    vec![
+                        json!({"type": "amux.claude.keymap"}),
+                        json!({"type": "amux.claude.input_result"}),
+                    ],
+                )],
+            ]),
+        ),
         ("feed_replay::pong", chat_feed("fix-auth-bug", "pong")),
         (
             "feed_replay::unknown_dedupe",

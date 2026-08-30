@@ -6,21 +6,21 @@ description = "Agent multiplexer - library for building amux clients and servers
 
 [features]
 default = ["local-agents"]
-# Local agent hosting: PTY-backed Claude/test-agent process spawning (pulls
-# `portable-pty`, a native dependency) and the Codex app-server client
-# (`codex-sdk`, which brings its WebSocket stack). Default-on for the desktop daemon;
+# Local agent hosting: provider-backed Claude/test-agent PTY sessions and the Codex app-server client
+# (`codex`, which brings its WebSocket stack). Default-on for the desktop daemon;
 # embedded mobile clients build with `default-features = false`. The daemonish
 # behaviors (direct reachability, self-update poll) are NOT gated here — they
 # are a runtime builder/config choice, independent of this feature.
-local-agents = ["dep:portable-pty", "dep:codex-sdk"]
+local-agents = ["claude/pty", "dep:pty-host", "dep:codex"]
 # Compiles the in-process spec-test harness (`amux::testnet`) into the
 # library. Test-only; never enable in production builds.
 testnet = ["dep:tempfile", "local-agents"]
 
 [dependencies]
 anyhow = { workspace = true }
+claude = { workspace = true }
 tempfile = { workspace = true, optional = true }
-portable-pty = { workspace = true, optional = true }
+pty-host = { workspace = true, optional = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -53,7 +53,7 @@ bytes = { workspace = true }
 shell-words = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-codex-sdk = { path = "../codex-sdk", optional = true }
+codex = { path = "../codex", optional = true }
 libc = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -72,6 +72,8 @@ windows-sys = { version = "0.61.2", features = [
 tempfile = { workspace = true }
 prost-types = { workspace = true }
 amux-ui = { workspace = true }
+claude = { workspace = true, features = ["specs", "pty"] }
+codex = { path = "../codex", features = ["specs"] }
 replay-support = { path = "../replay-support" }
 tokio-tungstenite = { workspace = true }
 nix = { workspace = true }
@@ -81,18 +83,25 @@ name = "spec"
 path = "tests/spec/main.rs"
 required-features = ["testnet"]
 
-# Opt-in real-Claude capture harness (the seed of the CHAT.md §H suite).
-# Does nothing unless scenarios are named: see tests/capture/main.rs.
+# Maintained opt-in real-Claude PTY backend suite. With no arguments it prints
+# usage and exits without live work; see tests/claude_pty_live.rs.
 [[test]]
-name = "capture"
-path = "tests/capture/main.rs"
+name = "claude_pty_live"
+path = "tests/claude_pty_live.rs"
 harness = false
 
-# Maintained opt-in real-Codex E2E suite. It exits without work unless a
-# scenario argument is supplied; see tests/codex_capture.rs.
+# Maintained opt-in real-Codex backend suite. With no arguments it prints usage
+# and exits without live work; see tests/codex_live.rs.
 [[test]]
-name = "codex_capture"
-path = "tests/codex_capture.rs"
+name = "codex_live"
+path = "tests/codex_live.rs"
+harness = false
+
+# Maintained opt-in real-Claude SDK backend suite. With no arguments it prints
+# usage and exits without live work; see tests/claude_sdk_live.rs.
+[[test]]
+name = "claude_sdk_live"
+path = "tests/claude_sdk_live.rs"
 harness = false
 
 [build-dependencies]

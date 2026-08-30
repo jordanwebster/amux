@@ -4,7 +4,9 @@
 //! build, folding the same checkpoint and ordered Msgs, produces identical
 //! Models. Replay folds but never executes Effects.
 
-use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer, PlanAnswer, QuestionResponse};
+use amux_ui::claude::answer::{
+    AskAnswer, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
+};
 use amux_ui::{
     BUILD, DisconnectReason, DumpReason, Effect, Model, Msg, OpOutcome, Recorder,
     StreamCloseReason, StreamEntry, StreamMsg, replay, update,
@@ -121,12 +123,12 @@ fn every_msg_variant_round_trips_through_serde() {
             amux_ui::Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
                 agent: agent_id("fix-auth-bug"),
                 ask: 1,
-                answer: AskAnswer::Question {
-                    responses: vec![QuestionResponse {
+                answer: AskAnswer::Question(QuestionResponse {
+                    answers: vec![QuestionAnswer {
                         selected: vec![0, 2],
                         other: Some("a torque wrench".to_string()),
                     }],
-                },
+                }),
             }),
         ),
         command(

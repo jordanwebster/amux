@@ -6,7 +6,7 @@ const STOP_PAYLOAD: &str = include_str!("fixtures/a2a/stop_payload.jsonl");
 const MCP_TOOLS: &str = include_str!("fixtures/a2a/mcp_tools.jsonl");
 const SESSION_REGISTRY: &str = include_str!("fixtures/a2a/session_registry.jsonl");
 const SESSION_REGISTRY_META: &str = include_str!("fixtures/a2a/session_registry.meta.json");
-const CODEX_MCP_SUBSTRATE: &str = include_str!("fixtures/codex_backend/mcp_substrate.jsonl");
+const CODEX_MCP_SUBSTRATE: &str = include_str!("fixtures/rows/codex/mcp_substrate.jsonl");
 
 fn codex_mcp_substrate() -> Vec<Value> {
     CODEX_MCP_SUBSTRATE
@@ -166,9 +166,9 @@ fn a2a_fixture_codex_mcp_substrate_replays_offline() {
 
 fn captured_a2a_io(name: &str) -> Vec<Value> {
     let capture = match name {
-        "inject_idle" => include_str!("fixtures/codex_backend/a2a_inject_idle.io.jsonl"),
-        "inject_busy" => include_str!("fixtures/codex_backend/a2a_inject_busy.io.jsonl"),
-        "last_message" => include_str!("fixtures/codex_backend/a2a_last_message.io.jsonl"),
+        "inject_idle" => include_str!("fixtures/rows/codex/a2a_inject_idle.io.jsonl"),
+        "inject_busy" => include_str!("fixtures/rows/codex/a2a_inject_busy.io.jsonl"),
+        "last_message" => include_str!("fixtures/rows/codex/a2a_last_message.io.jsonl"),
         _ => panic!("unknown A2A Codex fixture {name}"),
     };
     capture

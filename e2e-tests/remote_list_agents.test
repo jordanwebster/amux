@@ -70,4 +70,4 @@ Pairing mode ended.
 > amux list
 @@retry 5000 250
 Running agents:
-  remote-agent - $dir_a.path
+  remote-agent [test-agent] - $dir_a.path

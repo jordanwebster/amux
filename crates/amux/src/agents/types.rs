@@ -5,6 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::{AgentKind, ClaudeDriver};
+
 /// Environment variables forwarded from an agent's hook invocation.
 pub(crate) type HookEnvironment = HashMap<String, String>;
 
@@ -28,7 +30,7 @@ pub(crate) const AGENT_TYPE_TEST_AGENT: &str = "test-agent";
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentType {
     /// Claude Code agent.
-    Claude,
+    Claude { driver: ClaudeDriver },
     /// Codex agent backed by an app-server thread.
     Codex {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,9 +110,7 @@ pub struct Agent {
     pub name: Option<String>,
     pub command: String,
     pub working_dir: PathBuf,
-    pub agent_type: String,
-    #[serde(default)]
-    pub io_protocols: Vec<String>,
+    pub kind: AgentKind,
     pub readonly: bool,
     pub args: Vec<String>,
     pub created_at: DateTime<Utc>,

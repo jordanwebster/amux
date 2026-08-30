@@ -207,8 +207,7 @@ impl Serialize for AgentDebugEntry<'_> {
             map.serialize_entry("name", name)?;
         }
         map.serialize_entry("location", "local")?;
-        map.serialize_entry("agent_type", &info.agent_type)?;
-        map.serialize_entry("io_protocols", &info.io_protocols)?;
+        map.serialize_entry("kind", &info.kind)?;
         map.serialize_entry("readonly", &info.readonly)?;
         map.serialize_entry("command", &info.command)?;
         map.serialize_entry("working_dir", &LossyPath(&info.working_dir))?;

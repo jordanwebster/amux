@@ -23,7 +23,11 @@ fn attention_of(model: &Model, agent: &str) -> Attention {
 /// ranks it first.
 #[test]
 fn permission_request_marks_needs_you() {
-    let model = fold(chat_feed_prefix("fix-auth-bug", "permission", 8));
+    let model = fold(chat_feed_through(
+        "fix-auth-bug",
+        "permission",
+        ChatAnchor::PermissionRequest(0),
+    ));
     assert_eq!(
         attention_of(&model, "fix-auth-bug"),
         Attention::NeedsYou {
@@ -43,7 +47,11 @@ fn permission_request_marks_needs_you() {
 /// `tool_name`, which fires for questions too.
 #[test]
 fn a_pending_question_marks_needs_you_question() {
-    let model = fold(chat_feed_prefix("fix-auth-bug", "question_single", 8));
+    let model = fold(chat_feed_through(
+        "fix-auth-bug",
+        "question_single",
+        ChatAnchor::PermissionRequest(0),
+    ));
     assert_eq!(
         attention_of(&model, "fix-auth-bug"),
         Attention::NeedsYou { why: Why::Question }
@@ -56,8 +64,11 @@ fn a_pending_question_marks_needs_you_question() {
 /// on `tool_name` and cannot be fooled by wording.
 #[test]
 fn plan_approval_is_permission_not_question_whatever_the_wording_says() {
-    // plan_reject prefix through BOTH hook.notification rows.
-    let model = fold(chat_feed_prefix("fix-auth-bug", "plan_reject", 39));
+    let model = fold(chat_feed_through(
+        "fix-auth-bug",
+        "plan_reject",
+        ChatAnchor::PermissionRequest(0),
+    ));
     assert_eq!(
         attention_of(&model, "fix-auth-bug"),
         Attention::NeedsYou {
@@ -70,12 +81,26 @@ fn plan_approval_is_permission_not_question_whatever_the_wording_says() {
 /// cannot strobe the badge — only turn signals and asks leave Working.
 #[test]
 fn activity_between_prompt_and_turn_end_is_working() {
-    let mut model = fold(chat_feed_prefix("fix-auth-bug", "permission", 6));
+    let mut model = fold(chat_feed_through(
+        "fix-auth-bug",
+        "permission",
+        ChatAnchor::Prompt(0),
+    ));
     assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Working);
     // Fold the first turn's transcript rows one at a time, skipping the
-    // hook pair (rows 6-7): message, tool_use, and result rows keep it
-    // Working at every step.
-    for (step, row) in chat_rows("permission")[8..11].iter().enumerate() {
+    // permission hook: message, tool_use, and result rows keep it Working
+    // at every step.
+    for (step, row) in chat_rows_from_through(
+        "permission",
+        ChatAnchor::ToolUse {
+            name: "Bash",
+            occurrence: 0,
+        },
+        ChatAnchor::ToolResult(0),
+    )
+    .iter()
+    .enumerate()
+    {
         amux_ui::update(
             &mut model,
             batch("fix-auth-bug", 11 + step as i64, vec![row.clone()]),
@@ -92,14 +117,17 @@ fn activity_between_prompt_and_turn_end_is_working() {
 /// marks the turn complete: the agent finished and wants your review.
 #[test]
 fn a_completed_turn_marks_finished() {
-    let model = fold(chat_feed("fix-auth-bug", "permission"));
+    let model = fold(chat_feed("fix-auth-bug", "pong"));
     assert_eq!(
         attention_of(&model, "fix-auth-bug"),
         Attention::NeedsYou { why: Why::Finished }
     );
     // The pre-signal alone reports the same, before the tail catches up
-    // (the question fixture's capture window closed at the hook).
-    let presignal = fold(chat_feed("fix-auth-bug", "question_single"));
+    let presignal = fold(chat_feed_through(
+        "fix-auth-bug",
+        "pong",
+        ChatAnchor::StopHook(0),
+    ));
     assert_eq!(
         attention_of(&presignal, "fix-auth-bug"),
         Attention::NeedsYou { why: Why::Finished }
@@ -155,7 +183,11 @@ fn late_join_replay_derives_pending_permission() {
         synced(),
         vec![
             stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
-            batch("fix-auth-bug", 5, chat_rows("permission")[..8].to_vec()),
+            batch(
+                "fix-auth-bug",
+                5,
+                chat_rows_through("permission", ChatAnchor::PermissionRequest(0)),
+            ),
             stream("fix-auth-bug", StreamMsg::ReplayComplete),
         ],
     ]));
@@ -175,7 +207,7 @@ fn an_api_error_degrades_attention_to_unknown() {
     let error_row = serde_json::json!({
         "type": "assistant",
         "uuid": "cccccccc-0000-4000-8000-000000000009",
-        "sessionId": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+        "sessionId": chat_session_id("permission"),
         "timestamp": "2026-08-11T22:00:05.000Z",
         "isApiErrorMessage": true,
         "error": "server_error",
@@ -186,7 +218,7 @@ fn an_api_error_degrades_attention_to_unknown() {
         },
     });
     let model = fold(seq([
-        chat_feed_prefix("fix-auth-bug", "permission", 6),
+        chat_feed_through("fix-auth-bug", "permission", ChatAnchor::Prompt(0)),
         vec![batch("fix-auth-bug", 20, vec![error_row])],
     ]));
     assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Unknown);
@@ -205,7 +237,7 @@ fn an_api_error_degrades_attention_to_unknown() {
 #[test]
 fn stale_working_degrades_the_fleet_badge_and_label_together() {
     let live = fold(seq([
-        chat_feed_prefix("fix-auth-bug", "permission", 6),
+        chat_feed_through("fix-auth-bug", "permission", ChatAnchor::Prompt(0)),
         vec![tick(10 + 599)],
     ]));
     assert_eq!(attention_of(&live, "fix-auth-bug"), Attention::Working);
@@ -214,7 +246,7 @@ fn stale_working_degrades_the_fleet_badge_and_label_together() {
         "working"
     );
     let stale = fold(seq([
-        chat_feed_prefix("fix-auth-bug", "permission", 6),
+        chat_feed_through("fix-auth-bug", "permission", ChatAnchor::Prompt(0)),
         vec![tick(10 + 601)],
     ]));
     assert_eq!(attention_of(&stale, "fix-auth-bug"), Attention::Unknown);
@@ -400,7 +432,7 @@ fn a_replaying_claude_card_never_claims_idle_or_needs_you() {
         vec![batch(
             "fix-auth-bug",
             10,
-            chat_rows("permission")[..8].to_vec(),
+            chat_rows_through("permission", ChatAnchor::PermissionRequest(0)),
         )],
     ]);
     let model = fold(with_asks.clone());
@@ -442,14 +474,22 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
                 synced(),
                 vec![
                     stream("fix-auth-bug", StreamMsg::Opened { truncated: false }),
-                    batch("fix-auth-bug", 10, chat_rows("permission")[..8].to_vec()),
+                    batch(
+                        "fix-auth-bug",
+                        10,
+                        chat_rows_through("permission", ChatAnchor::PermissionRequest(0)),
+                    ),
                     stream("fix-auth-bug", StreamMsg::ReplayComplete),
                 ],
             ]),
         ),
         (
             "attention::permission_pending",
-            chat_feed_prefix("fix-auth-bug", "permission", 8),
+            chat_feed_through(
+                "fix-auth-bug",
+                "permission",
+                ChatAnchor::PermissionRequest(0),
+            ),
         ),
         (
             "attention::readonly_attach",
@@ -467,11 +507,15 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
         ),
         (
             "attention::plan_wording_lock",
-            chat_feed_prefix("fix-auth-bug", "plan_reject", 39),
+            chat_feed_through(
+                "fix-auth-bug",
+                "plan_reject",
+                ChatAnchor::PermissionRequest(0),
+            ),
         ),
         (
             "attention::finished",
-            chat_feed("fix-auth-bug", "question_single"),
+            chat_feed_through("fix-auth-bug", "pong", ChatAnchor::StopHook(0)),
         ),
         (
             "attention::late_join",
@@ -484,7 +528,11 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
                 synced(),
                 vec![
                     stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
-                    batch("fix-auth-bug", 5, chat_rows("permission")[..8].to_vec()),
+                    batch(
+                        "fix-auth-bug",
+                        5,
+                        chat_rows_through("permission", ChatAnchor::PermissionRequest(0)),
+                    ),
                     stream("fix-auth-bug", StreamMsg::ReplayComplete),
                 ],
             ]),

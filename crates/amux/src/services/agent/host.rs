@@ -46,12 +46,12 @@ pub(crate) struct PtyAgentHost {
 
 impl PtyAgentHost {
     /// Build a host against the default configured socket path.
-    #[cfg(any(test, feature = "testnet"))]
+    #[cfg(test)]
     pub(crate) fn new(host_id: Uuid) -> Arc<Self> {
         let config = crate::config::Config::default();
         let route = McpLaunchRoute::for_current_process(&config, host_id)
             .expect("default managed MCP route should be usable");
-        Self::new_with_mcp_launch_route(route)
+        Self::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir))
             .expect("default Codex private socket path should be usable")
     }
 
@@ -60,7 +60,10 @@ impl PtyAgentHost {
     /// The private Codex fallback socket lives beside the configured amux
     /// socket; its short filename preserves as much `SUN_LEN` headroom as
     /// possible.
-    pub(crate) fn new_with_mcp_launch_route(route: McpLaunchRoute) -> io::Result<Arc<Self>> {
+    pub(crate) fn new_with_mcp_launch_route(
+        route: McpLaunchRoute,
+        claude_user_keymap_dir: PathBuf,
+    ) -> io::Result<Arc<Self>> {
         let server_socket_path = route.socket_path().to_path_buf();
         let runtime_dir = server_socket_path
             .parent()
@@ -72,6 +75,7 @@ impl PtyAgentHost {
             runtime_dir,
             codex_private_socket_path(&server_socket_path)?,
             route,
+            claude_user_keymap_dir,
         );
         let state = Arc::new(RwLock::new(AgentServiceState::new(deps)));
         let (event_tx, event_rx) = mpsc::channel(256);
@@ -107,6 +111,7 @@ impl PtyAgentHost {
             state.deps.runtime_dir.clone(),
             state.deps.claude_version_cache.clone(),
             state.deps.mcp_launch_route.clone(),
+            state.deps.claude_user_keymap_dir.clone(),
         ));
         let agent = session.to_agent(self.host_id).into();
         let announce = state
@@ -185,7 +190,7 @@ fn codex_private_socket_path_with_fallback(
         Ok(adjacent)
     } else {
         // Move only the Codex runtime socket when the configured amux
-        // directory leaves too little room for codex-sdk's sun_path cap.
+        // directory leaves too little room for codex's sun_path cap.
         secure_codex_fallback_directory(fallback_dir)?;
         Ok(fallback_dir.join(file_name))
     }
@@ -651,7 +656,8 @@ fn create_rpc_to_domain_request(
     let parent = request.parent;
     let initial_prompt = request.initial_prompt;
     match request.agent {
-        CreateAgentConfig::ClaudePty {
+        CreateAgentConfig::Claude {
+            driver,
             working_dir,
             args,
             terminal_size,
@@ -659,7 +665,7 @@ fn create_rpc_to_domain_request(
             agent_id,
             host_id: None,
             name: request.name,
-            agent_type: AgentType::Claude,
+            agent_type: AgentType::Claude { driver },
             working_dir,
             terminal_size,
             args,
@@ -750,10 +756,15 @@ mod socket_tests {
         let route =
             McpLaunchRoute::new(executable, Some(config), socket, Uuid::from_u128(80)).unwrap();
 
-        let host = PtyAgentHost::new_with_mcp_launch_route(route.clone()).unwrap();
+        let keymap_dir = temp.path().join("keymaps");
+        let host =
+            PtyAgentHost::new_with_mcp_launch_route(route.clone(), keymap_dir.clone()).unwrap();
 
         assert_eq!(host.host_id(), route.host_id());
-        assert_eq!(host.state().read().await.deps.mcp_launch_route, route);
+        let state = host.state().read().await;
+        let deps = &state.deps;
+        assert_eq!(deps.mcp_launch_route, route);
+        assert_eq!(deps.claude_user_keymap_dir, keymap_dir);
     }
 
     #[test]

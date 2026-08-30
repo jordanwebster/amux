@@ -1,4 +1,5 @@
-//! Claude-specific diff chrome: magnitude words and Write-content blocks.
+//! Claude-specific diff chrome: magnitude words and Write-content blocks
+//! (`docs/CHAT.md` §Unified diffs and the reader's artifacts).
 //!
 //! Unified-diff row geometry is owned by `chat::diff`; this module only adapts
 //! Claude artifacts whose presentation differs from a landed patch.

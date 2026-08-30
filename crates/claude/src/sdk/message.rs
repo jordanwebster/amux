@@ -1,0 +1,655 @@
+use std::collections::HashMap;
+
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::sdk::error::ProtocolError;
+use crate::sdk::types::{
+    ApiKeySource, ApiMessage, AssistantMessageError, CompactTrigger, Extensions, MessageParam,
+    ModelUsage, PermissionDenial, PermissionMode, RawFrame, StreamEvent, Usage,
+};
+
+macro_rules! wire_struct {
+    ($name:ident { $($fields:tt)* }) => {
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct $name {
+            $($fields)*
+            #[serde(flatten)]
+            pub extensions: Extensions,
+        }
+    };
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    Assistant(AssistantMessage),
+    User(UserMessageOutput),
+    UserReplay(UserMessageReplay),
+    Result(ResultMessage),
+    System(SystemInitMessage),
+    StreamEvent(StreamEventMessage),
+    CompactBoundary(CompactBoundaryMessage),
+    Status(StatusMessage),
+    ApiRetry(ApiRetryMessage),
+    ControlRequestProgress(ControlRequestProgressMessage),
+    ModelRefusalFallback(ModelRefusalFallbackMessage),
+    ModelRefusalNoFallback(ModelRefusalNoFallbackMessage),
+    LocalCommandOutput(LocalCommandOutputMessage),
+    HookStarted(HookStartedMessage),
+    HookProgress(HookProgressMessage),
+    HookResponse(HookResponseMessage),
+    PluginInstall(PluginInstallMessage),
+    ToolProgress(ToolProgressMessage),
+    AuthStatus(AuthStatusMessage),
+    TaskNotification(TaskNotificationMessage),
+    TaskStarted(TaskStartedMessage),
+    TaskUpdated(TaskUpdatedMessage),
+    TaskProgress(TaskProgressMessage),
+    BackgroundTasksChanged(BackgroundTasksChangedMessage),
+    ThinkingTokens(ThinkingTokensMessage),
+    SessionStateChanged(SessionStateChangedMessage),
+    CommandsChanged(CommandsChangedMessage),
+    Notification(NotificationMessage),
+    FilesPersisted(FilesPersistedEvent),
+    ToolUseSummary(ToolUseSummaryMessage),
+    MemoryRecall(MemoryRecallMessage),
+    RateLimit(RateLimitEvent),
+    ElicitationComplete(ElicitationCompleteMessage),
+    PermissionDenied(PermissionDeniedMessage),
+    PromptSuggestion(PromptSuggestionMessage),
+    Informational(InformationalMessage),
+    ConversationReset(ConversationResetMessage),
+    UnknownSystem(RawFrame),
+    Unknown(RawFrame),
+}
+
+impl Message {
+    pub fn parse(raw: serde_json::Value) -> Result<Self, ProtocolError> {
+        match required_string(&raw, "type")?.to_owned().as_str() {
+            "assistant" => parse_known(raw, false).map(Self::Assistant),
+            "user" => match raw.get("isReplay") {
+                Some(serde_json::Value::Bool(true)) => {
+                    parse_known(raw, false).map(Self::UserReplay)
+                }
+                Some(serde_json::Value::Bool(false)) | None => {
+                    parse_known(raw, false).map(Self::User)
+                }
+                Some(_) => Err(ProtocolError::with_frame(
+                    "known `user` frame has non-boolean `isReplay`",
+                    raw,
+                )),
+            },
+            "result" => ResultMessage::parse(raw).map(Self::Result),
+            "system" => Self::parse_system(raw),
+            "stream_event" => parse_known(raw, false).map(Self::StreamEvent),
+            "tool_progress" => parse_known(raw, false).map(Self::ToolProgress),
+            "auth_status" => parse_known(raw, false).map(Self::AuthStatus),
+            "tool_use_summary" => parse_known(raw, false).map(Self::ToolUseSummary),
+            "rate_limit_event" => parse_known(raw, false).map(Self::RateLimit),
+            "prompt_suggestion" => parse_known(raw, false).map(Self::PromptSuggestion),
+            "conversation_reset" => parse_known(raw, false).map(Self::ConversationReset),
+            _ => Ok(Self::Unknown(RawFrame::new(raw))),
+        }
+    }
+
+    fn parse_system(raw: serde_json::Value) -> Result<Self, ProtocolError> {
+        match required_string(&raw, "subtype")?.to_owned().as_str() {
+            "init" => parse_known(raw, true).map(Self::System),
+            "compact_boundary" => parse_known(raw, true).map(Self::CompactBoundary),
+            "status" => parse_known(raw, true).map(Self::Status),
+            "api_retry" => parse_known(raw, true).map(Self::ApiRetry),
+            "control_request_progress" => parse_known(raw, true).map(Self::ControlRequestProgress),
+            "model_refusal_fallback" => parse_known(raw, true).map(Self::ModelRefusalFallback),
+            "model_refusal_no_fallback" => parse_known(raw, true).map(Self::ModelRefusalNoFallback),
+            "local_command_output" => parse_known(raw, true).map(Self::LocalCommandOutput),
+            "hook_started" => parse_known(raw, true).map(Self::HookStarted),
+            "hook_progress" => parse_known(raw, true).map(Self::HookProgress),
+            "hook_response" => parse_known(raw, true).map(Self::HookResponse),
+            "plugin_install" => parse_known(raw, true).map(Self::PluginInstall),
+            "task_notification" => parse_known(raw, true).map(Self::TaskNotification),
+            "task_started" => parse_known(raw, true).map(Self::TaskStarted),
+            "task_updated" => parse_known(raw, true).map(Self::TaskUpdated),
+            "task_progress" => parse_known(raw, true).map(Self::TaskProgress),
+            "background_tasks_changed" => parse_known(raw, true).map(Self::BackgroundTasksChanged),
+            "thinking_tokens" => parse_known(raw, true).map(Self::ThinkingTokens),
+            "session_state_changed" => parse_known(raw, true).map(Self::SessionStateChanged),
+            "commands_changed" => parse_known(raw, true).map(Self::CommandsChanged),
+            "notification" => parse_known(raw, true).map(Self::Notification),
+            "files_persisted" => parse_known(raw, true).map(Self::FilesPersisted),
+            "memory_recall" => parse_known(raw, true).map(Self::MemoryRecall),
+            "elicitation_complete" => parse_known(raw, true).map(Self::ElicitationComplete),
+            "permission_denied" => parse_known(raw, true).map(Self::PermissionDenied),
+            "informational" => parse_known(raw, true).map(Self::Informational),
+            _ => Ok(Self::UnknownSystem(RawFrame::new(raw))),
+        }
+    }
+
+    pub fn kind(&self) -> &str {
+        match self {
+            Self::Assistant(_) => "assistant",
+            Self::User(_) => "user",
+            Self::UserReplay(_) => "user.replay",
+            Self::Result(v) => v.kind(),
+            Self::System(_) => "system.init",
+            Self::StreamEvent(_) => "stream_event",
+            Self::CompactBoundary(_) => "system.compact_boundary",
+            Self::Status(_) => "system.status",
+            Self::ApiRetry(_) => "system.api_retry",
+            Self::ControlRequestProgress(_) => "system.control_request_progress",
+            Self::ModelRefusalFallback(_) => "system.model_refusal_fallback",
+            Self::ModelRefusalNoFallback(_) => "system.model_refusal_no_fallback",
+            Self::LocalCommandOutput(_) => "system.local_command_output",
+            Self::HookStarted(_) => "system.hook_started",
+            Self::HookProgress(_) => "system.hook_progress",
+            Self::HookResponse(_) => "system.hook_response",
+            Self::PluginInstall(_) => "system.plugin_install",
+            Self::ToolProgress(_) => "tool_progress",
+            Self::AuthStatus(_) => "auth_status",
+            Self::TaskNotification(_) => "system.task_notification",
+            Self::TaskStarted(_) => "system.task_started",
+            Self::TaskUpdated(_) => "system.task_updated",
+            Self::TaskProgress(_) => "system.task_progress",
+            Self::BackgroundTasksChanged(_) => "system.background_tasks_changed",
+            Self::ThinkingTokens(_) => "system.thinking_tokens",
+            Self::SessionStateChanged(_) => "system.session_state_changed",
+            Self::CommandsChanged(_) => "system.commands_changed",
+            Self::Notification(_) => "system.notification",
+            Self::FilesPersisted(_) => "system.files_persisted",
+            Self::ToolUseSummary(_) => "tool_use_summary",
+            Self::MemoryRecall(_) => "system.memory_recall",
+            Self::RateLimit(_) => "rate_limit_event",
+            Self::ElicitationComplete(_) => "system.elicitation_complete",
+            Self::PermissionDenied(_) => "system.permission_denied",
+            Self::PromptSuggestion(_) => "prompt_suggestion",
+            Self::Informational(_) => "system.informational",
+            Self::ConversationReset(_) => "conversation_reset",
+            Self::UnknownSystem(v) => v
+                .field("subtype")
+                .and_then(|v| v.as_str())
+                .unwrap_or("system.unknown"),
+            Self::Unknown(v) => v
+                .field("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown"),
+        }
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::User(v) => v.session_id.as_deref(),
+            Self::Result(v) => v.session_id(),
+            Self::UnknownSystem(v) | Self::Unknown(v) => {
+                v.field("session_id").and_then(|v| v.as_str())
+            }
+            Self::Assistant(v) => Some(&v.session_id),
+            Self::UserReplay(v) => Some(&v.session_id),
+            Self::System(v) => Some(&v.session_id),
+            Self::StreamEvent(v) => Some(&v.session_id),
+            Self::CompactBoundary(v) => Some(&v.session_id),
+            Self::Status(v) => Some(&v.session_id),
+            Self::ApiRetry(v) => Some(&v.session_id),
+            Self::ControlRequestProgress(v) => Some(&v.session_id),
+            Self::ModelRefusalFallback(v) => Some(&v.session_id),
+            Self::ModelRefusalNoFallback(v) => Some(&v.session_id),
+            Self::LocalCommandOutput(v) => Some(&v.session_id),
+            Self::HookStarted(v) => Some(&v.session_id),
+            Self::HookProgress(v) => Some(&v.session_id),
+            Self::HookResponse(v) => Some(&v.session_id),
+            Self::PluginInstall(v) => Some(&v.session_id),
+            Self::ToolProgress(v) => Some(&v.session_id),
+            Self::AuthStatus(v) => Some(&v.session_id),
+            Self::TaskNotification(v) => Some(&v.session_id),
+            Self::TaskStarted(v) => Some(&v.session_id),
+            Self::TaskUpdated(v) => Some(&v.session_id),
+            Self::TaskProgress(v) => Some(&v.session_id),
+            Self::BackgroundTasksChanged(v) => Some(&v.session_id),
+            Self::ThinkingTokens(v) => Some(&v.session_id),
+            Self::SessionStateChanged(v) => Some(&v.session_id),
+            Self::CommandsChanged(v) => Some(&v.session_id),
+            Self::Notification(v) => Some(&v.session_id),
+            Self::FilesPersisted(v) => Some(&v.session_id),
+            Self::ToolUseSummary(v) => Some(&v.session_id),
+            Self::MemoryRecall(v) => Some(&v.session_id),
+            Self::RateLimit(v) => Some(&v.session_id),
+            Self::ElicitationComplete(v) => Some(&v.session_id),
+            Self::PermissionDenied(v) => Some(&v.session_id),
+            Self::PromptSuggestion(v) => Some(&v.session_id),
+            Self::Informational(v) => Some(&v.session_id),
+            Self::ConversationReset(v) => Some(&v.session_id),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::parse(serde_json::Value::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for Message {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        macro_rules! env {
+            ($v:expr, $ty:expr, $sub:expr) => {
+                serialize_envelope($v, $ty, $sub, serializer)
+            };
+        }
+        match self {
+            Self::Assistant(v) => env!(v, "assistant", None),
+            Self::User(v) => env!(v, "user", None),
+            Self::UserReplay(v) => env!(v, "user", None),
+            Self::Result(v) => v.serialize(serializer),
+            Self::System(v) => env!(v, "system", Some("init")),
+            Self::StreamEvent(v) => env!(v, "stream_event", None),
+            Self::CompactBoundary(v) => env!(v, "system", Some("compact_boundary")),
+            Self::Status(v) => env!(v, "system", Some("status")),
+            Self::ApiRetry(v) => env!(v, "system", Some("api_retry")),
+            Self::ControlRequestProgress(v) => env!(v, "system", Some("control_request_progress")),
+            Self::ModelRefusalFallback(v) => env!(v, "system", Some("model_refusal_fallback")),
+            Self::ModelRefusalNoFallback(v) => env!(v, "system", Some("model_refusal_no_fallback")),
+            Self::LocalCommandOutput(v) => env!(v, "system", Some("local_command_output")),
+            Self::HookStarted(v) => env!(v, "system", Some("hook_started")),
+            Self::HookProgress(v) => env!(v, "system", Some("hook_progress")),
+            Self::HookResponse(v) => env!(v, "system", Some("hook_response")),
+            Self::PluginInstall(v) => env!(v, "system", Some("plugin_install")),
+            Self::ToolProgress(v) => env!(v, "tool_progress", None),
+            Self::AuthStatus(v) => env!(v, "auth_status", None),
+            Self::TaskNotification(v) => env!(v, "system", Some("task_notification")),
+            Self::TaskStarted(v) => env!(v, "system", Some("task_started")),
+            Self::TaskUpdated(v) => env!(v, "system", Some("task_updated")),
+            Self::TaskProgress(v) => env!(v, "system", Some("task_progress")),
+            Self::BackgroundTasksChanged(v) => env!(v, "system", Some("background_tasks_changed")),
+            Self::ThinkingTokens(v) => env!(v, "system", Some("thinking_tokens")),
+            Self::SessionStateChanged(v) => env!(v, "system", Some("session_state_changed")),
+            Self::CommandsChanged(v) => env!(v, "system", Some("commands_changed")),
+            Self::Notification(v) => env!(v, "system", Some("notification")),
+            Self::FilesPersisted(v) => env!(v, "system", Some("files_persisted")),
+            Self::ToolUseSummary(v) => env!(v, "tool_use_summary", None),
+            Self::MemoryRecall(v) => env!(v, "system", Some("memory_recall")),
+            Self::RateLimit(v) => env!(v, "rate_limit_event", None),
+            Self::ElicitationComplete(v) => env!(v, "system", Some("elicitation_complete")),
+            Self::PermissionDenied(v) => env!(v, "system", Some("permission_denied")),
+            Self::PromptSuggestion(v) => env!(v, "prompt_suggestion", None),
+            Self::Informational(v) => env!(v, "system", Some("informational")),
+            Self::ConversationReset(v) => env!(v, "conversation_reset", None),
+            Self::UnknownSystem(v) | Self::Unknown(v) => v.serialize(serializer),
+        }
+    }
+}
+
+wire_struct!(AssistantMessage {
+    pub uuid: uuid::Uuid, pub session_id: String, pub message: ApiMessage,
+    #[serde(deserialize_with="required_option")] pub parent_tool_use_id: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub error: Option<AssistantMessageError>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub request_id: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub user_message_uuid: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub resumed_from_incomplete_thinking: Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub supersedes: Option<Vec<uuid::Uuid>>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub aborted: Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub subagent_type: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub task_description: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub timestamp: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub context_usage: Option<serde_json::Value>,
+});
+
+wire_struct!(UserMessageOutput {
+    #[serde(default,skip_serializing_if="Option::is_none")] pub uuid: Option<uuid::Uuid>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub session_id: Option<String>,
+    pub message: MessageParam,
+    #[serde(deserialize_with="required_option")] pub parent_tool_use_id: Option<String>,
+    #[serde(rename="isSynthetic",default,skip_serializing_if="Option::is_none")] pub is_synthetic: Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_result: Option<serde_json::Value>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub priority: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub origin: Option<serde_json::Value>,
+    #[serde(rename="shouldQuery",default,skip_serializing_if="Option::is_none")] pub should_query: Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub timestamp: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub subagent_type: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub task_description: Option<String>,
+});
+
+wire_struct!(UserMessageReplay {
+    pub uuid: uuid::Uuid, pub session_id: String, pub message: MessageParam,
+    #[serde(deserialize_with="required_option")] pub parent_tool_use_id: Option<String>,
+    #[serde(rename="isReplay")] pub is_replay: bool,
+    #[serde(rename="isSynthetic",default,skip_serializing_if="Option::is_none")] pub is_synthetic: Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_result: Option<serde_json::Value>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub file_attachments: Option<Vec<serde_json::Value>>,
+});
+
+#[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum ResultMessage {
+    Success(ResultSuccess),
+    ErrorDuringExecution(ResultError),
+    ErrorMaxTurns(ResultError),
+    ErrorMaxBudgetUsd(ResultError),
+    ErrorMaxStructuredOutputRetries(ResultError),
+    Unknown(RawFrame),
+}
+
+impl ResultMessage {
+    fn parse(raw: serde_json::Value) -> Result<Self, ProtocolError> {
+        match required_string(&raw, "subtype")?.to_owned().as_str() {
+            "success" => parse_known(raw, true).map(Self::Success),
+            "error_during_execution" => parse_known(raw, true).map(Self::ErrorDuringExecution),
+            "error_max_turns" => parse_known(raw, true).map(Self::ErrorMaxTurns),
+            "error_max_budget_usd" => parse_known(raw, true).map(Self::ErrorMaxBudgetUsd),
+            "error_max_structured_output_retries" => {
+                parse_known(raw, true).map(Self::ErrorMaxStructuredOutputRetries)
+            }
+            _ => Ok(Self::Unknown(RawFrame::new(raw))),
+        }
+    }
+    pub fn kind(&self) -> &str {
+        match self {
+            Self::Success(_) => "result.success",
+            Self::ErrorDuringExecution(_) => "result.error_during_execution",
+            Self::ErrorMaxTurns(_) => "result.error_max_turns",
+            Self::ErrorMaxBudgetUsd(_) => "result.error_max_budget_usd",
+            Self::ErrorMaxStructuredOutputRetries(_) => {
+                "result.error_max_structured_output_retries"
+            }
+            Self::Unknown(v) => v
+                .field("subtype")
+                .and_then(|v| v.as_str())
+                .unwrap_or("result.unknown"),
+        }
+    }
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Success(v) => Some(&v.common.session_id),
+            Self::ErrorDuringExecution(v)
+            | Self::ErrorMaxTurns(v)
+            | Self::ErrorMaxBudgetUsd(v)
+            | Self::ErrorMaxStructuredOutputRetries(v) => Some(&v.common.session_id),
+            Self::Unknown(v) => v.field("session_id").and_then(|v| v.as_str()),
+        }
+    }
+}
+
+impl Serialize for ResultMessage {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Success(v) => serialize_envelope(v, "result", Some("success"), serializer),
+            Self::ErrorDuringExecution(v) => {
+                serialize_envelope(v, "result", Some("error_during_execution"), serializer)
+            }
+            Self::ErrorMaxTurns(v) => {
+                serialize_envelope(v, "result", Some("error_max_turns"), serializer)
+            }
+            Self::ErrorMaxBudgetUsd(v) => {
+                serialize_envelope(v, "result", Some("error_max_budget_usd"), serializer)
+            }
+            Self::ErrorMaxStructuredOutputRetries(v) => serialize_envelope(
+                v,
+                "result",
+                Some("error_max_structured_output_retries"),
+                serializer,
+            ),
+            Self::Unknown(v) => v.serialize(serializer),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResultCommon {
+    pub uuid: uuid::Uuid,
+    pub session_id: String,
+    pub duration_ms: u64,
+    pub duration_api_ms: u64,
+    pub is_error: bool,
+    pub num_turns: u32,
+    #[serde(deserialize_with = "required_option")]
+    pub stop_reason: Option<String>,
+    pub total_cost_usd: f64,
+    pub usage: Usage,
+    #[serde(rename = "modelUsage")]
+    pub model_usage: HashMap<String, ModelUsage>,
+    pub permission_denials: Vec<PermissionDenial>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued_turn_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_message_uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_mode_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_mode_disabled_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<serde_json::Value>,
+}
+wire_struct!(ResultSuccess {
+    #[serde(flatten)] pub common:ResultCommon,pub result:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub structured_output:Option<serde_json::Value>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub deferred_tool_use:Option<DeferredToolUse>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub ttft_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub ttft_stream_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub time_to_request_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub request_sent_wall_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub time_to_request_from_spawn_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub warm_spare_claimed:Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub time_origin_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub api_error_status:Option<u16>,
+});
+wire_struct!(ResultError { #[serde(flatten)] pub common:ResultCommon,pub errors:Vec<String>, });
+wire_struct!(DeferredToolUse { pub id:String,pub name:String,pub input:serde_json::Value, });
+
+wire_struct!(SystemInitMessage {
+    pub uuid:uuid::Uuid,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub agents:Option<Vec<String>>,
+    #[serde(rename="apiKeySource")] pub api_key_source:ApiKeySource,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub betas:Option<Vec<String>>,
+    pub claude_code_version:String,pub cwd:String,pub tools:Vec<String>,pub mcp_servers:Vec<McpServerInfo>,pub model:String,
+    #[serde(rename="permissionMode")] pub permission_mode:PermissionMode,
+    pub slash_commands:Vec<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub terminal_slash_commands:Option<Vec<String>>,
+    pub output_style:String,pub skills:Vec<String>,pub plugins:Vec<PluginInfo>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub capabilities:Option<Vec<String>>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub effort:Option<String>,
+});
+wire_struct!(McpServerInfo { pub name:String,pub status:String, });
+wire_struct!(PluginInfo { pub name:String,pub path:String,#[serde(default,skip_serializing_if="Option::is_none")] pub version:Option<String>, });
+wire_struct!(StreamEventMessage {
+    pub event:StreamEvent,#[serde(deserialize_with="required_option")] pub parent_tool_use_id:Option<String>,
+    pub uuid:uuid::Uuid,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub ttft_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub user_message_uuid:Option<String>,
+});
+wire_struct!(CompactBoundaryMessage { pub uuid:uuid::Uuid,pub session_id:String,pub compact_metadata:CompactMetadata, });
+wire_struct!(CompactMetadata {
+    pub trigger:CompactTrigger,pub pre_tokens:u64,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub post_tokens:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub duration_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub preserved_segment:Option<serde_json::Value>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub preserved_messages:Option<serde_json::Value>,
+});
+wire_struct!(StatusMessage {
+    #[serde(deserialize_with="required_option")] pub status:Option<String>,
+    #[serde(rename="permissionMode",default,skip_serializing_if="Option::is_none")] pub permission_mode:Option<PermissionMode>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub compact_result:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub compact_error:Option<String>,
+    pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(ApiRetryMessage {
+    pub attempt:u32,pub max_retries:u32,pub retry_delay_ms:u64,
+    #[serde(deserialize_with="required_option")] pub error_status:Option<u16>,
+    pub error:AssistantMessageError,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(ControlRequestProgressMessage {
+    pub request_id:String,pub status:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub attempt:Option<u32>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub max_retries:Option<u32>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub retry_delay_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub error_status:Option<u16>,
+    pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(ModelRefusalFallbackMessage {
+    pub trigger:String,pub direction:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub scope:Option<String>,
+    pub original_model:String,pub fallback_model:String,
+    #[serde(deserialize_with="required_option")] pub request_id:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub api_refusal_category:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub api_refusal_explanation:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub retracted_message_uuids:Option<Vec<String>>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub refused_user_message_uuid:Option<String>,
+    pub content:String,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(ModelRefusalNoFallbackMessage {
+    pub original_model:String,#[serde(deserialize_with="required_option")] pub request_id:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub api_refusal_category:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub api_refusal_explanation:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub refused_user_message_uuid:Option<String>,
+    pub content:String,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(LocalCommandOutputMessage { pub content:String,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(HookStartedMessage { pub hook_id:String,pub hook_name:String,pub hook_event:String,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(HookProgressMessage { pub hook_id:String,pub hook_name:String,pub hook_event:String,pub stdout:String,pub stderr:String,pub output:String,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(HookResponseMessage {
+    pub hook_id:String,pub hook_name:String,pub hook_event:String,pub output:String,pub stdout:String,pub stderr:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub exit_code:Option<i32>,
+    pub outcome:String,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(PluginInstallMessage {
+    pub status:String,#[serde(default,skip_serializing_if="Option::is_none")] pub name:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub error:Option<String>,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(ToolProgressMessage {
+    pub tool_use_id:String,pub tool_name:String,#[serde(deserialize_with="required_option")] pub parent_tool_use_id:Option<String>,
+    pub elapsed_time_seconds:f64,#[serde(default,skip_serializing_if="Option::is_none")] pub task_id:Option<String>,
+    pub uuid:uuid::Uuid,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub heartbeat:Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub subagent_type:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub subagent_retry:Option<serde_json::Value>,
+});
+wire_struct!(AuthStatusMessage {
+    #[serde(rename="isAuthenticating")] pub is_authenticating:bool,pub output:Vec<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub error:Option<String>,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(TaskUsage { pub total_tokens:u64,pub tool_uses:u32,pub duration_ms:u64, });
+wire_struct!(TaskNotificationMessage {
+    pub task_id:String,#[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_id:Option<String>,
+    pub status:String,pub output_file:String,pub summary:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub usage:Option<TaskUsage>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub skip_transcript:Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub ambient:Option<bool>,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(TaskStartedMessage {
+    pub task_id:String,#[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_id:Option<String>,pub description:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub subagent_type:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub is_backgrounded:Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub spawn_depth:Option<u32>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub task_type:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub workflow_name:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub prompt:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub skip_transcript:Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub ambient:Option<bool>,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(TaskPatch {
+    #[serde(default,skip_serializing_if="Option::is_none")] pub status:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub description:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub end_time:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub total_paused_ms:Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub error:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub is_backgrounded:Option<bool>,
+});
+wire_struct!(TaskUpdatedMessage { pub task_id:String,pub patch:TaskPatch,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(TaskProgressMessage {
+    pub task_id:String,#[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_id:Option<String>,pub description:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub subagent_type:Option<String>,pub usage:TaskUsage,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub last_tool_name:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub summary:Option<String>,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(BackgroundTask { pub task_id:String,pub task_type:String,pub description:String,#[serde(default,skip_serializing_if="Option::is_none")] pub ambient:Option<bool>, });
+wire_struct!(BackgroundTasksChangedMessage { pub tasks:Vec<BackgroundTask>,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(ThinkingTokensMessage { pub estimated_tokens:u64,pub estimated_tokens_delta:u64,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(SessionStateChangedMessage { pub state:String,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(CommandsChangedMessage { pub commands:Vec<serde_json::Value>,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(NotificationMessage {
+    pub key:String,pub text:String,pub priority:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub color:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub timeout_ms:Option<u64>,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(PersistedFile { pub filename:String,pub file_id:String, });
+wire_struct!(FailedFile { pub filename:String,pub error:String, });
+wire_struct!(FilesPersistedEvent { pub files:Vec<PersistedFile>,pub failed:Vec<FailedFile>,pub processed_at:String,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(ToolUseSummaryMessage { pub summary:String,pub preceding_tool_use_ids:Vec<String>,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(RecalledMemory { pub path:String,pub scope:String,#[serde(default,skip_serializing_if="Option::is_none")] pub content:Option<String>, });
+wire_struct!(MemoryRecallMessage { pub mode:String,pub memories:Vec<RecalledMemory>,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(RateLimitInfo {
+    pub status:String,
+    #[serde(rename="resetsAt",default,skip_serializing_if="Option::is_none")] pub resets_at:Option<u64>,
+    #[serde(rename="rateLimitType",default,skip_serializing_if="Option::is_none")] pub rate_limit_type:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub utilization:Option<f64>,
+    #[serde(rename="overageStatus",default,skip_serializing_if="Option::is_none")] pub overage_status:Option<String>,
+    #[serde(rename="overageResetsAt",default,skip_serializing_if="Option::is_none")] pub overage_resets_at:Option<u64>,
+    #[serde(rename="overageDisabledReason",default,skip_serializing_if="Option::is_none")] pub overage_disabled_reason:Option<String>,
+    #[serde(rename="isUsingOverage",default,skip_serializing_if="Option::is_none")] pub is_using_overage:Option<bool>,
+    #[serde(rename="overageInUse",default,skip_serializing_if="Option::is_none")] pub overage_in_use:Option<bool>,
+    #[serde(rename="surpassedThreshold",default,skip_serializing_if="Option::is_none")] pub surpassed_threshold:Option<f64>,
+    #[serde(rename="errorCode",default,skip_serializing_if="Option::is_none")] pub error_code:Option<String>,
+    #[serde(rename="canUserPurchaseCredits",default,skip_serializing_if="Option::is_none")] pub can_user_purchase_credits:Option<bool>,
+    #[serde(rename="hasChargeableSavedPaymentMethod",default,skip_serializing_if="Option::is_none")] pub has_chargeable_saved_payment_method:Option<bool>,
+});
+wire_struct!(RateLimitEvent { pub rate_limit_info:RateLimitInfo,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(ElicitationCompleteMessage { pub mcp_server_name:String,pub elicitation_id:String,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(PermissionDeniedMessage {
+    pub tool_name:String,pub tool_use_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub agent_id:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub decision_reason_type:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub decision_reason:Option<String>,
+    pub message:String,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(PromptSuggestionMessage { pub suggestion:String,pub uuid:uuid::Uuid,pub session_id:String, });
+wire_struct!(InformationalMessage {
+    pub content:String,pub level:String,#[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_id:Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub prevent_continuation:Option<bool>,pub uuid:uuid::Uuid,pub session_id:String,
+});
+wire_struct!(ConversationResetMessage { pub new_conversation_id:uuid::Uuid,pub uuid:uuid::Uuid,pub session_id:String, });
+
+fn required_string<'a>(raw: &'a serde_json::Value, field: &str) -> Result<&'a str, ProtocolError> {
+    let object = raw.as_object().ok_or_else(|| {
+        ProtocolError::with_frame("Claude protocol frame must be a JSON object", raw.clone())
+    })?;
+    object.get(field).and_then(|v| v.as_str()).ok_or_else(|| {
+        ProtocolError::with_frame(
+            format!("Claude protocol frame requires string field `{field}`"),
+            raw.clone(),
+        )
+    })
+}
+fn parse_known<T: DeserializeOwned>(
+    mut raw: serde_json::Value,
+    has_subtype: bool,
+) -> Result<T, ProtocolError> {
+    let original = raw.clone();
+    if let Some(object) = raw.as_object_mut() {
+        object.remove("type");
+        if has_subtype {
+            object.remove("subtype");
+        }
+    }
+    serde_json::from_value(raw).map_err(|error| {
+        ProtocolError::with_frame(format!("malformed known Claude frame: {error}"), original)
+    })
+}
+fn required_option<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    Option::<T>::deserialize(deserializer)
+}
+fn serialize_envelope<T: Serialize, S: Serializer>(
+    payload: &T,
+    kind: &str,
+    subtype: Option<&str>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut raw = serde_json::to_value(payload).map_err(serde::ser::Error::custom)?;
+    let object = raw
+        .as_object_mut()
+        .ok_or_else(|| serde::ser::Error::custom("protocol payload must serialize as object"))?;
+    object.insert("type".into(), kind.into());
+    if let Some(subtype) = subtype {
+        object.insert("subtype".into(), subtype.into());
+    }
+    raw.serialize(serializer)
+}

@@ -9,7 +9,7 @@
 //! versions — while absent fields never crash a fold.
 //!
 //! The subagent and API-error rows here are authored to the shapes in
-//! `notes/chat-v1/transcript-semantics.md` §12/§13/§20 (no Phase 0
+//! `docs/CLAUDE_TRANSCRIPT.md` §12/§13/§20 (no provider recording
 //! scenario captured them); the real-Claude suite (req. H) re-grounds
 //! them when those scenarios land.
 

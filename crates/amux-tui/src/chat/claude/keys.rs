@@ -1,15 +1,15 @@
 //! Chat key handling: keys mutate View and produce `UiAction`s; all
 //! domain writes leave as Commands through the runtime (never bytes —
-//! encodings live in amux-ui's C6 module).
+//! answers live in amux-ui's C6 module).
 //!
 //! The binding set is `docs/CHAT.md` §Keybindings' plain tier, derived in
-//! `notes/chat-v1/keybindings.md`: readline is law inside the composer
+//! `docs/CHAT.md` §Keybindings: readline is law inside the composer
 //! (P6), reflex keys stay harmless (P4), interrupt shares a key with
 //! nothing (P5). Kitty-tier sugar (Shift+Enter newline) is absent until
 //! the chrome feature-detects kitty — Phase 6; hints never advertise it.
 
 use amux_ui::claude::AskState;
-use amux_ui::claude::encoding::{self, AskAnswer};
+use amux_ui::claude::answer::{self, AskAnswer};
 use amux_ui::{ClaudeCommand, Command, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -491,7 +491,7 @@ fn panel_key(
     let head = chat.ask_head(model)?;
     // Unverified menu shapes render read-only-style (C2): no actions to
     // route — only the read affordance and the feed scroll live.
-    if encoding::menu_shape_refusal(&head.kind).is_some() {
+    if answer::menu_shape_refusal(&head.kind).is_some() {
         if key.code == KeyCode::Char('f') && ask_ui::has_readable(head) {
             chat.reader = Some(ReaderView::ask());
             return None;
@@ -736,11 +736,9 @@ mod tests {
             name: Some("fix-auth".to_string()),
             command: "claude".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
-            agent_type: "claude".to_string(),
-            io_protocols: vec![
-                "terminal_v1".to_string(),
-                "claude_pty_transcript_v1".to_string(),
-            ],
+            kind: amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
             readonly: false,
             args: Vec::new(),
             created_at: t(0),
@@ -1310,7 +1308,7 @@ mod tests {
 
     // --- ask panels, reader, read-only (Phase 5) ----------------------------
 
-    use amux_ui::claude::encoding::{PermissionAnswer, PlanAnswer, QuestionResponse};
+    use amux_ui::claude::answer::{PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse};
 
     fn hook_row(tool: &str, input: serde_json::Value, suggestions: usize) -> serde_json::Value {
         let mut row = json!({
@@ -1391,7 +1389,7 @@ mod tests {
         chat
     }
 
-    fn answer_of(action: Option<UiAction>) -> amux_ui::claude::encoding::AskAnswer {
+    fn answer_of(action: Option<UiAction>) -> amux_ui::claude::answer::AskAnswer {
         match action {
             Some(UiAction::Dispatch(Command::Claude(ClaudeCommand::AnswerAsk {
                 agent,
@@ -1424,7 +1422,9 @@ mod tests {
         ));
         assert_eq!(
             answer,
-            amux_ui::claude::encoding::AskAnswer::Permission(PermissionAnswer::AllowScoped)
+            amux_ui::claude::answer::AskAnswer::Permission(PermissionAnswer::AllowScoped {
+                suggestion: 0
+            })
         );
     }
 
@@ -1469,7 +1469,7 @@ mod tests {
         ));
         assert_eq!(
             answer,
-            amux_ui::claude::encoding::AskAnswer::Permission(PermissionAnswer::Deny {
+            amux_ui::claude::answer::AskAnswer::Permission(PermissionAnswer::Deny {
                 feedback: Some("why".to_string())
             })
         );
@@ -1490,7 +1490,7 @@ mod tests {
         ));
         assert_eq!(
             answer,
-            amux_ui::claude::encoding::AskAnswer::Permission(PermissionAnswer::Deny {
+            amux_ui::claude::answer::AskAnswer::Permission(PermissionAnswer::Deny {
                 feedback: None
             })
         );
@@ -1664,12 +1664,12 @@ mod tests {
         ));
         assert_eq!(
             answer,
-            amux_ui::claude::encoding::AskAnswer::Question {
-                responses: vec![QuestionResponse {
+            amux_ui::claude::answer::AskAnswer::Question(QuestionResponse {
+                answers: vec![QuestionAnswer {
                     selected: vec![1],
                     other: None
                 }]
-            }
+            })
         );
     }
 
@@ -1690,12 +1690,12 @@ mod tests {
         ));
         assert_eq!(
             answer,
-            amux_ui::claude::encoding::AskAnswer::Question {
-                responses: vec![QuestionResponse {
+            amux_ui::claude::answer::AskAnswer::Question(QuestionResponse {
+                answers: vec![QuestionAnswer {
                     selected: vec![],
                     other: Some("ochre".to_string())
                 }]
-            }
+            })
         );
     }
 
@@ -1726,12 +1726,12 @@ mod tests {
         ));
         assert_eq!(
             answer,
-            amux_ui::claude::encoding::AskAnswer::Question {
-                responses: vec![QuestionResponse {
+            amux_ui::claude::answer::AskAnswer::Question(QuestionResponse {
+                answers: vec![QuestionAnswer {
                     selected: vec![0, 1],
                     other: None
                 }]
-            }
+            })
         );
     }
 
@@ -1770,7 +1770,7 @@ mod tests {
         ));
         assert_eq!(
             answer,
-            amux_ui::claude::encoding::AskAnswer::Plan(PlanAnswer::RequestChanges {
+            amux_ui::claude::answer::AskAnswer::Plan(PlanAnswer::RequestChanges {
                 feedback: "q".to_string()
             })
         );
@@ -1790,7 +1790,7 @@ mod tests {
         ));
         assert_eq!(
             answer,
-            amux_ui::claude::encoding::AskAnswer::Plan(PlanAnswer::ApproveManual)
+            amux_ui::claude::answer::AskAnswer::Plan(PlanAnswer::ApproveManual)
         );
     }
 

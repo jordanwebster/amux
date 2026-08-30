@@ -8,7 +8,7 @@
 use crate::effect::{DumpReason, Effect, InputPayload};
 use crate::model::{
     AgentCard, AgentLayer, AgentPhase, Attention, Connection, FINISHED_OPS_RETAINED, FinishedOp,
-    HostState, Model, PendingOp, StreamPhase, StreamState,
+    HostState, Model, PendingOp, StreamPhase, StreamState, StructuredProtocol,
 };
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
 
@@ -52,8 +52,8 @@ enum StreamWanted {
     UserRequested,
 }
 
-/// Subscription policy: open the structured stream for an agent when it
-/// advertises one and none is already live. Emits at most one effect;
+/// Subscription policy: open the structured stream for an agent whose kind
+/// has a layer this build folds, and none is already live. Emits at most one effect;
 /// re-upserts are idempotent. Retryable closes (transport loss) reopen on
 /// the next inventory event; terminal closes (deleted, exited) do not.
 fn ensure_stream(
@@ -69,8 +69,14 @@ fn ensure_stream(
     if card.agent.readonly && wanted == StreamWanted::InventoryPolicy {
         return None;
     }
-    let layer = AgentLayer::from_protocols(&card.agent.io_protocols)?;
-    let protocol = layer.protocol();
+    let protocol = match AgentLayer::from_kind(&card.agent.kind)? {
+        AgentLayer::Claude(_) => StructuredProtocol::Claude,
+        AgentLayer::Codex(_) => StructuredProtocol::Codex,
+        // The SDK driver's rows have no client-side fold yet. Holding a
+        // stream open for a layer that observes nothing would buy nothing
+        // but bandwidth, so the subscription waits for the fold.
+        AgentLayer::ClaudeSdk(_) => return None,
+    };
     let reopen = match model.streams.get(&agent_id) {
         None => true,
         Some(state) => match &state.phase {
@@ -408,8 +414,8 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
     Vec::new()
 }
 
-/// Run a fold step on the typed native layer selected from the agent's
-/// advertised protocols, creating it on first evidence. Attention is
+/// Run a fold step on the typed native layer this agent's kind determines,
+/// creating it on first evidence. Attention is
 /// summarized from that same fold state and the provider's kernel-level
 /// projection rule afterwards.
 fn with_layer(model: &mut Model, agent: amux::AgentId, step: impl FnOnce(&mut AgentLayer)) {
@@ -417,7 +423,7 @@ fn with_layer(model: &mut Model, agent: amux::AgentId, step: impl FnOnce(&mut Ag
         let Some(card) = model.agents.get_mut(&agent) else {
             return;
         };
-        let Some(selected) = AgentLayer::from_protocols(&card.agent.io_protocols) else {
+        let Some(selected) = AgentLayer::from_kind(&card.agent.kind) else {
             return;
         };
         let layer = card.layer.get_or_insert(selected);

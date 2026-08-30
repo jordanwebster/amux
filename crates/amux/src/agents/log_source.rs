@@ -41,6 +41,7 @@ impl StructuredLogSource {
     }
 
     /// Subscribe to the structured log buffer immediately.
+    #[allow(dead_code)]
     pub(crate) async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
         self.buffer.subscribe().await
     }

@@ -77,7 +77,7 @@ fn ranked_sequence() -> Vec<Msg> {
         vec![batch(
             "tester",
             10,
-            chat_rows("question_single")[..8].to_vec(),
+            chat_rows_through("question_single", ChatAnchor::PermissionRequest(0)),
         )],
     ])
 }

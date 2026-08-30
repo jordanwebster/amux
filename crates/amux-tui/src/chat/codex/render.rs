@@ -110,7 +110,7 @@ fn header_row(
         Some(card) => format!(
             "{} · {} @ {}{}",
             card.display_name(),
-            card.agent.agent_type,
+            card.agent.kind.provider(),
             model.host_name(card.agent.host_id).unwrap_or("?"),
             crate::chat::subagent_marker(model, chat.agent),
         ),

@@ -21,6 +21,7 @@ Commands:
   attach  Attach to an existing agent session
   rm      Remove an agent session by exact name or UUID
   list    List running agent sessions, folding child agents into their parent
+  keymap  Manage Claude PTY keymaps
   server  Manage the amux server lifecycle
   init    Initialize amux (cloud mode, authentication)
   pair    Pair this device with another amux daemon

@@ -38,6 +38,19 @@ type TonicResult<T> = Result<tonic::Response<T>, tonic::Status>;
 pub(crate) type ResponseStream<T> =
     Pin<Box<dyn Stream<Item = Result<T, tonic::Status>> + Send + 'static>>;
 
+#[cfg(all(feature = "local-agents", debug_assertions))]
+pub(crate) async fn open_in_process_protocol_plane(
+    kind: crate::agents::AgentKind,
+    protocol: crate::agents::Protocol,
+) -> Result<(), ProtocolError> {
+    session_rpc::open_in_process_protocol_plane(kind, protocol).await
+}
+
+#[cfg(all(feature = "local-agents", debug_assertions))]
+pub(crate) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
+    session_rpc::create_sdk_in_process().await
+}
+
 /// The seam between the core and the local agent runtime.
 ///
 /// The runtime (sessions, PTY, hooks, lifecycle, suspend/resume) lives behind
@@ -476,7 +489,7 @@ mod tests {
     use tower::service_fn;
 
     use super::*;
-    use crate::agents::{CreateAgentConfig, TEST_ECHO_COMMAND, TEST_ECHO_V1};
+    use crate::agents::{CreateAgentConfig, TEST_ECHO_COMMAND};
 
     fn service_host() -> Arc<PtyAgentHost> {
         PtyAgentHost::new(Uuid::from_u128(1))
@@ -494,8 +507,7 @@ mod tests {
             name: Some(name.to_string()),
             command: "test-agent".to_string(),
             working_dir: PathBuf::from("/tmp"),
-            agent_type: "test-agent".to_string(),
-            io_protocols: vec!["test_echo_v1".to_string()],
+            kind: crate::agents::AgentKind::TestAgent,
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
@@ -523,18 +535,18 @@ mod tests {
     fn test_echo_subscribe_request(agent_id: Uuid) -> wire::pb::SubscribeSessionRequest {
         wire::pb::SubscribeSessionRequest {
             agent_id: agent_id.as_bytes().to_vec(),
-            io_protocol: TEST_ECHO_V1.to_string(),
-            args: None,
+            protocol: Some(wire::pb::subscribe_session_request::Protocol::TestEchoV1(
+                wire::pb::TestEchoV1Args {},
+            )),
         }
     }
 
     fn test_echo_send_input_request(agent_id: Uuid, payload: &[u8]) -> wire::pb::SendInputRequest {
         wire::pb::SendInputRequest {
             agent_id: agent_id.as_bytes().to_vec(),
-            io_protocol: TEST_ECHO_V1.to_string(),
-            event: Some(wire::pb::send_input_request::Event::Input(
-                wire::pb::SessionInput {
-                    input_id: b"input-1".to_vec(),
+            input_id: b"input-1".to_vec(),
+            event: Some(wire::pb::send_input_request::Event::TestEchoV1(
+                wire::pb::TestEchoV1Input {
                     payload: payload.to_vec(),
                 },
             )),
@@ -576,10 +588,9 @@ mod tests {
             &ctx,
             tonic::Request::new(wire::pb::SendInputRequest {
                 agent_id: missing_agent_id.as_bytes().to_vec(),
-                io_protocol: "terminal_v1".to_string(),
-                event: Some(wire::pb::send_input_request::Event::Input(
-                    wire::pb::SessionInput {
-                        input_id: vec![1],
+                input_id: vec![1],
+                event: Some(wire::pb::send_input_request::Event::TerminalV1(
+                    wire::pb::TerminalV1Input {
                         payload: b"input".to_vec(),
                     },
                 )),
@@ -769,6 +780,9 @@ mod tests {
             .expect("session stream returned error");
         let Some(wire::subscribe_session_response::Event::Output(output)) = output.event else {
             panic!("expected SessionOutput");
+        };
+        let Some(wire::session_output::Output::TestEchoV1(output)) = output.output else {
+            panic!("expected test echo output");
         };
         assert_eq!(output.payload, b"hello");
 

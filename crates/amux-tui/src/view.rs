@@ -488,7 +488,12 @@ mod quit_guard_tests {
     fn generated_names_are_scoped_to_the_agent_type() {
         let model = Model::default();
         assert_eq!(
-            next_agent_name(&model, &amux_ui::AgentType::Claude),
+            next_agent_name(
+                &model,
+                &amux_ui::AgentType::Claude {
+                    driver: amux_ui::ClaudeDriver::Pty,
+                },
+            ),
             "claude-1"
         );
         assert_eq!(

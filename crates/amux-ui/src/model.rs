@@ -69,38 +69,25 @@ pub enum Connection {
     },
 }
 
-/// The structured protocols with native UI support. This enum is carried
+/// The structured protocol each native layer speaks. This enum is carried
 /// through stream dispatch so every known protocol boundary is exhaustive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StructuredProtocol {
     #[serde(rename = "claude_pty_transcript_v1")]
     Claude,
+    #[serde(rename = "claude_sdk_v1")]
+    ClaudeSdk,
     #[serde(rename = "codex_sdk_v1")]
     Codex,
 }
 
 impl StructuredProtocol {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Claude => crate::claude::PROTOCOL,
+            Self::ClaudeSdk => crate::claude::SDK_PROTOCOL,
             Self::Codex => crate::codex::PROTOCOL,
         }
-    }
-}
-
-fn select_structured_protocol(protocols: &[String]) -> Option<StructuredProtocol> {
-    if protocols
-        .iter()
-        .any(|protocol| protocol == crate::claude::PROTOCOL)
-    {
-        Some(StructuredProtocol::Claude)
-    } else if protocols
-        .iter()
-        .any(|protocol| protocol == crate::codex::PROTOCOL)
-    {
-        Some(StructuredProtocol::Codex)
-    } else {
-        None
     }
 }
 
@@ -110,21 +97,37 @@ fn select_structured_protocol(protocols: &[String]) -> Option<StructuredProtocol
 #[serde(tag = "layer", content = "state", rename_all = "snake_case")]
 pub enum AgentLayer {
     Claude(ClaudeLayer),
+    ClaudeSdk(ClaudeSdkLayer),
     Codex(CodexLayer),
 }
 
+/// The layer of an agent whose protocol this build carries no fold for: it
+/// holds no state, observes nothing, and reports Unknown forever. Its one
+/// job is to make the gap a typed arm every screen must answer for, rather
+/// than an agent that silently has no chat at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaudeSdkLayer;
+
 impl AgentLayer {
-    /// Select a layer only from protocols the agent advertised.
-    pub(crate) fn from_protocols(protocols: &[String]) -> Option<Self> {
-        match select_structured_protocol(protocols)? {
-            StructuredProtocol::Claude => Some(Self::Claude(ClaudeLayer::default())),
-            StructuredProtocol::Codex => Some(Self::Codex(CodexLayer::default())),
+    /// The layer an agent's kind determines. A kind with no native chat in
+    /// this build has none; nothing is inferred from what a stream carries.
+    pub fn from_kind(kind: &amux::AgentKind) -> Option<Self> {
+        match kind {
+            amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            } => Some(Self::Claude(ClaudeLayer::default())),
+            amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Sdk,
+            } => Some(Self::ClaudeSdk(ClaudeSdkLayer)),
+            amux::AgentKind::Codex => Some(Self::Codex(CodexLayer::default())),
+            amux::AgentKind::TestAgent => None,
         }
     }
 
     pub(crate) fn protocol(&self) -> StructuredProtocol {
         match self {
             Self::Claude(_) => StructuredProtocol::Claude,
+            Self::ClaudeSdk(_) => StructuredProtocol::ClaudeSdk,
             Self::Codex(_) => StructuredProtocol::Codex,
         }
     }
@@ -132,27 +135,27 @@ impl AgentLayer {
     pub fn claude(&self) -> Option<&ClaudeLayer> {
         match self {
             Self::Claude(layer) => Some(layer),
-            Self::Codex(_) => None,
+            Self::ClaudeSdk(_) | Self::Codex(_) => None,
         }
     }
 
     pub(crate) fn claude_mut(&mut self) -> Option<&mut ClaudeLayer> {
         match self {
             Self::Claude(layer) => Some(layer),
-            Self::Codex(_) => None,
+            Self::ClaudeSdk(_) | Self::Codex(_) => None,
         }
     }
 
     pub fn codex(&self) -> Option<&CodexLayer> {
         match self {
-            Self::Claude(_) => None,
+            Self::Claude(_) | Self::ClaudeSdk(_) => None,
             Self::Codex(layer) => Some(layer),
         }
     }
 
     pub(crate) fn codex_mut(&mut self) -> Option<&mut CodexLayer> {
         match self {
-            Self::Claude(_) => None,
+            Self::Claude(_) | Self::ClaudeSdk(_) => None,
             Self::Codex(layer) => Some(layer),
         }
     }
@@ -160,6 +163,7 @@ impl AgentLayer {
     pub(crate) fn begin_window(&mut self, truncated: bool) {
         match self {
             Self::Claude(layer) => layer.begin_window(truncated),
+            Self::ClaudeSdk(_) => {}
             Self::Codex(layer) => layer.begin_window(truncated),
         }
     }
@@ -167,6 +171,7 @@ impl AgentLayer {
     pub(crate) fn observe(&mut self, seq: u64, at: DateTime<Utc>, payload: &serde_json::Value) {
         match self {
             Self::Claude(layer) => layer.observe(seq, at, payload),
+            Self::ClaudeSdk(_) => {}
             Self::Codex(layer) => layer.observe(seq, at, payload),
         }
     }
@@ -174,6 +179,7 @@ impl AgentLayer {
     pub(crate) fn observe_replay_complete(&mut self) {
         match self {
             Self::Claude(layer) => layer.observe_replay_complete(),
+            Self::ClaudeSdk(_) => {}
             Self::Codex(layer) => layer.observe_replay_complete(),
         }
     }
@@ -181,6 +187,7 @@ impl AgentLayer {
     pub(crate) fn observe_exit(&mut self) {
         match self {
             Self::Claude(layer) => layer.observe_exit(),
+            Self::ClaudeSdk(_) => {}
             Self::Codex(layer) => layer.observe_exit(),
         }
     }
@@ -188,6 +195,7 @@ impl AgentLayer {
     pub(crate) fn invalidate(&mut self) {
         match self {
             Self::Claude(layer) => layer.invalidate(),
+            Self::ClaudeSdk(_) => {}
             Self::Codex(layer) => layer.invalidate(),
         }
     }
@@ -198,6 +206,9 @@ impl AgentLayer {
     pub(crate) fn attention(&self, stream_phase: Option<&StreamPhase>) -> Attention {
         match self {
             Self::Claude(layer) => crate::claude::cached_attention(layer, stream_phase),
+            // Nothing is folded, so nothing is known: an unrendered layer
+            // reports Unknown rather than inventing a calm badge.
+            Self::ClaudeSdk(_) => Attention::Unknown,
             Self::Codex(layer) => crate::codex::projected_attention(layer, stream_phase),
         }
     }
@@ -205,6 +216,7 @@ impl AgentLayer {
     pub(crate) fn working_is_stale(&self, now: Option<DateTime<Utc>>) -> bool {
         match self {
             Self::Claude(layer) => layer.working_is_stale(now),
+            Self::ClaudeSdk(_) => false,
             Self::Codex(layer) => layer.working_is_stale(now),
         }
     }
@@ -212,6 +224,7 @@ impl AgentLayer {
     pub(crate) fn check_invariants(&self, agent: AgentId, out: &mut Vec<Violation>) {
         match self {
             Self::Claude(layer) => layer.check_invariants(agent, out),
+            Self::ClaudeSdk(_) => {}
             Self::Codex(layer) => layer.check_invariants(agent, out),
         }
     }
@@ -242,7 +255,7 @@ impl AgentCard {
     /// The native structured protocol selected from this agent's advertised
     /// protocols, when it is one this UI knows how to render.
     pub fn structured_protocol(&self) -> Option<StructuredProtocol> {
-        select_structured_protocol(&self.agent.io_protocols)
+        AgentLayer::from_kind(&self.agent.kind).map(|layer| layer.protocol())
     }
 
     /// The Claude chat layer's feed facts, when the agent's structured
@@ -1256,6 +1269,7 @@ impl Model {
                     AgentLayer::Claude(_) => {
                         crate::claude::check_projection_invariant(self, *id, &mut violations);
                     }
+                    AgentLayer::ClaudeSdk(_) => {}
                     AgentLayer::Codex(_) => {
                         crate::codex::check_projection_invariant(
                             self,
@@ -1313,7 +1327,7 @@ impl Model {
 /// the wire's `agent_type` string).
 pub fn agent_type_label(agent_type: &amux::AgentType) -> &'static str {
     match agent_type {
-        amux::AgentType::Claude => "claude",
+        amux::AgentType::Claude { .. } => "claude",
         amux::AgentType::Codex { .. } => "codex",
         #[allow(unreachable_patterns)]
         _ => "test-agent",
@@ -1380,11 +1394,9 @@ mod tests {
             name: Some("fix-auth-bug".to_string()),
             command: "claude".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
-            agent_type: "claude".to_string(),
-            io_protocols: vec![
-                "terminal_v1".to_string(),
-                crate::claude::PROTOCOL.to_string(),
-            ],
+            kind: amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
             readonly: false,
             args: Vec::new(),
             created_at: t0(),
@@ -1515,10 +1527,7 @@ mod tests {
     fn detects_codex_projection_disagreement() {
         let mut model = coherent_model();
         let card = model.agents.get_mut(&agent_id()).unwrap();
-        card.agent.io_protocols = vec![
-            "terminal_v1".to_string(),
-            crate::codex::PROTOCOL.to_string(),
-        ];
+        card.agent.kind = amux::AgentKind::Codex;
         card.layer = Some(AgentLayer::Codex(CodexLayer::default()));
         for event in [
             StreamMsg::Opened { truncated: false },

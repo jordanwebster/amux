@@ -1,0 +1,1 @@
+{"argv":["--output-format","stream-json","--input-format","stream-json","--verbose","--permission-prompt-tool","stdio","--session-id","b9f5fb6d-edc3-4ed0-b2bb-8f151daf5efd","--model","claude-haiku-4-5-20251001","--permission-mode","default","--settings","{\"sandbox\":{\"enabled\":false}}"],"transport_id":"49468-1787961012739171000","us":2251}

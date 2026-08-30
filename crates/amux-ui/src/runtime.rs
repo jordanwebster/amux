@@ -25,7 +25,6 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::claude::encoding::KeyStep;
 use crate::codex::CodexInput;
 use crate::effect::{DumpReason, Effect, InputPayload};
 use crate::model::{Model, StructuredProtocol};
@@ -453,7 +452,7 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
             Err(error) => op_error_outcome(&error),
         },
         // Input commands never ride Effect::Rpc — the reducer emits
-        // Effect::SendInput for them (encoded program + seq guard).
+        // Effect::SendInput for them (typed input + seq guard).
         Command::Claude(_) => OpOutcome::Error {
             error: OpError {
                 message: "input command routed to the RPC executor".to_string(),
@@ -471,18 +470,16 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
     }
 }
 
-/// How many times a `retry_stale` input program is re-sent with the seq
+/// How many times a `retry_stale` input is re-sent with the seq
 /// the refusal reported. Mechanical execution policy only: WHETHER a
-/// program retries is the reducer's decision, carried on the effect.
+/// send retries is the reducer's decision, carried on the effect.
 const STALE_RETRY_LIMIT: u32 = 3;
 
 /// The stated form of a seq-guard refusal (C5: the resurfaced ask carries
 /// the failure stated; the technical detail rides in parentheses).
 const STALE_INPUT_ERROR: &str = "input raced the session — it moved on before the keys landed";
 
-/// Inject a keystroke program under the seq guard. The KeySteps map onto
-/// the `claude_pty_transcript_v1` actions verbatim — no bytes are authored
-/// here (the C6 module owns every encoding).
+/// Send a semantic Claude intent under the transcript sequence guard.
 async fn execute_send_input(
     client: &Client,
     agent: AgentId,
@@ -492,11 +489,9 @@ async fn execute_send_input(
     match payload {
         InputPayload::Claude {
             expected_seq,
-            program,
+            intent,
             retry_stale,
-        } => {
-            execute_claude_input(client, agent, input_id, expected_seq, program, retry_stale).await
-        }
+        } => execute_claude_input(client, agent, input_id, expected_seq, intent, retry_stale).await,
         InputPayload::Codex { payload } => {
             execute_codex_input(client, agent, input_id, payload).await
         }
@@ -541,25 +536,16 @@ async fn execute_claude_input(
     agent: AgentId,
     input_id: Vec<u8>,
     expected_seq: u64,
-    program: Vec<KeyStep>,
+    intent: claude_io::Intent,
     retry_stale: bool,
 ) -> OpOutcome {
-    let actions: Vec<claude_io::ClaudePtyTranscriptV1Action> = program
-        .into_iter()
-        .map(|step| match step {
-            KeyStep::Write { text } => {
-                claude_io::ClaudePtyTranscriptV1Action::Write(text.into_bytes())
-            }
-            KeyStep::Delay { ms } => claude_io::ClaudePtyTranscriptV1Action::DelayMs(ms),
-        })
-        .collect();
     let mut expected_seq = expected_seq;
     let mut attempts = 0;
     loop {
         let payload =
             claude_io::encode_pty_transcript_v1_input(claude_io::ClaudePtyTranscriptV1Input {
                 expected_seq,
-                actions: actions.clone(),
+                intent: intent.clone(),
             });
         match client
             .send_input(SendInputRequest {
@@ -575,7 +561,7 @@ async fn execute_claude_input(
                 current_seq,
                 ..
             })) if retry_stale && attempts < STALE_RETRY_LIMIT => {
-                // Position-independent programs (interrupt) re-send with
+                // Position-independent intents (interrupt) re-send with
                 // the seq the source reported; positional ones never take
                 // this branch — they fail fast and resurface (C5).
                 expected_seq = current_seq;
@@ -830,6 +816,18 @@ async fn pump_structured_stream(
         StructuredProtocol::Codex => codex_io::encode_codex_sdk_v1_args(codex_io::CodexSdkV1Args {
             replay_query: Some(codex_io::CodexSdkV1ReplayQuery::Tail { count: tail }),
         }),
+        // The subscription policy never opens this protocol, because no
+        // layer here folds it. Reaching this arm means the policy changed
+        // without the fold: say which protocol is missing rather than
+        // subscribing with arguments nobody can read.
+        StructuredProtocol::ClaudeSdk => {
+            return Some(StreamCloseReason::InternalError {
+                detail: format!(
+                    "{} has no client-side fold in this build",
+                    protocol.as_str()
+                ),
+            });
+        }
     };
     let mut session = match client
         .subscribe_session(SubscribeSessionRequest {
@@ -940,6 +938,14 @@ fn decode_structured_entry(
 ) -> Result<StreamEntry, StreamCloseReason> {
     let output = match protocol {
         StructuredProtocol::Claude => claude_io::decode_pty_transcript_v1_output(payload),
+        StructuredProtocol::ClaudeSdk => {
+            return Err(StreamCloseReason::InternalError {
+                detail: format!(
+                    "{} has no client-side fold in this build",
+                    protocol.as_str()
+                ),
+            });
+        }
         StructuredProtocol::Codex => {
             let output = codex_io::decode_codex_sdk_v1_output(payload).map_err(|error| {
                 StreamCloseReason::InternalError {
@@ -1021,11 +1027,7 @@ mod tests {
             name: Some("projection-test".to_string()),
             command: "codex".to_string(),
             working_dir: PathBuf::from("/work"),
-            agent_type: "codex".to_string(),
-            io_protocols: vec![
-                "terminal_v1".to_string(),
-                crate::codex::PROTOCOL.to_string(),
-            ],
+            kind: amux::AgentKind::Codex,
             readonly: false,
             args: Vec::new(),
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
@@ -1041,11 +1043,9 @@ mod tests {
             name: Some("dispatch-clock-test".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/work"),
-            agent_type: "claude".to_string(),
-            io_protocols: vec![
-                "terminal_v1".to_string(),
-                crate::claude::PROTOCOL.to_string(),
-            ],
+            kind: amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
             readonly: false,
             args: Vec::new(),
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),

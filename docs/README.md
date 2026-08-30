@@ -23,6 +23,11 @@ subject; when two overlap, the owner named here wins.
   consumed by the capture drift tooling and its committed fixtures.
 - `../crates/amux-shot/README.md` — the committed 120×40 PNG and wheel-recording
   tool for named TUI states.
+- `PROVIDER_CRATES.md` — the canonical Claude, Codex, PTY-hosting and replay
+  crate boundaries; session shapes, capabilities, gaps, corpora and drift
+  ledgers.
+- `KEYMAPS.md` — semantic Claude PTY input; keymap data, resolution,
+  interpretation, provenance, management and screen-detection limits.
 - `../crates/amux/tests/spec/` — the executable spec. The suite reads as
   documentation and locks the protocol's guarantees; run it with
   `timeout 600 cargo test -p amux --features testnet --test spec`.

@@ -21,8 +21,6 @@ pub(crate) enum HookError {
     UnsupportedAgentType,
     #[error("invalid Claude hook payload: {message}")]
     InvalidPayload { message: String },
-    #[error("external Claude hook missing required field '{field}'")]
-    MissingBootstrapField { field: &'static str },
 }
 
 impl HookError {

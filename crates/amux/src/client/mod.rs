@@ -42,6 +42,7 @@ mod method {
     pub(super) const CLIENT_RENAME_NAME: &str = "/amux.v1.ClientService/RenameAgent";
     pub(super) const CLIENT_DELETE_NAME: &str = "/amux.v1.ClientService/DeleteAgent";
     pub(super) const CLIENT_SEND_MESSAGE_NAME: &str = "/amux.v1.ClientService/SendMessage";
+    pub(super) const CLIENT_SEND_INPUT_NAME: &str = "/amux.v1.ClientService/SendInput";
     pub(super) const CLIENT_SUBSCRIBE_SESSION_NAME: &str =
         "/amux.v1.ClientService/SubscribeSession";
     pub(super) const CLIENT_HANDLE_HOOK_NAME: &str = "/amux.v1.ClientService/HandleHook";
@@ -507,14 +508,26 @@ impl Client {
         request: SubscribeSessionRequest,
     ) -> Result<SessionStream, ClientError> {
         self.ensure_open()?;
+        let protocol = request
+            .io_protocol
+            .parse()
+            .map_err(|message| ClientError::Encode {
+                method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
+                message,
+            })?;
+        let protocol =
+            crate::agents::subscribe_protocol_to_client_wire(protocol, request.args.as_deref())
+                .map_err(|error| ClientError::Encode {
+                    method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
+                    message: error.to_string(),
+                })?;
         let response = self
             .inner
             .lock()
             .await
             .subscribe_session(wire::ClientSubscribeSessionRequest {
                 agent: Some(agent_ref(request.agent)),
-                io_protocol: request.io_protocol,
-                args: request.args.map(|args| args.to_vec()),
+                protocol: Some(protocol),
             })
             .await
             .map_err(status_to_client_error)?
@@ -528,18 +541,29 @@ impl Client {
 
     pub async fn send_input(&self, request: SendInputRequest) -> Result<(), ClientError> {
         self.ensure_open()?;
+        let event = crate::agents::SessionInputEvent::Input {
+            input_id: request.input_id,
+            payload: request.payload.to_vec(),
+        };
+        let protocol = request
+            .io_protocol
+            .parse()
+            .map_err(|message| ClientError::Encode {
+                method: method::CLIENT_SEND_INPUT_NAME,
+                message,
+            })?;
+        let (input_id, event) = crate::agents::send_input_event_to_client_wire(protocol, &event)
+            .map_err(|error| ClientError::Encode {
+                method: method::CLIENT_SEND_INPUT_NAME,
+                message: error.to_string(),
+            })?;
         self.inner
             .lock()
             .await
             .send_input(wire::ClientSendInputRequest {
                 agent: Some(agent_ref(request.agent)),
-                io_protocol: request.io_protocol,
-                event: Some(wire::client_send_input_request::Event::Input(
-                    wire::SessionInput {
-                        input_id: request.input_id,
-                        payload: request.payload.to_vec(),
-                    },
-                )),
+                input_id,
+                event: Some(event),
             })
             .await
             .map_err(status_to_client_error)?;
@@ -1028,7 +1052,7 @@ pub(crate) fn client_create_request_to_wire(
     request: CreateAgentRequest,
 ) -> Result<wire::ClientCreateAgentRequest, ClientError> {
     let agent = match request.agent_type {
-        crate::agents::AgentType::Claude => {
+        crate::agents::AgentType::Claude { driver } => {
             wire::client_create_agent_request::Agent::Claude(wire::ClaudeCreateConfig {
                 working_dir: path_to_wire_string(
                     method::CLIENT_CREATE_NAME,
@@ -1037,6 +1061,7 @@ pub(crate) fn client_create_request_to_wire(
                 )?,
                 args: request.args,
                 initial_terminal_size: request.terminal_size.map(terminal_size_to_wire),
+                driver: crate::agents::claude_driver_to_wire(driver) as i32,
             })
         }
         crate::agents::AgentType::Codex {
@@ -1223,7 +1248,12 @@ fn client_service_session_response_to_event(
     let event = match event {
         wire::subscribe_session_response::Event::Opened(_) => SubscribeSessionEvent::Opened,
         wire::subscribe_session_response::Event::Output(output) => SubscribeSessionEvent::Output {
-            payload: output.payload,
+            payload: crate::agents::session_output_payload_from_wire(output).map_err(|error| {
+                ClientError::Decode {
+                    method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
+                    message: error.to_string(),
+                }
+            })?,
         },
         wire::subscribe_session_response::Event::ReplayComplete(replay_complete) => {
             SubscribeSessionEvent::ReplayComplete {
@@ -1296,14 +1326,20 @@ fn host_entry_from_wire(
             message: "untrusted HostEntry must be online".to_string(),
         });
     }
+    let capabilities = host
+        .capabilities
+        .map(|capabilities| capabilities_from_wire(Some(capabilities)))
+        .transpose()
+        .map_err(|error| ClientError::Decode {
+            method,
+            message: error.to_string(),
+        })?;
     Ok(HostEntry {
         id,
         name: host.name,
         online: host.online,
         version: host.version,
-        capabilities: host
-            .capabilities
-            .map(|capabilities| capabilities_from_wire(Some(capabilities))),
+        capabilities,
         trust_status,
         last_dial_error: host.last_dial_error,
     })
@@ -1544,6 +1580,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn client_create_request_encodes_each_claude_driver() {
+        for (driver, expected) in [
+            (crate::agents::ClaudeDriver::Pty, wire::ClaudeDriver::Pty),
+            (crate::agents::ClaudeDriver::Sdk, wire::ClaudeDriver::Sdk),
+        ] {
+            let request = client_create_request_to_wire(CreateAgentRequest {
+                agent_id: Uuid::from_u128(7),
+                host_id: None,
+                name: Some("claude".into()),
+                agent_type: crate::agents::AgentType::Claude { driver },
+                working_dir: "/tmp/work".into(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
+            })
+            .unwrap();
+
+            let Some(wire::client_create_agent_request::Agent::Claude(config)) = request.agent
+            else {
+                panic!("expected Claude create config");
+            };
+            assert_eq!(
+                wire::ClaudeDriver::try_from(config.driver).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn client_create_request_encodes_codex_config() {
         let request = client_create_request_to_wire(CreateAgentRequest {
             agent_id: Uuid::from_u128(7),
@@ -1625,7 +1691,9 @@ mod tests {
             agent_id: Uuid::new_v4(),
             host_id: None,
             name: None,
-            agent_type: crate::agents::AgentType::Claude,
+            agent_type: crate::agents::AgentType::Claude {
+                driver: crate::agents::ClaudeDriver::Pty,
+            },
             working_dir: OsString::from_vec(vec![0xff]).into(),
             terminal_size: None,
             args: Vec::new(),

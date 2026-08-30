@@ -1,10 +1,13 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream};
 
-use crate::{IoDirection, IoEvent};
+use crate::{IoDirection, IoEvent, Recording};
+
+const DEFAULT_TRANSPORT_ID: &str = "<default>";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReplayTiming {
@@ -22,25 +25,102 @@ pub struct ReplayOptions {
 struct ReadEntry {
     us: u64,
     line: String,
+    transport_id: String,
 }
 
 #[derive(Debug, Clone)]
 struct WriteEntry {
     us: u64,
     line: String,
+    transport_id: String,
 }
 
 #[derive(Debug)]
 struct ReplayState {
     expected_writes: Vec<WriteEntry>,
     read_groups: Vec<Vec<ReadEntry>>,
+    matched_writes: Vec<bool>,
     validated_writes: usize,
+    delivered_reads: usize,
     next_group_idx: usize,
     next_read_idx: usize,
+    declared_transports: BTreeSet<String>,
+    used_transports: BTreeSet<String>,
+    write_buffers: BTreeMap<String, Vec<u8>>,
+    trailing_writes: Vec<String>,
+    write_mismatches: Vec<ReplayWriteMismatch>,
+    read_delivery_failures: Vec<String>,
+    skipped_notifications: Vec<serde_json::Value>,
+    explicit_ignores: Vec<ReplayNotificationIgnore>,
     replay_us: Option<u64>,
     timing: ReplayTiming,
-    writer_closed: bool,
+    open_writers: usize,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayWriteMismatch {
+    pub index: usize,
+    pub expected: String,
+    pub actual: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayNotificationIgnore {
+    pub notification: serde_json::Value,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayReport {
+    pub validated_writes: usize,
+    pub delivered_reads: usize,
+    pub explicit_ignores: Vec<ReplayNotificationIgnore>,
+    pub remaining_reads: usize,
+    pub remaining_writes: usize,
+    pub unused_transports: Vec<String>,
+    pub trailing_writes: Vec<String>,
+    pub trailing_output: Option<String>,
+    pub write_mismatches: Vec<ReplayWriteMismatch>,
+    pub read_delivery_failures: Vec<String>,
+    pub skipped_notifications: Vec<serde_json::Value>,
+}
+
+impl ReplayReport {
+    pub fn is_complete(&self) -> bool {
+        self.remaining_reads == 0
+            && self.remaining_writes == 0
+            && self.unused_transports.is_empty()
+            && self.trailing_writes.is_empty()
+            && self.trailing_output.is_none()
+            && self.write_mismatches.is_empty()
+            && self.read_delivery_failures.is_empty()
+            && self.skipped_notifications.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayError {
+    pub report: ReplayReport,
+}
+
+impl std::fmt::Display for ReplayError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let report = &self.report;
+        write!(
+            formatter,
+            "replay incomplete: {} unread, {} unwritten, {} unused transports, {} trailing writes, {} write mismatches, {} read delivery failures, {} undeclared skipped notifications",
+            report.remaining_reads,
+            report.remaining_writes,
+            report.unused_transports.len(),
+            report.trailing_writes.len() + usize::from(report.trailing_output.is_some()),
+            report.write_mismatches.len(),
+            report.read_delivery_failures.len(),
+            report.skipped_notifications.len(),
+        )
+    }
+}
+
+impl std::error::Error for ReplayError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayAdvance {
@@ -59,8 +139,25 @@ pub enum ReplayPeek {
 #[derive(Debug, Clone)]
 pub struct ReplayController {
     state: Arc<Mutex<ReplayState>>,
-    writer: Arc<tokio::sync::Mutex<DuplexStream>>,
+    outputs: ReplayOutputs,
     progress: Arc<tokio::sync::Notify>,
+}
+
+#[derive(Debug, Clone)]
+enum ReplayOutputs {
+    Single(Arc<tokio::sync::Mutex<DuplexStream>>),
+    Named(BTreeMap<String, Arc<tokio::sync::Mutex<DuplexStream>>>),
+}
+
+pub struct ReplayTransport {
+    pub reader: Box<dyn AsyncBufRead + Unpin + Send>,
+    pub writer: Box<dyn AsyncWrite + Unpin + Send>,
+}
+
+pub struct StrictReplay {
+    pub transports: BTreeMap<String, ReplayTransport>,
+    pub controller: ReplayController,
+    pub clock: ReplayClock,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -89,24 +186,13 @@ pub fn replay_transport_with_controller(
     script: Vec<IoEvent>,
     options: ReplayOptions,
 ) -> (BufReader<DuplexStream>, ReplayWriter, ReplayController) {
-    let replay_us = script.first().map(|event| event.us);
-    let (expected_writes, read_groups) = split_script(script);
-    let state = Arc::new(Mutex::new(ReplayState {
-        expected_writes,
-        read_groups,
-        validated_writes: 0,
-        next_group_idx: 0,
-        next_read_idx: 0,
-        replay_us,
-        timing: options.timing,
-        writer_closed: false,
-    }));
+    let state = replay_state(script, options, 1);
     let (read_half, write_half) = tokio::io::duplex(1024 * 1024);
-    let writer = Arc::new(tokio::sync::Mutex::new(write_half));
+    let output = Arc::new(tokio::sync::Mutex::new(write_half));
     let progress = Arc::new(tokio::sync::Notify::new());
     let controller = ReplayController {
         state: Arc::clone(&state),
-        writer,
+        outputs: ReplayOutputs::Single(output),
         progress: Arc::clone(&progress),
     };
 
@@ -114,7 +200,7 @@ pub fn replay_transport_with_controller(
         BufReader::new(read_half),
         ReplayWriter {
             state,
-            line_buf: Vec::new(),
+            transport_id: None,
             progress,
         },
         controller,
@@ -134,6 +220,53 @@ pub fn replay_transport_with_options(
     (reader, writer)
 }
 
+/// Build a strict replay with one independently owned I/O pair per named
+/// transport in the recording.
+pub fn strict_replay(recording: &Recording, options: ReplayOptions) -> StrictReplay {
+    let transport_ids = recording
+        .io
+        .iter()
+        .map(event_transport_id)
+        .collect::<BTreeSet<_>>();
+    let state = replay_state(recording.io.clone(), options, transport_ids.len());
+    let progress = Arc::new(tokio::sync::Notify::new());
+    let mut outputs = BTreeMap::new();
+    let mut transports = BTreeMap::new();
+
+    for transport_id in transport_ids {
+        let (read_half, write_half) = tokio::io::duplex(1024 * 1024);
+        outputs.insert(
+            transport_id.clone(),
+            Arc::new(tokio::sync::Mutex::new(write_half)),
+        );
+        transports.insert(
+            transport_id.clone(),
+            ReplayTransport {
+                reader: Box::new(BufReader::new(read_half)),
+                writer: Box::new(ReplayWriter {
+                    state: Arc::clone(&state),
+                    transport_id: Some(transport_id),
+                    progress: Arc::clone(&progress),
+                }),
+            },
+        );
+    }
+
+    let controller = ReplayController {
+        state,
+        outputs: ReplayOutputs::Named(outputs),
+        progress,
+    };
+    let clock = ReplayClock::new(None);
+    clock.register(controller.clone());
+
+    StrictReplay {
+        transports,
+        controller,
+        clock,
+    }
+}
+
 async fn drive_replay(controller: ReplayController) {
     loop {
         let notified = controller.progress.notified();
@@ -149,31 +282,73 @@ async fn drive_replay(controller: ReplayController) {
     }
 }
 
-fn split_script(script: Vec<IoEvent>) -> (Vec<WriteEntry>, Vec<Vec<ReadEntry>>) {
+fn replay_state(
+    script: Vec<IoEvent>,
+    options: ReplayOptions,
+    open_writers: usize,
+) -> Arc<Mutex<ReplayState>> {
+    let replay_us = script.first().map(|event| event.us);
+    let (expected_writes, read_groups, declared_transports) = split_script(script);
+    let matched_writes = vec![false; expected_writes.len()];
+    Arc::new(Mutex::new(ReplayState {
+        expected_writes,
+        read_groups,
+        matched_writes,
+        validated_writes: 0,
+        delivered_reads: 0,
+        next_group_idx: 0,
+        next_read_idx: 0,
+        declared_transports,
+        used_transports: BTreeSet::new(),
+        write_buffers: BTreeMap::new(),
+        trailing_writes: Vec::new(),
+        write_mismatches: Vec::new(),
+        read_delivery_failures: Vec::new(),
+        skipped_notifications: Vec::new(),
+        explicit_ignores: Vec::new(),
+        replay_us,
+        timing: options.timing,
+        open_writers,
+    }))
+}
+
+fn split_script(script: Vec<IoEvent>) -> (Vec<WriteEntry>, Vec<Vec<ReadEntry>>, BTreeSet<String>) {
     let mut expected_writes = Vec::new();
     let mut read_groups: Vec<Vec<ReadEntry>> = Vec::new();
     let mut current_reads = Vec::new();
+    let mut declared_transports = BTreeSet::new();
 
     for event in script {
+        let transport_id = event_transport_id(&event);
+        declared_transports.insert(transport_id.clone());
         match event.direction {
             IoDirection::Write => {
                 read_groups.push(std::mem::take(&mut current_reads));
                 expected_writes.push(WriteEntry {
                     us: event.us,
                     line: event.line,
+                    transport_id,
                 });
             }
             IoDirection::Read => {
                 current_reads.push(ReadEntry {
                     us: event.us,
                     line: event.line,
+                    transport_id,
                 });
             }
         }
     }
 
     read_groups.push(current_reads);
-    (expected_writes, read_groups)
+    (expected_writes, read_groups, declared_transports)
+}
+
+fn event_transport_id(event: &IoEvent) -> String {
+    event
+        .transport_id
+        .clone()
+        .unwrap_or_else(|| DEFAULT_TRANSPORT_ID.to_string())
 }
 
 impl ReplayController {
@@ -211,18 +386,122 @@ impl ReplayController {
             tokio::time::sleep(delay).await;
         }
 
-        let mut writer = self.writer.lock().await;
-        if writer.write_all(entry.line.as_bytes()).await.is_err() {
+        let Some(output) = self.output_for(&entry.transport_id) else {
+            self.state
+                .lock()
+                .expect("replay state lock")
+                .read_delivery_failures
+                .push(format!(
+                    "no replay output for transport {}",
+                    entry.transport_id
+                ));
+            return ReplayAdvance::Exhausted;
+        };
+        let delivery = async {
+            let mut writer = output.lock().await;
+            writer.write_all(entry.line.as_bytes()).await?;
+            writer.write_all(b"\n").await?;
+            writer.flush().await
+        }
+        .await;
+
+        let mut state = self.state.lock().expect("replay state lock");
+        state.used_transports.insert(entry.transport_id);
+        if let Err(error) = delivery {
+            state.read_delivery_failures.push(error.to_string());
             return ReplayAdvance::Exhausted;
         }
-        if writer.write_all(b"\n").await.is_err() {
-            return ReplayAdvance::Exhausted;
-        }
-        if writer.flush().await.is_err() {
-            return ReplayAdvance::Exhausted;
-        }
+        state.delivered_reads += 1;
 
         ReplayAdvance::Advanced { event_us: entry.us }
+    }
+
+    fn output_for(&self, transport_id: &str) -> Option<Arc<tokio::sync::Mutex<DuplexStream>>> {
+        match &self.outputs {
+            ReplayOutputs::Single(output) => Some(Arc::clone(output)),
+            ReplayOutputs::Named(outputs) => outputs.get(transport_id).cloned(),
+        }
+    }
+
+    /// Record a notification discarded without an explicit ignore declaration.
+    /// Such a skip makes [`Self::finish`] fail.
+    pub fn record_skipped_notification(&self, notification: serde_json::Value) {
+        self.state
+            .lock()
+            .expect("replay state lock")
+            .skipped_notifications
+            .push(notification);
+    }
+
+    /// Record a deliberately ignored notification and why it is outside the
+    /// current assertion. An empty reason remains an undeclared skip.
+    pub fn ignore_notification(&self, notification: serde_json::Value, reason: impl Into<String>) {
+        let reason = reason.into();
+        let mut state = self.state.lock().expect("replay state lock");
+        if reason.trim().is_empty() {
+            state.skipped_notifications.push(notification);
+        } else {
+            state.explicit_ignores.push(ReplayNotificationIgnore {
+                notification,
+                reason,
+            });
+        }
+    }
+
+    /// Prove that every recorded event and notification obligation was
+    /// accounted for.
+    #[allow(
+        clippy::result_large_err,
+        reason = "ReplayError intentionally carries the complete public accounting report"
+    )]
+    pub fn finish(&self) -> Result<ReplayReport, ReplayError> {
+        let state = self.state.lock().expect("replay state lock");
+        let total_reads = state.read_groups.iter().map(Vec::len).sum::<usize>();
+        let report = ReplayReport {
+            validated_writes: state.validated_writes,
+            delivered_reads: state.delivered_reads,
+            explicit_ignores: state.explicit_ignores.clone(),
+            remaining_reads: total_reads.saturating_sub(state.delivered_reads),
+            remaining_writes: state
+                .expected_writes
+                .len()
+                .saturating_sub(state.validated_writes),
+            unused_transports: state
+                .declared_transports
+                .difference(&state.used_transports)
+                .cloned()
+                .collect(),
+            trailing_writes: state.trailing_writes.clone(),
+            trailing_output: trailing_output(&state.write_buffers),
+            write_mismatches: state.write_mismatches.clone(),
+            read_delivery_failures: state.read_delivery_failures.clone(),
+            skipped_notifications: state.skipped_notifications.clone(),
+        };
+
+        if report.is_complete() {
+            Ok(report)
+        } else {
+            Err(ReplayError { report })
+        }
+    }
+}
+
+fn trailing_output(write_buffers: &BTreeMap<String, Vec<u8>>) -> Option<String> {
+    let nonempty = write_buffers
+        .iter()
+        .filter(|(_, bytes)| !bytes.is_empty())
+        .collect::<Vec<_>>();
+    match nonempty.as_slice() {
+        [] => None,
+        [(_, bytes)] => Some(String::from_utf8_lossy(bytes).into_owned()),
+        many => Some(
+            many.iter()
+                .map(|(transport, bytes)| {
+                    format!("{transport}: {}", String::from_utf8_lossy(bytes))
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
     }
 }
 
@@ -315,7 +594,7 @@ impl ReplayClock {
 
 pub struct ReplayWriter {
     state: Arc<Mutex<ReplayState>>,
-    line_buf: Vec<u8>,
+    transport_id: Option<String>,
     progress: Arc<tokio::sync::Notify>,
 }
 
@@ -325,7 +604,19 @@ impl AsyncWrite for ReplayWriter {
         _cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        self.get_mut().line_buf.extend_from_slice(buf);
+        let this = self.get_mut();
+        let buffer_key = this
+            .transport_id
+            .as_deref()
+            .unwrap_or(DEFAULT_TRANSPORT_ID)
+            .to_string();
+        this.state
+            .lock()
+            .expect("replay state lock")
+            .write_buffers
+            .entry(buffer_key)
+            .or_default()
+            .extend_from_slice(buf);
         std::task::Poll::Ready(Ok(buf.len()))
     }
 
@@ -334,45 +625,69 @@ impl AsyncWrite for ReplayWriter {
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
         let this = self.get_mut();
+        let buffer_key = this
+            .transport_id
+            .as_deref()
+            .unwrap_or(DEFAULT_TRANSPORT_ID)
+            .to_string();
+        let mut state = this.state.lock().expect("replay state lock");
 
-        while let Some(pos) = this.line_buf.iter().position(|&b| b == b'\n') {
-            let line_bytes: Vec<u8> = this.line_buf.drain(..=pos).collect();
+        loop {
+            let line_bytes = {
+                let buffer = state.write_buffers.entry(buffer_key.clone()).or_default();
+                let Some(pos) = buffer.iter().position(|&b| b == b'\n') else {
+                    break;
+                };
+                buffer.drain(..=pos).collect::<Vec<_>>()
+            };
             let line = String::from_utf8_lossy(&line_bytes[..line_bytes.len() - 1]).to_string();
-            let mut state = this.state.lock().expect("replay state lock");
 
             if state.validated_writes >= state.expected_writes.len() {
-                panic!(
-                    "unexpected replay write at index {}: {}",
-                    state.validated_writes, line
-                );
+                state.trailing_writes.push(line.clone());
+                return std::task::Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "unexpected replay write at index {}: {line}",
+                        state.validated_writes
+                    ),
+                )));
             }
 
             let write_idx = state.validated_writes;
-            let expected = state.expected_writes[write_idx].clone();
-            let actual_val = serde_json::from_str::<serde_json::Value>(&line);
-            let expected_val = serde_json::from_str::<serde_json::Value>(&expected.line);
+            let candidates = concurrent_writes_from(&state, write_idx);
+            let mut transport_candidates = candidates.iter().copied().filter(|&candidate| {
+                this.transport_id.as_ref().is_none_or(|transport_id| {
+                    state.expected_writes[candidate].transport_id == *transport_id
+                })
+            });
+            let expected_idx = transport_candidates.clone().next().unwrap_or(write_idx);
+            let Some(hit) = transport_candidates
+                .find(|&candidate| write_equals(&line, &state.expected_writes[candidate].line))
+            else {
+                let expected = state.expected_writes[expected_idx].clone();
+                state.write_mismatches.push(ReplayWriteMismatch {
+                    index: expected_idx,
+                    expected: expected.line,
+                    actual: line,
+                });
+                return std::task::Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("replay write mismatch at index {expected_idx}"),
+                )));
+            };
 
-            match (actual_val, expected_val) {
-                (Ok(actual), Ok(expected)) => {
-                    assert_eq!(
-                        actual, expected,
-                        "replay write mismatch at index {}",
-                        write_idx
-                    );
-                }
-                _ => {
-                    assert_eq!(
-                        line.trim(),
-                        expected.line.trim(),
-                        "replay write mismatch at index {}",
-                        write_idx
-                    );
-                }
+            let expected = state.expected_writes[hit].clone();
+            state.used_transports.insert(expected.transport_id);
+            state.matched_writes[hit] = true;
+            while state
+                .matched_writes
+                .get(state.validated_writes)
+                .copied()
+                .unwrap_or(false)
+            {
+                state.validated_writes += 1;
             }
-
-            state.validated_writes += 1;
             state.replay_us = Some(expected.us);
-            drop(state);
             this.progress.notify_one();
         }
 
@@ -389,9 +704,66 @@ impl AsyncWrite for ReplayWriter {
 
 impl Drop for ReplayWriter {
     fn drop(&mut self) {
-        self.state.lock().expect("replay state lock").writer_closed = true;
+        let mut state = self.state.lock().expect("replay state lock");
+        state.open_writers = state.open_writers.saturating_sub(1);
+        drop(state);
         self.progress.notify_one();
     }
+}
+
+/// Compare written lines as JSON so object key order and insignificant
+/// whitespace do not decide whether replay succeeds.
+fn write_equals(actual: &str, expected: &str) -> bool {
+    match (
+        serde_json::from_str::<serde_json::Value>(actual),
+        serde_json::from_str::<serde_json::Value>(expected),
+    ) {
+        (Ok(actual), Ok(expected)) => actual == expected,
+        _ => actual.trim() == expected.trim(),
+    }
+}
+
+const CONTROL_RESPONSE: &str = "control_response";
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum WriteOrigin {
+    Caller,
+    Responder,
+}
+
+fn write_origin(line: &str) -> WriteOrigin {
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(value)
+            if value.get("type").and_then(serde_json::Value::as_str) == Some(CONTROL_RESPONSE) =>
+        {
+            WriteOrigin::Responder
+        }
+        _ => WriteOrigin::Caller,
+    }
+}
+
+/// Return the unmatched writes that the recording did not causally order.
+fn concurrent_writes_from(state: &ReplayState, frontier: usize) -> Vec<usize> {
+    let mut candidates: Vec<usize> = Vec::new();
+    let mut index = frontier;
+    while index < state.expected_writes.len() {
+        if index > frontier && !state.read_groups[index].is_empty() {
+            break;
+        }
+        if !state.matched_writes[index] {
+            let write = &state.expected_writes[index];
+            let origin = write_origin(&write.line);
+            if !candidates.iter().any(|&candidate| {
+                let candidate = &state.expected_writes[candidate];
+                candidate.transport_id == write.transport_id
+                    && write_origin(&candidate.line) == origin
+            }) {
+                candidates.push(index);
+            }
+        }
+        index += 1;
+    }
+    candidates
 }
 
 fn peek_next_locked(state: &ReplayState) -> ReplayPeek {
@@ -403,7 +775,7 @@ fn peek_next_locked(state: &ReplayState) -> ReplayPeek {
             return ReplayPeek::Exhausted;
         }
         if group_idx > state.validated_writes {
-            return if state.writer_closed {
+            return if state.open_writers == 0 {
                 ReplayPeek::Exhausted
             } else {
                 ReplayPeek::BlockedOnWrite

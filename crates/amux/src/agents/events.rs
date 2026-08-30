@@ -133,8 +133,9 @@ mod tests {
                 name: Some("bad-path".to_string()),
                 command: "claude".to_string(),
                 working_dir: std::path::PathBuf::from(OsString::from_vec(vec![0xff])),
-                agent_type: "claude".to_string(),
-                io_protocols: Vec::new(),
+                kind: crate::agents::AgentKind::Claude {
+                    driver: crate::agents::ClaudeDriver::Pty,
+                },
                 readonly: false,
                 args: Vec::new(),
                 created_at: chrono::Utc::now(),

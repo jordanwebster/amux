@@ -50,7 +50,7 @@ fn new_local_agent_host(
     #[cfg(feature = "local-agents")]
     {
         let route = McpLaunchRoute::for_current_process(config, host_id)?;
-        PtyAgentHost::new_with_mcp_launch_route(route)
+        PtyAgentHost::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir))
             .map(|host| Some(host as Arc<dyn LocalAgentHost>))
     }
     #[cfg(not(feature = "local-agents"))]

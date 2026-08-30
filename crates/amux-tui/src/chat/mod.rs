@@ -8,6 +8,7 @@ mod codex;
 pub mod diff;
 pub(crate) mod frame;
 pub(crate) mod inline;
+mod unsupported;
 pub(crate) mod viewport;
 
 use std::cell::RefCell;
@@ -46,6 +47,10 @@ pub enum FeedScroll {
 enum AgentChatView {
     Claude(claude::View),
     Codex(codex::View),
+    /// A protocol this build has no fold for. It renders a placeholder and
+    /// takes no input, so a kind can ship before its reader does without
+    /// leaving its agents unreachable from the fleet.
+    Unsupported(unsupported::View),
 }
 
 #[derive(Clone, Debug)]
@@ -106,20 +111,25 @@ fn frame_parts(
         AgentChatView::Codex(view) => {
             codex::codex_frame_parts(model, view, &chat.viewport, cache, ctx)
         }
+        AgentChatView::Unsupported(view) => unsupported::frame_parts(model, view, ctx),
     }
 }
 
 impl ChatView {
     pub fn open(model: &Model, agent: AgentId, leader: char, kitty: bool) -> Option<Self> {
         let protocol = model.agent(agent)?.structured_protocol()?;
-        let inner = match protocol {
-            StructuredProtocol::Claude => {
-                AgentChatView::Claude(claude::View::open(agent, leader, kitty))
-            }
-            StructuredProtocol::Codex => {
-                AgentChatView::Codex(codex::View::open(agent, leader, kitty))
-            }
-        };
+        let inner =
+            match protocol {
+                StructuredProtocol::Claude => {
+                    AgentChatView::Claude(claude::View::open(agent, leader, kitty))
+                }
+                StructuredProtocol::Codex => {
+                    AgentChatView::Codex(codex::View::open(agent, leader, kitty))
+                }
+                StructuredProtocol::ClaudeSdk => AgentChatView::Unsupported(
+                    unsupported::View::open(agent, protocol.as_str(), leader, kitty),
+                ),
+            };
         Some(Self {
             agent,
             viewport: FeedViewport::following(),
@@ -150,10 +160,28 @@ impl ChatView {
         }
     }
 
+    pub fn open_unsupported(
+        agent: AgentId,
+        protocol: &'static str,
+        leader: char,
+        kitty: bool,
+    ) -> Self {
+        Self {
+            agent,
+            viewport: FeedViewport::following(),
+            inner: AgentChatView::Unsupported(unsupported::View::open(
+                agent, protocol, leader, kitty,
+            )),
+            feed_metrics: RefCell::new(None),
+            paint_cache: RefCell::new(PaintCache::default()),
+        }
+    }
+
     pub fn composer_mut(&mut self) -> &mut Composer {
         match &mut self.inner {
             AgentChatView::Claude(view) => &mut view.composer,
             AgentChatView::Codex(view) => &mut view.composer,
+            AgentChatView::Unsupported(view) => &mut view.composer,
         }
     }
 
@@ -161,6 +189,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => &mut view.quit_guard,
             AgentChatView::Codex(view) => &mut view.quit_guard,
+            AgentChatView::Unsupported(view) => &mut view.quit_guard,
         }
     }
 
@@ -168,6 +197,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.help = help,
             AgentChatView::Codex(view) => view.help = help,
+            AgentChatView::Unsupported(view) => view.help = help,
         }
     }
 
@@ -175,6 +205,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.kitty = kitty,
             AgentChatView::Codex(view) => view.kitty = kitty,
+            AgentChatView::Unsupported(view) => view.kitty = kitty,
         }
     }
 
@@ -213,6 +244,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.reconcile(model),
             AgentChatView::Codex(view) => view.reconcile(model),
+            AgentChatView::Unsupported(_) => {}
         }
     }
 
@@ -221,6 +253,8 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.note_dispatched(op, command),
             AgentChatView::Codex(view) => view.note_dispatched(op, command),
+            // This chat dispatches nothing, so it has nothing to await.
+            AgentChatView::Unsupported(_) => {}
         }
     }
 
@@ -228,6 +262,7 @@ impl ChatView {
         match &self.inner {
             AgentChatView::Claude(view) => view.needs_tick(model),
             AgentChatView::Codex(view) => view.needs_tick(model),
+            AgentChatView::Unsupported(_) => false,
         }
     }
 
@@ -286,6 +321,7 @@ impl ChatView {
         match &self.inner {
             AgentChatView::Claude(view) => view.pending_leader,
             AgentChatView::Codex(view) => view.pending_leader,
+            AgentChatView::Unsupported(view) => view.pending_leader,
         }
     }
 
@@ -293,6 +329,8 @@ impl ChatView {
         match &self.inner {
             AgentChatView::Claude(view) => view.overlay_open(),
             AgentChatView::Codex(view) => view.overlay_open(),
+            // The placeholder never opens an overlay of its own.
+            AgentChatView::Unsupported(_) => false,
         }
     }
 
@@ -300,6 +338,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.pending_leader = false,
             AgentChatView::Codex(view) => view.pending_leader = false,
+            AgentChatView::Unsupported(view) => view.pending_leader = false,
         }
         self.quit_guard_mut().disarm();
     }
@@ -403,10 +442,14 @@ pub fn handle_chat_key(
     let action = match &mut chat.inner {
         AgentChatView::Claude(view) => claude::handle_chat_key(view, model, key, viewport, now),
         AgentChatView::Codex(view) => codex::handle_chat_key(view, model, key, viewport, now),
+        AgentChatView::Unsupported(view) => unsupported::handle_chat_key(view, model, key, now),
     };
     let intent = match &mut chat.inner {
         AgentChatView::Claude(view) => view.scroll_intent.take(),
         AgentChatView::Codex(view) => view.scroll_intent.take(),
+        // The placeholder emits no scroll intents; wheel motion over its
+        // feed still routes through the shared viewport below.
+        AgentChatView::Unsupported(_) => None,
     };
     if let Some(intent) = intent {
         let metrics = chat.metrics_for(model, viewport, now);
@@ -424,6 +467,8 @@ pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
     match &mut chat.inner {
         AgentChatView::Claude(view) => claude::handle_chat_paste(view, model, text),
         AgentChatView::Codex(view) => codex::handle_chat_paste(view, model, text),
+        // Nothing to paste into.
+        AgentChatView::Unsupported(_) => {}
     }
 }
 
@@ -678,6 +723,8 @@ fn ask_detail(model: &Model, need: &FamilyNeed<'_>) -> Option<String> {
     match need.layer()? {
         StructuredProtocol::Claude => claude::ask_detail(model, need.agent()),
         StructuredProtocol::Codex => codex::ask_detail(model, need.agent()),
+        // An unfolded layer raises no need, so it has no detail to give.
+        StructuredProtocol::ClaudeSdk => None,
     }
 }
 
@@ -773,7 +820,7 @@ pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
         Some(StructuredProtocol::Codex) => model.codex(agent).map_or(0, |layer| {
             layer.evicted_entries() + layer.entry_count() as u64
         }),
-        None => 0,
+        Some(StructuredProtocol::ClaudeSdk) | None => 0,
     }
 }
 
@@ -833,8 +880,13 @@ mod tests {
                     name: Some("protocol-test".to_string()),
                     command: "test-agent".to_string(),
                     working_dir: "/work".into(),
-                    agent_type: "test-agent".to_string(),
-                    io_protocols: vec![protocol.to_string()],
+                    kind: match protocol {
+                        amux_ui::claude::PROTOCOL => amux_ui::AgentKind::Claude {
+                            driver: amux_ui::ClaudeDriver::Pty,
+                        },
+                        amux_ui::codex::PROTOCOL => amux_ui::AgentKind::Codex,
+                        _ => amux_ui::AgentKind::TestAgent,
+                    },
                     readonly: false,
                     args: Vec::new(),
                     created_at: at(0),
@@ -1007,10 +1059,7 @@ mod tests {
     #[test]
     fn both_agents_route_paging_and_endpoints_through_the_shared_viewport() {
         for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
-            let wire = match protocol {
-                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
-                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
-            };
+            let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
             let ctx = FrameContext {
@@ -1094,10 +1143,7 @@ mod tests {
     #[test]
     fn focus_chords_move_blocks_and_keep_them_visible_in_both_chats() {
         for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
-            let wire = match protocol {
-                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
-                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
-            };
+            let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
             seed_focus_cache(&mut chat);
@@ -1138,10 +1184,7 @@ mod tests {
     #[test]
     fn native_help_overlays_take_shared_focus_keys_in_both_chats() {
         for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
-            let wire = match protocol {
-                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
-                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
-            };
+            let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
             seed_focus_cache(&mut chat);
@@ -1192,10 +1235,7 @@ mod tests {
     #[test]
     fn focus_copy_uses_the_focused_block_or_the_newest_block_in_both_chats() {
         for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
-            let wire = match protocol {
-                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
-                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
-            };
+            let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
             seed_focus_cache(&mut chat);
@@ -1242,10 +1282,7 @@ mod tests {
     #[test]
     fn mouse_wheel_routes_three_rows_through_both_chat_viewports() {
         for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
-            let wire = match protocol {
-                StructuredProtocol::Claude => amux_ui::claude::PROTOCOL,
-                StructuredProtocol::Codex => amux_ui::codex::PROTOCOL,
-            };
+            let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
             chat.feed_metrics.replace(Some(super::CachedFeedMetrics {
