@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Closed the typed UI boundary correction pass.** The completed
+branch now keeps visible evidence in bounded diff previews, retains landed
+patches at a proportional byte scale, reuses painted geometry for wheel input,
+and proves typed approval facts agree with answer wire values. Formatting,
+all-target linting, and the complete workspace suite pass; the only lint
+diagnostics are the two pre-existing test-only listener helpers outside this
+branch's changes.
+
 2026-08-31 — **Made deliberate typed splits prove their agreement.** Codex
 approval specs now verify every scalar meaning maps back to its exact wire
 choice. Unknown object details remain typed as separate sanitized scalars, an
