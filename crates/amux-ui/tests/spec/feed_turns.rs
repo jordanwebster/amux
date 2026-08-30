@@ -130,6 +130,72 @@ fn messages_upsert_by_message_id_and_finalize_on_stop_reason() {
     );
 }
 
+/// A null-stop message flushed before an interrupt is final-as-interrupted,
+/// paired by `interruptedMessageId` rather than arrival guesswork
+/// (docs/CHAT.md B2/B8).
+#[test]
+fn a_mid_generation_interrupt_closes_its_flushed_message() {
+    let prompt = review_row(
+        0x7100,
+        "2026-08-11T22:00:00.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": "begin"},
+            "origin": {"kind": "human"},
+            "promptSource": "typed"
+        }),
+    );
+    let partial = review_row(
+        0x7101,
+        "2026-08-11T22:00:01.000Z",
+        json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_interrupted",
+                "role": "assistant",
+                "stop_reason": null,
+                "content": [{"type": "text", "text": "partial answer"}]
+            }
+        }),
+    );
+    let interrupt = review_row(
+        0x7102,
+        "2026-08-11T22:00:02.000Z",
+        json!({
+            "type": "user",
+            "interruptedMessageId": "msg_interrupted",
+            "message": {"role": "user", "content": [
+                {"type": "text", "text": "[Request interrupted by user]"}
+            ]}
+        }),
+    );
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch("fix-auth-bug", 10, vec![prompt, partial, interrupt])],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let message = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Message(message) => Some(message),
+            _ => None,
+        })
+        .expect("the flushed partial message");
+    assert_eq!(message.message_id, "msg_interrupted");
+    assert_eq!(message.finality, MessageFinality::Interrupted);
+    let interruption = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Interruption(interruption) => Some(interruption),
+            _ => None,
+        })
+        .expect("the paired interruption");
+    assert_eq!(
+        interruption.interrupted_message_id.as_deref(),
+        Some("msg_interrupted")
+    );
+}
+
 /// Thinking markers are retroactive and INFERRED from FACT timestamps:
 /// thinking row minus the previous uuid row, clamped at zero (B3). The
 /// fixture's wall clock makes the expected values exact.
@@ -145,6 +211,99 @@ fn thinking_durations_come_from_the_timestamp_chain() {
         })
         .collect();
     assert_eq!(durations, vec![Some(1703)]);
+}
+
+/// The previous-row timestamp chain includes rows that render as other entry
+/// kinds: a tool result and the next human prompt each become the base for the
+/// following thinking marker (docs/CHAT.md B3).
+#[test]
+fn thinking_durations_chain_through_tool_results_and_following_prompts() {
+    let prompt = review_row(
+        0x7200,
+        "2026-08-11T22:00:00.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": "first"},
+            "origin": {"kind": "human"},
+            "promptSource": "typed"
+        }),
+    );
+    let first_thinking = review_row(
+        0x7201,
+        "2026-08-11T22:00:01.000Z",
+        json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_thinking_1", "role": "assistant", "stop_reason": null,
+                "content": [{"type": "thinking", "thinking": "one"}]
+            }
+        }),
+    );
+    let tool_result = review_row(
+        0x7202,
+        "2026-08-11T22:00:03.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_chain", "content": "done"}
+            ]}
+        }),
+    );
+    let second_thinking = review_row(
+        0x7203,
+        "2026-08-11T22:00:05.000Z",
+        json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_thinking_2", "role": "assistant", "stop_reason": null,
+                "content": [{"type": "thinking", "thinking": "two"}]
+            }
+        }),
+    );
+    let next_prompt = review_row(
+        0x7204,
+        "2026-08-11T22:00:08.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": "second"},
+            "origin": {"kind": "human"},
+            "promptSource": "typed"
+        }),
+    );
+    let third_thinking = review_row(
+        0x7205,
+        "2026-08-11T22:00:11.000Z",
+        json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_thinking_3", "role": "assistant", "stop_reason": "end_turn",
+                "content": [{"type": "thinking", "thinking": "three"}]
+            }
+        }),
+    );
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                prompt,
+                first_thinking,
+                tool_result,
+                second_thinking,
+                next_prompt,
+                third_thinking,
+            ],
+        )],
+    ]));
+    let durations: Vec<_> = claude_layer(&model, "fix-auth-bug")
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Thinking(thinking) => Some(thinking.duration_ms),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(durations, vec![Some(1000), Some(2000), Some(3000)]);
 }
 
 /// The turn authority carries the wall-time-verified duration and the

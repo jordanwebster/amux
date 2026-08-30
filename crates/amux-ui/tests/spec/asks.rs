@@ -447,6 +447,41 @@ fn multiple_pending_asks_queue_with_an_honest_count() {
     assert_eq!(ids, vec![0, 1], "stable monotonic handles");
 }
 
+/// Ask identity is the request's tool name plus canonical input, not the
+/// prompt that happened to trigger it: one prompt may produce several
+/// independently answerable obligations (docs/CHAT.md §Asks).
+#[test]
+fn distinct_permission_requests_under_one_prompt_are_distinct_asks() {
+    let mut first = permission_hook("echo first");
+    first["prompt_id"] = json!("shared-prompt");
+    let mut second = permission_hook("echo second");
+    second["prompt_id"] = json!("shared-prompt");
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![ready(), a_prompt_row(), first, second],
+        )],
+    ]));
+    let asks: Vec<_> = the_layer(&model).asks().collect();
+    assert_eq!(asks.len(), 2);
+    assert_eq!(asks[0].session_ask_id, "shared-prompt");
+    assert_eq!(asks[1].session_ask_id, "shared-prompt");
+    let commands: Vec<_> = asks
+        .iter()
+        .map(|ask| match &ask.kind {
+            AskKind::Permission {
+                invocation: ToolInvocation::Bash { command, .. },
+                ..
+            } => command.as_deref(),
+            other => panic!("expected Bash permission, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(commands, vec![Some("echo first"), Some("echo second")]);
+    assert_ne!(asks[0].id, asks[1].id, "content gives each ask an identity");
+}
+
 /// A request identical to a PENDING ask is the duplicate delivery and
 /// folds to nothing; the same request arriving after resolution is a
 /// genuine re-ask and becomes a new ask.

@@ -5632,3 +5632,9 @@ registry transcript now reflects the current manifests: all eighteen PTY
 recordings show live verification at Claude Code 2.1.251, while the SDK rows
 retain their mixed migrated, re-recorded, passing, and still-unverified
 ledger history.
+
+2026-08-30 — **Restored synthetic chat-boundary regression claims.** UI specs
+again prove that a FACT-paired interrupt closes a flushed null-stop message as
+interrupted, distinct permission requests under one prompt remain separate
+asks, and thinking durations use the full previous-row timestamp chain across
+tool results and later prompts.
