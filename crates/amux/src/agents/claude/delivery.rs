@@ -138,6 +138,7 @@ mod tests {
                 hooks,
                 transcript,
                 version: claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
+                delays: claude::pty::DelaySource::replay(replay_support::ReplayClock::new(Some(0))),
             },
             &claude::pty::keymap::KeymapSources::default(),
         );

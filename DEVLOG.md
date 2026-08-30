@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Made Claude keymap delays virtual during replay.** PTY sessions
+now receive timing behavior with the rest of their source bundle. Live sessions
+still sleep for each bounded keymap delay, while recording-backed sessions
+advance the strict-replay clock and yield to causal input without waiting on
+wall time. All Claude PTY intents are re-driven with unchanged keystroke bytes
+and daemon rows, and the full Codex, Claude SDK and Claude PTY derivation suite
+now completes in about one second.
+
+---
+
 2026-08-30 — **Completed the canonical provider crates integration.** Claude
 PTY and SDK sessions now live behind `claude`, Codex sessions behind `codex`,
 provider-neutral process hosting behind `pty-host`, and corpus machinery behind

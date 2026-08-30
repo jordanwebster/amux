@@ -37,6 +37,8 @@ provider identity needed to resume. Provider behavior does not belong there.
 - `TranscriptSource` supplies rows tagged with their transcript path and a
   relink operation for compact and clear transitions.
 - `ClaudeVersion` is the observed provider version used for keymap resolution.
+- `DelaySource` sleeps with the bounded live clock or advances replay's virtual
+  clock, so keymap timing remains semantic without slowing corpus derivation.
 
 Live construction obtains those sources from `pty-host`, the hook receiver,
 the transcript tailer and a version probe. Recorded construction obtains the

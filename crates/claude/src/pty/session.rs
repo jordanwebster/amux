@@ -32,6 +32,45 @@ pub struct Sources {
     pub hooks: HookSource,
     pub transcript: TranscriptSource,
     pub version: ClaudeVersion,
+    pub delays: DelaySource,
+}
+
+#[derive(Clone)]
+pub struct DelaySource {
+    implementation: DelayImplementation,
+}
+
+#[derive(Clone)]
+enum DelayImplementation {
+    Live,
+    Replay(replay_support::ReplayClock),
+}
+
+impl DelaySource {
+    pub fn live() -> Self {
+        Self {
+            implementation: DelayImplementation::Live,
+        }
+    }
+
+    pub fn replay(clock: replay_support::ReplayClock) -> Self {
+        Self {
+            implementation: DelayImplementation::Replay(clock),
+        }
+    }
+
+    async fn wait(&self, duration: Duration) {
+        match &self.implementation {
+            DelayImplementation::Live => {
+                tokio::time::sleep(duration.min(Duration::from_millis(u64::from(MAX_DELAY_MS))))
+                    .await;
+            }
+            DelayImplementation::Replay(clock) => {
+                let _ = clock.advance_for(duration).await;
+                tokio::task::yield_now().await;
+            }
+        }
+    }
 }
 
 pub struct PtySource {
@@ -362,6 +401,7 @@ pub struct Control {
     confirmations: broadcast::Sender<Value>,
     exit: watch::Receiver<Option<pty_host::ExitStatus>>,
     write_observer: Arc<Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>>,
+    delays: DelaySource,
 }
 
 impl Control {
@@ -467,8 +507,9 @@ impl Control {
                     bytes_written += bytes.len();
                 }
                 PtyInput::Delay(ms) => {
-                    tokio::time::sleep(Duration::from_millis(u64::from((*ms).min(MAX_DELAY_MS))))
-                        .await
+                    self.delays
+                        .wait(Duration::from_millis(u64::from(*ms)))
+                        .await;
                 }
             }
         }
@@ -490,10 +531,7 @@ impl Control {
                     bytes_written += bytes.len();
                 }
                 super::keymap::KeyStep::Delay(delay) => {
-                    tokio::time::sleep(
-                        (*delay).min(Duration::from_millis(u64::from(MAX_DELAY_MS))),
-                    )
-                    .await;
+                    self.delays.wait(*delay).await;
                 }
             }
         }
@@ -647,6 +685,7 @@ pub fn spawn_with_version(
             hooks: HookSource::from_receiver(receiver),
             transcript: TranscriptSource::live(),
             version,
+            delays: DelaySource::live(),
         },
         keymaps,
     ))
@@ -658,6 +697,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
         hooks,
         transcript,
         version,
+        delays,
     } = sources;
     let PtySource {
         output,
@@ -791,6 +831,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
             confirmations: confirmation_tx,
             exit: exit_rx,
             write_observer: Arc::new(Mutex::new(None)),
+            delays,
         },
     }
 }
@@ -842,6 +883,7 @@ pub fn from_recording(
             hooks: hook_source,
             transcript: TranscriptSource::recorded(rows),
             version: ClaudeVersion(manifest.recorded.version.clone()),
+            delays: DelaySource::replay(replay.clock.clone()),
         },
         keymaps,
     ))
@@ -1251,6 +1293,7 @@ mod tests {
                 hooks,
                 transcript,
                 version: "2.1.251".parse().unwrap(),
+                delays: DelaySource::live(),
             },
             hook_tx,
             row_tx,
@@ -1287,6 +1330,18 @@ mod tests {
 
     fn from_test_sources(sources: Sources) -> Session {
         from_sources(sources, &super::super::keymap::KeymapSources::default())
+    }
+
+    #[tokio::test]
+    async fn replay_delays_advance_virtual_time_without_waiting() {
+        let clock = replay_support::ReplayClock::new(Some(0));
+        let delays = DelaySource::replay(clock.clone());
+        let started = std::time::Instant::now();
+
+        delays.wait(Duration::from_secs(30)).await;
+
+        assert_eq!(clock.current_us(), Some(30_000_000));
+        assert!(started.elapsed() < Duration::from_millis(100));
     }
 
     #[tokio::test]
