@@ -33,7 +33,7 @@ run = "scripts/workspace-test.sh"
 run = "cargo clippy --workspace --all-targets --features amux/testnet -- -D warnings"
 
 [task.spec]
-run = "timeout 900 cargo test -p amux --features testnet --test spec"
+run = "scripts/spec-test.sh"
 
 [task.e2e]
 run = "timeout 900 cargo run -p e2e-runner -- run"

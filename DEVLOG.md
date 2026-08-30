@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Made the protocol spec boundary explicit offline.** Normal
+workspace runs still execute every whole-daemon specification. In the
+credential-empty, network-denied sandbox, the task compiles the complete spec
+binary but does not execute it because every chapter is built on the
+TCP-backed `TestNet` harness. The runner reports that isolation directly,
+rather than turning network-denial failures into false protocol failures.
+
+---
+
 2026-08-30 — **Kept resumed Claude PTY construction behind agent
 dependencies.** The resume path now accepts the canonical dependency bundle
 that its caller already owns, rather than expanding runtime, version, launch
