@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Completed the canonical provider crates integration.** Claude
+PTY and SDK sessions now live behind `claude`, Codex sessions behind `codex`,
+provider-neutral process hosting behind `pty-host`, and corpus machinery behind
+`replay-support`; each provider exposes one owned event stream and a control
+handle to thin amux adapters. Closed agent kinds and per-protocol wire oneofs
+make every plane explicit, while semantic Claude PTY intents are encoded by
+versioned keymaps in the daemon. The SDK driver carries A2A envelopes through
+stream input and records provider-accepted delivery on the recipient's log.
+Strict executable-specification corpora retain the Claude SDK 2.1.247 baseline,
+record Claude PTY at 2.1.251 and Codex at 0.150.1, and derive the daemon row
+fixtures from replay; drift probes append live-verification ledgers and
+re-record only failed claims. The amuxapp bridge remains deliberately broken
+until it adopts the typed wire.
+
+---
+
 2026-08-30 — **Aligned the existing system documentation with provider
 crates.** Architecture now shows the provider-session, PTY-host and daemon
 adapter layers; the wire documents closed agent kinds and protocol payloads;
