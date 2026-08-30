@@ -1,51 +1,6 @@
 {
-  "captured_at": "2026-08-12T02:10:17.632025+00:00",
-  "claude_version": "2.1.228 (Claude Code)",
-  "failure": null,
-  "harness": "cargo test -p amux --test capture -- permission_session",
-  "model": "haiku",
-  "notes": {
-    "keys": [
-      {
-        "actions": [
-          "write \"\\r\""
-        ],
-        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
-        "seq_retries": 0
-      },
-      {
-        "actions": [
-          "write \"Use the Bash tool to run exactly: echo probe-one > one.txt. Then, in a second separate Bash tool call, run exactly: echo probe-two > two.txt. Then stop.\"",
-          "delay 300ms",
-          "write \"\\r\""
-        ],
-        "note": "prompt: Use the Bash tool to run exactly: echo probe-one > one.txt. Then, in a second separate Bash tool call, run exactly: echo probe-two > two.txt. Then stop.",
-        "seq_retries": 0
-      },
-      {
-        "actions": [
-          "write \"2\""
-        ],
-        "note": "allow for session: digit 2",
-        "seq_retries": 0
-      },
-      {
-        "actions": [
-          "write \"1\""
-        ],
-        "note": "allow once (second ask): digit 1",
-        "seq_retries": 0
-      }
-    ],
-    "observed": {
-      "command_permissions_attachment": false,
-      "second_permission_ask": true
-    },
-    "world": {
-      "one.txt": true,
-      "two.txt": true
-    }
-  },
-  "poisoned_daemon_env": true,
+  "derived": true,
+  "recorded_version": "2.1.251",
+  "recording": "permission_allow_scoped",
   "scenario": "permission_session"
 }

@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::agents::claude::ClaudeSdkBackend;
+use crate::agents::claude::{ClaudeSdkBackend, ClaudeSession as ClaudePtyBackend};
 use crate::agents::codex::CodexBackend;
 use crate::agents::{
     AgentBackend, AgentKind, AgentRecord, Plane, Protocol, SessionEvent, StopPolicy,
@@ -15,6 +15,115 @@ use crate::agents::{
 };
 use crate::claude_sdk_io::ClaudeSdkV1Input;
 use crate::codex_io::CodexSdkV1Input;
+
+pub struct ClaudePtyBackendHarness {
+    backend: ClaudePtyBackend,
+    input: Box<dyn StructuredInput>,
+    reader: crate::agents::MultiplexStructuredReader,
+    rows: Vec<Value>,
+    cursor: usize,
+    ingest: tokio::task::JoinHandle<()>,
+    _events: mpsc::Receiver<SessionEvent>,
+}
+
+impl ClaudePtyBackendHarness {
+    pub async fn with_session(session: claude::pty::Session, session_id: Uuid) -> Result<Self> {
+        let record = AgentRecord {
+            id: session_id,
+            host_id: Uuid::from_u128(2),
+            name: Some("derived-claude-pty".to_string()),
+            command: "claude".to_string(),
+            working_dir: PathBuf::from("<MACHINE_PATH>"),
+            kind: AgentKind::Claude {
+                driver: crate::agents::ClaudeDriver::Pty,
+            },
+            readonly: false,
+            args: Vec::new(),
+            created_at: Utc.timestamp_opt(0, 0).single().expect("Unix epoch exists"),
+            parent: None,
+            working_on: None,
+        };
+        let mut backend = ClaudePtyBackend::with_session(record, session);
+        let Plane::Structured { log, input } = backend.plane(Protocol::ClaudePtyTranscriptV1)?
+        else {
+            bail!("Claude PTY plane was not structured");
+        };
+        let (reader, count) = log
+            .subscribe_with_query(None)
+            .await
+            .context("Claude PTY backend log was already closed")?;
+        if count != 0 {
+            bail!("fresh Claude PTY backend unexpectedly retained {count} rows");
+        }
+        let (event_tx, events) = mpsc::channel(8);
+        let ingest = backend.start(&event_tx)?;
+        let mut harness = Self {
+            backend,
+            input,
+            reader,
+            rows: Vec::new(),
+            cursor: 0,
+            ingest,
+            _events: events,
+        };
+        harness
+            .wait_for(|row| row.get("type").and_then(Value::as_str) == Some("amux.claude.keymap"))
+            .await?;
+        Ok(harness)
+    }
+
+    pub async fn send(&self, intent: crate::claude_io::Intent) -> Result<()> {
+        let client_seq = self.backend.current_seq_for_derived_rows().await;
+        self.input
+            .send(StructuredInputEvent::ClaudePty { client_seq, intent })
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    pub async fn wait_for(&mut self, matches: impl Fn(&Value) -> bool) -> Result<Value> {
+        loop {
+            if let Some((offset, row)) = self.rows[self.cursor..]
+                .iter()
+                .enumerate()
+                .find(|(_, row)| matches(row))
+            {
+                self.cursor += offset + 1;
+                return Ok(row.clone());
+            }
+            let row = tokio::time::timeout(Duration::from_secs(10), self.reader.read())
+                .await
+                .context("timed out waiting for derived Claude PTY row")?
+                .context("Claude PTY backend log closed before the expected row")?;
+            self.rows.push(row.payload);
+        }
+    }
+
+    pub async fn finish(mut self) -> Result<Vec<Value>> {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let mut last_seq = self.backend.current_seq_for_derived_rows().await;
+            let mut stable = 0;
+            while stable < 3 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                let current = self.backend.current_seq_for_derived_rows().await;
+                if current == last_seq {
+                    stable += 1;
+                } else {
+                    last_seq = current;
+                    stable = 0;
+                }
+            }
+        })
+        .await
+        .context("timed out waiting for the Claude PTY backend rows to quiesce")?;
+        self.ingest.abort();
+        self.backend.close_log_for_derived_rows().await;
+        let _ = self.ingest.await;
+        while let Some(row) = self.reader.read().await {
+            self.rows.push(row.payload);
+        }
+        Ok(self.rows)
+    }
+}
 
 pub struct ClaudeSdkBackendHarness {
     backend: ClaudeSdkBackend,

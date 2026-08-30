@@ -233,7 +233,7 @@ pub struct KeymapId {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "basis", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Basis {
-    Verified(Version),
+    Verified { version: Version },
     InRange,
     Extrapolated { from: Version },
     Unknown,
@@ -242,7 +242,7 @@ pub enum Basis {
 impl std::fmt::Display for Basis {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Verified(version) => write!(formatter, "Verified({version})"),
+            Self::Verified { version } => write!(formatter, "Verified({version})"),
             Self::InRange => formatter.write_str("InRange"),
             Self::Extrapolated { from } => write!(formatter, "Extrapolated(from {from})"),
             Self::Unknown => formatter.write_str("Unknown"),
@@ -530,7 +530,12 @@ fn select<'a>(
         })
         .max_by_key(|candidate| candidate.keymap.provenance.recorded_version.clone())
     {
-        return Ok((selected, Basis::Verified(observed.clone())));
+        return Ok((
+            selected,
+            Basis::Verified {
+                version: observed.clone(),
+            },
+        ));
     }
 
     // A range is the evidence basis only until a keymap gains a live-verified
@@ -654,7 +659,7 @@ fn resolved(selected: &LoadedKeymap, basis: Basis, observed: &Version) -> Resolv
         .iter()
         .map(|(name, program)| {
             let limit = match (&basis, program.stability) {
-                (Basis::Verified(_) | Basis::InRange, _) | (_, Stability::Stable) => {
+                (Basis::Verified { .. } | Basis::InRange, _) | (_, Stability::Stable) => {
                     Extrapolation::Allowed
                 }
                 (Basis::Extrapolated { from }, Stability::Menu)
@@ -2132,7 +2137,12 @@ mod resolve {
     fn shipped_baked_set_uses_verified_anchor_and_bounded_extrapolation() {
         let sources = KeymapSources::default();
         let exact = resolve(&sources, &version("2.1.251")).expect("verified version");
-        assert_eq!(exact.basis, Basis::Verified("2.1.251".parse().unwrap()));
+        assert_eq!(
+            exact.basis,
+            Basis::Verified {
+                version: "2.1.251".parse().unwrap()
+            }
+        );
         assert_eq!(exact.keymap.name, "claude-2.1");
         assert_eq!(exact.keymap.source, KeymapSource::Baked);
         assert!(exact.keymap.digest.starts_with("sha256:"));
@@ -2203,7 +2213,9 @@ mod resolve {
         };
         assert_eq!(
             resolve(&sources, &version("2.1.251")).unwrap().basis,
-            Basis::Verified("2.1.251".parse().unwrap())
+            Basis::Verified {
+                version: "2.1.251".parse().unwrap()
+            }
         );
     }
 

@@ -533,6 +533,16 @@ impl ClaudePtyBackend {
             log: self.log.clone(),
         }
     }
+
+    #[cfg(debug_assertions)]
+    pub(crate) async fn current_seq_for_derived_rows(&self) -> u64 {
+        self.log.current_seq().await
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) async fn close_log_for_derived_rows(&self) {
+        self.log.close().await;
+    }
 }
 
 #[async_trait]

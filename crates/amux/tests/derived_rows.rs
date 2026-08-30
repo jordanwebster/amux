@@ -4,9 +4,16 @@ use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use amux::claude_io::{
+    AskAnswer as PtyAskAnswer, Intent as PtyIntent, PermissionAnswer as PtyPermissionAnswer,
+    PlanAnswer as PtyPlanAnswer, QuestionAnswer as PtyQuestionAnswer,
+    QuestionResponse as PtyQuestionResponse,
+};
 use amux::claude_sdk_io::ClaudeSdkV1Input;
 use amux::codex_io::CodexSdkV1Input;
-use amux::derived_rows_test_support::{ClaudeSdkBackendHarness, CodexBackendHarness};
+use amux::derived_rows_test_support::{
+    ClaudePtyBackendHarness, ClaudeSdkBackendHarness, CodexBackendHarness,
+};
 use anyhow::{Context as _, Result, bail};
 use claude::sdk::{PermissionResult, QueryOptions};
 use codex::{
@@ -28,6 +35,26 @@ const CLAUDE_SDK_DERIVATIONS: &[(&str, &str)] = &[
     ("resumed", "history/resumed"),
     ("multi_turn", "session/multi_turn"),
 ];
+const CLAUDE_PTY_DERIVATIONS: &[(&str, &str)] = &[
+    ("prompt", "pong"),
+    ("prompt_multiline", "prompt_multiline"),
+    ("tools", "tools"),
+    ("permission_allow_once", "permission"),
+    ("permission_allow_scoped", "permission_session"),
+    ("permission_deny_feedback", "permission_deny_feedback"),
+    ("plan_approve", "plan_approve"),
+    ("plan_auto", "plan_auto"),
+    ("plan_request_changes", "plan_reject"),
+    ("question_single", "question_single"),
+    ("question_multi_other", "question_multi"),
+    ("question_mixed", "question_mixed"),
+    ("question_tabs", "question_tabs"),
+    ("question_other_single", "question_other_single"),
+    ("interrupt", "interrupt"),
+    ("mode_cycle", "mode_cycle"),
+    ("compact_relink", "compact"),
+    ("clear_relink", "clear"),
+];
 
 struct Runtime {
     codex: Codex,
@@ -47,6 +74,10 @@ fn claude_sdk_fixtures_root() -> PathBuf {
 
 fn claude_sdk_recordings_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude/fixtures/sdk")
+}
+
+fn claude_pty_fixtures_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-v1")
 }
 
 fn thread_config(spec: &str) -> ThreadConfig {
@@ -618,6 +649,354 @@ async fn claude_sdk_recordings_derive_backend_rows_byte_for_byte() -> Result<()>
     assert_eq!(
         actual_names, expected_names,
         "Claude SDK row fixtures must map one-to-one to the derivation registry"
+    );
+    Ok(())
+}
+
+fn claude_pty_prompts(recording: &Recording) -> Result<Vec<String>> {
+    recording
+        .io
+        .iter()
+        .filter(|event| {
+            event.direction == IoDirection::Read
+                && event.transport_id.as_deref() == Some("transcript")
+        })
+        .filter_map(|event| {
+            let frame = match serde_json::from_str::<Value>(&event.line) {
+                Ok(frame) => frame,
+                Err(error) => return Some(Err(error.into())),
+            };
+            let row = &frame["row"];
+            if row.get("type").and_then(Value::as_str) != Some("user")
+                || row.pointer("/origin/kind").and_then(Value::as_str) != Some("human")
+            {
+                return None;
+            }
+            Some(
+                row.pointer("/message/content")
+                    .and_then(Value::as_str)
+                    .map(String::from)
+                    .context("recorded Claude PTY user prompt has no text content"),
+            )
+        })
+        .collect()
+}
+
+fn next_pty_prompt(prompts: &mut VecDeque<String>, spec: &str) -> Result<String> {
+    prompts
+        .pop_front()
+        .with_context(|| format!("Claude PTY recording {spec} has too few prompts"))
+}
+
+async fn send_pty_prompt(
+    harness: &ClaudePtyBackendHarness,
+    prompts: &mut VecDeque<String>,
+    spec: &str,
+) -> Result<()> {
+    harness
+        .send(PtyIntent::Prompt {
+            text: next_pty_prompt(prompts, spec)?,
+        })
+        .await
+}
+
+async fn wait_pty_ask(harness: &mut ClaudePtyBackendHarness, tool_name: &str) -> Result<String> {
+    let row = harness
+        .wait_for(|row| {
+            row.get("type").and_then(Value::as_str) == Some("hook.permission_request")
+                && row.get("tool_name").and_then(Value::as_str) == Some(tool_name)
+        })
+        .await?;
+    row.get("tool_use_id")
+        .or_else(|| row.get("prompt_id"))
+        .and_then(Value::as_str)
+        .map(String::from)
+        .with_context(|| format!("{tool_name} ask hook has neither tool_use_id nor prompt_id"))
+}
+
+async fn wait_pty_stop(harness: &mut ClaudePtyBackendHarness) -> Result<()> {
+    harness
+        .wait_for(|row| row.get("type").and_then(Value::as_str) == Some("hook.stop"))
+        .await
+        .map(|_| ())
+}
+
+async fn drive_claude_pty(
+    harness: &mut ClaudePtyBackendHarness,
+    spec: &str,
+    prompts: &mut VecDeque<String>,
+) -> Result<()> {
+    match spec {
+        "prompt" | "prompt_multiline" | "tools" => {
+            send_pty_prompt(harness, prompts, spec).await?;
+        }
+        "permission_allow_once" | "permission_allow_scoped" | "permission_deny_feedback" => {
+            send_pty_prompt(harness, prompts, spec).await?;
+            let ask_id = wait_pty_ask(harness, "Bash").await?;
+            let answer = match spec {
+                "permission_allow_once" => PtyPermissionAnswer::AllowOnce,
+                "permission_allow_scoped" => PtyPermissionAnswer::AllowScoped { suggestion: 0 },
+                "permission_deny_feedback" => PtyPermissionAnswer::Deny {
+                    feedback: Some("Use a read-only command instead".to_string()),
+                },
+                _ => unreachable!("permission specification"),
+            };
+            harness
+                .send(PtyIntent::Answer {
+                    ask_id,
+                    answer: PtyAskAnswer::Permission(answer),
+                })
+                .await?;
+        }
+        "plan_approve" | "plan_auto" | "plan_request_changes" => {
+            send_pty_prompt(harness, prompts, spec).await?;
+            let ask_id = wait_pty_ask(harness, "ExitPlanMode").await?;
+            let answer = match spec {
+                "plan_approve" => PtyPlanAnswer::ApproveManual,
+                "plan_auto" => PtyPlanAnswer::ApproveAuto,
+                "plan_request_changes" => PtyPlanAnswer::RequestChanges {
+                    feedback: "Also explain why the change is needed".to_string(),
+                },
+                _ => unreachable!("plan specification"),
+            };
+            harness
+                .send(PtyIntent::Answer {
+                    ask_id,
+                    answer: PtyAskAnswer::Plan(answer),
+                })
+                .await?;
+        }
+        "question_single"
+        | "question_multi_other"
+        | "question_mixed"
+        | "question_tabs"
+        | "question_other_single" => {
+            send_pty_prompt(harness, prompts, spec).await?;
+            let ask_id = wait_pty_ask(harness, "AskUserQuestion").await?;
+            let answers = match spec {
+                "question_single" => vec![PtyQuestionAnswer {
+                    selected: vec![0],
+                    other: None,
+                }],
+                "question_multi_other" => vec![PtyQuestionAnswer {
+                    selected: vec![0, 1],
+                    other: Some("Torque wrench".to_string()),
+                }],
+                "question_mixed" => vec![
+                    PtyQuestionAnswer {
+                        selected: vec![1],
+                        other: None,
+                    },
+                    PtyQuestionAnswer {
+                        selected: vec![0, 2],
+                        other: None,
+                    },
+                ],
+                "question_tabs" => vec![
+                    PtyQuestionAnswer {
+                        selected: vec![0],
+                        other: None,
+                    },
+                    PtyQuestionAnswer {
+                        selected: vec![1],
+                        other: None,
+                    },
+                ],
+                "question_other_single" => vec![PtyQuestionAnswer {
+                    selected: Vec::new(),
+                    other: Some("a warm ochre".to_string()),
+                }],
+                _ => unreachable!("question specification"),
+            };
+            harness
+                .send(PtyIntent::Answer {
+                    ask_id,
+                    answer: PtyAskAnswer::Question(PtyQuestionResponse { answers }),
+                })
+                .await?;
+        }
+        "interrupt" => {
+            send_pty_prompt(harness, prompts, spec).await?;
+            harness
+                .wait_for(|row| {
+                    row.get("type").and_then(Value::as_str) == Some("hook.pre_tool_use")
+                        && row.get("tool_name").and_then(Value::as_str) == Some("Bash")
+                })
+                .await?;
+            harness.send(PtyIntent::Interrupt).await?;
+        }
+        "mode_cycle" => {
+            harness.send(PtyIntent::CyclePermissionMode).await?;
+            send_pty_prompt(harness, prompts, spec).await?;
+        }
+        "compact_relink" => {
+            for _ in 0..4 {
+                send_pty_prompt(harness, prompts, spec).await?;
+                wait_pty_stop(harness).await?;
+            }
+            send_pty_prompt(harness, prompts, spec).await?;
+        }
+        "clear_relink" => {
+            send_pty_prompt(harness, prompts, spec).await?;
+            wait_pty_stop(harness).await?;
+            send_pty_prompt(harness, prompts, spec).await?;
+        }
+        other => bail!("no Claude PTY backend derivation driver for {other}"),
+    }
+    if !prompts.is_empty() {
+        bail!(
+            "Claude PTY recording {spec} left {} prompts unused",
+            prompts.len()
+        );
+    }
+    Ok(())
+}
+
+async fn derive_claude_pty(spec: &str, recording: &Recording) -> Result<Vec<u8>> {
+    let mut replay = strict_replay(recording, ReplayOptions::default());
+    let controller = replay.controller.clone();
+    let session = claude::pty::from_recording(
+        &mut replay,
+        &recording.manifest,
+        &claude::pty::keymap::KeymapSources::default(),
+    )
+    .with_context(|| format!("open Claude PTY recording {spec}"))?;
+    if !replay.transports.is_empty() {
+        bail!("Claude PTY recording {spec} has undeclared transports");
+    }
+    let driver_controller = controller.clone();
+    let mut replay_driver = tokio::spawn(async move {
+        while let ReplayAdvance::Advanced { .. } | ReplayAdvance::BlockedOnWrite =
+            driver_controller.advance_one().await
+        {
+            tokio::task::yield_now().await;
+        }
+    });
+    let session_id = recording
+        .manifest
+        .session_ids
+        .first()
+        .context("Claude PTY recording has no session id")?
+        .parse()
+        .context("Claude PTY recording session id is not a UUID")?;
+    let mut harness = ClaudePtyBackendHarness::with_session(session, session_id).await?;
+    let expected_prompts = match spec {
+        "compact_relink" => 4,
+        _ => 1,
+    };
+    let mut prompts = claude_pty_prompts(recording)?;
+    if prompts.len() < expected_prompts {
+        bail!(
+            "Claude PTY recording {spec} has {} prompts, expected at least {expected_prompts}",
+            prompts.len()
+        );
+    }
+    // Menu feedback can itself be persisted as a human-origin user row. Only
+    // the leading rows correspond to Prompt intents; answer text is driven by
+    // the typed answer variants below.
+    prompts.truncate(expected_prompts);
+    match spec {
+        // Slash commands relink the transcript before persisting a human row,
+        // so their semantic Prompt intents are not recoverable from that file.
+        "compact_relink" => prompts.push("/compact".to_string()),
+        "clear_relink" => prompts.push("/clear".to_string()),
+        _ => {}
+    }
+    let mut prompts = prompts.into();
+    drive_claude_pty(&mut harness, spec, &mut prompts).await?;
+    tokio::time::timeout(Duration::from_secs(30), &mut replay_driver)
+        .await
+        .with_context(|| format!("strict Claude PTY replay driver did not exhaust for {spec}"))??;
+    controller
+        .finish()
+        .with_context(|| format!("strict Claude PTY replay accounting failed for {spec}"))?;
+    encode_rows(&harness.finish().await?)
+}
+
+fn derived_pty_metadata(fixture: &str, recording: &Recording) -> Value {
+    json!({
+        "scenario": fixture,
+        "derived": true,
+        "recording": recording.manifest.spec,
+        "recorded_version": recording.manifest.recorded.version,
+    })
+}
+
+#[tokio::test]
+async fn claude_pty_recordings_derive_backend_rows_byte_for_byte() -> Result<()> {
+    let update = std::env::var_os(UPDATE_FLAG).is_some();
+    let output_root = claude_pty_fixtures_root();
+    let registry_names = claude::specs::pty_registry()
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    let derivation_names = CLAUDE_PTY_DERIVATIONS
+        .iter()
+        .map(|(recording, _)| *recording)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        derivation_names, registry_names,
+        "Claude PTY derivation table must cover every recording exactly once"
+    );
+    let fixture_names = CLAUDE_PTY_DERIVATIONS
+        .iter()
+        .map(|(_, fixture)| *fixture)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        fixture_names.len(),
+        CLAUDE_PTY_DERIVATIONS.len(),
+        "Claude PTY derivation table must not reuse a fixture name"
+    );
+
+    for (recording_name, fixture) in CLAUDE_PTY_DERIVATIONS {
+        let recording_dir = claude::specs::pty::fixtures_root().join(recording_name);
+        let recording = load_recording(&recording_dir)
+            .with_context(|| format!("load Claude PTY recording {recording_name}"))?;
+        let actual = derive_claude_pty(recording_name, &recording)
+            .await
+            .with_context(|| format!("derive Claude PTY {recording_name}"))?;
+        let rows_path = output_root.join(format!("{fixture}.rows.jsonl"));
+        let meta_path = output_root.join(format!("{fixture}.meta.json"));
+        let metadata = derived_pty_metadata(fixture, &recording);
+        if update {
+            std::fs::write(&rows_path, &actual)
+                .with_context(|| format!("write {}", rows_path.display()))?;
+            let mut meta = serde_json::to_vec_pretty(&metadata)?;
+            meta.push(b'\n');
+            std::fs::write(&meta_path, meta)
+                .with_context(|| format!("write {}", meta_path.display()))?;
+        } else {
+            let expected = std::fs::read(&rows_path).with_context(|| {
+                format!(
+                    "read {} (set {UPDATE_FLAG}=1 to generate)",
+                    rows_path.display()
+                )
+            })?;
+            assert_eq!(
+                actual, expected,
+                "derived Claude PTY rows changed for {fixture}"
+            );
+            let expected_meta: Value = serde_json::from_slice(&std::fs::read(&meta_path)?)?;
+            assert_eq!(
+                metadata, expected_meta,
+                "derived metadata changed for {fixture}"
+            );
+        }
+    }
+
+    let actual_rows = std::fs::read_dir(&output_root)?
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            name.ends_with(".rows.jsonl").then_some(name)
+        })
+        .collect::<BTreeSet<_>>();
+    let expected_rows = fixture_names
+        .iter()
+        .map(|fixture| format!("{fixture}.rows.jsonl"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        actual_rows, expected_rows,
+        "chat-v1 rows must map one-to-one to the Claude PTY recordings"
     );
     Ok(())
 }

@@ -5562,3 +5562,11 @@ the Read/Edit/Bash tool-result shapes, automatic plan approval followed by an
 unprompted edit, two-question tab navigation, and single-question Other text.
 Each claim records through the provider PTY session and replays through the same
 strict three-transport boundary at Claude Code 2.1.251.
+
+2026-08-30 — **Derived Claude chat rows from the canonical PTY corpus.** The
+eighteen Claude Code 2.1.251 recordings now replay strictly through the real
+daemon backend to produce the checked-in chat fixtures and provenance
+sidecars. A single name table covers every provider specification exactly once;
+the external-readonly, stale-sequence, and subscription scenarios remain in
+the process-only live suite instead of synthetic row data. Keymap provenance
+now serializes its verified version as an explicit field at this boundary.

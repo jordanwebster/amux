@@ -1,66 +1,6 @@
 {
-  "captured_at": "2026-08-11T22:29:27.055864+00:00",
-  "claude_version": "2.1.228 (Claude Code)",
-  "failure": null,
-  "harness": "cargo test -p amux --test capture -- question_multi",
-  "model": "haiku",
-  "notes": {
-    "answers": {
-      "Which tools should I use?": "Hammer, Saw, a torque wrench "
-    },
-    "keys": [
-      {
-        "actions": [
-          "write \"\\r\""
-        ],
-        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
-        "seq_retries": 0
-      },
-      {
-        "actions": [
-          "write \"Use the AskUserQuestion tool to ask me exactly one question with multiSelect true. Header: Tools. Question: Which tools should I use? Options: Hammer, Saw, Drill. After I answer, reply with the answer and stop.\"",
-          "delay 300ms",
-          "write \"\\r\""
-        ],
-        "note": "prompt: Use the AskUserQuestion tool to ask me exactly one question with multiSelect true. Header: Tools. Question: Which tools should I use? Options: Hammer, Saw, Drill. After I answer, reply with the answer and stop.",
-        "seq_retries": 0
-      },
-      {
-        "actions": [
-          "write \" \"",
-          "delay 500ms",
-          "write \"\\u{1b}[B\"",
-          "delay 400ms",
-          "write \" \"",
-          "delay 500ms",
-          "write \"\\u{1b}[B\"",
-          "delay 300ms",
-          "write \"\\u{1b}[B\"",
-          "delay 400ms",
-          "write \"\\r\"",
-          "delay 800ms",
-          "write \"a torque wrench\"",
-          "delay 500ms",
-          "write \"\\r\"",
-          "delay 600ms",
-          "write \" \""
-        ],
-        "note": "space-toggle Hammer; ↓ space-toggle Saw; ↓↓ Other: Enter, type, Enter, Space-check",
-        "seq_retries": 0
-      },
-      {
-        "actions": [
-          "write \"\\t\"",
-          "delay 900ms",
-          "write \"\\r\"",
-          "delay 1000ms",
-          "write \"\\r\""
-        ],
-        "note": "Tab to Submit tab, Enter to review, Enter to confirm submit",
-        "seq_retries": 0
-      }
-    ]
-  },
-  "poisoned_daemon_env": true,
+  "derived": true,
+  "recorded_version": "2.1.251",
+  "recording": "question_multi_other",
   "scenario": "question_multi"
 }

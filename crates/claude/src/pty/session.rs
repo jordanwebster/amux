@@ -1300,7 +1300,7 @@ mod tests {
         assert!(matches!(
             next(&mut session.events).await,
             PtyEvent::Keymap(super::super::keymap::Resolved {
-                basis: super::super::keymap::Basis::Verified(_),
+                basis: super::super::keymap::Basis::Verified { .. },
                 ..
             })
         ));

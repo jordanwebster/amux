@@ -1,47 +1,6 @@
 {
-  "captured_at": "2026-08-12T02:18:16.713775+00:00",
-  "claude_version": "2.1.228 (Claude Code)",
-  "failure": null,
-  "harness": "cargo test -p amux --test capture -- question_tabs",
-  "model": "haiku",
-  "notes": {
-    "answers": {
-      "Which color do you prefer?": "Red",
-      "Which size fits best?": "Large"
-    },
-    "keys": [
-      {
-        "actions": [
-          "write \"\\r\""
-        ],
-        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
-        "seq_retries": 0
-      },
-      {
-        "actions": [
-          "write \"Use the AskUserQuestion tool to ask me exactly two single-select questions in ONE tool call. Question 1: header Color, question 'Which color do you prefer?', options Red, Blue. Question 2: header Size, question 'Which size fits best?', options Small, Large. After I answer, reply with both answers and stop.\"",
-          "delay 300ms",
-          "write \"\\r\""
-        ],
-        "note": "prompt: Use the AskUserQuestion tool to ask me exactly two single-select questions in ONE tool call. Question 1: header Color, question 'Which color do you prefer?', options Red, Blue. Question 2: header Size, question 'Which size fits best?', options Small, Large. After I answer, reply with both answers and stop.",
-        "seq_retries": 0
-      },
-      {
-        "actions": [
-          "write \"1\"",
-          "delay 800ms",
-          "write \"2\"",
-          "delay 800ms",
-          "write \"\\r\""
-        ],
-        "note": "Q1: digit 1 (Red, selects+advances); Q2: digit 2 (Large); review: Enter submits",
-        "seq_retries": 0
-      }
-    ],
-    "observed": {
-      "extra_submit_steps": 0
-    }
-  },
-  "poisoned_daemon_env": true,
+  "derived": true,
+  "recorded_version": "2.1.251",
+  "recording": "question_tabs",
   "scenario": "question_tabs"
 }
