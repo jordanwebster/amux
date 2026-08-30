@@ -5400,3 +5400,9 @@ accepts SDK-driven Claude creation from the same host path as other agents,
 persists the provider session ID during suspend, and resumes that ID through
 Claude's stream-JSON CLI. Resumed structured streams begin with an explicit gap
 row before their ready row so clients can distinguish the restart boundary.
+
+2026-08-30 — **Derived Claude SDK daemon rows from provider recordings.** Five
+strictly replayed Claude SDK specifications now pass through the daemon backend
+to generate their committed `claude_sdk_v1` rows. Text, permission, interrupt,
+resume, and multi-turn fixtures reproduce byte for byte from the provider
+corpus instead of relying on hand-authored backend captures.
