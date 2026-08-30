@@ -1,5 +1,5 @@
 use amux::typed_protocol_test_support::{create_sdk, open_in_process_plane};
-use amux::{AgentKind, ClaudeDriver, Protocol, ProtocolError};
+use amux::{AgentKind, ClaudeDriver, Protocol, ProtocolError, claude_io};
 
 async fn assert_not_exposed(kind: AgentKind, protocol: Protocol) {
     assert_eq!(
@@ -73,4 +73,16 @@ async fn every_exposed_provider_protocol_opens_in_process() {
 #[tokio::test]
 async fn sdk_claude_create_constructs_the_provider_backend() {
     create_sdk().await.unwrap();
+}
+
+#[test]
+fn terminal_byte_payload_is_not_a_claude_transcript_intent() {
+    // A valid TerminalV1Input containing the three raw bytes `ESC [ A`.
+    // Field 1 is length-delimited there, while transcript field 1 is the
+    // sequence varint, so the typed transcript decoder must refuse it.
+    let terminal_input = b"\x0a\x03\x1b[A";
+    assert!(matches!(
+        claude_io::decode_pty_transcript_v1_input(terminal_input),
+        Err(ProtocolError::InvalidArgument { .. })
+    ));
 }

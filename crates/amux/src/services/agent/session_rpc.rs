@@ -2,7 +2,6 @@
 
 use std::future::Future;
 
-use serde_json::json;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -10,8 +9,7 @@ use super::PtyAgentHost;
 #[cfg(unix)]
 use crate::agents::CodexRawPtyLease;
 use crate::agents::claude::io::{
-    self as claude_io, ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Output,
-    ClaudePtyTranscriptV1ReplayQuery,
+    self as claude_io, ClaudePtyTranscriptV1Output, ClaudePtyTranscriptV1ReplayQuery,
 };
 use crate::agents::claude::sdk_io::{
     self as claude_sdk_io, ClaudeSdkV1Output, ClaudeSdkV1ReplayQuery,
@@ -461,7 +459,7 @@ async fn send_structured_session_input(
     target
         .send(StructuredInputEvent::ClaudePty {
             client_seq: input.expected_seq,
-            payload: transcript_actions_to_pty_input_json(input.actions),
+            intent: input.intent,
         })
         .await
 }
@@ -487,20 +485,6 @@ async fn structured_input_target(
 
 fn encode_transcript_cursor(seq: u64) -> Vec<u8> {
     claude_io::encode_pty_transcript_v1_cursor(seq)
-}
-
-fn transcript_actions_to_pty_input_json(
-    actions: Vec<ClaudePtyTranscriptV1Action>,
-) -> serde_json::Value {
-    serde_json::Value::Array(
-        actions
-            .into_iter()
-            .map(|action| match action {
-                ClaudePtyTranscriptV1Action::Write(bytes) => json!({ "Bytes": bytes }),
-                ClaudePtyTranscriptV1Action::DelayMs(delay_ms) => json!({ "Delay": delay_ms }),
-            })
-            .collect(),
-    )
 }
 
 enum DirectSessionStreamState {

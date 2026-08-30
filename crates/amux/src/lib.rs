@@ -108,10 +108,12 @@ pub mod derived_rows_test_support;
 
 pub mod claude_io {
     pub use crate::agents::claude::io::{
-        ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input,
-        ClaudePtyTranscriptV1Output, ClaudePtyTranscriptV1ReplayQuery, PTY_TRANSCRIPT_V1,
-        decode_pty_transcript_v1_cursor, decode_pty_transcript_v1_output,
-        encode_pty_transcript_v1_args, encode_pty_transcript_v1_input,
+        AskAnswer, ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input,
+        ClaudePtyTranscriptV1Output, ClaudePtyTranscriptV1ReplayQuery, Intent, PTY_TRANSCRIPT_V1,
+        PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
+        decode_pty_transcript_v1_cursor, decode_pty_transcript_v1_input,
+        decode_pty_transcript_v1_output, encode_pty_transcript_v1_args,
+        encode_pty_transcript_v1_input,
     };
 }
 

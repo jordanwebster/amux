@@ -7,9 +7,7 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use claude::hooks::{HookPayload, MessagingCredentials};
-use claude::pty::{
-    Control, HookSource, PtyEvent, PtyInput, PtySource, Session, Sources, TranscriptSource,
-};
+use claude::pty::{Control, HookSource, PtyEvent, PtySource, Session, Sources, TranscriptSource};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
@@ -19,6 +17,7 @@ use tokio::task::AbortHandle;
 use uuid::Uuid;
 
 use super::delivery::ClaudeDeliveryTarget;
+use super::io as pty_io;
 use super::suspend::{ClaudeSuspendRecord, sanitize_resume_args};
 use crate::agents::claude::ClaudeVersionCache;
 use crate::agents::{
@@ -281,11 +280,13 @@ impl ClaudePtyBackend {
             let mut names = NameState::default();
             while let Some(event) = events.recv().await {
                 match event {
-                    PtyEvent::Ready { .. }
-                    | PtyEvent::Ask(_)
-                    | PtyEvent::Keymap(_)
-                    | PtyEvent::InputResult(_)
-                    | PtyEvent::Delivery(_) => {}
+                    PtyEvent::Ready { .. } | PtyEvent::Ask(_) | PtyEvent::Delivery(_) => {}
+                    PtyEvent::Keymap(resolved) => {
+                        log.write(keymap_row(resolved)).await;
+                    }
+                    PtyEvent::InputResult(result) => {
+                        log.write(input_result_row(result)).await;
+                    }
                     PtyEvent::Relink { reason, .. } => {
                         if !matches!(reason, claude::pty::RelinkReason::Initial) {
                             log.clear().await;
@@ -691,11 +692,7 @@ struct ClaudeInputTarget {
 #[async_trait]
 impl StructuredInput for ClaudeInputTarget {
     async fn send(&self, input: StructuredInputEvent) -> std::result::Result<(), ProtocolError> {
-        let StructuredInputEvent::ClaudePty {
-            client_seq,
-            payload,
-        } = input
-        else {
+        let StructuredInputEvent::ClaudePty { client_seq, intent } = input else {
             return Err(ProtocolError::InvalidArgument {
                 message: "Claude PTY input target received another protocol's input".to_string(),
             });
@@ -712,10 +709,6 @@ impl StructuredInput for ClaudeInputTarget {
                 current_seq,
             });
         }
-        let program: Vec<PtyInput> =
-            serde_json::from_value(payload).map_err(|error| ProtocolError::InvalidArgument {
-                message: format!("invalid pty input: {error}"),
-            })?;
         let control = self
             .runtime
             .lock()
@@ -726,13 +719,91 @@ impl StructuredInput for ClaudeInputTarget {
                 message: "structured input requires an active PTY".to_string(),
             })?;
         control
-            .send_program(program)
+            .send(provider_intent(intent))
             .await
             .map(|_| ())
-            .map_err(|error| ProtocolError::ServerError {
-                message: error.to_string(),
-            })
+            .map_err(input_protocol_error)
     }
+}
+
+fn input_protocol_error(error: claude::pty::InputError) -> ProtocolError {
+    match error {
+        error @ claude::pty::InputError::Pty(_) => ProtocolError::ServerError {
+            message: error.to_string(),
+        },
+        error @ (claude::pty::InputError::UnknownAsk(_)
+        | claude::pty::InputError::UnverifiedShape { .. }
+        | claude::pty::InputError::UnsafeText { .. }
+        | claude::pty::InputError::AnswerMismatchesAsk { .. }
+        | claude::pty::InputError::NoKeymap { .. }) => ProtocolError::InvalidArgument {
+            message: error.to_string(),
+        },
+    }
+}
+
+fn provider_intent(intent: pty_io::Intent) -> claude::pty::Intent {
+    match intent {
+        pty_io::Intent::Prompt { text } => claude::pty::Intent::Prompt { text },
+        pty_io::Intent::Interrupt => claude::pty::Intent::Interrupt,
+        pty_io::Intent::CyclePermissionMode => claude::pty::Intent::CyclePermissionMode,
+        pty_io::Intent::Answer { ask_id, answer } => claude::pty::Intent::Answer {
+            ask_id: claude::pty::AskId(ask_id),
+            answer: provider_answer(answer),
+        },
+    }
+}
+
+fn provider_answer(answer: pty_io::AskAnswer) -> claude::pty::AskAnswer {
+    match answer {
+        pty_io::AskAnswer::Permission(answer) => claude::pty::AskAnswer::Permission(match answer {
+            pty_io::PermissionAnswer::AllowOnce => claude::pty::PermissionAnswer::AllowOnce,
+            pty_io::PermissionAnswer::AllowScoped { suggestion } => {
+                claude::pty::PermissionAnswer::AllowScoped { suggestion }
+            }
+            pty_io::PermissionAnswer::Deny { feedback } => {
+                claude::pty::PermissionAnswer::Deny { feedback }
+            }
+        }),
+        pty_io::AskAnswer::Plan(answer) => claude::pty::AskAnswer::Plan(match answer {
+            pty_io::PlanAnswer::ApproveAuto => claude::pty::PlanAnswer::ApproveAuto,
+            pty_io::PlanAnswer::ApproveManual => claude::pty::PlanAnswer::ApproveManual,
+            pty_io::PlanAnswer::RequestChanges { feedback } => {
+                claude::pty::PlanAnswer::RequestChanges { feedback }
+            }
+        }),
+        pty_io::AskAnswer::Question(response) => {
+            claude::pty::AskAnswer::Question(claude::pty::QuestionResponse {
+                answers: response
+                    .answers
+                    .into_iter()
+                    .map(|answer| claude::pty::QuestionAnswer {
+                        selected: answer.selected,
+                        other: answer.other,
+                    })
+                    .collect(),
+            })
+        }
+    }
+}
+
+fn keymap_row(resolved: claude::pty::keymap::Resolved) -> Value {
+    json!({
+        "type": "amux.claude.keymap",
+        "keymap": resolved.keymap,
+        "basis": resolved.basis,
+        "stability_limits": resolved.stability_limits,
+    })
+}
+
+fn input_result_row(result: claude::pty::InputResult) -> Value {
+    json!({
+        "type": "amux.claude.input_result",
+        "intent": result.intent,
+        "keymap": result.keymap,
+        "basis": result.basis,
+        "program": result.program,
+        "bytes_written": result.bytes_written,
+    })
 }
 
 async fn ingest_hook(
@@ -1050,6 +1121,49 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn semantic_input_writes_keymap_and_input_result_rows() {
+        let (backend, _hooks, _rows, _ingest) = injected_backend();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while backend.log.current_seq().await < 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("initial keymap row was not ingested");
+
+        backend
+            .input_target()
+            .send(StructuredInputEvent::ClaudePty {
+                client_seq: 1,
+                intent: pty_io::Intent::Prompt {
+                    text: "hello".to_string(),
+                },
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while backend.log.current_seq().await < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("input result row was not ingested");
+
+        let (mut replay, seq) = backend.log.subscribe_with_query(None).await.unwrap();
+        assert_eq!(seq, 2);
+        let keymap = replay.read().await.unwrap().payload;
+        assert_eq!(keymap["type"], "amux.claude.keymap");
+        assert_eq!(keymap["keymap"]["name"], "claude-2.1");
+        assert_eq!(keymap["basis"]["basis"], "in_range");
+        let result = replay.read().await.unwrap().payload;
+        assert_eq!(result["type"], "amux.claude.input_result");
+        assert_eq!(result["intent"]["intent"], "prompt");
+        assert_eq!(result["intent"]["text"], "hello");
+        assert_eq!(result["program"], "prompt");
+        assert!(result["bytes_written"].as_u64().unwrap() > 0);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn duplicate_hook_is_suppressed_inside_window_and_admitted_afterward() {
         let agent_id = Uuid::new_v4();
@@ -1107,7 +1221,7 @@ mod tests {
         .await
         .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
-            while backend.log.current_seq().await != 1 {
+            while backend.log.current_seq().await < 3 {
                 tokio::task::yield_now().await;
             }
         })
@@ -1134,7 +1248,7 @@ mod tests {
         .await
         .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
-            while backend.log.current_seq().await != 2 {
+            while backend.log.current_seq().await < 5 {
                 tokio::task::yield_now().await;
             }
         })
@@ -1142,7 +1256,11 @@ mod tests {
         .unwrap();
 
         let (mut replay, seq) = backend.log.subscribe_with_query(None).await.unwrap();
-        assert_eq!(seq, 2, "clearing retains the monotonic sequence");
+        assert_eq!(seq, 5, "clearing retains the monotonic sequence");
+        assert_eq!(
+            replay.read().await.unwrap().payload["type"],
+            "amux.claude.keymap"
+        );
         assert_eq!(replay.read().await.unwrap().payload["generation"], "new");
         assert!(
             tokio::time::timeout(Duration::from_millis(25), replay.read())

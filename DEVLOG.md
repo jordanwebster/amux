@@ -5468,3 +5468,10 @@ range, and installed-version evidence basis; it can print, validate and add,
 remove, or locate the user keymap directory. User files are installed by their
 declared name only after the provider loader accepts them, so malformed data
 and hand-authored verification claims never enter session resolution.
+
+2026-08-30 — **Put Claude PTY intents on the typed wire.** The transcript
+protocol now carries only prompt, interrupt, permission-mode cycle, and
+ask-referenced answer intents under its sequence guard; raw bytes remain a
+terminal-protocol concern. The daemon forwards those intents through the
+provider control handle and publishes resolved-keymap and successful-input
+rows on the same sequenced transcript stream.

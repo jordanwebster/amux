@@ -1,6 +1,8 @@
 //! Claude-native command reduction. The kernel dispatches the namespaced
 //! command here and knows none of the keystroke, gate, or optimistic state.
 
+use amux::claude_io;
+
 use super::{AskState, ClaudeCommand, ClaudeLayer};
 use crate::effect::InputPayload;
 use crate::model::{AgentLayer, Model};
@@ -40,15 +42,23 @@ fn update_send_prompt(
         return refuse(model, op, seq, command, message);
     }
     let text = super::encoding::normalize_prompt(&text);
-    let program = match super::encoding::prompt_program(&text) {
-        Ok(program) => program,
+    match super::encoding::prompt_program(&text) {
+        Ok(_) => {}
         Err(error) => return refuse(model, op, seq, command, &error.to_string()),
-    };
+    }
     let now = model.now();
     with_existing_layer(model, agent, |layer| {
-        layer.note_prompt_sent(op, text, now);
+        layer.note_prompt_sent(op, text.clone(), now);
     });
-    dispatch_claude_input(model, op, seq, command, agent, program, false)
+    dispatch_claude_input(
+        model,
+        op,
+        seq,
+        command,
+        agent,
+        claude_io::Intent::Prompt { text },
+        false,
+    )
 }
 
 fn update_answer_ask(
@@ -93,14 +103,27 @@ fn update_answer_ask(
             "answer already in flight — awaiting confirmation",
         );
     }
-    let program = match super::encoding::answer_program(&entry.kind, &answer) {
-        Ok(program) => program,
+    match super::encoding::answer_program(&entry.kind, &answer) {
+        Ok(_) => {}
         Err(error) => return refuse(model, op, seq, command, &error.to_string()),
+    }
+    let Some(ask_id) = entry.tool_use_id.clone() else {
+        return refuse(
+            model,
+            op,
+            seq,
+            command,
+            "ask identity is still being correlated from the transcript",
+        );
+    };
+    let intent = claude_io::Intent::Answer {
+        ask_id,
+        answer: wire_answer(&answer),
     };
     with_existing_layer(model, agent, |layer| {
         layer.note_ask_answered(ask, op, answer);
     });
-    dispatch_claude_input(model, op, seq, command, agent, program, false)
+    dispatch_claude_input(model, op, seq, command, agent, intent, false)
 }
 
 fn update_interrupt(
@@ -119,7 +142,7 @@ fn update_interrupt(
         seq,
         command,
         agent,
-        super::encoding::interrupt_program(),
+        claude_io::Intent::Interrupt,
         true,
     )
 }
@@ -140,7 +163,7 @@ fn update_cycle_mode(
         seq,
         command,
         agent,
-        super::encoding::mode_cycle_program(),
+        claude_io::Intent::CyclePermissionMode,
         false,
     )
 }
@@ -151,7 +174,7 @@ fn dispatch_claude_input(
     seq: u64,
     command: Command,
     agent: amux::AgentId,
-    program: Vec<super::encoding::KeyStep>,
+    intent: claude_io::Intent,
     retry_stale: bool,
 ) -> Vec<crate::Effect> {
     let expected_seq = model.claude(agent).map_or(0, ClaudeLayer::cursor);
@@ -163,10 +186,50 @@ fn dispatch_claude_input(
         agent,
         InputPayload::Claude {
             expected_seq,
-            program,
+            intent,
             retry_stale,
         },
     )
+}
+
+fn wire_answer(answer: &super::encoding::AskAnswer) -> claude_io::AskAnswer {
+    match answer {
+        super::encoding::AskAnswer::Permission(answer) => {
+            claude_io::AskAnswer::Permission(match answer {
+                super::encoding::PermissionAnswer::AllowOnce => {
+                    claude_io::PermissionAnswer::AllowOnce
+                }
+                super::encoding::PermissionAnswer::AllowScoped => {
+                    claude_io::PermissionAnswer::AllowScoped { suggestion: 0 }
+                }
+                super::encoding::PermissionAnswer::Deny { feedback } => {
+                    claude_io::PermissionAnswer::Deny {
+                        feedback: feedback.clone(),
+                    }
+                }
+            })
+        }
+        super::encoding::AskAnswer::Plan(answer) => claude_io::AskAnswer::Plan(match answer {
+            super::encoding::PlanAnswer::ApproveAuto => claude_io::PlanAnswer::ApproveAuto,
+            super::encoding::PlanAnswer::ApproveManual => claude_io::PlanAnswer::ApproveManual,
+            super::encoding::PlanAnswer::RequestChanges { feedback } => {
+                claude_io::PlanAnswer::RequestChanges {
+                    feedback: feedback.clone(),
+                }
+            }
+        }),
+        super::encoding::AskAnswer::Question { responses } => {
+            claude_io::AskAnswer::Question(claude_io::QuestionResponse {
+                answers: responses
+                    .iter()
+                    .map(|response| claude_io::QuestionAnswer {
+                        selected: response.selected.clone(),
+                        other: response.other.clone(),
+                    })
+                    .collect(),
+            })
+        }
+    }
 }
 
 pub(crate) fn update_failed_command(

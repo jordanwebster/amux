@@ -5,6 +5,7 @@
 //! first-party Claude schemas for those bytes.
 
 use prost::Message as ProstMessage;
+use serde::{Deserialize, Serialize};
 
 use crate::agents::TerminalSize;
 use crate::protocol::{ProtocolError, wire};
@@ -31,13 +32,53 @@ pub enum ClaudePtyTranscriptV1ReplayQuery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudePtyTranscriptV1Input {
     pub expected_seq: u64,
-    pub actions: Vec<ClaudePtyTranscriptV1Action>,
+    pub intent: Intent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClaudePtyTranscriptV1Action {
-    Write(Vec<u8>),
-    DelayMs(u32),
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "intent", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Intent {
+    Prompt { text: String },
+    Interrupt,
+    CyclePermissionMode,
+    Answer { ask_id: String, answer: AskAnswer },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "answer", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AskAnswer {
+    Permission(PermissionAnswer),
+    Plan(PlanAnswer),
+    Question(QuestionResponse),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "permission", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PermissionAnswer {
+    AllowOnce,
+    AllowScoped { suggestion: usize },
+    Deny { feedback: Option<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "plan", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlanAnswer {
+    ApproveAuto,
+    ApproveManual,
+    RequestChanges { feedback: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionResponse {
+    pub answers: Vec<QuestionAnswer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionAnswer {
+    pub selected: Vec<usize>,
+    pub other: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,7 +148,7 @@ pub fn encode_pty_transcript_v1_args(args: ClaudePtyTranscriptV1Args) -> Option<
     )
 }
 
-pub(crate) fn decode_pty_transcript_v1_input(
+pub fn decode_pty_transcript_v1_input(
     payload: &[u8],
 ) -> Result<ClaudePtyTranscriptV1Input, ProtocolError> {
     let input = wire::ClaudePtyTranscriptV1Input::decode(payload).map_err(|error| {
@@ -117,52 +158,173 @@ pub(crate) fn decode_pty_transcript_v1_input(
             ),
         }
     })?;
-
-    let actions = input
-        .actions
-        .into_iter()
-        .map(|action| {
-            let action = action
-                .action
-                .ok_or_else(|| ProtocolError::InvalidArgument {
-                    message: format!("`{PTY_TRANSCRIPT_V1}` input action missing action"),
-                })?;
-            Ok(match action {
-                wire::claude_pty_transcript_v1_action::Action::Write(bytes) => {
-                    ClaudePtyTranscriptV1Action::Write(bytes)
-                }
-                wire::claude_pty_transcript_v1_action::Action::DelayMs(delay_ms) => {
-                    ClaudePtyTranscriptV1Action::DelayMs(delay_ms)
-                }
-            })
-        })
-        .collect::<Result<Vec<_>, ProtocolError>>()?;
+    let intent = input
+        .intent
+        .ok_or_else(|| invalid_input("missing intent"))?;
+    let intent = match intent {
+        wire::claude_pty_transcript_v1_input::Intent::Prompt(prompt) => {
+            Intent::Prompt { text: prompt.text }
+        }
+        wire::claude_pty_transcript_v1_input::Intent::Interrupt(_) => Intent::Interrupt,
+        wire::claude_pty_transcript_v1_input::Intent::CyclePermissionMode(_) => {
+            Intent::CyclePermissionMode
+        }
+        wire::claude_pty_transcript_v1_input::Intent::Answer(answer) => Intent::Answer {
+            ask_id: answer.ask_id,
+            answer: answer_from_wire(
+                answer
+                    .answer
+                    .ok_or_else(|| invalid_input("answer missing answer"))?,
+            )?,
+        },
+    };
 
     Ok(ClaudePtyTranscriptV1Input {
         expected_seq: input.expected_seq,
-        actions,
+        intent,
     })
 }
 
 pub fn encode_pty_transcript_v1_input(input: ClaudePtyTranscriptV1Input) -> Vec<u8> {
     wire::ClaudePtyTranscriptV1Input {
         expected_seq: input.expected_seq,
-        actions: input
-            .actions
-            .into_iter()
-            .map(|action| wire::ClaudePtyTranscriptV1Action {
-                action: Some(match action {
-                    ClaudePtyTranscriptV1Action::Write(bytes) => {
-                        wire::claude_pty_transcript_v1_action::Action::Write(bytes)
-                    }
-                    ClaudePtyTranscriptV1Action::DelayMs(delay_ms) => {
-                        wire::claude_pty_transcript_v1_action::Action::DelayMs(delay_ms)
-                    }
-                }),
-            })
-            .collect(),
+        intent: Some(intent_to_wire(input.intent)),
     }
     .encode_to_vec()
+}
+
+fn intent_to_wire(intent: Intent) -> wire::claude_pty_transcript_v1_input::Intent {
+    use wire::claude_pty_transcript_v1_input::Intent as WireIntent;
+    match intent {
+        Intent::Prompt { text } => WireIntent::Prompt(wire::ClaudePrompt { text }),
+        Intent::Interrupt => WireIntent::Interrupt(wire::ClaudeInterrupt {}),
+        Intent::CyclePermissionMode => {
+            WireIntent::CyclePermissionMode(wire::ClaudeCyclePermissionMode {})
+        }
+        Intent::Answer { ask_id, answer } => WireIntent::Answer(wire::ClaudeAnswer {
+            ask_id,
+            answer: Some(answer_to_wire(answer)),
+        }),
+    }
+}
+
+fn answer_to_wire(answer: AskAnswer) -> wire::claude_answer::Answer {
+    use wire::claude_answer::Answer as WireAnswer;
+    match answer {
+        AskAnswer::Permission(answer) => WireAnswer::Permission(wire::ClaudePermissionAnswer {
+            decision: Some(match answer {
+                PermissionAnswer::AllowOnce => wire::claude_permission_answer::Decision::AllowOnce(
+                    wire::ClaudePermissionAllowOnce {},
+                ),
+                PermissionAnswer::AllowScoped { suggestion } => {
+                    wire::claude_permission_answer::Decision::AllowScoped(
+                        wire::ClaudePermissionAllowScoped {
+                            suggestion: index_to_wire(suggestion),
+                        },
+                    )
+                }
+                PermissionAnswer::Deny { feedback } => {
+                    wire::claude_permission_answer::Decision::Deny(wire::ClaudePermissionDeny {
+                        feedback,
+                    })
+                }
+            }),
+        }),
+        AskAnswer::Plan(answer) => WireAnswer::Plan(wire::ClaudePlanAnswer {
+            decision: Some(match answer {
+                PlanAnswer::ApproveAuto => {
+                    wire::claude_plan_answer::Decision::ApproveAuto(wire::ClaudePlanApproveAuto {})
+                }
+                PlanAnswer::ApproveManual => wire::claude_plan_answer::Decision::ApproveManual(
+                    wire::ClaudePlanApproveManual {},
+                ),
+                PlanAnswer::RequestChanges { feedback } => {
+                    wire::claude_plan_answer::Decision::RequestChanges(
+                        wire::ClaudePlanRequestChanges { feedback },
+                    )
+                }
+            }),
+        }),
+        AskAnswer::Question(response) => WireAnswer::Question(wire::ClaudeQuestionResponse {
+            answers: response
+                .answers
+                .into_iter()
+                .map(|answer| wire::ClaudeQuestionAnswer {
+                    selected: answer.selected.into_iter().map(index_to_wire).collect(),
+                    other: answer.other,
+                })
+                .collect(),
+        }),
+    }
+}
+
+fn answer_from_wire(answer: wire::claude_answer::Answer) -> Result<AskAnswer, ProtocolError> {
+    Ok(match answer {
+        wire::claude_answer::Answer::Permission(answer) => {
+            let decision = answer
+                .decision
+                .ok_or_else(|| invalid_input("permission answer missing decision"))?;
+            AskAnswer::Permission(match decision {
+                wire::claude_permission_answer::Decision::AllowOnce(_) => {
+                    PermissionAnswer::AllowOnce
+                }
+                wire::claude_permission_answer::Decision::AllowScoped(answer) => {
+                    PermissionAnswer::AllowScoped {
+                        suggestion: index_from_wire(answer.suggestion, "permission suggestion")?,
+                    }
+                }
+                wire::claude_permission_answer::Decision::Deny(answer) => PermissionAnswer::Deny {
+                    feedback: answer.feedback,
+                },
+            })
+        }
+        wire::claude_answer::Answer::Plan(answer) => {
+            let decision = answer
+                .decision
+                .ok_or_else(|| invalid_input("plan answer missing decision"))?;
+            AskAnswer::Plan(match decision {
+                wire::claude_plan_answer::Decision::ApproveAuto(_) => PlanAnswer::ApproveAuto,
+                wire::claude_plan_answer::Decision::ApproveManual(_) => PlanAnswer::ApproveManual,
+                wire::claude_plan_answer::Decision::RequestChanges(answer) => {
+                    PlanAnswer::RequestChanges {
+                        feedback: answer.feedback,
+                    }
+                }
+            })
+        }
+        wire::claude_answer::Answer::Question(response) => AskAnswer::Question(QuestionResponse {
+            answers: response
+                .answers
+                .into_iter()
+                .map(|answer| {
+                    Ok(QuestionAnswer {
+                        selected: answer
+                            .selected
+                            .into_iter()
+                            .map(|index| index_from_wire(index, "question selection"))
+                            .collect::<Result<Vec<_>, ProtocolError>>()?,
+                        other: answer.other,
+                    })
+                })
+                .collect::<Result<Vec<_>, ProtocolError>>()?,
+        }),
+    })
+}
+
+fn index_from_wire(index: u64, field: &str) -> Result<usize, ProtocolError> {
+    index
+        .try_into()
+        .map_err(|_| invalid_input(&format!("{field} is out of range: {index}")))
+}
+
+fn index_to_wire(index: usize) -> u64 {
+    u64::try_from(index).expect("usize fits the protocol's uint64 index")
+}
+
+fn invalid_input(message: &str) -> ProtocolError {
+    ProtocolError::InvalidArgument {
+        message: format!("`{PTY_TRANSCRIPT_V1}` input {message}"),
+    }
 }
 
 pub(crate) fn encode_pty_transcript_v1_output(output: ClaudePtyTranscriptV1Output) -> Vec<u8> {
@@ -253,25 +415,79 @@ mod tests {
     }
 
     #[test]
-    fn transcript_input_payload_decodes_typed_actions() {
-        let payload = encode_pty_transcript_v1_input(ClaudePtyTranscriptV1Input {
-            expected_seq: 7,
-            actions: vec![
-                ClaudePtyTranscriptV1Action::Write(b"hello".to_vec()),
-                ClaudePtyTranscriptV1Action::DelayMs(25),
-            ],
-        });
+    fn transcript_input_roundtrips_every_intent() {
+        let intents = vec![
+            Intent::Prompt {
+                text: "hello".to_string(),
+            },
+            Intent::Interrupt,
+            Intent::CyclePermissionMode,
+            Intent::Answer {
+                ask_id: "permission-once".to_string(),
+                answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+            },
+            Intent::Answer {
+                ask_id: "permission-scoped".to_string(),
+                answer: AskAnswer::Permission(PermissionAnswer::AllowScoped { suggestion: 2 }),
+            },
+            Intent::Answer {
+                ask_id: "permission-deny".to_string(),
+                answer: AskAnswer::Permission(PermissionAnswer::Deny {
+                    feedback: Some("not here".to_string()),
+                }),
+            },
+            Intent::Answer {
+                ask_id: "plan-auto".to_string(),
+                answer: AskAnswer::Plan(PlanAnswer::ApproveAuto),
+            },
+            Intent::Answer {
+                ask_id: "plan-manual".to_string(),
+                answer: AskAnswer::Plan(PlanAnswer::ApproveManual),
+            },
+            Intent::Answer {
+                ask_id: "plan-changes".to_string(),
+                answer: AskAnswer::Plan(PlanAnswer::RequestChanges {
+                    feedback: "add tests".to_string(),
+                }),
+            },
+            Intent::Answer {
+                ask_id: "questions".to_string(),
+                answer: AskAnswer::Question(QuestionResponse {
+                    answers: vec![
+                        QuestionAnswer {
+                            selected: vec![0, 2],
+                            other: None,
+                        },
+                        QuestionAnswer {
+                            selected: Vec::new(),
+                            other: Some("another choice".to_string()),
+                        },
+                    ],
+                }),
+            },
+        ];
 
-        assert_eq!(
-            decode_pty_transcript_v1_input(&payload).unwrap(),
-            ClaudePtyTranscriptV1Input {
+        for intent in intents {
+            let input = ClaudePtyTranscriptV1Input {
                 expected_seq: 7,
-                actions: vec![
-                    ClaudePtyTranscriptV1Action::Write(b"hello".to_vec()),
-                    ClaudePtyTranscriptV1Action::DelayMs(25),
-                ],
-            }
-        );
+                intent,
+            };
+            let payload = encode_pty_transcript_v1_input(input.clone());
+            assert_eq!(decode_pty_transcript_v1_input(&payload).unwrap(), input);
+        }
+    }
+
+    #[test]
+    fn transcript_input_requires_an_intent() {
+        let payload = wire::ClaudePtyTranscriptV1Input {
+            expected_seq: 7,
+            intent: None,
+        }
+        .encode_to_vec();
+        assert!(matches!(
+            decode_pty_transcript_v1_input(&payload),
+            Err(ProtocolError::InvalidArgument { message }) if message.contains("missing intent")
+        ));
     }
 
     #[test]

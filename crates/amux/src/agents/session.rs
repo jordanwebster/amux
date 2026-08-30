@@ -132,7 +132,7 @@ impl AgentDeliveryTarget for UnsupportedAgentDelivery {
 pub(crate) enum StructuredInputEvent {
     ClaudePty {
         client_seq: u64,
-        payload: Value,
+        intent: super::claude::io::Intent,
     },
     ClaudeSdk {
         input_id: Vec<u8>,

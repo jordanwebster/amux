@@ -40,14 +40,72 @@ message ClaudePtyTranscriptV1Cursor {
 
 message ClaudePtyTranscriptV1Input {
   uint64 expected_seq = 1;
-  repeated ClaudePtyTranscriptV1Action actions = 2;
+  oneof intent {
+    ClaudePrompt prompt = 10;
+    ClaudeInterrupt interrupt = 11;
+    ClaudeCyclePermissionMode cycle_permission_mode = 12;
+    ClaudeAnswer answer = 13;
+  }
 }
 
-message ClaudePtyTranscriptV1Action {
-  oneof action {
-    bytes write = 1;
-    uint32 delay_ms = 2;
+message ClaudePrompt {
+  string text = 1;
+}
+
+message ClaudeInterrupt {}
+
+message ClaudeCyclePermissionMode {}
+
+message ClaudeAnswer {
+  string ask_id = 1;
+  oneof answer {
+    ClaudePermissionAnswer permission = 10;
+    ClaudePlanAnswer plan = 11;
+    ClaudeQuestionResponse question = 12;
   }
+}
+
+message ClaudePermissionAnswer {
+  oneof decision {
+    ClaudePermissionAllowOnce allow_once = 10;
+    ClaudePermissionAllowScoped allow_scoped = 11;
+    ClaudePermissionDeny deny = 12;
+  }
+}
+
+message ClaudePermissionAllowOnce {}
+
+message ClaudePermissionAllowScoped {
+  uint64 suggestion = 1;
+}
+
+message ClaudePermissionDeny {
+  optional string feedback = 1;
+}
+
+message ClaudePlanAnswer {
+  oneof decision {
+    ClaudePlanApproveAuto approve_auto = 10;
+    ClaudePlanApproveManual approve_manual = 11;
+    ClaudePlanRequestChanges request_changes = 12;
+  }
+}
+
+message ClaudePlanApproveAuto {}
+
+message ClaudePlanApproveManual {}
+
+message ClaudePlanRequestChanges {
+  string feedback = 1;
+}
+
+message ClaudeQuestionResponse {
+  repeated ClaudeQuestionAnswer answers = 1;
+}
+
+message ClaudeQuestionAnswer {
+  repeated uint64 selected = 1;
+  optional string other = 2;
 }
 
 message ClaudePtyTranscriptV1Output {

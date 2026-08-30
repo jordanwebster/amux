@@ -1273,11 +1273,11 @@ mod tests {
             }),
             pb::send_input_request::Event::ClaudePtyTranscriptV1(pb::ClaudePtyTranscriptV1Input {
                 expected_seq: 2,
-                actions: vec![pb::ClaudePtyTranscriptV1Action {
-                    action: Some(pb::claude_pty_transcript_v1_action::Action::Write(
-                        b"claude".to_vec(),
-                    )),
-                }],
+                intent: Some(pb::claude_pty_transcript_v1_input::Intent::Prompt(
+                    pb::ClaudePrompt {
+                        text: "claude".to_string(),
+                    },
+                )),
             }),
             pb::send_input_request::Event::ClaudeSdkV1(pb::ClaudeSdkV1Input {
                 input: Some(pb::claude_sdk_v1_input::Input::Prompt(
@@ -1361,7 +1361,9 @@ mod tests {
             pb::client_send_input_request::Event::ClaudePtyTranscriptV1(
                 pb::ClaudePtyTranscriptV1Input {
                     expected_seq: 1,
-                    actions: Vec::new(),
+                    intent: Some(pb::claude_pty_transcript_v1_input::Intent::Interrupt(
+                        pb::ClaudeInterrupt {},
+                    )),
                 },
             ),
             pb::client_send_input_request::Event::ClaudeSdkV1(pb::ClaudeSdkV1Input {
