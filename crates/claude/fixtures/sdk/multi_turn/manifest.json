@@ -25,7 +25,7 @@
     }
   ],
   "content": {
-    "io.jsonl": "sha256:082006b00068ac221a895e40fbec3826bf3a0b722015ed2417d891968bc649b3",
+    "io.jsonl": "sha256:6ce1492f13732d3c0c299c179f41f71884663dc185a0f51751e1a5bff340f65b",
     "sessions/5651c630-6550-4233-8837-517f88ab245c.jsonl": "sha256:fa0df88f8f6c3dce6283e757bf431b5daaac40a52fc43e3202c4c823c2e5d429",
     "spawn.jsonl": "sha256:eff7a5cb3b9b4fbd897989758959c58475ca5dd783f5e71b2760093e6a15f308"
   },
@@ -874,9 +874,9 @@
     ]
   },
   "redaction": {
-    "secrets": 2,
+    "secrets": 0,
     "machine_paths": 10,
-    "personal_identifiers": 0
+    "personal_identifiers": 2
   },
   "session_ids": [
     "5651c630-6550-4233-8837-517f88ab245c"

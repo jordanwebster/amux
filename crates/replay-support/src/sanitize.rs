@@ -67,10 +67,24 @@ fn sanitize_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionS
 }
 
 fn is_personal_identifier_key(key: &str, rules: &Redaction) -> bool {
-    rules
-        .personal_identifier_keys
-        .iter()
-        .any(|identifier_key| identifier_key == key)
+    is_builtin_personal_identifier_key(key)
+        || rules
+            .personal_identifier_keys
+            .iter()
+            .any(|identifier_key| identifier_key == key)
+}
+
+fn is_builtin_personal_identifier_key(key: &str) -> bool {
+    let normalized = normalized_key(key);
+    normalized == "bridgesessionid"
+        || matches!(
+            normalized.as_str(),
+            "email" | "userid" | "useruuid" | "organization"
+        )
+        || ((normalized.contains("account") || normalized.contains("organization"))
+            && (normalized.ends_with("id")
+                || normalized.ends_with("uuid")
+                || normalized.ends_with("name")))
 }
 
 fn sanitize_path_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionSummary) {
@@ -108,10 +122,6 @@ fn is_sensitive_key(key: &str) -> bool {
             | "clientsecret"
             | "secretkey"
             | "credential"
-            | "email"
-            | "organization"
-            | "userid"
-            | "accountid"
     ) || normalized.ends_with("apikey")
 }
 
@@ -391,6 +401,36 @@ mod tests {
             IDENTIFIER_PLACEHOLDER
         );
         assert_eq!(sanitized["mcp"]["server_name"], "spec");
+    }
+
+    #[test]
+    fn sanitize_redacts_bridge_session_identifiers() {
+        let mut io = vec![event(serde_json::json!({
+            "path": "<MACHINE_PATH>",
+            "row": {
+                "type": "bridge-session",
+                "bridgeSessionId": "private-bridge-id",
+                "ownerAccountUuid": "private-account-id",
+                "ownerOrganizationUuid": "private-organization-id",
+                "sessionId": "replay-session-id"
+            }
+        }))];
+
+        assert_eq!(
+            sanitize(&mut io, &Redaction::default()),
+            RedactionSummary {
+                personal_identifiers: 3,
+                ..RedactionSummary::default()
+            }
+        );
+        let sanitized: Value = serde_json::from_str(&io[0].line).unwrap();
+        assert_eq!(sanitized["row"]["bridgeSessionId"], IDENTIFIER_PLACEHOLDER);
+        assert_eq!(sanitized["row"]["ownerAccountUuid"], IDENTIFIER_PLACEHOLDER);
+        assert_eq!(
+            sanitized["row"]["ownerOrganizationUuid"],
+            IDENTIFIER_PLACEHOLDER
+        );
+        assert_eq!(sanitized["row"]["sessionId"], "replay-session-id");
     }
 
     #[test]

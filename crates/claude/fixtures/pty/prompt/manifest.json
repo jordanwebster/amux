@@ -16,7 +16,7 @@
     }
   ],
   "content": {
-    "io.jsonl": "sha256:3627f7218543adf7dc68d4225e8a5c08555a239d943e01e493401ad84f3530fe",
+    "io.jsonl": "sha256:74cc8ef01bfc82a3dbc8e8d639e1892df0df4def8b35e5ad2a5f3d731e343954",
     "spawn.jsonl": "sha256:8dfbb2e72c114a4427b23448b160e53f1ba6e7b1273d74438f932e841aad9315"
   },
   "observed": {
@@ -475,7 +475,7 @@
   "redaction": {
     "secrets": 0,
     "machine_paths": 32,
-    "personal_identifiers": 0
+    "personal_identifiers": 3
   },
   "session_ids": [
     "97321b58-b761-4de1-9edf-e61a34945f49"

@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Bridge-session ownership identifiers are sanitized.** The
+shared replay sanitizer now treats bridge session ids and account,
+organization and user identity fields as personal identifiers, including
+ownership UUIDs nested in Claude transcript rows. The committed provider
+recordings and their derived daemon rows were re-sanitized, with recording
+inventories and redaction counts refreshed.
+
+---
+
 2026-08-30 — **Documented the canonical provider and keymap boundaries.** The
 documentation map now covers the common provider session shape, provider
 adapters, PTY source bundle, capability gaps, executable-specification corpora
