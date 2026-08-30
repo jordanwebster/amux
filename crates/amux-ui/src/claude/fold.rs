@@ -78,8 +78,12 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
 
     // amux-layer rows first: they carry no transcript identity.
     match kind {
-        Some("amux.transcript_ready") => {
-            layer.transcript_ready = true;
+        Some("amux.transcript_ready")
+        | Some("amux.claude.keymap")
+        | Some("amux.claude.input_result") => {
+            if kind == Some("amux.transcript_ready") {
+                layer.transcript_ready = true;
+            }
             return;
         }
         Some("hook.stop") | Some("hook.permission_request") => {

@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Claude keymap metadata stays outside the chat transcript.**
+The UI now folds keymap-selection and semantic-input result rows as daemon
+control facts. They add no unrecognized feed entries and do not make a fresh
+session look like transcript replay before its first turn.
+
+---
+
 2026-08-30 — **The Claude clients stopped authoring key bytes.** The client
 keystroke encoder and its menu, delay and escape-sequence tables are deleted;
 amux-ui and the TUI now dispatch semantic intents — prompt, interrupt,
