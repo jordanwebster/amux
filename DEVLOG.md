@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Documented the canonical provider and keymap boundaries.** The
+documentation map now covers the common provider session shape, provider
+adapters, PTY source bundle, capability gaps, executable-specification corpora
+and verification ledgers. The keymap guide records the fixed step language,
+version-resolution and provenance rules, CLI workflow, data-versus-binary
+boundary, and the absence of a terminal screen model.
+
+---
+
 2026-08-30 — **Derived Claude rows name the current verified keymap.** The
 chat-v1 fixtures were regenerated through the Claude PTY recordings after the
 probe updated the baked keymap's verification ledger. Their semantic keymap
