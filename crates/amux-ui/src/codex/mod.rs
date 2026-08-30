@@ -12,7 +12,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::model::{AgentMessageKind, AgentPhase, Attention, Model, StreamPhase, Violation, Why};
+use crate::model::{
+    AgentMessageKind, AgentMessagePresentation, AgentPhase, Attention, Model, StreamPhase,
+    Violation, Why, message_digest,
+};
 use crate::msg::OpId;
 
 /// The native structured protocol owned by this layer.
@@ -1048,6 +1051,17 @@ impl CodexLayer {
 
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
         self.entries.iter()
+    }
+
+    /// Whether closing completion reports would hide any retained content.
+    pub fn has_foldable_completion(&self) -> bool {
+        self.entries.iter().any(|entry| match &entry.kind {
+            FeedEntryKind::AgentMessage(message) => {
+                message.kind.presentation() == AgentMessagePresentation::Finished
+                    && message_digest(&message.text).hidden_lines > 0
+            }
+            _ => false,
+        })
     }
 
     pub fn entry_count(&self) -> usize {

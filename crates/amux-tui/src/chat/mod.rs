@@ -13,8 +13,8 @@ pub(crate) mod viewport;
 use std::cell::RefCell;
 
 use amux_ui::{
-    AgentId, AgentMessageKind, AgentMessagePresentation, AgentMessageSender, Command, FamilyNeed,
-    Model, OpId, StructuredProtocol, Why, message_digest,
+    AgentId, AgentMessagePresentation, AgentMessageSender, Command, FamilyNeed, Model, OpId,
+    StructuredProtocol, Why, message_digest,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
@@ -716,32 +716,12 @@ pub(crate) fn family_keys(model: &Model, agent: AgentId) -> crate::bindings::Fam
 /// screen. A completion that said one thing is already showing all of
 /// it, and a chat of those has nothing to open.
 fn has_closable_completion(model: &Model, agent: AgentId) -> bool {
-    let closable = |kind: &AgentMessageKind, text: &str| {
-        kind.presentation() == AgentMessagePresentation::Finished
-            && message_digest(text).hidden_lines > 0
-    };
-    match model
-        .agent(agent)
-        .and_then(amux_ui::AgentCard::structured_protocol)
-    {
-        Some(StructuredProtocol::Claude) => model.claude(agent).is_some_and(|layer| {
-            layer.entries().any(|entry| match &entry.kind {
-                amux_ui::claude::FeedEntryKind::AgentMessage(message) => {
-                    closable(&message.kind, &message.text)
-                }
-                _ => false,
-            })
-        }),
-        Some(StructuredProtocol::Codex) => model.codex(agent).is_some_and(|layer| {
-            layer.entries().any(|entry| match &entry.kind {
-                amux_ui::codex::FeedEntryKind::AgentMessage(message) => {
-                    closable(&message.kind, &message.text)
-                }
-                _ => false,
-            })
-        }),
-        None => false,
-    }
+    model
+        .claude(agent)
+        .is_some_and(amux_ui::claude::ClaudeLayer::has_foldable_completion)
+        || model
+            .codex(agent)
+            .is_some_and(amux_ui::codex::CodexLayer::has_foldable_completion)
 }
 
 /// The header's family marker (U3): how many agents this one has spawned,

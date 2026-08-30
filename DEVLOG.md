@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Asked each native layer whether completions can fold.**
+Claude and Codex now each project whether a retained completion report has
+content behind its first visible line, using the shared envelope presentation
+and message digest facts over their own feed vocabulary. The terminal still
+decides whether that fact makes the family report key visible, without
+matching either native feed enum.
+
 2026-08-30 — **Typed amux envelope senders before terminal formatting.**
 The Model now projects each retained sender string as either an amux address
 with a typed host id or exact passthrough text. The terminal still suppresses

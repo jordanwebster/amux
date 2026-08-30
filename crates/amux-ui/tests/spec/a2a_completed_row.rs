@@ -233,6 +233,42 @@ fn a2a_completed_row_reads_the_same_in_both_layers() {
     );
 }
 
+/// Each native layer answers whether its own completion rows have content
+/// behind the closed first line; clients need not inspect either feed enum.
+#[test]
+fn a2a_completed_row_projects_foldable_completion_per_layer() {
+    let claude = fold(claude_sequence());
+    let codex = fold(codex_sequence());
+    assert!(
+        claude_layer(&claude, CLAUDE_AGENT).has_foldable_completion(),
+        "Claude report has two non-empty lines behind its head"
+    );
+    assert!(
+        codex_layer(&codex, CODEX_AGENT).has_foldable_completion(),
+        "Codex report has two non-empty lines behind its head"
+    );
+
+    let quiet_claude = fold(chat_base(CLAUDE_AGENT));
+    let quiet_codex = fold(codex_base(CODEX_AGENT));
+    assert!(!claude_layer(&quiet_claude, CLAUDE_AGENT).has_foldable_completion());
+    assert!(!codex_layer(&quiet_codex, CODEX_AGENT).has_foldable_completion());
+
+    let single_claude = fold(seq([
+        chat_base(CLAUDE_AGENT),
+        vec![batch(
+            CLAUDE_AGENT,
+            10,
+            vec![claude_row(amux::envelope::EnvelopeKind::Completed, "done")],
+        )],
+    ]));
+    let single_codex = fold(seq([
+        codex_base(CODEX_AGENT),
+        vec![batch(CODEX_AGENT, 10, vec![codex_row("completed", "done")])],
+    ]));
+    assert!(!claude_layer(&single_claude, CLAUDE_AGENT).has_foldable_completion());
+    assert!(!codex_layer(&single_codex, CODEX_AGENT).has_foldable_completion());
+}
+
 /// A kind this build does not know, and a carrier that stated none, both
 /// render as the message they plainly are — body included. The unknown is
 /// in the label, not in the words somebody sent.
