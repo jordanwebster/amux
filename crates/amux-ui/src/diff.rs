@@ -147,10 +147,10 @@ pub fn parse_unified_patch(head: &str, truncated: bool) -> Document {
 
     for text in head.lines() {
         if let Some(ranges) = hunk_ranges(text) {
-            if let Some(previous) = pending.take() {
-                if previous.complete() {
-                    hunks.push(previous.finish());
-                }
+            if let Some(previous) = pending.take()
+                && previous.complete()
+            {
+                hunks.push(previous.finish());
             }
             pending = Some(PendingHunk::new(text, ranges));
             continue;
@@ -164,7 +164,10 @@ pub fn parse_unified_patch(head: &str, truncated: bool) -> Document {
             continue;
         }
         if !hunk.push(text) {
-            pending = None;
+            let previous = pending.take().expect("the pending hunk exists");
+            if previous.complete() {
+                hunks.push(previous.finish());
+            }
         }
     }
 

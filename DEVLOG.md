@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Kept complete diffs ahead of unknown trailers.** A valid hunk
+is now committed as soon as later non-patch text proves the diff body has
+ended. Provider diagnostics and other unknown footer text therefore cannot
+erase rows whose declared old and new ranges were already satisfied, while an
+incomplete malformed hunk still yields no rows.
+
 2026-08-30 — **Unified terminal diff painting around typed rows.** Every
 unified-diff surface now passes `amux-ui` row facts through one terminal
 painter with independent old and new gutters, wrapped content, and blank

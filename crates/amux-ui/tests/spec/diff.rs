@@ -120,6 +120,23 @@ fn complete_hunks_survive_the_next_files_preamble() {
 }
 
 #[test]
+fn a_complete_hunk_survives_an_unknown_trailer() {
+    let document = parse_unified_patch(
+        "@@ -1 +1 @@\n-old\n+new\nprovider diagnostic outside the patch",
+        false,
+    );
+
+    assert_eq!(
+        document.rows(),
+        vec![
+            row(None, None, RowKind::Meta, "@@ -1 +1 @@"),
+            row(Some(1), None, RowKind::Removed, "-old"),
+            row(None, Some(1), RowKind::Added, "+new"),
+        ]
+    );
+}
+
+#[test]
 fn empty_header_only_and_malformed_patches_have_no_rows() {
     for patch in [
         "",
