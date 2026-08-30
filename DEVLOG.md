@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Named derived rows by their provider plane.** The daemon row
+fixtures now live under `fixtures/rows/claude-pty`, `claude-sdk`, and `codex`,
+mirroring the recording owners in the canonical provider crates. Derivation,
+live capture waiters, A2A carrier checks, UI folds, TUI goldens, provenance,
+and user documentation all resolve those plane-specific paths; the fixture
+index records the exact provider recording directory behind each set.
+
+---
+
 2026-08-30 — **Made the protocol spec boundary explicit offline.** Normal
 workspace runs still execute every whole-daemon specification. In the
 credential-empty, network-denied sandbox, the task compiles the complete spec
@@ -89,7 +98,7 @@ boundary, and the absence of a terminal screen model.
 ---
 
 2026-08-30 — **Derived Claude rows name the current verified keymap.** The
-chat-v1 fixtures were regenerated through the Claude PTY recordings after the
+Claude PTY row fixtures were regenerated through the provider recordings after the
 probe updated the baked keymap's verification ledger. Their semantic keymap
 and input-result rows now carry that keymap's current digest, so replay through
 the daemon reproduces every checked-in fixture byte for byte again.
@@ -1825,7 +1834,7 @@ recorded as the phase's one deferral, with a CHAT.md drift note for
 the orchestrator: alternate-scroll (wheel→arrows) cannot honor the
 table's "wheel scrolls the feed" while the composer owns arrows and
 ↑-at-top is reserved for history recall — no code shipped either way.
-Phase report: `notes/chat-v1/phases/06-report.md`.
+Phase report: the gitignored Phase 6 working report.
 
 ---
 
@@ -1955,8 +1964,7 @@ inserts a newline, never sends; Ctrl+J stays canonical.
 ## 2026-08-12: Chat V1 Phase 6 — chrome-wide guarded Ctrl+C
 
 ### Summary
-The behavior change this phase owns (`docs/CHAT.md` §Keybindings,
-derivation `notes/chat-v1/keybindings.md` §2.1): Ctrl+C is ONE rule
+The behavior change this phase owns (`docs/CHAT.md` §Keybindings): Ctrl+C is ONE rule
 everywhere in the TUI. A focused non-empty text field is cleared —
 as a yankable kill in the chat's Composer-backed fields; the fleet's
 filter/rename line-edits clear without a kill slot (they are bare
@@ -2639,8 +2647,8 @@ correlation is content equality). Eight redacted fixtures graduated
 - crates/amux/tests/capture/main.rs — scenarios permission_session,
   permission_deny_feedback, question_tabs, question_other_single,
   question_mixed, plan_auto, mode_cycle, prompt_multiline.
-- crates/amux/tests/fixtures/chat-v1/ — 8 new fixture pairs + README.
-- notes/chat-v1/transcript-semantics.md — §18d; §10 permission-mode row
+- crates/amux/tests/fixtures/rows/claude-pty/ — 8 new fixture pairs + README.
+- docs/CLAUDE_TRANSCRIPT.md — §18d; §10 permission-mode row
   entry resolved.
 
 ### Decisions Made
@@ -3150,10 +3158,10 @@ summarizer's substring split).
   summarizer (unification is Phase 2); layer window resets on `Opened`.
 - crates/amux-ui/tests/spec/{feed_replay,feed_turns,feed_tools,
   feed_edges}.rs — Chapters 6–9, fixture-driven against
-  crates/amux/tests/fixtures/chat-v1 (referenced via `include_str!`, so
+  crates/amux/tests/fixtures/rows/claude-pty (referenced via `include_str!`, so
   the suite stays IO-free); sequences registered so the wire_free
   differential wraps them.
-- crates/amux/tests/fixtures/chat-v1/README.md — corrected the pong row
+- crates/amux/tests/fixtures/rows/claude-pty/README.md — corrected the pong row
   claim (the fixture holds no assistant rows; the capture closed at the
   arrival-ordered hook.stop).
 
@@ -3259,7 +3267,7 @@ check.
 - `crates/amux/tests/capture/`: opt-in real-Claude capture harness
   (`harness=false`), driving keystrokes through the structured input
   seq-guarded path; scenario redaction with a fail-loud verify pass.
-- `crates/amux/tests/fixtures/chat-v1/`: 9 redacted, provenance-stamped
+- `crates/amux/tests/fixtures/rows/claude-pty/`: 9 redacted, provenance-stamped
   baseline fixtures (pong, tools, permission, question single/multi,
   interrupt, plan approve/reject, compact) + README.
 
@@ -3290,15 +3298,15 @@ check.
   plan_approve stops at the ExitPlanMode resolution (264s→26s). All 9
   fixtures recaptured through the new redaction; leak sweep = 0.
 
-### Spec drift recorded (notes/chat-v1/transcript-semantics.md §18a)
+### Spec drift recorded (`docs/CLAUDE_TRANSCRIPT.md` §18a)
 - Plan approve (manual) does NOT emit a `permission-mode` change —
   contradicts the docs-sourced C3/§18 rule; approval FACT is the
   tool_result success + canonical content. Rejection = `is_error:true`.
 - AskUserQuestion `answers` keyed by question TEXT, not header;
   options are `{label,description}` objects.
 - Transcript file is created lazily on the first turn, not at
-  SessionStart. docs/CHAT.md deltas queued for the orchestrator in
-  notes/chat-v1/phases/00-report.md.
+  SessionStart. `docs/CHAT.md` deltas were queued for the orchestrator in the
+  gitignored Phase 0 working report.
 
 ### Next Steps
 - Phase 1 (Claude layer fold) can read these fixtures raw.
@@ -3317,9 +3325,8 @@ throughout, the ask lifecycle, principle-derived keybindings (guarded
 Ctrl+C, no Alt ever, readline in text fields), diff/artifact
 rendering, seven 80-col wireframes, and the real-Claude E2E suite.
 Designed from first principles with UX studies of Codex CLI and
-opencode plus a transcript semantics survey (working material in
-notes/chat-v1/, gitignored per convention). Implementation is phased
-in notes/chat-v1/orchestration.md.
+opencode plus a transcript semantics survey (gitignored working material).
+Implementation is phased in the working orchestration note.
 
 ### Changes
 - docs/CHAT.md — new; companion to docs/UI.md.
@@ -3346,7 +3353,7 @@ in notes/chat-v1/orchestration.md.
   half arrives with the phased implementation.
 
 ### Next Steps
-- Phase 0 (notes/chat-v1/orchestration.md): transcript-persistence
+- Phase 0: transcript-persistence
   bug fix + baseline fixture capture; overnight autonomous run.
 
 ---

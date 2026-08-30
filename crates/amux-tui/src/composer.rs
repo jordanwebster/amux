@@ -1,5 +1,5 @@
 //! The composer: a multiline readline editor over the draft (`docs/CHAT.md`
-//! §Composer and control, `notes/chat-v1/keybindings.md` P6).
+//! §Composer and control and §Keybindings).
 //!
 //! The draft is renderer ViewState (D1): it survives ask takeovers,
 //! scrolling, phase changes, and send gating — nothing here reads the

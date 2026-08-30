@@ -131,7 +131,7 @@ fn fold(msgs: Vec<Msg>) -> Model {
     model
 }
 
-// --- row builders (shapes per notes/chat-v1/transcript-semantics.md) --------
+// --- row builders (shapes per docs/CLAUDE_TRANSCRIPT.md) --------------------
 
 fn ready_row() -> Value {
     json!({"type": "amux.transcript_ready"})

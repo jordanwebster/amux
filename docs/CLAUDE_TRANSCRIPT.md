@@ -13,9 +13,10 @@ Evidence base:
 
 - The canonical 18-recording Claude PTY corpus under
   `crates/claude/fixtures/pty/`, recorded at Claude Code **2.1.251** and
-  replayed by `claude::specs::pty`. The 18 committed `chat-v1` row fixtures
-  are derived from those recordings through the real provider session and
-  amux adapter; their sidecars name the source recording and version.
+  replayed by `claude::specs::pty`. The 18 committed row fixtures under
+  `crates/amux/tests/fixtures/rows/claude-pty/` are derived from those
+  recordings through the real provider session and amux adapter; their
+  sidecars name the source recording and version.
 - 13 main session files + 30+ subagent files under `~/.claude/projects/`
   (~10,100 rows), Claude Code versions **2.1.198, 2.1.220, 2.1.221,
   2.1.226, 2.1.227**. All quoted rows are structure-only; prose, paths,
@@ -566,7 +567,7 @@ resurface path is purely client-side.
 ### 18a. Phase 0 capture corrections (claude 2.1.228, 2026-08-11)
 
 These findings were first established by the Phase 0 live harness at 2.1.228.
-The current files under `crates/amux/tests/fixtures/chat-v1/` are not those
+The current files under `crates/amux/tests/fixtures/rows/claude-pty/` are not those
 hand captures: they are derived from the canonical 2.1.251 provider recordings
 by `crates/amux/tests/derived_rows.rs`. Their sidecars are the authority for
 recording name and version; every quoted row remains redacted structure.
@@ -633,8 +634,8 @@ recording name and version; every quoted row remains redacted structure.
 ### 18b. Phase 1 fixture-read corrections (claude 2.1.228, 2026-08-12)
 
 Found while building the amux-ui Claude layer against the original Phase 0
-captures. Each named `chat-v1` fixture now points through its sidecar to a
-2.1.251 provider recording reproducing the same boundary claim.
+captures. Each named Claude PTY row fixture now points through its sidecar to
+a 2.1.251 provider recording reproducing the same boundary claim.
 
 - **`agent-name` rows are BACK in 2.1.228** (`plan_approve` line 30:
   `{agentName, sessionId, type:"agent-name"}`). §3 lists the type as absent
@@ -760,7 +761,7 @@ process. The current executable evidence is the 2.1.251
 `permission_deny_feedback`, `question_tabs`, `question_other_single`,
 `question_mixed`, `plan_auto`, `mode_cycle`, and `prompt_multiline`, with the
 model recorded per manifest. `derived_rows` maps those provider recordings to
-the correspondingly named `chat-v1` fixtures (including
+the correspondingly named Claude PTY row fixtures (including
 `permission_session` for `permission_allow_scoped`) through the real session
 and adapter. Process-only stale-sequence, external-read-only, and terminal
 fan-out checks live in `claude_pty_live` and are deliberately not fixture

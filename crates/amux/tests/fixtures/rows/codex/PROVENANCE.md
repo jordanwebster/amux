@@ -1,4 +1,4 @@
-# Codex backend fixture provenance
+# Codex derived-row provenance
 
 ## Session-scoped MCP substrate
 

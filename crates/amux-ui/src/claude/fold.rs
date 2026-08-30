@@ -1,7 +1,7 @@
 //! The Claude feed fold: one native row in, typed feed facts out.
 //!
 //! Tolerate-unknown runs in both directions (G1): typed extraction where
-//! `notes/chat-v1/transcript-semantics.md` names a shape, retained-as-
+//! `docs/CLAUDE_TRANSCRIPT.md` names a shape, retained-as-
 //! unknown otherwise. No rule gates on key-set equality or crashes on an
 //! absent field — the format is internal to Claude Code and drifts by
 //! version. Unknown rows become explicit unrecognized entries, never

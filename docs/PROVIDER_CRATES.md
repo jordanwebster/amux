@@ -105,8 +105,11 @@ Every provider driver follows the same test story:
    records its original provider version and model, and rejects orphaned,
    uninventoried, changed or below-minimum data.
 5. amux's `derived_rows` test replays the crate recordings through the real
-   daemon adapters and reproduces the committed structured row fixtures byte
-   for byte.
+   daemon adapters and reproduces the committed structured row fixtures under
+   `crates/amux/tests/fixtures/rows/` byte for byte. Its `claude-pty`,
+   `claude-sdk`, and `codex` directories derive from
+   `crates/claude/fixtures/pty`, `crates/claude/fixtures/sdk`, and
+   `crates/codex/fixtures`, respectively.
 6. Provider live suites remain opt-in and cover process-level behavior that a
    transport recording cannot prove.
 

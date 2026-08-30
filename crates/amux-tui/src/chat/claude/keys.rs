@@ -3,7 +3,7 @@
 //! answers live in amux-ui's C6 module).
 //!
 //! The binding set is `docs/CHAT.md` §Keybindings' plain tier, derived in
-//! `notes/chat-v1/keybindings.md`: readline is law inside the composer
+//! `docs/CHAT.md` §Keybindings: readline is law inside the composer
 //! (P6), reflex keys stay harmless (P4), interrupt shares a key with
 //! nothing (P5). Kitty-tier sugar (Shift+Enter newline) is absent until
 //! the chrome feature-detects kitty — Phase 6; hints never advertise it.

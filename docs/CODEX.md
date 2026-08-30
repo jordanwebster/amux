@@ -353,7 +353,8 @@ Four tiers, in increasing cost:
    and `gpt-5.6-luna` passed explicitly.
 2. **Daemon adapter derivation.** `crates/amux/tests/derived_rows.rs` opens
    recorded `codex::Session`s, feeds them through the real amux adapter, and
-   proves the committed `codex_backend` rows reproduce byte for byte.
+   proves the committed `crates/amux/tests/fixtures/rows/codex/` rows reproduce
+   byte for byte from `crates/codex/fixtures/`.
    `a2a_fixtures` separately covers the thread-scoped MCP route and carrier
    facts that belong at the daemon boundary.
 3. **`crates/amux-ui/tests/spec/`.** Pure reducer folds use the derived rows;

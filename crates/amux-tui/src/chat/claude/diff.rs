@@ -1,5 +1,5 @@
 //! The diff body renderer (`docs/CHAT.md` §Diffs and the reader's
-//! artifacts; `notes/chat-v1/diff-rendering.md` §4 is the layout spec).
+//! artifacts; `docs/CHAT.md` §Diffs is the layout spec).
 //!
 //! One pure renderer over the layer's hunk model, serving both producers
 //! (the ask-time computed preview today, `structuredPatch` restatements

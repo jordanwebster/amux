@@ -9,7 +9,7 @@ compares that output byte for byte with the checked-in rows.
 
 The recording-to-fixture names are:
 
-| provider recording | chat fixture |
+| provider recording | row fixture |
 |---|---|
 | `prompt` | `pong` |
 | `prompt_multiline` | `prompt_multiline` |
@@ -44,4 +44,4 @@ UPDATE_DERIVED_ROWS=1 timeout 900 \
 
 Without `UPDATE_DERIVED_ROWS`, the same test is the executable byte-for-byte
 specification. The tracked transcript semantics are documented in
-[`docs/CLAUDE_TRANSCRIPT.md`](../../../../../docs/CLAUDE_TRANSCRIPT.md).
+[`docs/CLAUDE_TRANSCRIPT.md`](../../../../../../docs/CLAUDE_TRANSCRIPT.md).

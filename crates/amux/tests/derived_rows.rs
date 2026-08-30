@@ -65,11 +65,11 @@ struct Runtime {
 }
 
 fn fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex_backend")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rows/codex")
 }
 
 fn claude_sdk_fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude-sdk")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rows/claude-sdk")
 }
 
 fn claude_sdk_recordings_root() -> PathBuf {
@@ -77,7 +77,7 @@ fn claude_sdk_recordings_root() -> PathBuf {
 }
 
 fn claude_pty_fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-v1")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rows/claude-pty")
 }
 
 fn thread_config(spec: &str) -> ThreadConfig {
@@ -390,7 +390,7 @@ async fn codex_recordings_derive_backend_rows_byte_for_byte() -> Result<()> {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         actual_names, expected_names,
-        "Codex backend row fixtures must map one-to-one to the crate registry"
+        "Codex row fixtures must map one-to-one to the crate registry"
     );
     Ok(())
 }
@@ -996,7 +996,7 @@ async fn claude_pty_recordings_derive_backend_rows_byte_for_byte() -> Result<()>
         .collect::<BTreeSet<_>>();
     assert_eq!(
         actual_rows, expected_rows,
-        "chat-v1 rows must map one-to-one to the Claude PTY recordings"
+        "Claude PTY rows must map one-to-one to the Claude PTY recordings"
     );
     Ok(())
 }

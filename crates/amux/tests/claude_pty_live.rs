@@ -182,7 +182,7 @@ fn validate_scenario_grammar() -> Result<()> {
 }
 
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-v1")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rows/claude-pty")
 }
 
 fn semantics_markdown() -> &'static str {

@@ -9,8 +9,8 @@
 //! entries, never silent drops (G1). Interpretation happens only here, in
 //! the fold; renderers format these facts and never re-derive them.
 //!
-//! Grounding: `notes/chat-v1/transcript-semantics.md` (the row survey) and
-//! the Phase 0 fixtures at `crates/amux/tests/fixtures/chat-v1/`. Every
+//! Grounding: `docs/CLAUDE_TRANSCRIPT.md` (the row survey) and the derived rows
+//! at `crates/amux/tests/fixtures/rows/claude-pty/`. Every
 //! derived value keeps the survey's FACT vs INFERRED discipline; comments
 //! below tag the rule they implement.
 //!

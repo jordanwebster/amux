@@ -367,7 +367,7 @@ per hook facts, and edits proceed ask-free.
 
 ### Diffs and the reader's artifacts
 
-Diff rendering is grounded in `notes/chat-v1/diff-rendering.md`
+Diff rendering is specified by this document
 (both reference TUIs converge on unified-at-80, numbered gutter,
 wrap-not-scroll, no intra-line emphasis). Two producers, both
 Claude-layer folds, one pure renderer:
@@ -785,8 +785,8 @@ them.
 
 ## Keybindings
 
-Bindings are derived, not accumulated: `notes/chat-v1/keybindings.md`
-records the principles and the full derivation; this section is the
+Bindings are derived, not accumulated: this section records the principles
+and the full derivation, and is the
 normative result. Three tiers: **plain** — guaranteed ANSI bytes,
 always hintable; **ext** — standard CSI most emulators deliver
 (convenience only, never the sole path to an action, marked
@@ -905,9 +905,10 @@ agent MCP tools, and cross-kind completion. It is opt-in, always run under
 `timeout`, uses Haiku by default, and prints the observed Claude Code version
 and model first.
 
-The committed `chat-v1` rows are not hand captures. `derived_rows` replays the
-provider recordings through `claude::pty::from_recording` and the real amux PTY
-adapter, then compares all 18 row fixtures byte for byte. Assertions use row
+The committed `crates/amux/tests/fixtures/rows/claude-pty/` rows are not hand
+captures. `derived_rows` replays `crates/claude/fixtures/pty/` through
+`claude::pty::from_recording` and the real amux PTY adapter, then compares all
+18 row fixtures byte for byte. Assertions use row
 structure, ids, answer objects, and filesystem outcomes rather than assistant
 wording. `claude-probe` runs every provider specification against an installed
 binary, appends passing versions to recording and keymap ledgers, re-records
