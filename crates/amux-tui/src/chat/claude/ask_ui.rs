@@ -7,10 +7,12 @@
 //! drafts, the optional text stages. Esc steps back one stage and floors
 //! at the menu — the panel is not dismissible while its ask pends — and
 //! every stage-back preserves typed form state verbatim (P8). Keys
-//! produce typed [`AskAnswer`]s; bytes never appear here (the C6 encoder
-//! owns them).
+//! produce typed [`AskAnswer`]s; bytes never appear here (the daemon
+//! chooses the keystrokes that carry an answer).
 
-use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer, PlanAnswer, QuestionResponse};
+use amux_ui::claude::answer::{
+    AskAnswer, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
+};
 use amux_ui::claude::{Ask, AskKind, QuestionFact, ToolInvocation};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -206,7 +208,11 @@ impl AskUi {
                     AskKeyOutcome::Answer(AskAnswer::Permission(PermissionAnswer::AllowOnce))
                 }
                 (1, false) => {
-                    AskKeyOutcome::Answer(AskAnswer::Permission(PermissionAnswer::AllowScoped))
+                    // The verified permission menu carries exactly one
+                    // suggestion, and this row is it.
+                    AskKeyOutcome::Answer(AskAnswer::Permission(PermissionAnswer::AllowScoped {
+                        suggestion: 0,
+                    }))
                 }
                 (2, false) => {
                     self.stage = AskStage::DenyFeedback;
@@ -297,16 +303,16 @@ impl QuestionUi {
     }
 
     fn answer(&self) -> AskAnswer {
-        AskAnswer::Question {
-            responses: self
+        AskAnswer::Question(QuestionResponse {
+            answers: self
                 .drafts
                 .iter()
-                .map(|draft| QuestionResponse {
+                .map(|draft| QuestionAnswer {
                     selected: draft.selected.clone(),
                     other: (draft.other_chosen && other_present(draft)).then(|| draft.other.text()),
                 })
                 .collect(),
-        }
+        })
     }
 
     fn goto_tab(&mut self, tab: usize) {

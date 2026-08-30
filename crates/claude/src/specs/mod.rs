@@ -27,8 +27,8 @@ use crate::sdk::init::ContextUsage;
 use crate::sdk::{
     CompactBoundaryMessage, ContentBlock, Error, InitializationResult, McpServerStatus, Message,
     MessageContent, PermissionDeniedMessage, PermissionMode, ProcessExit, QueryOptions,
-    ResultMessage, SdkEvent, StreamDelta, StreamEvent, TaskNotificationMessage,
-    TaskStartedMessage, Usage,
+    ResultMessage, SdkEvent, StreamDelta, StreamEvent, TaskNotificationMessage, TaskStartedMessage,
+    Usage,
 };
 
 pub mod agents;
@@ -194,9 +194,7 @@ impl Sessions {
             let prompt = setup.prompt;
             tokio::spawn(async move {
                 tokio::task::yield_now().await;
-                control
-                    .prompt(crate::sdk::UserMessage::text(prompt))
-                    .await
+                control.prompt(crate::sdk::UserMessage::text(prompt)).await
             });
         } else {
             session
@@ -634,7 +632,9 @@ impl Turn {
                             content
                                 .iter()
                                 .map(|part| match part {
-                                    crate::sdk::ToolResultContent::Text { text, .. } => text.clone(),
+                                    crate::sdk::ToolResultContent::Text { text, .. } => {
+                                        text.clone()
+                                    }
                                     other => serde_json::to_string(other).unwrap_or_default(),
                                 })
                                 .collect::<String>(),
@@ -936,7 +936,10 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
 
     let ledger = sessions.clone();
     let driven = tokio::spawn(async move {
-        let mut session = sessions.open(setup).await.map_err(|error| error.to_string())?;
+        let mut session = sessions
+            .open(setup)
+            .await
+            .map_err(|error| error.to_string())?;
         (definition.run)(&mut session).await;
         session.close().await;
         Ok::<(), String>(())

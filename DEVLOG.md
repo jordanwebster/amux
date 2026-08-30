@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **The Claude clients stopped authoring key bytes.** The client
+keystroke encoder and its menu, delay and escape-sequence tables are deleted;
+amux-ui and the TUI now dispatch semantic intents — prompt, interrupt,
+permission-mode cycle, and an answer naming the ask it answers — and the
+session chooses the keystrokes from a keymap resolved against the Claude
+version actually running there. Answers use the daemon's own typed answer
+payloads, so nothing is translated twice. Each ask now carries the name the
+session announced it by, derived from the same hook row the panel is drawn
+from, so an answer is addressable the moment a menu appears instead of waiting
+for the transcript tail to correlate a tool_use id. What a client can still
+decide alone — whether an answer fits its ask, and whether free text is safe to
+carry — stays client-side and refuses locally. A test scans the Claude client
+sources for escape, CSI and carriage-return literals and fails on any of them.
+
+---
+
 2026-08-30 — **Claude SDK delivery rows represent accepted messages.** The
 recipient-owned `amux.claude_sdk.message` row is now written only after the
 provider accepts the stream prompt. A failed provider write returns the

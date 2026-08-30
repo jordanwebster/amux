@@ -503,8 +503,8 @@ mod tests {
         let mut c = Composer::default();
         c.paste("line one\nline two\nline three");
         assert_eq!(c.text(), "line one\nline two\nline three");
-        // Sendable as one prompt: the encoder accepts printable + \n.
-        assert!(amux_ui::claude::encoding::prompt_program(&c.text()).is_ok());
+        // Sendable as one prompt: the validator accepts printable + \n.
+        assert!(amux_ui::claude::answer::check_prompt(&c.text()).is_ok());
     }
 
     #[test]
@@ -520,7 +520,7 @@ mod tests {
         c.paste("indent:\n\tcode line");
         assert_eq!(c.text(), "indent:\n    code line");
         assert!(
-            amux_ui::claude::encoding::prompt_program(&c.text()).is_ok(),
+            amux_ui::claude::answer::check_prompt(&c.text()).is_ok(),
             "expanded tabs pass the C6 control-byte validator"
         );
     }
@@ -532,7 +532,7 @@ mod tests {
         // terminator inside the injected program (Phase 3's P2 finding).
         c.paste("safe\x1b[201~text\x07");
         assert_eq!(c.text(), "safe[201~text");
-        assert!(amux_ui::claude::encoding::prompt_program(&c.text()).is_ok());
+        assert!(amux_ui::claude::answer::check_prompt(&c.text()).is_ok());
     }
 
     #[test]

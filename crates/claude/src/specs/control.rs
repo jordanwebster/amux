@@ -279,10 +279,8 @@ const EXTERNAL: &str = "external";
 const ADDED: &str = "added_later";
 
 fn connected_mcp_setup() -> SessionSetup {
-    let mut setup = SessionSetup::conversation(
-        SONNET,
-        "Reply with exactly SERVERS_OK and nothing else.",
-    );
+    let mut setup =
+        SessionSetup::conversation(SONNET, "Reply with exactly SERVERS_OK and nothing else.");
     setup.options.permission_mode = Some(PermissionMode::Default);
     setup.options.mcp_servers = std::collections::HashMap::from([(
         EXTERNAL.to_string(),

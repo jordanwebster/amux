@@ -17,8 +17,8 @@
 //! This module is part of the pure reducer core: no IO, no clocks, no
 //! randomness may be imported here.
 
+pub mod answer;
 pub mod artifact;
-pub mod encoding;
 mod envelope;
 mod fold;
 pub(crate) mod update;
@@ -30,7 +30,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::claude::encoding::AskAnswer;
+use crate::claude::answer::AskAnswer;
 use crate::model::{AgentMessageKind, AgentPhase, Attention, Model, StreamPhase, Violation, Why};
 use crate::msg::OpId;
 
@@ -486,10 +486,16 @@ pub struct Ask {
     /// Stream seq of the creating row (provenance).
     pub seq: u64,
     /// The `toolu_*` id once the transcript row is correlated — the
-    /// resolution key. Hook payloads carry NO tool_use id
+    /// resolution key. The permission hook's payload carries NO tool_use id
     /// (fixture-verified), so a hook-born ask starts uncorrelated and gains
     /// the id when the transcript tail catches up.
     pub tool_use_id: Option<String>,
+    /// The name the SESSION knows this ask by, and the only handle an
+    /// answer may address it with. Derived at creation from the row that
+    /// announced the ask — the same derivation the session runs — so an
+    /// answer is addressable the moment the ask appears, with no wait for
+    /// the transcript tail to correlate.
+    pub session_ask_id: String,
     pub kind: AskKind,
     pub state: AskState,
     /// The typed panel/reader body (C2): the ask-time mini-diff for Edit,
@@ -1524,8 +1530,8 @@ pub fn mode_cycle_gate(model: &Model, agent: amux::AgentId) -> Option<&'static s
 }
 
 /// Whether the final Claude condition exposes an authoritative ask that can
-/// accept an answer now. Menu-shape byte safety remains a separate typed
-/// encoding question; observation-only policy is part of this session gate.
+/// accept an answer now. Menu-shape safety remains a separate typed
+/// answer question; observation-only policy is part of this session gate.
 pub fn allows_answer(model: &Model, agent: amux::AgentId) -> bool {
     classify_model(model, agent, model.now()).allows_answer()
 }
@@ -1565,7 +1571,7 @@ fn projections_agree(
         host_offline,
         working_stale,
         observer_readonly,
-        // Menu byte safety remains owned by `encoding` and does not change
+        // Menu shape safety remains owned by `answer` and does not change
         // the public session projections.
         menu_shape_refusal: _,
     } = exceptions;
@@ -1672,7 +1678,7 @@ pub(crate) fn check_projection_invariant(
 
     let head = card.claude().and_then(ClaudeLayer::ask_head);
     let menu_shape_refusal =
-        head.is_some_and(|ask| encoding::menu_shape_refusal(&ask.kind).is_some());
+        head.is_some_and(|ask| answer::menu_shape_refusal(&ask.kind).is_some());
     let exceptions = ProjectionExceptions {
         host_offline,
         working_stale,
@@ -1886,6 +1892,7 @@ mod tests {
             id: layer.next_ask_id + 3,
             seq: 9,
             tool_use_id: None,
+            session_ask_id: "ask-order".to_string(),
             kind: AskKind::Question {
                 questions: Vec::new(),
             },
@@ -2426,6 +2433,7 @@ mod tests {
             id,
             seq: id,
             tool_use_id: None,
+            session_ask_id: format!("question-{id}"),
             kind: AskKind::Question {
                 questions: Vec::new(),
             },

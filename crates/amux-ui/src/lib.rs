@@ -23,7 +23,7 @@ mod update;
 // Kernel entity vocabulary re-exported so renderers depend on amux-ui alone.
 pub use amux::{
     Agent, AgentId, AgentKind, AgentParent, AgentType, Capabilities, ClaudeDriver, HostEntry,
-    HostId, HostTrustStatus, Protocol, WorkingOn,
+    HostId, HostTrustStatus, Protocol, WorkingOn, claude_io,
 };
 pub use claude::{ClaudeCommand, SendGate};
 pub use codex::{CodexCommand, CodexDecision, CodexInput};

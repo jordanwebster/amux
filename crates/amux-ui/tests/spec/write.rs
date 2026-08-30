@@ -1,10 +1,11 @@
-//! Chapter 13 — The write path: intents, programs, the optimistic
+//! Chapter 13 — The write path: intents, the seq guard, the optimistic
 //! lifecycle.
 //!
 //! `docs/CHAT.md` §The keystroke seam (C6), §Composer and control (D2–D4),
 //! §Asks lifecycle (C5). Typed intents dispatch as Commands; the reducer
-//! encodes them through the ONE encoding module and hands the shell a
-//! seq-guarded `SendInput` effect; outcomes return as finished-op state —
+//! checks them against the ask in front of the user and hands the shell a
+//! seq-guarded `SendInput` effect carrying the intent — never keystrokes,
+//! which the session chooses; outcomes return as finished-op state —
 //! a lost outcome must never leave a spinner. Confirmation is never the
 //! send: prompts confirm by echo reconciliation against the transcript's
 //! user row (content equality — the injected paste lands byte-identical,
@@ -17,9 +18,10 @@
 //! mode facts these flows drive.
 
 use amux_ui::claude::AskState;
-use amux_ui::claude::encoding::{
-    AskAnswer, KeyStep, PermissionAnswer, PlanAnswer, QuestionResponse,
+use amux_ui::claude::answer::{
+    AskAnswer, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
 };
+use amux_ui::claude_io::Intent;
 use amux_ui::{
     ClaudeCommand, Command, Effect, InputPayload, Msg, NOT_CONNECTED_ERROR, OpOutcome, SendGate,
     StreamMsg,
@@ -79,7 +81,7 @@ fn failure_message(model: &amux_ui::Model, op_n: u8) -> String {
 
 /// Every SendInput effect of a fold, destructured (the base sequences
 /// also emit stream-management effects, which are not under test here).
-fn send_inputs(effects: &[Effect]) -> Vec<(u64, Vec<KeyStep>, bool)> {
+fn send_inputs(effects: &[Effect]) -> Vec<(u64, Intent, bool)> {
     effects
         .iter()
         .filter_map(|effect| match effect {
@@ -88,13 +90,13 @@ fn send_inputs(effects: &[Effect]) -> Vec<(u64, Vec<KeyStep>, bool)> {
                 payload:
                     InputPayload::Claude {
                         expected_seq,
-                        program,
+                        intent,
                         retry_stale,
                     },
                 ..
             } => {
                 assert_eq!(*effect_agent, agent());
-                Some((*expected_seq, program.clone(), *retry_stale))
+                Some((*expected_seq, intent.clone(), *retry_stale))
             }
             _ => None,
         })
@@ -102,30 +104,32 @@ fn send_inputs(effects: &[Effect]) -> Vec<(u64, Vec<KeyStep>, bool)> {
 }
 
 /// The newest SendInput effect of a fold.
-fn send_input_effect(effects: &[Effect]) -> (u64, Vec<KeyStep>, bool) {
+fn send_input_effect(effects: &[Effect]) -> (u64, Intent, bool) {
     send_inputs(effects)
         .pop()
         .expect("a SendInput effect was dispatched")
 }
 
-fn written(program: &[KeyStep]) -> Vec<String> {
-    program
-        .iter()
-        .filter_map(|step| match step {
-            KeyStep::Write { text } => Some(text.clone()),
-            KeyStep::Delay { .. } => None,
-        })
-        .collect()
+/// The answer intent for the ask the session calls `ask_id`.
+fn answer_intent(ask_id: &str, answer: AskAnswer) -> Intent {
+    Intent::Answer {
+        ask_id: ask_id.to_string(),
+        answer,
+    }
 }
+
+/// The permission fixture's hook carries a `prompt_id` and no tool_use id,
+/// so that is the name the session knows every ask of that session by.
+const PERMISSION_ASK: &str = "a02371c5-2da6-4848-af75-180e3685a016";
 
 // --- prompts (B1/D2) --------------------------------------------------------
 
 /// An idle chat accepts a prompt: the dispatch yields ONE seq-guarded
-/// SendInput effect whose program is the bracketed paste + Enter, the
-/// expected_seq is the layer's stream cursor, and the optimistic echo
-/// pends with the normalized text (the reconciliation key).
+/// SendInput effect carrying the prompt intent, the expected_seq is the
+/// layer's stream cursor, and the optimistic echo pends with the
+/// normalized text (the reconciliation key).
 #[test]
-fn a_sent_prompt_becomes_a_pasted_program_and_a_pending_echo() {
+fn a_sent_prompt_becomes_a_prompt_intent_and_a_pending_echo() {
     // The full permission fixture folds to an idle chat (turn closed by
     // the authority); its 26 rows arrive as seqs 11..=36.
     let mut msgs = chat_feed(AGENT, "permission");
@@ -142,19 +146,18 @@ fn a_sent_prompt_becomes_a_pasted_program_and_a_pending_echo() {
         "the reducer exposes a deterministic protocol correlation id"
     );
 
-    let (expected_seq, program, retry_stale) = send_input_effect(&effects);
+    let (expected_seq, intent, retry_stale) = send_input_effect(&effects);
     assert_eq!(expected_seq, 36, "the layer's cursor is the seq guard");
     assert!(
         !retry_stale,
         "a prompt is positional — it never auto-retries"
     );
     assert_eq!(
-        written(&program),
-        vec![
-            "\u{1b}[200~fix the sync bug\nthen run the tests\u{1b}[201~".to_string(),
-            "\r".to_string(),
-        ],
-        "bracketed paste keeps the text literal; CRLF normalized"
+        intent,
+        Intent::Prompt {
+            text: "fix the sync bug\nthen run the tests".to_string()
+        },
+        "the prompt leaves as its text; CRLF normalized"
     );
 
     let echoes = the_layer(&model).pending_echoes();
@@ -291,7 +294,7 @@ fn send_is_gated_by_phase() {
     assert!(send_inputs(&effects).is_empty());
     assert_eq!(failure_message(&model, 3), "send gated while replaying");
 
-    // An empty prompt is a typed encoding refusal, not a byte guess.
+    // An empty prompt is a typed refusal stated locally, not a round trip.
     let mut empty = chat_feed(AGENT, "permission");
     empty.push(send_prompt(4, "   "));
     let (model, effects) = fold_with_effects(empty);
@@ -386,28 +389,43 @@ fn an_answer_addressed_past_the_head_refuses_without_bytes() {
     // The head answers normally.
     msgs.push(allow_once(2, 0));
     let (model, effects) = fold_with_effects(msgs);
-    let (_, program, _) = send_input_effect(&effects);
-    assert_eq!(written(&program), vec!["1".to_string()]);
+    let (_, intent, _) = send_input_effect(&effects);
+    assert_eq!(
+        intent,
+        answer_intent(
+            // Neither synthetic hook carries an id, so the session names
+            // the ask after the session and the tool.
+            "permission:22222222-2222-4222-8222-222222222222:Bash",
+            AskAnswer::Permission(PermissionAnswer::AllowOnce),
+        )
+    );
     assert!(matches!(
         the_layer(&model).ask_head().expect("head").state,
         AskState::AnsweredOptimistic { .. }
     ));
 }
 
-/// Allow-once on the fixture's correlated permission ask: the program is
-/// the verified menu digit, the ask flips to answered-optimistic carrying
+/// Allow-once on the fixture's permission ask: the intent names the ask
+/// the session announced, the ask flips to answered-optimistic carrying
 /// the answer (the pending marker's data), and the phase keeps stating
-/// needs-you until the transcript confirms.
+/// needs-you until the transcript confirms. The ask is addressable from
+/// the hook row alone — no wait for the transcript to correlate it.
 #[test]
-fn an_allow_once_answer_is_digit_one_and_flips_the_ask_optimistic() {
+fn an_allow_once_answer_names_the_ask_and_flips_it_optimistic() {
     let mut msgs = chat_feed_prefix(AGENT, "permission", 10);
     msgs.push(allow_once(1, 0));
     let (model, effects) = fold_with_effects(msgs);
 
-    let (expected_seq, program, retry_stale) = send_input_effect(&effects);
+    let (expected_seq, intent, retry_stale) = send_input_effect(&effects);
     assert_eq!(expected_seq, 20, "cursor after ten fixture rows");
     assert!(!retry_stale, "menu answers are positional");
-    assert_eq!(written(&program), vec!["1".to_string()]);
+    assert_eq!(
+        intent,
+        answer_intent(
+            PERMISSION_ASK,
+            AskAnswer::Permission(PermissionAnswer::AllowOnce)
+        )
+    );
 
     let ask = the_layer(&model).ask_head().expect("still queued");
     let AskState::AnsweredOptimistic {
@@ -459,11 +477,17 @@ fn a_failed_answer_send_resurfaces_the_ask() {
         }
     );
 
-    // Re-answering the resurfaced ask dispatches a fresh program.
+    // Re-answering the resurfaced ask dispatches a fresh intent.
     msgs.push(allow_once(2, 0));
     let (model, effects) = fold_with_effects(msgs);
-    let (_, program, _) = send_input_effect(&effects);
-    assert_eq!(written(&program), vec!["1".to_string()]);
+    let (_, intent, _) = send_input_effect(&effects);
+    assert_eq!(
+        intent,
+        answer_intent(
+            PERMISSION_ASK,
+            AskAnswer::Permission(PermissionAnswer::AllowOnce)
+        )
+    );
     assert!(matches!(
         the_layer(&model).ask_head().expect("queued").state,
         AskState::AnsweredOptimistic { .. }
@@ -570,35 +594,49 @@ fn a_prompt_echo_refuses_a_later_ask_answer_with_truthful_wording() {
     ));
 }
 
-/// The question and plan-review programs ride the same dispatch: the
-/// single-select digit submits a single-question form (§18d), and the
-/// plan menu's manual approve is digit 2 — each fixture-grounded.
+/// Question and plan-review answers ride the same dispatch: each leaves
+/// as the selection the user made against the ask the session named, and
+/// nothing about the menu's layout travels with it.
 #[test]
-fn question_and_plan_answers_encode_their_verified_programs() {
+fn question_and_plan_answers_dispatch_their_typed_selections() {
     let mut question = chat_feed_prefix(AGENT, "question_single", 10);
     question.push(answer_ask(
         1,
         0,
-        AskAnswer::Question {
-            responses: vec![QuestionResponse {
+        AskAnswer::Question(QuestionResponse {
+            answers: vec![QuestionAnswer {
                 selected: vec![0],
                 other: None,
             }],
-        },
+        }),
     ));
     let (_, effects) = fold_with_effects(question);
-    let (_, program, _) = send_input_effect(&effects);
+    let (_, intent, _) = send_input_effect(&effects);
     assert_eq!(
-        written(&program),
-        vec!["1".to_string()],
-        "a single single-select question submits on its digit"
+        intent,
+        answer_intent(
+            "9e556025-5be6-4af5-90c5-c9a0bd764efc",
+            AskAnswer::Question(QuestionResponse {
+                answers: vec![QuestionAnswer {
+                    selected: vec![0],
+                    other: None,
+                }],
+            }),
+        ),
+        "the chosen option travels, not the row it sits on"
     );
 
     let mut plan = chat_feed_prefix(AGENT, "plan_approve", 19);
     plan.push(answer_ask(2, 0, AskAnswer::Plan(PlanAnswer::ApproveManual)));
     let (model, effects) = fold_with_effects(plan);
-    let (_, program, _) = send_input_effect(&effects);
-    assert_eq!(written(&program), vec!["2".to_string()]);
+    let (_, intent, _) = send_input_effect(&effects);
+    assert_eq!(
+        intent,
+        answer_intent(
+            "145c6fd8-57d3-4b7e-bf1c-6d4237b42f19",
+            AskAnswer::Plan(PlanAnswer::ApproveManual),
+        )
+    );
     assert!(matches!(
         the_layer(&model).ask_head().expect("queued").state,
         AskState::AnsweredOptimistic { .. }
@@ -608,7 +646,7 @@ fn question_and_plan_answers_encode_their_verified_programs() {
 // --- interrupt (D3) ---------------------------------------------------------
 
 /// Interrupt is allowed in every state — working, ask pending, all of it —
-/// and is the one stale-retryable program (its meaning is not positional).
+/// and is the one stale-retryable intent (its meaning is not positional).
 /// The transcript's interrupt rows then record the entry and close the
 /// asks; the outcome only resolves the op.
 #[test]
@@ -619,10 +657,10 @@ fn interrupt_dispatches_from_any_state_and_the_rows_close_the_asks() {
         Command::Claude(ClaudeCommand::Interrupt { agent: agent() }),
     ));
     let (model, effects) = fold_with_effects(msgs.clone());
-    let (expected_seq, program, retry_stale) = send_input_effect(&effects);
+    let (expected_seq, intent, retry_stale) = send_input_effect(&effects);
     assert_eq!(expected_seq, 18);
     assert!(retry_stale, "interrupt retries a stale seq mechanically");
-    assert_eq!(written(&program), vec!["\u{1b}".to_string()]);
+    assert_eq!(intent, Intent::Interrupt);
     assert_eq!(the_layer(&model).ask_count(), 1, "dispatch closes nothing");
 
     // The §17 artifacts close the ask and record the entry (B8).
@@ -708,12 +746,12 @@ fn observation_only_refuses_every_claude_action_before_local_mutation() {
 
 // --- permission-mode cycle (D4) ---------------------------------------------
 
-/// The cycle is one CSI Z; the mode FACT returns via hook payloads — the
+/// The cycle is one intent; the mode FACT returns via hook payloads — the
 /// cycle emits no transcript row (the mode_cycle fixture's verdict), so
 /// nothing flips optimistically and the hook's `permission_mode` is what
 /// updates the session fact.
 #[test]
-fn the_mode_cycle_dispatches_csi_z_and_the_hook_payload_carries_the_fact() {
+fn the_mode_cycle_dispatches_an_intent_and_the_hook_payload_carries_the_fact() {
     // After the first turn the fixture's session mode is `default`.
     let mut msgs = chat_feed_prefix(AGENT, "mode_cycle", 11);
     msgs.push(command(
@@ -721,9 +759,9 @@ fn the_mode_cycle_dispatches_csi_z_and_the_hook_payload_carries_the_fact() {
         Command::Claude(ClaudeCommand::CyclePermissionMode { agent: agent() }),
     ));
     let (model, effects) = fold_with_effects(msgs.clone());
-    let (_, program, retry_stale) = send_input_effect(&effects);
+    let (_, intent, retry_stale) = send_input_effect(&effects);
     assert!(!retry_stale);
-    assert_eq!(written(&program), vec!["\u{1b}[Z".to_string()]);
+    assert_eq!(intent, Intent::CyclePermissionMode);
     assert_eq!(
         the_layer(&model).session().permission_mode.as_deref(),
         Some("default"),
@@ -806,12 +844,12 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
         msgs.push(answer_ask(
             1,
             0,
-            AskAnswer::Question {
-                responses: vec![QuestionResponse {
+            AskAnswer::Question(QuestionResponse {
+                answers: vec![QuestionAnswer {
                     selected: vec![0],
                     other: None,
                 }],
-            },
+            }),
         ));
         msgs.push(op_result(op(1), OpOutcome::InputSent));
         msgs

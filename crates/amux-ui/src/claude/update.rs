@@ -1,8 +1,9 @@
 //! Claude-native command reduction. The kernel dispatches the namespaced
-//! command here and knows none of the keystroke, gate, or optimistic state.
+//! command here and knows none of the intent, gate, or optimistic state.
 
 use amux::claude_io;
 
+use super::answer::{self, AskAnswer};
 use super::{AskState, ClaudeCommand, ClaudeLayer};
 use crate::effect::InputPayload;
 use crate::model::{AgentLayer, Model};
@@ -41,10 +42,9 @@ fn update_send_prompt(
     if let Some(message) = super::send_gate(model, agent).refusal() {
         return refuse(model, op, seq, command, message);
     }
-    let text = super::encoding::normalize_prompt(&text);
-    match super::encoding::prompt_program(&text) {
-        Ok(_) => {}
-        Err(error) => return refuse(model, op, seq, command, &error.to_string()),
+    let text = answer::normalize_prompt(&text);
+    if let Err(refusal) = answer::check_prompt(&text) {
+        return refuse(model, op, seq, command, &refusal.to_string());
     }
     let now = model.now();
     with_existing_layer(model, agent, |layer| {
@@ -68,7 +68,7 @@ fn update_answer_ask(
     command: Command,
     agent: amux::AgentId,
     ask: u64,
-    answer: super::encoding::AskAnswer,
+    answer: AskAnswer,
 ) -> Vec<crate::Effect> {
     if let Some(message) = super::answer_gate(model, agent) {
         return refuse(model, op, seq, command, message);
@@ -103,22 +103,12 @@ fn update_answer_ask(
             "answer already in flight — awaiting confirmation",
         );
     }
-    match super::encoding::answer_program(&entry.kind, &answer) {
-        Ok(_) => {}
-        Err(error) => return refuse(model, op, seq, command, &error.to_string()),
+    if let Err(refusal) = answer::check_answer(&entry.kind, &answer) {
+        return refuse(model, op, seq, command, &refusal.to_string());
     }
-    let Some(ask_id) = entry.tool_use_id.clone() else {
-        return refuse(
-            model,
-            op,
-            seq,
-            command,
-            "ask identity is still being correlated from the transcript",
-        );
-    };
     let intent = claude_io::Intent::Answer {
-        ask_id,
-        answer: wire_answer(&answer),
+        ask_id: entry.session_ask_id.clone(),
+        answer: answer.clone(),
     };
     with_existing_layer(model, agent, |layer| {
         layer.note_ask_answered(ask, op, answer);
@@ -190,46 +180,6 @@ fn dispatch_claude_input(
             retry_stale,
         },
     )
-}
-
-fn wire_answer(answer: &super::encoding::AskAnswer) -> claude_io::AskAnswer {
-    match answer {
-        super::encoding::AskAnswer::Permission(answer) => {
-            claude_io::AskAnswer::Permission(match answer {
-                super::encoding::PermissionAnswer::AllowOnce => {
-                    claude_io::PermissionAnswer::AllowOnce
-                }
-                super::encoding::PermissionAnswer::AllowScoped => {
-                    claude_io::PermissionAnswer::AllowScoped { suggestion: 0 }
-                }
-                super::encoding::PermissionAnswer::Deny { feedback } => {
-                    claude_io::PermissionAnswer::Deny {
-                        feedback: feedback.clone(),
-                    }
-                }
-            })
-        }
-        super::encoding::AskAnswer::Plan(answer) => claude_io::AskAnswer::Plan(match answer {
-            super::encoding::PlanAnswer::ApproveAuto => claude_io::PlanAnswer::ApproveAuto,
-            super::encoding::PlanAnswer::ApproveManual => claude_io::PlanAnswer::ApproveManual,
-            super::encoding::PlanAnswer::RequestChanges { feedback } => {
-                claude_io::PlanAnswer::RequestChanges {
-                    feedback: feedback.clone(),
-                }
-            }
-        }),
-        super::encoding::AskAnswer::Question { responses } => {
-            claude_io::AskAnswer::Question(claude_io::QuestionResponse {
-                answers: responses
-                    .iter()
-                    .map(|response| claude_io::QuestionAnswer {
-                        selected: response.selected.clone(),
-                        other: response.other.clone(),
-                    })
-                    .collect(),
-            })
-        }
-    }
 }
 
 pub(crate) fn update_failed_command(

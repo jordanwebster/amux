@@ -15,7 +15,7 @@
 //! an agent's own obligations come before its children's.
 
 use amux_ui::claude::AskState;
-use amux_ui::claude::encoding::{self, AskAnswer};
+use amux_ui::claude::answer::{self, AskAnswer};
 use amux_ui::{AgentId, ClaudeCommand, CodexCommand, Command, Model, StructuredProtocol};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::{Line, Span};
@@ -273,7 +273,7 @@ pub(crate) fn handle_key(model: &Model, inline: &mut InlineAsk, key: &KeyEvent) 
             // (C5), and an unverified menu shape has no actions to offer
             // (C2). Both stay on screen and consume nothing.
             if !matches!(ask.state, AskState::Pending | AskState::SendFailed { .. })
-                || encoding::menu_shape_refusal(&ask.kind).is_some()
+                || answer::menu_shape_refusal(&ask.kind).is_some()
             {
                 return InlineOutcome::NotHandled;
             }

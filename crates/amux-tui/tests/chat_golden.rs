@@ -11,7 +11,7 @@
 
 use amux_tui::view::ViewState;
 use amux_tui::{ChatView, FrameContext, Theme, render};
-use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer};
+use amux_ui::claude::answer::{AskAnswer, PermissionAnswer};
 use amux_ui::claude::{DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
 use amux_ui::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, OpId, ServerMsg, StreamEntry,

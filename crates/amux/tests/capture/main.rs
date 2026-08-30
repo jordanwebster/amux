@@ -2727,7 +2727,7 @@ async fn stale_seq(
     model: &str,
 ) -> Result<serde_json::Value> {
     use amux_ui::claude::AskState;
-    use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer};
+    use amux_ui::claude::answer::{AskAnswer, PermissionAnswer};
     use amux_ui::{Command, OpOutcome, Runtime, RuntimeOptions};
 
     let (session, index) = open(

@@ -332,6 +332,7 @@ fn push_ask(
     layer: &mut ClaudeLayer,
     seq: u64,
     tool_use_id: Option<String>,
+    session_ask_id: String,
     hook_key: Option<u64>,
     kind: AskKind,
     artifact: Option<AskArtifact>,
@@ -342,6 +343,7 @@ fn push_ask(
         id,
         seq,
         tool_use_id,
+        session_ask_id,
         kind,
         state: AskState::Pending,
         artifact,
@@ -371,7 +373,29 @@ fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     }
     let kind = ask_kind(tool_name, input, extract_suggestions(row));
     let artifact = ask_artifact(tool_name, input);
-    push_ask(layer, seq, None, Some(key), kind, artifact);
+    push_ask(
+        layer,
+        seq,
+        None,
+        hook_ask_id(row, tool_name.unwrap_or_default()),
+        Some(key),
+        kind,
+        artifact,
+    );
+}
+
+/// The name the session gives a hook-announced ask, derived here exactly as
+/// the session derives it: the tool_use id the permission hook carries when
+/// it has one, else the prompt id, else a name built from the session and
+/// the tool — the fallback for the permission hooks that carry neither
+/// (fixture-verified). An ask no answer could address would be a menu the
+/// user can see and not act on, so this never fails.
+fn hook_ask_id(row: &Value, tool_name: &str) -> String {
+    if let Some(id) = str_of(row, "tool_use_id").or_else(|| str_of(row, "prompt_id")) {
+        return id.to_string();
+    }
+    let session = str_of(row, "session_id").unwrap_or_default();
+    format!("permission:{session}:{tool_name}")
 }
 
 // --- user rows --------------------------------------------------------------
@@ -1170,10 +1194,12 @@ fn correlate_ask(
         // The transcript-only fallback exists for question and plan asks
         // only; neither carries a body artifact (the plan markdown rides
         // the invocation).
+        // A transcript-born ask is named by its tool_use id on both sides.
         None => push_ask(
             layer,
             seq,
             Some(tool_use_id.to_string()),
+            tool_use_id.to_string(),
             Some(key),
             ask_kind(Some(name), input, Vec::new()),
             None,
