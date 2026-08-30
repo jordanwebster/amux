@@ -1386,3 +1386,157 @@ pub(crate) fn spawn_writer_task(
         drop(stdin);
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+    use std::sync::OnceLock;
+    use std::sync::atomic::AtomicU64;
+    use std::time::Duration;
+
+    use tokio::io::AsyncWriteExt;
+    use tokio::sync::{Mutex, mpsc};
+    use tokio::time::timeout;
+
+    use super::*;
+    use crate::sdk::control::ControlRequestBody;
+
+    fn test_inner(stdin_tx: mpsc::UnboundedSender<WriteCommand>) -> Arc<QueryInner> {
+        Arc::new(QueryInner {
+            session_id: "test-session".to_owned(),
+            stdin_tx,
+            pending_controls: Mutex::new(HashMap::new()),
+            init_result: OnceLock::new(),
+            request_counter: AtomicU64::new(0),
+            initialize_request: serde_json::json!({ "subtype": "initialize" }),
+            pending_incoming: Mutex::new(HashMap::new()),
+            hook_callback_ids: HashSet::new(),
+            sdk_mcp_servers: std::sync::RwLock::new(HashMap::new()),
+        })
+    }
+
+    #[tokio::test]
+    async fn reader_reports_each_malformed_line_and_continues() {
+        let (stdin_tx, _stdin_rx) = mpsc::unbounded_channel();
+        let inner = test_inner(stdin_tx);
+        let (turn_tx, mut turn_rx) = mpsc::channel(4);
+        let shutdown = Shutdown::new();
+        let (mut writer, reader) = tokio::io::duplex(4096);
+        writer
+            .write_all(
+                concat!(
+                    "not-json\n",
+                    r#"{"type":"prompt_suggestion"}"#,
+                    "\n",
+                    r#"{"type":"prompt_suggestion","suggestion":"next","uuid":"11111111-1111-4111-8111-111111111111","session_id":"s"}"#,
+                    "\n",
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        drop(writer);
+
+        reader_loop(tokio::io::BufReader::new(reader), turn_tx, inner, shutdown).await;
+
+        assert!(matches!(
+            turn_rx.recv().await,
+            Some(Err(Error::Protocol(_)))
+        ));
+        assert!(matches!(
+            turn_rx.recv().await,
+            Some(Err(Error::Protocol(_)))
+        ));
+        assert!(matches!(
+            turn_rx.recv().await,
+            Some(Ok(SdkEvent::Message(Message::PromptSuggestion(_))))
+        ));
+    }
+
+    #[tokio::test]
+    async fn malformed_control_response_is_not_dropped() {
+        let (stdin_tx, _stdin_rx) = mpsc::unbounded_channel();
+        let inner = test_inner(stdin_tx);
+        let (turn_tx, mut turn_rx) = mpsc::channel(1);
+
+        dispatch_line(
+            r#"{"type":"control_response","response":{}}"#,
+            &turn_tx,
+            &inner,
+        )
+        .await;
+
+        assert!(matches!(
+            turn_rx.recv().await,
+            Some(Err(Error::Protocol(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn reader_accounts_for_empty_lines() {
+        let (stdin_tx, _stdin_rx) = mpsc::unbounded_channel();
+        let inner = test_inner(stdin_tx);
+        let (turn_tx, mut turn_rx) = mpsc::channel(1);
+        let shutdown = Shutdown::new();
+        let (mut writer, reader) = tokio::io::duplex(16);
+        writer.write_all(b"\n").await.unwrap();
+        drop(writer);
+
+        reader_loop(tokio::io::BufReader::new(reader), turn_tx, inner, shutdown).await;
+
+        assert!(matches!(
+            turn_rx.recv().await,
+            Some(Err(Error::Protocol(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_control_removes_pending_request_on_send_failure() {
+        let (stdin_tx, stdin_rx) = mpsc::unbounded_channel();
+        drop(stdin_rx);
+        let inner = test_inner(stdin_tx);
+
+        let error = inner
+            .send_control(ControlRequestBody::Interrupt {
+                cancel_queued: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::Send(_)));
+        assert!(inner.pending_controls.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dropping_pending_controls_unblocks_waiters() {
+        let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel();
+        let inner = test_inner(stdin_tx);
+        let task_inner = inner.clone();
+        let task = tokio::spawn(async move {
+            task_inner
+                .send_control(ControlRequestBody::Interrupt {
+                    cancel_queued: None,
+                })
+                .await
+        });
+
+        let command = stdin_rx
+            .recv()
+            .await
+            .expect("control request should be sent");
+        let WriteCommand::Data { ack: Some(ack), .. } = command else {
+            panic!("expected acknowledged control request data")
+        };
+        ack.send(Ok(())).unwrap();
+        drop_pending_controls(inner.clone()).await;
+
+        let error = timeout(Duration::from_secs(1), task)
+            .await
+            .expect("send_control should not hang")
+            .expect("task should complete")
+            .unwrap_err();
+        assert!(matches!(error, Error::Control(_)));
+        assert!(inner.pending_controls.lock().await.is_empty());
+    }
+}

@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Claude SDK dispatch and lifecycle failures are executable
+contracts again.** The reshaped session boundary now proves malformed and
+empty-line accounting, pending-control cleanup, observable aborts, close under
+full virtual and process output, captured failing-process stderr, and truthful
+resume and fork identities. Process exit publication is independent of the
+bounded event channel, so an unread stream cannot strand explicit close.
+
+---
+
 2026-08-30 — **Claude PTY invariants remain covered at their new boundaries.**
 Provider tests prove paste sanitization and transcript-attributed socket
 confirmation. Adapter tests again prove hook deduplication, external terminal

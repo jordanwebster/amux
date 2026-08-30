@@ -523,6 +523,11 @@ fn spawn_process_supervisor(
                 ))))
                 .await;
         }
+        // Closing is controlled independently from the sole event receiver.
+        // Publish the durable exit before terminal events so a full, unread
+        // output channel cannot strand `Control::close` after the process has
+        // already stopped.
+        let _ = exit_tx.send(Some(exit.clone()));
         match reason {
             ShutdownReason::Running if !exit.success => {
                 let _ = output_tx
@@ -538,7 +543,6 @@ fn spawn_process_supervisor(
             _ => {}
         }
         let _ = output_tx.send(Ok(SdkEvent::Exited(exit.clone()))).await;
-        let _ = exit_tx.send(Some(exit));
     });
 }
 
@@ -560,7 +564,308 @@ fn spawn_virtual_supervisor(handles: SupervisorHandles) {
             let _ = output_tx.send(Err(Error::Aborted)).await;
         }
         let exit = ProcessExit::virtual_success(termination(reason));
+        let _ = exit_tx.send(Some(exit.clone()));
         let _ = output_tx.send(Ok(SdkEvent::Exited(exit.clone()))).await;
-        let _ = exit_tx.send(Some(exit));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex};
+
+    use super::*;
+    use crate::sdk::message::Message;
+
+    const INIT_RESPONSE: &str = concat!(
+        r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_0","response":{"commands":[],"agents":[],"output_style":"default","available_output_styles":[],"models":[],"account":{}}}}"#,
+        "\n"
+    );
+
+    fn options() -> QueryOptions {
+        let mut options = QueryOptions::new("haiku");
+        options.session_id = Some("00000000-0000-0000-0000-000000000001".to_owned());
+        options
+    }
+
+    async fn read_json_line(reader: &mut BufReader<tokio::io::DuplexStream>) -> serde_json::Value {
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+
+    async fn next_event(
+        events: &mut crate::sdk::session::EventStream,
+    ) -> Option<Result<SdkEvent, Error>> {
+        std::future::poll_fn(|cx| Pin::new(&mut *events).poll_next(cx)).await
+    }
+
+    #[cfg(unix)]
+    fn write_script(path: &Path, body: String) {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::write(path, body).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn resume_and_fork_use_truthful_session_identities() {
+        let source = "11111111-1111-4111-8111-111111111111";
+        let target = "22222222-2222-4222-8222-222222222222";
+
+        let resumed = QueryOptions {
+            resume: Some(source.to_owned()),
+            ..QueryOptions::default()
+        };
+        assert_eq!(query_session_id(&resumed), source);
+
+        let mut forked = resumed;
+        forked.fork_session = true;
+        forked.session_id = Some(target.to_owned());
+        assert_eq!(query_session_id(&forked), target);
+
+        forked.session_id = None;
+        let generated_target = query_session_id(&forked);
+        assert_ne!(generated_target, source);
+        assert!(uuid::Uuid::parse_str(&generated_target).is_ok());
+    }
+
+    #[tokio::test]
+    async fn abort_is_observable_and_close_waits_for_shutdown() {
+        let (sdk_stdin, server_stdin) = duplex(4096);
+        let (server_stdout, sdk_stdout) = duplex(4096);
+        let server = tokio::spawn(async move {
+            let mut stdin = BufReader::new(server_stdin);
+            let mut stdout = server_stdout;
+            let _init = read_json_line(&mut stdin).await;
+            stdout.write_all(INIT_RESPONSE.as_bytes()).await.unwrap();
+            let mut line = String::new();
+            while stdin.read_line(&mut line).await.unwrap_or(0) != 0 {
+                line.clear();
+            }
+        });
+
+        let session = crate::sdk::from_io(BufReader::new(sdk_stdout), sdk_stdin, options())
+            .await
+            .unwrap();
+        let crate::sdk::Session {
+            mut events,
+            control,
+        } = session;
+        let abort = control.abort_handle();
+        abort.abort();
+        assert!(abort.is_aborted());
+        assert!(matches!(
+            next_event(&mut events).await,
+            Some(Err(Error::Aborted))
+        ));
+        let exit_event = next_event(&mut events).await.unwrap().unwrap();
+        assert!(matches!(
+            exit_event,
+            SdkEvent::Exited(ProcessExit {
+                termination: Termination::Aborted,
+                ..
+            })
+        ));
+        let exit = control.close().await;
+        assert_eq!(exit.termination, Termination::Aborted);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_completes_when_virtual_output_is_full() {
+        let (sdk_stdin, server_stdin) = duplex(4096);
+        let (server_stdout, sdk_stdout) = duplex(1_048_576);
+        let server = tokio::spawn(async move {
+            let mut stdin = BufReader::new(server_stdin);
+            let mut stdout = server_stdout;
+            let _init = read_json_line(&mut stdin).await;
+            stdout.write_all(INIT_RESPONSE.as_bytes()).await.unwrap();
+            for index in 0..300 {
+                stdout
+                    .write_all(
+                        format!(
+                            "{{\"type\":\"prompt_suggestion\",\"suggestion\":\"{index}\",\"uuid\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"test-session\"}}\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            let mut eof = String::new();
+            assert_eq!(stdin.read_line(&mut eof).await.unwrap(), 0);
+        });
+
+        let warm = WarmQuery::from_io(
+            options(),
+            BufReader::new(sdk_stdout),
+            sdk_stdin,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let query = warm.into_query();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while query.output_rx.len() < query.output_rx.max_capacity() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("reader did not fill the bounded output channel");
+
+        let crate::sdk::Session { events, control } = crate::sdk::session::from_query(query);
+        let exit = tokio::time::timeout(Duration::from_secs(1), control.close())
+            .await
+            .expect("close parked behind the full output channel");
+        assert_eq!(exit.termination, Termination::Closed);
+        assert!(exit.success);
+        drop(events);
+        tokio::time::timeout(Duration::from_secs(1), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn close_completes_when_process_output_is_full() {
+        let directory = tempfile::tempdir().unwrap();
+        let script_path = directory.path().join("full-output.sh");
+        write_script(
+            &script_path,
+            format!(
+                "#!/bin/sh\nread init\nprintf '%b' '{}'\ni=0\nwhile [ \"$i\" -lt 300 ]; do\n  printf '{{\"type\":\"prompt_suggestion\",\"suggestion\":\"%s\",\"uuid\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"test-session\"}}\\n' \"$i\"\n  i=$((i + 1))\ndone\nread eof\n",
+                INIT_RESPONSE.replace('\n', "\\n")
+            ),
+        );
+
+        let mut process_options = options();
+        process_options.cli_path = Some(script_path);
+        let session_id = query_session_id(&process_options);
+        let process = crate::sdk::process::spawn_query(&session_id, &process_options).unwrap();
+        process_options.session_id = Some(session_id);
+        let warm = Query::warm_from_process(process_options, process, Duration::from_secs(1))
+            .await
+            .unwrap();
+        let query = warm.into_query();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while query.output_rx.len() < query.output_rx.max_capacity() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("reader did not fill the bounded output channel");
+
+        let crate::sdk::Session { events, control } = crate::sdk::session::from_query(query);
+        let exit = tokio::time::timeout(Duration::from_secs(1), control.close())
+            .await
+            .expect("close parked behind the full process output channel");
+        assert_eq!(exit.termination, Termination::Closed);
+        drop(events);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn untargeted_fork_uses_one_generated_target_identity() {
+        let source = "11111111-1111-4111-8111-111111111111";
+        let directory = tempfile::tempdir().unwrap();
+        let script_path = directory.path().join("fork.sh");
+        let args_path = directory.path().join("args");
+        let prompts_path = directory.path().join("prompts.jsonl");
+        write_script(
+            &script_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nread init\nprintf '%b' '{}'\nread first\nprintf '%s\\n' \"$first\" > '{}'\nread second\nprintf '%s\\n' \"$second\" >> '{}'\nprintf '%s\\n' '{{\"type\":\"prompt_suggestion\",\"suggestion\":\"seen\",\"uuid\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"test-session\"}}'\n",
+                args_path.display(),
+                INIT_RESPONSE.replace('\n', "\\n"),
+                prompts_path.display(),
+                prompts_path.display(),
+            ),
+        );
+
+        let fork_options = QueryOptions {
+            cli_path: Some(script_path),
+            resume: Some(source.to_owned()),
+            fork_session: true,
+            ..QueryOptions::default()
+        };
+        let session = crate::sdk::spawn(fork_options).await.unwrap();
+        let crate::sdk::Session {
+            mut events,
+            control,
+        } = session;
+        let target = control.session_id().to_owned();
+        assert_ne!(target, source);
+        assert!(uuid::Uuid::parse_str(&target).is_ok());
+
+        control.prompt(UserMessage::text("first")).await.unwrap();
+        control.prompt(UserMessage::text("second")).await.unwrap();
+        assert!(matches!(
+            next_event(&mut events).await,
+            Some(Ok(SdkEvent::Message(Message::PromptSuggestion(_))))
+        ));
+
+        let args = std::fs::read_to_string(args_path).unwrap();
+        let args = args.lines().collect::<Vec<_>>();
+        assert!(args.windows(2).any(|pair| pair == ["--resume", source]));
+        assert!(args.contains(&"--fork-session"));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--session-id", target.as_str()])
+        );
+
+        let prompts = std::fs::read_to_string(prompts_path).unwrap();
+        let frames = prompts
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(frames.len(), 2);
+        assert!(frames.iter().all(|frame| frame["session_id"] == target));
+
+        let exit = control.close().await;
+        assert!(exit.success);
+        drop(events);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn nonzero_exit_includes_captured_stderr() {
+        let directory = tempfile::tempdir().unwrap();
+        let script_path = directory.path().join("nonzero.sh");
+        write_script(
+            &script_path,
+            format!(
+                "#!/bin/sh\nread init\nprintf '%b' '{}'\nread prompt\nprintf '%s\\n' '{{\"type\":\"prompt_suggestion\",\"suggestion\":\"seen\",\"uuid\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"test-session\"}}'\nprintf 'diagnostic from stderr\\n' >&2\nexit 17\n",
+                INIT_RESPONSE.replace('\n', "\\n")
+            ),
+        );
+
+        let mut process_options = options();
+        process_options.cli_path = Some(script_path);
+        let session = crate::sdk::spawn(process_options).await.unwrap();
+        let crate::sdk::Session {
+            mut events,
+            control,
+        } = session;
+        control.prompt(UserMessage::text("hello")).await.unwrap();
+        assert!(matches!(
+            next_event(&mut events).await,
+            Some(Ok(SdkEvent::Message(Message::PromptSuggestion(_))))
+        ));
+        match next_event(&mut events).await.unwrap().unwrap_err() {
+            Error::ProcessExit { status, stderr } => {
+                assert_eq!(status, "code 17");
+                assert_eq!(stderr, "diagnostic from stderr\n");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        let exit_event = next_event(&mut events).await.unwrap().unwrap();
+        assert!(matches!(exit_event, SdkEvent::Exited(_)));
+        let exit = control
+            .process_exit()
+            .expect("process exit was not retained");
+        assert_eq!(exit.code, Some(17));
+        assert_eq!(exit.stderr, "diagnostic from stderr\n");
+    }
 }
