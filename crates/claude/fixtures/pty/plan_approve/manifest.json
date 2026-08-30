@@ -8,7 +8,13 @@
     "at": "2026-08-30T08:20:04.288386Z",
     "source_kind": "live_capture"
   },
-  "verified": [],
+  "verified": [
+    {
+      "version": "2.1.251",
+      "at": "2026-08-30T14:36:38.050733Z",
+      "run_id": "2ebf7ac7-05b4-469c-a6f8-18e88ff36888"
+    }
+  ],
   "content": {
     "io.jsonl": "sha256:902118207ff8a883988eef70cdc39771d871a2de64389baa2c9081e6bf7b2bb5",
     "spawn.jsonl": "sha256:2cb3fbf33164c0df1aa5aa0987fa00dc275fd442b7be5b9ed6b0a830a06a3bd5"

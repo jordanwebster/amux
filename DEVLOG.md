@@ -5587,3 +5587,10 @@ separate canonical recordings, captured content assertions reflect Claude Code
 2.1.251, and the new `atis-latch` and `bridge-session` rows remain explicitly
 visible as unrecognized entries. The fold implementation and TUI goldens are
 unchanged.
+
+2026-08-30 — **QA exercised the Claude PTY corpus and full drift probe.** The
+probe passed all eighteen PTY specifications and produced SDK/PTY additive
+drift reports at Claude Code 2.1.251; keymap resolution and format boundaries
+passed. The live semantic chat capture reached prompt and permission intents
+but timed out waiting for the `AskUserQuestion` transcript ask, so that defect
+is filed for repair rather than being reported as a passing end-to-end flow.
