@@ -18,13 +18,14 @@ use uuid::Uuid;
 
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agents::{
-    AGENT_TYPE_TEST_AGENT, AgentBackend, AgentDeliveryTarget, AgentParent, CreateAgentRequest,
-    Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource, SessionEvent, StopPolicy,
-    StructuredLogSource, TerminalSize, terminal_io_protocols,
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CreateAgentRequest, Delivery,
+    DeliveryError, DeliveryLiveness, LocalAgentNameSource, Plane, Protocol, RawPtyTarget,
+    SessionEvent, StopPolicy, StructuredLogSource, TerminalSize,
 };
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
 use crate::debug::DebugView;
+use crate::protocol::ProtocolError;
 
 const STRUCTURED_LOG_RETENTION: usize = 1000;
 
@@ -191,10 +192,6 @@ impl TestAgentSession {
         }))
     }
 
-    pub(crate) fn log_source(&self) -> Option<StructuredLogSource> {
-        self.log_source.clone()
-    }
-
     /// Subscribe to structured log output with an optional query filter
     /// and return the matching seq.
     #[cfg(test)]
@@ -262,33 +259,31 @@ impl AgentBackend for TestAgentSession {
         TestAgentSession::stop(self).await;
     }
 
-    fn agent_type(&self) -> &'static str {
-        AGENT_TYPE_TEST_AGENT
+    fn kind(&self) -> AgentKind {
+        AgentKind::TestAgent
+    }
+
+    fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError> {
+        match protocol {
+            Protocol::TerminalV1 | Protocol::TestEchoV1 => self
+                .pty
+                .clone()
+                .map(RawPtyTarget::Existing)
+                .map(Plane::Terminal)
+                .ok_or_else(|| ProtocolError::FailedPrecondition {
+                    message: "test-agent PTY is not active".to_string(),
+                }),
+            Protocol::ClaudePtyTranscriptV1 | Protocol::ClaudeSdkV1 | Protocol::CodexSdkV1 => {
+                Err(ProtocolError::NotExposed {
+                    kind: self.kind(),
+                    protocol,
+                })
+            }
+        }
     }
 
     fn parent(&self) -> Option<AgentParent> {
         self.parent
-    }
-
-    fn io_protocols(&self) -> Vec<String> {
-        #[cfg(any(test, feature = "testnet"))]
-        {
-            let mut protocols = terminal_io_protocols(self.pty.as_ref());
-            protocols.push(io::TEST_ECHO_V1.to_string());
-            protocols
-        }
-        #[cfg(not(any(test, feature = "testnet")))]
-        {
-            terminal_io_protocols(self.pty.as_ref())
-        }
-    }
-
-    fn log_source(&self) -> Option<StructuredLogSource> {
-        TestAgentSession::log_source(self)
-    }
-
-    fn pty_handle(&self) -> Result<Option<PtyHandle>> {
-        Ok(self.pty.clone())
     }
 
     fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {

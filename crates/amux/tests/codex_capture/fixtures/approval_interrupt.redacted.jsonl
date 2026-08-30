@@ -1,8 +1,0 @@
-{"type":"item/commandExecution/requestApproval","threadId":"[THREAD]","turnId":"[TURN]","itemId":"[ITEM]"}
-{"availableDecisions":["accept","cancel"],"request_id":0,"type":"amux.codex_approval_required"}
-{"reason":"answered","type":"amux.codex_approval_resolved","request_id":0}
-{"type":"item/completed","threadId":"[THREAD]","item":{"type":"commandExecution","status":"completed","exitCode":0}}
-{"type":"turn/completed","threadId":"[THREAD]","turn":{"id":"[TURN-1]","status":"interrupted"}}
-{"type":"mcpServer/startupStatus/updated","threadId":"[THREAD]","status":"ready"}
-{"type":"item/completed","threadId":"[THREAD]","item":{"type":"agentMessage","text":"AFTER_INTERRUPT"}}
-{"type":"turn/completed","threadId":"[THREAD]","turn":{"id":"[TURN-2]","status":"completed"}}

@@ -453,6 +453,9 @@ fn geometry_identical_for_claude_and_codex_fixtures_at_120_by_40() {
             AgentChatView::Codex(view) => {
                 crate::chat::codex::geometry(&fixture.model, view, (120, 40), false)
             }
+            AgentChatView::Unsupported(_) => {
+                unreachable!("this parity test builds only Claude and Codex fixtures")
+            }
         }
     };
 

@@ -177,11 +177,9 @@ mod tests {
             name: Some("fix-auth".to_string()),
             command: "claude".to_string(),
             working_dir: "/work".into(),
-            agent_type: "claude".to_string(),
-            io_protocols: vec![
-                "terminal_v1".to_string(),
-                "claude_pty_transcript_v1".to_string(),
-            ],
+            kind: amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
             readonly: false,
             args: Vec::new(),
             created_at: at(0),

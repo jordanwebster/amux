@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Merged the provider-crates flight into the rewritten TUI.**
+One merge commit reconciles two flights that grew from the same base:
+main's shared full-screen presentation (borderless frame, block kit,
+semantic themes, 120x40 goldens) and the branch's typed agent kinds and
+protocols, semantic PTY intents, and canonical provider crates.
+Presentation questions resolved toward main; type and protocol questions
+toward the branch. The SDK-driven Claude chat's unsupported placeholder now
+renders through the shared frame as ChatFrameParts — real header, family
+banner, one feed block naming the unreadable protocol, bottom hint — and
+its goldens re-rendered at 120x40 with semantic style classification.
+Fixture builders type the agent kind instead of carrying protocol strings,
+and feed recording rejects `ClaudeSdk` rather than inventing a feed for a
+chat that renders none.
+
 2026-08-30 — **Gave every capture row room for its own glyphs.** The
 screenshot renderer clipped each glyph to its cell, and the cell was 20px tall
 with the baseline at 16 — but JetBrains Mono at the capture's font size asks for
@@ -461,6 +475,360 @@ classify every cell instead of inferring meaning from the old named ANSI
 colours. Their regenerated maps therefore lock token intent in both truecolor
 palettes and mark remaining legacy literal styles explicitly until the shared
 painters migrate them.
+2026-08-30 — **Ran the complete workspace and protocol suites offline.** The
+offline sandbox now permits host-local loopback sockets while retaining its
+public-address TCP refusal. Workspace tests no longer skip network-shaped
+localhost coverage, and the TestNet runner executes all 58 protocol
+specifications with isolated provider homes and Cargo offline mode enabled.
+
+---
+
+2026-08-30 — **Live Claude evidence rejects ownership identifiers.** The PTY
+capture redactor now shares replay-support's personal-identifier field rule,
+recursively replaces account, organization, and bridge-session values, and
+verifies that no matching field survives before evidence is written.
+
+---
+
+2026-08-30 — **Named derived rows by their provider plane.** The daemon row
+fixtures now live under `fixtures/rows/claude-pty`, `claude-sdk`, and `codex`,
+mirroring the recording owners in the canonical provider crates. Derivation,
+live capture waiters, A2A carrier checks, UI folds, TUI goldens, provenance,
+and user documentation all resolve those plane-specific paths; the fixture
+index records the exact provider recording directory behind each set.
+
+---
+
+2026-08-30 — **Made the protocol spec boundary explicit offline.** Normal
+workspace runs still execute every whole-daemon specification. In the
+credential-empty, network-denied sandbox, the task compiles the complete spec
+binary but does not execute it because every chapter is built on the
+TCP-backed `TestNet` harness. The runner reports that isolation directly,
+rather than turning network-denial failures into false protocol failures.
+
+---
+
+2026-08-30 — **Kept resumed Claude PTY construction behind agent
+dependencies.** The resume path now accepts the canonical dependency bundle
+that its caller already owns, rather than expanding runtime, version, launch
+and keymap services into parallel arguments. This keeps fresh and resumed PTY
+sessions wired from the same dependency source and restores warning-clean
+workspace linting.
+
+---
+
+2026-08-30 — **Made the workspace test task explicit offline.** The ordinary
+task still runs every workspace target, while the credential-empty sandbox
+first compiles every target and then runs all tests except ten cases whose
+contract requires an internet TCP socket. Nine daemon unit tests and the
+embedded update-poll integration test are named at the runner boundary, so
+offline success cannot silently omit newly added tests. Claude PTY keymap
+tests now also follow the current verified ledger and valid user-keymap rules.
+
+---
+
+2026-08-30 — **Made Claude keymap delays virtual during replay.** PTY sessions
+now receive timing behavior with the rest of their source bundle. Live sessions
+still sleep for each bounded keymap delay, while recording-backed sessions
+advance the strict-replay clock and yield to causal input without waiting on
+wall time. All Claude PTY intents are re-driven with unchanged keystroke bytes
+and daemon rows, and the full Codex, Claude SDK and Claude PTY derivation suite
+now completes in about one second.
+
+---
+
+2026-08-30 — **Completed the canonical provider crates integration.** Claude
+PTY and SDK sessions now live behind `claude`, Codex sessions behind `codex`,
+provider-neutral process hosting behind `pty-host`, and corpus machinery behind
+`replay-support`; each provider exposes one owned event stream and a control
+handle to thin amux adapters. Closed agent kinds and per-protocol wire oneofs
+make every plane explicit, while semantic Claude PTY intents are encoded by
+versioned keymaps in the daemon. The SDK driver carries A2A envelopes through
+stream input and records provider-accepted delivery on the recipient's log.
+Strict executable-specification corpora retain the Claude SDK 2.1.247 baseline,
+record Claude PTY at 2.1.251 and Codex at 0.150.1, and derive the daemon row
+fixtures from replay; drift probes append live-verification ledgers and
+re-record only failed claims. The amuxapp bridge remains deliberately broken
+until it adopts the typed wire.
+
+---
+
+2026-08-30 — **Aligned the existing system documentation with provider
+crates.** Architecture now shows the provider-session, PTY-host and daemon
+adapter layers; the wire documents closed agent kinds and protocol payloads;
+Codex and Claude chat point to crate specifications, derived rows and focused
+live suites. The client guide names the typed Claude SDK placeholder, the A2A
+guide records the SDK stream carrier's recipient-owned row, and transcript
+provenance now distinguishes historical 2.1.228 findings from the current
+2.1.251 corpus. The amuxapp bridge remains explicitly broken until it adopts
+the typed wire.
+
+---
+
+2026-08-30 — **Bridge-session ownership identifiers are sanitized.** The
+shared replay sanitizer now treats bridge session ids and account,
+organization and user identity fields as personal identifiers, including
+ownership UUIDs nested in Claude transcript rows. The committed provider
+recordings and their derived daemon rows were re-sanitized, with recording
+inventories and redaction counts refreshed.
+
+---
+
+2026-08-30 — **Documented the canonical provider and keymap boundaries.** The
+documentation map now covers the common provider session shape, provider
+adapters, PTY source bundle, capability gaps, executable-specification corpora
+and verification ledgers. The keymap guide records the fixed step language,
+version-resolution and provenance rules, CLI workflow, data-versus-binary
+boundary, and the absence of a terminal screen model.
+
+---
+
+2026-08-30 — **Derived Claude rows name the current verified keymap.** The
+Claude PTY row fixtures were regenerated through the provider recordings after the
+probe updated the baked keymap's verification ledger. Their semantic keymap
+and input-result rows now carry that keymap's current digest, so replay through
+the daemon reproduces every checked-in fixture byte for byte again.
+
+---
+
+2026-08-30 — **The live semantic chat follows Claude's question boundary.**
+Claude Code may expose an `AskUserQuestion` menu through its permission hook
+before persisting the corresponding assistant tool-use transcript row. The
+live suite now answers the hook-derived semantic ask first, then requires the
+deferred transcript row before continuing. Turn waits also begin after their
+semantic input-result rows, so deny-with-feedback cannot make the next prompt
+race an earlier tool-rejection turn end.
+
+---
+
+2026-08-30 — **Added a credential-empty offline workspace runner.** Commands
+can now be run with fresh home directories for Claude and Codex, Cargo's
+offline mode enabled, and outbound networking denied by the macOS sandbox.
+The runner preserves the installed Rust toolchains and command path, permits
+Unix-domain sockets used by local integration tests, prints the effective
+environment, and checks its own TCP isolation before executing a command.
+
+---
+
+2026-08-30 — **Claude PTY process checks have a focused live suite.** The
+former capture harness is now the opt-in `claude_pty_live` target with a
+validated `all | <scenario>...` grammar. Provider behavior covered by the
+Claude crate's recordings is no longer duplicated as fixture-driven waiter
+tests; the retained suite exercises daemon-only facts such as stale sequence
+rejection, two-terminal fanout, read-only hook discovery, cross-kind
+completion and both A2A carriers. Its semantic chat drives every interactive
+operation as a typed intent and records the daemon's keymap and input-result
+rows. The live harness also refuses to run a stale prebuilt daemon using the
+same depfile guard as the Codex suite.
+
+---
+
+2026-08-30 — **Claude PTY behavior has an executable specification boundary.**
+The Claude crate now registers one live-and-replay specification for every
+semantic chat intent and transcript relink. Live runs go through the hosted
+PTY session while recording the actual PTY, hook and transcript transports;
+replay feeds those same frames through strict causal accounting. PTY bytes are
+hex-framed at the line-oriented replay boundary so prompts containing newlines
+and terminal controls remain exact. The probe is the sole authority that can
+append keymap verification, and provenance tests require every baked entry to
+name matching recording evidence before it can ship.
+
+---
+
+2026-08-30 — **Hosted Claude sessions use installed user keymaps.** The daemon
+now carries the configured data directory's keymap path into each PTY backend,
+including resumed and testnet sessions. The CLI and daemon share one canonical
+path helper, so `amux keymap` source and basis output describes the same file
+whose digest appears in the session's keymap row.
+
+---
+
+2026-08-30 — **Claude keymap metadata stays outside the chat transcript.**
+The UI now folds keymap-selection and semantic-input result rows as daemon
+control facts. They add no unrecognized feed entries and do not make a fresh
+session look like transcript replay before its first turn.
+
+---
+
+2026-08-30 — **The Claude clients stopped authoring key bytes.** The client
+keystroke encoder and its menu, delay and escape-sequence tables are deleted;
+amux-ui and the TUI now dispatch semantic intents — prompt, interrupt,
+permission-mode cycle, and an answer naming the ask it answers — and the
+session chooses the keystrokes from a keymap resolved against the Claude
+version actually running there. Answers use the daemon's own typed answer
+payloads, so nothing is translated twice. Each ask now carries the name the
+session announced it by, derived from the same hook row the panel is drawn
+from, so an answer is addressable the moment a menu appears instead of waiting
+for the transcript tail to correlate a tool_use id. What a client can still
+decide alone — whether an answer fits its ask, and whether free text is safe to
+carry — stays client-side and refuses locally. A test scans the Claude client
+sources for escape, CSI and carriage-return literals and fails on any of them.
+
+---
+
+2026-08-30 — **Claude SDK delivery rows represent accepted messages.** The
+recipient-owned `amux.claude_sdk.message` row is now written only after the
+provider accepts the stream prompt. A failed provider write returns the
+delivery error without leaving a row that falsely claims the message arrived.
+
+---
+
+2026-08-30 — **SDK-driven Claude agents open their typed placeholder.**
+Creating or attaching to a Claude SDK agent now enters the structured TUI
+layer even when raw attach is configured as the default. Fleet entry keys
+derive raw-attach availability from the agent kind's protocol set, so an SDK
+agent never requests `terminal_v1`; its unsupported placeholder remains
+stream-free and the daemon's typed protocol refusal stays intact. A live
+worktree-daemon capture now proves both explicit attach and fleet entry render
+that placeholder without a subscription error or daemon crash.
+
+---
+
+2026-08-30 — **Froze the Claude SDK daemon protocol vocabulary.** The
+`claude_sdk_v1` adapter now owns typed subscription replay, output and input
+codecs, including structured allow and deny permission decisions. Claude's
+stream-JSON values remain unchanged, while daemon-authored ready, gap,
+permission, input-result and A2A message rows occupy a closed namespace whose
+complete JSON shape is covered by unit tests.
+
+---
+
+2026-08-30 — **Claude SDK dispatch and lifecycle failures are executable
+contracts again.** The reshaped session boundary now proves malformed and
+empty-line accounting, pending-control cleanup, observable aborts, close under
+full virtual and process output, captured failing-process stderr, and truthful
+resume and fork identities. Process exit publication is independent of the
+bounded event channel, so an unread stream cannot strand explicit close.
+
+---
+
+2026-08-30 — **Claude PTY invariants remain covered at their new boundaries.**
+Provider tests prove paste sanitization and transcript-attributed socket
+confirmation. Adapter tests again prove hook deduplication, external terminal
+refusal, and structured-log generation clearing after a transcript relink.
+
+---
+
+2026-08-30 — **Managed Claude hooks retain native messaging delivery.** The
+per-session hook socket now carries Claude's messaging socket and token in a
+private provider envelope while preserving the original hook payload for
+structured rows. Managed PTY sessions that observe both credentials use the
+native socket carrier; sessions without them continue to use safe PTY paste.
+
+---
+
+2026-08-30 — **The Claude SDK corpus has its first live drift ledger.**
+Claude Code 2.1.251 exercised all 23 specifications: 20 retained their 2.1.247
+recordings and gained verification entries, `history/resumed_at` alone was
+re-recorded, and the MCP reconnect and elicitation claims remain explicit
+failures in the probe report. The run wrote additive drift for every claim and
+recorded that an SDK-only registry verifies no PTY keymap. Live captures now
+run in isolated subprocesses so a failed assertion remains one durable probe
+result even though the workspace dev profile uses aborting panics.
+
+---
+
+2026-08-30 — **Claude PTY hosting now crosses one provider session boundary.**
+The amux Claude runtime is reduced to its backend, wire codec, delivery carrier,
+and suspend record. Live, replay-injected, external read-only, and testnet
+sessions all consume `claude::pty::Session`; raw terminal access adapts the
+provider control handle while transcript and hook events feed the structured
+plane. Managed hook commands forward directly to the session socket, leaving
+the daemon hook RPC for externally started Claude processes.
+
+---
+
+2026-08-29 — **Codex specifications now share their live and replay path.**
+The feature-gated `codex::specs` registry covers initialization, turns,
+approvals, interruption, list/resume, dynamic tools, idle and busy injection,
+and assistant-message ordering. `codex-probe` lists corpus provenance, records
+through isolated credential homes with `gpt-5.6-luna` passed explicitly, and
+uses the shared probe machinery to append ledgers or re-record only failed
+claims while retaining additive drift. Strict replay tests own the full
+accounting report and reject orphaned or below-minimum recordings.
+
+---
+
+2026-08-29 — **Codex now has a canonical provider boundary.** The former
+`codex-sdk` package is now the `codex` workspace crate. Its existing app-server
+surface remains available, while `Session` pairs the thread's single owned
+event stream with a restricted, cloneable control handle for turns, steering,
+interrupts, approvals, injected items, and identity. The reduced replay smoke
+recordings and credential-gated daemon probe are gone; the fake-socket framing
+test remains as the transport boundary.
+
+---
+
+2026-08-29 — **Flattened agent kinds at the MCP tool boundary.** The `agents`
+tool now reports `claude`, `codex`, or `test-agent` in its `kind` field, matching
+the vocabulary used to select an agent provider. Claude's `pty` or `sdk` detail
+is a separate `driver` field instead of being nested inside `kind`.
+
+---
+
+2026-08-29 — **Made external Claude terminal absence observable.** A Claude
+session discovered through hooks still has the PTY driver kind because its
+transcript protocol is available, but it has no terminal owned by amux. The
+backend and live capture boundary now prove that a terminal subscription is
+refused with `FailedPrecondition` while transcript replay remains available.
+
+---
+
+2026-08-29 — **Agent kinds and session protocols are closed across the wire.**
+Claude now carries its PTY or SDK driver in the agent kind, while Codex and the
+test agent are distinct variants; each kind derives the protocols it exposes.
+Session protobufs select typed protocol arguments, output, and input through
+oneofs, daemon plane lookup refuses unsupported selections with a typed error,
+and the UI chooses its layer exhaustively from the kind. `amux new claude`
+accepts `--driver pty|sdk` with PTY as the default, `amux list` prints the kind
+and driver, and SDK-driven Claude sessions render an explicit unsupported chat
+placeholder until that layer gains a reader.
+
+---
+
+2026-08-29 — **The chat layer comes from the agent's kind, and an unread
+protocol renders as one.** The UI no longer sniffs a layer out of advertised
+protocol strings: a kind determines its layer, and a Claude driven through
+the SDK gets a typed layer that folds nothing. Its chat is a placeholder
+naming the protocol nothing here reads, taking no input and still offering
+the keys that leave, so an agent kind can ship before its reader does without
+becoming unreachable. Fleet fixtures that reached Codex states through Claude
+rows now use Codex rows, which is the only way to reach them under closed
+kinds.
+
+---
+
+2026-08-29 — **Probe re-record failures remain visible run outcomes.** A
+failed attempt to refresh one broken specification now records that claim as
+failed, continues through the registry, and still writes both probe and drift
+artifacts with the results collected before and after the capture error.
+
+---
+
+2026-08-29 — **Strict replay accounts for writes per named transport.**
+Concurrent write origins are now deduplicated within each transport, so two
+independent channels may arrive in either order while each channel's own
+ordering remains strict. A mismatched named write reports that transport's
+expectation and global recording index.
+
+---
+
+2026-08-29 — **Codex raw PTY detach has a synchronous termination floor.**
+The final raw-terminal lease now signals the hosted process group with
+SIGTERM before it asks Tokio to await and escalate shutdown. Detach therefore
+still starts teardown when it happens outside a runtime or while a runtime is
+shutting down; an available runtime retains the bounded SIGKILL escalation.
+
+---
+
+2026-08-29 — **PTY process hosting is provider-neutral.** Claude PTY,
+Codex's raw terminal, and real test-agent processes now spawn through the
+`pty-host` crate. The crate owns PTY creation, environment layering, one raw
+output stream, synchronous resize, exit status, and process-group shutdown
+that escalates from SIGTERM to SIGKILL after a bounded grace period. amux's
+remaining PTY module only feeds that output into its replaying byte buffer and
+keeps the in-process echo used by deterministic tests. The mobile library
+build still excludes PTY hosting when default features are disabled.
 
 ---
 
@@ -1952,7 +2320,7 @@ recorded as the phase's one deferral, with a CHAT.md drift note for
 the orchestrator: alternate-scroll (wheel→arrows) cannot honor the
 table's "wheel scrolls the feed" while the composer owns arrows and
 ↑-at-top is reserved for history recall — no code shipped either way.
-Phase report: `notes/chat-v1/phases/06-report.md`.
+Phase report: the gitignored Phase 6 working report.
 
 ---
 
@@ -2082,8 +2450,7 @@ inserts a newline, never sends; Ctrl+J stays canonical.
 ## 2026-08-12: Chat V1 Phase 6 — chrome-wide guarded Ctrl+C
 
 ### Summary
-The behavior change this phase owns (`docs/CHAT.md` §Keybindings,
-derivation `notes/chat-v1/keybindings.md` §2.1): Ctrl+C is ONE rule
+The behavior change this phase owns (`docs/CHAT.md` §Keybindings): Ctrl+C is ONE rule
 everywhere in the TUI. A focused non-empty text field is cleared —
 as a yankable kill in the chat's Composer-backed fields; the fleet's
 filter/rename line-edits clear without a kill slot (they are bare
@@ -2766,8 +3133,8 @@ correlation is content equality). Eight redacted fixtures graduated
 - crates/amux/tests/capture/main.rs — scenarios permission_session,
   permission_deny_feedback, question_tabs, question_other_single,
   question_mixed, plan_auto, mode_cycle, prompt_multiline.
-- crates/amux/tests/fixtures/chat-v1/ — 8 new fixture pairs + README.
-- notes/chat-v1/transcript-semantics.md — §18d; §10 permission-mode row
+- crates/amux/tests/fixtures/rows/claude-pty/ — 8 new fixture pairs + README.
+- docs/CLAUDE_TRANSCRIPT.md — §18d; §10 permission-mode row
   entry resolved.
 
 ### Decisions Made
@@ -3277,10 +3644,10 @@ summarizer's substring split).
   summarizer (unification is Phase 2); layer window resets on `Opened`.
 - crates/amux-ui/tests/spec/{feed_replay,feed_turns,feed_tools,
   feed_edges}.rs — Chapters 6–9, fixture-driven against
-  crates/amux/tests/fixtures/chat-v1 (referenced via `include_str!`, so
+  crates/amux/tests/fixtures/rows/claude-pty (referenced via `include_str!`, so
   the suite stays IO-free); sequences registered so the wire_free
   differential wraps them.
-- crates/amux/tests/fixtures/chat-v1/README.md — corrected the pong row
+- crates/amux/tests/fixtures/rows/claude-pty/README.md — corrected the pong row
   claim (the fixture holds no assistant rows; the capture closed at the
   arrival-ordered hook.stop).
 
@@ -3386,7 +3753,7 @@ check.
 - `crates/amux/tests/capture/`: opt-in real-Claude capture harness
   (`harness=false`), driving keystrokes through the structured input
   seq-guarded path; scenario redaction with a fail-loud verify pass.
-- `crates/amux/tests/fixtures/chat-v1/`: 9 redacted, provenance-stamped
+- `crates/amux/tests/fixtures/rows/claude-pty/`: 9 redacted, provenance-stamped
   baseline fixtures (pong, tools, permission, question single/multi,
   interrupt, plan approve/reject, compact) + README.
 
@@ -3417,15 +3784,15 @@ check.
   plan_approve stops at the ExitPlanMode resolution (264s→26s). All 9
   fixtures recaptured through the new redaction; leak sweep = 0.
 
-### Spec drift recorded (notes/chat-v1/transcript-semantics.md §18a)
+### Spec drift recorded (`docs/CLAUDE_TRANSCRIPT.md` §18a)
 - Plan approve (manual) does NOT emit a `permission-mode` change —
   contradicts the docs-sourced C3/§18 rule; approval FACT is the
   tool_result success + canonical content. Rejection = `is_error:true`.
 - AskUserQuestion `answers` keyed by question TEXT, not header;
   options are `{label,description}` objects.
 - Transcript file is created lazily on the first turn, not at
-  SessionStart. docs/CHAT.md deltas queued for the orchestrator in
-  notes/chat-v1/phases/00-report.md.
+  SessionStart. `docs/CHAT.md` deltas were queued for the orchestrator in the
+  gitignored Phase 0 working report.
 
 ### Next Steps
 - Phase 1 (Claude layer fold) can read these fixtures raw.
@@ -3444,9 +3811,8 @@ throughout, the ask lifecycle, principle-derived keybindings (guarded
 Ctrl+C, no Alt ever, readline in text fields), diff/artifact
 rendering, seven 80-col wireframes, and the real-Claude E2E suite.
 Designed from first principles with UX studies of Codex CLI and
-opencode plus a transcript semantics survey (working material in
-notes/chat-v1/, gitignored per convention). Implementation is phased
-in notes/chat-v1/orchestration.md.
+opencode plus a transcript semantics survey (gitignored working material).
+Implementation is phased in the working orchestration note.
 
 ### Changes
 - docs/CHAT.md — new; companion to docs/UI.md.
@@ -3473,7 +3839,7 @@ in notes/chat-v1/orchestration.md.
   half arrives with the phased implementation.
 
 ### Next Steps
-- Phase 0 (notes/chat-v1/orchestration.md): transcript-persistence
+- Phase 0: transcript-persistence
   bug fix + baseline fixture capture; overnight autonomous run.
 
 ---
@@ -5755,3 +6121,253 @@ each accepted demonstration and expectation.
 commit had force-added two ignored `.autopilot/` reports. They are no longer
 tracked, while their working copies remain available to the running flight
 under the existing ignore rule.
+2026-08-29 — **Made recorded transport failures fully accountable.** Strict
+replay now exposes one reader and writer per recorded transport while retaining
+global causal ordering. Completion reports every unread or unwritten event,
+unused transport, trailing output, notification skip, delivery failure and
+write mismatch; a wrong write returns an I/O error with its expected and actual
+payloads in the report instead of panicking the specification process.
+
+2026-08-29 — **Made corpus provenance inspectable at the registry boundary.**
+Provider registries can now list each specification beside its recording,
+capture version and later live-verification ledger. Shared checks walk nested
+fixture roots deterministically to expose unclaimed recording directories and
+captures older than a provider's declared minimum.
+
+2026-08-29 — **Completed the provider specification substrate.** Provider-neutral
+PTY hosting now sits beside ledgered, content-inventoried recordings and strict
+multi-transport replay. `replay-support` observes recursive raw-frame structure,
+reports additive protocol drift without turning it into a version gate, and
+drives live corpus probes that append successful verification ledgers while
+re-recording only failed claims. Probe and drift reports are durable JSON run
+artifacts, and the shared sanitizer removes nested secrets, machine paths and
+personal identifiers while reporting exactly what it changed.
+
+2026-08-29 — **Made agent sessions self-describing on the wire.** Agent records
+and host capabilities now carry a closed provider kind and Claude driver.
+Session subscriptions, inputs, controls and outputs select typed protobuf arms
+for terminal, Claude PTY, Claude SDK, Codex SDK and test echo traffic, including
+the routed client mirrors; protocol names and opaque top-level payload fields no
+longer cross the network boundary.
+
+2026-08-29 — **Made protocol exposure an exhaustive backend decision.** Every
+agent backend now maps the closed protocol enum to either a terminal or
+structured plane and returns `NotExposed` for every invalid kind/protocol pair.
+Daemon subscription and input demux no longer rebuild protocol strings or use a
+separate structured-codec discriminator, and typed refusal details survive the
+protobuf error boundary. Claude SDK creation remains an explicit
+`Unimplemented` operation until its driver lands.
+
+2026-08-29 — **Recorded Codex behavior as executable specifications.** Ten live
+app-server scenarios captured with codex-cli 0.150.1 and `gpt-5.6-luna` now
+cover initialization, turns, approvals, interruption, resume, dynamic tools,
+input injection and multi-message ordering. Their sanitized transcripts replay
+strictly, and host names plus per-installation identifiers are redacted at the
+shared corpus boundary.
+
+2026-08-29 — **Reduced Codex hosting to a provider-session adapter.** The amux
+backend now owns one `codex::Session` event stream and operates it through the
+restricted control handle, including approvals, injection, interruption and
+A2A delivery. Live reconnect and thread materialization remain host policy,
+while recorded sessions can enter the same backend through an injection seam;
+delivery and suspend-record construction have explicit adapter modules.
+
+2026-08-30 — **Completed the canonical Codex provider boundary.** The maintained
+live suite now keeps only host-level behavior and records one green run against
+codex-cli 0.150.1 with explicit `gpt-5.6-luna`; its raw and structured readers
+run concurrently so terminal backpressure cannot stall the daemon. Every Codex
+recording also replays strictly through an injected `codex::Session` and the
+real amux backend, reproducing one committed full-fidelity row fixture byte for
+byte. The UI folds those derived rows, while daemon-authored A2A rows remain an
+explicit separate fixture.
+
+2026-08-30 — **Retired the last hand-captured Codex row projections.** Backend
+unit tests keep direct coverage of daemon-authored delivery rows, while the
+derived-rows integration boundary now exclusively owns complete provider
+recording replay and byte-for-byte fixture reproduction.
+
+2026-08-30 — **Scoped capture-specific identifier redaction.** Corpus capture
+tools now opt exact JSON field names into personal-identifier replacement.
+Codex host and installation identifiers stay sanitized without rewriting a
+different provider's semantic `server_name`, such as an MCP server id.
+
+2026-08-30 — **Moved shared Claude mechanics behind the provider boundary.**
+The canonical Claude crate now owns PTY and stream-JSON launch construction,
+managed hook and MCP settings, child-session environment scrubbing, semantic
+version probing, external hook parsing and socket forwarding, typed transcript
+rows and relinkable tailing, messaging-socket framing, and persisted-session
+history. The amux host consumes those modules while retaining only daemon
+policy: structured sequencing, hook deduplication, delivery confirmation and
+session lifecycle.
+
+2026-08-30 — **Added the canonical Claude PTY session boundary.** Live and
+recorded sessions now enter through one bundle of terminal, hook, transcript
+and semantic-version sources. The crate exposes one typed event stream and a
+control handle for fixed input programs, resize, delivery and termination;
+synthetic-source tests cover transcript relinks, ask facts, socket confirmation,
+paste fallback and process exit.
+
+2026-08-30 — **Kept the Claude SDK corpus at its canonical boundary.** All 23
+Claude Code 2.1.247 donor recordings now carry ledger-ready manifests, complete
+content inventories and migrated provenance in the `claude` crate. Their
+executable claims drive the crate's owned event stream, answer permission,
+hook, elicitation and dialog requests through its control handle, and finish
+under strict multi-transport replay. The crate also owns SDK registry listing,
+recording and drift probing plus the standalone hook socket forwarder.
+
+2026-08-30 — **Hosted Claude SDK sessions through the canonical provider.** The
+daemon now gives each stream-JSON process an owned session id, ingests provider
+events into the sequenced `claude_sdk_v1` log, tracks permission requests until
+typed input resolves them, and forwards prompts and interrupts through the
+provider control handle. Hook, elicitation and user-dialog requests remain
+observable while receiving the documented non-interactive defaults, and the
+SDK path has no transcript-file dependency.
+
+2026-08-30 — **Added stream delivery for SDK-driven Claude agents.** Delivery
+becomes live only after the provider ready row, sends the same authenticated
+envelope used by the other backends through stream input, and records the
+accepted message on the recipient's `claude_sdk_v1` log. Exited sessions refuse
+delivery instead of accepting messages that can no longer be observed.
+
+2026-08-30 — **Enabled Claude SDK creation and restart resume.** The daemon now
+accepts SDK-driven Claude creation from the same host path as other agents,
+persists the provider session ID during suspend, and resumes that ID through
+Claude's stream-JSON CLI. Resumed structured streams begin with an explicit gap
+row before their ready row so clients can distinguish the restart boundary.
+
+2026-08-30 — **Derived Claude SDK daemon rows from provider recordings.** Five
+strictly replayed Claude SDK specifications now pass through the daemon backend
+to generate their committed `claude_sdk_v1` rows. Text, permission, interrupt,
+resume, and multi-turn fixtures reproduce byte for byte from the provider
+corpus instead of relying on hand-authored backend captures.
+
+2026-08-30 — **Proved the Claude SDK daemon boundary against Claude Code.** An
+opt-in live suite now drives a Haiku session through prompt completion, an
+input-resolved Write permission with observed tool output, interruption,
+authenticated delivery from a second agent, and suspend plus resume across a
+daemon restart. Its redacted `claude_sdk_v1` recording preserves the recipient
+message row and the resumed session's explicit gap-to-ready boundary.
+
+2026-08-30 — **Moved Claude PTY key tables into a versioned keymap.** The
+provider crate now strictly loads the closed key, delay, menu, shape, and
+program vocabularies from TOML. The baked Claude 2.1 data preserves the live
+verified encoder tables behind a bounded version range, while user files are
+prevented from claiming capture verification provenance.
+
+2026-08-30 — **Interpreted Claude PTY intents through fixed keymap programs.**
+The provider owns the closed intent-to-program table and rejects keymaps that
+remap its six roots or introduce recursive calls. Typed ask facts drive bounded
+question iteration and per-question cursor movement, while every free-text
+source is validated before its complete byte program is exposed. Exact tests
+preserve the former prompt, permission, plan, question, interrupt, and mode
+cycle bytes and delays.
+
+2026-08-30 — **Resolved Claude keymaps from typed version evidence.** Baked and
+user-directory sources now merge by declared keymap name, with local data
+shadowing the shipped copy and every selection carrying its SHA-256 identity.
+Resolution distinguishes range compatibility, exact live verification,
+same-minor extrapolation, and unknown versions; stable programs remain usable
+while menu programs refuse unsafe extrapolation or hook-observed shapes that
+the selected keymap has not verified.
+
+2026-08-30 — **Sent semantic intents through Claude PTY sessions.** Each
+session resolves and publishes its versioned keymap at startup and after every
+transcript relink, then turns prompt, interrupt, mode-cycle, and ask-referenced
+answer intents into provider-owned terminal programs. Input results identify
+the keymap, evidence basis, and fixed program, while unknown asks, mismatched
+answers, unsafe text, unverified menu shapes, and unavailable keymaps remain
+typed refusals before terminal input is written.
+
+2026-08-30 — **Completed the semantic PTY keymap milestone.** The CLI now
+lists effective baked and user keymaps with their source, applicable Claude
+range, and installed-version evidence basis; it can print, validate and add,
+remove, or locate the user keymap directory. User files are installed by their
+declared name only after the provider loader accepts them, so malformed data
+and hand-authored verification claims never enter session resolution.
+
+2026-08-30 — **Put Claude PTY intents on the typed wire.** The transcript
+protocol now carries only prompt, interrupt, permission-mode cycle, and
+ask-referenced answer intents under its sequence guard; raw bytes remain a
+terminal-protocol concern. The daemon forwards those intents through the
+provider control handle and publishes resolved-keymap and successful-input
+rows on the same sequenced transcript stream.
+
+2026-08-30 — **Recorded live Claude PTY question and plan-change behavior.**
+Claude Code 2.1.251 can expose `AskUserQuestion` through its permission hook
+before flushing the corresponding transcript row, so the provider now derives
+the typed question shape from either boundary. Live Sonnet recordings preserve
+mixed-question selections and plan feedback under strict replay, while the
+capture tooling appends their evidence to the baked keymap provenance.
+
+2026-08-30 — **Recorded manual Claude plan approval at the PTY boundary.** The
+spec recorder now leaves a complete IO diagnostic when a live claim stalls and
+supports a bounded timeout override. Plan approval waits for the menu to settle,
+transcript tailing preserves fragmented JSONL appends, and the specification
+correlates the successful result with the ExitPlanMode hook's tool-use ID. The
+Claude Code 2.1.251 Sonnet capture replays strictly and carries matching keymap
+provenance.
+
+2026-08-30 — **Completed the Claude PTY executable-specification corpus.** All
+thirteen interactive claims now have sanitized Claude Code 2.1.251 recordings
+that replay strictly across PTY, hook, and transcript transports. Haiku records
+the ordinary flows while the three model-sensitive plan and mixed-question
+claims retain their explicit Sonnet provenance. Compact recordings preserve four
+completed turns and recognize Claude's in-place compact boundary even when the
+transcript path does not change; every passing capture carries matching baked
+keymap verification evidence.
+
+2026-08-30 — **Expanded the Claude PTY corpus around derived chat boundaries.**
+Five additional semantic specifications preserve multiline prompt identity,
+the Read/Edit/Bash tool-result shapes, automatic plan approval followed by an
+unprompted edit, two-question tab navigation, and single-question Other text.
+Each claim records through the provider PTY session and replays through the same
+strict three-transport boundary at Claude Code 2.1.251.
+
+2026-08-30 — **Derived Claude chat rows from the canonical PTY corpus.** The
+eighteen Claude Code 2.1.251 recordings now replay strictly through the real
+daemon backend to produce the checked-in chat fixtures and provenance
+sidecars. A single name table covers every provider specification exactly once;
+the external-readonly, stale-sequence, and subscription scenarios remain in
+the process-only live suite instead of synthetic row data. Keymap provenance
+now serializes its verified version as an explicit field at this boundary.
+
+2026-08-30 — **Rebased Claude fold specifications on the provider corpus.**
+The UI specification harness now cuts partial PTY recordings at named semantic
+anchors instead of row offsets. Permission allow and deny claims use their
+separate canonical recordings, captured content assertions reflect Claude Code
+2.1.251, and the new `atis-latch` and `bridge-session` rows remain explicitly
+visible as unrecognized entries. The fold implementation and TUI goldens are
+unchanged.
+
+2026-08-30 — **QA exercised the Claude PTY corpus and full drift probe.** The
+probe passed all eighteen PTY specifications and produced SDK/PTY additive
+drift reports at Claude Code 2.1.251; keymap resolution and format boundaries
+passed. The live semantic chat capture reached prompt and permission intents
+but timed out waiting for the `AskUserQuestion` transcript ask, so that defect
+is filed for repair rather than being reported as a passing end-to-end flow.
+
+2026-08-30 — **Made shipped keymaps usable as local override templates.** The
+keymap CLI accepts a copied baked verification ledger only when it exactly
+matches the baked keymap of the same name, then strips that evidence before
+installing the user override. Altered or hand-authored verification remains a
+typed refusal, while listings report the shipped Claude 2.1.251 basis as
+verified.
+
+2026-08-30 — **Folded Claude tool lifecycle hooks as typed session facts.**
+Managed PTY settings register both pre- and post-tool hooks, and the chat fold
+now consumes them without rendering duplicate or unrecognized tool entries;
+transient hook-local modes do not replace transcript session state.
+Fixture-backed feed specs keep provider hook rows covered while preserving
+genuinely unknown `atis-latch` and `bridge-session` entries.
+
+2026-08-30 — **Refreshed the Claude specification registry evidence.** The
+registry transcript now reflects the current manifests: all eighteen PTY
+recordings show live verification at Claude Code 2.1.251, while the SDK rows
+retain their mixed migrated, re-recorded, passing, and still-unverified
+ledger history.
+
+2026-08-30 — **Restored synthetic chat-boundary regression claims.** UI specs
+again prove that a FACT-paired interrupt closes a flushed null-stop message as
+interrupted, distinct permission requests under one prompt remain separate
+asks, and thinking durations use the full previous-row timestamp chain across
+tool results and later prompts.

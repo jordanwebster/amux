@@ -50,8 +50,8 @@ mod user_state;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use agents::{
-    Agent, AgentEvent, AgentParent, AgentType, CreateAgentRequest, SessionCloseReason,
-    SubscribeSessionEvent, TerminalSize, WorkingOn,
+    Agent, AgentEvent, AgentKind, AgentParent, AgentType, ClaudeDriver, CreateAgentRequest,
+    Protocol, SessionCloseReason, SubscribeSessionEvent, TerminalSize, WorkingOn,
 };
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
@@ -75,7 +75,7 @@ pub use pairing::ssh::{
 };
 #[cfg(unix)]
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
-pub use paths::{default_data_dir, default_log_path};
+pub use paths::{default_data_dir, default_log_path, keymap_dir};
 pub use protocol::{PROTOCOL_VERSION, ProtocolError};
 pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
 pub use server::{
@@ -85,12 +85,45 @@ pub use subscription::SubscriptionReporter;
 pub use transport::TransportError;
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 
+#[cfg(all(feature = "local-agents", debug_assertions))]
+#[doc(hidden)]
+/// Hermetic constructors used by protocol-boundary integration tests.
+pub mod typed_protocol_test_support {
+    use crate::{AgentKind, Protocol, ProtocolError};
+
+    pub async fn open_in_process_plane(
+        kind: AgentKind,
+        protocol: Protocol,
+    ) -> Result<(), ProtocolError> {
+        crate::services::open_in_process_protocol_plane(kind, protocol).await
+    }
+
+    pub async fn create_sdk() -> Result<(), ProtocolError> {
+        crate::services::create_sdk_in_process().await
+    }
+}
+
+#[cfg(all(feature = "local-agents", debug_assertions, unix))]
+#[doc(hidden)]
+/// Backend-boundary harness used to derive deterministic fixtures from provider recordings.
+pub mod derived_rows_test_support;
+
 pub mod claude_io {
     pub use crate::agents::claude::io::{
-        ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input,
-        ClaudePtyTranscriptV1Output, ClaudePtyTranscriptV1ReplayQuery, PTY_TRANSCRIPT_V1,
-        decode_pty_transcript_v1_cursor, decode_pty_transcript_v1_output,
-        encode_pty_transcript_v1_args, encode_pty_transcript_v1_input,
+        AskAnswer, ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input,
+        ClaudePtyTranscriptV1Output, ClaudePtyTranscriptV1ReplayQuery, Intent, PTY_TRANSCRIPT_V1,
+        PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
+        decode_pty_transcript_v1_cursor, decode_pty_transcript_v1_input,
+        decode_pty_transcript_v1_output, encode_pty_transcript_v1_args,
+        encode_pty_transcript_v1_input,
+    };
+}
+
+pub mod claude_sdk_io {
+    pub use crate::agents::claude::sdk_io::{
+        CLAUDE_SDK_V1, ClaudeSdkSynthesized, ClaudeSdkV1Args, ClaudeSdkV1Input, ClaudeSdkV1Output,
+        ClaudeSdkV1ReplayQuery, ClaudeSdkV1Row, decode_claude_sdk_v1_output,
+        encode_claude_sdk_v1_args, encode_claude_sdk_v1_input,
     };
 }
 

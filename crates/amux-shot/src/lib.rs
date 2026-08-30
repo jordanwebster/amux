@@ -238,6 +238,14 @@ pub fn record_scroll(
     const EVENT_COUNT_PER_DIRECTION: usize = 12;
     const FRAME_DELAY_CENTISECONDS: u16 = 12;
 
+    // An SDK-driven chat renders only its unsupported placeholder; a long
+    // scrolling feed recorded for it would be an invention, not evidence.
+    if matches!(protocol, StructuredProtocol::ClaudeSdk) {
+        return Err(ShotError::Render(
+            "an SDK-driven chat has no native feed to scroll".to_string(),
+        ));
+    }
+
     fs::create_dir_all(out)?;
     let agent = protocol_name(protocol);
     let gif_name = format!("{agent}-wheel.gif");
@@ -383,6 +391,7 @@ fn update_scroll_event_log(out: &Path, recording: ScrollRecording) -> Result<(),
 fn protocol_name(protocol: StructuredProtocol) -> &'static str {
     match protocol {
         StructuredProtocol::Claude => "claude",
+        StructuredProtocol::ClaudeSdk => "claude-sdk",
         StructuredProtocol::Codex => "codex",
     }
 }

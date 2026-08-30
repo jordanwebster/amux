@@ -28,7 +28,7 @@ fn api_error() -> serde_json::Value {
     json!({
         "type": "assistant",
         "uuid": "cccccccc-0000-4000-8000-000000000099",
-        "sessionId": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+        "sessionId": chat_session_id("pong"),
         "timestamp": "2026-08-11T22:00:05.000Z",
         "isApiErrorMessage": true,
         "error": "server_error",
@@ -47,7 +47,7 @@ fn new_permission_hook() -> serde_json::Value {
         "type": "hook.permission_request",
         "hook_event_name": "PermissionRequest",
         "prompt_id": "new-prompt-after-local-send",
-        "session_id": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+        "session_id": chat_session_id("pong"),
         "tool_name": "Bash",
         "tool_input": {"command": "echo new-request"},
         "permission_mode": "default",
@@ -59,7 +59,7 @@ fn reconciled_prompt(text: &str) -> serde_json::Value {
     json!({
         "type": "user",
         "uuid": "cccccccc-0000-4000-8000-000000000100",
-        "sessionId": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+        "sessionId": chat_session_id("pong"),
         "timestamp": "2026-08-11T22:10:12.000Z",
         "origin": {"kind": "human"},
         "promptSource": "typed",
@@ -77,7 +77,7 @@ fn observation_only(mut messages: Vec<Msg>) -> Vec<Msg> {
 }
 
 fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
-    let mut echo_at_rest = chat_feed(AGENT, "permission");
+    let mut echo_at_rest = chat_feed(AGENT, "pong");
     echo_at_rest.push(send_prompt(40, "next task"));
 
     let mut echo_with_error = echo_at_rest.clone();
@@ -101,10 +101,17 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
                 vec![stream(AGENT, StreamMsg::Opened { truncated: false })],
             ]),
         ),
-        ("permission ask", chat_feed_prefix(AGENT, "permission", 8)),
+        (
+            "permission ask",
+            chat_feed_through(AGENT, "permission", ChatAnchor::PermissionRequest(0)),
+        ),
         (
             "unverified question ask",
-            chat_feed_prefix(AGENT, "question_other_single", 8),
+            chat_feed_through(
+                AGENT,
+                "question_other_single",
+                ChatAnchor::PermissionRequest(0),
+            ),
         ),
         (
             "unverified permission menu",
@@ -115,20 +122,34 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
         ),
         (
             "readonly permission ask",
-            observation_only(chat_feed_prefix(AGENT, "permission", 8)),
+            observation_only(chat_feed_through(
+                AGENT,
+                "permission",
+                ChatAnchor::PermissionRequest(0),
+            )),
         ),
-        ("working turn", chat_feed_prefix(AGENT, "permission", 6)),
+        (
+            "working turn",
+            chat_feed_through(AGENT, "permission", ChatAnchor::Prompt(0)),
+        ),
         (
             "observation-only working turn",
-            observation_only(chat_feed_prefix(AGENT, "permission", 6)),
+            observation_only(chat_feed_through(
+                AGENT,
+                "permission",
+                ChatAnchor::Prompt(0),
+            )),
         ),
-        ("finished turn", chat_feed(AGENT, "permission")),
-        ("stop presignal", chat_feed(AGENT, "question_single")),
+        ("finished turn", chat_feed(AGENT, "pong")),
+        (
+            "stop presignal",
+            chat_feed_through(AGENT, "pong", ChatAnchor::StopHook(0)),
+        ),
         ("interrupted turn", chat_feed(AGENT, "interrupt")),
         (
             "transport unknown",
             seq([
-                chat_feed_prefix(AGENT, "permission", 6),
+                chat_feed_through(AGENT, "permission", ChatAnchor::Prompt(0)),
                 vec![stream(
                     AGENT,
                     StreamMsg::Closed {
@@ -166,7 +187,7 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
         (
             "stale working turn",
             seq([
-                chat_feed_prefix(AGENT, "permission", 6),
+                chat_feed_through(AGENT, "permission", ChatAnchor::Prompt(0)),
                 vec![tick(10 + 601)],
             ]),
         ),
@@ -177,20 +198,18 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
 /// chapter. Keeping them together makes the coverage claim auditable; both
 /// the agreement matrix below and `wire_free` inspect every intermediate Msg.
 fn remaining_lifecycles() -> Vec<(&'static str, Vec<Msg>)> {
-    let mut echo_with_ask = chat_feed(AGENT, "permission");
+    let mut echo_with_ask = chat_feed(AGENT, "pong");
     echo_with_ask.push(send_prompt(40, "next task"));
     echo_with_ask.push(batch(AGENT, 80, vec![new_permission_hook()]));
 
     let mut offline_host = a_host("nova");
     offline_host.online = false;
 
-    let tools = chat_rows("tools");
-    let permission = chat_rows("permission");
     vec![
         (
             "retryable close -> reopen -> replay",
             seq([
-                chat_feed_prefix(AGENT, "permission", 6),
+                chat_feed_through(AGENT, "permission", ChatAnchor::Prompt(0)),
                 vec![stream(
                     AGENT,
                     StreamMsg::Closed {
@@ -201,7 +220,11 @@ fn remaining_lifecycles() -> Vec<(&'static str, Vec<Msg>)> {
                 )],
                 vec![agent_up(&an_agent(AGENT, "nova"))],
                 vec![stream(AGENT, StreamMsg::Opened { truncated: false })],
-                vec![batch(AGENT, 20, permission[..8].to_vec())],
+                vec![batch(
+                    AGENT,
+                    20,
+                    chat_rows_through("permission", ChatAnchor::PermissionRequest(0)),
+                )],
                 vec![stream(AGENT, StreamMsg::ReplayComplete)],
             ]),
         ),
@@ -221,7 +244,7 @@ fn remaining_lifecycles() -> Vec<(&'static str, Vec<Msg>)> {
         (
             "Closed AgentDeleted while card remains listed",
             seq([
-                chat_feed(AGENT, "question_single"),
+                chat_feed_through(AGENT, "pong", ChatAnchor::StopHook(0)),
                 vec![stream(
                     AGENT,
                     StreamMsg::Closed {
@@ -235,13 +258,12 @@ fn remaining_lifecycles() -> Vec<(&'static str, Vec<Msg>)> {
             "/clear relink during replay",
             seq([
                 chat_feed(AGENT, "pong"),
-                vec![batch(AGENT, 20, tools[..2].to_vec())],
-                vec![batch(AGENT, 21, vec![tools[2].clone()])],
+                vec![batch(AGENT, 20, chat_rows("clear"))],
             ]),
         ),
         (
             "folded Claude layer on an offline host",
-            seq([chat_feed(AGENT, "permission"), vec![host_up(&offline_host)]]),
+            seq([chat_feed(AGENT, "pong"), vec![host_up(&offline_host)]]),
         ),
         (
             "non-truncated ask mid-replay",
@@ -251,9 +273,21 @@ fn remaining_lifecycles() -> Vec<(&'static str, Vec<Msg>)> {
                 // row opens a non-truncated layer replay while the kernel
                 // stream remains Live; the hook then carries an apparent
                 // ask whose resolving suffix is not authoritative yet.
-                vec![batch(AGENT, 20, vec![permission[0].clone()])],
-                vec![batch(AGENT, 21, vec![new_permission_hook()])],
-                vec![batch(AGENT, 22, vec![permission[2].clone()])],
+                vec![batch(
+                    AGENT,
+                    20,
+                    chat_rows_before("permission", ChatAnchor::TranscriptReady),
+                )],
+                vec![batch(
+                    AGENT,
+                    21,
+                    vec![chat_row("permission", ChatAnchor::PermissionRequest(0))],
+                )],
+                vec![batch(
+                    AGENT,
+                    22,
+                    vec![chat_row("permission", ChatAnchor::TranscriptReady)],
+                )],
             ]),
         ),
     ]
@@ -524,7 +558,7 @@ fn a_non_truncated_replay_prefix_outranks_its_held_ask_until_ready() {
 
 #[test]
 fn prompt_echo_ages_from_dispatch_while_its_send_gate_stays_closed() {
-    let mut model = fold(seq([chat_feed(AGENT, "permission"), vec![tick(10 + 601)]]));
+    let mut model = fold(seq([chat_feed(AGENT, "pong"), vec![tick(10 + 601)]]));
 
     amux_ui::update(&mut model, send_prompt(41, "next task"));
     assert_eq!(
@@ -558,7 +592,7 @@ fn prompt_echo_ages_from_dispatch_while_its_send_gate_stays_closed() {
     );
 
     let mut failed = fold(seq([
-        chat_feed(AGENT, "permission"),
+        chat_feed(AGENT, "pong"),
         vec![tick(10 + 601), send_prompt(42, "retry task")],
     ]));
     assert_eq!(
@@ -576,7 +610,11 @@ fn prompt_echo_ages_from_dispatch_while_its_send_gate_stays_closed() {
 
 #[test]
 fn echo_free_working_still_ages_from_transcript_delivery() {
-    let mut model = fold(chat_feed_prefix(AGENT, "permission", 6));
+    let mut model = fold(chat_feed_through(
+        AGENT,
+        "permission",
+        ChatAnchor::Prompt(0),
+    ));
 
     amux_ui::update(&mut model, tick(10 + 600));
     assert_eq!(
@@ -596,7 +634,7 @@ fn offline_host_still_outranks_a_fresh_prompt_echo() {
     let mut offline_host = a_host("nova");
     offline_host.online = false;
     let model = fold(seq([
-        chat_feed(AGENT, "permission"),
+        chat_feed(AGENT, "pong"),
         vec![tick(10 + 601), send_prompt(43, "next task")],
         vec![host_up(&offline_host)],
     ]));

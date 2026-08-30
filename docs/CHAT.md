@@ -1,18 +1,19 @@
 # The amux chat TUI
 
-Status: normative, implemented — chat V1 shipped across Phases 0–7
-(2026-08-11/12; see DEVLOG and notes/chat-v1/ for the build record).
+Status: normative, implemented — chat V1 shipped across Phases 0–7 and its
+semantic-input boundary was refreshed against Claude Code 2.1.251
+(2026-08-30; see DEVLOG and the provider recordings for the build record).
 Companion to `docs/UI.md`, which owns the client layer this view stands
 on — the reducer core, the kernel/per-agent split, the facts/translation/
 interpretation boundary, and the chrome-first TUI rules all bind here
 and are not restated. `docs/PROTOCOL.md` owns the wire,
 `docs/ARCHITECTURE.md` the system. The executable half of this document
-is live — the amux-ui chat spec chapters, the golden-frame suites, and
-the opt-in real-Claude H suite (crates/amux/tests/capture); where prose
-and passing spec disagree, the spec wins. Row semantics below are
-grounded in an evidence survey of ~10,100 transcript rows across Claude
-Code 2.1.198–2.1.227 (working spec in `notes/chat-v1/`, graduating into
-committed fixtures via H); every derived state keeps that survey's
+is live — `claude::specs::pty`, the derived amux rows, the amux-ui chat
+spec chapters, the golden-frame suites, and the opt-in `claude_pty_live`
+suite; where prose and a passing specification disagree, the specification
+wins. Row semantics below began with an evidence survey of ~10,100 transcript
+rows across Claude Code 2.1.198–2.1.227 and are now pinned by the provider
+corpus recorded at 2.1.251. Every derived state keeps that survey's
 fact-vs-inferred discipline. Requirement IDs (A1…H) are cited in
 parentheses so review can trace them.
 
@@ -24,8 +25,9 @@ appear in the chat.
 
 - **Chat** — the shared structured conversation screen over a known agent
   session. Claude's native layer consumes `claude_pty_transcript_v1`
-  transcript and hook rows and sends seq-guarded keystroke programs; Codex's
-  native layer consumes its app-server control plane and sends typed requests.
+  transcript and hook rows and sends seq-guarded semantic intents that the
+  daemon encodes for the session's observed Claude version; Codex's native
+  layer consumes its app-server control plane and sends typed requests.
   Both enter the same presentation shell without sharing a content model.
 - **Feed** — the scrolling sequence of conversation entries. An
   **entry** is one rendered unit: a prompt, a message, a tool line, a
@@ -69,7 +71,8 @@ Read-only agents open in chat only; raw attach is absent for them — not
 disabled-with-an-error, absent (A3). There is no in-session mode
 switching in V1: the mode is chosen at open, with no toggle inside a
 chat or an attach (A4). The protocol allows concurrent raw and
-structured subscriptions (proved by E2E scenario H.8), so this is a UX
+structured subscriptions (proved by `claude_pty_live`'s
+`two_terminal_fanout` process scenario), so this is a UX
 decision that stays reversible, not a technical constraint.
 
 Chat renders on the alternate screen inside the existing chrome,
@@ -449,21 +452,27 @@ variant, a match arm, and golden frames. Ask-time artifacts live with
 their ask (evict bytes, never obligations); accepted plans keep B6's
 keyed retention; nothing else is retained in V1.
 
-### The keystroke seam (C6)
+### The semantic input seam (C6)
 
-Every answer, prompt submission, and interrupt becomes a keystroke
-program: an encoded byte sequence injected into the session PTY under
-the seq guard. All encodings live in one spec-tested Claude-layer
-module — menu digits, arrow navigation, multi-select toggles and the
-joined-selection submit, plan-review keys, the interrupt Esc. Views
-never encode keys; renderers dispatch typed Commands and the module
-owns the bytes. This module is also the seam for a future native
-structured-input protocol: when one exists, the module's typed surface
-stays and its PTY backend is replaced. The module is
-`amux-ui/src/claude/encoding.rs`; every table carries its
-verification provenance (claude version, capture run), and an
-unverified menu shape refuses with a typed error — never guessed
-bytes.
+Views and reducers never author Claude key bytes. A prompt, interrupt,
+permission-mode cycle, or answer becomes a typed `ClaudeEffect::SendIntent`
+carrying the current transcript sequence and, for an answer, the ask id. The
+wire preserves that shape in `ClaudePtyTranscriptV1Input`; arbitrary bytes are
+available only through the separate raw terminal protocol.
+
+The daemon converts the wire value exhaustively to `claude::pty::Intent` and
+passes it to the provider session's control handle. `claude::pty::keymap` then
+selects a versioned keymap, validates text and observed menu facts, chooses the
+fixed binary-owned program for the intent, and writes the resulting bounded
+key steps to the PTY. Menu digits, cursor movement, toggles, plan-review keys,
+fixed delays, paste, and typed menu text are data in that keymap; which program
+answers an intent remains code. An unverified shape or unsafe text refuses
+before any byte is written.
+
+The structured stream records `amux.claude.keymap` at session start and relink
+and `amux.claude.input_result` for each attempt, including the keymap identity,
+resolution basis, program, and outcome. [`KEYMAPS.md`](./KEYMAPS.md) owns the
+format, resolution, provenance, and no-screen-detection limit.
 
 ## Composer and control (D)
 
@@ -847,8 +856,8 @@ them.
 
 ## Keybindings
 
-Bindings are derived, not accumulated: `notes/chat-v1/keybindings.md`
-records the principles and the full derivation; this section is the
+Bindings are derived, not accumulated: this section records the principles
+and the full derivation, and is the
 normative result. Three tiers: **plain** — guaranteed ANSI bytes,
 always hintable; **ext** — standard CSI most emulators deliver
 (convenience only, never the sole path to an action, marked
@@ -1076,42 +1085,33 @@ chat-specific consequences.
 - Golden-frame coverage exists for every feed entry kind and every ask
   form, including the read-only fact variants (G4).
 
-## The real-Claude E2E suite (H)
+## Executable specifications and live verification (H)
 
-An opt-in leg driving the real `claude` binary with real credentials:
-never default CI, always under `timeout`. Scenario sessions run the
-cheapest sufficient model — haiku 4.5 by default, sonnet 5 where a
-scenario proves tool-unreliable — and every capture records the model
-and Claude Code version it observed. A version difference alone is
-never a failure: drift is recorded and diffed against the semantics
-spec; only actual semantic breakage fails a scenario. Scenarios:
+The former monolithic real-Claude test leg is split at the provider boundary.
+`claude::specs::pty` owns 18 executable claims: prompt and multiline prompt,
+tools, permission variants, plan variants, question forms, interrupt,
+permission-mode cycle, and compact/clear relinks. Each claim is the same
+function in record and verify modes. Verification runs offline against strict,
+sanitized recordings captured at Claude Code 2.1.251, including byte-for-byte
+intent writes, hook and transcript transports, provenance inventories, orphan
+checks, and the minimum supported version.
 
-1. Prompt round-trip ("Reply with exactly PONG").
-2. Question, single-select (via "Use the AskUserQuestion tool to …").
-3. Question, multi-select + Other — the hardest keystroke table,
-   including the joined-selection answer encoding.
-4. Permission allow and deny — assert the world (the file exists or
-   does not), plus the denial facts (`toolDenialKind`).
-5. Plan review, approve and request-changes — **the fixture-capture
-   scenario for the UNOBSERVED `ExitPlanMode` rows**; the plan
-   surface's resolution rules are gated on these fixtures.
-6. Interrupt mid-turn (null-`stop_reason` flush + interrupt row).
-7. Stale-seq input race → retryable resurfaced ask, not a crash.
-8. Raw and chat subscriptions coexisting without disturbance (A4's
-   open door).
-9. Read-only observation of a hook-discovered external session.
+`crates/amux/tests/claude_pty_live.rs` retains only facts recording replay
+cannot establish, plus one end-to-end semantic-chat witness. Its current
+scenarios cover semantic chat, stale-sequence refusal, two-terminal fan-out,
+external read-only hook discovery, native-socket and PTY-fallback A2A delivery,
+agent MCP tools, and cross-kind completion. It is opt-in, always run under
+`timeout`, uses Haiku by default, and prints the observed Claude Code version
+and model first.
 
-The suite also confirms the open semantics questions this spec flags:
-whether mid-session permission-mode cycling re-emits the
-`permission-mode` row (D4's fallback trigger), and subagent
-auto-compaction rows.
-
-Assertions are structure, never prose: assert row shapes, pairing ids,
-answer objects, files on disk — never match assistant wording, which
-changes with every model. Each run records its Msg stream; redacted
-recordings graduate into committed regression fixtures, so encoding
-drift across Claude Code versions is caught here first, before any
-user sees it.
+The committed `crates/amux/tests/fixtures/rows/claude-pty/` rows are not hand
+captures. `derived_rows` replays `crates/claude/fixtures/pty/` through
+`claude::pty::from_recording` and the real amux PTY adapter, then compares all
+18 row fixtures byte for byte. Assertions use row
+structure, ids, answer objects, and filesystem outcomes rather than assistant
+wording. `claude-probe` runs every provider specification against an installed
+binary, appends passing versions to recording and keymap ledgers, re-records
+only broken claims, and writes additive drift for review.
 
 ## Rejected alternatives
 

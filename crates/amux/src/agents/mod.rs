@@ -6,6 +6,7 @@ pub(crate) mod codex;
 mod events;
 #[cfg(feature = "local-agents")]
 mod hook;
+mod kind;
 mod log_source;
 mod naming;
 #[cfg(feature = "local-agents")]
@@ -30,20 +31,19 @@ pub use events::AgentEvent;
 pub(crate) use events::{agent_event_from_wire, agent_event_to_wire};
 #[cfg(feature = "local-agents")]
 pub(crate) use hook::{ExternalHookBootstrap, HookError, HookOutcome};
+pub use kind::{AgentKind, ClaudeDriver, Protocol};
 pub(crate) use log_source::StructuredLogSource;
 pub(crate) use naming::LocalAgentNameSource;
 #[cfg(feature = "local-agents")]
 pub(crate) use pty::{PtyHandle, spawn_pty_agent};
 pub(crate) use record::{AgentRecord, SessionEvent, StopPolicy};
-#[cfg(all(feature = "local-agents", unix))]
-pub(crate) use session::CodexInput;
 #[cfg(all(feature = "local-agents", test))]
 pub(crate) use session::mcp_launch_route_for_tests;
 #[cfg(feature = "local-agents")]
 pub(crate) use session::{
     AgentBackend, AgentDeliveryTarget, AgentDeps, AgentSession, Delivery, DeliveryError,
-    DeliveryLiveness, McpLaunchRoute, RawPtyTarget, StructuredInput, agent_from_suspended,
-    bootstrap_external_hook, new_agent, terminal_io_protocols,
+    DeliveryLiveness, McpLaunchRoute, Plane, RawPtyTarget, StructuredInput, StructuredInputEvent,
+    agent_from_suspended, bootstrap_external_hook, new_agent,
 };
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
@@ -64,11 +64,15 @@ pub use types::{
 };
 pub(crate) use wire::{
     CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest, SessionInputEvent,
-    SetAgentStatusRequest, SubscribeSessionRequest, agent_from_wire, agent_parent_from_wire,
-    agent_to_wire, create_agent_request_from_wire, delete_agent_id_from_wire, envelope_from_wire,
-    envelope_to_wire, rename_agent_request_from_wire, send_input_request_from_wire,
-    session_output_event_to_wire, set_agent_status_request_from_wire,
-    subscribe_session_request_from_wire,
+    SetAgentStatusRequest, SubscribeSessionRequest, agent_from_wire, agent_kind_from_wire,
+    agent_kind_to_wire, agent_parent_from_wire, agent_to_wire, claude_driver_from_wire,
+    claude_driver_to_wire, create_agent_request_from_wire, delete_agent_id_from_wire,
+    envelope_from_wire, envelope_to_wire, rename_agent_request_from_wire,
+    send_input_event_from_client_wire, send_input_event_to_agent_wire,
+    send_input_event_to_client_wire, send_input_request_from_wire, session_output_event_to_wire,
+    session_output_payload_from_wire, set_agent_status_request_from_wire,
+    subscribe_protocol_from_client_wire, subscribe_protocol_to_agent_wire,
+    subscribe_protocol_to_client_wire, subscribe_session_request_from_wire,
 };
 #[cfg(test)]
 pub(crate) use wire::{decode_session_output_event_payload, encode_session_output_event_payload};

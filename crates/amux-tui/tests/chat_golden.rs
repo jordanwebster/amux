@@ -11,7 +11,7 @@
 
 use amux_tui::view::ViewState;
 use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
-use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer};
+use amux_ui::claude::answer::{AskAnswer, PermissionAnswer};
 use amux_ui::claude::{DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
 use amux_ui::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, OpId, ServerMsg, StreamEntry,
@@ -63,11 +63,9 @@ fn base_msgs_readonly(readonly: bool) -> Vec<Msg> {
         name: Some(if readonly { "ci-triage" } else { "fix-auth" }.to_string()),
         command: "claude".to_string(),
         working_dir: std::path::PathBuf::from("/work"),
-        agent_type: "claude".to_string(),
-        io_protocols: vec![
-            "terminal_v1".to_string(),
-            "claude_pty_transcript_v1".to_string(),
-        ],
+        kind: amux_ui::AgentKind::Claude {
+            driver: amux_ui::ClaudeDriver::Pty,
+        },
         readonly,
         args: Vec::new(),
         created_at: at("2026-08-12T08:00:00Z"),
@@ -134,7 +132,7 @@ fn fold(msgs: Vec<Msg>) -> Model {
     model
 }
 
-// --- row builders (shapes per notes/chat-v1/transcript-semantics.md) --------
+// --- row builders (shapes per docs/CLAUDE_TRANSCRIPT.md) --------------------
 
 fn ready_row() -> Value {
     json!({"type": "amux.transcript_ready"})

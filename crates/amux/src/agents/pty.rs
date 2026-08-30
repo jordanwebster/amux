@@ -1,10 +1,13 @@
-use std::io::{Read, Write};
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use tokio::sync::{Mutex, mpsc};
+#[cfg(any(test, feature = "testnet"))]
+use anyhow::anyhow;
+use anyhow::{Context, Result};
+#[cfg(any(test, feature = "testnet"))]
+use tokio::sync::mpsc;
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -12,18 +15,40 @@ use crate::agents::{ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader, T
 
 /// Maximum replay buffer size for PTY bytes.
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
+const TERMINATE_GRACE: Duration = Duration::from_millis(250);
 
-/// PTY I/O handle — input, output subscription, resize.
+#[derive(Clone)]
+enum HostedPty {
+    Process(Arc<pty_host::PtyProcess>),
+    Claude(claude::pty::Control),
+    #[cfg(any(test, feature = "testnet"))]
+    TestEcho(mpsc::Sender<Vec<u8>>),
+}
+
+/// amux's replaying view over a provider-neutral hosted PTY.
 #[derive(Clone)]
 pub(crate) struct PtyHandle {
-    input_tx: mpsc::Sender<Vec<u8>>,
-    pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
-    current_size: Arc<Mutex<(u16, u16)>>,
+    hosted: HostedPty,
     buffer: Arc<MultiplexByteBuffer>,
-    child_process_id: Option<u32>,
 }
 
 impl PtyHandle {
+    pub(crate) fn from_claude(control: claude::pty::Control) -> Option<Self> {
+        let mut output = control.terminal_output()?;
+        let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
+        let output_buffer = buffer.clone();
+        tokio::spawn(async move {
+            while let Some(bytes) = output.recv().await {
+                output_buffer.write(bytes.to_vec()).await;
+            }
+            output_buffer.close().await;
+        });
+        Some(Self {
+            hosted: HostedPty::Claude(control),
+            buffer,
+        })
+    }
+
     #[cfg(any(test, feature = "testnet"))]
     pub(crate) fn test_echo() -> Self {
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
@@ -37,20 +62,26 @@ impl PtyHandle {
         });
 
         Self {
-            input_tx,
-            pty_master: Arc::new(Mutex::new(None)),
-            current_size: Arc::new(Mutex::new((24, 80))),
+            hosted: HostedPty::TestEcho(input_tx),
             buffer,
-            child_process_id: None,
         }
     }
 
     /// Send raw input bytes to the PTY.
     pub(crate) async fn send_input(&self, data: Vec<u8>) -> Result<()> {
-        self.input_tx
-            .send(data)
-            .await
-            .map_err(|_| anyhow!("session closed"))
+        match &self.hosted {
+            HostedPty::Process(process) => process.handle.write(&data).await.map_err(Into::into),
+            HostedPty::Claude(control) => control
+                .send_program(vec![claude::pty::PtyInput::Bytes(data)])
+                .await
+                .map(|_| ())
+                .map_err(Into::into),
+            #[cfg(any(test, feature = "testnet"))]
+            HostedPty::TestEcho(input_tx) => input_tx
+                .send(data)
+                .await
+                .map_err(|_| anyhow!("session closed")),
+        }
     }
 
     pub(crate) async fn subscribe_with_query(
@@ -62,83 +93,70 @@ impl PtyHandle {
 
     /// Resize the PTY.
     pub(crate) async fn resize(&self, size: TerminalSize) -> Result<()> {
-        let mut current = self.current_size.lock().await;
-        if *current != (size.rows, size.cols) {
-            let master_guard = self.pty_master.lock().await;
-            if let Some(master) = master_guard.as_ref() {
-                master
-                    .resize(PtySize {
-                        rows: size.rows,
-                        cols: size.cols,
-                        pixel_width: 0,
-                        pixel_height: 0,
-                    })
-                    .context("failed to resize pty")?;
-                tracing::debug!(cols = size.cols, rows = size.rows, "pty resized");
-                *current = (size.rows, size.cols);
-            }
+        match &self.hosted {
+            HostedPty::Process(process) => process
+                .handle
+                .resize(pty_size(size))
+                .context("failed to resize pty"),
+            HostedPty::Claude(control) => control
+                .resize(pty_size(size))
+                .context("failed to resize Claude PTY"),
+            #[cfg(any(test, feature = "testnet"))]
+            HostedPty::TestEcho(_) => Ok(()),
         }
-        Ok(())
     }
 
-    /// Close the PTY master and output buffer.
+    /// Close amux output and terminate a real hosted process group.
     pub(crate) async fn close(&self) {
-        self.pty_master.lock().await.take();
-        self.buffer.close().await;
+        let _ = self.terminate().await;
     }
 
-    /// Terminate the PTY child process group, then close its I/O.
-    #[cfg(unix)]
-    pub(crate) fn terminate_process_group(&self) -> Result<()> {
-        if let Some(process_id) = self.child_process_id {
-            let process_id = i32::try_from(process_id).context("PTY process id exceeds i32")?;
-            // `forkpty` makes the child the process-group leader. A negative
-            // pid addresses the whole group, including CLI shims and their
-            // native children.
-            let result = unsafe { libc::kill(-process_id, libc::SIGTERM) };
-            if result != 0 {
-                let error = std::io::Error::last_os_error();
-                if error.raw_os_error() != Some(libc::ESRCH) {
-                    return Err(error).context("failed to terminate PTY process group");
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Terminate the PTY child process group, then close its I/O.
-    #[cfg(unix)]
+    /// Terminate the PTY child process group, then close amux output.
     pub(crate) async fn terminate(&self) -> Result<()> {
-        self.terminate_process_group()?;
-        self.close().await;
+        match &self.hosted {
+            HostedPty::Process(process) => {
+                pty_host::terminate(
+                    process,
+                    pty_host::Terminate::Graceful {
+                        grace: TERMINATE_GRACE,
+                    },
+                )
+                .await;
+            }
+            HostedPty::Claude(control) => {
+                control
+                    .clone()
+                    .stop(pty_host::Terminate::Graceful {
+                        grace: TERMINATE_GRACE,
+                    })
+                    .await;
+            }
+            #[cfg(any(test, feature = "testnet"))]
+            HostedPty::TestEcho(_) => {}
+        }
+        self.buffer.close().await;
         Ok(())
     }
+
+    /// Signal a real hosted process group synchronously.
+    pub(crate) fn signal_process_group(&self, signal: pty_host::ProcessGroupSignal) -> Result<()> {
+        match &self.hosted {
+            HostedPty::Process(process) => process
+                .handle
+                .signal_process_group(signal)
+                .map_err(Into::into),
+            HostedPty::Claude(control) => control
+                .terminal()
+                .ok_or_else(|| anyhow::anyhow!("Claude session has no live PTY handle"))?
+                .signal_process_group(signal)
+                .map_err(Into::into),
+            #[cfg(any(test, feature = "testnet"))]
+            HostedPty::TestEcho(_) => Ok(()),
+        }
+    }
 }
 
-/// Apply environment additions and removals to a spawn command.
-///
-/// `CommandBuilder` inherits the daemon's full environment by default;
-/// `env_remove` scrubs inherited variables that must not reach the child
-/// (see `ClaudeSession::start` for the Claude scrub list and its rationale).
-pub(in crate::agents) fn apply_env(
-    cmd: &mut CommandBuilder,
-    env: &[(&str, String)],
-    env_remove: &[&str],
-) {
-    for key in env_remove {
-        cmd.env_remove(key);
-    }
-    for (key, value) in env {
-        cmd.env(key, value);
-    }
-}
-
-/// Spawn a PTY process and return a handle plus an exit handle.
-///
-/// Creates the PTY, spawns the command, and starts reader/writer/exit-monitor
-/// tasks. The exit handle completes when the child exits (after internal cleanup).
-/// The spawned environment is the daemon's environment minus `env_remove` plus
-/// `env`. Used by both [`super::ClaudeSession`] and [`super::TestAgentSession`].
+/// Spawn through pty-host and feed its single output stream into amux replay.
 pub(crate) fn spawn_pty_agent(
     agent_id: Uuid,
     command: &str,
@@ -151,154 +169,76 @@ pub(crate) fn spawn_pty_agent(
     let session_span = tracing::info_span!("session", agent_id = %agent_id, command = %command);
     tracing::info!(parent: &session_span, dir = %working_dir.display(), "creating session");
 
-    let pty_system = native_pty_system();
-    let size = terminal_size.unwrap_or_default();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: size.rows,
-            cols: size.cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .with_context(|| format!("failed to open PTY for '{command}'"))?;
-
-    let mut cmd = CommandBuilder::new(command);
-    for arg in args {
-        cmd.arg(arg);
-    }
-    cmd.cwd(working_dir);
-    apply_env(&mut cmd, env, env_remove);
-    let mut child = pair
-        .slave
-        .spawn_command(cmd)
-        .with_context(|| format!("failed to spawn '{command}'"))?;
-    let child_process_id = child.process_id();
-    // Close the slave pty handle in the parent so EOF propagates to the child on exit.
-    drop(pair.slave);
-
-    let master = pair.master;
-    let mut pty_reader = master
-        .try_clone_reader()
-        .context("failed to clone PTY reader")?;
-    let mut pty_writer = master.take_writer().context("failed to open PTY writer")?;
-
-    let master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>> = Arc::new(Mutex::new(Some(master)));
-    let current_size: Arc<Mutex<(u16, u16)>> = Arc::new(Mutex::new((size.rows, size.cols)));
+    let process = pty_host::spawn(pty_spawn(
+        command,
+        args,
+        working_dir,
+        env,
+        env_remove,
+        terminal_size,
+    ))
+    .with_context(|| format!("failed to spawn '{command}'"))?;
+    let mut output = process.handle.output();
+    let process = Arc::new(process);
     let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
-    let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
 
-    // Task: Read from PTY, write to multiplex buffer.
-    let buffer_clone = buffer.clone();
-    let span = session_span.clone();
-    tokio::task::spawn_blocking(move || {
-        let _guard = span.enter();
-        let rt = tokio::runtime::Handle::current();
-        let mut read_buf = [0u8; 4096];
-        loop {
-            match pty_reader.read(&mut read_buf) {
-                Ok(0) => break,
-                Ok(size) => {
-                    rt.block_on(buffer_clone.write(read_buf[..size].to_vec()));
-                }
-                Err(_) => break,
-            }
-        }
-        tracing::debug!("pty reader ended");
-    });
-
-    // Task: Forward input to PTY.
-    tokio::spawn(
+    let output_buffer = buffer.clone();
+    let output_span = session_span.clone();
+    let output_task = tokio::spawn(
         async move {
-            while let Some(data) = input_rx.recv().await {
-                if pty_writer.write_all(&data).is_err() {
-                    break;
-                }
-                let _ = pty_writer.flush();
+            while let Some(bytes) = output.recv().await {
+                output_buffer.write(bytes.to_vec()).await;
             }
-            tracing::debug!("pty writer ended");
         }
-        .instrument(session_span.clone()),
+        .instrument(output_span),
     );
 
-    // Task: Wait for child to exit, then clean up (server monitors this handle).
-    let master_clone = master.clone();
-    let buffer_clone = buffer.clone();
-    let span = session_span;
-    let exit_handle = tokio::task::spawn_blocking(move || {
-        let _guard = span.enter();
-        let status = child.wait();
-        tracing::info!(?status, "agent exited");
+    let exit_process = process.clone();
+    let exit_buffer = buffer.clone();
+    let exit_handle = tokio::spawn(
+        async move {
+            let mut exit = exit_process.exit.clone();
+            let status = exit.wait().await;
+            tracing::info!(?status, "agent exited");
+            let _ = output_task.await;
+            exit_buffer.close().await;
+        }
+        .instrument(session_span),
+    );
 
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            {
-                let mut master = master_clone.lock().await;
-                master.take();
-            }
-            buffer_clone.close().await;
-        });
-    });
-
-    let pty = PtyHandle {
-        input_tx,
-        pty_master: master,
-        current_size,
-        buffer,
-        child_process_id,
-    };
-
-    Ok((pty, exit_handle))
+    Ok((
+        PtyHandle {
+            hosted: HostedPty::Process(process),
+            buffer,
+        },
+        exit_handle,
+    ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `apply_env` scrubs inherited variables and applies additions on top —
-    /// the seam every PTY agent spawn goes through.
-    #[test]
-    fn apply_env_removes_inherited_vars_and_sets_additions() {
-        let mut cmd = CommandBuilder::new("some-agent");
-        // Simulate an inherited (daemon) environment carrying a poisoned var.
-        cmd.env("POISONED_INHERITED_VAR", "1");
-        cmd.env("UNRELATED_VAR", "keep");
-
-        apply_env(
-            &mut cmd,
-            &[("ADDED_VAR", "added".to_string())],
-            &["POISONED_INHERITED_VAR", "NEVER_SET_VAR"],
-        );
-
-        assert_eq!(cmd.get_env("POISONED_INHERITED_VAR"), None);
-        assert_eq!(
-            cmd.get_env("UNRELATED_VAR").and_then(|v| v.to_str()),
-            Some("keep")
-        );
-        assert_eq!(
-            cmd.get_env("ADDED_VAR").and_then(|v| v.to_str()),
-            Some("added")
-        );
+pub(in crate::agents) fn pty_spawn(
+    command: &str,
+    args: &[String],
+    working_dir: &Path,
+    env: &[(&str, String)],
+    env_remove: &[&str],
+    terminal_size: Option<TerminalSize>,
+) -> pty_host::PtySpawn {
+    pty_host::PtySpawn {
+        command: command.into(),
+        args: args.to_vec(),
+        cwd: working_dir.to_path_buf(),
+        env: env
+            .iter()
+            .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+            .collect(),
+        env_remove: env_remove.iter().map(OsString::from).collect(),
+        size: pty_size(terminal_size.unwrap_or_default()),
     }
+}
 
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn terminate_stops_the_pty_process_group() {
-        let args = vec!["-c".to_string(), "sleep 30".to_string()];
-        let (pty, exit) = spawn_pty_agent(
-            Uuid::from_u128(1),
-            "sh",
-            &args,
-            std::path::Path::new("/tmp"),
-            &[],
-            &[],
-            None,
-        )
-        .unwrap();
-
-        pty.terminate().await.unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(2), exit)
-            .await
-            .expect("PTY child should exit after process-group termination")
-            .unwrap();
+fn pty_size(size: TerminalSize) -> pty_host::PtySize {
+    pty_host::PtySize {
+        rows: size.rows,
+        cols: size.cols,
     }
 }

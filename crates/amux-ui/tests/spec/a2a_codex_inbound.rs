@@ -7,8 +7,9 @@
 //! Codex does report; amux's own tools are separated from anyone else's so
 //! the fleet's work on itself reads in the fleet's words.
 //!
-//! The message half folds the graduated Codex 0.148.0 structural capture.
-//! The tool half is built from the `mcpToolCall` item shape, so a running,
+//! The message half folds the backend-derived Codex corpus followed by the
+//! daemon-authored carrier row. The tool half is built from the `mcpToolCall`
+//! item shape, so a running,
 //! completed and failed call are all visible in one chapter rather than
 //! only whichever outcome a recorded turn happened to take.
 
@@ -36,12 +37,24 @@ fn message_row(kind: &str, delivery: &str) -> serde_json::Value {
     })
 }
 
-/// The committed structural capture, which carries one delivered message.
+fn inbound_fixture_row() -> serde_json::Value {
+    json!({
+        "type": "amux.codex_message",
+        "id": "00000000-0000-0000-0000-000000000029",
+        "kind": "message",
+        "from": "sender/00000000-0000-0000-0000-00000000002c",
+        "from_id": "00000000-0000-0000-0000-00000000002b",
+        "context": "00000000-0000-0000-0000-00000000002a",
+        "text": "hello from another agent",
+        "delivery": "inject_queued",
+    })
+}
+
+/// The committed provider-derived rows followed by the daemon-authored row.
 fn fixture_sequence() -> Vec<Msg> {
-    seq([
-        codex_base(AGENT),
-        vec![batch(AGENT, 20, codex_fixture_rows())],
-    ])
+    let mut rows = codex_fixture_rows();
+    rows.push(inbound_fixture_row());
+    seq([codex_base(AGENT), vec![batch(AGENT, 20, rows)]])
 }
 
 /// An `mcpToolCall` item against a named server, in the shape Codex reports
@@ -118,7 +131,7 @@ fn work(layer: &CodexLayer) -> Vec<WorkEntry> {
 fn a2a_codex_inbound_folds_the_synthesized_message_row() {
     let model = fold(fixture_sequence());
     let inbound = messages(codex_layer(&model, AGENT));
-    assert_eq!(inbound.len(), 1, "the capture carries one delivery");
+    assert_eq!(inbound.len(), 1, "the daemon row carries one delivery");
     let message = &inbound[0];
     assert_eq!(message.kind, AgentMessageKind::Message);
     assert_eq!(message.text, "hello from another agent");

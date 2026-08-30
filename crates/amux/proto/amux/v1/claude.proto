@@ -2,22 +2,24 @@ syntax = "proto3";
 
 package amux.v1;
 
-// Claude-specific creation config and structured io_protocol payloads.
-//
-// These messages are intentionally independent from amux.proto. The core
-// protocol treats session args/input/control/output as opaque bytes; callers
-// serialize these inner messages only when they opt into the Claude protocol.
-// TerminalSize is also shared by the core terminal protocol.
+// Claude-specific creation config and structured protocol payloads.
 
 message TerminalSize {
   uint32 rows = 1;
   uint32 cols = 2;
 }
 
+enum ClaudeDriver {
+  CLAUDE_DRIVER_UNSPECIFIED = 0;
+  CLAUDE_DRIVER_PTY = 1;
+  CLAUDE_DRIVER_SDK = 2;
+}
+
 message ClaudeCreateConfig {
   string working_dir = 1;
   repeated string args = 2;
   optional TerminalSize initial_terminal_size = 10;
+  ClaudeDriver driver = 11;
 }
 
 message ClaudePtyTranscriptV1Args {
@@ -38,17 +40,125 @@ message ClaudePtyTranscriptV1Cursor {
 
 message ClaudePtyTranscriptV1Input {
   uint64 expected_seq = 1;
-  repeated ClaudePtyTranscriptV1Action actions = 2;
+  oneof intent {
+    ClaudePrompt prompt = 10;
+    ClaudeInterrupt interrupt = 11;
+    ClaudeCyclePermissionMode cycle_permission_mode = 12;
+    ClaudeAnswer answer = 13;
+  }
 }
 
-message ClaudePtyTranscriptV1Action {
-  oneof action {
-    bytes write = 1;
-    uint32 delay_ms = 2;
+message ClaudePrompt {
+  string text = 1;
+}
+
+message ClaudeInterrupt {}
+
+message ClaudeCyclePermissionMode {}
+
+message ClaudeAnswer {
+  string ask_id = 1;
+  oneof answer {
+    ClaudePermissionAnswer permission = 10;
+    ClaudePlanAnswer plan = 11;
+    ClaudeQuestionResponse question = 12;
   }
+}
+
+message ClaudePermissionAnswer {
+  oneof decision {
+    ClaudePermissionAllowOnce allow_once = 10;
+    ClaudePermissionAllowScoped allow_scoped = 11;
+    ClaudePermissionDeny deny = 12;
+  }
+}
+
+message ClaudePermissionAllowOnce {}
+
+message ClaudePermissionAllowScoped {
+  uint64 suggestion = 1;
+}
+
+message ClaudePermissionDeny {
+  optional string feedback = 1;
+}
+
+message ClaudePlanAnswer {
+  oneof decision {
+    ClaudePlanApproveAuto approve_auto = 10;
+    ClaudePlanApproveManual approve_manual = 11;
+    ClaudePlanRequestChanges request_changes = 12;
+  }
+}
+
+message ClaudePlanApproveAuto {}
+
+message ClaudePlanApproveManual {}
+
+message ClaudePlanRequestChanges {
+  string feedback = 1;
+}
+
+message ClaudeQuestionResponse {
+  repeated ClaudeQuestionAnswer answers = 1;
+}
+
+message ClaudeQuestionAnswer {
+  repeated uint64 selected = 1;
+  optional string other = 2;
 }
 
 message ClaudePtyTranscriptV1Output {
   uint64 seq_id = 1;
   bytes payload = 2;
+}
+
+message ClaudeSdkV1Args {
+  optional ClaudeSdkV1ReplayQuery replay_query = 1;
+}
+
+message ClaudeSdkV1ReplayQuery {
+  oneof query {
+    uint64 since = 1;
+    uint64 tail_count = 2;
+  }
+}
+
+message ClaudeSdkV1Output {
+  uint64 seq_id = 1;
+  bytes payload = 2;
+}
+
+message ClaudeSdkV1Input {
+  oneof input {
+    ClaudeSdkPrompt prompt = 10;
+    ClaudeSdkInterrupt interrupt = 11;
+    ClaudeSdkPermissionDecision permission_decision = 12;
+  }
+}
+
+message ClaudeSdkPrompt {
+  string text = 1;
+}
+
+message ClaudeSdkInterrupt {}
+
+message ClaudeSdkPermissionDecision {
+  string request_id = 1;
+  oneof decision {
+    ClaudeSdkPermissionAllow allow = 10;
+    ClaudeSdkPermissionDeny deny = 11;
+  }
+}
+
+message ClaudeSdkPermissionAllow {
+  optional bytes updated_input_json = 1;
+  repeated bytes updated_permissions_json = 2;
+  optional string tool_use_id = 3;
+}
+
+message ClaudeSdkPermissionDeny {
+  string message = 1;
+  optional bool interrupt = 2;
+  optional string tool_use_id = 3;
 }

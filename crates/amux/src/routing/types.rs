@@ -109,37 +109,49 @@ pub(crate) fn host_from_wire(host: pb::Host) -> Result<Host, protocol_wire::Deco
         id: uuid_from_bytes("host_id", host.host_id)?,
         name: host.name,
         version: host.version,
-        capabilities: capabilities_from_wire(host.capabilities),
+        capabilities: capabilities_from_wire(host.capabilities)?,
     })
 }
 
 pub(crate) fn capabilities_to_wire(capabilities: &Capabilities) -> pb::Capabilities {
     pb::Capabilities {
         features: capabilities.features.clone(),
-        supported_agent_types: capabilities
+        supported_agents: capabilities
             .supported_agent_types
             .iter()
             .map(|agent| pb::SupportedAgentType {
-                agent_type: agent.agent_type.clone(),
+                kind: Some(crate::agents::agent_kind_to_wire(
+                    crate::agents::AgentKind::from_legacy(&agent.agent_type, &[])
+                        .expect("locally advertised agent kind must be known"),
+                )),
             })
             .collect(),
     }
 }
 
-pub(crate) fn capabilities_from_wire(capabilities: Option<pb::Capabilities>) -> Capabilities {
+pub(crate) fn capabilities_from_wire(
+    capabilities: Option<pb::Capabilities>,
+) -> Result<Capabilities, protocol_wire::DecodeError> {
     let Some(capabilities) = capabilities else {
-        return Capabilities::default();
+        return Ok(Capabilities::default());
     };
-    Capabilities {
+    Ok(Capabilities {
         features: capabilities.features,
         supported_agent_types: capabilities
-            .supported_agent_types
+            .supported_agents
             .into_iter()
-            .map(|agent| SupportedAgentType {
-                agent_type: agent.agent_type,
+            .map(|agent| {
+                let kind = crate::agents::agent_kind_from_wire(agent.kind.ok_or_else(|| {
+                    protocol_wire::DecodeError::Invalid(
+                        "SupportedAgentType missing kind".to_string(),
+                    )
+                })?)?;
+                Ok(SupportedAgentType {
+                    agent_type: kind.provider().to_string(),
+                })
             })
-            .collect(),
-    }
+            .collect::<Result<Vec<_>, protocol_wire::DecodeError>>()?,
+    })
 }
 
 fn uuid_from_bytes(name: &str, bytes: Vec<u8>) -> Result<Uuid, protocol_wire::DecodeError> {

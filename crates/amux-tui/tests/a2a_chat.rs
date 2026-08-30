@@ -63,14 +63,20 @@ const CLAUDE_PROTOCOL: &str = "claude_pty_transcript_v1";
 const CODEX_PROTOCOL: &str = "codex_sdk_v1";
 
 fn an_agent(name: &str, kind: &str, protocol: &str, parent: Option<&str>) -> Agent {
+    let _ = protocol;
     Agent {
         id: agent_id(name),
         host_id: host_id(),
         name: Some(name.to_string()),
         command: kind.to_string(),
         working_dir: std::path::PathBuf::from("/work"),
-        agent_type: kind.to_string(),
-        io_protocols: vec!["terminal_v1".to_string(), protocol.to_string()],
+        kind: match kind {
+            "claude" => amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
+            "codex" => amux_ui::AgentKind::Codex,
+            other => panic!("unsupported fixture kind {other}"),
+        },
         readonly: false,
         args: Vec::new(),
         created_at: t0(),

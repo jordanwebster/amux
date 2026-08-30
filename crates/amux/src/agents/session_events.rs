@@ -40,7 +40,8 @@ mod tests {
                 &crate::agents::encode_session_output_event_payload(
                     &SubscribeSessionEvent::Closed {
                         reason: SessionCloseReason::AgentDeleted,
-                    }
+                    },
+                    crate::agents::Protocol::TerminalV1,
                 )
             )
             .unwrap(),

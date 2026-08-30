@@ -1,8 +1,9 @@
 # The amux client layer
 
-Status: normative, and implemented for two agents — Claude
-(`docs/CHAT.md`) and Codex (`docs/CODEX.md`) — revised after external
-review (see git history; review findings in the 2026-08 devlog entries).
+Status: normative, with full native layers for Claude PTY (`docs/CHAT.md`)
+and Codex (`docs/CODEX.md`), plus an explicit unsupported layer for Claude
+SDK — revised after external review (see git history; review findings in the
+2026-08 devlog entries).
 This document owns the client side of amux: the `amux-ui` state library,
 its renderers (the TUI first, desktop and mobile clients later), and the
 rules that keep per-agent knowledge in the right place. Companions:
@@ -137,27 +138,29 @@ whatever depth it sits; equally loud needs keep the family's own order.
 Answering the child anywhere clears the result by re-derivation. No family
 attention or parent-chat notification rides the peer wire.
 
-Agent identity is typed, never normalized away. Each agent type gets its
+Agent identity is typed, never normalized away. Each agent kind gets its
 own layer: a typed child model consuming that agent's *native* protocol,
 with typed per-agent Command/Delta variants. Layers are allowed to be
 structurally different — a transcript-shaped Claude layer, a
 control-plane-shaped Codex layer — the asymmetry is expressed, not
 papered over. There is no generic intermediate representation of agent
-content and there are no capability flags. A client that does not know an
-agent type degrades to the `AgentCard` and can still attach to its raw
-terminal when the session advertises the agent-independent core protocol
-`terminal_v1`; every PTY-backed session currently advertises it. This is an
-enforced typed boundary, not a renderer convention: structured-protocol
-selection is exhaustive for Claude and Codex, while an unknown or missing
-structured protocol opens no native chat, leaves the fleet card active, and
-uses a neutral watermark. It never falls through to Claude.
+content and there are no capability flags. The closed `AgentKind` determines
+the protocol set: Claude/PTY and Codex expose the agent-independent
+`terminal_v1` plane, while Claude/SDK does not. This is an enforced typed
+boundary, not a renderer convention: native-protocol selection exhaustively
+matches the kind, and a kind with no supported native chat keeps its fleet
+card without falling through to another provider's layer.
 
 The registry as built: `AgentLayer` is an exhaustive enum over
-`Claude` and `Codex` (plus a dev-only test agent). Exhaustive `match`
-is the mechanism — adding a layer is a compile error at every site that
-must decide something, which is the point. `Model`'s fields are
-`pub(crate)`, so a renderer structurally cannot reach past the
-projections to the raw layer state.
+`Claude`, `ClaudeSdk`, and `Codex`; the test agent has no structured layer.
+`AgentLayer::from_kind` exhaustively selects among them. `ClaudeSdkLayer` is a
+deliberate typed hole: it holds no folded state, observes no SDK rows, reports
+unknown attention, accepts no composer input, and makes the TUI render “this
+chat is unsupported in this build.” Opening it does not subscribe to a PTY or
+silently reuse the Claude PTY fold. Exhaustive `match` is the mechanism —
+adding a layer is a compile error at every site that must decide something,
+which is the point. `Model`'s fields are `pub(crate)`, so a renderer
+structurally cannot reach past the projections to raw layer state.
 
 **One classification per layer, projected — not several derivations of
 one fact.** Within a layer, `phase`, `attention`, the send gate and the
@@ -194,9 +197,10 @@ phase and attention continue to say what the agent is doing, while every write
 refuses locally with `agent is read-only — you are observing this session`.
 Codex's app-server reconnect `ReadOnly` remains a distinct lifecycle state.
 Codex also keeps “active turn” and “input in flight” separate so a writable
-turn retains its interrupt escape hatch. Claude keeps typed menu-shape byte
-safety separate from session actionability. Reducers check the gate before
-emitting bytes or optimistic state, and render hints, ordinary keys,
+turn retains its interrupt escape hatch. Claude reducers emit semantic intents;
+the daemon-side provider layer owns menu-shape and byte safety separately from
+client actionability. Reducers check the gate before emitting intents or
+optimistic state, and render hints, ordinary keys,
 focused-field/Ctrl+C access, and paste mutation consume the same actionability
 queries rather than raw layer flags.
 
@@ -300,6 +304,12 @@ Agent-message provenance is still folded by the recipient's own layer: Claude
 parses its delivered user row and Codex parses `amux.codex_message`. The shared
 kernel owns only presentation facts common to both envelope kinds; it does not
 invent a generic message feed.
+
+Claude SDK is currently the explicit exception to “native chat”: the daemon
+protocol and provider driver exist, but the client layer is intentionally an
+unsupported placeholder. Streaming partials, model or mode switching, context
+usage, MCP status, and SDK request controls are parked until a real SDK chat
+layer is designed.
 On Windows the chrome must build and run (crossterm); byte passthrough is
 untested pending e2e-driver support there, and the structured chat path is the
 guaranteed Windows client direction.
@@ -383,10 +393,9 @@ constraint.
   them into a shared crate is mechanical); interpreted state still never
   rides the peer wire, and multi-writer "attention" pushes are
   specifically to be avoided.
-- **Lightweight per-agent stream views** (e.g. a hooks-only protocol
-  alongside `terminal_v1`) as a bandwidth lever: a new `io_protocols`
-  string on the existing subscription surface, not a new RPC, and still
-  fact emission.
+- **Lightweight per-agent stream views** (for example, a hooks-only protocol
+  alongside `terminal_v1`) as a bandwidth lever: add a typed protocol variant
+  to the existing subscription `oneof`, not a new RPC, and keep emitting facts.
 - **Session-content access** goes through the Effect seam; no layer may
   assume content is remote-fetched or locally-stored.
 - **Content windowing.** Transcript-scale entities are windowed when the
@@ -394,11 +403,10 @@ constraint.
   snapshot/live reconciliation. Nothing in V1 touches content.
 - **Offline command queueing** (mobile): additive shell work with
   idempotency receipts; the reducer's fail-fast contract is unchanged.
-- **Typed agent identity on the wire.** `agent_type` string +
-  `io_protocols` strings function as an open capability set; when the
-  inventory message is next reshaped, prefer a typed known/unknown agent
-  descriptor. Raw terminal attachment is already agent-independent
-  through `terminal_v1`; only the typed descriptor remains deferred.
+- **New agent kinds and protocols.** Agent identity and session protocols are
+  now closed wire types. Adding a provider means adding typed kind and protocol
+  variants, then satisfying every exhaustive backend, client-layer, and
+  renderer match; it is intentionally not a data-only capability extension.
 - **Naming fields.** Current leaning: `name` (user-assigned, written only
   by rename) plus adapter-translated `provider_label`, display fallback in
   the Model; the provenance machinery in `agents/naming.rs` then deletes.

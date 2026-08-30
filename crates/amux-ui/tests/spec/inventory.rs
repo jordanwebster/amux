@@ -1,4 +1,4 @@
-//! Chapter 2 — Inventory: idempotent upserts, unknown agent types, display
+//! Chapter 2 — Inventory: idempotent upserts, kinds without a layer, display
 //! fallback, and the authority rule.
 //!
 //! Subscriptions are the sole writer of entity state. Deltas are upserts —
@@ -19,10 +19,9 @@ fn base() -> Vec<Msg> {
     ])
 }
 
-fn unknown_type_sequence() -> Vec<Msg> {
+fn no_structured_layer_sequence() -> Vec<Msg> {
     let mut exotic = an_agent("mystery", "nova");
-    exotic.agent_type = "frobnicator-2000".to_string();
-    exotic.io_protocols = vec!["fabricated_structured_v1".to_string()];
+    exotic.kind = amux::AgentKind::TestAgent;
     seq([base(), vec![agent_up(&exotic)]])
 }
 
@@ -67,10 +66,10 @@ fn agent_upserts_are_idempotent() {
 /// A client that does not know an agent type degrades to the card: the row
 /// renders, attention honestly reports Unknown, nothing panics.
 #[test]
-fn unknown_agent_type_still_renders_a_card() {
-    let (model, effects) = fold_with_effects(unknown_type_sequence());
+fn kind_without_a_structured_layer_still_renders_a_card() {
+    let (model, effects) = fold_with_effects(no_structured_layer_sequence());
     let card = model.agent(agent_id("mystery")).expect("card exists");
-    assert_eq!(card.agent.agent_type, "frobnicator-2000");
+    assert_eq!(card.agent.kind, amux::AgentKind::TestAgent);
     assert_eq!(card.structured_protocol(), None);
     assert_eq!(card.attention, Attention::Unknown);
     assert_eq!(card.display_name(), "mystery");
@@ -98,6 +97,38 @@ fn known_agents_open_streams_with_typed_protocols() {
             Effect::OpenStream { protocol, .. } if *protocol == expected
         )));
     }
+}
+
+/// The SDK placeholder is a typed layer but has no fold. Inventory and a
+/// deliberate user open both remain stream-free, so opening the placeholder
+/// cannot accidentally request either terminal_v1 or claude_sdk_v1.
+#[test]
+fn sdk_placeholder_opens_no_stream() {
+    let mut sdk = an_agent("sdk-agent", "nova");
+    sdk.kind = amux::AgentKind::Claude {
+        driver: amux::ClaudeDriver::Sdk,
+    };
+    let (model, effects) = fold_with_effects(seq([
+        base(),
+        vec![agent_up(&sdk)],
+        vec![Msg::UserAttached {
+            agent: agent_id("sdk-agent"),
+        }],
+    ]));
+
+    assert_eq!(
+        model
+            .agent(agent_id("sdk-agent"))
+            .expect("SDK card")
+            .structured_protocol(),
+        Some(StructuredProtocol::ClaudeSdk)
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::OpenStream { .. })),
+        "the unsupported SDK placeholder must not request a session stream"
+    );
 }
 
 /// Display naming is a Model derivation, computed once for every renderer:
@@ -187,7 +218,10 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         ("inventory::base", base()),
         ("inventory::readonly", readonly_sequence()),
-        ("inventory::unknown_type", unknown_type_sequence()),
+        (
+            "inventory::no_structured_layer",
+            no_structured_layer_sequence(),
+        ),
         ("inventory::unnamed_agent", unnamed_agent_sequence()),
         ("inventory::stale_rename", stale_rename_sequence()),
     ]

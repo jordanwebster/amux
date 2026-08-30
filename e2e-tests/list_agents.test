@@ -41,5 +41,5 @@ echo: ping from beta
 @T3
 > amux list
 Running agents:
-  alpha - $dir_alpha.path
-  beta - $dir_beta.path
+  alpha [test-agent] - $dir_alpha.path
+  beta [test-agent] - $dir_beta.path

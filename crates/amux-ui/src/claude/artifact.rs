@@ -6,7 +6,7 @@
 //! feed line's magnitude), and the ask-time preview computed here — the
 //! ONE place a diff is ever computed, because at ask time the transcript
 //! states no diff at all: the hook carries only `old_string`/`new_string`
-//! (`notes/chat-v1/diff-rendering.md` §1.4). Absolute line numbers are
+//! (`docs/CHAT.md` §Diffs). Absolute line numbers are
 //! unavailable at ask time (locating the snippet would require reading the
 //! file, and a chat client can be relay-remote), so ask-time artifacts are
 //! numberless and their magnitude is an ESTIMATE — exact for single-site

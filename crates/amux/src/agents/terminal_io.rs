@@ -77,23 +77,34 @@ pub fn encode_terminal_v1_args(args: TerminalV1Args) -> Option<Vec<u8>> {
 pub(crate) fn decode_terminal_v1_control(
     payload: &[u8],
 ) -> Result<TerminalV1Control, ProtocolError> {
-    let control = wire::TerminalV1Control::decode(payload).map_err(|error| {
-        ProtocolError::InvalidArgument {
+    let control =
+        wire::SessionControl::decode(payload).map_err(|error| ProtocolError::InvalidArgument {
             message: format!(
-                "`{TERMINAL_V1}` control payload must be TerminalV1Control protobuf: {error}"
+                "`{TERMINAL_V1}` control payload must be SessionControl protobuf: {error}"
             ),
-        }
-    })?;
+        })?;
     let control = control
         .control
         .ok_or_else(|| ProtocolError::InvalidArgument {
             message: format!("`{TERMINAL_V1}` control payload missing control"),
         })?;
     match control {
-        wire::terminal_v1_control::Control::Resize(size) => {
+        wire::session_control::Control::Resize(size) => {
             Ok(TerminalV1Control::Resize(terminal_size_from_wire(size)?))
         }
     }
+}
+
+#[cfg(test)]
+pub fn encode_terminal_v1_control(control: TerminalV1Control) -> Vec<u8> {
+    wire::SessionControl {
+        control: Some(match control {
+            TerminalV1Control::Resize(size) => {
+                wire::session_control::Control::Resize(terminal_size_to_wire(size))
+            }
+        }),
+    }
+    .encode_to_vec()
 }
 
 fn terminal_size_to_wire(size: TerminalSize) -> wire::TerminalSize {
@@ -138,6 +149,18 @@ mod tests {
                 terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
                 replay_query: Some(TerminalV1ReplayQuery::TailBytes { count: 4096 }),
             }
+        );
+    }
+
+    #[test]
+    fn control_roundtrips_resize() {
+        let control = TerminalV1Control::Resize(TerminalSize {
+            rows: 48,
+            cols: 160,
+        });
+        assert_eq!(
+            decode_terminal_v1_control(&encode_terminal_v1_control(control.clone())).unwrap(),
+            control
         );
     }
 }

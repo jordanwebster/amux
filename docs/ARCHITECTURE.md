@@ -1,6 +1,6 @@
 # The amux system architecture
 
-**Status**: current (2026-08-24). This document describes the system —
+**Status**: current (2026-08-30). This document describes the system —
 processes, servers, trust machinery, service surfaces, and internal
 layering. Its companion, [`PROTOCOL.md`](./PROTOCOL.md), owns the wire:
 links, frames, tunnels, the routing rules, and the pairing flow. When this
@@ -35,20 +35,45 @@ Around the daemon sit its clients and consumers:
   protocol actor for wire-conformance tests. `crates/e2e-runner` drives
   real compiled binaries end to end.
 
-A daemon also owns whatever its **agent backends** need, and those are
-not all the same shape. `AgentBackend` is a trait
-(`Box<dyn AgentBackend>`), and the two implemented backends differ at the
-process level, not just in protocol: a Claude agent is a **PTY the daemon
-owns and reads**, while a Codex agent is a **thread on a Codex
-app-server** the daemon connects to — one shared, supervised server
-process group for every Codex agent in the daemon, spawned on the
-well-known socket or on a private one when that is unusable. Agent
-identity therefore outlives the daemon: a Codex thread id survives
-restarts of both amux and the server, which is what makes suspend/resume
-work. A Codex agent additionally exposes its own raw PTY (`codex resume`)
-on the agent-independent `terminal_v1` plane, so the real Codex TUI and
-amux's native chat screen can be live on one agent at once.
-`docs/CODEX.md` owns the detail.
+> **Compatibility note:** amuxapp is not updated for the typed agent wire on
+> this branch. Its runtime bridge is broken until the app adopts closed agent
+> kinds and the per-protocol protobuf payloads described below.
+
+## Provider crates and daemon adapters
+
+Provider process behavior lives below the daemon in canonical crates owned by
+this repository. `claude::pty::Session`, `claude::sdk::Session`, and
+`codex::Session` each expose the same boundary shape: one owned, ordered event
+stream paired with a cloneable control handle. The crates own provider launch,
+native transport parsing, and provider facts; no callback trait crosses into
+amux. [`PROVIDER_CRATES.md`](./PROVIDER_CRATES.md) owns the complete boundary
+and test story.
+
+The layering is deliberate:
+
+1. **`pty-host`** owns provider-neutral PTY spawn, the single output stream,
+   input and resize handles, exit monitoring, and process-group termination.
+   Claude PTY sessions, the Codex raw plane, and the test agent all use it.
+2. **`claude` and `codex`** own provider sessions. Claude's PTY driver combines
+   a PTY, hook stream, transcript stream, and observed version in one source
+   bundle; its SDK driver owns the stream-JSON event/control boundary. Codex
+   owns one app-server thread event/control boundary.
+3. **`crates/amux/src/agents/claude` and `agents/codex`** are adapters. They
+   translate provider events into amux-owned structured rows, route typed input
+   to controls, supply the A2A carrier, and persist only the provider identity
+   needed for resume.
+4. **The daemon** owns agent identity, protocol exposure, sequencing, replay,
+   fan-out, outstanding obligations, delivery policy, suspend records, and UI
+   layers.
+
+`AgentBackend` is the common daemon seam, but the provider sessions behind it
+remain intentionally different. Claude PTY is an interactive process owned by
+amux; Claude SDK is a stream-JSON process and never tails a transcript; Codex
+is a thread on a shared, supervised app-server. Codex additionally exposes a
+raw PTY running `codex resume`, so the genuine Codex TUI and amux's native chat
+can be live on one agent at once. Durable Claude session ids and Codex thread
+ids make suspend/resume survive daemon restarts. [`CODEX.md`](./CODEX.md) owns
+the Codex detail, and [`CHAT.md`](./CHAT.md) owns Claude PTY chat behavior.
 
 Raw subscription lookup is a two-phase boundary. While the local-agent
 registry is read-locked, the service validates the requested protocol and

@@ -2,6 +2,7 @@ mod auth;
 mod client_common;
 mod hooks;
 mod init;
+mod keymap;
 mod mcp;
 mod server_client;
 mod session_client;
@@ -57,6 +58,10 @@ enum Commands {
         /// Agent type: claude, codex, or test-agent (test-agent only in dev builds)
         agent_type: String,
 
+        /// Claude driver (Claude agents only; defaults to pty)
+        #[arg(long, value_enum)]
+        driver: Option<CliClaudeDriver>,
+
         /// Session name (optional human-readable name)
         #[arg(long)]
         name: Option<String>,
@@ -100,6 +105,12 @@ enum Commands {
         /// Show child agents, indented beneath their parent
         #[arg(long)]
         all: bool,
+    },
+
+    /// Manage Claude PTY keymaps
+    Keymap {
+        #[command(subcommand)]
+        command: KeymapCommands,
     },
 
     /// Manage the amux server lifecycle
@@ -228,6 +239,33 @@ enum PeerCommands {
 }
 
 #[derive(Debug, Subcommand)]
+enum KeymapCommands {
+    /// List effective keymaps and their basis for the installed Claude version
+    List,
+
+    /// Print an effective keymap
+    Show {
+        /// Declared keymap name
+        name: String,
+    },
+
+    /// Validate and install a user keymap
+    Add {
+        /// TOML keymap file
+        file: PathBuf,
+    },
+
+    /// Remove an installed user keymap
+    Remove {
+        /// Declared keymap name
+        name: String,
+    },
+
+    /// Print the user keymap directory
+    Dir,
+}
+
+#[derive(Debug, Subcommand)]
 enum ServerCommands {
     /// Start the amux server
     Start {
@@ -267,6 +305,21 @@ enum ServerCommands {
 enum CliDebugFormat {
     Yaml,
     Json,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum CliClaudeDriver {
+    Pty,
+    Sdk,
+}
+
+impl From<CliClaudeDriver> for amux::ClaudeDriver {
+    fn from(value: CliClaudeDriver) -> Self {
+        match value {
+            CliClaudeDriver::Pty => Self::Pty,
+            CliClaudeDriver::Sdk => Self::Sdk,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -411,6 +464,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         Commands::Ui => ui::run(config).await?,
         Commands::New {
             agent_type,
+            driver,
             name,
             model,
             approval_policy,
@@ -425,6 +479,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 move || async move {
                     let agent_type = configure_agent_type(
                         parse_agent_type(&agent_type)?,
+                        driver,
                         model,
                         approval_policy,
                         sandbox_policy,
@@ -444,6 +499,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             session_client::remove_agent(&target, force, &config).await?
         }
         Commands::List { all } => session_client::list_agents(all, &config).await?,
+        Commands::Keymap { command } => keymap::run(command, &config.data_dir).await?,
         Commands::Server { command } => match command {
             ServerCommands::Start {
                 cloud, foreground, ..
@@ -1008,7 +1064,9 @@ fn parse_agent_type(s: &str) -> Result<AgentType> {
         .unwrap_or(false);
 
     match s.to_lowercase().as_str() {
-        "claude" => Ok(AgentType::Claude),
+        "claude" => Ok(AgentType::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        }),
         "codex" => Ok(AgentType::Codex {
             model: None,
             approval_policy: None,
@@ -1038,23 +1096,46 @@ fn parse_agent_type(s: &str) -> Result<AgentType> {
 
 fn configure_agent_type(
     agent_type: AgentType,
+    driver: Option<CliClaudeDriver>,
     model: Option<String>,
     approval_policy: Option<CliCodexApprovalPolicy>,
     sandbox_policy: Option<CliCodexSandboxPolicy>,
 ) -> Result<AgentType> {
     match agent_type {
+        AgentType::Claude { .. } => {
+            if model.is_some() || approval_policy.is_some() || sandbox_policy.is_some() {
+                return Err(anyhow!(
+                    "--model, --approval-policy, and --sandbox-policy require agent type `codex`"
+                ));
+            }
+            Ok(AgentType::Claude {
+                driver: driver.unwrap_or(CliClaudeDriver::Pty).into(),
+            })
+        }
         AgentType::Codex {
             resume_thread_id, ..
-        } => Ok(AgentType::Codex {
-            model,
-            approval_policy: approval_policy.map(|value| value.as_str().to_string()),
-            sandbox_policy: sandbox_policy.map(|value| value.as_str().to_string()),
-            resume_thread_id,
-        }),
-        _other if model.is_some() || approval_policy.is_some() || sandbox_policy.is_some() => Err(
-            anyhow!("--model, --approval-policy, and --sandbox-policy require agent type `codex`"),
-        ),
-        other => Ok(other),
+        } => {
+            if driver.is_some() {
+                return Err(anyhow!("--driver requires agent type `claude`"));
+            }
+            Ok(AgentType::Codex {
+                model,
+                approval_policy: approval_policy.map(|value| value.as_str().to_string()),
+                sandbox_policy: sandbox_policy.map(|value| value.as_str().to_string()),
+                resume_thread_id,
+            })
+        }
+        AgentType::TestAgent { command } => {
+            if driver.is_some() {
+                return Err(anyhow!("--driver requires agent type `claude`"));
+            }
+            if model.is_some() || approval_policy.is_some() || sandbox_policy.is_some() {
+                return Err(anyhow!(
+                    "--model, --approval-policy, and --sandbox-policy require agent type `codex`"
+                ));
+            }
+            Ok(AgentType::TestAgent { command })
+        }
     }
 }
 
@@ -1269,6 +1350,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_claude_driver_and_defaults_to_pty() {
+        for (args, expected) in [
+            (vec!["amux", "new", "claude"], amux::ClaudeDriver::Pty),
+            (
+                vec!["amux", "new", "claude", "--driver", "pty"],
+                amux::ClaudeDriver::Pty,
+            ),
+            (
+                vec!["amux", "new", "claude", "--driver", "sdk"],
+                amux::ClaudeDriver::Sdk,
+            ),
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            let Some(Commands::New {
+                agent_type,
+                driver,
+                model,
+                approval_policy,
+                sandbox_policy,
+                ..
+            }) = cli.command
+            else {
+                panic!("expected new command");
+            };
+            let configured = configure_agent_type(
+                parse_agent_type(&agent_type).unwrap(),
+                driver,
+                model,
+                approval_policy,
+                sandbox_policy,
+            )
+            .unwrap();
+            assert_eq!(configured, AgentType::Claude { driver: expected });
+        }
+
+        assert!(Cli::try_parse_from(["amux", "new", "claude", "--driver", "unknown"]).is_err());
+    }
+
+    #[test]
     fn parses_and_applies_codex_creation_options() {
         let cli = Cli::try_parse_from([
             "amux",
@@ -1284,6 +1404,7 @@ mod tests {
         .unwrap();
         let Some(Commands::New {
             agent_type,
+            driver,
             model,
             approval_policy,
             sandbox_policy,
@@ -1294,6 +1415,7 @@ mod tests {
         };
         let configured = configure_agent_type(
             parse_agent_type(&agent_type).unwrap(),
+            driver,
             model,
             approval_policy,
             sandbox_policy,
@@ -1377,11 +1499,75 @@ mod tests {
     }
 
     #[test]
+    fn keymap_subcommands_parse_their_targets() {
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "list"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::List
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "show", "claude-2.1"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::Show { name }
+            }) if name == "claude-2.1"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "add", "custom.toml"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::Add { file }
+            }) if file.as_os_str() == "custom.toml"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "remove", "custom"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::Remove { name }
+            }) if name == "custom"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["amux", "keymap", "dir"])
+                .unwrap()
+                .command,
+            Some(Commands::Keymap {
+                command: KeymapCommands::Dir
+            })
+        ));
+    }
+
+    #[test]
     fn codex_creation_options_reject_other_agents() {
-        let error =
-            configure_agent_type(AgentType::Claude, Some("gpt-5.4".to_string()), None, None)
-                .unwrap_err();
+        let error = configure_agent_type(
+            AgentType::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
+            None,
+            Some("gpt-5.4".to_string()),
+            None,
+            None,
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("require agent type `codex`"));
+    }
+
+    #[test]
+    fn claude_driver_rejects_other_agent_kinds() {
+        let error = configure_agent_type(
+            parse_agent_type("codex").unwrap(),
+            Some(CliClaudeDriver::Sdk),
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "--driver requires agent type `claude`");
     }
 
     #[test]

@@ -2,11 +2,11 @@
 //!
 //! [`AgentBackend`] is the instance behavior every locally hosted agent
 //! implements; [`AgentSession`] is the owned handle the runtime stores.
-//! [`StructuredInput`] and [`RawPtyTarget`] are owned endpoints a backend hands
-//! out so callers can do input or raw-PTY preparation once the session registry
-//! lock is released. The Claude and test-agent impls live beside their sessions;
-//! this module keeps only the factories and the shared
-//! [`terminal_io_protocols`] advertisement.
+//! [`Plane`] is the owned endpoint a backend hands out so callers can prepare
+//! input or output once the session registry lock is released. The Claude and
+//! test-agent impls live beside their sessions; this module keeps only the
+//! factories and shared session behavior. Protocol exposure is derived from
+//! each backend's [`AgentKind`].
 //!
 //! This module constructs live agent sessions, so it is gated at its `mod`
 //! declaration behind the `local-agents` feature. The data types it produces
@@ -27,15 +27,17 @@ use uuid::Uuid;
 
 #[cfg(any(debug_assertions, test))]
 use super::TestAgentSession;
-use super::claude::{ClaudeSession, ClaudeVersionCache};
+use super::claude::{ClaudeSdkBackend, ClaudeSession, ClaudeVersionCache};
 #[cfg(unix)]
-use super::codex::{CodexClient, CodexRawPtyTarget, CodexSession};
+use super::codex::{CodexBackend, CodexClient, CodexRawPtyTarget};
 use super::types::SpawnInheritance;
 use super::{
     AgentRecord, ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome,
     LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredLogSource,
 };
-use crate::agents::{AgentParent, AgentType, CreateAgentRequest, terminal_io};
+use crate::agents::{
+    AgentKind, AgentParent, AgentType, ClaudeDriver, CreateAgentRequest, Protocol,
+};
 use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::protocol::ProtocolError;
@@ -46,6 +48,7 @@ use crate::suspend::SuspendedAgent;
 pub(crate) enum Delivery {
     Socket,
     Pty,
+    Stream,
     InjectQueued,
     InjectStarted,
     TurnStarted,
@@ -56,6 +59,7 @@ impl Delivery {
         match self {
             Self::Socket => "socket",
             Self::Pty => "pty",
+            Self::Stream => "stream",
             Self::InjectQueued => "inject_queued",
             Self::InjectStarted => "inject_started",
             Self::TurnStarted => "turn_started",
@@ -110,33 +114,41 @@ pub(crate) trait AgentDeliveryTarget: Send + Sync {
 }
 
 struct UnsupportedAgentDelivery {
-    agent_type: &'static str,
+    provider: &'static str,
 }
 
 #[async_trait]
 impl AgentDeliveryTarget for UnsupportedAgentDelivery {
     fn liveness(&self) -> std::result::Result<DeliveryLiveness, DeliveryError> {
-        Err(DeliveryError::UnsupportedAgentType(self.agent_type))
+        Err(DeliveryError::UnsupportedAgentType(self.provider))
     }
 
     async fn deliver(&self, _envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
-        Err(DeliveryError::UnsupportedAgentType(self.agent_type))
+        Err(DeliveryError::UnsupportedAgentType(self.provider))
     }
+}
+
+/// A typed input accepted by a structured protocol plane.
+pub(crate) enum StructuredInputEvent {
+    ClaudePty {
+        client_seq: u64,
+        intent: super::claude::io::Intent,
+    },
+    ClaudeSdk {
+        input_id: Vec<u8>,
+        input: super::claude::sdk_io::ClaudeSdkV1Input,
+    },
+    #[cfg(unix)]
+    Codex {
+        input_id: Vec<u8>,
+        input: super::codex::io::CodexSdkV1Input,
+    },
 }
 
 /// An owned structured-input endpoint detached from the session registry lock.
 #[async_trait]
 pub(crate) trait StructuredInput: Send + Sync {
-    async fn send(&self, client_seq: u64, payload: Value)
-    -> std::result::Result<(), ProtocolError>;
-}
-
-/// Codex-owned structured input endpoint, separate from Claude's sequence-
-/// checked JSON seam.
-#[cfg(unix)]
-#[async_trait]
-pub(crate) trait CodexInput: Send + Sync {
-    async fn send(&self, input_id: Vec<u8>, input: super::codex::io::CodexSdkV1Input);
+    async fn send(&self, input: StructuredInputEvent) -> std::result::Result<(), ProtocolError>;
 }
 
 /// An owned raw-PTY preparation target detached from the session registry.
@@ -144,6 +156,15 @@ pub(crate) enum RawPtyTarget {
     Existing(PtyHandle),
     #[cfg(unix)]
     Codex(CodexRawPtyTarget),
+}
+
+/// An owned backend endpoint selected by a closed session protocol.
+pub(crate) enum Plane {
+    Terminal(RawPtyTarget),
+    Structured {
+        log: StructuredLogSource,
+        input: Box<dyn StructuredInput>,
+    },
 }
 
 /// Effective configuration provenance frozen when the daemon starts.
@@ -263,6 +284,7 @@ pub(crate) fn mcp_launch_route_for_tests(host_id: Uuid) -> McpLaunchRoute {
 #[derive(Clone)]
 pub(crate) struct AgentDeps {
     pub(crate) runtime_dir: std::path::PathBuf,
+    pub(crate) claude_user_keymap_dir: std::path::PathBuf,
     pub(crate) claude_version_cache: ClaudeVersionCache,
     #[cfg(unix)]
     pub(crate) codex_client: Arc<CodexClient>,
@@ -274,11 +296,13 @@ impl AgentDeps {
         runtime_dir: std::path::PathBuf,
         codex_private_socket: std::path::PathBuf,
         mcp_launch_route: McpLaunchRoute,
+        claude_user_keymap_dir: std::path::PathBuf,
     ) -> Self {
         #[cfg(not(unix))]
         let _ = codex_private_socket;
         Self {
             runtime_dir,
+            claude_user_keymap_dir,
             claude_version_cache: ClaudeVersionCache::default(),
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
@@ -310,7 +334,8 @@ pub(crate) trait AgentBackend: Send + Sync {
         event_tx: &mpsc::Sender<SessionEvent>,
     ) -> Result<tokio::task::JoinHandle<()>>;
     async fn stop(&self, policy: StopPolicy);
-    fn agent_type(&self) -> &'static str;
+    fn kind(&self) -> AgentKind;
+    fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError>;
 
     fn spawn_inheritance(&self) -> SpawnInheritance {
         SpawnInheritance::default()
@@ -320,17 +345,10 @@ pub(crate) trait AgentBackend: Send + Sync {
         None
     }
 
-    /// Advertised I/O protocols; PTY-backed backends build on
-    /// [`terminal_io_protocols`].
-    fn io_protocols(&self) -> Vec<String>;
-
-    fn log_source(&self) -> Option<StructuredLogSource>;
-    fn pty_handle(&self) -> Result<Option<PtyHandle>>;
-
     /// Snapshot the smallest owned target needed to deliver a message.
     fn delivery_target(&self) -> Box<dyn AgentDeliveryTarget> {
         Box::new(UnsupportedAgentDelivery {
-            agent_type: self.agent_type(),
+            provider: self.kind().provider(),
         })
     }
 
@@ -341,22 +359,6 @@ pub(crate) trait AgentBackend: Send + Sync {
     #[allow(dead_code)]
     async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
         self.delivery_target().deliver(envelope).await
-    }
-
-    /// Snapshot the smallest owned target needed to prepare a raw subscription.
-    /// The default covers backends whose PTY already exists for the session.
-    fn raw_pty_target(&self) -> Result<Option<RawPtyTarget>> {
-        self.pty_handle()
-            .map(|handle| handle.map(RawPtyTarget::Existing))
-    }
-
-    fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {
-        None
-    }
-
-    #[cfg(unix)]
-    fn codex_input(&self) -> Option<Box<dyn CodexInput>> {
-        None
     }
 
     async fn handle_hook_payload(
@@ -380,8 +382,7 @@ pub(crate) trait AgentBackend: Send + Sync {
             name: self.name().map(String::from),
             command: self.command().to_string(),
             working_dir: self.working_dir().to_path_buf(),
-            agent_type: self.agent_type().to_string(),
-            io_protocols: self.io_protocols(),
+            kind: self.kind(),
             readonly: self.readonly(),
             args: self.args().to_vec(),
             created_at: self.created_at(),
@@ -395,28 +396,28 @@ pub(crate) trait AgentBackend: Send + Sync {
     fn debug_json(&self, verbose: bool) -> serde_json::Result<Value>;
 }
 
-/// The shared terminal protocol advertisement for every PTY-backed backend.
-pub(crate) fn terminal_io_protocols(pty: Option<&PtyHandle>) -> Vec<String> {
-    if pty.is_some() {
-        vec![terminal_io::TERMINAL_V1.to_string()]
-    } else {
-        Vec::new()
-    }
-}
-
 /// Unified agent session handle backed by dynamic trait dispatch.
 pub(crate) type AgentSession = Box<dyn AgentBackend>;
 
 pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<AgentSession> {
     match &req.agent_type {
-        AgentType::Claude => Ok(Box::new(ClaudeSession::new(
+        AgentType::Claude {
+            driver: ClaudeDriver::Pty,
+        } => Ok(Box::new(ClaudeSession::new(
             req,
             deps.runtime_dir.clone(),
             deps.claude_version_cache.clone(),
             deps.mcp_launch_route.clone(),
+            deps.claude_user_keymap_dir.clone(),
+        ))),
+        AgentType::Claude {
+            driver: ClaudeDriver::Sdk,
+        } => Ok(Box::new(ClaudeSdkBackend::new(
+            req,
+            deps.mcp_launch_route.clone(),
         ))),
         #[cfg(unix)]
-        AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(
+        AgentType::Codex { .. } => Ok(Box::new(CodexBackend::new(
             req,
             deps.codex_client.clone(),
             deps.mcp_launch_route.clone(),
@@ -435,6 +436,7 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
 pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) -> AgentSession {
     match suspended {
         SuspendedAgent::Claude {
+            driver,
             agent_id,
             name,
             name_source,
@@ -450,22 +452,29 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 agent_id,
                 host_id: None,
                 name,
-                agent_type: AgentType::Claude,
+                agent_type: AgentType::Claude { driver },
                 working_dir,
                 terminal_size,
                 args,
                 parent,
                 initial_prompt: None,
             };
-            Box::new(ClaudeSession::from_suspended(
-                &req,
-                name_source.into(),
-                session_id,
-                created_at,
-                deps.runtime_dir.clone(),
-                deps.claude_version_cache.clone(),
-                deps.mcp_launch_route.clone(),
-            ))
+            match driver {
+                ClaudeDriver::Pty => Box::new(ClaudeSession::from_suspended(
+                    &req,
+                    name_source.into(),
+                    session_id,
+                    created_at,
+                    deps,
+                )),
+                ClaudeDriver::Sdk => Box::new(ClaudeSdkBackend::from_suspended(
+                    &req,
+                    name_source.into(),
+                    session_id,
+                    created_at,
+                    deps.mcp_launch_route.clone(),
+                )),
+            }
         }
         #[cfg(unix)]
         SuspendedAgent::Codex {
@@ -497,7 +506,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 parent,
                 initial_prompt: None,
             };
-            Box::new(CodexSession::from_suspended(
+            Box::new(CodexBackend::from_suspended(
                 &req,
                 deps.codex_client.clone(),
                 deps.mcp_launch_route.clone(),
@@ -614,14 +623,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_agent_has_no_structured_input() {
+    async fn test_agent_refuses_structured_protocols() {
         let session = TestAgentSession::echo_for_tests(Uuid::new_v4(), None);
-        assert!(session.structured_input().is_none());
+        assert!(matches!(
+            session.plane(Protocol::ClaudePtyTranscriptV1),
+            Err(ProtocolError::NotExposed {
+                kind: AgentKind::TestAgent,
+                protocol: Protocol::ClaudePtyTranscriptV1,
+            })
+        ));
     }
 
     #[test]
     fn suspended_claude_into_session_filters_resume_unsafe_args() {
         let sa = SuspendedAgent::Claude {
+            driver: ClaudeDriver::Sdk,
             agent_id: Uuid::new_v4(),
             name: Some("claude".to_string()),
             name_source: SuspendedLocalAgentNameSource::ProviderName,
@@ -652,8 +668,16 @@ mod tests {
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
             mcp_launch_route_for_tests(Uuid::new_v4()),
+            std::env::temp_dir().join("amux-test-keymaps"),
         );
         let session = agent_from_suspended(sa, &deps);
+
+        assert_eq!(
+            session.kind(),
+            AgentKind::Claude {
+                driver: ClaudeDriver::Sdk,
+            }
+        );
 
         assert_eq!(
             session.to_agent(Uuid::new_v4()).args,
@@ -687,6 +711,7 @@ mod tests {
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
             mcp_launch_route_for_tests(Uuid::new_v4()),
+            std::env::temp_dir().join("amux-test-keymaps"),
         );
 
         let session = agent_from_suspended(suspended, &deps);
@@ -713,7 +738,9 @@ mod tests {
             agent_id: Uuid::new_v4(),
             host_id: None,
             name: Some("claude".to_string()),
-            agent_type: AgentType::Claude,
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Pty,
+            },
             working_dir: PathBuf::from("/tmp"),
             terminal_size: None,
             args: vec![
@@ -725,13 +752,14 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let mut session = ClaudeSession::new(
+        let session = ClaudeSession::new(
             &req,
             std::env::temp_dir(),
             ClaudeVersionCache::default(),
             mcp_launch_route_for_tests(Uuid::new_v4()),
+            std::env::temp_dir().join("amux-test-keymaps"),
         );
-        session.session_id = Some(Uuid::new_v4());
+        session.set_session_id_for_tests(Uuid::new_v4());
 
         let suspended = session.suspended_state().unwrap();
 

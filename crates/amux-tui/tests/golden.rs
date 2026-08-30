@@ -82,11 +82,13 @@ fn an_agent(name: &str, agent_type: &str, on: &str) -> Agent {
         name: Some(name.to_string()),
         command: agent_type.to_string(),
         working_dir: std::path::PathBuf::from("/work"),
-        agent_type: agent_type.to_string(),
-        io_protocols: vec![
-            "terminal_v1".to_string(),
-            "claude_pty_transcript_v1".to_string(),
-        ],
+        kind: match agent_type {
+            "claude" => amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
+            "codex" => amux_ui::AgentKind::Codex,
+            other => panic!("unsupported fixture kind {other}"),
+        },
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
@@ -190,6 +192,35 @@ fn stop_row() -> serde_json::Value {
     serde_json::json!({"type": "hook.stop"})
 }
 
+/// The Codex rows with the same meaning as the Claude ones above. A Codex
+/// agent's kind exposes only Codex protocols, so its fixture states have to
+/// be reached through its own vocabulary.
+fn codex_ready_row() -> serde_json::Value {
+    serde_json::json!({"type": "amux.codex_ready"})
+}
+
+fn codex_turn_started_row(turn: &str) -> serde_json::Value {
+    serde_json::json!({"type":"turn/started","turn":{"id":turn,"status":"inProgress"}})
+}
+
+fn codex_turn_completed_row(turn: &str) -> serde_json::Value {
+    serde_json::json!({"type":"turn/completed","turn":{"id":turn,"status":"completed"}})
+}
+
+/// A Codex agent stopped on a command approval: the ask the fleet badges.
+fn codex_approval_rows() -> Vec<serde_json::Value> {
+    vec![
+        codex_ready_row(),
+        codex_turn_started_row("turn-approval"),
+        serde_json::json!({"type":"item/started","item":{"id":"exec-1","type":"commandExecution",
+            "command":"cargo test","cwd":"/work","status":"inProgress"}}),
+        serde_json::json!({"type":"item/commandExecution/requestApproval","itemId":"exec-1",
+            "command":"cargo test","cwd":"/work","reason":"run tests?"}),
+        serde_json::json!({"type":"amux.codex_approval_required","request_id":7,
+            "availableDecisions":["accept","cancel"]}),
+    ]
+}
+
 fn weak_row() -> serde_json::Value {
     serde_json::json!({"type": "summary", "summary": "compaction"})
 }
@@ -230,7 +261,11 @@ fn fleet_msgs() -> Vec<Msg> {
     msgs.extend(stream_rows(
         "nightly-refactor",
         NOW - 180,
-        vec![ready_row(), prompt_row(3), stop_row()],
+        vec![
+            codex_ready_row(),
+            codex_turn_started_row("turn-nightly"),
+            codex_turn_completed_row("turn-nightly"),
+        ],
     ));
     msgs.extend(stream_rows(
         "refactor-tunnels",
@@ -406,7 +441,9 @@ fn fleet_attention_badges() {
         command: Command::CreateAgent {
             host: Some(host_id("nova")),
             name: "claude-4".to_string(),
-            agent_type: amux_ui::AgentType::Claude,
+            agent_type: amux_ui::AgentType::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
             working_dir: std::path::PathBuf::from("/work"),
         },
     });
@@ -622,7 +659,9 @@ fn op_pending_and_failed() {
             command: Command::CreateAgent {
                 host: Some(host_id("nova")),
                 name: "claude-3".to_string(),
-                agent_type: amux_ui::AgentType::Claude,
+                agent_type: amux_ui::AgentType::Claude {
+                    driver: amux_ui::ClaudeDriver::Pty,
+                },
                 working_dir: std::path::PathBuf::from("/work"),
             },
         },
@@ -633,7 +672,9 @@ fn op_pending_and_failed() {
         command: Command::CreateAgent {
             host: Some(host_id("nova")),
             name: "claude-4".to_string(),
-            agent_type: amux_ui::AgentType::Claude,
+            agent_type: amux_ui::AgentType::Claude {
+                driver: amux_ui::ClaudeDriver::Pty,
+            },
             working_dir: std::path::PathBuf::from("/work"),
         },
     });
@@ -740,13 +781,9 @@ fn family_msgs() -> Vec<Msg> {
     msgs.extend(stream_rows(
         "test-runner",
         NOW - 30,
-        vec![ready_row(), prompt_row(6)],
+        vec![codex_ready_row(), codex_turn_started_row("turn-runner")],
     ));
-    msgs.extend(stream_rows(
-        "flake-hunter",
-        NOW - 20,
-        vec![ready_row(), prompt_row(7), permission_row()],
-    ));
+    msgs.extend(stream_rows("flake-hunter", NOW - 20, codex_approval_rows()));
     msgs
 }
 

@@ -15,7 +15,7 @@
 //! an agent's own obligations come before its children's.
 
 use amux_ui::claude::AskState;
-use amux_ui::claude::encoding::{self, AskAnswer};
+use amux_ui::claude::answer::{self, AskAnswer};
 use amux_ui::{AgentId, ClaudeCommand, CodexCommand, Command, Model, StructuredProtocol};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Line;
@@ -83,7 +83,8 @@ pub(crate) fn can_open(model: &Model, parent: AgentId, child: AgentId) -> bool {
             .codex(child)
             .and_then(|layer| layer.ask_head())
             .is_some(),
-        None => false,
+        // A layer nothing folds has no ask to dock.
+        Some(StructuredProtocol::ClaudeSdk) | None => false,
     }
 }
 
@@ -105,7 +106,8 @@ fn bottom_is_taken(model: &Model, parent: AgentId) -> bool {
             .codex(parent)
             .and_then(|layer| layer.ask_head())
             .is_some(),
-        None => true,
+        // The placeholder frame has no composer to give up.
+        Some(StructuredProtocol::ClaudeSdk) | None => true,
     }
 }
 
@@ -123,6 +125,7 @@ impl InlineAsk {
                 model.codex(child)?.ask_head()?;
                 Ui::Codex { cursor: 0 }
             }
+            StructuredProtocol::ClaudeSdk => return None,
         };
         Some(Self { child, ui })
     }
@@ -280,7 +283,7 @@ pub(crate) fn handle_key(model: &Model, inline: &mut InlineAsk, key: &KeyEvent) 
             // (C5), and an unverified menu shape has no actions to offer
             // (C2). Both stay on screen and consume nothing.
             if !matches!(ask.state, AskState::Pending | AskState::SendFailed { .. })
-                || encoding::menu_shape_refusal(&ask.kind).is_some()
+                || answer::menu_shape_refusal(&ask.kind).is_some()
             {
                 return InlineOutcome::NotHandled;
             }

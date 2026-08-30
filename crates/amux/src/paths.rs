@@ -4,7 +4,7 @@
 //! available, these helpers fall back to the relative XDG suffix (for example
 //! `.local/state`) rather than a shared global temp directory.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Resolve an XDG base directory: `$env_var` if set, otherwise `$HOME/{default_suffix}`.
 ///
@@ -65,6 +65,12 @@ pub fn default_data_dir() -> PathBuf {
 #[cfg(target_os = "ios")]
 pub fn default_data_dir() -> PathBuf {
     ios_application_support_dir()
+}
+
+/// User-installed Claude keymaps managed by `amux keymap` and consumed by
+/// locally hosted Claude PTY sessions.
+pub fn keymap_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("keymaps")
 }
 
 /// Default log path: `$XDG_STATE_HOME/amux/amux.log` (co-located with state.yaml).

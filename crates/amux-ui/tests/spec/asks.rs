@@ -1,6 +1,6 @@
 //! Chapter 11 — Asks: extraction, correlation, lifecycle.
 //!
-//! `docs/CHAT.md` §Asks against the Phase 0 fixtures. An ask is the
+//! `docs/CHAT.md` §Asks against the derived provider fixtures. An ask is the
 //! chat-layer surface of a live obligation: the pending signal is the amux
 //! `hook.permission_request` row (FACT, arrival-ordered — it precedes the
 //! transcript tail), routed on `tool_name`, never notification wording;
@@ -21,8 +21,8 @@ use serde_json::json;
 
 use crate::harness::*;
 
-fn feed_prefix(fixture: &str, end: usize) -> Vec<Msg> {
-    chat_feed_prefix("fix-auth-bug", fixture, end)
+fn feed_through(fixture: &str, anchor: ChatAnchor) -> Vec<Msg> {
+    chat_feed_through("fix-auth-bug", fixture, anchor)
 }
 
 fn the_layer(model: &amux_ui::Model) -> &ClaudeLayer {
@@ -42,7 +42,7 @@ fn head(model: &amux_ui::Model) -> &Ask {
 /// transcript row yet (the tail lags the hook by design).
 #[test]
 fn a_permission_hook_extracts_one_pending_ask_despite_duplicate_delivery() {
-    let model = fold(feed_prefix("permission", 8));
+    let model = fold(feed_through("permission", ChatAnchor::PermissionRequest(0)));
     let layer = the_layer(&model);
     assert_eq!(layer.ask_count(), 1, "duplicate delivery is one ask");
     let ask = head(&model);
@@ -60,7 +60,7 @@ fn a_permission_hook_extracts_one_pending_ask_despite_duplicate_delivery() {
     assert_eq!(tool_name.as_deref(), Some("Bash"));
     assert_eq!(
         command.as_deref(),
-        Some("echo allowed-probe > allowed.txt"),
+        Some("printf allow-once > allow-once.txt; printf allow-once"),
         "the typed per-tool payload is the same extraction tool entries use"
     );
     assert_eq!(
@@ -77,12 +77,18 @@ fn a_permission_hook_extracts_one_pending_ask_despite_duplicate_delivery() {
 /// ask gains its `toolu_*` resolution key without a second ask appearing.
 #[test]
 fn the_transcript_tool_use_correlates_the_hook_ask() {
-    let model = fold(feed_prefix("permission", 10));
+    let model = fold(feed_through(
+        "permission",
+        ChatAnchor::ToolUse {
+            name: "Bash",
+            occurrence: 0,
+        },
+    ));
     let layer = the_layer(&model);
     assert_eq!(layer.ask_count(), 1);
     assert_eq!(
         head(&model).tool_use_id.as_deref(),
-        Some("toolu_01D9384zKG2ozqqE54c59MKP"),
+        Some("toolu_01LTvHPzjAbRyQSpztfVvsEv"),
         "the ask now carries the transcript identity"
     );
 }
@@ -91,31 +97,40 @@ fn the_transcript_tool_use_correlates_the_hook_ask() {
 /// leaves the queue; the collapsed fact renders from the tool entry.
 #[test]
 fn a_non_error_result_resolves_the_permission_as_allowed() {
-    let model = fold(feed_prefix("permission", 11));
+    let model = fold(feed_through("permission", ChatAnchor::ToolResult(0)));
     assert_eq!(the_layer(&model).ask_count(), 0, "resolved, not pending");
 }
 
 /// Deny ⇔ `is_error:true` plus `toolDenialKind:"user-rejected"` (B5): the
-/// second turn's ask resolves on the typed denial; the interrupt row and
-/// turn authority that follow find nothing left to close.
+/// denial recording's ask resolves on the typed denial; the turn authority
+/// that follows finds nothing left to close.
 #[test]
 fn a_typed_denial_resolves_the_permission_as_denied() {
-    let pending = fold(feed_prefix("permission", 21));
-    assert_eq!(the_layer(&pending).ask_count(), 1, "second ask pending");
-    let denied = fold(feed_prefix("permission", 24));
+    let pending = fold(feed_through(
+        "permission_deny_feedback",
+        ChatAnchor::PermissionRequest(0),
+    ));
+    assert_eq!(the_layer(&pending).ask_count(), 1, "denial ask pending");
+    let denied = fold(feed_through(
+        "permission_deny_feedback",
+        ChatAnchor::ToolResult(0),
+    ));
     assert_eq!(the_layer(&denied).ask_count(), 0, "denial resolved it");
-    let closed = fold(chat_feed("fix-auth-bug", "permission"));
+    let closed = fold(chat_feed("fix-auth-bug", "permission_deny_feedback"));
     assert_eq!(the_layer(&closed).ask_count(), 0);
 }
 
 // --- question ---------------------------------------------------------------
 
-/// `hook.permission_request` fires for AskUserQuestion too (Phase 0):
+/// `hook.permission_request` fires for AskUserQuestion too:
 /// extraction routes on `tool_name` and yields a QUESTION ask carrying the
 /// C4 facts — question text, `{label, description}` options.
 #[test]
 fn an_ask_user_question_hook_extracts_a_question_ask() {
-    let model = fold(feed_prefix("question_single", 8));
+    let model = fold(feed_through(
+        "question_single",
+        ChatAnchor::PermissionRequest(0),
+    ));
     let ask = head(&model);
     assert_eq!(ask.why(), AskWhy::Question);
     let AskKind::Question { questions } = &ask.kind else {
@@ -140,12 +155,18 @@ fn an_ask_user_question_hook_extracts_a_question_ask() {
 /// resolution fact: the ask leaves the queue when the result row lands.
 #[test]
 fn the_answers_result_resolves_the_question() {
-    let correlated = fold(feed_prefix("question_single", 10));
+    let correlated = fold(feed_through(
+        "question_single",
+        ChatAnchor::ToolUse {
+            name: "AskUserQuestion",
+            occurrence: 0,
+        },
+    ));
     assert_eq!(
         head(&correlated).tool_use_id.as_deref(),
-        Some("toolu_0193YwXqWKEhBWar328MuBdE")
+        Some("toolu_01YahM7Aqdk6Cqy9UqyXgeZ9")
     );
-    let answered = fold(feed_prefix("question_single", 11));
+    let answered = fold(feed_through("question_single", ChatAnchor::ToolResult(0)));
     assert_eq!(the_layer(&answered).ask_count(), 0);
 }
 
@@ -153,7 +174,10 @@ fn the_answers_result_resolves_the_question() {
 /// answer string is a tool-entry fact, not ask state.
 #[test]
 fn a_multi_select_question_extracts_and_resolves() {
-    let pending = fold(feed_prefix("question_multi", 8));
+    let pending = fold(feed_through(
+        "question_multi",
+        ChatAnchor::PermissionRequest(0),
+    ));
     let AskKind::Question { questions } = &head(&pending).kind else {
         panic!("a question ask");
     };
@@ -169,7 +193,10 @@ fn a_multi_select_question_extracts_and_resolves() {
 /// plan for the reader, straight from the hook.
 #[test]
 fn an_exit_plan_mode_hook_extracts_the_plan_review_variant() {
-    let model = fold(feed_prefix("plan_approve", 19));
+    let model = fold(feed_through(
+        "plan_approve",
+        ChatAnchor::PermissionRequest(0),
+    ));
     let ask = head(&model);
     assert_eq!(ask.why(), AskWhy::Permission);
     let AskKind::Permission {
@@ -183,7 +210,7 @@ fn an_exit_plan_mode_hook_extracts_the_plan_review_variant() {
         panic!("a plan-review permission: {:?}", ask.kind);
     };
     assert_eq!(tool_name.as_deref(), Some("ExitPlanMode"));
-    assert!(plan.starts_with("# Add README.md"));
+    assert!(plan.starts_with("# Context"));
 }
 
 /// Approval ⇔ the non-error ExitPlanMode result (§18a — NO permission-mode
@@ -197,36 +224,18 @@ fn plan_approval_resolves_the_ask_and_retains_the_plan() {
     assert_eq!(layer.accepted_plans().len(), 1);
 }
 
-/// Rejection (request-changes) resolves the FIRST plan ask without ending
-/// the turn — the agent revises and asks AGAIN with a new plan: a second,
-/// distinct ask under the same `prompt_id` (fixture-verified). Ask
-/// identity is per request content, not per prompt.
+/// Rejection (request-changes) resolves the plan ask without retaining the
+/// rejected plan as accepted session state.
 #[test]
-fn a_rejected_plan_can_be_re_asked_as_a_new_ask() {
-    let first_pending = fold(feed_prefix("plan_reject", 25));
-    let first = head(&first_pending);
-    assert_eq!(first.why(), AskWhy::Permission);
-
-    let first_rejected = fold(feed_prefix("plan_reject", 29));
-    assert_eq!(the_layer(&first_rejected).ask_count(), 0);
-
-    let second_pending = fold(feed_prefix("plan_reject", 37));
-    let layer = the_layer(&second_pending);
-    assert_eq!(layer.ask_count(), 1, "the revised plan is a NEW ask");
-    let AskKind::Permission {
-        invocation: ToolInvocation::Plan {
-            plan: Some(plan), ..
-        },
-        ..
-    } = &head(&second_pending).kind
-    else {
-        panic!("a plan-review permission");
-    };
-    assert!(
-        plan.contains("Note: I checked the full repo"),
-        "the second ask carries the REVISED plan"
-    );
-
+fn a_rejected_plan_is_resolved_without_becoming_accepted() {
+    let pending = fold(feed_through(
+        "plan_reject",
+        ChatAnchor::PermissionRequest(0),
+    ));
+    assert_eq!(head(&pending).why(), AskWhy::Permission);
+    let rejected = fold(feed_through("plan_reject", ChatAnchor::ToolResult(0)));
+    assert_eq!(the_layer(&rejected).ask_count(), 0);
+    assert!(the_layer(&rejected).accepted_plans().is_empty());
     let closed = fold(chat_feed("fix-auth-bug", "plan_reject"));
     assert_eq!(the_layer(&closed).ask_count(), 0);
 }
@@ -237,8 +246,10 @@ fn a_rejected_plan_can_be_re_asked_as_a_new_ask() {
 /// alone, so the wording cannot misclassify it (E2's forbidden ground).
 #[test]
 fn notification_wording_never_classifies_the_ask() {
-    // Prefix through both hook.notification rows (37, 38).
-    let model = fold(feed_prefix("plan_reject", 39));
+    let model = fold(feed_through(
+        "plan_reject",
+        ChatAnchor::PermissionRequest(0),
+    ));
     let layer = the_layer(&model);
     assert_eq!(layer.ask_count(), 1);
     assert_eq!(
@@ -434,6 +445,41 @@ fn multiple_pending_asks_queue_with_an_honest_count() {
     assert_eq!(command.as_deref(), Some("echo first"), "arrival order");
     let ids: Vec<u64> = layer.asks().map(|ask| ask.id).collect();
     assert_eq!(ids, vec![0, 1], "stable monotonic handles");
+}
+
+/// Ask identity is the request's tool name plus canonical input, not the
+/// prompt that happened to trigger it: one prompt may produce several
+/// independently answerable obligations (docs/CHAT.md §Asks).
+#[test]
+fn distinct_permission_requests_under_one_prompt_are_distinct_asks() {
+    let mut first = permission_hook("echo first");
+    first["prompt_id"] = json!("shared-prompt");
+    let mut second = permission_hook("echo second");
+    second["prompt_id"] = json!("shared-prompt");
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![ready(), a_prompt_row(), first, second],
+        )],
+    ]));
+    let asks: Vec<_> = the_layer(&model).asks().collect();
+    assert_eq!(asks.len(), 2);
+    assert_eq!(asks[0].session_ask_id, "shared-prompt");
+    assert_eq!(asks[1].session_ask_id, "shared-prompt");
+    let commands: Vec<_> = asks
+        .iter()
+        .map(|ask| match &ask.kind {
+            AskKind::Permission {
+                invocation: ToolInvocation::Bash { command, .. },
+                ..
+            } => command.as_deref(),
+            other => panic!("expected Bash permission, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(commands, vec![Some("echo first"), Some("echo second")]);
+    assert_ne!(asks[0].id, asks[1].id, "content gives each ask an identity");
 }
 
 /// A request identical to a PENDING ask is the duplicate delivery and
@@ -695,12 +741,33 @@ fn eviction_never_evicts_a_pending_ask() {
 
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
-        ("asks::permission_pending", feed_prefix("permission", 8)),
+        (
+            "asks::permission_pending",
+            feed_through("permission", ChatAnchor::PermissionRequest(0)),
+        ),
         ("asks::edit_artifact", edit_ask_sequence()),
-        ("asks::permission_correlated", feed_prefix("permission", 10)),
-        ("asks::question_pending", feed_prefix("question_single", 8)),
-        ("asks::plan_pending", feed_prefix("plan_approve", 19)),
-        ("asks::plan_re_ask", feed_prefix("plan_reject", 39)),
+        (
+            "asks::permission_correlated",
+            feed_through(
+                "permission",
+                ChatAnchor::ToolUse {
+                    name: "Bash",
+                    occurrence: 0,
+                },
+            ),
+        ),
+        (
+            "asks::question_pending",
+            feed_through("question_single", ChatAnchor::PermissionRequest(0)),
+        ),
+        (
+            "asks::plan_pending",
+            feed_through("plan_approve", ChatAnchor::PermissionRequest(0)),
+        ),
+        (
+            "asks::plan_rejected",
+            feed_through("plan_reject", ChatAnchor::PermissionRequest(0)),
+        ),
         (
             "asks::queued",
             seq([

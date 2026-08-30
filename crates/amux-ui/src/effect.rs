@@ -3,10 +3,9 @@
 //! shell executes them against `amux::Client` and feeds results back as Msgs.
 //! Replay folds Msgs but never executes Effects.
 
-use amux::AgentId;
+use amux::{AgentId, claude_io};
 use serde::{Deserialize, Serialize};
 
-use crate::claude::encoding::KeyStep;
 use crate::codex::CodexInput;
 use crate::model::StructuredProtocol;
 use crate::msg::{Command, OpId};
@@ -20,7 +19,7 @@ pub enum InputPayload {
         /// The layer's stream cursor: the source refuses the write unless
         /// the client has seen its newest row (`SequenceNumberMismatch`).
         expected_seq: u64,
-        program: Vec<KeyStep>,
+        intent: claude_io::Intent,
         /// Reducer policy for a stale-seq refusal: an interrupt's meaning
         /// does not depend on the session's position, so the shell may
         /// retry it mechanically with the seq the refusal reported;

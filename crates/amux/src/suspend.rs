@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::agents::{AgentParent, TerminalSize, WorkingOn};
+use crate::agents::{AgentParent, ClaudeDriver, TerminalSize, WorkingOn};
 
 /// All suspended agent sessions, serialized to disk across server restarts.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -30,6 +30,7 @@ pub(crate) enum SuspendedLocalAgentNameSource {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) enum SuspendedAgent {
     Claude {
+        driver: ClaudeDriver,
         agent_id: Uuid,
         name: Option<String>,
         name_source: SuspendedLocalAgentNameSource,
@@ -193,6 +194,7 @@ mod tests {
         let state = SuspendedServerState {
             agents: vec![
                 SuspendedAgent::Claude {
+                    driver: ClaudeDriver::Pty,
                     agent_id: Uuid::new_v4(),
                     name: Some("test-claude".to_string()),
                     name_source: SuspendedLocalAgentNameSource::ProviderName,
@@ -251,6 +253,7 @@ mod tests {
         assert!(matches!(
             &loaded.agents[0],
             SuspendedAgent::Claude {
+                driver: ClaudeDriver::Pty,
                 name,
                 parent: Some(parent),
                 working_on: Some(working_on),

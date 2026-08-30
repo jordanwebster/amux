@@ -8,7 +8,7 @@
 //! Lines come back "open" (no padding, no right border); the frame
 //! assembler finishes everything once.
 
-use amux_ui::claude::encoding::{self, AskAnswer, PermissionAnswer, PlanAnswer};
+use amux_ui::claude::answer::{self, AskAnswer, PermissionAnswer, PlanAnswer};
 use amux_ui::claude::{
     Ask, AskArtifact, AskKind, AskState, QuestionFact, SuggestionFact, ToolInvocation,
 };
@@ -178,7 +178,7 @@ fn scoped_label(suggestions: &[SuggestionFact]) -> String {
 fn answer_summary(answer: &AskAnswer, theme: Theme) -> (&'static str, Style, &'static str) {
     match answer {
         AskAnswer::Permission(PermissionAnswer::AllowOnce) => ("✔", theme.ok(), "allowed once"),
-        AskAnswer::Permission(PermissionAnswer::AllowScoped) => {
+        AskAnswer::Permission(PermissionAnswer::AllowScoped { .. }) => {
             ("✔", theme.ok(), "allowed (scoped)")
         }
         AskAnswer::Permission(PermissionAnswer::Deny { .. }) => ("✗", theme.error(), "denied"),
@@ -187,7 +187,7 @@ fn answer_summary(answer: &AskAnswer, theme: Theme) -> (&'static str, Style, &'s
         AskAnswer::Plan(PlanAnswer::RequestChanges { .. }) => {
             ("✗", theme.error(), "changes requested")
         }
-        AskAnswer::Question { .. } => ("?", theme.warn(), "answered"),
+        AskAnswer::Question(_) => ("?", theme.warn(), "answered"),
     }
 }
 
@@ -422,7 +422,7 @@ pub(crate) fn ask_panel(
             if ask_ui::is_plan(ask) {
                 return plan_panel(ask, ui, failed, ask_count, ctx);
             }
-            if let Some(refusal) = encoding::menu_shape_refusal(&ask.kind) {
+            if let Some(refusal) = answer::menu_shape_refusal(&ask.kind) {
                 return refusal_panel(ask, &refusal.to_string(), ask_count, ctx);
             }
             permission_panel(ask, suggestions, ui, failed, ask_count, ctx)

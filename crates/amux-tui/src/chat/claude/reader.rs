@@ -337,7 +337,7 @@ pub(crate) fn answer_actionable(model: &Model, chat: &View) -> bool {
         .and_then(|resolved| resolved.ask)
         .is_some_and(|ask| {
             matches!(ask.state, AskState::Pending)
-                && amux_ui::claude::encoding::menu_shape_refusal(&ask.kind).is_none()
+                && amux_ui::claude::answer::menu_shape_refusal(&ask.kind).is_none()
         })
 }
 

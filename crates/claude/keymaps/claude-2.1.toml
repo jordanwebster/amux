@@ -1,0 +1,167 @@
+name = "claude-2.1"
+applies_to = ">=2.1.228, <2.2.0"
+verified = [{ version = "2.1.251", run_id = "be51d262-2443-4131-9cf3-cfa86c2eb412", spec = "prompt" }, { run_id = "f94ad8d0-4f23-46c6-8664-53b92b050cc1", spec = "permission_allow_once", version = "2.1.251" }, { run_id = "ac69f6cf-fe24-4f33-b181-39b0d2f59935", spec = "permission_allow_scoped", version = "2.1.251" }, { run_id = "8030dd02-1a6a-4a9a-99f7-cabbf5597c8e", spec = "permission_deny_feedback", version = "2.1.251" }, { run_id = "f58808c8-f3bd-4bc7-b9d0-5d5a7e296f13", spec = "question_single", version = "2.1.251" }, { run_id = "005e2315-b9d8-4aaf-88f5-f97d9ca7ae5c", spec = "question_multi_other", version = "2.1.251" }, { run_id = "95f324e0-50e3-4efd-ac35-4f5ab63aa1ec", spec = "interrupt", version = "2.1.251" }, { run_id = "3cdbb155-5ccd-4f75-8408-fd2461465fcb", spec = "mode_cycle", version = "2.1.251" }, { run_id = "b2d96f1c-411d-4880-b20f-9440dfe26ccd", spec = "clear_relink", version = "2.1.251" }, { run_id = "b596554b-34aa-4ab1-8993-3a32fe701143", spec = "plan_request_changes", version = "2.1.251" }, { run_id = "a23c9381-5a4f-48bd-aaa8-b17bd782d290", spec = "question_mixed", version = "2.1.251" }, { run_id = "c7ae93bb-4e4f-4e53-b854-b389ced9884a", spec = "plan_approve", version = "2.1.251" }, { run_id = "0121485f-2a29-4a0f-8f1c-0bd8f39af95b", spec = "compact_relink", version = "2.1.251" }, { run_id = "e6520d5c-8f43-435a-b0d7-a4a6d474aee8", spec = "prompt_multiline", version = "2.1.251" }, { run_id = "2b52643b-2600-4497-9767-181573a20a32", spec = "tools", version = "2.1.251" }, { run_id = "124453e4-924f-48f2-ba80-0c2749a64eb0", spec = "question_tabs", version = "2.1.251" }, { run_id = "b1c8710c-e4df-4c0c-b064-cac42d3a059a", spec = "question_other_single", version = "2.1.251" }, { run_id = "091baf05-239e-4fde-b356-bd6fae1ab002", spec = "plan_auto", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "prompt", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "prompt_multiline", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "tools", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "permission_allow_once", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "permission_allow_scoped", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "permission_deny_feedback", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "plan_approve", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "plan_auto", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "plan_request_changes", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "question_single", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "question_multi_other", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "question_mixed", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "question_tabs", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "question_other_single", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "interrupt", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "mode_cycle", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "compact_relink", version = "2.1.251" }, { run_id = "2ebf7ac7-05b4-469c-a6f8-18e88ff36888", spec = "clear_relink", version = "2.1.251" }]
+
+[intent_programs]
+prompt = "prompt"
+interrupt = "interrupt"
+mode_cycle = "mode_cycle"
+permission = "permission_menu"
+plan = "plan_menu"
+question = "question_form"
+
+[provenance]
+recorded_version = "2.1.228"
+model = "haiku"
+dates = ["2026-08-11", "2026-08-12"]
+specs = [
+    "prompt_multiline",
+    "permission",
+    "permission_session",
+    "permission_deny_feedback",
+    "question_single",
+    "question_tabs",
+    "question_other_single",
+    "question_multi",
+    "question_mixed",
+    "plan_auto",
+    "plan_approve",
+    "plan_reject",
+    "interrupt",
+    "mode_cycle",
+]
+
+[keys]
+escape = [27]
+enter = [13]
+tab = [9]
+space = [32]
+down = [27, 91, 66]
+shift_tab = [27, 91, 90]
+paste_begin = [27, 91, 50, 48, 48, 126]
+paste_end = [27, 91, 50, 48, 49, 126]
+
+[delays]
+after_paste = 400
+after_toggle = 400
+after_move = 300
+after_tab = 800
+after_editor_open = 800
+before_submit = 400
+after_review_open = 1000
+after_deny = 1500
+before_plan_approval = 800
+after_menu_text_open = 800
+after_other_save = 600
+
+[menus.permission.entries]
+allow_once = 1
+allow_scoped = 2
+deny = 3
+
+[menus.plan.entries]
+approve_auto = 1
+approve_manual = 2
+request_changes = 3
+
+[verified_shapes.permission_menu]
+permission_suggestions = [1]
+
+[programs.prompt]
+stability = "stable"
+steps = [
+    { step = "paste", text = "prompt_text" },
+    { step = "delay", delay = "after_paste" },
+    { step = "key", key = "enter" },
+]
+
+[programs.interrupt]
+stability = "stable"
+steps = [{ step = "key", key = "escape" }]
+
+[programs.mode_cycle]
+stability = "stable"
+steps = [{ step = "key", key = "shift_tab" }]
+
+[programs.permission_menu]
+stability = "menu"
+steps = [
+    { step = "digit", digit = { source = "menu_entry", menu = "permission", entry = "allow_once" } },
+    { step = "digit", digit = { source = "suggestion" } },
+    { step = "digit", digit = { source = "menu_entry", menu = "permission", entry = "deny" } },
+    { step = "if", cond = "has_feedback", then = [
+        { step = "delay", delay = "after_deny" },
+        { step = "paste", text = "deny_feedback" },
+        { step = "delay", delay = "after_paste" },
+        { step = "key", key = "enter" },
+    ] },
+]
+
+[programs.plan_menu]
+stability = "menu"
+steps = [
+    { step = "if", cond = "has_feedback", then = [], otherwise = [
+        { step = "delay", delay = "before_plan_approval" },
+    ] },
+    { step = "digit", digit = { source = "menu_entry", menu = "plan", entry = "approve_auto" } },
+    { step = "digit", digit = { source = "menu_entry", menu = "plan", entry = "approve_manual" } },
+    { step = "digit", digit = { source = "menu_entry", menu = "plan", entry = "request_changes" } },
+    { step = "if", cond = "has_feedback", then = [
+        { step = "delay", delay = "after_menu_text_open" },
+        { step = "type", text = "plan_feedback" },
+        { step = "delay", delay = "before_submit" },
+        { step = "key", key = "enter" },
+    ] },
+]
+
+[programs.question_form]
+stability = "menu"
+steps = [
+    { step = "for_each", over = "questions", steps = [
+        { step = "if", cond = "is_first", then = [], otherwise = [
+            { step = "delay", delay = "after_tab" },
+        ] },
+        { step = "if", cond = "multi_select", then = [
+            { step = "for_each", over = "selected_options", steps = [
+                { step = "move_to", row = "selected_option" },
+                { step = "key", key = "space" },
+                { step = "delay", delay = "after_toggle" },
+            ] },
+            { step = "if", cond = "has_other", then = [
+                { step = "move_to", row = "other_row" },
+                { step = "key", key = "enter" },
+                { step = "delay", delay = "after_editor_open" },
+                { step = "type", text = "other_text" },
+                { step = "delay", delay = "before_submit" },
+                { step = "key", key = "enter" },
+                { step = "delay", delay = "after_other_save" },
+                { step = "key", key = "space" },
+                { step = "delay", delay = "after_toggle" },
+            ] },
+            { step = "key", key = "tab" },
+        ], otherwise = [
+            { step = "if", cond = "has_other", then = [
+                { step = "digit", digit = { source = "other_row" } },
+                { step = "delay", delay = "after_editor_open" },
+                { step = "type", text = "other_text" },
+                { step = "delay", delay = "before_submit" },
+                { step = "key", key = "enter" },
+            ], otherwise = [
+                { step = "for_each", over = "selected_options", steps = [
+                    { step = "digit", digit = { source = "selected_option" } },
+                ] },
+            ] },
+        ] },
+    ] },
+    { step = "if", cond = "single_question_single_select", then = [], otherwise = [
+        { step = "if", cond = "last_question_multi", then = [
+            { step = "delay", delay = "after_tab" },
+            { step = "key", key = "enter" },
+            { step = "delay", delay = "after_review_open" },
+            { step = "key", key = "enter" },
+        ], otherwise = [
+            { step = "delay", delay = "after_tab" },
+            { step = "key", key = "enter" },
+        ] },
+    ] },
+]

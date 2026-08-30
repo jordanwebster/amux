@@ -1,6 +1,6 @@
 //! Chapter 7 — The chat feed: prompts, messages, and markers.
 //!
-//! `docs/CHAT.md` B1/B2/B3 against the Phase 0 fixtures. Message identity
+//! `docs/CHAT.md` B1/B2/B3 against the derived provider fixtures. Message identity
 //! rides `message.id` (one content block per row, appended in file order);
 //! finality is FACT on a non-null `stop_reason`; "streaming" is never a
 //! state. Thinking durations are INFERRED from FACT timestamps and never
@@ -35,16 +35,31 @@ fn kind_words(model: &amux_ui::Model, agent: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// The pong fixture stopped at the hook: the prompt is in the feed, the
-/// `hook.stop` pre-signal is recorded, and no turn marker exists — hook
+/// The pong fixture cut at the hook has the prompt in the feed, the
+/// `hook.stop` pre-signal recorded, and no turn marker — hook
 /// rows are arrival-ordered and may precede the transcript tail, so the
 /// marker waits for the `turn_duration` authority (B3).
 #[test]
 fn hook_stop_is_a_presignal_not_a_marker() {
-    let model = fold(chat_feed("fix-auth-bug", "pong"));
-    assert_eq!(kind_words(&model, "fix-auth-bug"), vec!["prompt"]);
+    let model = fold(chat_feed_through(
+        "fix-auth-bug",
+        "pong",
+        ChatAnchor::StopHook(0),
+    ));
+    assert_eq!(
+        kind_words(&model, "fix-auth-bug"),
+        vec!["unrecognized", "unrecognized", "prompt"]
+    );
     let layer = claude_layer(&model, "fix-auth-bug");
     assert!(layer.turn_end_presignal());
+    let unrecognized: Vec<_> = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Unrecognized(row) => row.row_type.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(unrecognized, vec!["atis-latch", "bridge-session"]);
     let prompt = layer
         .entries()
         .find_map(|entry| match &entry.kind {
@@ -52,31 +67,39 @@ fn hook_stop_is_a_presignal_not_a_marker() {
             _ => None,
         })
         .expect("the prompt entry");
-    assert_eq!(prompt.text, "Reply with exactly PONG and nothing else.");
+    assert_eq!(
+        prompt.text,
+        "Reply exactly PTY_SPEC_PROMPT_OK and nothing else."
+    );
     assert_eq!(prompt.source, PromptSource::Typed);
     assert!(prompt.prompt_id.is_some(), "Phase 3's reconciliation key");
 }
 
-/// The permission fixture, walked whole: two turns — an allowed Bash run
-/// closed by the `turn_duration` authority, then a denied one closed by
-/// interrupt with the authority reconciling the inferred marker in place.
+/// The permission recordings preserve the allowed and denied runs as
+/// separate provider specifications.
 #[test]
-fn the_permission_fixture_folds_to_the_documented_feed() {
-    let model = fold(chat_feed("fix-auth-bug", "permission"));
+fn the_permission_fixtures_fold_to_the_documented_feed() {
+    let allowed = fold(chat_feed("fix-auth-bug", "permission"));
     assert_eq!(
-        kind_words(&model, "fix-auth-bug"),
+        kind_words(&allowed, "fix-auth-bug"),
+        vec!["unrecognized", "unrecognized", "prompt", "thinking", "tool",]
+    );
+
+    let denied = fold(chat_feed_through(
+        "fix-auth-bug",
+        "permission_deny_feedback",
+        ChatAnchor::TurnDuration(0),
+    ));
+    assert_eq!(
+        kind_words(&denied, "fix-auth-bug"),
         vec![
-            "prompt",       // Use the Bash tool… allowed.txt
-            "thinking",     // ~ thought for 3.8s
-            "tool",         // ✔ Bash echo allowed-probe…
-            "thinking",     // ~ thought for 2.6s
-            "message",      // final text, end_turn
-            "turn",         // ─ turn · 7.5s (measured)
-            "prompt",       // Use the Bash tool… denied.txt
-            "thinking",     // ~ thought for 2.2s
-            "tool",         // ✗ Bash echo denied-probe… (denied)
-            "interruption", // [Request interrupted by user for tool use]
-            "turn",         // measured 4.2s — reconciled over the inferred marker
+            "unrecognized",
+            "unrecognized",
+            "prompt",
+            "thinking",
+            "tool",
+            "interruption",
+            "turn",
         ]
     );
 }
@@ -85,7 +108,7 @@ fn the_permission_fixture_folds_to_the_documented_feed() {
 /// file order, and finality is the FACT on the rows' `stop_reason` (B2).
 #[test]
 fn messages_upsert_by_message_id_and_finalize_on_stop_reason() {
-    let model = fold(chat_feed("fix-auth-bug", "permission"));
+    let model = fold(chat_feed("fix-auth-bug", "pong"));
     let layer = claude_layer(&model, "fix-auth-bug");
     let messages: Vec<_> = layer
         .entries()
@@ -96,7 +119,7 @@ fn messages_upsert_by_message_id_and_finalize_on_stop_reason() {
         .collect();
     assert_eq!(messages.len(), 1, "one text-bearing message in the fixture");
     let message = messages[0];
-    assert_eq!(message.message_id, "msg_011CdwkZYnEDMwi2xkEr5nxn");
+    assert_eq!(message.message_id, "msg_011CeYPVJFBzDZ8nZKGiLhSm");
     assert_eq!(message.segments.len(), 1);
     assert!(!message.segments[0].is_empty());
     assert_eq!(
@@ -104,6 +127,72 @@ fn messages_upsert_by_message_id_and_finalize_on_stop_reason() {
         MessageFinality::Final {
             stop_reason: "end_turn".to_string()
         }
+    );
+}
+
+/// A null-stop message flushed before an interrupt is final-as-interrupted,
+/// paired by `interruptedMessageId` rather than arrival guesswork
+/// (docs/CHAT.md B2/B8).
+#[test]
+fn a_mid_generation_interrupt_closes_its_flushed_message() {
+    let prompt = review_row(
+        0x7100,
+        "2026-08-11T22:00:00.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": "begin"},
+            "origin": {"kind": "human"},
+            "promptSource": "typed"
+        }),
+    );
+    let partial = review_row(
+        0x7101,
+        "2026-08-11T22:00:01.000Z",
+        json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_interrupted",
+                "role": "assistant",
+                "stop_reason": null,
+                "content": [{"type": "text", "text": "partial answer"}]
+            }
+        }),
+    );
+    let interrupt = review_row(
+        0x7102,
+        "2026-08-11T22:00:02.000Z",
+        json!({
+            "type": "user",
+            "interruptedMessageId": "msg_interrupted",
+            "message": {"role": "user", "content": [
+                {"type": "text", "text": "[Request interrupted by user]"}
+            ]}
+        }),
+    );
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch("fix-auth-bug", 10, vec![prompt, partial, interrupt])],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let message = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Message(message) => Some(message),
+            _ => None,
+        })
+        .expect("the flushed partial message");
+    assert_eq!(message.message_id, "msg_interrupted");
+    assert_eq!(message.finality, MessageFinality::Interrupted);
+    let interruption = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Interruption(interruption) => Some(interruption),
+            _ => None,
+        })
+        .expect("the paired interruption");
+    assert_eq!(
+        interruption.interrupted_message_id.as_deref(),
+        Some("msg_interrupted")
     );
 }
 
@@ -121,14 +210,100 @@ fn thinking_durations_come_from_the_timestamp_chain() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        durations,
-        vec![
-            Some(3835), // prompt 22:29:42.123 → thinking 22:29:45.958
-            Some(2621), // tool_result 48.434 → thinking 51.055
-            Some(2206), // prompt 51.624 → thinking 53.830
-        ]
+    assert_eq!(durations, vec![Some(1703)]);
+}
+
+/// The previous-row timestamp chain includes rows that render as other entry
+/// kinds: a tool result and the next human prompt each become the base for the
+/// following thinking marker (docs/CHAT.md B3).
+#[test]
+fn thinking_durations_chain_through_tool_results_and_following_prompts() {
+    let prompt = review_row(
+        0x7200,
+        "2026-08-11T22:00:00.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": "first"},
+            "origin": {"kind": "human"},
+            "promptSource": "typed"
+        }),
     );
+    let first_thinking = review_row(
+        0x7201,
+        "2026-08-11T22:00:01.000Z",
+        json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_thinking_1", "role": "assistant", "stop_reason": null,
+                "content": [{"type": "thinking", "thinking": "one"}]
+            }
+        }),
+    );
+    let tool_result = review_row(
+        0x7202,
+        "2026-08-11T22:00:03.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_chain", "content": "done"}
+            ]}
+        }),
+    );
+    let second_thinking = review_row(
+        0x7203,
+        "2026-08-11T22:00:05.000Z",
+        json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_thinking_2", "role": "assistant", "stop_reason": null,
+                "content": [{"type": "thinking", "thinking": "two"}]
+            }
+        }),
+    );
+    let next_prompt = review_row(
+        0x7204,
+        "2026-08-11T22:00:08.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": "second"},
+            "origin": {"kind": "human"},
+            "promptSource": "typed"
+        }),
+    );
+    let third_thinking = review_row(
+        0x7205,
+        "2026-08-11T22:00:11.000Z",
+        json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_thinking_3", "role": "assistant", "stop_reason": "end_turn",
+                "content": [{"type": "thinking", "thinking": "three"}]
+            }
+        }),
+    );
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                prompt,
+                first_thinking,
+                tool_result,
+                second_thinking,
+                next_prompt,
+                third_thinking,
+            ],
+        )],
+    ]));
+    let durations: Vec<_> = claude_layer(&model, "fix-auth-bug")
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Thinking(thinking) => Some(thinking.duration_ms),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(durations, vec![Some(1000), Some(2000), Some(3000)]);
 }
 
 /// The turn authority carries the wall-time-verified duration and the
@@ -136,7 +311,7 @@ fn thinking_durations_come_from_the_timestamp_chain() {
 /// lands.
 #[test]
 fn turn_duration_is_the_authority() {
-    let model = fold(chat_feed("fix-auth-bug", "permission"));
+    let model = fold(chat_feed("fix-auth-bug", "pong"));
     let layer = claude_layer(&model, "fix-auth-bug");
     let turns: Vec<_> = layer
         .entries()
@@ -145,35 +320,30 @@ fn turn_duration_is_the_authority() {
             _ => None,
         })
         .collect();
-    assert_eq!(turns.len(), 2);
-    assert_eq!(turns[0].duration, TurnDuration::Measured { ms: 7483 });
-    assert_eq!(turns[0].message_count, Some(11));
-    // The denied turn ended by interrupt; the inferred elapsed marker was
-    // reconciled in place when the authority arrived two rows later.
-    assert_eq!(turns[1].duration, TurnDuration::Measured { ms: 4172 });
-    assert_eq!(turns[1].message_count, Some(17));
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].duration, TurnDuration::Measured { ms: 1292 });
+    assert_eq!(turns[0].message_count, Some(9));
     assert!(!layer.turn_end_presignal());
 }
 
-/// A mid-generation interrupt: the flushed null-`stop_reason` message is
-/// closed as interrupted — FACT-paired via `interruptedMessageId` — and
-/// the turn marker shows elapsed-from-prompt, tagged inferred (B2/B3/§17).
+/// A mid-generation tool interrupt records the interrupted tool request and
+/// the turn marker shows elapsed-from-prompt, tagged inferred (B3/§17).
 #[test]
-fn an_interrupt_closes_the_flushed_message_and_infers_the_turn() {
+fn an_interrupt_closes_the_tool_request_and_infers_the_turn() {
     let model = fold(chat_feed("fix-auth-bug", "interrupt"));
     assert_eq!(
         kind_words(&model, "fix-auth-bug"),
-        vec!["prompt", "thinking", "message", "interruption", "turn"]
+        vec![
+            "unrecognized",
+            "unrecognized",
+            "prompt",
+            "thinking",
+            "tool",
+            "interruption",
+            "turn",
+        ]
     );
     let layer = claude_layer(&model, "fix-auth-bug");
-    let message = layer
-        .entries()
-        .find_map(|entry| match &entry.kind {
-            FeedEntryKind::Message(message) => Some(message),
-            _ => None,
-        })
-        .expect("the flushed message");
-    assert_eq!(message.finality, MessageFinality::Interrupted);
     let interruption = layer
         .entries()
         .find_map(|entry| match &entry.kind {
@@ -183,7 +353,7 @@ fn an_interrupt_closes_the_flushed_message_and_infers_the_turn() {
         .expect("the interruption entry");
     assert_eq!(
         interruption.interrupted_message_id.as_deref(),
-        Some("msg_011CdwkbJ3WwiT2t3eeb7i5M")
+        Some("msg_011CeYTfdzqBFAHSu3UajiAB")
     );
     let turn = layer
         .entries()
@@ -194,12 +364,12 @@ fn an_interrupt_closes_the_flushed_message_and_infers_the_turn() {
         .expect("the inferred turn marker");
     assert_eq!(
         turn.duration,
-        TurnDuration::SincePrompt { ms: 6263 },
-        "18.577 − 12.314, elapsed from the prompt row"
+        TurnDuration::SincePrompt { ms: 4007 },
+        "08.076 − 04.069, elapsed from the prompt row"
     );
 }
 
-/// The compact fixture end to end: two measured turns, the typed `/compact`
+/// The compact fixture end to end: four measured turns, the typed `/compact`
 /// as a bare prompt (no origin — never a turn start), the boundary with its
 /// FACT token counts, and the transcript-only summary. Meta and
 /// local-command records fold to session bookkeeping, not entries.
@@ -209,6 +379,16 @@ fn compaction_folds_to_boundary_plus_summary() {
     assert_eq!(
         kind_words(&model, "fix-auth-bug"),
         vec![
+            "unrecognized",
+            "unrecognized",
+            "prompt",
+            "thinking",
+            "message",
+            "turn",
+            "prompt",
+            "thinking",
+            "message",
+            "turn",
             "prompt",
             "thinking",
             "message",
@@ -229,7 +409,7 @@ fn compaction_folds_to_boundary_plus_summary() {
             FeedEntryKind::Prompt(prompt) => Some(prompt),
             _ => None,
         })
-        .nth(2)
+        .nth(4)
         .expect("the /compact record");
     assert_eq!(bare.text, "/compact");
     assert_eq!(bare.source, PromptSource::Unstated);
@@ -241,8 +421,8 @@ fn compaction_folds_to_boundary_plus_summary() {
         })
         .expect("the boundary");
     assert_eq!(compaction.trigger.as_deref(), Some("manual"));
-    assert_eq!(compaction.pre_tokens, Some(31641));
-    assert_eq!(compaction.post_tokens, Some(1795));
+    assert_eq!(compaction.pre_tokens, Some(34695));
+    assert_eq!(compaction.post_tokens, Some(2587));
 }
 
 /// Durations are never computed across a compaction (B3): a thinking row
@@ -367,15 +547,14 @@ fn abandoned_closure_yields_to_a_late_finality_fact() {
 #[test]
 fn an_unpaired_tool_in_a_final_message_is_pending_until_the_result() {
     let mut msgs = chat_base("fix-auth-bug");
-    let rows = chat_rows("question_single");
-    let (before, after) = rows.split_at(10); // split before the tool_result row
+    let before = chat_rows_before("question_single", ChatAnchor::ToolResult(0));
     assert!(
         before
             .iter()
             .rev()
             .all(|row| row["message"]["content"][0]["type"] != "tool_result")
     );
-    msgs.push(batch("fix-auth-bug", 10, before.to_vec()));
+    msgs.push(batch("fix-auth-bug", 10, before));
     let model = fold(msgs.clone());
     let layer = claude_layer(&model, "fix-auth-bug");
     let tool = layer
@@ -388,7 +567,11 @@ fn an_unpaired_tool_in_a_final_message_is_pending_until_the_result() {
     assert_eq!(tool.outcome, ToolOutcome::Pending);
     assert!(tool.message_final, "renders as running, not streaming");
 
-    msgs.push(batch("fix-auth-bug", 20, after.to_vec()));
+    msgs.push(batch(
+        "fix-auth-bug",
+        20,
+        vec![chat_row("question_single", ChatAnchor::ToolResult(0))],
+    ));
     let model = fold(msgs);
     let layer = claude_layer(&model, "fix-auth-bug");
     let tool = layer
@@ -404,15 +587,15 @@ fn an_unpaired_tool_in_a_final_message_is_pending_until_the_result() {
 
 /// Session-state rows fold as latest-wins facts, never feed entries: the
 /// permission mode (D4's source of truth), the generated title, and the
-/// 2.1.228 `agent-name` row.
+/// `agent-name` row.
 #[test]
 fn session_state_rows_fold_to_latest_wins_facts() {
-    let model = fold(chat_feed("fix-auth-bug", "plan_approve"));
+    let model = fold(chat_feed("fix-auth-bug", "plan_auto"));
     let layer = claude_layer(&model, "fix-auth-bug");
     assert_eq!(layer.session().permission_mode.as_deref(), Some("plan"));
     assert_eq!(
         layer.session().agent_name.as_deref(),
-        Some("add-readme-config-documentation")
+        Some("update-readme-content")
     );
     assert!(layer.session().ai_title.is_some());
 
@@ -424,6 +607,31 @@ fn session_state_rows_fold_to_latest_wins_facts() {
             .as_deref(),
         Some("bypassPermissions")
     );
+}
+
+/// PreToolUse and PostToolUse duplicate the transcript's typed tool blocks.
+/// They never add a second tool or an unrecognized feed entry
+/// (docs/CHAT.md §The feed).
+#[test]
+fn tool_lifecycle_hooks_are_known_session_fact_rows() {
+    let rows = chat_rows("tools");
+    for row_type in ["hook.pre_tool_use", "hook.post_tool_use"] {
+        assert!(
+            rows.iter().any(|row| row["type"] == row_type),
+            "the provider fixture exercises {row_type}"
+        );
+    }
+
+    let model = fold(chat_feed("fix-auth-bug", "tools"));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let unrecognized: Vec<_> = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Unrecognized(row) => row.row_type.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(unrecognized, vec!["atis-latch", "bridge-session"]);
 }
 
 const REVIEW_SESSION: &str = "22222222-2222-4222-8222-222222222222";

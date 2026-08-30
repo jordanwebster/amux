@@ -300,6 +300,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     /// registration, ensuring atomicity with `write()` and `close()`.
     ///
     /// Returns `None` if the buffer has been closed.
+    #[allow(dead_code)]
     pub(crate) async fn subscribe(&self) -> Option<BroadcastReader<P>> {
         self.subscribe_filtered(P::Filter::default(), |_| ())
             .await
