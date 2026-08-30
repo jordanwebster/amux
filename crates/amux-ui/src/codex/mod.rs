@@ -152,6 +152,9 @@ pub struct AgentMessageEntry {
     pub delivery: Option<String>,
 }
 
+/// Clients aggregate these per-server statuses themselves today. When two
+/// clients need the same counts, add a counts projection beside this type
+/// instead of writing a second aggregation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpStartupEntry {
     pub servers: BTreeMap<String, McpServerStartup>,

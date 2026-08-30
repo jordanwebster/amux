@@ -285,6 +285,10 @@ impl AgentCard {
     /// rows (A3: they open in chat only) state `read-only` as their
     /// resting word — an inventory fact, more informative than idle/`–` —
     /// while live attention words still win over it.
+    ///
+    /// Keeping these words in the Model is a deliberate exception while the
+    /// terminal fleet is their only consumer. When a second consumer needs
+    /// status labels, precedence stays here and each renderer owns its words.
     pub(crate) fn status_label(&self, attention: Attention) -> String {
         match (&attention, &self.phase) {
             (_, AgentPhase::Exited { exit_code }) => match exit_code {
@@ -547,6 +551,10 @@ pub struct FamilyMember<'a> {
 /// asking that layer for it under the child's id — so the parent's chat
 /// decides where the ask is drawn while the child's layer decides what it
 /// looks like, and answering from either place is the same act.
+///
+/// The one-line ask detail is renderer wording while only one surface draws
+/// family banners. When a second surface draws them, add a typed per-agent ask
+/// digest so two banners cannot describe the same ask differently.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FamilyNeed<'a> {
     pub card: &'a AgentCard,

@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-30 — **Sited the triggers for three deliberate presentation splits.**
+The status label, Codex MCP startup facts, and family need projection now each
+state when another consumer should split shared precedence from renderer words
+or promote shared typed counts and ask digests. The comments keep current
+single-consumer choices explicit without pre-building unused projections.
+
 2026-08-30 — **Specified the typed-fact boundary for every amux client.**
 The UI specification now distinguishes renderer-independent fact recovery
 from medium and interaction policy, including lazy projections, raw fact
