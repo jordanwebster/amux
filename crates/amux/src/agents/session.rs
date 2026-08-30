@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 #[cfg(any(debug_assertions, test))]
 use super::TestAgentSession;
-use super::claude::{ClaudeSession, ClaudeVersionCache};
+use super::claude::{ClaudeSdkBackend, ClaudeSession, ClaudeVersionCache};
 #[cfg(unix)]
 use super::codex::{CodexBackend, CodexClient, CodexRawPtyTarget};
 use super::types::SpawnInheritance;
@@ -131,6 +131,10 @@ pub(crate) enum StructuredInputEvent {
     ClaudePty {
         client_seq: u64,
         payload: Value,
+    },
+    ClaudeSdk {
+        input_id: Vec<u8>,
+        input: super::claude::sdk_io::ClaudeSdkV1Input,
     },
     #[cfg(unix)]
     Codex {
@@ -402,7 +406,10 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
         ))),
         AgentType::Claude {
             driver: ClaudeDriver::Sdk,
-        } => Err(anyhow::anyhow!("Claude SDK agents are not implemented yet")),
+        } => Ok(Box::new(ClaudeSdkBackend::new(
+            req,
+            deps.mcp_launch_route.clone(),
+        ))),
         #[cfg(unix)]
         AgentType::Codex { .. } => Ok(Box::new(CodexBackend::new(
             req,
@@ -446,15 +453,24 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 parent,
                 initial_prompt: None,
             };
-            Box::new(ClaudeSession::from_suspended(
-                &req,
-                name_source.into(),
-                session_id,
-                created_at,
-                deps.runtime_dir.clone(),
-                deps.claude_version_cache.clone(),
-                deps.mcp_launch_route.clone(),
-            ))
+            match driver {
+                ClaudeDriver::Pty => Box::new(ClaudeSession::from_suspended(
+                    &req,
+                    name_source.into(),
+                    session_id,
+                    created_at,
+                    deps.runtime_dir.clone(),
+                    deps.claude_version_cache.clone(),
+                    deps.mcp_launch_route.clone(),
+                )),
+                ClaudeDriver::Sdk => Box::new(ClaudeSdkBackend::from_suspended(
+                    &req,
+                    name_source.into(),
+                    session_id,
+                    created_at,
+                    deps.mcp_launch_route.clone(),
+                )),
+            }
         }
         #[cfg(unix)]
         SuspendedAgent::Codex {

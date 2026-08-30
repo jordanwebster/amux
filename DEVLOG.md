@@ -5380,3 +5380,11 @@ executable claims drive the crate's owned event stream, answer permission,
 hook, elicitation and dialog requests through its control handle, and finish
 under strict multi-transport replay. The crate also owns SDK registry listing,
 recording and drift probing plus the standalone hook socket forwarder.
+
+2026-08-30 — **Hosted Claude SDK sessions through the canonical provider.** The
+daemon now gives each stream-JSON process an owned session id, ingests provider
+events into the sequenced `claude_sdk_v1` log, tracks permission requests until
+typed input resolves them, and forwards prompts and interrupts through the
+provider control handle. Hook, elicitation and user-dialog requests remain
+observable while receiving the documented non-interactive defaults, and the
+SDK path has no transcript-file dependency.

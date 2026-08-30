@@ -356,8 +356,8 @@ pub(super) async fn send_session_input(
             send_structured_session_input(host, request.agent_id, request.event).await
         }
         Protocol::ClaudeSdkV1 => {
-            let _target = structured_input_target(host, request.agent_id, request.protocol).await?;
-            let SessionInputEvent::Input { payload, .. } = request.event else {
+            let target = structured_input_target(host, request.agent_id, request.protocol).await?;
+            let SessionInputEvent::Input { input_id, payload } = request.event else {
                 return Err(ProtocolError::InvalidArgument {
                     message: format!(
                         "`{}` does not accept SendInput control events",
@@ -365,10 +365,10 @@ pub(super) async fn send_session_input(
                     ),
                 });
             };
-            let _input = claude_sdk_io::decode_claude_sdk_v1_input(&payload)?;
-            Err(ProtocolError::Unimplemented {
-                message: "Claude SDK input is not implemented yet".to_string(),
-            })
+            let input = claude_sdk_io::decode_claude_sdk_v1_input(&payload)?;
+            target
+                .send(StructuredInputEvent::ClaudeSdk { input_id, input })
+                .await
         }
         Protocol::CodexSdkV1 => {
             let SessionInputEvent::Input { input_id, payload } = request.event else {
