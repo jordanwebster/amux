@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Pinned the remaining byte-contract files to LF.** Sweeping
+the whole suite against a simulated Windows checkout — rather than
+discovering one failure per CI round — surfaced three more: the Claude PTY,
+Claude SDK, and Codex replay recordings all refuse to load because each
+manifest stores a digest of the recording beside it, and translated line
+endings invalidate every hash. These are byte-contracts in the same sense
+the golden frames already were, so they join them in `.gitattributes`,
+along with the baked keymaps, which are embedded verbatim and hashed into
+the keymap identity. The keymap walk still tolerates CRLF, because a user
+may hand the CLI a keymap they wrote themselves on Windows; the pin only
+settles what the repo ships.
+
 2026-08-31 — **Made the CRLF keymap case terminator-agnostic.** The case
 added with the ledger fix converted the baked keymap's LF to CRLF, but the
 baked file's own terminators follow the checkout, so on Windows it doubled
