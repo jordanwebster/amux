@@ -35,6 +35,12 @@ run = "cargo clippy --workspace --all-targets --features amux/testnet -- -D warn
 [task.spec]
 run = "scripts/spec-test.sh"
 
+# Regenerates the committed protobuf code (crates/amux/src/protocol/generated)
+# after a proto change. Not a build step: the output is committed, and CI
+# fails when it goes stale.
+[task.protobuf]
+run = "cargo run -p xtask -- codegen"
+
 [task.e2e]
 run = "timeout 900 cargo run -p e2e-runner -- run"
 needs = ["build"]

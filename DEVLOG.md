@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Moved protobuf codegen out of build.rs into committed
+source.** The build script generated `amux.v1.rs` into `OUT_DIR` from
+workspace-local protos, which made the generated API invisible to git,
+review, and every build cache — and, under a shared Cargo build directory,
+let two worktrees overwrite each other's generation (the wt build-cache
+corruption diagnosed on 2026-08-30). The generated code and descriptor set
+now live in `crates/amux/src/protocol/generated/` as ordinary tracked
+files; `cargo run -p xtask -- codegen` (also `wt run protobuf`) regenerates
+them with the same vendored protoc and `build_transport(false)` settings
+the build script used, and a CI job regenerates and fails on any
+difference, so the committed output cannot drift from the protos. build.rs
+is gone, which also drops protoc from every build — CI, release, and
+mobile builders included. The `.rs` is pinned to LF and the `.bin` marked
+binary in `.gitattributes`, joining the other byte-contract files.
+
 2026-08-31 — **Pinned the remaining byte-contract files to LF.** Sweeping
 the whole suite against a simulated Windows checkout — rather than
 discovering one failure per CI round — surfaced three more: the Claude PTY,

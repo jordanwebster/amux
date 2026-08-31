@@ -104,7 +104,3 @@ name = "claude_sdk_live"
 path = "tests/claude_sdk_live.rs"
 harness = false
 
-[build-dependencies]
-prost-build = { workspace = true }
-tonic-prost-build = { workspace = true }
-protoc-bin-vendored = { workspace = true }

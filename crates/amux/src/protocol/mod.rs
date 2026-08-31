@@ -11,7 +11,10 @@ pub(crate) mod amux {
         // The generated `Agent` oneof gained a third variant (`Codex`), which
         // trips `enum_variant_names` on prost's `TestAgent` variant name.
         #![allow(dead_code, clippy::enum_variant_names)]
-        include!(concat!(env!("OUT_DIR"), "/amux.v1.rs"));
+        // Committed codegen, not a build artifact: regenerate with
+        // `cargo run -p xtask -- codegen` after editing the protos.
+        // CI fails if this file is stale.
+        include!("generated/amux.v1.rs");
     }
 }
 
@@ -31,7 +34,7 @@ pub(crate) mod wire {
 }
 
 #[cfg(test)]
-pub(crate) const DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/amux.v1.bin"));
+pub(crate) const DESCRIPTOR_SET: &[u8] = include_bytes!("generated/amux.v1.bin");
 
 #[cfg(test)]
 mod tests {

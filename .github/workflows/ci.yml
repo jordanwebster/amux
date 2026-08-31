@@ -33,6 +33,24 @@ jobs:
       - name: Check formatting
         run: cargo +nightly fmt --all -- --check
 
+  codegen:
+    name: Protobuf codegen is current
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Regenerate committed protobuf code
+        run: cargo run -p xtask -- codegen
+      - name: Committed output matches the protos
+        run: |
+          if [ -n "$(git status --porcelain crates/amux/src/protocol/generated)" ]; then
+            git --no-pager diff -- crates/amux/src/protocol/generated
+            echo "::error::committed protobuf codegen is stale; run 'cargo run -p xtask -- codegen' and commit the result"
+            exit 1
+          fi
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

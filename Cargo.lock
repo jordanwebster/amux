@@ -44,9 +44,7 @@ dependencies = [
  "nix 0.31.3",
  "oauth2",
  "prost",
- "prost-build",
  "prost-types",
- "protoc-bin-vendored",
  "pty-host",
  "rcgen",
  "replay-support",
@@ -67,7 +65,6 @@ dependencies = [
  "tokio-tungstenite",
  "tonic",
  "tonic-prost",
- "tonic-prost-build",
  "tower",
  "tracing",
  "uuid",
@@ -4158,6 +4155,14 @@ dependencies = [
  "rusticata-macros",
  "thiserror 2.0.20",
  "time",
+]
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "protoc-bin-vendored",
+ "tonic-prost-build",
 ]
 
 [[package]]

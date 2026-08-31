@@ -1,8 +1,10 @@
 // amux protocol vNext.
 //
-// This file is the canonical protobuf source. Generated Rust types are included
-// from crates/amux/src/protocol/mod.rs and must be wrapped in domain types
-// before being used by application code.
+// This file is the canonical protobuf source. Generated Rust types are
+// committed under crates/amux/src/protocol/generated/ — regenerate with
+// `cargo run -p xtask -- codegen` after editing any proto here (CI fails on
+// stale output) — and must be wrapped in domain types before being used by
+// application code.
 //
 // The amux runtime uses gRPC services for application calls.
 // Host-to-host links use LinkService.Connect, whose bidi stream carries the
