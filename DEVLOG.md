@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Made the CRLF keymap case terminator-agnostic.** The case
+added with the ledger fix converted the baked keymap's LF to CRLF, but the
+baked file's own terminators follow the checkout, so on Windows it doubled
+them into `\r\r\n` and authored a file no editor produces. It now
+normalizes to LF first and asserts it never doubles. The production fix
+itself was already proven on that run: the pre-existing install case passed
+on Windows for the first time.
+
 2026-08-31 — **Fixed a real Windows bug hiding behind the CI failures.**
 Installing a user keymap strips the inherited verification ledger by
 replacing that line in place, and it located the line by walking

@@ -244,7 +244,12 @@ mod tests {
         // replaced in place, leaving exactly one `verified` key in the root.
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("override.toml");
-        std::fs::write(&input, BAKED.replace('\n', "\r\n")).unwrap();
+        // The baked file's own terminators follow the checkout, so normalize to
+        // LF before converting; doubling them would author a file no editor
+        // produces and TOML rejects outright.
+        let crlf = BAKED.replace("\r\n", "\n").replace('\n', "\r\n");
+        assert!(!crlf.contains("\r\r"));
+        std::fs::write(&input, &crlf).unwrap();
 
         add_keymap(dir.path(), &input).unwrap();
 
