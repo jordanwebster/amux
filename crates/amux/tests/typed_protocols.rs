@@ -62,6 +62,10 @@ async fn every_exposed_provider_protocol_opens_in_process() {
             },
             Protocol::ClaudeSdkV1,
         ),
+        // Codex is hosted by a unix-only backend, so its protocol surface is
+        // advertised everywhere but can only be opened in process where that
+        // backend exists.
+        #[cfg(unix)]
         (AgentKind::Codex, Protocol::CodexSdkV1),
     ] {
         open_in_process_plane(kind, protocol)

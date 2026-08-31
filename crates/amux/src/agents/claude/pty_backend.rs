@@ -936,10 +936,9 @@ impl NameState {
                 .get("agentName")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-        } else if let Some(slug) = value.get("slug").and_then(Value::as_str) {
-            self.slug = Some(slug.to_string());
         } else {
-            return None;
+            let slug = value.get("slug").and_then(Value::as_str)?;
+            self.slug = Some(slug.to_string());
         }
         let candidate = self
             .agent

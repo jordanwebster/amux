@@ -4,6 +4,26 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Finished the CI repair against the toolchain CI actually
+runs.** The first repair pass was verified on a local stable that trailed
+the runners by four releases, so a lint that only exists in the newer
+compiler went unseen, and the Windows-only test failure was never reached
+because the build had already died earlier. Two faults remained. The Claude
+PTY name observer expressed an early return through an `else` arm, which
+the newer clippy requires be written with `?`. The typed-protocol
+exhaustiveness test asserted that every advertised provider protocol opens
+in process, but Codex is hosted by a unix-only backend: its protocol
+surface is advertised on every platform while only unix can open it, so
+that one case is now gated to unix and the invariant still holds wherever
+Codex exists.
+
+The local stable and nightly toolchains were updated to match the runners,
+which is what makes the lint checks meaningful. Cross-checking the
+workspace against the Windows MSVC target from macOS is not possible —
+`ring` compiles C that needs the MSVC headers — so Windows coverage comes
+from per-crate checks of the crates that avoid `ring` plus the runner
+itself.
+
 2026-08-31 — **Restored a green CI run.** Four independent breakages had
 accumulated across the last three merges to main. The Claude history walk
 now expresses its parent chain as a `while let`, which the linter demands
