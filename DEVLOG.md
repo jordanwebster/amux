@@ -4,6 +4,23 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-31 — **Fixed a real Windows bug hiding behind the CI failures.**
+Installing a user keymap strips the inherited verification ledger by
+replacing that line in place, and it located the line by walking
+`str::lines()` while advancing one byte per terminator. `lines()` discards
+the terminator, so it cannot report how many bytes it consumed; a CRLF file
+drifted the replacement window one byte per preceding line. The window then
+landed on the previous line's terminator, the real ledger survived
+untouched, and a second `verified` key appeared ahead of it, which TOML
+rejects. The baked keymap is not pinned to LF in `.gitattributes` — only
+the golden frames and CLI fixtures are — so Windows checkouts hit this
+every time, and any Windows author would have hit it with their own file.
+
+The walk now reads raw bytes and keeps the true terminator length. A CRLF
+case covers it on every platform rather than only where CRLF is the
+default; it reproduces the original parse error against the old walk. No
+other line-offset arithmetic in the workspace shares the assumption.
+
 2026-08-31 — **Finished the CI repair against the toolchain CI actually
 runs.** The first repair pass was verified on a local stable that trailed
 the runners by four releases, so a lint that only exists in the newer

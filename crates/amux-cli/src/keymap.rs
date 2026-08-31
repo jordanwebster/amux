@@ -102,28 +102,31 @@ fn add_keymap(data_dir: &Path, input: &Path) -> Result<String> {
     ))
 }
 
+// Walks the raw bytes rather than `str::lines()`, which discards the line
+// terminator and so cannot say how many bytes it consumed. A keymap authored on
+// Windows arrives with CRLF, and assuming a one-byte terminator drifts the
+// replacement window one byte per preceding line: the real ledger survives and a
+// second `verified` key appears ahead of it, which TOML then rejects.
 fn strip_inherited_verification(contents: &str) -> Option<String> {
-    let start = contents
-        .lines()
-        .take_while(|line| !line.trim_start().starts_with('['))
-        .scan(0, |offset, line| {
-            let line_start = *offset;
-            *offset += line.len() + 1;
-            Some((line_start, line))
-        })
-        .find_map(|(offset, line)| {
-            line.trim_start()
-                .starts_with("verified =")
-                .then_some(offset)
-        })?;
-    let end = contents[start..]
-        .find('\n')
-        .map_or(contents.len(), |offset| start + offset);
-    let indentation =
-        &contents[start..][..contents[start..].len() - contents[start..].trim_start().len()];
-    let mut stripped = contents.to_owned();
-    stripped.replace_range(start..end, &format!("{indentation}verified = []"));
-    Some(stripped)
+    let mut offset = 0;
+    while offset < contents.len() {
+        let rest = &contents[offset..];
+        let line = &rest[..rest.find('\n').map_or(rest.len(), |index| index + 1)];
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            // A section header ends the document root, where the ledger lives.
+            return None;
+        }
+        if trimmed.starts_with("verified =") {
+            let indentation = &line[..line.len() - trimmed.len()];
+            let value_end = offset + line.trim_end_matches(['\r', '\n']).len();
+            let mut stripped = contents.to_owned();
+            stripped.replace_range(offset..value_end, &format!("{indentation}verified = []"));
+            return Some(stripped);
+        }
+        offset += line.len();
+    }
+    None
 }
 
 fn remove_keymap(data_dir: &Path, name: &str) -> Result<String> {
@@ -233,6 +236,22 @@ mod tests {
             "Removed keymap claude-2.1"
         );
         assert!(!installed.exists());
+    }
+
+    #[test]
+    fn keymap_add_strips_the_inherited_ledger_from_a_crlf_authored_file() {
+        // Windows checkouts and editors hand us CRLF. The ledger must still be
+        // replaced in place, leaving exactly one `verified` key in the root.
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("override.toml");
+        std::fs::write(&input, BAKED.replace('\n', "\r\n")).unwrap();
+
+        add_keymap(dir.path(), &input).unwrap();
+
+        let installed =
+            std::fs::read_to_string(keymap_dir(dir.path()).join("claude-2.1.toml")).unwrap();
+        assert!(installed.contains("verified = []"));
+        assert_eq!(installed.matches("verified =").count(), 1);
     }
 
     #[test]
