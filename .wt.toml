@@ -6,17 +6,17 @@ bin = ["target/debug"]
 commands = ["amux"]
 
 [env]
-AMUX_CONFIG = "${root()}/.wt/amux/config.yaml"
-AMUX_LOG = "${root()}/.wt/amux/amux.log"
+AMUX_CONFIG = "{{root()}}/.wt/amux/config.yaml"
+AMUX_LOG = "{{root()}}/.wt/amux/amux.log"
 AMUX_INVARIANT_FATAL = "1"
 
 [files.".wt/amux/config.yaml"]
 marker = "#"
 content = """
-host_name: ${name_short()}
-socket_path: ${root()}/.wt/amux/amux.sock
-state_path: ${root()}/.wt/amux/state/state.yaml
-data_dir: ${root()}/.wt/amux/data
+host_name: {{name_short()}}
+socket_path: {{root()}}/.wt/amux/amux.sock
+state_path: {{root()}}/.wt/amux/state/state.yaml
+data_dir: {{root()}}/.wt/amux/data
 enable_cloud_mode: false
 prevent_idle_sleep: false
 """
@@ -48,7 +48,7 @@ needs = ["build"]
 # This checkout's daemon. A resource: `wt remove` stops it.
 [task.daemon]
 tied_to = "tree"
-name = "${name_short()}"
+name = "{{name_short()}}"
 needs = ["build"]
 exists = "amux list >/dev/null 2>&1"
 run = "amux server start"
