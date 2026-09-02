@@ -418,6 +418,12 @@ pub enum TraceEvent {
     /// The id is the shell's to mint, so it enters as its own event
     /// rather than being guessed by a replay.
     Dispatched { op: OpId, command: Command },
+    /// The clock moved far enough to disarm a quit guard. The shell's
+    /// 1 Hz tick is not itself an event — most of them change nothing —
+    /// but the expiry it triggers is view state, so it enters the trace
+    /// like every other mutation and a replay disarms the guard at the
+    /// same point in the fold.
+    Tick { now: DateTime<Utc> },
     /// The chat opened for a reason outside any keypress — the agent
     /// `amux new` asked for, once its inventory row arrived.
     ChatOpened {
@@ -503,11 +509,22 @@ impl Chrome {
         self.frame.take()
     }
 
-    /// The tick's time-dependent view update: a quit guard armed longer
-    /// than its window disarms, and the warning footer it was rendering
-    /// owes a repaint. Not a [`TraceEvent`]: the tick is the shell's
-    /// schedule, not something the terminal delivered.
-    pub fn expire(&mut self, now: DateTime<Utc>) -> bool {
+    /// Whether a quit guard — the fleet's or the open chat's — is armed.
+    /// The armed guard is the only view state the clock alone can move,
+    /// so the shell asks this to decide whether a tick is worth a
+    /// [`TraceEvent::Tick`] at all.
+    pub fn quit_guard_armed(&self) -> bool {
+        self.view.quit_guard.is_armed()
+            || self
+                .view
+                .chat
+                .as_ref()
+                .is_some_and(|chat| chat.quit_guard().is_armed())
+    }
+
+    /// A quit guard armed longer than its window disarms, and the warning
+    /// footer it was rendering owes a repaint.
+    fn expire(&mut self, now: DateTime<Utc>) -> bool {
         let mut expired = self.view.quit_guard.expire(now);
         if let Some(chat) = self.view.chat.as_mut() {
             expired |= chat.expire_quit_guard(now);
@@ -522,6 +539,10 @@ impl Chrome {
             // The caller folded it; the screen is stale, nothing else.
             TraceEvent::Msg(_) => {
                 self.dirty = true;
+                Vec::new()
+            }
+            TraceEvent::Tick { now } => {
+                self.expire(*now);
                 Vec::new()
             }
             TraceEvent::Drained => {

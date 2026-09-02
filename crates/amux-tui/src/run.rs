@@ -223,8 +223,20 @@ async fn chrome_session(
                 };
                 // The quit guard's disarm check runs only while armed —
                 // the arm tick of the gate extension; the disarm itself
-                // owes a repaint (the warning footer must vanish).
-                needed |= chrome.expire(now);
+                // owes a repaint (the warning footer must vanish). The
+                // expiry is view state, so it goes through a step and is
+                // recorded; a tick that disarmed nothing changed nothing
+                // and stays out of the ring, where it would otherwise
+                // push a quiet session's history out one event a second.
+                if chrome.quit_guard_armed() {
+                    let event = TraceEvent::Tick { now };
+                    chrome.step(model, &event);
+                    let expired = !chrome.quit_guard_armed();
+                    if expired {
+                        record(config, &event);
+                    }
+                    needed |= expired;
+                }
                 if needed {
                     runtime.observe_now(now);
                     chrome.mark_dirty();

@@ -201,6 +201,14 @@ impl ChatView {
         }
     }
 
+    pub fn quit_guard(&self) -> &QuitGuard {
+        match &self.inner {
+            AgentChatView::Claude(view) => &view.quit_guard,
+            AgentChatView::Codex(view) => &view.quit_guard,
+            AgentChatView::Unsupported(view) => &view.quit_guard,
+        }
+    }
+
     pub fn quit_guard_mut(&mut self) -> &mut QuitGuard {
         match &mut self.inner {
             AgentChatView::Claude(view) => &mut view.quit_guard,

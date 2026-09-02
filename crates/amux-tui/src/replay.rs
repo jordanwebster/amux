@@ -274,12 +274,13 @@ fn bounding_mark(cells: &[(u16, u16)]) -> Option<Mark> {
 mod tests {
     use amux_ui::BUILD;
     use amux_ui::report::{ReportDraft, ReportKind, ReportParts, ReportWriter};
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, TimeDelta, Utc};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use super::*;
     use crate::chrome::{InputEvent, KeyRecord};
     use crate::fixtures::{NamedState, fixture};
+    use crate::view::QuitGuard;
     use crate::trace::{SEGMENT_LEN, TraceRing};
 
     const VIEWPORT: (u16, u16) = (120, 40);
@@ -334,16 +335,36 @@ mod tests {
         }
 
         fn press(&mut self, code: KeyCode) {
+            self.press_with(code, KeyModifiers::NONE);
+        }
+
+        fn press_with(&mut self, code: KeyCode, modifiers: KeyModifiers) {
             let event = TraceEvent::Input {
-                event: InputEvent::Key(KeyRecord::from_event(KeyEvent::new(
-                    code,
-                    KeyModifiers::NONE,
-                ))),
+                event: InputEvent::Key(KeyRecord::from_event(KeyEvent::new(code, modifiers))),
                 viewport: VIEWPORT,
                 now: self.now,
             };
             self.ring.record(&event);
             self.chrome.step(&self.model, &event);
+        }
+
+        /// Move the session's clock, as the wall clock moves between one
+        /// terminal event and the next.
+        fn advance(&mut self, seconds: i64) {
+            self.now += TimeDelta::seconds(seconds);
+        }
+
+        /// One turn of the shell's 1 Hz tick, recorded the way `run.rs`
+        /// records it: only a tick that actually disarmed a guard.
+        fn tick(&mut self) {
+            if !self.chrome.quit_guard_armed() {
+                return;
+            }
+            let event = TraceEvent::Tick { now: self.now };
+            self.chrome.step(&self.model, &event);
+            if !self.chrome.quit_guard_armed() {
+                self.ring.record(&event);
+            }
         }
 
         pub(super) fn capture(&self) -> FrameCapture {
@@ -392,6 +413,45 @@ mod tests {
             session.draw();
         }
         session
+    }
+
+    /// The armed footer is the one thing a tick alone can change, and a
+    /// tick that expires it must be in the trace: replay the same events
+    /// and the warning must be gone from the replayed frame too.
+    #[test]
+    fn a_tick_that_expires_the_quit_guard_replays() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut session = Session::open(NamedState::Fleet);
+        session.draw();
+        session.press_with(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        session.draw();
+        let armed = session.capture();
+        assert!(
+            armed.text.contains("press ctrl+c again to quit"),
+            "the guarded press must arm the warning footer"
+        );
+
+        session.advance(QuitGuard::WINDOW_SECS + 1);
+        session.tick();
+        session.draw();
+        let expired = session.capture();
+        assert!(
+            !expired.text.contains("press ctrl+c again to quit"),
+            "the tick past the window must disarm the guard"
+        );
+
+        let report = session.write_report(dir.path());
+        let mut replay = Replay::load(&report).expect("report loads");
+        replay.step_to_end().expect("replays to the end");
+        assert_eq!(
+            replay.frame().expect("a frame was drawn"),
+            expired,
+            "a replay that skipped the expiry would still show the warning"
+        );
+        assert_eq!(
+            verify(&report).expect("verify runs"),
+            ReplayVerdict::Reproduces
+        );
     }
 
     #[test]

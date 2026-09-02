@@ -6693,3 +6693,13 @@ frame is caught and named, and a report with no trace to fold reads as
 neither reproducing nor diverging — it cannot be checked, and saying so is
 different from saying it failed. What remains before a person can press a key
 is the capture flow itself.
+
+2026-09-03 — **The tick's quit-guard expiry is now a recorded event.** The
+1 Hz tick used to disarm a stale quit guard by calling into the chrome
+directly, which made it the one view mutation outside the trace: a report
+captured while the warning footer had just expired replayed with the footer
+still up. Expiry now travels as `TraceEvent::Tick`, applied by `Chrome::step`
+like every other mutation. The shell records a tick only when it actually
+disarmed something — a tick that changed nothing changes nothing on replay
+either, and recording every one would push a quiet session's history out of
+the ring at a event a second.
