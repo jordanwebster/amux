@@ -9,6 +9,7 @@
 use amux_ui::Model;
 use amux_ui::claude::{Ask, AskArtifact, AskKind, AskState, DiffArtifact, ToolInvocation};
 use ratatui::text::{Line, Span};
+use serde::{Deserialize, Serialize};
 
 use crate::chat::claude::ask_ui::{AskStage, AskUi};
 use crate::chat::claude::{View, diff, panel};
@@ -19,7 +20,7 @@ use crate::render::{Theme, push_right, push_span};
 /// sits. The artifact itself is resolved from the Model at render — a
 /// stale reader for a resolved ask stops resolving and the frame falls
 /// back to the chat (reconcile also dismisses it).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ReaderView {
     pub source: ReaderSource,
     pub scroll: usize,
@@ -35,7 +36,7 @@ impl ReaderView {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ReaderSource {
     /// The pending ask's artifact (plan review reader-first; `f` from
     /// panels and fact panels).

@@ -27,6 +27,7 @@ use ask_ui::AskUi;
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 use reader::{ReaderSource, ReaderView};
 pub(crate) use render::{ask_panel_lines, claude_frame_parts};
+use serde::{Deserialize, Serialize};
 
 use crate::chat::inline::InlineAsk;
 use crate::chat::viewport::ScrollIntent;
@@ -36,7 +37,7 @@ use crate::view::QuitGuard;
 /// A dispatched prompt send being watched for its outcome (C5): the
 /// finished op carries the failure fact, and the draft resurfaces from
 /// here — send failures have no transcript artifact.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct PendingSend {
     op: OpId,
     text: String,
@@ -45,14 +46,14 @@ struct PendingSend {
 /// A dispatched ask answer being watched for a SYNCHRONOUS refusal (the
 /// asynchronous path flips `AskState` in the Model; a reducer refusal
 /// never touches the ask, so the view states it).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct PendingAnswer {
     op: OpId,
     ask: u64,
 }
 
-/// Renderer-local chat state. Never serialized, never authoritative.
-#[derive(Clone, Debug)]
+/// Renderer-local chat state. Never persisted, never authoritative.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct View {
     pub agent: AgentId,
     pub composer: Composer,

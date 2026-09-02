@@ -16,6 +16,8 @@ pub mod keys;
 pub(crate) mod markdown;
 pub mod render;
 pub mod run;
+#[cfg(test)]
+mod serde_roundtrip;
 pub mod terminal;
 pub mod theme;
 pub mod view;

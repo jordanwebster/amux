@@ -7,6 +7,7 @@ use std::ops::Range;
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
+use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::FeedScroll;
@@ -28,7 +29,7 @@ pub(crate) const CONTENT_INDENT: usize = 2;
 pub(crate) const MARK_GLYPH: &str = "\u{258e}";
 
 /// Renderer-local identity for one painted block.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct BlockKey(pub(crate) u64);
 
 /// Finished rows and interaction metadata produced by one block painter.

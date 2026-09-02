@@ -6631,3 +6631,15 @@ newest twenty without pruning bug or tweak reports, and each header records the
 CLI build's Git revision when repository metadata is available. Unreadable log
 tails are declared absent without aborting capture, and a post-write retention
 failure no longer discards the completed report path.
+
+2026-09-02 — **Made renderer state serializable so a screen can be replayed.**
+The fleet `ViewState`, the chat view and its Claude, Codex and unsupported
+folds, the composer, the quit guard, and the theme now derive serde, and the
+chat's feed-metrics and paint caches are skipped: they are re-derived on the
+next draw, so a view restored from bytes must be drawn before its keys are
+handled, exactly as a freshly opened one must. The unsupported chat's protocol
+name became owned, because a name read back in another process cannot borrow
+this one's statics. The proof is a re-render — every named fixture's view makes
+a round trip through JSON and draws a byte-identical frame — and `docs/CHAT.md`
+now says what the shape is and is not: serializable for diagnostic capture,
+never persisted across runs.

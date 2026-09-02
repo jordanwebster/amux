@@ -22,6 +22,7 @@
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
+use serde::{Deserialize, Serialize};
 
 use super::frame::{BlockKey, PaintedBlock};
 use crate::markdown;
@@ -30,7 +31,7 @@ use crate::render::{
 };
 
 /// Renderer-local identity for an expandable run of related feed entries.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct RunKey(pub(crate) u64);
 
 /// Claude's run counts plus the renderer-selected path preview. The layer

@@ -14,10 +14,11 @@
 //! bindings around it.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde::{Deserialize, Serialize};
 
 /// The editable draft with a char-indexed cursor and the single-slot kill
 /// buffer.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Composer {
     chars: Vec<char>,
     /// Char index in `0..=chars.len()`.

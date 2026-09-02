@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 use amux_ui::{AgentId, Attention, Command, FleetItem, Model};
 use chrono::{DateTime, TimeDelta, Utc};
+use serde::{Deserialize, Serialize};
 
 /// The chrome-wide guarded Ctrl+C (`docs/CHAT.md` §Keybindings) — ONE
 /// rule for the whole TUI: with a focused non-empty text field the press
@@ -16,7 +17,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 /// Any other key or the timeout disarms. The invariant, teachable in one
 /// line: a single Ctrl+C never quits, never interrupts, and never loses
 /// text it didn't visibly kill.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuitGuard {
     armed_at: Option<DateTime<Utc>>,
 }
@@ -88,7 +89,7 @@ impl QuitGuard {
 /// raw attach (the byte passthrough) or the structured chat. The default
 /// comes from the amux config (`ui.default_open_mode`, shipped `raw`);
 /// the non-default mode opens via Ctrl+Enter (kitty tier) or `o`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OpenMode {
     #[default]
     RawAttach,
@@ -106,7 +107,7 @@ impl OpenMode {
 }
 
 /// Interaction mode of the fleet screen.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mode {
     /// Navigation (`j/k`, `gg/G`); the filter line is dormant.
     Normal,
@@ -120,8 +121,10 @@ pub enum Mode {
     Help,
 }
 
-/// Renderer-local state. Never serialized, never authoritative.
-#[derive(Clone, Debug)]
+/// Renderer-local state. Never persisted across runs, never
+/// authoritative — it serializes only so a diagnostic capture can record
+/// and replay the screen (`docs/CHAT.md` §State transitions).
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ViewState {
     pub mode: Mode,
     pub filter: String,

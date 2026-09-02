@@ -8,6 +8,7 @@ use amux_ui::codex::{AskContext, CodexCommand, CodexPhase};
 use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 pub(crate) use render::codex_frame_parts;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::chat::inline::InlineAsk;
@@ -15,19 +16,19 @@ use crate::chat::viewport::ScrollIntent;
 use crate::composer::Composer;
 use crate::view::QuitGuard;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct PendingSend {
     op: OpId,
     text: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct PendingAnswer {
     op: OpId,
     request_id: Value,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct View {
     pub agent: AgentId,
     pub composer: Composer,

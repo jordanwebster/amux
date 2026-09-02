@@ -9,6 +9,7 @@ use amux_ui::{AgentId, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::text::Line;
+use serde::{Deserialize, Serialize};
 
 use super::blocks::{GLYPH_COL, TEXT_COL, paint_header};
 use super::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintedBlock};
@@ -16,12 +17,15 @@ use crate::composer::Composer;
 use crate::render::{FrameContext, Theme, push_span};
 use crate::view::{QuitGuard, UiAction};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct View {
     pub agent: AgentId,
     /// The protocol this chat is declining to render, named on screen so a
-    /// person can say what is missing without reading the source.
-    pub protocol: &'static str,
+    /// person can say what is missing without reading the source. Owned
+    /// rather than borrowed from the protocol table: the name has to
+    /// survive a round trip through bytes, and a build that reads a view
+    /// recorded by another one cannot promise the same statics.
+    pub protocol: String,
     /// Owned so the outer chat has one uniform shape; no key ever reaches
     /// it, because there is nothing here to send to.
     pub composer: Composer,
@@ -36,7 +40,7 @@ impl View {
     pub(crate) fn open(agent: AgentId, protocol: &'static str, leader: char, kitty: bool) -> Self {
         Self {
             agent,
-            protocol,
+            protocol: protocol.to_string(),
             composer: Composer::default(),
             quit_guard: QuitGuard::default(),
             leader,

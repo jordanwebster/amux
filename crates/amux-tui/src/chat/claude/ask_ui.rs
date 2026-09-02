@@ -15,12 +15,13 @@ use amux_ui::claude::answer::{
 };
 use amux_ui::claude::{Ask, AskKind, QuestionFact, ToolInvocation};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde::{Deserialize, Serialize};
 
 use crate::composer::{self, Composer};
 
 /// Panel state for one ask (keyed by `ask_id`: a new head gets a fresh
 /// panel; the old ask's typed state dies with its ask).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct AskUi {
     pub ask_id: u64,
     pub stage: AskStage,
@@ -30,7 +31,7 @@ pub(crate) struct AskUi {
     pub plan_feedback: Composer,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum AskStage {
     /// The numbered action list — permission actions, or the plan's
     /// three-way review.
@@ -242,7 +243,7 @@ impl AskUi {
 
 /// Per-question draft state. `other` holds the free text persistently —
 /// tabbing away and back never loses it (P8).
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct QuestionDraft {
     /// Selected option indexes (single-select: at most one).
     pub selected: Vec<usize>,
@@ -251,7 +252,7 @@ pub(crate) struct QuestionDraft {
     pub other: Composer,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct QuestionUi {
     /// Current tab: a question index, or `questions.len()` for the submit
     /// tab (tabbed forms only).

@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use ratatui::style::{Color, Modifier, Style};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// The colour capability selected once at the terminal boundary.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ColorMode {
     TrueColor,
     Ansi,
@@ -24,7 +24,7 @@ pub enum ColorPreference {
 }
 
 /// One semantic colour with truecolor and 16-colour terminal faces.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Token {
     pub rgb: (u8, u8, u8),
     pub ansi: Color,
@@ -45,7 +45,7 @@ impl Token {
 }
 
 /// The complete semantic vocabulary available to TUI painters.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tokens {
     pub background: Token,
     pub text: Token,
@@ -69,7 +69,7 @@ pub struct Tokens {
 }
 
 /// The provenance of a resolved palette.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ThemeName {
     Dark,
     Light,
@@ -109,7 +109,7 @@ pub enum ThemeError {
 }
 
 /// A complete palette resolved in one terminal colour mode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Theme {
     pub tokens: Tokens,
     pub mode: ColorMode,

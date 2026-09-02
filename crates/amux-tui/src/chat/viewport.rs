@@ -2,12 +2,14 @@
 
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 use super::FeedScroll;
 use super::blocks::RunKey;
 use super::frame::{BlockKey, FeedMetrics, PaintedBlock};
 
 /// Renderer-local position, focus, and expansion state for a chat feed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FeedViewport {
     pub(crate) scroll: FeedScroll,
     pub(crate) focus: Option<BlockKey>,
@@ -25,7 +27,7 @@ impl FeedViewport {
 }
 
 /// A request to move the shared feed viewport.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ScrollIntent {
     /// Move by display rows; negative values move toward older content.
     Rows(i32),

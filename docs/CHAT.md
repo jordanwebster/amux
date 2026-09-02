@@ -796,6 +796,14 @@ the target for copy and exploration expansion and is independent of the input
 owner. Scroll is a third renderer-local scalar; every input-owner state may be
 scrolled.
 
+None of it is persisted across runs. Renderer state is serializable so a
+diagnostic capture can record the screen a person was looking at and replay
+it later, but a new run always starts from a fresh view derived from the
+Model — there is no saved-view file, and no version of this shape is ever
+read back from an older release. Paint caches are excluded from that
+capture: they are re-derived on the first draw, so a view restored from
+bytes must be drawn before its keys are handled.
+
 | From | Event / key | To | Notes |
 |---|---|---|---|
 | COMPOSER (idle) | Enter, non-empty draft | COMPOSER (working) | optimistic echo + `sending…` (B1) |

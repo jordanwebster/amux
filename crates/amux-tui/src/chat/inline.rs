@@ -19,6 +19,7 @@ use amux_ui::claude::answer::{self, AskAnswer};
 use amux_ui::{AgentId, ClaudeCommand, CodexCommand, Command, Model, StructuredProtocol};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Line;
+use serde::{Deserialize, Serialize};
 
 use crate::chat::claude::ask_ui::{AskKeyOutcome, AskUi};
 use crate::chat::claude::panel;
@@ -28,7 +29,7 @@ use crate::render::{Theme, push_span};
 
 /// A child's ask docked in its parent's chat: whose it is, and the
 /// child's layer's own panel state for it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct InlineAsk {
     child: AgentId,
     ui: Ui,
@@ -38,7 +39,7 @@ pub(crate) struct InlineAsk {
 /// is the child's layer's own type in both cases — the Claude stage
 /// machine and the Codex decision cursor — so an inline panel behaves
 /// exactly like the same panel in the child's own chat.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum Ui {
     Claude(AskUi),
     Codex { cursor: usize },

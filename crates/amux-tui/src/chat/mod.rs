@@ -25,6 +25,7 @@ use frame::{
     compose_chat_frame, feed_metrics,
 };
 use ratatui::text::Line;
+use serde::{Deserialize, Serialize};
 use viewport::{FeedViewport, apply_scroll, move_focus, toggle_focused_run};
 
 use crate::composer::Composer;
@@ -34,7 +35,7 @@ use crate::view::{QuitGuard, UiAction};
 /// Feed scroll state shared because both native screens have the same
 /// sticky-bottom terminal interaction, not because their feed entries share
 /// a representation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FeedScroll {
     Following,
     Paused {
@@ -43,7 +44,7 @@ pub enum FeedScroll {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum AgentChatView {
     Claude(claude::View),
     Codex(codex::View),
@@ -74,7 +75,7 @@ impl CachedFeedMetrics {
 
 /// Renderer-local state for one structured chat. Native sub-state remains
 /// namespaced; dispatch is exhaustive at this one additive seam.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ChatView {
     pub agent: AgentId,
     pub(crate) viewport: FeedViewport,
@@ -82,7 +83,15 @@ pub struct ChatView {
     /// Metrics from the adapter blocks painted for the latest frame. Key
     /// handling consumes this instead of walking and painting the feed a
     /// second time merely to discover its scroll bounds.
+    ///
+    /// Skipped by serde like the paint cache below: both are derived from
+    /// the last paint, so a deserialized chat rebuilds them on its next
+    /// draw rather than carrying a frame's worth of geometry around. A
+    /// chat restored from bytes must therefore be drawn before its keys
+    /// are handled, exactly as a freshly opened one must.
+    #[serde(skip)]
     feed_metrics: RefCell<Option<CachedFeedMetrics>>,
+    #[serde(skip)]
     paint_cache: RefCell<PaintCache>,
 }
 
@@ -137,6 +146,13 @@ impl ChatView {
             feed_metrics: RefCell::new(None),
             paint_cache: RefCell::new(PaintCache::default()),
         })
+    }
+
+    /// Whether the last paint's feed metrics are still cached. The
+    /// serde round-trip tests read it to prove the caches stay behind.
+    #[cfg(test)]
+    pub(crate) fn has_cached_metrics(&self) -> bool {
+        self.feed_metrics.borrow().is_some()
     }
 
     /// Deterministic constructors used by pure golden fixtures.
