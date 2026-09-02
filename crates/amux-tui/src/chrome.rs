@@ -418,6 +418,12 @@ pub enum TraceEvent {
     /// The id is the shell's to mint, so it enters as its own event
     /// rather than being guessed by a replay.
     Dispatched { op: OpId, command: Command },
+    /// The status line's transient notice, set by something the chrome
+    /// did not do itself: an attach that ended, a clipboard write, a
+    /// written report. The shell knows the outcome; the chrome owns the
+    /// view, so the outcome comes back in as an event rather than the
+    /// shell reaching into the view behind the trace's back.
+    Notice(Option<String>),
     /// The clock moved far enough to disarm a quit guard. The shell's
     /// 1 Hz tick is not itself an event — most of them change nothing —
     /// but the expiry it triggers is view state, so it enters the trace
@@ -538,6 +544,11 @@ impl Chrome {
         match event {
             // The caller folded it; the screen is stale, nothing else.
             TraceEvent::Msg(_) => {
+                self.dirty = true;
+                Vec::new()
+            }
+            TraceEvent::Notice(notice) => {
+                self.view.notice = notice.clone();
                 self.dirty = true;
                 Vec::new()
             }

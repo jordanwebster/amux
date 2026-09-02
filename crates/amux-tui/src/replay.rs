@@ -348,6 +348,14 @@ mod tests {
             self.chrome.step(&self.model, &event);
         }
 
+        /// A notice the shell put up — the way `run.rs` records the
+        /// outcome of an attach, a clipboard write or a written report.
+        fn notice(&mut self, notice: &str) {
+            let event = TraceEvent::Notice(Some(notice.to_string()));
+            self.ring.record(&event);
+            self.chrome.step(&self.model, &event);
+        }
+
         /// Move the session's clock, as the wall clock moves between one
         /// terminal event and the next.
         fn advance(&mut self, seconds: i64) {
@@ -413,6 +421,35 @@ mod tests {
             session.draw();
         }
         session
+    }
+
+    /// The status line belongs to the trace even when the shell, not a
+    /// keypress, is what put something in it.
+    #[test]
+    fn a_shell_set_notice_replays() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut session = Session::open(NamedState::Fleet);
+        session.draw();
+        session.notice("copied message to clipboard");
+        session.draw();
+        let captured = session.capture();
+        assert!(
+            captured.text.contains("copied message to clipboard"),
+            "the notice must reach the status line"
+        );
+
+        let report = session.write_report(dir.path());
+        let mut replay = Replay::load(&report).expect("report loads");
+        replay.step_to_end().expect("replays to the end");
+        assert_eq!(
+            replay.frame().expect("a frame was drawn"),
+            captured,
+            "a notice written outside the trace would replay to an empty status line"
+        );
+        assert_eq!(
+            verify(&report).expect("verify runs"),
+            ReplayVerdict::Reproduces
+        );
     }
 
     /// The armed footer is the one thing a tick alone can change, and a

@@ -6703,3 +6703,10 @@ like every other mutation. The shell records a tick only when it actually
 disarmed something — a tick that changed nothing changes nothing on replay
 either, and recording every one would push a quiet session's history out of
 the ring at a event a second.
+
+2026-09-03 — **Shell-set notices go through the trace.** The status line was
+the last thing the shell wrote into the view directly: the notice an ended
+attach, a clipboard write or a written report leaves behind. Those now travel
+as `TraceEvent::Notice`, so `Chrome::step` is the only writer of
+`view.notice` and a replayed frame carries the same status line the capture
+did instead of an empty one.

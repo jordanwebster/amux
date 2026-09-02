@@ -109,8 +109,15 @@ where
                 match attach(agent).await {
                     // `<leader>d`: detach means the shell, not the chrome.
                     Ok(AttachReturn::Exit) => return Ok(()),
-                    Ok(AttachReturn::Fleet(notice)) => chrome.view.notice = notice,
-                    Err(error) => chrome.view.notice = Some(format!("attach failed: {error:#}")),
+                    Ok(AttachReturn::Fleet(notice)) => {
+                        set_notice(runtime, &config, &mut chrome, notice)
+                    }
+                    Err(error) => set_notice(
+                        runtime,
+                        &config,
+                        &mut chrome,
+                        Some(format!("attach failed: {error:#}")),
+                    ),
                 }
             }
         }
@@ -270,8 +277,8 @@ fn perform(
             ShellEffect::NoteAttached(agent) => runtime.note_attached(agent),
             ShellEffect::WriteClipboard(text) => {
                 let notice = write_osc52(&mut io::stdout(), &text)?;
-                chrome.view.notice =
-                    Some(notice.unwrap_or_else(|| "copied message to clipboard".to_string()));
+                let notice = notice.unwrap_or_else(|| "copied message to clipboard".to_string());
+                set_notice(runtime, config, chrome, Some(notice));
             }
             ShellEffect::Dispatch(command) => {
                 let op = runtime.dispatch(command.clone());
@@ -289,14 +296,27 @@ fn perform(
                 });
             }
             ShellEffect::Report => {
-                chrome.view.notice = Some(match runtime.report(DumpReason::UserRequested) {
+                let notice = match runtime.report(DumpReason::UserRequested) {
                     Ok(path) => format!("reported to {}", path.display()),
                     Err(error) => format!("report failed: {error}"),
-                });
+                };
+                set_notice(runtime, config, chrome, Some(notice));
             }
         }
     }
     Ok(())
+}
+
+/// Put a status-line notice up the way every other view change happens:
+/// as a recorded event through the chrome's one mutation path. The shell
+/// is what learned the outcome — an attach that ended, a clipboard write,
+/// a written report — but writing the view directly would leave the
+/// status line out of the trace, and a replay would draw the frame
+/// without it.
+fn set_notice(runtime: &Runtime, config: &TuiConfig, chrome: &mut Chrome, notice: Option<String>) {
+    let event = TraceEvent::Notice(notice);
+    record(config, &event);
+    chrome.step(runtime.model(), &event);
 }
 
 /// Append one event to this session's ring, if it has one.
