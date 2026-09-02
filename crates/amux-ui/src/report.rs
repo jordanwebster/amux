@@ -327,7 +327,7 @@ pub fn prune(dir: &Path) -> io::Result<PruneSummary> {
             .iter()
             .filter_map(|summary| {
                 let header = summary.header.as_ref()?;
-                (header.kind == kind).then(|| (header.stamp.as_str(), summary.path.as_path()))
+                (header.kind == kind).then_some((header.stamp.as_str(), summary.path.as_path()))
             })
             .collect::<Vec<_>>();
         reports.sort_by(|left, right| left.0.cmp(right.0));
