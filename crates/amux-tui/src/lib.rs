@@ -9,6 +9,7 @@
 
 pub(crate) mod bindings;
 pub mod chat;
+pub mod chrome;
 pub mod composer;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;

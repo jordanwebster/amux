@@ -6643,3 +6643,16 @@ this one's statics. The proof is a re-render — every named fixture's view make
 a round trip through JSON and draws a byte-identical frame — and `docs/CHAT.md`
 now says what the shape is and is not: serializable for diagnostic capture,
 never persisted across runs.
+
+2026-09-02 — **Gave the chrome one mutation path shared by the live loop
+and replay.** Every keypress, paste, wheel, resize, draw, dispatched op and
+chat opening is now a `TraceEvent`, and `Chrome::step` is the only function
+that applies one; `run.rs` converts terminal events into those and performs
+the `ShellEffect`s that come back rather than mutating the view itself. The
+draw is an event because drawing mutates state — chat key handling reads
+feed metrics the previous paint cached — so the step builds the frame's
+lines and the loop only paints them. crossterm's key and mouse events get
+recordable mirrors, exhaustive over every variant this build can be handed,
+because crossterm's own serde impls are behind a feature the wire shape of a
+diagnostic recording should not depend on. Behaviour is unchanged: the whole
+existing golden, chat and a2a suite passes untouched.
