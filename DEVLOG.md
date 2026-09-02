@@ -6683,3 +6683,13 @@ rather than a recording nobody can judge; a divergence names the first
 differing cell and the rectangle covering all of them. The golden-frame
 serializer moved into `capture_frame`, so a golden and a report frame are
 now the same shape and comparable without translation.
+
+2026-09-02 — **Closed the trace-and-replay substrate.** Renderer state is
+serializable, the chrome has one mutation path, the trace ring is bounded and
+fed by both the loop and the runtime's Msg tap, and a recorded report folds
+back into a frame this build can compare against the captured one. The
+divergence cases have their own home: tampering a single cell of a report's
+frame is caught and named, and a report with no trace to fold reads as
+neither reproducing nor diverging — it cannot be checked, and saying so is
+different from saying it failed. What remains before a person can press a key
+is the capture flow itself.

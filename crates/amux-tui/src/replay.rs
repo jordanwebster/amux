@@ -286,7 +286,7 @@ mod tests {
 
     /// A live session recorded exactly the way `run.rs` records one: roll,
     /// record the draw, step it, paint what the step built.
-    struct Session {
+    pub(super) struct Session {
         chrome: Chrome,
         model: Model,
         ring: TraceRing,
@@ -346,7 +346,7 @@ mod tests {
             self.chrome.step(&self.model, &event);
         }
 
-        fn capture(&self) -> FrameCapture {
+        pub(super) fn capture(&self) -> FrameCapture {
             capture_frame(
                 self.frame.as_ref().expect("a frame has been drawn"),
                 Theme::default(),
@@ -355,7 +355,7 @@ mod tests {
 
         /// Write the session's window and last frame as a report bundle,
         /// the same shape the capture key writes.
-        fn write_report(&self, dir: &Path) -> std::path::PathBuf {
+        pub(super) fn write_report(&self, dir: &Path) -> std::path::PathBuf {
             let window = self.ring.window().expect("a drawn session has a window");
             ReportWriter::new(dir.to_path_buf(), BUILD, "test-sha")
                 .write(
@@ -384,7 +384,7 @@ mod tests {
     /// A long feed scrolled back: draws, three page-ups each followed by a
     /// draw, and a final draw. The frame at the end is not the frame at the
     /// start, which is what makes the earlier-index assertion meaningful.
-    fn scrolled_session() -> Session {
+    pub(super) fn scrolled_session() -> Session {
         let mut session = Session::open(NamedState::ClaudeLongFeed);
         session.draw();
         for _ in 0..3 {
@@ -438,9 +438,23 @@ mod tests {
         replay.step_to(draws[0]).expect("replays backwards");
         assert_eq!(replay.frame().expect("frame"), first);
     }
+}
+
+/// Divergence: what a report says about itself, checked against what this
+/// build actually draws. A report that cannot be checked at all — no trace
+/// to fold — is its own answer, and must not be mistaken for either verdict.
+#[cfg(test)]
+mod divergence {
+    use amux_ui::BUILD;
+    use amux_ui::report::{ReportDraft, ReportKind, ReportParts, ReportWriter};
+
+    use super::tests::scrolled_session;
+    use super::*;
+
+    const VIEWPORT: (u16, u16) = (120, 40);
 
     #[test]
-    fn a_tampered_frame_is_flagged_with_the_cells_that_differ() {
+    fn a_tampered_frame_diverges_and_names_the_cell() {
         let dir = tempfile::tempdir().expect("tempdir");
         let session = scrolled_session();
         let report = session.write_report(dir.path());
@@ -479,7 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn a_report_without_a_trace_says_so() {
+    fn a_report_without_a_trace_neither_reproduces_nor_diverges() {
         let dir = tempfile::tempdir().expect("tempdir");
         let session = scrolled_session();
         let report = ReportWriter::new(dir.path().to_path_buf(), BUILD, "test-sha")
