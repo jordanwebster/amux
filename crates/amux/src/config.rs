@@ -240,6 +240,11 @@ pub struct Config {
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
 
+    /// Directory where diagnostic report bundles are written. Defaults to the
+    /// `reports` directory beneath `data_dir`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reports_dir: Option<PathBuf>,
+
     /// Whether the user has opted into cloud mode. `None` = not yet asked (init
     /// will prompt); `Some(true/false)` = explicit user choice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -278,6 +283,7 @@ impl Default for Config {
             tcp_port: None,
             state_path: default_state_path(),
             data_dir: default_data_dir(),
+            reports_dir: None,
             enable_cloud_mode: None,
             prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
@@ -291,6 +297,13 @@ impl Default for Config {
 impl Config {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The configured diagnostic report directory, or `data_dir/reports`.
+    pub fn reports_dir(&self) -> PathBuf {
+        self.reports_dir
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("reports"))
     }
 
     /// Default config file path: `$XDG_CONFIG_HOME/amux/config.yaml`,
@@ -393,6 +406,30 @@ mod tests {
         let serialized = serde_yaml::to_string(&config).unwrap();
         let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
         assert_eq!(parsed.data_dir, PathBuf::from("/srv/amux-dev/data"));
+    }
+
+    #[test]
+    fn reports_dir_defaults_beneath_data_dir() {
+        let config: Config = serde_yaml::from_str("data_dir: /srv/amux-dev/data\n").unwrap();
+
+        assert_eq!(config.reports_dir, None);
+        assert_eq!(
+            config.reports_dir(),
+            PathBuf::from("/srv/amux-dev/data/reports")
+        );
+    }
+
+    #[test]
+    fn reports_dir_yaml_roundtrip() {
+        let yaml = "data_dir: /srv/amux-dev/data\nreports_dir: /srv/amux-reports\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+
+        assert_eq!(config.reports_dir(), PathBuf::from("/srv/amux-reports"));
+
+        let serialized = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.reports_dir, Some(PathBuf::from("/srv/amux-reports")));
+        assert_eq!(parsed.reports_dir(), PathBuf::from("/srv/amux-reports"));
     }
 
     #[test]
