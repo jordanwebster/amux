@@ -432,6 +432,11 @@ pub fn read_frame(report: &Path) -> io::Result<Option<FrameCapture>> {
     Ok(Some(FrameCapture { text, styles }))
 }
 
+/// How much of the log a report carries. One budget for every capture
+/// path — automatic, panic and hand-captured — so no report is quietly
+/// shorter than another.
+pub const LOG_TAIL_BYTES: usize = 64 * 1024;
+
 /// Read at most the final `max_bytes` of a log, discarding a leading partial
 /// line. A missing log is not an error.
 pub fn log_tail(path: &Path, max_bytes: usize) -> io::Result<Option<String>> {

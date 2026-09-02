@@ -280,8 +280,8 @@ mod tests {
     use super::*;
     use crate::chrome::{InputEvent, KeyRecord};
     use crate::fixtures::{NamedState, fixture};
-    use crate::view::QuitGuard;
     use crate::trace::{SEGMENT_LEN, TraceRing};
+    use crate::view::QuitGuard;
 
     const VIEWPORT: (u16, u16) = (120, 40);
     /// The agent the Claude fixtures are built around.

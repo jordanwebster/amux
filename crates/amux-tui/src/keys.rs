@@ -145,9 +145,6 @@ pub fn handle_key(
             // the guard exists for the shell's ^C muscle memory, and
             // Normal mode has no text field for `q` to type into.
             KeyCode::Char('q') => Some(UiAction::Quit),
-            KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                Some(UiAction::DebugDump)
-            }
             KeyCode::Char('j') | KeyCode::Down => {
                 move_selection(view, model, 1, list_rows);
                 None

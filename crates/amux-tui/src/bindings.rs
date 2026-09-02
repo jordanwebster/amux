@@ -171,6 +171,20 @@ fn feed_focus_rows(eff: &Effective) -> Vec<Binding> {
     ]
 }
 
+/// The capture key's row, present only where the key itself is. The
+/// binding is a debug-build affordance — a release binary has nothing to
+/// capture into a report — and every list of keys derives from this one
+/// answer so no overlay can offer a key that does nothing.
+pub(crate) fn report_key_row() -> Option<Binding> {
+    report_key_row_for(cfg!(debug_assertions))
+}
+
+/// The gate itself, so both answers are reachable from a test binary
+/// (which is always built with debug assertions on).
+pub(crate) fn report_key_row_for(debug_build: bool) -> Option<Binding> {
+    debug_build.then(|| row("C-g", "capture a report", Tier::Plain))
+}
+
 fn row(keys: impl Into<String>, action: impl Into<String>, tier: Tier) -> Binding {
     Binding {
         keys: keys.into(),
@@ -215,10 +229,10 @@ pub fn fleet_sections(
     fleet.extend([
         row("r", "rename selected", Tier::Plain),
         row("d", "delete selected", Tier::Plain),
-        row("C-g", "debug dump", Tier::Plain),
         row("q", "quit", Tier::Plain),
         row("ctrl+c ctrl+c", "quit (guarded: two presses)", Tier::Plain),
     ]);
+    fleet.extend(report_key_row());
     let attach = vec![
         row(
             format!("{} d", eff.leader_label),
@@ -273,6 +287,7 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
         ),
     ]);
     chat.extend(family_rows(eff, family));
+    chat.extend(report_key_row());
     let mut composer = vec![
         row("enter", "send", Tier::Plain),
         row("ctrl+j", "newline", Tier::Plain),
@@ -360,6 +375,7 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
         ),
     ]);
     chat.extend(family_rows(eff, family));
+    chat.extend(report_key_row());
     let mut composer = vec![
         row("enter", "send or steer", Tier::Plain),
         row("ctrl+j", "newline", Tier::Plain),

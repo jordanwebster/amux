@@ -447,11 +447,7 @@ pub enum ShellEffect {
     Dispatch(Command),
     NoteAttached(AgentId),
     WriteClipboard(String),
-    Create {
-        host: Option<HostId>,
-    },
-    /// Write a diagnostic report of the current runtime state.
-    Report,
+    Create { host: Option<HostId> },
 }
 
 /// Chrome configuration the view does not carry: the palette every frame
@@ -679,7 +675,6 @@ impl Chrome {
                 self.view.close_chat();
                 Vec::new()
             }
-            Some(UiAction::DebugDump) => vec![ShellEffect::Report],
         }
     }
 }

@@ -6,7 +6,7 @@
 use std::io;
 use std::time::Duration;
 
-use amux_ui::{AgentId, Command, DumpReason, Runtime};
+use amux_ui::{AgentId, Command, Runtime};
 use anyhow::Result;
 use chrono::Utc;
 use crossterm::event::EventStream;
@@ -18,6 +18,8 @@ use ratatui::widgets::Paragraph;
 use crate::chrome::{Chrome, ChromeConfig, InputEvent, ShellEffect, TraceEvent};
 use crate::diagnostics::DiagnosticsSource;
 use crate::render::Theme;
+#[cfg(any(debug_assertions, test))]
+use crate::report_flow::{CAPTURE_KEY, Frozen};
 use crate::terminal::{TerminalGuard, write_osc52};
 use crate::trace::{SharedTrace, record_shared};
 use crate::view::{ViewState, next_agent_name};
@@ -152,6 +154,10 @@ async fn chrome_session(
     // the whole batch has been performed, so a copy or a dispatch queued
     // behind it is not silently dropped.
     let mut exit_request: Option<ChromeExit> = None;
+    // The buffer as the terminal last received it. A capture has to
+    // describe what the person was looking at, and by the time the key
+    // arrives the renderer has moved on from the state that produced it.
+    let mut last_frame: Option<ratatui::buffer::Buffer> = None;
 
     let exit = loop {
         if chrome.take_dirty() {
@@ -178,9 +184,10 @@ async fn chrome_session(
             }
             chrome.step(runtime.model(), &event);
             if let Some(lines) = chrome.take_frame() {
-                terminal.draw(|frame| {
+                let completed = terminal.draw(|frame| {
                     frame.render_widget(Paragraph::new(lines), frame.area());
                 })?;
+                last_frame = Some(completed.buffer.clone());
             }
         }
         tokio::select! {
@@ -205,6 +212,19 @@ async fn chrome_session(
             }
             maybe_event = events.next() => match maybe_event {
                 Some(Ok(event)) => {
+                    if let Some(frozen) = capture(&event, config, runtime, chrome, last_frame.as_ref()) {
+                        // The staged prompt that turns this into a bundle
+                        // is not wired yet; naming what was frozen at
+                        // least tells the person the key did something.
+                        let events = frozen.trace.as_ref().map(|t| t.events.len()).unwrap_or(0);
+                        set_notice(
+                            runtime,
+                            config,
+                            chrome,
+                            Some(format!("captured the screen and {events} events")),
+                        );
+                        continue;
+                    }
                     if let Some(input) = InputEvent::from_terminal(&event) {
                         let size = terminal.size()?;
                         let event = TraceEvent::Input {
@@ -300,16 +320,53 @@ fn perform(
                     working_dir: config.working_dir.clone(),
                 });
             }
-            ShellEffect::Report => {
-                let notice = match runtime.report(DumpReason::UserRequested) {
-                    Ok(path) => format!("reported to {}", path.display()),
-                    Err(error) => format!("report failed: {error}"),
-                };
-                set_notice(runtime, config, chrome, Some(notice));
-            }
         }
     }
     Ok(())
+}
+
+/// Freeze everything a report needs, if this event is the capture key and
+/// this build can capture at all. Deliberately ahead of both key handlers:
+/// the key means the same thing on the fleet and inside a chat, and a
+/// handler that swallowed it first would make that depend on the screen.
+#[cfg(any(debug_assertions, test))]
+fn capture(
+    event: &crossterm::event::Event,
+    config: &TuiConfig,
+    runtime: &Runtime,
+    chrome: &Chrome,
+    last_frame: Option<&ratatui::buffer::Buffer>,
+) -> Option<Frozen> {
+    let crossterm::event::Event::Key(key) = event else {
+        return None;
+    };
+    if key.code != CAPTURE_KEY.code || key.modifiers != CAPTURE_KEY.modifiers {
+        return None;
+    }
+    let diagnostics = config.diagnostics.as_ref()?;
+    let trace = config.trace.as_ref()?;
+    let last_frame = last_frame?;
+    Some(Frozen::take(
+        last_frame,
+        chrome.theme(),
+        trace,
+        runtime,
+        diagnostics,
+        Utc::now(),
+    ))
+}
+
+/// A build that captures no reports has no capture key: the event falls
+/// through to the ordinary handlers.
+#[cfg(not(any(debug_assertions, test)))]
+fn capture(
+    _event: &crossterm::event::Event,
+    _config: &TuiConfig,
+    _runtime: &Runtime,
+    _chrome: &Chrome,
+    _last_frame: Option<&ratatui::buffer::Buffer>,
+) -> Option<std::convert::Infallible> {
+    None
 }
 
 /// Put a status-line notice up the way every other view change happens:

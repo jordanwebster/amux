@@ -416,8 +416,6 @@ pub enum UiAction {
     Create {
         host: Option<amux_ui::HostId>,
     },
-    /// Dump the recorder ring (`C-g`).
-    DebugDump,
 }
 
 impl ViewState {

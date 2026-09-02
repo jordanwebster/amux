@@ -16,6 +16,7 @@
       ctrl+c                    clear field; empty: press twice to quit                                                 
       C-a s                     back to fleet                                                                           
       C-a d                     detach to shell                                                                         
+      C-g                       capture a report                                                                        
                                                                                                                         
   composer                                                                                                              
       enter                     send                                                                                    
@@ -34,7 +35,6 @@
       space                     toggle (multi-select)                                                                   
       tab/shift+tab ←/→         cycle question tabs                                                                     
       enter                     confirm / advance / submit                                                              
-      f                         full diff / plan in the reader                                                          
   ⋮ more — a taller terminal shows the full list                                                                        
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     any key to close                                                                                                    

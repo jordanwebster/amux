@@ -116,19 +116,15 @@ async fn run_inner(
     // meant to explain the daemon's state at the moment something looked
     // wrong. A missing daemon is a reason string, not a failed capture.
     let dump_config = config.clone();
-    let diagnostics = amux_cli::diagnostics::source(
-        &config,
-        GIT_SHA,
-        cfg!(debug_assertions),
-        move || {
+    let diagnostics =
+        amux_cli::diagnostics::source(&config, GIT_SHA, cfg!(debug_assertions), move || {
             let config = dump_config.clone();
             async move {
                 crate::server_client::debug(&config, true, DebugFormat::Json)
                     .await
                     .map_err(|error| format!("{error:#}"))
             }
-        },
-    );
+        });
 
     let tui_config = TuiConfig {
         working_dir: std::env::current_dir()?,

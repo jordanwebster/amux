@@ -6730,3 +6730,19 @@ of failing the capture. Only debug builds get a source, which is what will
 keep the capture key out of release builds. `amux-cli` grew a small library
 target so this wiring can be unit-tested with a stub fetcher instead of a live
 daemon; the binary depends on it like any other crate.
+
+2026-09-03 — **`C-g` now freezes the screen instead of dumping the ring.**
+A report is worth nothing if it describes a moment other than the one that
+looked wrong, so the capture key stops the world: the buffer on screen, its
+per-cell style classification, the trace window, the recorder's Msgs and the
+log tail are all read in one synchronous pass while the loop still holds the
+keypress. Nothing recorded afterwards can enter the capture, which is what a
+new test pins. The daemon is the exception — it lives in another process, so
+its fetch starts at the keypress and is awaited later, when the wait costs
+nobody anything. The loop keeps a clone of the last drawn buffer for this,
+and intercepts the key ahead of both key handlers so it means the same thing
+on the fleet and inside a chat. The old `UiAction::DebugDump` path and
+`ShellEffect::Report` are gone, and the binding is now gated: `C-g` appears
+in the help overlay only in a build that can capture, since a release binary
+has nothing to capture into. The overlay goldens were regenerated; the chat
+overlay's existing "⋮ more" truncation absorbs the extra row.

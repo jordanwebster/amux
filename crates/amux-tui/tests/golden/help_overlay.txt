@@ -9,9 +9,9 @@
 │   n             new agent                                                                                            │
 │   r             rename selected                                                                                      │
 │   d             delete selected                                                                                      │
-│   C-g           debug dump                                                                                           │
 │   q             quit                                                                                                 │
 │   ctrl+c ctrl+c quit (guarded: two presses)                                                                          │
+│   C-g           capture a report                                                                                     │
 │                                                                                                                      │
 │   C-a d         detach to shell                                                                                      │
 │   C-a s         back to fleet                                                                                        │

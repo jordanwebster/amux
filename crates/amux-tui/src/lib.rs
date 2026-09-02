@@ -18,6 +18,8 @@ pub mod keys;
 pub(crate) mod markdown;
 pub mod render;
 pub mod replay;
+#[cfg(any(debug_assertions, test))]
+pub mod report_flow;
 pub mod run;
 #[cfg(test)]
 mod serde_roundtrip;

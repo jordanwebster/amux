@@ -35,7 +35,8 @@ use crate::msg::{
 };
 use crate::recorder::{DEFAULT_RECORDER_CAPACITY, Recorder};
 use crate::report::{
-    FrameCapture, ReplayVerdict, ReportDraft, ReportKind, ReportParts, ReportWriter, log_tail,
+    FrameCapture, LOG_TAIL_BYTES, ReplayVerdict, ReportDraft, ReportKind, ReportParts,
+    ReportWriter, log_tail,
 };
 use crate::update::{NOT_CONNECTED_ERROR, update};
 
@@ -456,8 +457,6 @@ impl Drop for Runtime {
     }
 }
 
-const REPORT_LOG_TAIL_BYTES: usize = 64 * 1024;
-
 struct PanicReportContext {
     recorder: Arc<StdMutex<Recorder>>,
     report_dir: PathBuf,
@@ -512,7 +511,7 @@ fn capture_log_tail(log_path: Option<&Path>) -> (Option<String>, Option<String>)
     let Some(path) = log_path else {
         return (None, None);
     };
-    match log_tail(path, REPORT_LOG_TAIL_BYTES) {
+    match log_tail(path, LOG_TAIL_BYTES) {
         Ok(log) => (log, None),
         Err(error) => (
             None,
@@ -1309,7 +1308,7 @@ mod tests {
         let log_path = dir.path().join("amux.log");
         let mut runtime = a_runtime(dir.path().to_path_buf());
         std::fs::write(&log_path, b"valid line\n\xff").expect("write invalid UTF-8 log");
-        let read_error = log_tail(&log_path, REPORT_LOG_TAIL_BYTES)
+        let read_error = log_tail(&log_path, LOG_TAIL_BYTES)
             .expect_err("invalid UTF-8 must fail")
             .to_string();
 
