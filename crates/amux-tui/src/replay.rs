@@ -272,8 +272,8 @@ fn bounding_mark(cells: &[(u16, u16)]) -> Option<Mark> {
 
 #[cfg(test)]
 mod tests {
-    use amux_ui::BUILD;
     use amux_ui::report::{ReportDraft, ReportKind, ReportParts, ReportWriter};
+    use amux_ui::{AgentId, BUILD, Msg, StreamEntry, StreamMsg};
     use chrono::{DateTime, TimeDelta, Utc};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -284,6 +284,8 @@ mod tests {
     use crate::trace::{SEGMENT_LEN, TraceRing};
 
     const VIEWPORT: (u16, u16) = (120, 40);
+    /// The agent the Claude fixtures are built around.
+    const CLAUDE_AGENT: AgentId = AgentId::from_u128(7);
 
     /// A live session recorded exactly the way `run.rs` records one: roll,
     /// record the draw, step it, paint what the step built.
@@ -344,6 +346,26 @@ mod tests {
                 viewport: VIEWPORT,
                 now: self.now,
             };
+            self.ring.record(&event);
+            self.chrome.step(&self.model, &event);
+        }
+
+        /// One runtime message, folded the way the live loop folds one:
+        /// into the Model first, then through the chrome, which only
+        /// learns that the screen is stale.
+        fn fold(&mut self, msg: Msg) {
+            let event = TraceEvent::Msg(msg);
+            self.ring.record(&event);
+            if let TraceEvent::Msg(msg) = &event {
+                let _ = update(&mut self.model, msg.clone());
+            }
+            self.chrome.step(&self.model, &event);
+        }
+
+        /// The end of a batch of folded messages: the chat reconciles
+        /// against the fresh Model.
+        fn drained(&mut self) {
+            let event = TraceEvent::Drained;
             self.ring.record(&event);
             self.chrome.step(&self.model, &event);
         }
@@ -421,6 +443,66 @@ mod tests {
             session.draw();
         }
         session
+    }
+
+    /// A feed entry that arrived from the runtime between two draws, in
+    /// the wording the test can look for.
+    fn assistant_entry(seq: u64, text: &str) -> Msg {
+        Msg::Stream {
+            agent: CLAUDE_AGENT,
+            event: StreamMsg::Batch {
+                at: "2026-08-12T09:13:00Z".parse().expect("timestamp"),
+                entries: vec![StreamEntry {
+                    seq,
+                    payload: serde_json::json!({
+                        "type": "assistant",
+                        "uuid": format!("eeeeeeee-0000-4000-8000-{seq:012}"),
+                        "sessionId": "22222222-2222-4222-8222-222222222222",
+                        "timestamp": "2026-08-12T09:13:00Z",
+                        "message": {
+                            "id": format!("msg-{seq}"),
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": text}],
+                            "stop_reason": "end_turn",
+                        },
+                    }),
+                }],
+            },
+        }
+    }
+
+    /// A trace is not only inputs and draws: the feed content a chat draws
+    /// arrives as runtime messages, and a replay that does not fold them
+    /// draws yesterday's conversation.
+    #[test]
+    fn folded_msgs_between_draws_replay() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut session = Session::open(NamedState::ClaudeIdle);
+        session.draw();
+        session.fold(assistant_entry(6, "the retry budget is now configurable"));
+        session.drained();
+        session.draw();
+        session.fold(assistant_entry(7, "and the backoff ceiling is capped"));
+        session.drained();
+        session.draw();
+        let captured = session.capture();
+        assert!(
+            captured.text.contains("the backoff ceiling is capped"),
+            "the folded messages must reach the feed"
+        );
+
+        let report = session.write_report(dir.path());
+        let mut replay = Replay::load(&report).expect("report loads");
+        replay.step_to_end().expect("replays to the end");
+        assert_eq!(
+            replay.frame().expect("a frame was drawn"),
+            captured,
+            "a replay that skipped the Msgs would draw the feed as it was before them"
+        );
+        assert_eq!(
+            verify(&report).expect("verify runs"),
+            ReplayVerdict::Reproduces
+        );
     }
 
     /// The status line belongs to the trace even when the shell, not a

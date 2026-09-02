@@ -6710,3 +6710,11 @@ attach, a clipboard write or a written report leaves behind. Those now travel
 as `TraceEvent::Notice`, so `Chrome::step` is the only writer of
 `view.notice` and a replayed frame carries the same status line the capture
 did instead of an empty one.
+
+2026-09-03 — **A replay folds the runtime's messages, not just the keys.**
+The recording harness can now fold a `Msg` the way the live loop does — into
+its own Model, then through the chrome — so a recorded session covers feed
+content arriving between draws, not only inputs and paints. Replaying such a
+trace lands on the captured frame; drop the fold from the replay and the
+frame comes back as the conversation was before the messages arrived, which
+is what the new test pins.
