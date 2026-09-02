@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::RecorderSnapshot;
-use crate::recorder::{DUMP_FORMAT_VERSION, RecorderSnapshotHeader};
+use crate::recorder::{MSGS_SCHEMA_VERSION, RecorderSnapshotHeader};
 
 /// Bumped whenever the report header or directory layout changes.
 pub const REPORT_SCHEMA_VERSION: u32 = 1;
@@ -221,7 +221,7 @@ fn part_state<T>(part: &Option<T>, absent_reason: &str) -> PartState {
 fn write_recorder_snapshot(path: &Path, snapshot: &RecorderSnapshot) -> io::Result<()> {
     let mut file = create_private_file(path)?;
     let header = RecorderSnapshotHeader {
-        format_version: DUMP_FORMAT_VERSION,
+        format_version: MSGS_SCHEMA_VERSION,
         checkpoint: &snapshot.checkpoint,
     };
     serde_json::to_writer(&mut file, &header).map_err(io::Error::other)?;

@@ -58,12 +58,12 @@ pub enum Effect {
         input_id: Vec<u8>,
         payload: InputPayload,
     },
-    /// A reducer tripwire observed an impossible state: dump the recorder
+    /// A reducer tripwire observed an impossible state: report the recorder
     /// ring for diagnosis. The pure reducer never writes files — it requests.
     RequestDump { reason: DumpReason },
 }
 
-/// Why a recorder dump was taken.
+/// Why an automatic report was taken.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "dump_reason", rename_all = "snake_case")]
 pub enum DumpReason {
@@ -71,9 +71,9 @@ pub enum DumpReason {
     Tripwire { detail: String },
     /// A lossless channel overflowed — a torn stream is a bug to fix.
     ChannelOverflow { detail: String },
-    /// Best-effort dump from the panic hook, after terminal restore.
+    /// Best-effort report from the panic hook, after terminal restore.
     Panic { detail: String },
-    /// Explicit user request (keybinding or `amux debug ui-dump`).
+    /// Explicit user request from the legacy debug keybinding.
     UserRequested,
 }
 

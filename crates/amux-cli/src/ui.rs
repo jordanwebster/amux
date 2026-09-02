@@ -79,17 +79,22 @@ async fn run_inner(
         connector,
         RuntimeOptions {
             local_host_id,
-            dump_dir: Some(config.data_dir.join("ui-dumps")),
+            report_dir: Some(config.reports_dir()),
+            log_path: Some(
+                std::env::var_os("AMUX_LOG")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(amux::default_log_path),
+            ),
             subscription_status_provider: Some(Arc::new(move || {
                 subscription_reporter.subscription_required()
             })),
             ..RuntimeOptions::default()
         },
     );
-    // A panic anywhere in the TUI leaves a Msg recording: the terminal.rs
-    // panic hook calls amux_ui::write_panic_dump after restoring the
+    // A panic anywhere in the TUI leaves a report: the terminal.rs panic
+    // hook calls amux_ui::write_panic_report after restoring the
     // terminal.
-    runtime.install_panic_dump();
+    runtime.install_panic_report();
 
     let tui_config = TuiConfig {
         working_dir: std::env::current_dir()?,

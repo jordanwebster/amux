@@ -232,12 +232,12 @@ async fn chrome_session(
                             view.close_chat();
                         }
                         Some(UiAction::DebugDump) => {
-                            match runtime.dump(DumpReason::UserRequested) {
+                            match runtime.report(DumpReason::UserRequested) {
                                 Ok(path) => {
-                                    view.notice = Some(format!("dumped to {}", path.display()));
+                                    view.notice = Some(format!("reported to {}", path.display()));
                                 }
                                 Err(error) => {
-                                    view.notice = Some(format!("dump failed: {error}"));
+                                    view.notice = Some(format!("report failed: {error}"));
                                 }
                             }
                         }

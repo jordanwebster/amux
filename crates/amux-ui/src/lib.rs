@@ -42,10 +42,11 @@ pub use msg::{
     StreamCloseReason, StreamEntry, StreamMsg,
 };
 pub use recorder::{
-    DEFAULT_RECORDER_CAPACITY, DUMP_FORMAT_VERSION, DUMP_RETAINED_FILES, DumpHeader, Recorder,
-    RecorderSnapshot, ReplayError, replay,
+    DEFAULT_RECORDER_CAPACITY, MSGS_SCHEMA_VERSION, Recorder, RecorderSnapshot, ReplayError,
+    replay_msgs,
 };
 pub use runtime::{
-    BUILD, ConnectFailure, ConnectFuture, Connector, Runtime, RuntimeOptions, write_panic_dump,
+    BUILD, ConnectFailure, ConnectFuture, Connector, ReportExtras, ReportExtrasProvider, Runtime,
+    RuntimeOptions, write_panic_report,
 };
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};

@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
@@ -33,9 +34,12 @@ use crate::msg::{
     StreamEntry, StreamMsg,
 };
 use crate::recorder::{DEFAULT_RECORDER_CAPACITY, Recorder};
+use crate::report::{
+    FrameCapture, ReplayVerdict, ReportDraft, ReportKind, ReportParts, ReportWriter, log_tail,
+};
 use crate::update::{NOT_CONNECTED_ERROR, update};
 
-/// Reducer build identity, stamped into recorder dumps.
+/// Reducer build identity, stamped into reports.
 pub const BUILD: &str = concat!("amux-ui/", env!("CARGO_PKG_VERSION"));
 
 /// One ordered Msg stream; producers wait when it is full (lossless).
@@ -72,12 +76,28 @@ pub type Connector = Box<dyn FnMut() -> ConnectFuture + Send>;
 /// Reads the daemon's durable subscription-required state.
 pub type SubscriptionStatusProvider = Arc<dyn Fn() -> bool + Send + Sync>;
 
+/// Debug-only frame and trace data supplied by an embedding UI when available.
+#[derive(Clone, Debug, Default)]
+pub struct ReportExtras {
+    pub frame: Option<FrameCapture>,
+    pub trace: Option<Vec<u8>>,
+    pub viewport: Option<(u16, u16)>,
+}
+
+pub type ReportExtrasProvider = Arc<dyn Fn() -> ReportExtras + Send + Sync>;
+
 pub struct RuntimeOptions {
     /// The daemon's own host id (read from the local device identity);
     /// enters the Model via `ServerMsg::Connected`.
     pub local_host_id: Option<HostId>,
-    /// Where recorder dumps land. `None` disables dumping.
-    pub dump_dir: Option<PathBuf>,
+    /// Where report bundles land. `None` disables reporting.
+    pub report_dir: Option<PathBuf>,
+    /// Log file whose bounded tail is included when it exists.
+    pub log_path: Option<PathBuf>,
+    /// Source revision embedded in every report header.
+    pub git_sha: &'static str,
+    /// Optional UI-owned capture hook for automatic reports.
+    pub report_extras: Option<ReportExtrasProvider>,
     pub recorder_capacity: usize,
     /// Provider polled while connected so marker transitions enter the reducer.
     pub subscription_status_provider: Option<SubscriptionStatusProvider>,
@@ -87,7 +107,10 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             local_host_id: None,
-            dump_dir: None,
+            report_dir: None,
+            log_path: None,
+            git_sha: "unknown",
+            report_extras: None,
             recorder_capacity: DEFAULT_RECORDER_CAPACITY,
             subscription_status_provider: None,
         }
@@ -99,8 +122,8 @@ impl Default for RuntimeOptions {
 /// [`Runtime::drain`].
 pub struct Runtime {
     model: Model,
-    /// Shared with the process panic hook ([`Runtime::install_panic_dump`])
-    /// so a panic can dump the ring after terminal restore. The fold is
+    /// Shared with the process panic hook ([`Runtime::install_panic_report`])
+    /// so a panic can snapshot the ring after terminal restore. The fold is
     /// single-threaded — contention is nil; the mutex exists for the hook.
     recorder: Arc<StdMutex<Recorder>>,
     msg_tx: mpsc::Sender<Msg>,
@@ -110,10 +133,13 @@ pub struct Runtime {
     /// Live per-agent stream tasks (shell resource bookkeeping only; the
     /// semantic stream state lives in the Model).
     streams: HashMap<AgentId, JoinHandle<()>>,
-    dump_dir: Option<PathBuf>,
+    report_dir: Option<PathBuf>,
+    log_path: Option<PathBuf>,
+    git_sha: &'static str,
+    report_extras: Option<ReportExtrasProvider>,
     /// Violation kinds already reported this session: invariant logs and
-    /// dumps are throttled to once per kind so a persistent incoherence
-    /// cannot fill the dump directory.
+    /// reports are throttled to once per kind so a persistent incoherence
+    /// cannot fill the report directory.
     reported_violations: HashSet<&'static str>,
 }
 
@@ -146,7 +172,10 @@ impl Runtime {
             client,
             tasks: vec![connection_task],
             streams: HashMap::new(),
-            dump_dir: options.dump_dir,
+            report_dir: options.report_dir,
+            log_path: options.log_path,
+            git_sha: options.git_sha,
+            report_extras: options.report_extras,
             reported_violations: HashSet::new(),
         }
     }
@@ -210,22 +239,61 @@ impl Runtime {
         folded
     }
 
-    /// Dump the recorder ring for diagnosis. Local-only; never uploaded.
-    pub fn dump(&mut self, reason: DumpReason) -> io::Result<PathBuf> {
-        let Some(dir) = self.dump_dir.clone() else {
-            return Err(io::Error::other("no dump directory configured"));
+    /// Write an automatic diagnostic report. Local-only; never uploaded.
+    pub fn report(&mut self, reason: DumpReason) -> io::Result<PathBuf> {
+        let Some(dir) = self.report_dir.clone() else {
+            return Err(io::Error::other("no report directory configured"));
         };
-        lock_recorder(&self.recorder).write_dump(&dir, reason, BUILD, &dump_stamp())
+        let extras = self
+            .report_extras
+            .as_ref()
+            .map(|provider| provider())
+            .unwrap_or_default();
+        let log = self
+            .log_path
+            .as_deref()
+            .map(|path| log_tail(path, REPORT_LOG_TAIL_BYTES))
+            .transpose()?
+            .flatten();
+        let (kind, detail) = report_reason(reason);
+        ReportWriter::new(dir, BUILD, self.git_sha).write(
+            ReportDraft {
+                kind,
+                detail,
+                note: String::new(),
+                marks: Vec::new(),
+                viewport: extras.viewport,
+                replay: ReplayVerdict::Unchecked,
+            },
+            ReportParts {
+                frame: extras.frame,
+                trace: extras.trace,
+                msgs: Some(self.recorder_snapshot()),
+                daemon: None,
+                log,
+                absent_reason: automatic_absent_reason().to_string(),
+            },
+        )
     }
 
-    /// Register this Runtime's recorder with the process-global panic-dump
-    /// slot read by [`write_panic_dump`]. Call once after start; a Runtime
-    /// without a dump directory registers nothing.
-    pub fn install_panic_dump(&self) {
-        let Some(dir) = self.dump_dir.clone() else {
+    pub fn recorder_snapshot(&self) -> crate::RecorderSnapshot {
+        lock_recorder(&self.recorder).snapshot()
+    }
+
+    /// Register this Runtime's recorder with the process-global panic-report
+    /// slot read by [`write_panic_report`]. Call once after start; a Runtime
+    /// without a report directory registers nothing.
+    pub fn install_panic_report(&self) {
+        let Some(report_dir) = self.report_dir.clone() else {
             return;
         };
-        let _ = PANIC_DUMP.set((self.recorder.clone(), dir, BUILD));
+        let _ = PANIC_REPORT.set(PanicReportContext {
+            recorder: self.recorder.clone(),
+            report_dir,
+            log_path: self.log_path.clone(),
+            git_sha: self.git_sha,
+            report_extras: self.report_extras.clone(),
+        });
     }
 
     fn process(&mut self, msg: Msg) {
@@ -271,7 +339,7 @@ impl Runtime {
     /// Model coherence at the fold seam (`docs/UI.md`, Testing): distinct
     /// from input tripwires, which refuse impossible inputs at the receiving
     /// reducer arm — this checks the folded state itself, in every build.
-    /// Every build reports and dumps once per violation kind, marks a sticky
+    /// Every build writes once per violation kind, marks a sticky
     /// renderer warning, and keeps folding. `AMUX_INVARIANT_FATAL=1` is the
     /// sole opt-in to the fatal panic policy used by tests and CI.
     fn enforce_invariants(&mut self) {
@@ -287,11 +355,11 @@ impl Runtime {
         }
         for violation in violations {
             if self.reported_violations.insert(violation.kind()) {
-                tracing::error!(%violation, "model invariant violated; dumping recorder ring");
-                if let Err(error) = self.dump(DumpReason::Tripwire {
+                tracing::error!(%violation, "model invariant violated; writing report");
+                if let Err(error) = self.report(DumpReason::Tripwire {
                     detail: format!("invariant: {violation}"),
                 }) {
-                    tracing::error!(%violation, %error, "failed to write invariant dump");
+                    tracing::error!(%violation, %error, "failed to write invariant report");
                 }
             }
         }
@@ -358,8 +426,8 @@ impl Runtime {
                 }
             }
             Effect::RequestDump { reason } => {
-                if let Err(error) = self.dump(reason.clone()) {
-                    tracing::warn!(?reason, %error, "failed to write requested ui dump");
+                if let Err(error) = self.report(reason.clone()) {
+                    tracing::warn!(?reason, %error, "failed to write requested report");
                 }
             }
         }
@@ -377,13 +445,31 @@ impl Drop for Runtime {
     }
 }
 
-/// The recorder registered for panic dumps: set once by
-/// [`Runtime::install_panic_dump`], read by [`write_panic_dump`] inside the
-/// panic hook.
-static PANIC_DUMP: OnceLock<(Arc<StdMutex<Recorder>>, PathBuf, &'static str)> = OnceLock::new();
+const REPORT_LOG_TAIL_BYTES: usize = 64 * 1024;
+
+struct PanicReportContext {
+    recorder: Arc<StdMutex<Recorder>>,
+    report_dir: PathBuf,
+    log_path: Option<PathBuf>,
+    git_sha: &'static str,
+    report_extras: Option<ReportExtrasProvider>,
+}
+
+/// The context registered for panic reports: set once by
+/// [`Runtime::install_panic_report`] and read inside the panic hook.
+static PANIC_REPORT: OnceLock<PanicReportContext> = OnceLock::new();
+static PANIC_REPORT_WRITING: AtomicBool = AtomicBool::new(false);
+
+struct PanicReportGuard;
+
+impl Drop for PanicReportGuard {
+    fn drop(&mut self) {
+        PANIC_REPORT_WRITING.store(false, Ordering::Release);
+    }
+}
 
 /// Lock the recorder even when poisoned: a panic mid-record must not block
-/// the panic hook from dumping. The ring holds pre-serialized lines, so the
+/// the panic hook from reporting. The ring holds pre-serialized lines, so the
 /// worst a poisoned lock can cost is the newest entry.
 fn lock_recorder(recorder: &StdMutex<Recorder>) -> std::sync::MutexGuard<'_, Recorder> {
     recorder
@@ -391,31 +477,65 @@ fn lock_recorder(recorder: &StdMutex<Recorder>) -> std::sync::MutexGuard<'_, Rec
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Unique dump-file stamp: zero-padded wall millis (name order is age
-/// order, which the pruner relies on) plus pid.
-fn dump_stamp() -> String {
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or(0);
-    format!("{millis:013}-{}", std::process::id())
+fn report_reason(reason: DumpReason) -> (ReportKind, Option<String>) {
+    match reason {
+        DumpReason::Tripwire { detail } => (ReportKind::Tripwire, Some(detail)),
+        DumpReason::ChannelOverflow { detail } => (ReportKind::ChannelOverflow, Some(detail)),
+        DumpReason::Panic { detail } => (ReportKind::Panic, Some(detail)),
+        DumpReason::UserRequested => (
+            ReportKind::Bug,
+            Some("legacy user-requested capture".to_string()),
+        ),
+    }
 }
 
-/// Best-effort recorder dump from the process panic hook, called AFTER
-/// terminal restore (a dump is worthless if writing it destroys the panic
-/// report). Returns quietly on every failure — nothing may panic or block
-/// here; the process is already dying.
-pub fn write_panic_dump(detail: &str) {
-    let Some((recorder, dir, build)) = PANIC_DUMP.get() else {
+fn automatic_absent_reason() -> &'static str {
+    if cfg!(debug_assertions) {
+        "not captured by this automatic report"
+    } else {
+        "unavailable in release build"
+    }
+}
+
+/// Best-effort report from the process panic hook, called after terminal
+/// restore. Returns quietly on every failure; the process is already dying.
+pub fn write_panic_report(detail: &str) {
+    if PANIC_REPORT_WRITING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _guard = PanicReportGuard;
+    let Some(context) = PANIC_REPORT.get() else {
         return;
     };
-    let _ = lock_recorder(recorder).write_dump(
-        dir,
-        DumpReason::Panic {
-            detail: detail.to_string(),
+    let extras = context
+        .report_extras
+        .as_ref()
+        .and_then(|provider| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| provider())).ok()
+        })
+        .unwrap_or_default();
+    let log = context
+        .log_path
+        .as_deref()
+        .and_then(|path| log_tail(path, REPORT_LOG_TAIL_BYTES).ok().flatten());
+    let snapshot = lock_recorder(&context.recorder).snapshot();
+    let _ = ReportWriter::new(context.report_dir.clone(), BUILD, context.git_sha).write(
+        ReportDraft {
+            kind: ReportKind::Panic,
+            detail: Some(detail.to_string()),
+            note: String::new(),
+            marks: Vec::new(),
+            viewport: extras.viewport,
+            replay: ReplayVerdict::Unchecked,
         },
-        build,
-        &dump_stamp(),
+        ReportParts {
+            frame: extras.frame,
+            trace: extras.trace,
+            msgs: Some(snapshot),
+            daemon: None,
+            log,
+            absent_reason: automatic_absent_reason().to_string(),
+        },
     );
 }
 
@@ -1064,9 +1184,11 @@ mod tests {
     }
 
     /// A Runtime with no shell tasks: Msgs enter only through the direct
-    /// fold surface (`dispatch`/`observe_now`), which is all the panic-dump
+    /// fold surface (`dispatch`/`observe_now`), which is all the panic-report
     /// path needs. No tokio runtime required.
-    fn a_runtime(dump_dir: PathBuf) -> Runtime {
+    fn a_runtime(report_dir: PathBuf) -> Runtime {
+        let log_path = report_dir.join("amux.log");
+        std::fs::write(&log_path, "runtime test log\n").expect("write test log");
         let model = Model::default();
         let recorder = Arc::new(StdMutex::new(Recorder::new(
             DEFAULT_RECORDER_CAPACITY,
@@ -1081,7 +1203,10 @@ mod tests {
             client: Arc::new(StdMutex::new(None)),
             tasks: Vec::new(),
             streams: HashMap::new(),
-            dump_dir: Some(dump_dir),
+            report_dir: Some(report_dir),
+            log_path: Some(log_path),
+            git_sha: "test-sha",
+            report_extras: None,
             reported_violations: HashSet::new(),
         }
     }
@@ -1098,15 +1223,11 @@ mod tests {
         );
     }
 
-    fn dump_paths(dir: &std::path::Path) -> Vec<PathBuf> {
+    fn report_paths(dir: &std::path::Path) -> Vec<PathBuf> {
         std::fs::read_dir(dir)
-            .expect("read dump directory")
-            .map(|entry| entry.expect("read dump entry").path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("ui-dump-") && name.ends_with(".jsonl"))
-            })
+            .expect("read report directory")
+            .map(|entry| entry.expect("read report entry").path())
+            .filter(|path| path.is_dir() && path.join("report.json").is_file())
             .collect()
     }
 
@@ -1144,25 +1265,41 @@ mod tests {
                 corrupt_with_orphan_stream(&mut runtime);
                 runtime.enforce_invariants();
                 assert!(runtime.model().has_invariant_warning());
-                let dumps = dump_paths(dir.path());
-                assert_eq!(dumps.len(), 1, "one dump for the new violation kind");
-                let contents = std::fs::read_to_string(&dumps[0]).expect("read invariant dump");
-                let header: crate::recorder::DumpHeader =
-                    serde_json::from_str(contents.lines().next().expect("invariant dump header"))
-                        .expect("parse invariant dump header");
+                let reports = report_paths(dir.path());
+                assert_eq!(reports.len(), 1, "one report for the new violation kind");
+                let header =
+                    crate::report::read_header(&reports[0]).expect("read invariant report header");
+                assert!(matches!(header.kind, crate::report::ReportKind::Tripwire));
+                assert!(
+                    header
+                        .detail
+                        .as_deref()
+                        .is_some_and(|detail| detail.starts_with("invariant:"))
+                );
                 assert!(matches!(
-                    header.reason,
-                    DumpReason::Tripwire { ref detail } if detail.starts_with("invariant:")
+                    header.parts.frame,
+                    crate::report::PartState::Absent { .. }
                 ));
-                let replayed = crate::recorder::replay(&dumps[0]).expect("replay invariant dump");
+                assert!(matches!(
+                    header.parts.trace,
+                    crate::report::PartState::Absent { .. }
+                ));
+                assert_eq!(header.parts.msgs, crate::report::PartState::Present);
+                assert!(matches!(
+                    header.parts.daemon,
+                    crate::report::PartState::Absent { .. }
+                ));
+                assert_eq!(header.parts.log, crate::report::PartState::Present);
+                let replayed = crate::recorder::replay_msgs(&reports[0].join("msgs.jsonl"))
+                    .expect("replay invariant report");
                 assert!(
                     replayed.has_invariant_warning(),
-                    "replayed invariant dump must retain the sticky warning"
+                    "replayed invariant report must retain the sticky warning"
                 );
 
                 runtime.enforce_invariants();
                 assert_eq!(
-                    dump_paths(dir.path()).len(),
+                    report_paths(dir.path()).len(),
                     1,
                     "persistent corruption stays throttled once per kind"
                 );
@@ -1174,7 +1311,7 @@ mod tests {
             "coherent" => {
                 runtime.enforce_invariants();
                 assert!(!runtime.model().has_invariant_warning());
-                assert!(dump_paths(dir.path()).is_empty());
+                assert!(report_paths(dir.path()).is_empty());
             }
             other => panic!("unknown invariant policy child case: {other}"),
         }
@@ -1276,40 +1413,35 @@ mod tests {
         );
     }
 
-    /// The panic hook's dump path, exercised WITHOUT panicking: install,
-    /// call `write_panic_dump`, and the dump directory holds a bundle whose
+    /// The panic hook's report path, exercised WITHOUT panicking: install,
+    /// call `write_panic_report`, and the report directory holds a bundle whose
     /// header carries the panic reason.
     #[test]
-    fn write_panic_dump_writes_a_dump_after_install() {
+    fn write_panic_report_writes_a_report_after_install() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut runtime = a_runtime(dir.path().to_path_buf());
         runtime.observe_now(DateTime::from_timestamp(1_754_697_600, 0).expect("valid time"));
         runtime.dispatch(Command::DeleteAgent {
             agent: Uuid::from_u128(7),
         });
-        runtime.install_panic_dump();
+        runtime.install_panic_report();
 
-        write_panic_dump("test");
+        write_panic_report("test");
 
-        let dump = std::fs::read_dir(dir.path())
-            .expect("read dump dir")
+        let report = std::fs::read_dir(dir.path())
+            .expect("read report dir")
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
-            .find(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("ui-dump-") && name.ends_with(".jsonl"))
-            })
-            .expect("a dump file exists");
-        let contents = std::fs::read_to_string(&dump).expect("read dump");
-        let header = contents.lines().next().expect("header line");
-        assert!(
-            header.contains("panic"),
-            "dump header must carry the panic reason: {header}"
-        );
+            .find(|path| path.is_dir() && path.join("report.json").is_file())
+            .expect("a report exists");
+        let header = crate::report::read_header(&report).expect("read panic report");
+        assert_eq!(header.kind, crate::report::ReportKind::Panic);
+        assert_eq!(header.detail.as_deref(), Some("test"));
+        let contents =
+            std::fs::read_to_string(report.join("msgs.jsonl")).expect("read recorder snapshot");
         assert!(
             contents.lines().count() > 1,
-            "the recorded Msgs ride along in the dump"
+            "the recorded Msgs ride along in the report"
         );
     }
 

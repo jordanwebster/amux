@@ -7,9 +7,10 @@
 use amux_ui::claude::answer::{
     AskAnswer, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
 };
+use amux_ui::report::{ReplayVerdict, ReportDraft, ReportKind, ReportParts, ReportWriter};
 use amux_ui::{
     BUILD, DisconnectReason, DumpReason, Effect, Model, Msg, OpOutcome, Recorder,
-    StreamCloseReason, StreamEntry, StreamMsg, replay, update,
+    StreamCloseReason, StreamEntry, StreamMsg, replay_msgs, update,
 };
 
 use crate::harness::*;
@@ -55,7 +56,7 @@ fn differential_fold_matches_live_state_after_every_msg() {
 
             // No public fold sequence may ever leave the Model structurally
             // incoherent — the same check the shell enforces at the fold
-            // seam (panic in debug, dump-once-per-kind in release).
+            // seam (panic in debug, report-once-per-kind in release).
             let violations = live.check_invariants();
             assert!(
                 violations.is_empty(),
@@ -65,7 +66,7 @@ fn differential_fold_matches_live_state_after_every_msg() {
     }
 }
 
-/// A recorder dump is a self-contained replay bundle: replaying it twice
+/// A recorder report is a self-contained replay bundle: replaying it twice
 /// yields byte-identical Model JSON, and both equal the live Model. The
 /// recorder capacity is deliberately tiny so eviction folds Msgs into the
 /// checkpoint on the way.
@@ -81,12 +82,30 @@ fn replaying_a_recorded_log_twice_yields_identical_models() {
             update(&mut live, msg);
         }
     }
-    let path = recorder
-        .write_dump(dir.path(), DumpReason::UserRequested, BUILD, "0-test")
-        .expect("dump written");
+    let report = ReportWriter::new(dir.path().to_path_buf(), BUILD, "test")
+        .write(
+            ReportDraft {
+                kind: ReportKind::Bug,
+                detail: None,
+                note: String::new(),
+                marks: Vec::new(),
+                viewport: None,
+                replay: ReplayVerdict::Unchecked,
+            },
+            ReportParts {
+                frame: None,
+                trace: None,
+                msgs: Some(recorder.snapshot()),
+                daemon: None,
+                log: None,
+                absent_reason: "test".to_string(),
+            },
+        )
+        .expect("report written");
+    let path = report.join("msgs.jsonl");
 
-    let first = replay(&path).expect("first replay");
-    let second = replay(&path).expect("second replay");
+    let first = replay_msgs(&path).expect("first replay");
+    let second = replay_msgs(&path).expect("second replay");
     let first_json = serde_json::to_value(&first).unwrap();
     assert_eq!(first_json, serde_json::to_value(&second).unwrap());
     assert_eq!(first_json, serde_json::to_value(&live).unwrap());
@@ -259,10 +278,10 @@ fn every_msg_variant_round_trips_through_serde() {
 }
 
 /// A reducer tripwire: entity events cannot arrive while disconnected (the
-/// subscription that would carry them is down). The reducer requests a dump
+/// subscription that would carry them is down). The reducer requests a report
 /// and refuses the write instead of corrupting the Model.
 #[test]
-fn impossible_input_requests_a_dump() {
+fn impossible_input_requests_a_report() {
     let (model, effects) = fold_with_effects(vec![agent_up(&an_agent("ghost", "nova"))]);
     assert_eq!(model.agent_count(), 0, "the impossible write is refused");
     assert!(
@@ -272,6 +291,6 @@ fn impossible_input_requests_a_dump() {
                 reason: DumpReason::Tripwire { .. }
             }]
         ),
-        "expected a tripwire dump request: {effects:?}"
+        "expected a tripwire report request: {effects:?}"
     );
 }

@@ -120,10 +120,10 @@ pub fn install_panic_hook() {
             if CHROME_OWNS_TERMINAL.swap(false, Ordering::SeqCst) {
                 restore_now();
             }
-            // Best-effort Msg recording, deliberately AFTER restore: a dump
+            // Best-effort Msg recording, deliberately AFTER restore: a report
             // is worthless if writing it delays putting the terminal back
             // and the report lands on a vanishing alternate screen.
-            amux_ui::write_panic_dump(&info.to_string());
+            amux_ui::write_panic_report(&info.to_string());
             previous(info);
         }));
     });
