@@ -6621,3 +6621,11 @@ again prove that a FACT-paired interrupt closes a flushed null-stop message as
 interrupted, distinct permission requests under one prompt remain separate
 asks, and thinking durations use the full previous-row timestamp chain across
 tool results and later prompts.
+
+2026-09-02 — **Moved client diagnostics into self-describing report bundles.**
+Reports now live under `data_dir/reports` unless `reports_dir` overrides it and
+declare every frame, trace, Model message log, daemon dump, and log-tail part in
+a versioned private header. Runtime tripwires and terminal-restored panic hooks
+write the same directory format in every build, automatic kinds retain their
+newest twenty without pruning bug or tweak reports, and each header records the
+CLI build's Git revision when repository metadata is available.

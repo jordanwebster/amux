@@ -20,6 +20,8 @@ use crate::client_common::get_client;
 use crate::init::{self, InitContext};
 use crate::update::MarkerFileReporter;
 
+const GIT_SHA: &str = env!("GIT_SHA");
+
 pub async fn run(config: Config) -> Result<()> {
     run_inner(config, None, None).await
 }
@@ -85,6 +87,7 @@ async fn run_inner(
                     .map(PathBuf::from)
                     .unwrap_or_else(amux::default_log_path),
             ),
+            git_sha: GIT_SHA,
             subscription_status_provider: Some(Arc::new(move || {
                 subscription_reporter.subscription_required()
             })),
