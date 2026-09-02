@@ -99,6 +99,7 @@ fn replaying_a_recorded_log_twice_yields_identical_models() {
                 daemon: None,
                 log: None,
                 absent_reason: "test".to_string(),
+                log_absent_reason: None,
             },
         )
         .expect("report written");

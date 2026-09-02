@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
@@ -249,12 +249,7 @@ impl Runtime {
             .as_ref()
             .map(|provider| provider())
             .unwrap_or_default();
-        let log = self
-            .log_path
-            .as_deref()
-            .map(|path| log_tail(path, REPORT_LOG_TAIL_BYTES))
-            .transpose()?
-            .flatten();
+        let (log, log_absent_reason) = capture_log_tail(self.log_path.as_deref());
         let (kind, detail) = report_reason(reason);
         ReportWriter::new(dir, BUILD, self.git_sha).write(
             ReportDraft {
@@ -272,6 +267,7 @@ impl Runtime {
                 daemon: None,
                 log,
                 absent_reason: automatic_absent_reason().to_string(),
+                log_absent_reason,
             },
         )
     }
@@ -497,6 +493,22 @@ fn automatic_absent_reason() -> &'static str {
     }
 }
 
+fn capture_log_tail(log_path: Option<&Path>) -> (Option<String>, Option<String>) {
+    let Some(path) = log_path else {
+        return (None, None);
+    };
+    match log_tail(path, REPORT_LOG_TAIL_BYTES) {
+        Ok(log) => (log, None),
+        Err(error) => (
+            None,
+            Some(format!(
+                "failed to read log tail from {}: {error}",
+                path.display()
+            )),
+        ),
+    }
+}
+
 /// Best-effort report from the process panic hook, called after terminal
 /// restore. Returns quietly on every failure; the process is already dying.
 pub fn write_panic_report(detail: &str) {
@@ -514,10 +526,7 @@ pub fn write_panic_report(detail: &str) {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| provider())).ok()
         })
         .unwrap_or_default();
-    let log = context
-        .log_path
-        .as_deref()
-        .and_then(|path| log_tail(path, REPORT_LOG_TAIL_BYTES).ok().flatten());
+    let (log, log_absent_reason) = capture_log_tail(context.log_path.as_deref());
     let snapshot = lock_recorder(&context.recorder).snapshot();
     let _ = ReportWriter::new(context.report_dir.clone(), BUILD, context.git_sha).write(
         ReportDraft {
@@ -535,6 +544,7 @@ pub fn write_panic_report(detail: &str) {
             daemon: None,
             log,
             absent_reason: automatic_absent_reason().to_string(),
+            log_absent_reason,
         },
     );
 }
@@ -1229,6 +1239,37 @@ mod tests {
             .map(|entry| entry.expect("read report entry").path())
             .filter(|path| path.is_dir() && path.join("report.json").is_file())
             .collect()
+    }
+
+    #[test]
+    fn report_degrades_when_log_tail_is_not_utf8() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("amux.log");
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        std::fs::write(&log_path, b"valid line\n\xff").expect("write invalid UTF-8 log");
+        let read_error = log_tail(&log_path, REPORT_LOG_TAIL_BYTES)
+            .expect_err("invalid UTF-8 must fail")
+            .to_string();
+
+        let report = runtime
+            .report(DumpReason::Tripwire {
+                detail: "invalid log fixture".to_string(),
+            })
+            .expect("the report still writes");
+
+        assert!(report.join("report.json").is_file());
+        assert!(!report.join("log.txt").exists());
+        let header = crate::report::read_header(&report).expect("read degraded report header");
+        assert_eq!(
+            header.parts.log,
+            crate::report::PartState::Absent {
+                reason: format!(
+                    "failed to read log tail from {}: {read_error}",
+                    log_path.display()
+                ),
+            }
+        );
+        assert_eq!(header.parts.msgs, crate::report::PartState::Present);
     }
 
     fn run_invariant_policy_child(case: &str, fatal: Option<&str>) -> std::process::Output {

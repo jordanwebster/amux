@@ -122,6 +122,9 @@ pub struct ReportParts {
     pub daemon: Option<String>,
     pub log: Option<String>,
     pub absent_reason: String,
+    /// A capture failure specific to the log, when it differs from the
+    /// default reason shared by other missing parts.
+    pub log_absent_reason: Option<String>,
 }
 
 /// Capture metadata supplied by the report's caller.
@@ -165,7 +168,13 @@ impl ReportWriter {
             trace: part_state(&parts.trace, &parts.absent_reason),
             msgs: part_state(&parts.msgs, &parts.absent_reason),
             daemon: part_state(&parts.daemon, &parts.absent_reason),
-            log: part_state(&parts.log, &parts.absent_reason),
+            log: part_state(
+                &parts.log,
+                parts
+                    .log_absent_reason
+                    .as_deref()
+                    .unwrap_or(&parts.absent_reason),
+            ),
         };
 
         if let Some(frame) = parts.frame {
@@ -203,7 +212,13 @@ impl ReportWriter {
         let mut bytes = serde_json::to_vec_pretty(&header).map_err(io::Error::other)?;
         bytes.push(b'\n');
         write_private(&report_dir.join("report.json"), &bytes)?;
-        prune(&self.dir)?;
+        if let Err(error) = prune(&self.dir) {
+            tracing::warn!(
+                path = %self.dir.display(),
+                %error,
+                "report written but automatic report pruning failed"
+            );
+        }
 
         Ok(report_dir)
     }
@@ -480,6 +495,7 @@ mod tests {
                     daemon: Some("{\"hosts\":[]}".to_string()),
                     log: Some("first\nsecond\n".to_string()),
                     absent_reason: "not captured".to_string(),
+                    log_absent_reason: None,
                 },
             )
             .unwrap();
@@ -556,6 +572,7 @@ mod tests {
                     daemon: None,
                     log: Some("tripwire log\n".to_string()),
                     absent_reason: "unavailable in release build".to_string(),
+                    log_absent_reason: None,
                 },
             )
             .unwrap();
@@ -591,6 +608,7 @@ mod tests {
                     daemon: None,
                     log: None,
                     absent_reason: "test".to_string(),
+                    log_absent_reason: None,
                 },
             )
             .unwrap();
@@ -604,6 +622,7 @@ mod tests {
                     daemon: None,
                     log: None,
                     absent_reason: "test".to_string(),
+                    log_absent_reason: None,
                 },
             )
             .unwrap();
@@ -661,6 +680,7 @@ mod tests {
             daemon: None,
             log: None,
             absent_reason: "retention fixture".to_string(),
+            log_absent_reason: None,
         };
 
         let tripwire_paths = (0..25)

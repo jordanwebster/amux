@@ -6628,4 +6628,6 @@ declare every frame, trace, Model message log, daemon dump, and log-tail part in
 a versioned private header. Runtime tripwires and terminal-restored panic hooks
 write the same directory format in every build, automatic kinds retain their
 newest twenty without pruning bug or tweak reports, and each header records the
-CLI build's Git revision when repository metadata is available.
+CLI build's Git revision when repository metadata is available. Unreadable log
+tails are declared absent without aborting capture, and a post-write retention
+failure no longer discards the completed report path.
