@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use amux::{ColorSetting, Config, ThemeSetting, UiSettings};
+use amux::{ColorSetting, Config, DebugFormat, ThemeSetting, UiSettings};
 use amux_tui::{
     ColorPreference, Theme, ThemeError, TuiConfig, detect_color_mode, parse_theme_file, run_fleet,
     theme_from_file,
@@ -98,11 +98,7 @@ async fn run_inner(
         RuntimeOptions {
             local_host_id,
             report_dir: Some(config.reports_dir()),
-            log_path: Some(
-                std::env::var_os("AMUX_LOG")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(amux::default_log_path),
-            ),
+            log_path: Some(amux_cli::diagnostics::resolved_log_path()),
             git_sha: GIT_SHA,
             subscription_status_provider: Some(Arc::new(move || {
                 subscription_reporter.subscription_required()
@@ -115,6 +111,24 @@ async fn run_inner(
     // hook calls amux_ui::write_panic_report after restoring the
     // terminal.
     runtime.install_panic_report();
+
+    // The dump is fetched when the key is pressed, not now: a report is
+    // meant to explain the daemon's state at the moment something looked
+    // wrong. A missing daemon is a reason string, not a failed capture.
+    let dump_config = config.clone();
+    let diagnostics = amux_cli::diagnostics::source(
+        &config,
+        GIT_SHA,
+        cfg!(debug_assertions),
+        move || {
+            let config = dump_config.clone();
+            async move {
+                crate::server_client::debug(&config, true, DebugFormat::Json)
+                    .await
+                    .map_err(|error| format!("{error:#}"))
+            }
+        },
+    );
 
     let tui_config = TuiConfig {
         working_dir: std::env::current_dir()?,
@@ -132,6 +146,7 @@ async fn run_inner(
         initial_chat,
         initial_chat_configuration,
         trace,
+        diagnostics,
     };
 
     let attach_config = config.clone();

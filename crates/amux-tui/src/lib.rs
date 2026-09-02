@@ -11,6 +11,7 @@ pub(crate) mod bindings;
 pub mod chat;
 pub mod chrome;
 pub mod composer;
+pub mod diagnostics;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
 pub mod keys;
@@ -26,6 +27,7 @@ pub mod trace;
 pub mod view;
 
 pub use chat::{ChatView, PaintStats};
+pub use diagnostics::{DaemonDump, DiagnosticsSource};
 pub use render::{FrameContext, build_lines, render};
 pub use run::{AttachReturn, TuiConfig, run_fleet};
 pub use terminal::{

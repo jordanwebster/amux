@@ -4,6 +4,10 @@ version = "0.6.0"
 edition.workspace = true
 description = "Agent multiplexer - CLI binary"
 
+[lib]
+name = "amux_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "amux"
 path = "src/main.rs"

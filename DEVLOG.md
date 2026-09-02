@@ -6718,3 +6718,15 @@ content arriving between draws, not only inputs and paints. Replaying such a
 trace lands on the captured frame; drop the fold from the replay and the
 frame comes back as the conversation was before the messages arrived, which
 is what the new test pins.
+
+2026-09-03 — **The shell now hands the TUI its diagnostics.** A report has to
+carry things the TUI cannot reach: the daemon's debug dump, the log file, the
+reports directory and the commit the binary was built from. The TUI consumes
+`amux-ui` exclusively and must never touch `amux::Client`, so `TuiConfig`
+gained an optional `DiagnosticsSource` that the CLI fills in. The dump is a
+closure rather than a captured string — the daemon's state matters at the
+moment of capture, and a missing daemon comes back as a reason string instead
+of failing the capture. Only debug builds get a source, which is what will
+keep the capture key out of release builds. `amux-cli` grew a small library
+target so this wiring can be unit-tested with a stub fetcher instead of a live
+daemon; the binary depends on it like any other crate.

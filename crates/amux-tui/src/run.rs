@@ -16,6 +16,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::widgets::Paragraph;
 
 use crate::chrome::{Chrome, ChromeConfig, InputEvent, ShellEffect, TraceEvent};
+use crate::diagnostics::DiagnosticsSource;
 use crate::render::Theme;
 use crate::terminal::{TerminalGuard, write_osc52};
 use crate::trace::{SharedTrace, record_shared};
@@ -54,6 +55,10 @@ pub struct TuiConfig {
     /// tap so folds and inputs interleave in the order they happened.
     /// `None` in a build that records nothing.
     pub trace: Option<SharedTrace>,
+    /// The daemon dump, log path, reports directory and commit the shell
+    /// contributes to a captured report. `None` in a build that captures
+    /// none, which is what makes the capture key absent there.
+    pub diagnostics: Option<DiagnosticsSource>,
 }
 
 enum ChromeExit {
