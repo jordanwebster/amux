@@ -4,9 +4,12 @@
 //! component_golden` and review both the text and semantic style maps.
 
 use amux_tui::fixtures::{NamedState, fixture};
+use amux_tui::report_flow::paint;
 use amux_tui::{ColorMode, FrameContext, Theme, render};
+use amux_ui::report::Mark;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 
 const VIEWPORT: (u16, u16) = (120, 40);
 const WIDTH_DECLARING_GOLDENS: &[(&str, (u16, u16))] = &[
@@ -273,4 +276,74 @@ fn interaction_states_name_the_paused_view_and_copy_chord() {
         help.contains("C-a y") && help.contains("copy the focused block"),
         "help should name the effective copy chord and action:\n{help}"
     );
+}
+
+/// Serialize a rendered buffer the way `capture` does, for a frame that
+/// was not produced by `render`.
+fn serialize(buffer: &Buffer, theme: Theme) -> Capture {
+    let mut text = String::new();
+    let mut styles = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            let cell = buffer.cell((x, y)).expect("cell in area");
+            text.push_str(cell.symbol());
+            styles.push(theme.classify(cell.style()));
+        }
+        text.push('\n');
+        styles.push('\n');
+    }
+    Capture { text, styles }
+}
+
+/// The capture overlay: a frozen screen with two marked rectangles and the
+/// prompt asking about the second one. The frozen frame underneath is an
+/// ordinary gallery render, so the golden shows exactly what a person sees
+/// when they stop the world and start marking it up.
+#[test]
+fn report_overlay_marks_the_frozen_screen_and_asks_about_it() {
+    let theme = Theme::dark(ColorMode::TrueColor);
+    let fixture = fixture(NamedState::ComponentGallery);
+    let mut terminal = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1)).expect("terminal");
+    let context = FrameContext {
+        viewport: VIEWPORT,
+        theme,
+        now: fixture.now,
+    };
+    terminal
+        .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
+        .expect("draw the screen that will be frozen");
+    let frozen = terminal.backend().buffer().clone();
+
+    let marks = [
+        Mark {
+            x: 4,
+            y: 3,
+            width: 30,
+            height: 4,
+            note: "this block should be folded".into(),
+        },
+        Mark {
+            x: 60,
+            y: 20,
+            width: 24,
+            height: 2,
+            note: "the age never updates".into(),
+        },
+    ];
+    let mut overlay = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1)).expect("terminal");
+    overlay
+        .draw(|frame| {
+            paint(
+                frame,
+                &frozen,
+                theme,
+                marks.iter(),
+                "what is wrong here? the age never updates▏  enter keep · esc discard",
+            )
+        })
+        .expect("draw the overlay");
+
+    let capture = serialize(overlay.backend().buffer(), theme);
+    assert_golden("report_overlay_dark", &capture.text);
+    assert_golden("report_overlay_dark_styles", &capture.styles);
 }

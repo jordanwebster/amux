@@ -6746,3 +6746,17 @@ on the fleet and inside a chat. The old `UiAction::DebugDump` path and
 in the help overlay only in a build that can capture, since a release binary
 has nothing to capture into. The overlay goldens were regenerated; the chat
 overlay's existing "⋮ more" truncation absorbs the extra row.
+
+2026-09-03 — **The capture asks what is wrong, over the screen it froze.**
+Pressing the capture key now opens a flow across the frozen frame: what kind
+of report this is (bug or tweak), what happened, and then rectangles drawn on
+the screen itself — by mouse drag or by keyboard, with arrows or `hjkl` to
+move, space to anchor a corner and enter to close the box. Every rectangle is
+asked what is wrong with it, because a box with no words is a place, not a
+report; enter with no box open means "that is all of it", which is also how a
+report with nothing marked finishes. Esc steps back rather than throwing
+work away, except at the first question, where there is nothing to lose.
+The painting is a pure function of the frozen buffer, the marks and the
+prompt, so the overlay is held to a component golden without a live capture
+behind it, and the marks and prompt row paint from named theme styles like
+everything else.

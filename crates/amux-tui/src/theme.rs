@@ -262,6 +262,25 @@ impl Theme {
             .bg(self.color(self.tokens.user_surface))
     }
 
+    /// A rectangle someone drew on a captured screen. Only a build that
+    /// captures reports paints it.
+    #[cfg(any(debug_assertions, test))]
+    pub(crate) fn mark(self) -> Style {
+        Style::default()
+            .fg(self.color(self.tokens.accent))
+            .bg(self.color(self.tokens.user_surface))
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// The capture flow's prompt row, filled edge to edge so it reads as a
+    /// question about the screen rather than part of it.
+    #[cfg(any(debug_assertions, test))]
+    pub(crate) fn report_prompt(self) -> Style {
+        Style::default()
+            .fg(self.color(self.tokens.text))
+            .bg(self.color(self.tokens.panel))
+    }
+
     /// The bar marking the focused feed block.
     pub(crate) fn focus_bar(self) -> Style {
         Style::default().fg(self.color(self.tokens.focus))
