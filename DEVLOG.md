@@ -6782,3 +6782,9 @@ daemon is the one part another process has to answer for, and "it never
 replied" is worth saying in those words — and `report::set_verdict` stamps a
 verdict onto a bundle already on disk, which is also what `amux debug report
 replay` will need.
+
+2026-09-03 — **QA captured the report flow in tmux.** The local debug TUI
+captured a tweak report from the worktree's test-agent fallback, including two
+marked regions and notes; the bundle contained all seven expected files,
+self-replayed successfully, and the process-scoped socket check found no
+TCP/UDP sockets. Evidence is under `.autopilot/evidence/live-capture/`.

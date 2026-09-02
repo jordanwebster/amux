@@ -1,0 +1,10 @@
+total 112
+drwx------@ 9 jlw  staff    288 Sep  3 01:34 .
+drwxr-xr-x@ 3 jlw  staff     96 Sep  3 01:34 ..
+-rw-------@ 1 jlw  staff   1791 Sep  3 01:34 daemon.json
+-rw-------@ 1 jlw  staff   8554 Sep  3 01:34 frame.styles
+-rw-------@ 1 jlw  staff   9459 Sep  3 01:34 frame.txt
+-rw-------@ 1 jlw  staff   1629 Sep  3 01:34 log.txt
+-rw-------@ 1 jlw  staff   4443 Sep  3 01:34 msgs.jsonl
+-rw-------@ 1 jlw  staff    725 Sep  3 01:34 report.json
+-rw-------@ 1 jlw  staff  11112 Sep  3 01:34 trace.jsonl
