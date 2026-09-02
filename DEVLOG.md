@@ -6760,3 +6760,25 @@ The painting is a pure function of the frozen buffer, the marks and the
 prompt, so the overlay is held to a component golden without a live capture
 behind it, and the marks and prompt row paint from named theme styles like
 everything else.
+
+2026-09-03 — **A finished capture writes a bundle that has already proved
+itself.** Answering the last prompt now awaits the daemon dump the keypress
+started — bounded at two seconds, because the person has been typing a note
+across the whole round trip and a wedged daemon should cost the report one
+part, not the report — and writes the frozen frame, the trace window, the
+recorder's Msgs, the dump and the log tail through `ReportWriter`. Then it
+replays what it just wrote against the frame it captured and stamps the
+verdict into the header, so a report that claims to reproduce has reproduced
+once, in this build, before anyone is told where it landed; a recording this
+build cannot fold at all is recorded as a divergence, since it is exactly as
+useless as one that folds to a different screen. The status line names the
+path. Cancelling writes nothing at all. The flow owns the terminal and the
+event stream while it is up: no message is folded, no tick fires and nothing
+is recorded, which is what keeps the act of reporting out of the recording
+being reported. On the way out the chrome is marked dirty so the next turn
+paints live state over the frozen frame, whichever way the flow ended.
+`ReportParts` grew a daemon-specific absent reason beside the log's — the
+daemon is the one part another process has to answer for, and "it never
+replied" is worth saying in those words — and `report::set_verdict` stamps a
+verdict onto a bundle already on disk, which is also what `amux debug report
+replay` will need.

@@ -125,6 +125,10 @@ pub struct ReportParts {
     /// A capture failure specific to the log, when it differs from the
     /// default reason shared by other missing parts.
     pub log_absent_reason: Option<String>,
+    /// Why the daemon dump is missing, when it is missing for its own
+    /// reason. The daemon is the one part another process has to answer
+    /// for, so "it never replied" is worth saying in those words.
+    pub daemon_absent_reason: Option<String>,
 }
 
 /// Capture metadata supplied by the report's caller.
@@ -167,7 +171,13 @@ impl ReportWriter {
             frame: part_state(&parts.frame, &parts.absent_reason),
             trace: part_state(&parts.trace, &parts.absent_reason),
             msgs: part_state(&parts.msgs, &parts.absent_reason),
-            daemon: part_state(&parts.daemon, &parts.absent_reason),
+            daemon: part_state(
+                &parts.daemon,
+                parts
+                    .daemon_absent_reason
+                    .as_deref()
+                    .unwrap_or(&parts.absent_reason),
+            ),
             log: part_state(
                 &parts.log,
                 parts
@@ -209,8 +219,7 @@ impl ReportWriter {
             parts: states,
             replay: draft.replay,
         };
-        let mut bytes = serde_json::to_vec_pretty(&header).map_err(io::Error::other)?;
-        bytes.push(b'\n');
+        let bytes = header_bytes(&header).map_err(io::Error::other)?;
         write_private(&report_dir.join("report.json"), &bytes)?;
         if let Err(error) = prune(&self.dir) {
             tracing::warn!(
@@ -222,6 +231,14 @@ impl ReportWriter {
 
         Ok(report_dir)
     }
+}
+
+/// A header as `report.json` holds it: pretty, and newline-terminated so
+/// the file reads and diffs like every other text part of a bundle.
+fn header_bytes(header: &ReportHeader) -> serde_json::Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec_pretty(header)?;
+    bytes.push(b'\n');
+    Ok(bytes)
 }
 
 fn part_state<T>(part: &Option<T>, absent_reason: &str) -> PartState {
@@ -414,6 +431,18 @@ pub fn read_header(report: &Path) -> Result<ReportHeader, ReportError> {
     Ok(serde_json::from_slice(&bytes)?)
 }
 
+/// Stamp a replay verdict onto a report that is already on disk.
+///
+/// A verdict can only be earned by replaying a finished bundle, so it is
+/// written a second time rather than guessed at capture: what the header
+/// claims about reproducibility is then something that was actually tried.
+pub fn set_verdict(report: &Path, verdict: ReplayVerdict) -> Result<(), ReportError> {
+    let mut header = read_header(report)?;
+    header.replay = verdict;
+    fs::write(report.join("report.json"), header_bytes(&header)?)?;
+    Ok(())
+}
+
 /// Read a report's captured frame. Both halves are one part, so a report
 /// carrying only one of them is a report with no frame — a half-frame
 /// would fail a comparison for a reason that has nothing to do with the
@@ -519,6 +548,7 @@ mod tests {
                     log: Some("first\nsecond\n".to_string()),
                     absent_reason: "not captured".to_string(),
                     log_absent_reason: None,
+                    daemon_absent_reason: None,
                 },
             )
             .unwrap();
@@ -596,6 +626,7 @@ mod tests {
                     log: Some("tripwire log\n".to_string()),
                     absent_reason: "unavailable in release build".to_string(),
                     log_absent_reason: None,
+                    daemon_absent_reason: None,
                 },
             )
             .unwrap();
@@ -632,6 +663,7 @@ mod tests {
                     log: None,
                     absent_reason: "test".to_string(),
                     log_absent_reason: None,
+                    daemon_absent_reason: None,
                 },
             )
             .unwrap();
@@ -646,6 +678,7 @@ mod tests {
                     log: None,
                     absent_reason: "test".to_string(),
                     log_absent_reason: None,
+                    daemon_absent_reason: None,
                 },
             )
             .unwrap();
@@ -704,6 +737,7 @@ mod tests {
             log: None,
             absent_reason: "retention fixture".to_string(),
             log_absent_reason: None,
+            daemon_absent_reason: None,
         };
 
         let tripwire_paths = (0..25)

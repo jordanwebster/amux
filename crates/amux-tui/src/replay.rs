@@ -271,7 +271,7 @@ fn bounding_mark(cells: &[(u16, u16)]) -> Option<Mark> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use amux_ui::report::{ReportDraft, ReportKind, ReportParts, ReportWriter};
     use amux_ui::{AgentId, BUILD, Msg, StreamEntry, StreamMsg};
     use chrono::{DateTime, TimeDelta, Utc};
@@ -283,13 +283,13 @@ mod tests {
     use crate::trace::{SEGMENT_LEN, TraceRing};
     use crate::view::QuitGuard;
 
-    const VIEWPORT: (u16, u16) = (120, 40);
+    pub(crate) const VIEWPORT: (u16, u16) = (120, 40);
     /// The agent the Claude fixtures are built around.
     const CLAUDE_AGENT: AgentId = AgentId::from_u128(7);
 
     /// A live session recorded exactly the way `run.rs` records one: roll,
     /// record the draw, step it, paint what the step built.
-    pub(super) struct Session {
+    pub(crate) struct Session {
         chrome: Chrome,
         model: Model,
         ring: TraceRing,
@@ -298,7 +298,7 @@ mod tests {
     }
 
     impl Session {
-        fn open(state: NamedState) -> Self {
+        pub(crate) fn open(state: NamedState) -> Self {
             let built = fixture(state);
             Self {
                 chrome: Chrome::new(
@@ -314,7 +314,7 @@ mod tests {
             }
         }
 
-        fn draw(&mut self) {
+        pub(crate) fn draw(&mut self) {
             self.ring.roll_if_due(
                 &self.model,
                 &self.chrome.view,
@@ -336,7 +336,7 @@ mod tests {
             self.frame = Some(terminal.backend().buffer().clone());
         }
 
-        fn press(&mut self, code: KeyCode) {
+        pub(crate) fn press(&mut self, code: KeyCode) {
             self.press_with(code, KeyModifiers::NONE);
         }
 
@@ -353,7 +353,7 @@ mod tests {
         /// One runtime message, folded the way the live loop folds one:
         /// into the Model first, then through the chrome, which only
         /// learns that the screen is stale.
-        fn fold(&mut self, msg: Msg) {
+        pub(crate) fn fold(&mut self, msg: Msg) {
             let event = TraceEvent::Msg(msg);
             self.ring.record(&event);
             if let TraceEvent::Msg(msg) = &event {
@@ -364,7 +364,7 @@ mod tests {
 
         /// The end of a batch of folded messages: the chat reconciles
         /// against the fresh Model.
-        fn drained(&mut self) {
+        pub(crate) fn drained(&mut self) {
             let event = TraceEvent::Drained;
             self.ring.record(&event);
             self.chrome.step(&self.model, &event);
@@ -397,11 +397,19 @@ mod tests {
             }
         }
 
-        pub(super) fn capture(&self) -> FrameCapture {
+        pub(crate) fn capture(&self) -> FrameCapture {
             capture_frame(
                 self.frame.as_ref().expect("a frame has been drawn"),
                 Theme::default(),
             )
+        }
+
+        /// The ring and the last frame in the form the capture key meets
+        /// them: a shared ring the shell can freeze, and the buffer the
+        /// terminal last received.
+        pub(crate) fn into_capture(self) -> (crate::trace::SharedTrace, Buffer) {
+            let frame = self.frame.expect("a frame has been drawn");
+            (std::sync::Arc::new(std::sync::Mutex::new(self.ring)), frame)
         }
 
         /// Write the session's window and last frame as a report bundle,
@@ -426,6 +434,7 @@ mod tests {
                         log: None,
                         absent_reason: "not captured by this test".to_string(),
                         log_absent_reason: None,
+                        daemon_absent_reason: None,
                     },
                 )
                 .expect("report writes")
@@ -693,6 +702,7 @@ mod divergence {
                     log: None,
                     absent_reason: "unavailable in release build".to_string(),
                     log_absent_reason: None,
+                    daemon_absent_reason: None,
                 },
             )
             .expect("report writes");

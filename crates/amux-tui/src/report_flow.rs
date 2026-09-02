@@ -13,19 +13,24 @@
 //! answering takes a round trip. Its fetch is started here and awaited
 //! later, so the wait costs the person nothing while they write the note.
 
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use amux_ui::report::{
+    FrameCapture, LOG_TAIL_BYTES, Mark, ReplayVerdict, ReportDraft, ReportKind, ReportParts,
+    ReportWriter, log_tail, set_verdict,
+};
+use amux_ui::{RecorderSnapshot, Runtime};
 use chrono::{DateTime, Utc};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use tokio::task::JoinHandle;
 
-use amux_ui::report::ReplayVerdict;
-use amux_ui::report::{FrameCapture, LOG_TAIL_BYTES, Mark, ReportDraft, ReportKind, log_tail};
-use amux_ui::{RecorderSnapshot, Runtime};
-
 use crate::diagnostics::DiagnosticsSource;
 use crate::render::Theme;
-use crate::replay::capture_frame;
+use crate::replay::{ReplayError, capture_frame, verify};
 use crate::trace::{SharedTrace, TraceWindow};
 
 /// The one capture key. The loop intercepts it before either key handler,
@@ -245,7 +250,7 @@ impl ReportFlow {
                         // Enter with no rectangle open means "that is all
                         // of it" — including the common case of a report
                         // that marks nothing.
-                        None => self.finish(),
+                        None => self.complete(),
                     },
                     code => {
                         if let Some(step) = step_for(code) {
@@ -321,7 +326,7 @@ impl ReportFlow {
         FlowStep::Continue
     }
 
-    fn finish(&mut self) -> FlowStep {
+    fn complete(&mut self) -> FlowStep {
         self.stage = Stage::Finish;
         FlowStep::Finish(ReportDraft {
             // Only a chosen kind reaches this stage; Bug is the answer a
@@ -353,6 +358,109 @@ impl ReportFlow {
             self.marks.iter().chain(pending.iter()),
             &prompt(&self.stage, self.marks.len()),
         );
+    }
+}
+
+/// How long finishing waits for the daemon. The fetch started at the
+/// keypress and the person has been writing a note ever since, so this
+/// bounds only the tail of a round trip they have usually already
+/// outlasted — and a wedged daemon costs the report one part, not the
+/// report.
+const DAEMON_DUMP_TIMEOUT: Duration = Duration::from_secs(2);
+
+impl ReportFlow {
+    /// Turn the capture and the answers into a bundle on disk.
+    ///
+    /// The verdict is stamped by replaying what was just written, not by
+    /// asserting it: a report that claims to reproduce has reproduced
+    /// once, in this build, before anyone was told where it landed.
+    pub async fn finish(self, draft: ReportDraft, writer: &ReportWriter) -> io::Result<PathBuf> {
+        let frozen = self.frozen;
+        let (daemon, daemon_absent_reason) = daemon_dump(frozen.daemon).await;
+        let (trace, trace_absent_reason) = match frozen.trace {
+            Some(window) => match window.to_bytes() {
+                Ok(bytes) => (Some(bytes), None),
+                Err(error) => (
+                    None,
+                    Some(format!("the trace would not serialize: {error}")),
+                ),
+            },
+            None => (
+                None,
+                Some("nothing had been recorded when the screen was captured".to_string()),
+            ),
+        };
+        let path = writer.write(
+            draft,
+            ReportParts {
+                frame: Some(frozen.capture),
+                trace,
+                msgs: Some(frozen.msgs),
+                daemon,
+                log: frozen.log,
+                // Frame and Msgs are always captured, so the shared reason
+                // only ever speaks for a trace that could not be taken.
+                absent_reason: trace_absent_reason
+                    .unwrap_or_else(|| "not captured with this report".to_string()),
+                log_absent_reason: frozen.log_absent_reason,
+                daemon_absent_reason,
+            },
+        )?;
+        let verdict = self_verify(&path);
+        if let ReplayVerdict::Diverges { first_diff } = &verdict {
+            tracing::warn!(
+                path = %path.display(),
+                %first_diff,
+                "a report did not replay to the frame it captured"
+            );
+        }
+        if let Err(error) = set_verdict(&path, verdict) {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "report written but its replay verdict was not recorded"
+            );
+        }
+        Ok(path)
+    }
+}
+
+/// Wait out the fetch started at the keypress. Every way it can fail is a
+/// sentence the report keeps in place of the dump.
+async fn daemon_dump(
+    handle: JoinHandle<Result<String, String>>,
+) -> (Option<String>, Option<String>) {
+    let abort = handle.abort_handle();
+    match tokio::time::timeout(DAEMON_DUMP_TIMEOUT, handle).await {
+        Ok(Ok(Ok(dump))) => (Some(dump), None),
+        Ok(Ok(Err(reason))) => (None, Some(format!("the daemon did not answer: {reason}"))),
+        Ok(Err(error)) => (None, Some(format!("the dump was never fetched: {error}"))),
+        Err(_) => {
+            abort.abort();
+            (
+                None,
+                Some(format!(
+                    "the daemon did not answer within {} seconds",
+                    DAEMON_DUMP_TIMEOUT.as_secs()
+                )),
+            )
+        }
+    }
+}
+
+/// Replay the bundle that was just written against the frame it captured.
+/// A report with nothing to replay is `Unchecked` rather than failed —
+/// there was no claim to test. Anything else that stops the replay is a
+/// divergence: a recording this build cannot fold is exactly as useless
+/// as one that folds to a different screen, and saying so early is what
+/// keeps a broken report from being trusted later.
+fn self_verify(report: &Path) -> ReplayVerdict {
+    match verify(report) {
+        Ok(verdict) => verdict,
+        Err(ReplayError::NoTrace | ReplayError::NoCapturedFrame) => ReplayVerdict::Unchecked,
+        Err(error) => ReplayVerdict::Diverges {
+            first_diff: format!("the report would not replay: {error}"),
+        },
     }
 }
 
@@ -667,11 +775,11 @@ mod flow {
         ReportFlow::begin(frozen, theme)
     }
 
-    fn press(flow: &mut ReportFlow, code: KeyCode) -> FlowStep {
+    pub(super) fn press(flow: &mut ReportFlow, code: KeyCode) -> FlowStep {
         flow.handle(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
     }
 
-    fn type_text(flow: &mut ReportFlow, text: &str) {
+    pub(super) fn type_text(flow: &mut ReportFlow, text: &str) {
         for c in text.chars() {
             press(flow, KeyCode::Char(c));
         }
@@ -686,7 +794,7 @@ mod flow {
         }));
     }
 
-    fn drag(flow: &mut ReportFlow, from: (u16, u16), to: (u16, u16)) {
+    pub(super) fn drag(flow: &mut ReportFlow, from: (u16, u16), to: (u16, u16)) {
         mouse(flow, MouseEventKind::Down(MouseButton::Left), from);
         mouse(flow, MouseEventKind::Drag(MouseButton::Left), to);
         mouse(flow, MouseEventKind::Up(MouseButton::Left), to);
@@ -828,5 +936,180 @@ mod flow {
     #[test]
     fn a_box_reads_the_same_drawn_in_any_direction() {
         assert_eq!(rectangle((5, 3), (2, 1)), rectangle((2, 1), (5, 3)));
+    }
+}
+
+#[cfg(test)]
+mod written {
+    use std::sync::Arc;
+
+    use amux_ui::report::{PartState, ReportStatus, read_header};
+
+    use super::flow::{drag, press, type_text};
+    use super::frozen::{diagnostics, runtime};
+    use super::*;
+    use crate::fixtures::NamedState;
+    use crate::replay::tests::Session;
+
+    /// A real recorded session, frozen the way the capture key freezes
+    /// one: the ring the shell was recording into and the buffer the
+    /// terminal last received, read in a single pass.
+    fn frozen(runtime: &Runtime, diagnostics: &DiagnosticsSource) -> Frozen {
+        let mut session = Session::open(NamedState::ClaudeIdle);
+        session.draw();
+        session.press(KeyCode::Char('k'));
+        session.draw();
+        let (trace, frame) = session.into_capture();
+        Frozen::take(
+            &frame,
+            Theme::default(),
+            &trace,
+            runtime,
+            diagnostics,
+            Utc::now(),
+        )
+    }
+
+    fn writer(dir: &std::path::Path) -> amux_ui::report::ReportWriter {
+        amux_ui::report::ReportWriter::new(dir.to_path_buf(), amux_ui::BUILD, "abc1234")
+    }
+
+    /// Answer the kind, the note, one dragged mark and its note, then
+    /// finish — the shortest path a person takes through the prompt.
+    fn answer(flow: &mut ReportFlow) -> ReportDraft {
+        press(flow, KeyCode::Char('b'));
+        type_text(flow, "the working line never cleared");
+        press(flow, KeyCode::Enter);
+        drag(flow, (10, 5), (20, 8));
+        type_text(flow, "still spinning");
+        press(flow, KeyCode::Enter);
+        match press(flow, KeyCode::Enter) {
+            FlowStep::Finish(draft) => draft,
+            _ => panic!("the flow did not finish"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_finished_report_holds_every_part_and_replays_to_its_own_frame() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("amux.log");
+        std::fs::write(&log, "opened the fleet\n").expect("write log");
+        let runtime = runtime();
+        let diagnostics = diagnostics(Some(log), r#"{"agents":[]}"#);
+        let mut flow = ReportFlow::begin(frozen(&runtime, &diagnostics), Theme::default());
+        let draft = answer(&mut flow);
+
+        let reports = dir.path().join("reports");
+        let path = flow
+            .finish(draft, &writer(&reports))
+            .await
+            .expect("the report writes");
+
+        for part in [
+            "report.json",
+            "frame.txt",
+            "frame.styles",
+            "trace.jsonl",
+            "msgs.jsonl",
+            "daemon.json",
+            "log.txt",
+        ] {
+            assert!(path.join(part).is_file(), "{part} is missing");
+        }
+        let header = read_header(&path).expect("the header reads");
+        assert_eq!(header.kind, ReportKind::Bug);
+        assert_eq!(header.status, ReportStatus::Open);
+        assert_eq!(header.note, "the working line never cleared");
+        assert_eq!(header.viewport, Some(crate::replay::tests::VIEWPORT));
+        assert_eq!(header.marks.len(), 1);
+        assert_eq!(header.marks[0].note, "still spinning");
+        assert_eq!(header.parts.frame, PartState::Present);
+        assert_eq!(header.parts.trace, PartState::Present);
+        assert_eq!(header.parts.msgs, PartState::Present);
+        assert_eq!(header.parts.daemon, PartState::Present);
+        assert_eq!(header.parts.log, PartState::Present);
+        assert_eq!(
+            header.replay,
+            ReplayVerdict::Reproduces,
+            "a report writes the verdict it earned by replaying itself"
+        );
+        println!(
+            "{}",
+            std::fs::read_to_string(path.join("report.json")).expect("header reads back")
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_daemon_that_never_answers_costs_the_report_one_part() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let runtime = runtime();
+        let diagnostics = DiagnosticsSource {
+            daemon_dump: Arc::new(|| Box::pin(std::future::pending())),
+            log_path: None,
+            reports_dir: dir.path().to_path_buf(),
+            git_sha: "abc1234",
+        };
+        let mut flow = ReportFlow::begin(frozen(&runtime, &diagnostics), Theme::default());
+        let draft = answer(&mut flow);
+
+        let path = flow
+            .finish(draft, &writer(dir.path()))
+            .await
+            .expect("a silent daemon does not stop the report");
+
+        assert!(!path.join("daemon.json").exists());
+        let header = read_header(&path).expect("the header reads");
+        let PartState::Absent { reason } = &header.parts.daemon else {
+            panic!("the dump that never arrived should be declared absent");
+        };
+        assert!(
+            reason.contains("did not answer within"),
+            "the reason should say the daemon ran out of time, said {reason:?}"
+        );
+        assert_eq!(header.replay, ReplayVerdict::Reproduces);
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_flow_writes_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let reports = dir.path().join("reports");
+        let runtime = runtime();
+        let diagnostics = diagnostics(None, "{}");
+        let mut flow = ReportFlow::begin(frozen(&runtime, &diagnostics), Theme::default());
+
+        assert!(matches!(press(&mut flow, KeyCode::Esc), FlowStep::Cancel));
+        drop(flow);
+
+        assert!(
+            !reports.exists(),
+            "cancelling leaves no bundle and no directory behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn answering_the_prompt_never_reaches_the_trace() {
+        let runtime = runtime();
+        let diagnostics = diagnostics(None, "{}");
+        let mut session = Session::open(NamedState::ClaudeIdle);
+        session.draw();
+        let (trace, frame) = session.into_capture();
+        let recorded = trace.lock().expect("ring").len();
+
+        let frozen = Frozen::take(
+            &frame,
+            Theme::default(),
+            &trace,
+            &runtime,
+            &diagnostics,
+            Utc::now(),
+        );
+        let mut flow = ReportFlow::begin(frozen, Theme::default());
+        answer(&mut flow);
+
+        assert_eq!(
+            trace.lock().expect("ring").len(),
+            recorded,
+            "the act of reporting must stay out of the recording being reported"
+        );
     }
 }

@@ -19,7 +19,7 @@ use crate::chrome::{Chrome, ChromeConfig, InputEvent, ShellEffect, TraceEvent};
 use crate::diagnostics::DiagnosticsSource;
 use crate::render::Theme;
 #[cfg(any(debug_assertions, test))]
-use crate::report_flow::{CAPTURE_KEY, Frozen};
+use crate::report_flow::{CAPTURE_KEY, FlowStep, Frozen, ReportFlow};
 use crate::terminal::{TerminalGuard, write_osc52};
 use crate::trace::{SharedTrace, record_shared};
 use crate::view::{ViewState, next_agent_name};
@@ -213,16 +213,24 @@ async fn chrome_session(
             maybe_event = events.next() => match maybe_event {
                 Some(Ok(event)) => {
                     if let Some(frozen) = capture(&event, config, runtime, chrome, last_frame.as_ref()) {
-                        // The staged prompt that turns this into a bundle
-                        // is not wired yet; naming what was frozen at
-                        // least tells the person the key did something.
-                        let events = frozen.trace.as_ref().map(|t| t.events.len()).unwrap_or(0);
-                        set_notice(
-                            runtime,
+                        // The flow owns the screen and the event stream
+                        // until it is answered; nothing it does reaches
+                        // the chrome, the runtime or the trace.
+                        let notice = report_flow(
+                            &mut terminal,
+                            &mut events,
+                            frozen,
+                            chrome.theme(),
                             config,
-                            chrome,
-                            Some(format!("captured the screen and {events} events")),
-                        );
+                        ).await?;
+                        if let Some(notice) = notice {
+                            set_notice(runtime, config, chrome, Some(notice));
+                        }
+                        // The frozen frame is still on the terminal, and a
+                        // cancelled flow changed no view state to make the
+                        // chrome dirty by itself. Owe the repaint here, so
+                        // the next turn draws live state over it either way.
+                        chrome.mark_dirty();
                         continue;
                     }
                     if let Some(input) = InputEvent::from_terminal(&event) {
@@ -323,6 +331,65 @@ fn perform(
         }
     }
     Ok(())
+}
+
+/// Run the report prompt over the frozen frame until it is answered,
+/// returning the notice the status line should carry. The loop's own
+/// select! is left behind deliberately: no Msg is folded, no tick fires
+/// and no event is recorded while the flow is up, which is what keeps the
+/// act of reporting out of the recording being reported.
+#[cfg(any(debug_assertions, test))]
+async fn report_flow(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    events: &mut EventStream,
+    frozen: Frozen,
+    theme: Theme,
+    config: &TuiConfig,
+) -> Result<Option<String>> {
+    let Some(diagnostics) = config.diagnostics.as_ref() else {
+        return Ok(None);
+    };
+    let writer = amux_ui::report::ReportWriter::new(
+        diagnostics.reports_dir.clone(),
+        amux_ui::BUILD,
+        diagnostics.git_sha,
+    );
+    let mut flow = ReportFlow::begin(frozen, theme);
+    loop {
+        terminal.draw(|frame| flow.render(frame))?;
+        let Some(event) = events.next().await else {
+            // The terminal went away mid-flow: there is nobody left to
+            // show a notice to, and half an answer is not a report.
+            return Ok(None);
+        };
+        match flow.handle(event?) {
+            FlowStep::Continue => {}
+            FlowStep::Cancel => return Ok(None),
+            FlowStep::Finish(draft) => {
+                // One more paint so the prompt says what is happening
+                // while the daemon dump and the self-replay are awaited.
+                terminal.draw(|frame| flow.render(frame))?;
+                return Ok(Some(match flow.finish(draft, &writer).await {
+                    Ok(path) => format!("wrote {}", path.display()),
+                    Err(error) => format!("the report could not be written: {error}"),
+                }));
+            }
+        }
+    }
+}
+
+/// A build that captures no reports never has a frozen screen to prompt
+/// over: the capture above cannot produce one, and this says so in the
+/// type rather than in a second copy of the event loop.
+#[cfg(not(any(debug_assertions, test)))]
+async fn report_flow(
+    _terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    _events: &mut EventStream,
+    frozen: std::convert::Infallible,
+    _theme: Theme,
+    _config: &TuiConfig,
+) -> Result<Option<String>> {
+    match frozen {}
 }
 
 /// Freeze everything a report needs, if this event is the capture key and

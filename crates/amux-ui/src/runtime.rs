@@ -281,6 +281,7 @@ impl Runtime {
                 log,
                 absent_reason: automatic_absent_reason().to_string(),
                 log_absent_reason,
+                daemon_absent_reason: None,
             },
         )
     }
@@ -559,6 +560,7 @@ pub fn write_panic_report(detail: &str) {
             log,
             absent_reason: automatic_absent_reason().to_string(),
             log_absent_reason,
+            daemon_absent_reason: None,
         },
     );
 }
