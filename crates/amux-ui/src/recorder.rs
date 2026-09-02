@@ -43,6 +43,19 @@ pub struct Recorder {
     entries: VecDeque<String>,
 }
 
+/// A frozen recorder window ready to be embedded in a report bundle.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecorderSnapshot {
+    pub checkpoint: Model,
+    pub msgs: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct RecorderSnapshotHeader<'a> {
+    pub format_version: u32,
+    pub checkpoint: &'a Model,
+}
+
 impl Recorder {
     pub fn new(capacity: usize, initial: &Model) -> Self {
         Self {

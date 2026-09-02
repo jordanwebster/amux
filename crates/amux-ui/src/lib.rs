@@ -18,6 +18,7 @@ mod effect;
 mod model;
 mod msg;
 mod recorder;
+pub mod report;
 mod runtime;
 mod update;
 
@@ -42,7 +43,7 @@ pub use msg::{
 };
 pub use recorder::{
     DEFAULT_RECORDER_CAPACITY, DUMP_FORMAT_VERSION, DUMP_RETAINED_FILES, DumpHeader, Recorder,
-    ReplayError, replay,
+    RecorderSnapshot, ReplayError, replay,
 };
 pub use runtime::{
     BUILD, ConnectFailure, ConnectFuture, Connector, Runtime, RuntimeOptions, write_panic_dump,
