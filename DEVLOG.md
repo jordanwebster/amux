@@ -6670,3 +6670,16 @@ drain batched, and a wrong guess is a replay that diverges for no visible
 reason. The debug CLI installs both; release builds record nothing. The
 chat's paint-cache entries gained a `Send` bound so a snapshot of the view
 can cross to the tap.
+
+2026-09-02 — **Folded recorded reports back into the frames they came
+from.** `amux-tui`'s `replay` module loads a report's header and trace,
+folds each recorded Msg into a Model of its own, and steps every event
+through the same `Chrome::step` the live loop used — draws included, since
+they fill the paint caches the next keypress reads. Effects are dropped: a
+replay has no runtime, terminal or agent, and what those effects produced is
+already recorded as its own event. `verify` replays to the end and compares
+against the captured frame, so a report carries a claim a build can check
+rather than a recording nobody can judge; a divergence names the first
+differing cell and the rectangle covering all of them. The golden-frame
+serializer moved into `capture_frame`, so a golden and a report frame are
+now the same shape and comparable without translation.

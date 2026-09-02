@@ -6,6 +6,7 @@
 //! Regenerate with `UPDATE_GOLDENS=1 cargo test -p amux-tui --test golden`
 //! and review the diff like code.
 
+use amux_tui::replay::capture_frame;
 use amux_tui::view::{Mode, UiAction, ViewState};
 use amux_tui::{ColorMode, FrameContext, Theme, render};
 use amux_ui::{
@@ -330,29 +331,16 @@ fn render_frame(model: &Model, view: &ViewState, width: u16, height: u16) -> Str
 
 fn render_frame_at(model: &Model, view: &ViewState, width: u16, height: u16) -> String {
     let buffer = render_buffer_at(model, view, width, height, Theme::default());
-    let mut out = String::new();
-    for y in 0..buffer.area.height {
-        for x in 0..buffer.area.width {
-            out.push_str(buffer.cell((x, y)).expect("cell in area").symbol());
-        }
-        out.push('\n');
-    }
-    out
+    capture_frame(&buffer, Theme::default()).text
 }
 
 /// One class letter per cell: what the text goldens cannot see. The theme
 /// itself names the class, so a cell painted from a colour literal instead
-/// of a token shows up as `?` rather than passing for one.
+/// of a token shows up as `?` rather than passing for one. This is the
+/// same serializer a captured report stores its frame with, so a golden
+/// and a report frame are comparable without translation.
 fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
-    let mut out = String::new();
-    for y in 0..buffer.area.height {
-        for x in 0..buffer.area.width {
-            let style = buffer.cell((x, y)).expect("cell in area").style();
-            out.push(theme.classify(style));
-        }
-        out.push('\n');
-    }
-    out
+    capture_frame(buffer, theme).styles
 }
 
 fn assert_golden(name: &str, rendered: &str) {

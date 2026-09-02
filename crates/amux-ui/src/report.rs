@@ -414,6 +414,24 @@ pub fn read_header(report: &Path) -> Result<ReportHeader, ReportError> {
     Ok(serde_json::from_slice(&bytes)?)
 }
 
+/// Read a report's captured frame. Both halves are one part, so a report
+/// carrying only one of them is a report with no frame — a half-frame
+/// would fail a comparison for a reason that has nothing to do with the
+/// bug being reported.
+pub fn read_frame(report: &Path) -> io::Result<Option<FrameCapture>> {
+    let text = match fs::read_to_string(report.join("frame.txt")) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let styles = match fs::read_to_string(report.join("frame.styles")) {
+        Ok(styles) => styles,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(Some(FrameCapture { text, styles }))
+}
+
 /// Read at most the final `max_bytes` of a log, discarding a leading partial
 /// line. A missing log is not an error.
 pub fn log_tail(path: &Path, max_bytes: usize) -> io::Result<Option<String>> {

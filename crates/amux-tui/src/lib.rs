@@ -16,6 +16,7 @@ pub mod fixtures;
 pub mod keys;
 pub(crate) mod markdown;
 pub mod render;
+pub mod replay;
 pub mod run;
 #[cfg(test)]
 mod serde_roundtrip;
