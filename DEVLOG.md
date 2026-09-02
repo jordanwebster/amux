@@ -6656,3 +6656,17 @@ recordable mirrors, exhaustive over every variant this build can be handed,
 because crossterm's own serde impls are behind a feature the wire shape of a
 diagnostic recording should not depend on. Behaviour is unchanged: the whole
 existing golden, chat and a2a suite passes untouched.
+
+2026-09-02 — **Recorded what the chrome saw into a bounded trace ring.**
+`amux-tui`'s `trace` module keeps two segments of serialized `TraceEvent`s
+and a live clone of the Model, view and theme at each segment boundary, so
+whatever the ring holds is replayable in full and nothing older survives to
+be half-replayable. Snapshots are taken just before a draw, which is where a
+frame boundary already is; events serialize on the way in, so an event that
+cannot be recorded is dropped while the screen is still there to look at,
+not at capture time. `RuntimeOptions::msg_tap` reports each folded Msg in
+fold order — reconstructing that from outside would mean guessing how a
+drain batched, and a wrong guess is a replay that diverges for no visible
+reason. The debug CLI installs both; release builds record nothing. The
+chat's paint-cache entries gained a `Send` bound so a snapshot of the view
+can cross to the tap.

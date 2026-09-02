@@ -86,6 +86,9 @@ pub struct ReportExtras {
 
 pub type ReportExtrasProvider = Arc<dyn Fn() -> ReportExtras + Send + Sync>;
 
+/// See [`RuntimeOptions::msg_tap`].
+pub type MsgTap = Box<dyn FnMut(&Msg) + Send>;
+
 pub struct RuntimeOptions {
     /// The daemon's own host id (read from the local device identity);
     /// enters the Model via `ServerMsg::Connected`.
@@ -101,6 +104,12 @@ pub struct RuntimeOptions {
     pub recorder_capacity: usize,
     /// Provider polled while connected so marker transitions enter the reducer.
     pub subscription_status_provider: Option<SubscriptionStatusProvider>,
+    /// Called with every folded Msg, in fold order, before [`Runtime::next`]
+    /// returns. The diagnostic trace uses it: a recording that reconstructs
+    /// the fold order from the outside would have to guess how a drain
+    /// batched, and a wrong guess is a replay that diverges for no visible
+    /// reason. `None` in a build that records nothing.
+    pub msg_tap: Option<MsgTap>,
 }
 
 impl Default for RuntimeOptions {
@@ -113,6 +122,7 @@ impl Default for RuntimeOptions {
             report_extras: None,
             recorder_capacity: DEFAULT_RECORDER_CAPACITY,
             subscription_status_provider: None,
+            msg_tap: None,
         }
     }
 }
@@ -137,6 +147,7 @@ pub struct Runtime {
     log_path: Option<PathBuf>,
     git_sha: &'static str,
     report_extras: Option<ReportExtrasProvider>,
+    msg_tap: Option<MsgTap>,
     /// Violation kinds already reported this session: invariant logs and
     /// reports are throttled to once per kind so a persistent incoherence
     /// cannot fill the report directory.
@@ -176,6 +187,7 @@ impl Runtime {
             log_path: options.log_path,
             git_sha: options.git_sha,
             report_extras: options.report_extras,
+            msg_tap: options.msg_tap,
             reported_violations: HashSet::new(),
         }
     }
@@ -294,6 +306,9 @@ impl Runtime {
 
     fn process(&mut self, msg: Msg) {
         lock_recorder(&self.recorder).record(&msg);
+        if let Some(tap) = self.msg_tap.as_mut() {
+            tap(&msg);
+        }
         // Shell-side resource bookkeeping keyed on an observed Msg (allowed:
         // the shell manages resources, never decides semantics): a stream
         // task always ends by sending `Closed`, so drop its finished
@@ -1217,6 +1232,7 @@ mod tests {
             log_path: Some(log_path),
             git_sha: "test-sha",
             report_extras: None,
+            msg_tap: None,
             reported_violations: HashSet::new(),
         }
     }
@@ -1239,6 +1255,52 @@ mod tests {
             .map(|entry| entry.expect("read report entry").path())
             .filter(|path| path.is_dir() && path.join("report.json").is_file())
             .collect()
+    }
+
+    #[test]
+    fn the_msg_tap_sees_every_fold_in_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let seen: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        let recorded = seen.clone();
+        runtime.msg_tap = Some(Box::new(move |msg: &Msg| {
+            recorded
+                .lock()
+                .expect("tap lock")
+                .push(format!("{}", MsgLabel(msg)));
+        }));
+
+        // A drain batches an unknown number of Msgs, so the tap is the only
+        // honest report of what was folded and in what order.
+        runtime.process(Msg::Server(ServerMsg::Disconnected {
+            reason: crate::msg::DisconnectReason::ApplicationShutdown,
+        }));
+        runtime.process(Msg::Tick {
+            now: DateTime::from_timestamp(1_754_697_600, 0).expect("fixture time"),
+        });
+        runtime.process(Msg::Server(ServerMsg::Disconnected {
+            reason: crate::msg::DisconnectReason::ApplicationShutdown,
+        }));
+
+        assert_eq!(
+            *seen.lock().expect("tap lock"),
+            vec!["server", "tick", "server"],
+            "the tap sees each fold once, in fold order"
+        );
+    }
+
+    /// The coarse shape of a Msg — enough to assert on order without
+    /// pinning this test to the wording of any one variant.
+    struct MsgLabel<'m>(&'m Msg);
+
+    impl std::fmt::Display for MsgLabel<'_> {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str(match self.0 {
+                Msg::Server(_) => "server",
+                Msg::Tick { .. } => "tick",
+                _ => "other",
+            })
+        }
     }
 
     #[test]

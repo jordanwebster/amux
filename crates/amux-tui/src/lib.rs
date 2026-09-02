@@ -21,6 +21,7 @@ pub mod run;
 mod serde_roundtrip;
 pub mod terminal;
 pub mod theme;
+pub mod trace;
 pub mod view;
 
 pub use chat::{ChatView, PaintStats};

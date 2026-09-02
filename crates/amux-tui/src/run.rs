@@ -18,6 +18,7 @@ use ratatui::widgets::Paragraph;
 use crate::chrome::{Chrome, ChromeConfig, InputEvent, ShellEffect, TraceEvent};
 use crate::render::Theme;
 use crate::terminal::{TerminalGuard, write_osc52};
+use crate::trace::{SharedTrace, record_shared};
 use crate::view::{ViewState, next_agent_name};
 
 /// What the embedding CLI's attach handoff decided: resume the fleet
@@ -49,6 +50,10 @@ pub struct TuiConfig {
     pub initial_chat: Option<AgentId>,
     /// Creation-time model/approval/sandbox label for that initial chat.
     pub initial_chat_configuration: Option<String>,
+    /// The ring this session records into, shared with the runtime's Msg
+    /// tap so folds and inputs interleave in the order they happened.
+    /// `None` in a build that records nothing.
+    pub trace: Option<SharedTrace>,
 }
 
 enum ChromeExit {
@@ -142,13 +147,24 @@ async fn chrome_session(
             // fills the chat's paint caches, which the next keypress reads.
             // Only the painting of the finished lines is ours.
             let size = terminal.size()?;
-            chrome.step(
-                runtime.model(),
-                &TraceEvent::Draw {
-                    viewport: (size.width, size.height),
-                    now: Utc::now(),
-                },
-            );
+            let now = Utc::now();
+            let event = TraceEvent::Draw {
+                viewport: (size.width, size.height),
+                now,
+            };
+            if let Some(trace) = config.trace.as_ref() {
+                // Roll first: the snapshot a new segment starts from is
+                // state as of this frame boundary, and the draw below is
+                // the first thing replayed from it.
+                match trace.lock() {
+                    Ok(mut ring) => {
+                        ring.roll_if_due(runtime.model(), &chrome.view, chrome.theme(), now)
+                    }
+                    Err(_) => tracing::warn!("trace segment not rolled: ring lock poisoned"),
+                }
+                record_shared(trace, &event);
+            }
+            chrome.step(runtime.model(), &event);
             if let Some(lines) = chrome.take_frame() {
                 terminal.draw(|frame| {
                     frame.render_widget(Paragraph::new(lines), frame.area());
@@ -163,24 +179,29 @@ async fn chrome_session(
                 if let Some(agent) = *initial_chat
                     && runtime.model().agent(agent).is_some()
                 {
-                    let effects = chrome.step(runtime.model(), &TraceEvent::ChatOpened {
+                    let event = TraceEvent::ChatOpened {
                         agent,
                         codex_configuration: initial_chat_configuration.take(),
-                    });
+                    };
+                    record(config, &event);
+                    let effects = chrome.step(runtime.model(), &event);
                     perform(runtime, config, chrome, effects, &mut exit_request)?;
                     *initial_chat = None;
                 }
+                record(config, &TraceEvent::Drained);
                 chrome.step(runtime.model(), &TraceEvent::Drained);
             }
             maybe_event = events.next() => match maybe_event {
                 Some(Ok(event)) => {
                     if let Some(input) = InputEvent::from_terminal(&event) {
                         let size = terminal.size()?;
-                        let effects = chrome.step(runtime.model(), &TraceEvent::Input {
+                        let event = TraceEvent::Input {
                             event: input,
                             viewport: (size.width, size.height),
                             now: Utc::now(),
-                        });
+                        };
+                        record(config, &event);
+                        let effects = chrome.step(runtime.model(), &event);
                         perform(runtime, config, chrome, effects, &mut exit_request)?;
                     }
                 }
@@ -242,7 +263,9 @@ fn perform(
             }
             ShellEffect::Dispatch(command) => {
                 let op = runtime.dispatch(command.clone());
-                chrome.step(runtime.model(), &TraceEvent::Dispatched { op, command });
+                let event = TraceEvent::Dispatched { op, command };
+                record(config, &event);
+                chrome.step(runtime.model(), &event);
             }
             ShellEffect::Create { host } => {
                 let name = next_agent_name(runtime.model(), &config.default_agent_type);
@@ -262,4 +285,11 @@ fn perform(
         }
     }
     Ok(())
+}
+
+/// Append one event to this session's ring, if it has one.
+fn record(config: &TuiConfig, event: &TraceEvent) {
+    if let Some(trace) = config.trace.as_ref() {
+        record_shared(trace, event);
+    }
 }

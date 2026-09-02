@@ -46,7 +46,7 @@ pub use recorder::{
     replay_msgs,
 };
 pub use runtime::{
-    BUILD, ConnectFailure, ConnectFuture, Connector, ReportExtras, ReportExtrasProvider, Runtime,
-    RuntimeOptions, write_panic_report,
+    BUILD, ConnectFailure, ConnectFuture, Connector, MsgTap, ReportExtras, ReportExtrasProvider,
+    Runtime, RuntimeOptions, write_panic_report,
 };
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};

@@ -365,7 +365,10 @@ pub struct PaintStats {
 }
 
 struct CachedBlock {
-    content: Box<dyn Any>,
+    /// `Send` so the whole view can be cloned into a diagnostic snapshot
+    /// that crosses to the runtime's Msg tap. Cache content is plain data
+    /// — the bound costs nothing and states where the view can travel.
+    content: Box<dyn Any + Send>,
     width: usize,
     theme: (ThemeName, ColorMode),
     expanded: bool,
@@ -389,7 +392,7 @@ impl fmt::Debug for PaintCache {
 }
 
 impl PaintCache {
-    pub(crate) fn get_or_paint<K: PartialEq + Clone + 'static>(
+    pub(crate) fn get_or_paint<K: PartialEq + Clone + Send + 'static>(
         &mut self,
         key: BlockKey,
         content: &K,
