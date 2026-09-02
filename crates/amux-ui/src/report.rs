@@ -18,6 +18,8 @@ use crate::recorder::{DUMP_FORMAT_VERSION, RecorderSnapshotHeader};
 
 /// Bumped whenever the report header or directory layout changes.
 pub const REPORT_SCHEMA_VERSION: u32 = 1;
+/// Newest automatic reports retained for each automatic kind.
+pub const RETAINED_AUTOMATIC_REPORTS: usize = 20;
 
 /// Why a report was captured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +203,7 @@ impl ReportWriter {
         let mut bytes = serde_json::to_vec_pretty(&header).map_err(io::Error::other)?;
         bytes.push(b'\n');
         write_private(&report_dir.join("report.json"), &bytes)?;
+        prune(&self.dir)?;
 
         Ok(report_dir)
     }
@@ -295,6 +298,48 @@ pub struct ReportSummary {
     pub path: PathBuf,
     pub header: Option<ReportHeader>,
     pub error: Option<String>,
+}
+
+/// Automatic report directories removed by one retention pass.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PruneSummary {
+    pub removed: Vec<PathBuf>,
+}
+
+/// Bound each automatic report kind independently. User-authored and
+/// unreadable reports are never removed.
+pub fn prune(dir: &Path) -> io::Result<PruneSummary> {
+    let summaries = match list(dir) {
+        Ok(summaries) => summaries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(PruneSummary::default());
+        }
+        Err(error) => return Err(error),
+    };
+    let mut removed = Vec::new();
+
+    for kind in [
+        ReportKind::Tripwire,
+        ReportKind::ChannelOverflow,
+        ReportKind::Panic,
+    ] {
+        let mut reports = summaries
+            .iter()
+            .filter_map(|summary| {
+                let header = summary.header.as_ref()?;
+                (header.kind == kind).then(|| (header.stamp.as_str(), summary.path.as_path()))
+            })
+            .collect::<Vec<_>>();
+        reports.sort_by(|left, right| left.0.cmp(right.0));
+
+        let remove_count = reports.len().saturating_sub(RETAINED_AUTOMATIC_REPORTS);
+        for (_, path) in reports.into_iter().take(remove_count) {
+            fs::remove_dir_all(path)?;
+            removed.push(path.to_path_buf());
+        }
+    }
+
+    Ok(PruneSummary { removed })
 }
 
 /// List report directories newest first. Unreadable directories remain in
@@ -603,5 +648,65 @@ mod tests {
         );
         assert_eq!(log_tail(&path, 9).unwrap().as_deref(), Some("three\n"));
         assert_eq!(log_tail(&path, 0).unwrap().as_deref(), Some(""));
+    }
+
+    #[test]
+    fn retention_bounds_each_automatic_kind_and_keeps_user_reports() {
+        let root = tempfile::tempdir().unwrap();
+        let writer = ReportWriter::new(root.path().to_path_buf(), "test", "abc");
+        let empty_parts = || ReportParts {
+            frame: None,
+            trace: None,
+            msgs: None,
+            daemon: None,
+            log: None,
+            absent_reason: "retention fixture".to_string(),
+        };
+
+        let tripwire_paths = (0..25)
+            .map(|_| {
+                writer
+                    .write(draft(ReportKind::Tripwire), empty_parts())
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..3 {
+            writer
+                .write(draft(ReportKind::Panic), empty_parts())
+                .unwrap();
+        }
+        for kind in [ReportKind::Bug, ReportKind::Tweak, ReportKind::Bug] {
+            writer.write(draft(kind), empty_parts()).unwrap();
+        }
+
+        let headers = list(root.path())
+            .unwrap()
+            .into_iter()
+            .filter_map(|summary| summary.header)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            headers
+                .iter()
+                .filter(|header| header.kind == ReportKind::Tripwire)
+                .count(),
+            RETAINED_AUTOMATIC_REPORTS
+        );
+        assert!(tripwire_paths[..5].iter().all(|path| !path.exists()));
+        assert!(tripwire_paths[5..].iter().all(|path| path.exists()));
+        assert_eq!(
+            headers
+                .iter()
+                .filter(|header| header.kind == ReportKind::Panic)
+                .count(),
+            3
+        );
+        assert_eq!(
+            headers
+                .iter()
+                .filter(|header| matches!(header.kind, ReportKind::Bug | ReportKind::Tweak))
+                .count(),
+            3
+        );
+        assert!(prune(root.path()).unwrap().removed.is_empty());
     }
 }
