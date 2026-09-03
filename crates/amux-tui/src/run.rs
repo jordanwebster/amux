@@ -21,6 +21,7 @@ use crate::render::Theme;
 #[cfg(any(debug_assertions, test))]
 use crate::report_flow::{CAPTURE_KEY, FlowStep, Frozen, ReportFlow};
 use crate::terminal::{TerminalGuard, write_osc52};
+#[cfg(any(debug_assertions, test))]
 use crate::trace::{SharedTrace, record_shared};
 use crate::view::{Notice, ViewState, next_agent_name};
 
@@ -55,7 +56,8 @@ pub struct TuiConfig {
     pub initial_chat_configuration: Option<String>,
     /// The ring this session records into, shared with the runtime's Msg
     /// tap so folds and inputs interleave in the order they happened.
-    /// `None` in a build that records nothing.
+    /// The field itself is absent from builds that record nothing.
+    #[cfg(any(debug_assertions, test))]
     pub trace: Option<SharedTrace>,
     /// The daemon dump, log path, reports directory and commit the shell
     /// contributes to a captured report. `None` in a build that captures
@@ -170,6 +172,7 @@ async fn chrome_session(
                 viewport: (size.width, size.height),
                 now,
             };
+            #[cfg(any(debug_assertions, test))]
             if let Some(trace) = config.trace.as_ref() {
                 // Roll first: the snapshot a new segment starts from is
                 // state as of this frame boundary, and the draw below is
@@ -455,8 +458,14 @@ fn set_notice(runtime: &Runtime, config: &TuiConfig, chrome: &mut Chrome, notice
 }
 
 /// Append one event to this session's ring, if it has one.
+#[cfg(any(debug_assertions, test))]
 fn record(config: &TuiConfig, event: &TraceEvent) {
     if let Some(trace) = config.trace.as_ref() {
         record_shared(trace, event);
     }
 }
+
+/// Release builds still step the chrome through the same events, but do
+/// not retain them or carry trace storage in their configuration.
+#[cfg(not(any(debug_assertions, test)))]
+fn record(_config: &TuiConfig, _event: &TraceEvent) {}

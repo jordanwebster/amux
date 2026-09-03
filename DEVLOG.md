@@ -6858,3 +6858,12 @@ path and can be read back byte-for-byte instead of being reconstructed. The
 standalone debugging guide also makes a path-only agent handoff start with the
 actual replay command and a frame-based description of every mark, rather than
 trusting the header's stored verdict as if it were a fresh replay.
+
+2026-09-03 — **Removed trace and replay code from production release
+builds.** The release boundary is now a compile-time boundary rather than a
+runtime `None`: `amux-tui` does not define or export its trace ring, trace
+window or replay module, `TuiConfig` has no trace field, and the CLI does not
+construct a ring or message tap. Test targets retain the modules so release
+key-gating tests can still inspect both answers, while `amux-ui`'s report
+format, writer and automatic tripwire and panic paths remain available in
+every profile.

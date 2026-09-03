@@ -78,16 +78,14 @@ async fn run_inner(
         })
     };
     // Debug builds record what the chrome saw so a captured report can be
-    // replayed. Release builds record nothing: the ring is the one part of
-    // the diagnostic path that costs memory on every keystroke.
-    let trace = if cfg!(debug_assertions) {
-        Some(amux_tui::trace::shared(amux_tui::trace::SEGMENT_LEN))
-    } else {
-        None
-    };
+    // replayed. The declaration is compile-gated because release builds do
+    // not contain the trace module or carry its storage in TuiConfig.
+    #[cfg(debug_assertions)]
+    let trace = Some(amux_tui::trace::shared(amux_tui::trace::SEGMENT_LEN));
     // The fold order is the runtime's to report. Reconstructing it from
     // outside would mean guessing how a drain batched, and a wrong guess is
     // a replay that diverges for no visible reason.
+    #[cfg(debug_assertions)]
     let msg_tap: Option<amux_ui::MsgTap> = trace.clone().map(|trace| {
         Box::new(move |msg: &amux_ui::Msg| {
             amux_tui::trace::record_shared(&trace, &amux_tui::chrome::TraceEvent::Msg(msg.clone()));
@@ -103,6 +101,7 @@ async fn run_inner(
             subscription_status_provider: Some(Arc::new(move || {
                 subscription_reporter.subscription_required()
             })),
+            #[cfg(debug_assertions)]
             msg_tap,
             ..RuntimeOptions::default()
         },
@@ -141,6 +140,7 @@ async fn run_inner(
         },
         initial_chat,
         initial_chat_configuration,
+        #[cfg(debug_assertions)]
         trace,
         diagnostics,
     };

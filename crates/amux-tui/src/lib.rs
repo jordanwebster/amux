@@ -17,6 +17,7 @@ pub mod fixtures;
 pub mod keys;
 pub(crate) mod markdown;
 pub mod render;
+#[cfg(any(debug_assertions, test))]
 pub mod replay;
 #[cfg(any(debug_assertions, test))]
 pub mod report_flow;
@@ -25,6 +26,7 @@ pub mod run;
 mod serde_roundtrip;
 pub mod terminal;
 pub mod theme;
+#[cfg(any(debug_assertions, test))]
 pub mod trace;
 pub mod view;
 
