@@ -6820,3 +6820,20 @@ and the unretained establishment time remain `null`. A two-daemon spec opens a
 real direct TCP session, echoes bytes through its tunnel, and checks both the
 caller's routing state and the host's subscriber and buffer state through the
 public debug RPC.
+
+2026-09-03 — **Made a captured screen a local agent work item.** The
+debug-only `amux debug` tree now prints daemon state and can list, validate,
+replay, prune and graduate report bundles. Replay folds the recorded trace
+through the current renderer, stamps its verdict and identifies every changed
+cell and their bounding rectangle; draw indices can render earlier frames.
+Graduation reuses replay-support's structural and text redaction across every
+file, including the frozen frame, daemon dump and log tail, while adding the
+local user and hostname to the home-path, secret and identifier rules. It
+refuses an existing `surface_subject` fixture name and records the original
+kind, stamp, redacted note and marks, graduation time and redaction counts in a
+manifest. The first redacted live fixture now replays in the integration suite,
+which also rejects committed fixture files containing home-path markers or the
+executing hostname. `docs/DEBUGGING.md` is the standalone path from a local
+report through replay, a mark-bounded tweak and a reviewed committed fixture;
+release builds expose none of these commands while continuing to write bounded
+degraded reports.

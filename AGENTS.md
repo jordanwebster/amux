@@ -11,6 +11,7 @@ broken freely. Simplify decisions accordingly.
 - Committed documentation lives in `docs/` (start at `docs/README.md`);
   `notes/` is gitignored working material. Graduate notes into `docs/`
   deliberately; never force-add them.
+- Agent debugging starts at `docs/DEBUGGING.md`; captured reports live in the configured reports directory (normally `<data_dir>/reports`).
 - This file holds rules about how agents operate. Documentation about the
   source belongs in `docs/` and component READMEs, not here.
 
