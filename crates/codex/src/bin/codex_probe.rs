@@ -168,6 +168,7 @@ async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::er
             secret_env: secret_values(),
             hostname: None,
             user: None,
+            extra_personal_identifiers: Vec::new(),
             personal_identifier_keys: vec!["installationId".into(), "serverName".into()],
         },
     );

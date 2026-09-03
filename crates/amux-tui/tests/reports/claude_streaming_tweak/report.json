@@ -1,26 +1,26 @@
 {
   "build": "amux-ui/0.4.0",
-  "created_at": "2026-09-03T03:59:17.503699Z",
+  "created_at": "2026-09-03T04:20:59.982421Z",
   "detail": null,
-  "git_sha": "975622320ddcaacb8966d5d28371ca0d7c37439e",
+  "git_sha": "642f744593eba44fd42f8acd5b17bf82ed9c7bde",
   "kind": "tweak",
   "marks": [
     {
-      "height": 3,
-      "note": "Claude output row",
-      "width": 11,
+      "height": 1,
+      "note": "the agent name in this header should stand out from its context",
+      "width": 45,
       "x": 0,
-      "y": 2
+      "y": 0
     },
     {
       "height": 1,
-      "note": "Claude status bar",
-      "width": 1,
-      "x": 34,
-      "y": 11
+      "note": "the working status row should say what it is waiting on",
+      "width": 35,
+      "x": 2,
+      "y": 35
     }
   ],
-  "note": "current real Claude stream needs a focused renderer tweak",
+  "note": "the chat header name reads too quietly while Claude is streaming",
   "parts": {
     "daemon": "present",
     "frame": "present",
@@ -30,7 +30,7 @@
   },
   "replay": "reproduces",
   "schema_version": 1,
-  "stamp": "1788407957503-4821",
+  "stamp": "1788409259982-9610",
   "status": "open",
   "viewport": [
     140,

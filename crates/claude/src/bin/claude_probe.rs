@@ -331,6 +331,7 @@ async fn record_pty_one(entry: SpecEntry) -> Result<(), Box<dyn std::error::Erro
             secret_env: secret_values(),
             hostname: None,
             user: None,
+            extra_personal_identifiers: Vec::new(),
             personal_identifier_keys: Vec::new(),
         },
     );
@@ -639,6 +640,7 @@ async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::er
             secret_env: secret_values(),
             hostname: None,
             user: None,
+            extra_personal_identifiers: Vec::new(),
             personal_identifier_keys: Vec::new(),
         },
     );

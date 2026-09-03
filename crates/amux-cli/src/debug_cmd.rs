@@ -148,7 +148,7 @@ pub fn run_report(command: ReportCommands, config: &Config) -> Result<ReportComm
             styles,
         } => replay_report(&reports_dir, &report, at, frame, styles),
         ReportCommands::Graduate { report, name, into } => {
-            let fixture = graduate(&reports_dir, &report, &name, into.as_deref())?;
+            let fixture = graduate(config, &reports_dir, &report, &name, into.as_deref())?;
             Ok(ReportCommandOutput::success(format!(
                 "Graduated report to {}\n",
                 fixture.display()
@@ -159,6 +159,7 @@ pub fn run_report(command: ReportCommands, config: &Config) -> Result<ReportComm
 }
 
 fn graduate(
+    config: &Config,
     reports_dir: &Path,
     requested: &Path,
     name: &str,
@@ -202,7 +203,7 @@ fn graduate(
     fs::create_dir(&fixture)
         .with_context(|| format!("failed to create fixture {}", fixture.display()))?;
 
-    let result = graduate_into(&report_dir, &fixture, name);
+    let result = graduate_into(config, &report_dir, &fixture, name);
     if let Err(error) = result {
         let _ = fs::remove_dir_all(&fixture);
         return Err(error);
@@ -231,7 +232,7 @@ fn validate_fixture_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn local_redaction() -> Redaction {
+fn local_redaction(config: &Config) -> Redaction {
     Redaction {
         home: std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
@@ -244,12 +245,16 @@ fn local_redaction() -> Redaction {
             .or_else(|_| std::env::var("USERNAME"))
             .ok()
             .filter(|value| !value.is_empty()),
+        extra_personal_identifiers: (!config.host_name.is_empty())
+            .then(|| config.host_name.clone())
+            .into_iter()
+            .collect(),
         ..Redaction::default()
     }
 }
 
-fn graduate_into(report_dir: &Path, fixture: &Path, name: &str) -> Result<()> {
-    let rules = local_redaction();
+fn graduate_into(config: &Config, report_dir: &Path, fixture: &Path, name: &str) -> Result<()> {
+    let rules = local_redaction(config);
     let mut summary = RedactionSummary::default();
     redact_tree(report_dir, fixture, &rules, &mut summary)?;
 
@@ -913,6 +918,7 @@ mod tests {
         let hostname = gethostname::gethostname()
             .into_string()
             .expect("test host name is UTF-8");
+        let configured_host_name = "private-daily-driver";
         assert!(!home.is_empty());
         assert!(!user.is_empty());
         assert!(!hostname.is_empty());
@@ -929,7 +935,11 @@ mod tests {
             log: PartState::Present,
         };
         let report_dir = write_header(&reports_dir, "source-tweak", &source_header);
-        fs::write(report_dir.join("frame.txt"), format!("frame {private}\n")).unwrap();
+        fs::write(
+            report_dir.join("frame.txt"),
+            format!("frame {private} configured={configured_host_name}\n"),
+        )
+        .unwrap();
         fs::write(
             report_dir.join("frame.styles"),
             format!("styles {private}\n"),
@@ -938,17 +948,19 @@ mod tests {
         fs::write(
             report_dir.join("trace.jsonl"),
             format!(
-                "{{\"note\":{}}}\n",
-                serde_json::to_string(&private).unwrap()
+                "{{\"note\":{},\"host\":{}}}\n",
+                serde_json::to_string(&private).unwrap(),
+                serde_json::to_string(configured_host_name).unwrap()
             ),
         )
         .unwrap();
         fs::write(
             report_dir.join("msgs.jsonl"),
             format!(
-                "{{\"home_path\":{},\"operator\":{}}}\n",
+                "{{\"home_path\":{},\"operator\":{},\"host_name\":{}}}\n",
                 serde_json::to_string(&format!("{home}/project")).unwrap(),
-                serde_json::to_string(&user).unwrap()
+                serde_json::to_string(&user).unwrap(),
+                serde_json::to_string(configured_host_name).unwrap()
             ),
         )
         .unwrap();
@@ -956,6 +968,7 @@ mod tests {
             report_dir.join("daemon.json"),
             serde_json::to_vec(&serde_json::json!({
                 "hostname": hostname.clone(),
+                "host_name": configured_host_name,
                 "user": user.clone(),
                 "cwd": format!("{home}/project"),
                 "api_key": "private-key"
@@ -963,7 +976,14 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        fs::write(report_dir.join("log.txt"), format!("log {private}\n")).unwrap();
+        fs::write(
+            report_dir.join("log.txt"),
+            format!("log {private} configured={configured_host_name}\n"),
+        )
+        .unwrap();
+
+        let mut graduation_config = config(&reports_dir);
+        graduation_config.host_name = configured_host_name.to_string();
 
         let output = run_report(
             ReportCommands::Graduate {
@@ -971,7 +991,7 @@ mod tests {
                 name: "chat_wrapped_note".to_string(),
                 into: Some(fixtures_dir.clone()),
             },
-            &config(&reports_dir),
+            &graduation_config,
         )
         .unwrap();
         let fixture = fixtures_dir.join("chat_wrapped_note");
@@ -997,7 +1017,7 @@ mod tests {
         for entry in fs::read_dir(&fixture).unwrap() {
             let path = entry.unwrap().path();
             let text = fs::read_to_string(&path).unwrap();
-            for sensitive in [&home, &user, &hostname] {
+            for sensitive in [&home, &user, &hostname, configured_host_name] {
                 assert!(
                     !text.contains(sensitive),
                     "{} retained {sensitive:?}",

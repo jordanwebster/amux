@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use serde_json::Value;
+use unicode_width::UnicodeWidthStr;
 
 use crate::{IoEvent, RedactionSummary};
 
@@ -19,6 +20,8 @@ pub struct Redaction {
     pub hostname: Option<String>,
     /// Local user name whose literal appearances should not leave the capture.
     pub user: Option<String>,
+    /// Other exact identifiers whose literal appearances should not leave the capture.
+    pub extra_personal_identifiers: Vec<String>,
     /// Exact JSON field names whose values this capture treats as personal identifiers.
     pub personal_identifier_keys: Vec<String>,
 }
@@ -209,6 +212,11 @@ pub fn redact_text(input: &str, rules: &Redaction, summary: &mut RedactionSummar
         value = redact_spans(&value, marker, PATH_PLACEHOLDER, &mut summary.machine_paths);
     }
     value = redact_windows_user_paths(&value, summary);
+    for identifier in &rules.extra_personal_identifiers {
+        if !identifier.is_empty() && identifier != IDENTIFIER_PLACEHOLDER {
+            value = redact_width_matched_identifier(&value, identifier, summary);
+        }
+    }
     for identifier in [&rules.hostname, &rules.user].into_iter().flatten() {
         if !identifier.is_empty() && identifier != IDENTIFIER_PLACEHOLDER {
             value = redact_literal(
@@ -220,6 +228,31 @@ pub fn redact_text(input: &str, rules: &Redaction, summary: &mut RedactionSummar
         }
     }
     value
+}
+
+fn redact_width_matched_identifier(
+    input: &str,
+    identifier: &str,
+    summary: &mut RedactionSummary,
+) -> String {
+    const LABEL: &str = "<REDACTED>";
+
+    let width = UnicodeWidthStr::width(identifier);
+    let label_width = UnicodeWidthStr::width(LABEL);
+    let replacement = if width >= label_width {
+        format!("{LABEL}{}", "_".repeat(width - label_width))
+    } else {
+        "#".repeat(width)
+    };
+    if replacement == identifier {
+        return input.to_string();
+    }
+    redact_literal(
+        input,
+        identifier,
+        &replacement,
+        &mut summary.personal_identifiers,
+    )
 }
 
 fn redact_literal(input: &str, needle: &str, replacement: &str, count: &mut u64) -> String {
@@ -363,6 +396,7 @@ mod tests {
             secret_env: vec!["exact-secret".to_string()],
             hostname: None,
             user: None,
+            extra_personal_identifiers: Vec::new(),
             personal_identifier_keys: vec!["installationId".into(), "serverName".into()],
         };
 
@@ -398,25 +432,30 @@ mod tests {
     }
 
     #[test]
-    fn redact_text_removes_the_configured_hostname_and_user() {
+    fn redact_text_removes_local_and_extra_identifiers() {
         let rules = Redaction {
             hostname: Some("alices-laptop.local".to_string()),
             user: Some("alice".to_string()),
+            extra_personal_identifiers: vec!["daily-driver".to_string()],
             ..Redaction::default()
         };
         let mut summary = RedactionSummary::default();
 
         let redacted = redact_text(
-            "alice captured this on alices-laptop.local",
+            "alice captured this on alices-laptop.local as daily-driver",
             &rules,
             &mut summary,
         );
 
         assert_eq!(
             redacted,
-            "<REDACTED_IDENTIFIER> captured this on <REDACTED_IDENTIFIER>"
+            "<REDACTED_IDENTIFIER> captured this on <REDACTED_IDENTIFIER> as <REDACTED>__"
         );
-        assert_eq!(summary.personal_identifiers, 2);
+        assert_eq!(summary.personal_identifiers, 3);
+        assert_eq!(
+            UnicodeWidthStr::width("<REDACTED>__"),
+            UnicodeWidthStr::width("daily-driver")
+        );
     }
 
     #[test]

@@ -6867,3 +6867,13 @@ construct a ring or message tap. Test targets retain the modules so release
 key-gating tests can still inspect both answers, while `amux-ui`'s report
 format, writer and automatic tripwire and panic paths remain available in
 every profile.
+
+2026-09-03 — **Redacted the configured host name from graduated reports.**
+The daemon and renderer identify a machine with `Config.host_name`, which may
+deliberately differ from the operating system hostname that graduation already
+removed. Graduation now adds that configured value to replay-support's exact
+personal-identifier rules before processing every report part. The fixture
+test seeds a distinct configured name into the daemon dump, trace, Model
+messages, frozen frame and log, and the real Claude streaming fixture has been
+re-graduated from its accepted report with the machine name replaced while
+remaining replayable.

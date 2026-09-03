@@ -1,28 +1,28 @@
 {
   "name": "claude_streaming_tweak",
   "kind": "tweak",
-  "original_stamp": "1788407957503-4821",
-  "note": "current real Claude stream needs a focused renderer tweak",
+  "original_stamp": "1788409259982-9610",
+  "note": "the chat header name reads too quietly while Claude is streaming",
   "marks": [
     {
       "x": 0,
-      "y": 2,
-      "width": 11,
-      "height": 3,
-      "note": "Claude output row"
+      "y": 0,
+      "width": 45,
+      "height": 1,
+      "note": "the agent name in this header should stand out from its context"
     },
     {
-      "x": 34,
-      "y": 11,
-      "width": 1,
+      "x": 2,
+      "y": 35,
+      "width": 35,
       "height": 1,
-      "note": "Claude status bar"
+      "note": "the working status row should say what it is waiting on"
     }
   ],
-  "graduated_at": "2026-09-03T04:01:07.326198Z",
+  "graduated_at": "2026-09-03T04:38:39.919138Z",
   "redaction": {
     "secrets": 0,
-    "machine_paths": 67,
-    "personal_identifiers": 15
+    "machine_paths": 140,
+    "personal_identifiers": 22
   }
 }
