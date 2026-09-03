@@ -1,1 +1,0 @@
-target/debug/amux new claude --name attachments-qa
