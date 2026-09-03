@@ -159,6 +159,8 @@ async fn chrome_session(
     // The buffer as the terminal last received it. A capture has to
     // describe what the person was looking at, and by the time the key
     // arrives the renderer has moved on from the state that produced it.
+    // Only a build with the capture key ever reads it, so only that build
+    // pays for the copy: it stays `None` everywhere else.
     let mut last_frame: Option<ratatui::buffer::Buffer> = None;
 
     let exit = loop {
@@ -190,7 +192,9 @@ async fn chrome_session(
                 let completed = terminal.draw(|frame| {
                     frame.render_widget(Paragraph::new(lines), frame.area());
                 })?;
-                last_frame = Some(completed.buffer.clone());
+                if cfg!(any(debug_assertions, test)) {
+                    last_frame = Some(completed.buffer.clone());
+                }
             }
         }
         tokio::select! {

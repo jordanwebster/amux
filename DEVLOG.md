@@ -6877,3 +6877,11 @@ test seeds a distinct configured name into the daemon dump, trace, Model
 messages, frozen frame and log, and the real Claude streaming fixture has been
 re-graduated from its accepted report with the machine name replaced while
 remaining replayable.
+
+2026-09-03 — **Stopped release builds copying the frame buffer on every
+draw.** The live loop keeps a clone of the buffer the terminal last
+received so the capture key can freeze what the person was actually
+looking at, but the capture key exists only in debug builds, and the copy
+was being made in every profile. The clone is now behind the same
+`debug_assertions` gate as its reader, so a release repaint no longer pays
+for a diagnostic it cannot produce.
