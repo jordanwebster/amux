@@ -7090,3 +7090,10 @@ presses Enter, an open question gates the send and hands the screen back once
 answered, and a refused send puts nothing so the whole draft can be restored.
 The screenshot registry grew two states — the feed's attachment rows and a
 draft holding two kinds at once — rendered by a new `attachments` set.
+
+2026-09-03 — **Replayed the live attachment flow.** With the worktree config
+passed explicitly inside tmux, the 120×40 chat accepted a pasted-text token, a
+clipboard image token, and a mixed draft; the sent feed showed the image row,
+Claude described the PNG without a permission ask, and Preview was confirmed
+frontmost. The five canonical pane captures and replay report live under
+`.autopilot/evidence/live/attachments-qa/` and `.autopilot/qa/`.
