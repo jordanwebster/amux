@@ -911,9 +911,14 @@ mod tests {
         let temp = tempdir().unwrap();
         let reports_dir = temp.path().join("reports");
         let fixtures_dir = temp.path().join("fixtures");
-        let home = std::env::var("HOME").expect("test process has HOME");
+        // The same fallbacks the redaction itself uses: Windows runners have
+        // no HOME or USER, only USERPROFILE and USERNAME.
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .expect("test process has a home directory");
         let user = std::env::var("USER")
             .or_else(|_| std::env::var("LOGNAME"))
+            .or_else(|_| std::env::var("USERNAME"))
             .expect("test process has a user name");
         let hostname = gethostname::gethostname()
             .into_string()

@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Two CI legs that had been red before the build-configuration
+change go green again.** Neither failure was new. The Windows test job died
+in the debug report's redaction test, which read `HOME` and `USER` straight
+from the environment and unwrapped them; Windows runners carry `USERPROFILE`
+and `USERNAME` instead, which the redaction itself already falls back to,
+so the test now falls back the same way. The E2E job's `bare_help`
+expectation predated the `debug` subcommand and lacked its help line; the
+line is added. Everything else in both jobs was already passing.
+
 2026-09-03 — **One build configuration for every host command; test
 scaffolding follows the profile, not a feature.** A single worktree had
 grown a 39 GB cargo build directory in a day, and `wt rm` of it took 78
