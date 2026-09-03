@@ -214,7 +214,7 @@ fn parse_element(text: &str, start: usize) -> Option<(Mention, usize)> {
             let merge_base = attributes.remove("merge-base");
             let name = attributes.remove("name").unwrap_or_default();
             let expected_comments: usize = attributes.remove("comments")?.parse().ok()?;
-            let body = crate::review::parse_body(&body?)?;
+            let body = crate::review::parse_body_parts(&body?).ok()?;
             if body.comments.len() != expected_comments {
                 return None;
             }

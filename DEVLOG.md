@@ -6983,3 +6983,11 @@ to consumers, and malformed elements stay byte-for-byte prose while scanning
 continues for later valid mentions. Drafts compute artifact IDs from their
 bytes before upload, and the UI crate exposes the shared artifact metadata
 types needed by renderers.
+
+2026-09-03 — **Made diff reviews portable client data.** The UI core now
+splits a complete Git patch into file-local documents, reuses the shared diff
+walker for old and new line facts, records hunk positions, and checks parsed
+magnitudes against daemon metadata. Inclusive selections become stable
+path/side/line anchors with exact quoted rows. Review comments stay in document
+order through add, edit, and delete, and their human-readable body carries blob
+identity and round-trips independently of any terminal renderer.
