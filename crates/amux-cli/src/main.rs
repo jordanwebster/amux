@@ -16,7 +16,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use amux::{AgentType, Config, DebugFormat, PairingSecret, PairingStart, setup};
+use amux::{AgentType, Config, PairingSecret, PairingStart, setup};
+#[cfg(debug_assertions)]
+use amux_cli::debug_cmd::{self, DebugCommands};
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -214,15 +216,11 @@ enum Commands {
     /// Update amux to the latest version
     Update,
 
-    /// Internal: Show server debug information
-    #[command(hide = true)]
+    /// Inspect daemon state and locally captured reports
+    #[cfg(debug_assertions)]
     Debug {
-        /// Dump per-user, per-host, per-route, and per-agent details
-        #[arg(long)]
-        verbose: bool,
-        /// Output format (default: yaml)
-        #[arg(long, value_enum, default_value_t = CliDebugFormat::Yaml)]
-        format: CliDebugFormat,
+        #[command(subcommand)]
+        command: DebugCommands,
     },
 }
 
@@ -298,15 +296,6 @@ enum ServerCommands {
     Resume,
 }
 
-/// CLI-side mirror of `DebugFormat` so we can derive `clap::ValueEnum`
-/// without pulling clap into the `amux` library crate.
-#[derive(Copy, Clone, Debug, ValueEnum)]
-#[value(rename_all = "snake_case")]
-enum CliDebugFormat {
-    Yaml,
-    Json,
-}
-
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum CliClaudeDriver {
     Pty,
@@ -352,15 +341,6 @@ impl CliCodexSandboxPolicy {
             Self::DangerFullAccess => "danger-full-access",
             Self::WorkspaceWrite => "workspace-write",
             Self::ReadOnly => "read-only",
-        }
-    }
-}
-
-impl From<CliDebugFormat> for DebugFormat {
-    fn from(value: CliDebugFormat) -> Self {
-        match value {
-            CliDebugFormat::Yaml => DebugFormat::Yaml,
-            CliDebugFormat::Json => DebugFormat::Json,
         }
     }
 }
@@ -691,10 +671,16 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             amux::relay_stdio_to_unix_socket(&config.socket_path).await?;
         }
         Commands::Update => update::run_update(&config).await?,
-        Commands::Debug { verbose, format } => {
-            let dump = server_client::debug(&config, verbose, format.into()).await?;
-            print!("{dump}");
-        }
+        #[cfg(debug_assertions)]
+        Commands::Debug { command } => match command {
+            DebugCommands::Daemon { verbose, format } => {
+                let dump = server_client::debug(&config, verbose, format.into()).await?;
+                print!("{dump}");
+            }
+            DebugCommands::Report { command } => {
+                print!("{}", debug_cmd::run_report(command, &config)?);
+            }
+        },
         Commands::Hooks { provider } => match provider {
             HooksProvider::Claude => {
                 hooks::handle_claude_hook(&config);
@@ -1254,6 +1240,20 @@ fn normalize_config_path(path: &std::path::Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn top_level_help_mentions_debug_exactly_in_debug_builds() {
+        let help = Cli::command().render_long_help().to_string();
+        let debug_entries = help
+            .lines()
+            .filter(|line| {
+                let line = line.trim_start();
+                line == "debug" || line.starts_with("debug ")
+            })
+            .count();
+
+        assert_eq!(debug_entries, usize::from(cfg!(debug_assertions)), "{help}");
+    }
 
     /// The config flag doubles as `AMUX_CONFIG`. Checked through the clap
     /// command model rather than by setting the variable, which would race
