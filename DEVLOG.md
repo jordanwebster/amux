@@ -6961,3 +6961,13 @@ act on `read_event`; and an `AsyncReadExt` import serving one gated
 scripted-session helper. Each now sits under the gate its callers already
 have, so `cargo build --release` says nothing and a future dead-code
 warning there means something.
+
+2026-09-03 — **Proved artifact ownership across routes, restarts, and
+lifetime transitions.** The daemon spec now sends put, get, diff, and pinned
+prompt requests from another host, then restarts the owning daemon and verifies
+both the replayed refs and stored bytes. An injected testnet clock makes expiry
+deterministic: unsent artifacts sweep, sent ones remain pinned, and deleting
+the agent removes its store. The same boundary tests preserve typed oversized
+and missing-attachment errors. Pinned Claude PTY delivery now accounts for its
+metadata row in transcript sequencing, and stopping an unlinked or scripted
+Claude session no longer waits for a process exit that cannot occur.

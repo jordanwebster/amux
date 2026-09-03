@@ -8,6 +8,9 @@
 //! over this daemon's current route, so input and output cross the real
 //! tunnel.
 
+use std::path::Path;
+
+use bytes::Bytes;
 use uuid::Uuid;
 
 use super::Daemon;
@@ -17,8 +20,8 @@ use crate::client::{Client, ClientError};
 use crate::protocol::ProtocolError;
 use crate::services::LocalAgentHost;
 use crate::{
-    Agent, AgentParent, AgentType, CreateAgentRequest, SendInputRequest, SendMessageRequest,
-    SubscribeSessionEvent,
+    Agent, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
+    DiffBase, DiffResponse, SendInputRequest, SendMessageRequest, SubscribeSessionEvent,
 };
 
 /// Asserts a routed local-admin RPC was rejected with permission-denied.
@@ -36,6 +39,12 @@ impl Daemon {
     /// echoes session input back as output. Returns once the agent is in the
     /// daemon's own inventory.
     pub async fn spawn_echo_agent(&self, name: &str) -> Agent {
+        self.spawn_echo_agent_in(name, std::env::temp_dir()).await
+    }
+
+    /// Spawns a local echo agent rooted at `working_dir`, for operations such
+    /// as diff capture that observe the agent's checkout.
+    pub async fn spawn_echo_agent_in(&self, name: &str, working_dir: impl AsRef<Path>) -> Agent {
         let agent = self
             .admin_client()
             .await
@@ -46,7 +55,7 @@ impl Daemon {
                 agent_type: AgentType::TestAgent {
                     command: TEST_ECHO_COMMAND.to_string(),
                 },
-                working_dir: std::env::temp_dir(),
+                working_dir: working_dir.as_ref().to_path_buf(),
                 terminal_size: None,
                 args: Vec::new(),
                 parent: None,
@@ -61,6 +70,170 @@ impl Daemon {
             });
         assert_eq!(agent.name.as_deref(), Some(name));
         agent
+    }
+
+    /// Registers a process-free Claude PTY agent with a stable id. This is a
+    /// testnet stand-in for a provider process reconnecting after restart.
+    pub async fn register_scripted_claude_agent(
+        &self,
+        agent_id: Uuid,
+        name: &str,
+        working_dir: impl AsRef<Path>,
+    ) -> Agent {
+        let parts = self
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        parts
+            .agent_host
+            .register_scripted_claude(CreateAgentRequest {
+                agent_id,
+                host_id: None,
+                name: Some(name.to_string()),
+                agent_type: AgentType::Claude {
+                    driver: crate::ClaudeDriver::Pty,
+                },
+                working_dir: working_dir.as_ref().to_path_buf(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
+            })
+            .await
+            .unwrap_or_else(|error| panic!("register scripted Claude agent '{name}': {error}"))
+    }
+
+    /// Stores bytes on `owner` for `agent`, routing through this daemon.
+    pub async fn put_artifact_on(
+        &self,
+        owner: &Daemon,
+        agent: &Agent,
+        kind: ArtifactKind,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactRef, ClientError> {
+        self.client_to(owner)
+            .await
+            .put_artifact(agent.id.into(), kind, name, mime, bytes)
+            .await
+    }
+
+    /// Fetches bytes from `owner` for `agent`, routing through this daemon.
+    pub async fn get_artifact_on(
+        &self,
+        owner: &Daemon,
+        agent: &Agent,
+        id: &ArtifactId,
+    ) -> Result<(ArtifactRef, Vec<u8>), ClientError> {
+        self.client_to(owner)
+            .await
+            .get_artifact(agent.id.into(), id)
+            .await
+    }
+
+    /// Captures the checkout diff on `owner` for `agent` through this daemon.
+    pub async fn diff_on(
+        &self,
+        owner: &Daemon,
+        agent: &Agent,
+        base: DiffBase,
+    ) -> Result<DiffResponse, ClientError> {
+        self.client_to(owner)
+            .await
+            .diff(agent.id.into(), base)
+            .await
+    }
+
+    /// Deletes `agent` on `owner` through this daemon.
+    pub async fn delete_agent_on(&self, owner: &Daemon, agent: &Agent) -> Result<(), ClientError> {
+        self.client_to(owner).await.delete_agent(agent.id).await
+    }
+
+    /// Sends an echo-protocol input with explicit pins, preserving typed
+    /// service errors for boundary assertions.
+    pub async fn send_echo_with_pins_on(
+        &self,
+        owner: &Daemon,
+        agent: &Agent,
+        text: &str,
+        pin: Vec<ArtifactId>,
+    ) -> Result<(), ClientError> {
+        self.client_to(owner)
+            .await
+            .send_input(SendInputRequest {
+                agent: agent.id.into(),
+                input_id: Uuid::new_v4().as_bytes().to_vec(),
+                io_protocol: TEST_ECHO_V1.to_string(),
+                payload: Bytes::copy_from_slice(text.as_bytes()),
+                pin: pin.into_iter().map(|id| id.to_string()).collect(),
+            })
+            .await
+    }
+
+    /// Pins artifacts with a Claude prompt and returns the attachment row
+    /// observed on the same routed session.
+    pub async fn send_pinned_claude_prompt_on(
+        &self,
+        owner: &Daemon,
+        agent: &Agent,
+        text: &str,
+        pin: Vec<ArtifactId>,
+    ) -> Vec<ArtifactRef> {
+        let client = self.client_to(owner).await;
+        let mut stream = client
+            .subscribe_session(crate::SubscribeSessionRequest {
+                agent: agent.id.into(),
+                io_protocol: crate::claude_io::PTY_TRANSCRIPT_V1.to_string(),
+                args: None,
+            })
+            .await
+            .unwrap_or_else(|error| panic!("subscribe to scripted Claude agent: {error}"));
+        let expected_seq = replay_cursor(&mut stream).await;
+        let input_id = Uuid::new_v4().as_bytes().to_vec();
+        let payload = crate::claude_io::encode_pty_transcript_v1_input(
+            crate::claude_io::ClaudePtyTranscriptV1Input {
+                expected_seq,
+                intent: crate::claude_io::Intent::Prompt {
+                    text: text.to_string(),
+                },
+            },
+        );
+        client
+            .send_input(SendInputRequest {
+                agent: agent.id.into(),
+                input_id: input_id.clone(),
+                io_protocol: crate::claude_io::PTY_TRANSCRIPT_V1.to_string(),
+                payload: payload.into(),
+                pin: pin.into_iter().map(|id| id.to_string()).collect(),
+            })
+            .await
+            .unwrap_or_else(|error| panic!("send pinned Claude prompt: {error}"));
+        attachment_refs(&mut stream, Some(&input_id)).await
+    }
+
+    /// Opens a fresh Claude session and returns the synthetic row containing
+    /// every artifact pinned in earlier messages.
+    pub async fn replayed_artifacts_on(&self, owner: &Daemon, agent: &Agent) -> Vec<ArtifactRef> {
+        let mut stream = self
+            .client_to(owner)
+            .await
+            .subscribe_session(crate::SubscribeSessionRequest {
+                agent: agent.id.into(),
+                io_protocol: crate::claude_io::PTY_TRANSCRIPT_V1.to_string(),
+                args: None,
+            })
+            .await
+            .unwrap_or_else(|error| panic!("subscribe for pinned artifact replay: {error}"));
+        attachment_refs(&mut stream, None).await
+    }
+
+    async fn client_to(&self, owner: &Daemon) -> Client {
+        if self.host_id() == owner.host_id() {
+            self.admin_client().await
+        } else {
+            self.routed_admin_client_to(owner).await
+        }
     }
 
     /// Spawns an echo child and proves its first input is an authenticated
@@ -902,6 +1075,79 @@ impl Daemon {
             });
         Client::from_client_service_channel(channel, None)
     }
+}
+
+async fn replay_cursor(stream: &mut crate::SessionStream) -> u64 {
+    let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
+    loop {
+        let event = tokio::time::timeout_at(deadline, stream.recv())
+            .await
+            .expect("timed out waiting for scripted Claude replay cursor")
+            .expect("scripted Claude replay failed");
+        match event {
+            SubscribeSessionEvent::ReplayComplete {
+                cursor: Some(cursor),
+            } => {
+                return crate::claude_io::decode_pty_transcript_v1_cursor(&cursor)
+                    .expect("scripted Claude replay cursor decodes");
+            }
+            SubscribeSessionEvent::ReplayComplete { cursor: None } => {
+                panic!("scripted Claude replay omitted its cursor")
+            }
+            SubscribeSessionEvent::Closed { reason } => {
+                panic!("scripted Claude session closed during replay: {reason}")
+            }
+            SubscribeSessionEvent::Opened | SubscribeSessionEvent::Output { .. } => {}
+        }
+    }
+}
+
+async fn attachment_refs(
+    stream: &mut crate::SessionStream,
+    expected_input_id: Option<&[u8]>,
+) -> Vec<ArtifactRef> {
+    let expected_input_id = expected_input_id.map(hex_bytes);
+    let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
+    loop {
+        let event = tokio::time::timeout_at(deadline, stream.recv())
+            .await
+            .expect("timed out waiting for an attachment row")
+            .expect("attachment row stream failed");
+        match event {
+            SubscribeSessionEvent::Output { payload } => {
+                let output = crate::claude_io::decode_pty_transcript_v1_output(&payload)
+                    .expect("Claude output decodes");
+                let value: serde_json::Value =
+                    serde_json::from_slice(&output.payload).expect("Claude output contains JSON");
+                if value.get("type").and_then(serde_json::Value::as_str) != Some("amux.attachments")
+                {
+                    continue;
+                }
+                let input_matches = match (&expected_input_id, value.get("input_id")) {
+                    (Some(expected), Some(serde_json::Value::String(actual))) => actual == expected,
+                    (None, Some(serde_json::Value::Null)) => true,
+                    _ => false,
+                };
+                if input_matches {
+                    return serde_json::from_value(value["refs"].clone())
+                        .expect("attachment row refs decode");
+                }
+            }
+            SubscribeSessionEvent::Closed { reason } => {
+                panic!("scripted Claude session closed before its attachment row: {reason}")
+            }
+            SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
+        }
+    }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    bytes.iter().fold(String::new(), |mut encoded, byte| {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+        encoded
+    })
 }
 
 async fn echoed_envelope(

@@ -515,6 +515,31 @@ pub(crate) async fn start_user_services(
     agent_host: Option<Arc<dyn LocalAgentHost>>,
     device_security: DeviceRuntimeSecurity,
 ) -> Result<StartedUserServices, IdentityError> {
+    start_user_services_with_clock(
+        state,
+        agent_host,
+        device_security,
+        Arc::new(amux_artifacts::SystemClock),
+    )
+    .await
+}
+
+#[cfg(feature = "testnet")]
+pub(crate) async fn start_user_services_with_artifact_clock(
+    state: Arc<RwLock<ServerState>>,
+    agent_host: Option<Arc<dyn LocalAgentHost>>,
+    device_security: DeviceRuntimeSecurity,
+    clock: Arc<dyn amux_artifacts::Clock>,
+) -> Result<StartedUserServices, IdentityError> {
+    start_user_services_with_clock(state, agent_host, device_security, clock).await
+}
+
+async fn start_user_services_with_clock(
+    state: Arc<RwLock<ServerState>>,
+    agent_host: Option<Arc<dyn LocalAgentHost>>,
+    device_security: DeviceRuntimeSecurity,
+    artifact_clock: Arc<dyn amux_artifacts::Clock>,
+) -> Result<StartedUserServices, IdentityError> {
     // ClientService and the debug serializer must observe the same concrete
     // local runtime. Production startup already seeded this slot lazily;
     // explicit hosts supplied by testnet and other embedders need it too.
@@ -528,11 +553,8 @@ pub(crate) async fn start_user_services(
     };
 
     let artifact_owners = Arc::new(
-        ArtifactOwners::open(
-            device_security.data_dir.clone(),
-            Arc::new(amux_artifacts::SystemClock),
-        )
-        .map_err(|error| IdentityError::Io(std::io::Error::other(error)))?,
+        ArtifactOwners::open(device_security.data_dir.clone(), artifact_clock)
+            .map_err(|error| IdentityError::Io(std::io::Error::other(error)))?,
     );
     let agent = AgentServiceCtx::new(agent_host.clone(), host_id, is_cloud_server)
         .with_artifact_owners(artifact_owners.clone());

@@ -15,6 +15,8 @@ pub(crate) use agent::{create_sdk_in_process, open_in_process_protocol_plane};
 pub(crate) use client::ClientService;
 pub(crate) use pairing::{LocalPairingIdentity, PairingService, pair_initiator};
 pub(crate) use reachability::ReachabilityLinkConnector;
+#[cfg(feature = "testnet")]
+pub(crate) use startup::start_user_services_with_artifact_clock;
 pub(crate) use startup::{
     CloudLinkService, DeviceRuntimeSecurity, StartedUserServices, establish_cloud_connection,
     start_user_services,

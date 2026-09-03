@@ -575,6 +575,13 @@ async fn send_claude_pty_to_target(
     pins: &[ArtifactId],
 ) -> Result<(), ProtocolError> {
     if let Some(owner) = attachment_owner {
+        let current_seq = log.current_seq().await;
+        if input.expected_seq != current_seq {
+            return Err(ProtocolError::SequenceNumberMismatch {
+                client_seq: input.expected_seq,
+                current_seq,
+            });
+        }
         let claude_io::Intent::Prompt { text } = &mut input.intent else {
             return Err(attachments_require_prompt(Protocol::ClaudePtyTranscriptV1));
         };
@@ -588,6 +595,9 @@ async fn send_claude_pty_to_target(
         )
         .await?;
         *text = prepared.text;
+        // The metadata row is part of this accepted input and must precede
+        // provider delivery. Advance the provider-facing sequence across it.
+        input.expected_seq = log.current_seq().await;
     }
     target
         .send(StructuredInputEvent::ClaudePty {

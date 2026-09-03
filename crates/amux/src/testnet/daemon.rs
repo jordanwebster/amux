@@ -4,8 +4,9 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex as StdMutex, Weak};
 
+use chrono::{DateTime, TimeDelta, Utc};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -29,7 +30,8 @@ use crate::routing::{
     spawn_connector_to_channel_with_bearer_token,
 };
 use crate::services::{
-    ClientService, DeviceRuntimeSecurity, PtyAgentHost, StartedUserServices, start_user_services,
+    ClientService, DeviceRuntimeSecurity, PtyAgentHost, StartedUserServices,
+    start_user_services_with_artifact_clock,
 };
 use crate::trust::{Reachability, SharedTrustStore, TrustStore};
 use crate::tunnel::TunnelPool;
@@ -47,6 +49,7 @@ pub(crate) struct DaemonInner {
     pub(crate) name: String,
     pub(crate) host_id: HostId,
     pub(crate) data_dir: PathBuf,
+    pub(crate) artifact_clock: Arc<TestArtifactClock>,
     /// Direct-TCP listener address; stable across restarts so stored
     /// reachabilities keep working. `None` for cloud-only daemons.
     pub(crate) tcp_addr: Option<SocketAddr>,
@@ -66,6 +69,26 @@ pub(crate) struct DaemonInner {
     /// dialed, kept separately from `tracked_tcp` so credential-rollover
     /// verbs can sever just the cloud link while direct links stay up.
     pub(crate) tracked_cloud_tcp: TrackedTcpConnections,
+}
+
+pub(crate) struct TestArtifactClock(StdMutex<DateTime<Utc>>);
+
+impl TestArtifactClock {
+    pub(crate) fn new() -> Self {
+        Self(StdMutex::new(Utc::now()))
+    }
+
+    fn advance(&self, duration: std::time::Duration) {
+        let delta = TimeDelta::from_std(duration).expect("test artifact time must fit chrono");
+        let mut now = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        *now += delta;
+    }
+}
+
+impl amux_artifacts::Clock for TestArtifactClock {
+    fn now(&self) -> DateTime<Utc> {
+        *self.0.lock().unwrap_or_else(|error| error.into_inner())
+    }
 }
 
 impl DaemonInner {
@@ -236,9 +259,14 @@ pub(crate) async fn start_daemon_runtime(
         inner.data_dir.clone(),
     )
     .expect("testnet Codex private socket path should be usable");
-    let mut services = start_user_services(state, Some(agent_host.clone()), security)
-        .await
-        .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
+    let mut services = start_user_services_with_artifact_clock(
+        state,
+        Some(agent_host.clone()),
+        security,
+        inner.artifact_clock.clone(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
 
     if let Some(addr) = inner.tcp_addr {
         let listener = match listener {
@@ -362,6 +390,34 @@ impl Daemon {
     /// The daemon's persistent host id (stable across restarts).
     pub fn host_id(&self) -> HostId {
         self.inner.host_id
+    }
+
+    /// Advances this daemon's injected artifact clock without sleeping.
+    pub fn advance_artifact_time(&self, duration: std::time::Duration) {
+        self.inner.artifact_clock.advance(duration);
+    }
+
+    /// Runs the same loaded-owner sweep used by the daemon background task.
+    pub async fn sweep_artifacts(&self) -> Vec<crate::ArtifactId> {
+        let guard = self.inner.runtime.lock().await;
+        let runtime = guard
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        runtime
+            .services
+            .artifact_owners
+            .sweep_loaded(amux_artifacts::EPHEMERAL_TTL)
+            .unwrap_or_else(|error| panic!("'{}' failed to sweep artifacts: {error}", self.name()))
+    }
+
+    /// Reports whether an agent's authoritative artifact root still exists.
+    pub fn artifact_root_exists(&self, agent_id: crate::AgentId) -> bool {
+        self.inner
+            .data_dir
+            .join("agents")
+            .join(agent_id.to_string())
+            .join("artifacts")
+            .exists()
     }
 
     /// The same verbose JSON diagnostics a local client requests from this

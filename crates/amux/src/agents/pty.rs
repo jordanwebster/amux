@@ -153,12 +153,16 @@ impl PtyHandle {
                 .await;
             }
             HostedPty::Claude(control) => {
-                control
-                    .clone()
-                    .stop(pty_host::Terminate::Graceful {
-                        grace: TERMINATE_GRACE,
-                    })
-                    .await;
+                // A scripted or currently unlinked Claude session has no
+                // process group whose exit can be awaited.
+                if control.terminal().is_some() {
+                    control
+                        .clone()
+                        .stop(pty_host::Terminate::Graceful {
+                            grace: TERMINATE_GRACE,
+                        })
+                        .await;
+                }
             }
             #[cfg(any(test, feature = "testnet"))]
             HostedPty::TestEcho(_) => {}

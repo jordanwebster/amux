@@ -499,6 +499,7 @@ impl TestNetBuilder {
                 name: spec.name.clone(),
                 host_id: prep.identity.host_id,
                 data_dir: prep.data_dir,
+                artifact_clock: Arc::new(daemon::TestArtifactClock::new()),
                 tcp_addr: prep.tcp_addr,
                 cloud: prep.attaches_to_cloud.then(|| {
                     let cloud = cloud.as_ref().expect("cloud attachment without cloud");
