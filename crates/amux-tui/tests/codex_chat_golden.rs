@@ -261,7 +261,12 @@ fn mcp_startup_rows() -> Vec<Value> {
     ]
 }
 
-fn attachment(kind: amux_ui::ArtifactKind, name: &str, mime: &str, size: usize) -> amux_ui::DraftAttachment {
+fn attachment(
+    kind: amux_ui::ArtifactKind,
+    name: &str,
+    mime: &str,
+    size: usize,
+) -> amux_ui::DraftAttachment {
     amux_ui::DraftAttachment::from_bytes(kind, name, mime, vec![b'z'; size])
 }
 
@@ -316,9 +321,19 @@ fn refs_row(attachments: &[&amux_ui::DraftAttachment]) -> Value {
 }
 
 fn attachment_rows() -> Vec<Value> {
-    let image = attachment(amux_ui::ArtifactKind::Image, "screenshot.png", "image/png", 120_433);
+    let image = attachment(
+        amux_ui::ArtifactKind::Image,
+        "screenshot.png",
+        "image/png",
+        120_433,
+    );
     let file = attachment(amux_ui::ArtifactKind::File, "trace.log", "text/plain", 4096);
-    let report = attachment(amux_ui::ArtifactKind::File, "coverage.html", "text/html", 20_000);
+    let report = attachment(
+        amux_ui::ArtifactKind::File,
+        "coverage.html",
+        "text/html",
+        20_000,
+    );
     let prompt = format!(
         "the sync panel looks wrong\n{}\n{}\n{}",
         element(&image),
@@ -346,6 +361,27 @@ fn attachment_rows() -> Vec<Value> {
 #[test]
 fn codex_attachment_blocks_both_themes() {
     assert_surface("attachment_blocks", &model(attachment_rows()));
+}
+
+fn review_rows() -> Vec<Value> {
+    let prompt = format!(
+        "three things before this lands\n{}",
+        amux_tui::review::fixture::sample_review_element(),
+    );
+    vec![
+        ready(),
+        json!({"type":"turn/started","turn":{"id":"turn-review","status":"inProgress"}}),
+        json!({"type":"item/completed","turnId":"turn-review","item":{"id":"user-4","type":"userMessage","content":[{"type":"text","text":prompt}]}}),
+        json!({"type":"turn/completed","turn":{"id":"turn-review","status":"completed"}}),
+    ]
+}
+
+/// A review reads the same in Codex's feed as in Claude's: one row
+/// stating what was written and over how many files. Codex has no
+/// reader, so the row states everything it can and stops there.
+#[test]
+fn codex_review_block_both_themes() {
+    assert_surface("review_block", &model(review_rows()));
 }
 
 #[test]

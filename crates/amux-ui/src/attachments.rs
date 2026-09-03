@@ -75,6 +75,10 @@ pub struct AttachmentLine {
     pub size: Option<u64>,
     pub lines: Option<u32>,
     pub comments: Option<usize>,
+    /// How many files a review's comments are spread over. Only a review
+    /// has one, and it is counted from the comments the element carries,
+    /// so a viewer states it without fetching the diff.
+    pub files: Option<usize>,
 }
 
 /// Attachment metadata and lazily fetched review patches for one chat layer.
@@ -150,6 +154,7 @@ impl AttachmentIndex {
                     size: artifact.map(|artifact| artifact.size).or(mention.size),
                     lines: None,
                     comments: None,
+                    files: None,
                 }
             }
             MentionKind::Text { lines, .. } => AttachmentLine {
@@ -158,6 +163,7 @@ impl AttachmentIndex {
                 size: None,
                 lines: Some(*lines),
                 comments: None,
+                files: None,
             },
             MentionKind::Review { comments, .. } => AttachmentLine {
                 kind: AttachmentKind::Review,
@@ -165,6 +171,7 @@ impl AttachmentIndex {
                 size: None,
                 lines: None,
                 comments: Some(comments.len()),
+                files: Some(distinct_paths(comments)),
             },
         }
     }
@@ -218,6 +225,17 @@ impl AttachmentIndex {
         };
         mention
     }
+}
+
+/// How many distinct files a comment set touches.
+fn distinct_paths(comments: &[ReviewComment]) -> usize {
+    let mut paths: Vec<&str> = comments
+        .iter()
+        .map(|comment| comment.path.as_str())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    paths.len()
 }
 
 /// Artifact data retained by a composer until its message is sent.
@@ -616,6 +634,43 @@ mod tests {
             size: None,
             path: None,
         });
+    }
+
+    /// A review's row states both halves of its size, and both come out
+    /// of the element itself — a host that never fetched the patch still
+    /// says how much was written and how much of the tree it covers.
+    #[test]
+    fn attachments_describe_a_review_by_its_comments_and_their_files() {
+        let comment = |path: &str, line: u32| ReviewComment {
+            path: path.into(),
+            start_side: Side::New,
+            start_line: line,
+            side: Side::New,
+            line,
+            quoted: vec![format!("+row {line}")],
+            text: "look at this".into(),
+        };
+        let line = AttachmentIndex::default().describe(&Mention {
+            kind: MentionKind::Review {
+                header: ReviewHeader {
+                    diff: id_of(b"patch"),
+                    base: "working-tree".into(),
+                    head: "4f2a9c1".into(),
+                    merge_base: None,
+                    blobs: Vec::new(),
+                },
+                comments: vec![
+                    comment("src/lib.rs", 2),
+                    comment("src/attachments.rs", 1),
+                    comment("src/attachments.rs", 3),
+                ],
+            },
+            name: "review".into(),
+            size: None,
+            path: None,
+        });
+        assert_eq!(line.comments, Some(3));
+        assert_eq!(line.files, Some(2));
     }
 
     #[test]

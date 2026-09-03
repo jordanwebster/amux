@@ -358,6 +358,21 @@ impl View {
         });
     }
 
+    /// Open the fullscreen reader on a review someone sent.
+    pub(crate) fn open_review_reader(
+        &mut self,
+        header: amux_ui::review::ReviewHeader,
+        comments: Vec<amux_ui::review::ReviewComment>,
+    ) {
+        self.reader = Some(ReaderView {
+            source: ReaderSource::Review {
+                header: Box::new(header),
+                comments,
+            },
+            scroll: 0,
+        });
+    }
+
     fn ask_reader_open(&self) -> bool {
         matches!(
             self.reader,

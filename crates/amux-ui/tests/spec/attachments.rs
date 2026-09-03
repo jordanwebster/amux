@@ -153,6 +153,7 @@ fn assert_image_segment(index: &AttachmentIndex, content: &[Segment]) {
             size: Some(12_043),
             lines: None,
             comments: None,
+            files: None,
         }
     );
 }

@@ -371,6 +371,22 @@ impl ChatView {
         }
     }
 
+    /// Read a sent review in the fullscreen reader, reporting whether a
+    /// reader opened — a chat without one has no use for the diff.
+    fn open_review_reader(
+        &mut self,
+        header: amux_ui::review::ReviewHeader,
+        comments: Vec<amux_ui::review::ReviewComment>,
+    ) -> bool {
+        match &mut self.inner {
+            AgentChatView::Claude(view) => {
+                view.open_review_reader(header, comments);
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn consume_shared_leader(&mut self) {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.pending_leader = false,
@@ -397,8 +413,10 @@ impl ChatView {
 ///
 /// An image or a file leaves for the host's viewer through the runtime,
 /// which fetches and verifies the bytes first; pasted text is read here,
-/// because there is no file to hand anyone. A review has its own page
-/// and is not opened from this chord.
+/// because there is no file to hand anyone. A sent review opens the
+/// reader and asks for its diff in the same breath: the comments arrived
+/// with the message, the patch they hang on is an artifact on the
+/// agent's host that this viewer may never have seen.
 fn open_focused_attachment(chat: &mut ChatView, model: &Model) -> Option<UiAction> {
     let focus = chat.viewport.focus?;
     let mention = attachments::focused_mention(model, chat.agent, focus)?;
@@ -410,6 +428,14 @@ fn open_focused_attachment(chat: &mut ChatView, model: &Model) -> Option<UiActio
         attachments::Opening::Read { title, body } => {
             chat.open_text_reader(title, body);
             None
+        }
+        attachments::Opening::Review { header, comments } => {
+            let id = header.diff.clone();
+            chat.open_review_reader(*header, comments)
+                .then_some(UiAction::Dispatch(Command::FetchDiff {
+                    agent: chat.agent,
+                    id,
+                }))
         }
     }
 }

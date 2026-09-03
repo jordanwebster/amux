@@ -2679,6 +2679,89 @@ fn chat_review_token() {
     assert_golden("chat_review_token", &rendered);
 }
 
+// --- a sent review, read back -----------------------------------------------
+
+/// A prompt carrying a review someone wrote and sent.
+fn review_prompt_msgs() -> Vec<Msg> {
+    let mut msgs = base_msgs();
+    msgs.extend(opened(false));
+    msgs.push(batch(
+        "2026-08-12T09:02:00Z",
+        1,
+        vec![
+            ready_row(),
+            mode_row("default"),
+            prompt_row(
+                1,
+                "2026-08-12T09:00:00Z",
+                &format!(
+                    "three things before this lands\n{}",
+                    amux_tui::review::fixture::sample_review_element(),
+                ),
+            ),
+            turn_duration_row(2, "2026-08-12T09:01:42Z", 102_000),
+        ],
+    ));
+    msgs
+}
+
+/// The row a sent review leaves in the feed: what it is, how much was
+/// written on it, and over how many files — none of which needs the diff.
+#[test]
+fn chat_review_block() {
+    let rendered = render_frame(&fold(review_prompt_msgs()), &chat_view(), 80, 20, IDLE_NOW);
+    assert_golden("chat_review_block", &rendered);
+}
+
+/// Open the reader on the sent review by focusing its feed row.
+fn open_sent_review(view: &mut ViewState, model: &Model) {
+    // The newest block is the turn rule, then the review row.
+    leader(view, model, KeyCode::Char('k'));
+    leader(view, model, KeyCode::Char('k'));
+    leader(view, model, KeyCode::Char('o'));
+}
+
+/// Opening a sent review fetches the diff it cites, and once the bytes
+/// land the reader shows the whole patch with each comment under the row
+/// it was written on.
+#[test]
+fn review_reader_fetched() {
+    let mut model = fold(review_prompt_msgs());
+    let mut view = reconciled_view(&model);
+    open_sent_review(&mut view, &model);
+
+    let command = Command::FetchDiff {
+        agent: agent_id(),
+        id: amux_tui::review::fixture::sample_diff_id(),
+    };
+    update(&mut model, Msg::Command { op: op(4), command });
+    update(
+        &mut model,
+        Msg::OpResult {
+            op: op(4),
+            outcome: amux_ui::OpOutcome::DiffFetched {
+                id: amux_tui::review::fixture::sample_diff_id(),
+                patch: amux_tui::review::fixture::sample_patch().to_string(),
+            },
+        },
+    );
+
+    let rendered = render_frame(&model, &view, 120, 40, IDLE_NOW);
+    assert_golden("review_reader_fetched", &rendered);
+}
+
+/// A viewing host that cannot get the diff still shows the review: the
+/// comments and the rows they quote, under one line saying why the patch
+/// is not on screen.
+#[test]
+fn review_reader_missing() {
+    let model = fold(review_prompt_msgs());
+    let mut view = reconciled_view(&model);
+    open_sent_review(&mut view, &model);
+    let rendered = render_frame(&model, &view, 120, 40, IDLE_NOW);
+    assert_golden("review_reader_missing", &rendered);
+}
+
 /// The chord, the daemon's frozen diff, and the page on screen over the
 /// chat — the whole path a person takes to a review.
 fn open_review_page(view: &mut ViewState, model: &mut Model) {

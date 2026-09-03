@@ -3,7 +3,7 @@
 //! review core; this module decides only what is on screen and which key
 //! reaches which core call.
 
-use amux_ui::review::{RowRef, anchor};
+use amux_ui::review::{ReviewComment, RowRef, anchor};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
@@ -177,14 +177,14 @@ fn save(view: &mut ReviewView) -> ReviewOutcome {
 
 /// The threads the core anchors to `row`, painted under it.
 pub fn thread_lines(
-    view: &ReviewView,
+    comments: &[ReviewComment],
     rows: &[Option<RowRef>],
     row: RowRef,
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    for (index, comment) in view.review().comments().iter().enumerate() {
+    for (index, comment) in comments.iter().enumerate() {
         if rows.get(index).copied().flatten() != Some(row) {
             continue;
         }
@@ -260,7 +260,7 @@ fn box_rule(inner: usize, label: &str, theme: Theme) -> Line<'static> {
 }
 
 /// Wrap comment text to `width` cells, keeping the writer's own newlines.
-fn wrap(text: &str, width: usize) -> Vec<String> {
+pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut out = Vec::new();
     for paragraph in text.split('\n') {

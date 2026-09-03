@@ -8,6 +8,7 @@
 
 use amux_ui::Model;
 use amux_ui::claude::{Ask, AskDocument, AskKind, AskState, DiffDocument, ToolInvocation};
+use amux_ui::review::{ReviewComment, ReviewHeader};
 use ratatui::text::{Line, Span};
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +50,14 @@ pub(crate) enum ReaderSource {
     /// part of the message that carried them and never change, so there
     /// is nothing to look up and nothing that can go stale.
     Text { name: String, body: String },
+    /// A review someone sent. Its comments came with the message and are
+    /// carried here; the diff they were written on is an artifact,
+    /// resolved from the layer's index so it appears the moment the
+    /// fetch lands.
+    Review {
+        header: Box<ReviewHeader>,
+        comments: Vec<ReviewComment>,
+    },
 }
 
 /// The typed document body, borrowed from the Model (§5: a match, not a
@@ -61,6 +70,13 @@ enum Body<'m> {
     /// Words with no markup: a pasted attachment is read as it was
     /// pasted, not as markdown a renderer guessed at.
     Text(&'m str),
+    /// A sent review: its comments, over the fetched patch when this host
+    /// has it.
+    Review {
+        header: &'m ReviewHeader,
+        comments: &'m [ReviewComment],
+        diff: Option<&'m str>,
+    },
 }
 
 struct Resolved<'m> {
@@ -120,6 +136,16 @@ fn resolve<'m>(model: &'m Model, chat: &'m View) -> Option<Resolved<'m>> {
             };
             Some(resolved)
         }
+        ReaderSource::Review { header, comments } => Some(Resolved {
+            title: review_title(header, comments),
+            body: Body::Review {
+                header,
+                comments,
+                diff: layer.attachments().diff(&header.diff),
+            },
+            ask: None,
+            plans_nav: None,
+        }),
         ReaderSource::Text { name, body } => Some(Resolved {
             title: format!("{name} \u{b7} {} lines", body.lines().count()),
             body: Body::Text(body),
@@ -145,6 +171,33 @@ fn resolve<'m>(model: &'m Model, chat: &'m View) -> Option<Resolved<'m>> {
             })
         }
     }
+}
+
+/// What a sent review is, in one line: what it was taken against, and how
+/// much of it a person wrote on.
+fn review_title(header: &ReviewHeader, comments: &[ReviewComment]) -> String {
+    let mut paths: Vec<&str> = comments
+        .iter()
+        .map(|comment| comment.path.as_str())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let base = match header.base.strip_prefix("branch:") {
+        Some(branch) => format!("against {branch}"),
+        None => "working tree".to_string(),
+    };
+    format!(
+        "review \u{2014} {base} @ {}  \u{b7}  {} {} in {} {}",
+        header.head,
+        comments.len(),
+        if comments.len() == 1 {
+            "comment"
+        } else {
+            "comments"
+        },
+        paths.len(),
+        if paths.len() == 1 { "file" } else { "files" },
+    )
 }
 
 fn permission_path(kind: &AskKind) -> Option<&str> {
@@ -179,15 +232,22 @@ fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'stat
         }
         Body::Diff(document) => crate::chat::diff::reader_rows(document, width, theme),
         Body::NewFile(content) => diff::new_file_rows(content, width, theme, true),
-        Body::Text(content) => markdown::plain_rows(content, width.saturating_sub(3).max(1), theme.text())
-            .into_iter()
-            .map(|spans| {
-                let mut line = Line::default();
-                push_span(&mut line, 2, "", theme.text());
-                line.spans.extend(spans);
-                line
-            })
-            .collect(),
+        Body::Review {
+            header,
+            comments,
+            diff,
+        } => crate::review::review_reader_rows(header, comments, *diff, width, theme),
+        Body::Text(content) => {
+            markdown::plain_rows(content, width.saturating_sub(3).max(1), theme.text())
+                .into_iter()
+                .map(|spans| {
+                    let mut line = Line::default();
+                    push_span(&mut line, 2, "", theme.text());
+                    line.spans.extend(spans);
+                    line
+                })
+                .collect()
+        }
     }
 }
 

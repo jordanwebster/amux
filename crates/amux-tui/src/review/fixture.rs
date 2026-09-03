@@ -99,6 +99,34 @@ fn identity(base: DiffBase) -> BaseIdentity {
     }
 }
 
+/// The artifact id the frozen patch is stored under, for a viewer asking
+/// the daemon for it.
+pub fn sample_diff_id() -> ArtifactId {
+    diff_id()
+}
+
+/// The patch as a viewer gets it back from the daemon's artifact store,
+/// for the reader that fetched it.
+pub fn sample_patch() -> &'static str {
+    PATCH
+}
+
+/// The element a sent review rides in, comments and all — what a viewing
+/// host actually parses out of a prompt.
+pub fn sample_review_element() -> String {
+    let view = sample_review_with_comments();
+    let review = view.review();
+    amux_ui::attachments::format_mention(&amux_ui::attachments::Mention {
+        kind: amux_ui::attachments::MentionKind::Review {
+            header: review.header(),
+            comments: review.comments().to_vec(),
+        },
+        name: "review".to_string(),
+        size: None,
+        path: None,
+    })
+}
+
 /// The review as it opens against the working tree.
 pub fn sample_review() -> ReviewView {
     sample_review_against(DiffBase::WorkingTree)

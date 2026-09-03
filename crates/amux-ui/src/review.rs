@@ -8,6 +8,13 @@ use crate::diff::{RowFact, RowKind, parse_unified_patch};
 
 const COMMENT_TEXT_PREFIX: &str = "text-bytes: ";
 
+/// Where a comment sorts when the document no longer holds its rows:
+/// after every row that is still there.
+const LAST_ROW: RowRef = RowRef {
+    file: usize::MAX,
+    row: usize::MAX,
+};
+
 /// A multi-file patch frozen with the repository identity it was derived from.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewDocument {
@@ -110,6 +117,27 @@ impl Review {
         }
     }
 
+    /// A frozen document with a comment set already written elsewhere.
+    ///
+    /// A viewer reading a review someone else sent has the comments as
+    /// text and the diff as an artifact; it never authored an anchor, so
+    /// it needs a way in that does not go through `add`.
+    pub fn with_comments(
+        doc: ReviewDocument,
+        diff: ArtifactId,
+        comments: Vec<ReviewComment>,
+    ) -> Self {
+        let mut review = Self::new(doc, diff);
+        for comment in comments {
+            let key = comment_row(&review.doc, &comment).unwrap_or(LAST_ROW);
+            let index = review.comments.partition_point(|existing| {
+                comment_row(&review.doc, existing).unwrap_or(LAST_ROW) <= key
+            });
+            review.comments.insert(index, comment);
+        }
+        review
+    }
+
     pub fn document(&self) -> &ReviewDocument {
         &self.doc
     }
@@ -125,15 +153,9 @@ impl Review {
             quoted: anchor.quoted,
             text,
         };
-        let key = comment_row(&self.doc, &comment).unwrap_or(RowRef {
-            file: usize::MAX,
-            row: usize::MAX,
-        });
+        let key = comment_row(&self.doc, &comment).unwrap_or(LAST_ROW);
         let index = self.comments.partition_point(|existing| {
-            comment_row(&self.doc, existing).unwrap_or(RowRef {
-                file: usize::MAX,
-                row: usize::MAX,
-            }) <= key
+            comment_row(&self.doc, existing).unwrap_or(LAST_ROW) <= key
         });
         self.comments.insert(index, comment);
         index
@@ -260,6 +282,72 @@ pub fn parse_patch(
         files: review_files,
         identity,
     })
+}
+
+/// Parses a patch that arrived on its own, taking the file list from the
+/// patch itself.
+///
+/// A viewer that fetched a stored review diff has no separate list of
+/// changed files to check it against: the artifact is the whole record of
+/// what was reviewed, and its section headers are the only statement of
+/// which paths it covers.
+pub fn parse_stored_patch(
+    patch: &str,
+    identity: BaseIdentity,
+) -> Result<ReviewDocument, ReviewError> {
+    let files = stated_files(patch)?;
+    parse_patch(patch, identity, &files)
+}
+
+/// The base a review header spells out, read back.
+///
+/// Anything that is not a branch spelling is the working tree, because
+/// that is what a review with no branch named was taken against.
+pub fn parse_base(spelling: &str) -> DiffBase {
+    match spelling.strip_prefix("branch:") {
+        Some(base) => DiffBase::Branch {
+            base: base.to_string(),
+        },
+        None => DiffBase::WorkingTree,
+    }
+}
+
+/// The path and magnitude each section of a patch states about itself.
+fn stated_files(patch: &str) -> Result<Vec<DiffFile>, ReviewError> {
+    let mut files = Vec::new();
+    for section in patch_sections(patch)? {
+        let path = section_path(&section.text).ok_or(ReviewError::MalformedPatch {
+            line: section.start_line,
+        })?;
+        let rows = parse_unified_patch(&section.text, false).rows();
+        files.push(DiffFile {
+            path,
+            added: rows.iter().filter(|row| row.kind == RowKind::Added).count() as u32,
+            removed: rows
+                .iter()
+                .filter(|row| row.kind == RowKind::Removed)
+                .count() as u32,
+        });
+    }
+    Ok(files)
+}
+
+/// The path a section is about: the new side, or the old side for a file
+/// the patch deletes.
+fn section_path(section: &str) -> Option<String> {
+    let mut old = None;
+    for line in section.lines() {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            return Some(path.to_string());
+        }
+        if let Some(path) = line.strip_prefix("--- a/") {
+            old = Some(path.to_string());
+        }
+        if line.starts_with("@@") {
+            break;
+        }
+    }
+    old
 }
 
 /// Resolves an inclusive, file-local row range into review coordinates.
@@ -613,6 +701,82 @@ index 0000000..4444444
 
     fn document() -> ReviewDocument {
         parse_patch(PATCH, identity(), &files()).unwrap()
+    }
+
+    /// A viewer that fetched only the stored patch has to reach the same
+    /// document the daemon's file list produced, or the comments it hangs
+    /// on the rows would land somewhere else.
+    #[test]
+    fn review_parse_stored_patch_reads_the_file_list_out_of_the_patch() {
+        let stored = parse_stored_patch(PATCH, identity()).unwrap();
+        assert_eq!(stored, document());
+        assert_eq!(
+            stored
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/lib.rs", "deleted.txt", "new.txt"],
+        );
+    }
+
+    /// A review arriving as text carries its comments in element order;
+    /// the reader shows them under the rows, so they have to sort into
+    /// document order on the way in.
+    #[test]
+    fn review_with_comments_sorts_a_sent_comment_set_into_document_order() {
+        let document = document();
+        let late = anchor(
+            &document,
+            RowRef { file: 2, row: 2 },
+            RowRef { file: 2, row: 2 },
+        )
+        .unwrap();
+        let early = anchor(
+            &document,
+            RowRef { file: 0, row: 3 },
+            RowRef { file: 0, row: 3 },
+        )
+        .unwrap();
+        let comment = |anchor: Anchor, text: &str| ReviewComment {
+            path: anchor.path,
+            start_side: anchor.start_side,
+            start_line: anchor.start_line,
+            side: anchor.side,
+            line: anchor.line,
+            quoted: anchor.quoted,
+            text: text.to_string(),
+        };
+        let review = Review::with_comments(
+            document,
+            id_of(b"patch"),
+            vec![comment(late, "second"), comment(early, "first")],
+        );
+        assert_eq!(
+            review
+                .comments()
+                .iter()
+                .map(|comment| comment.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second"],
+        );
+        assert_eq!(review.comments_in(0), 1);
+        assert_eq!(review.comments_in(2), 1);
+    }
+
+    /// The base a header spells out has to come back as the base a review
+    /// was taken against, or a reader would attribute every branch review
+    /// to the working tree.
+    #[test]
+    fn review_parse_base_round_trips_both_spellings() {
+        for base in [
+            DiffBase::WorkingTree,
+            DiffBase::Branch {
+                base: "main".into(),
+            },
+        ] {
+            assert_eq!(parse_base(&format_base(&base)), base);
+        }
     }
 
     #[test]

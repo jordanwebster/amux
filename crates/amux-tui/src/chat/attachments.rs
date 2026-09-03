@@ -74,6 +74,12 @@ pub(crate) enum Opening {
     External(amux_ui::attachments::ArtifactId),
     /// Read it here: inline text has no file to open.
     Read { title: String, body: String },
+    /// Read a review someone sent: the diff it cites is fetched, the
+    /// comments came with the message.
+    Review {
+        header: Box<amux_ui::review::ReviewHeader>,
+        comments: Vec<amux_ui::review::ReviewComment>,
+    },
 }
 
 /// How this attachment opens, or `None` for a kind this build cannot
@@ -85,7 +91,10 @@ pub(crate) fn opening(mention: &Mention) -> Option<Opening> {
             title: mention.name.clone(),
             body: body.clone(),
         }),
-        MentionKind::Review { .. } => None,
+        MentionKind::Review { header, comments } => Some(Opening::Review {
+            header: Box::new(header.clone()),
+            comments: comments.clone(),
+        }),
     }
 }
 
@@ -102,7 +111,9 @@ pub(crate) fn focused_mention(model: &Model, agent: AgentId, focus: BlockKey) ->
     let owner = (focus.0 >> 8) & OWNER_MASK;
     let index = (focus.0 & 0xff) as usize;
     let content = owner_content(model, agent, owner)?;
-    mentions(&content).get(index).map(|mention| (*mention).clone())
+    mentions(&content)
+        .get(index)
+        .map(|mention| (*mention).clone())
 }
 
 fn owner_content(model: &Model, agent: AgentId, owner: u64) -> Option<Vec<Segment>> {

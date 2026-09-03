@@ -8,7 +8,9 @@
 pub mod comments;
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixture;
+pub mod reader;
 pub mod view;
 
 pub use comments::{CommentEditor, Selection};
+pub use reader::review_reader_rows;
 pub use view::{ReviewOutcome, ReviewView};

@@ -1,0 +1,40 @@
+  fix-auth · claude @ mbp                                                                                   chat · idle 
+                                                                                                                        
+▎   three things before this lands                                                                                      
+                                                                                                                        
+  ⌗ review · 3 comments · 2 files                                                                                       
+                                                                                                                        
+  ─ turn · 1m 42s ──────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+▎   Type a message▌                                                                                                     
+                                                                                                                        
+    enter send · ctrl+j newline · C-a r review diff · ? help                                               mode default 

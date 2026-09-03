@@ -431,7 +431,7 @@ impl ReviewView {
                 }
                 let mut height = lines.len() - at;
                 lines.extend(super::comments::thread_lines(
-                    self,
+                    self.core.comments(),
                     &comment_rows,
                     here,
                     width,
@@ -654,7 +654,7 @@ struct Body {
     spans: Vec<(RowRef, usize, usize)>,
 }
 
-fn file_line(
+pub(super) fn file_line(
     file: &amux_ui::review::ReviewFile,
     folded: bool,
     comments: usize,

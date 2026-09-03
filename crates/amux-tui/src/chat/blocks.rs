@@ -442,7 +442,12 @@ pub(crate) fn paint_attachment(
 ) -> PaintedBlock {
     let detail = attachment_detail(attachment);
     let mut line = Line::default();
-    push_span(&mut line, GLYPH_COL, attachment_glyph(attachment.kind), theme.text());
+    push_span(
+        &mut line,
+        GLYPH_COL,
+        attachment_glyph(attachment.kind),
+        theme.text(),
+    );
     let room = text_width(width).saturating_sub(str_width(&detail) + 3);
     push_span(
         &mut line,
@@ -470,13 +475,19 @@ fn attachment_glyph(kind: AttachmentKind) -> &'static str {
 }
 
 /// The one measurement the kind makes available: bytes for stored
-/// artifacts, lines for pasted text, comments for a review.
+/// artifacts, lines for pasted text, and for a review both halves of what
+/// was written — how many comments, over how many files — because either
+/// alone leaves the reader guessing at the size of the thing.
 fn attachment_detail(attachment: &AttachmentLine) -> String {
     if let Some(lines) = attachment.lines {
         return plural(lines as usize, "line", "lines");
     }
     if let Some(comments) = attachment.comments {
-        return plural(comments, "comment", "comments");
+        let mut detail = plural(comments, "comment", "comments");
+        if let Some(files) = attachment.files {
+            detail.push_str(&format!(" \u{b7} {}", plural(files, "file", "files")));
+        }
+        return detail;
     }
     attachment.size.map(human_size).unwrap_or_default()
 }

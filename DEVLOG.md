@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Read a sent review back.** A review that has been sent leaves
+one row in the feed saying what it is, how many comments it carries and over
+how many files — all counted from the element itself, so a host that has
+never seen the patch paints the row without fetching a byte. Opening the row
+asks the agent's host for the diff artifact the review cites and opens the
+reader in the same breath: once the patch lands, the reader shows the whole
+diff with each comment under the row it was written on, exactly as the page
+that wrote it did. A patch that never arrives, or one that no longer matches
+the identity the review states, falls back to the comments themselves, each
+quoting the rows it names, under one line saying why the diff is not on
+screen; showing rows from a patch that does not fit would put every comment
+on the wrong line. Codex's feed paints the same row and stops there, having
+no reader of its own.
+
 2026-09-03 — **Hosted the review page in the chat.** `<leader> r` asks the
 daemon to freeze the repository's diff and opens the review page over the
 whole chat frame when it arrives; every later press resumes the same frozen
