@@ -9,9 +9,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod cache;
 mod index;
 mod owner;
 
+pub use cache::Cache;
 pub use owner::Owner;
 
 /// The maximum size accepted for one artifact.

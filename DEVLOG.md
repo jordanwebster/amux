@@ -15,6 +15,10 @@ The owning role loads that index once, applies the ten-mebibyte cap before
 writing, retains first-put metadata, verifies every read, pins atomically,
 sweeps only indexed expired ephemerals, replays pins in creation order, and
 deletes all stored artifacts with their agent.
+The viewing role uses the same flat layout as a persisted byte-bounded LRU:
+hits are rehashed and update recency, corrupt entries fetch through again,
+fetched bytes must match both identity and recorded size, and reopen preserves
+the cache without introducing an `amux` dependency.
 
 2026-09-03 — **Renamed the reader's typed content model to documents.**
 `AskDocument`, `DiffDocument`, and the `claude::document` module now name

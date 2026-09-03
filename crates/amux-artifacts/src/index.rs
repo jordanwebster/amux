@@ -78,48 +78,53 @@ impl Index {
 
     fn recover(root: &Path) -> Result<Self, StoreError> {
         let mut index = Self::default();
-        for entry in fs::read_dir(root.join(BLOBS_DIR))? {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-
-            let Some(file_name) = entry.file_name().to_str().map(str::to_owned) else {
-                continue;
-            };
-            let bytes = fs::read(entry.path())?;
-            let id = id_of(&bytes);
-            if id.hex() != file_name {
-                fs::remove_file(entry.path())?;
-                continue;
-            }
-
-            let metadata = entry.metadata()?;
-            let created_at = metadata
-                .modified()
-                .map(DateTime::<Utc>::from)
-                .unwrap_or_else(|_| DateTime::<Utc>::from(SystemTime::UNIX_EPOCH));
-            let meta = ArtifactMeta {
-                id: id.clone(),
-                kind: ArtifactKind::File,
-                name: file_name,
-                mime: "application/octet-stream".to_owned(),
-                size: bytes.len() as u64,
-                created_at,
-                pinned_at: None,
-            };
+        for meta in recover_artifacts(root)? {
             index.insert(meta);
         }
-        index.order.sort_by(|left, right| {
-            let left = &index.artifacts[left];
-            let right = &index.artifacts[right];
-            left.created_at
-                .cmp(&right.created_at)
-                .then_with(|| left.id.cmp(&right.id))
-        });
         index.write(root)?;
         Ok(index)
     }
+}
+
+pub(crate) fn recover_artifacts(root: &Path) -> Result<Vec<ArtifactMeta>, StoreError> {
+    let mut recovered = Vec::new();
+    for entry in fs::read_dir(root.join(BLOBS_DIR))? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+
+        let Some(file_name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let bytes = fs::read(entry.path())?;
+        let id = id_of(&bytes);
+        if id.hex() != file_name {
+            fs::remove_file(entry.path())?;
+            continue;
+        }
+
+        let metadata = entry.metadata()?;
+        let created_at = metadata
+            .modified()
+            .map(DateTime::<Utc>::from)
+            .unwrap_or_else(|_| DateTime::<Utc>::from(SystemTime::UNIX_EPOCH));
+        recovered.push(ArtifactMeta {
+            id,
+            kind: ArtifactKind::File,
+            name: file_name,
+            mime: "application/octet-stream".to_owned(),
+            size: bytes.len() as u64,
+            created_at,
+            pinned_at: None,
+        });
+    }
+    recovered.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(recovered)
 }
 
 pub(crate) fn blob_path(root: &Path, id: &ArtifactId) -> PathBuf {
