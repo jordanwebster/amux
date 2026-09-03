@@ -10,6 +10,7 @@
 pub(crate) mod bindings;
 pub mod chat;
 pub mod chrome;
+pub mod clipboard;
 pub mod composer;
 pub mod diagnostics;
 #[cfg(feature = "fixtures")]

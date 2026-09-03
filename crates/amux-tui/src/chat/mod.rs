@@ -2,6 +2,7 @@
 //! per-agent view; Claude and Codex keep their content, panels, and key
 //! semantics separate while sharing only proven terminal renderers.
 
+pub(crate) mod attach;
 pub(crate) mod blocks;
 pub(crate) mod claude;
 mod codex;

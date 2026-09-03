@@ -19,6 +19,7 @@ use crate::chat::claude::ask_ui::{self, AskKeyOutcome, AskStage, AskUi};
 use crate::chat::claude::reader::{self, ReaderSource, ReaderView};
 use crate::chat::inline::{InlineAsk, InlineOutcome};
 use crate::chat::viewport::ScrollIntent;
+use crate::clipboard::ClipboardContent;
 use crate::composer;
 use crate::composer::Composer;
 use crate::view::UiAction;
@@ -304,13 +305,18 @@ fn composer_key(
         KeyCode::Char('?') if !ctrl && chat.composer.is_empty() => {
             chat.help = true;
         }
+        // Ctrl+V: attach what the clipboard holds. A terminal cannot
+        // deliver image bytes through a bracketed paste, so this is the
+        // one path an image reaches a draft by.
+        KeyCode::Char('v') if ctrl => {
+            attach_clipboard(chat, model, crate::clipboard::read_clipboard());
+        }
         // The shared readline set (P6): motion, kills, yank, printables —
         // `?` included on a non-empty draft. What it leaves stays
         // unbound, each an act of restraint: Ctrl+A (chrome leader),
         // Ctrl+G (emacs abort reflex — must never fire agent actions),
         // Ctrl+R (reserved: history search), Ctrl+L (shell redraw
-        // reflex), Ctrl+V (bracketed paste owns pasting), and the
-        // byte-aliases Ctrl+H/I/M.
+        // reflex), and the byte-aliases Ctrl+H/I/M.
         _ => {
             composer::readline_key(&mut chat.composer, &key);
         }
@@ -378,7 +384,36 @@ pub fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
         crate::chat::inline::handle_paste(inline, &one_line);
         return;
     }
-    chat.composer.paste(text);
+    chat.composer.paste_or_attach(text);
+}
+
+/// Ctrl+V: attach what the clipboard holds.
+///
+/// The content is a parameter, not read here, so the binding is testable
+/// without a host clipboard. Text is a paste like any other and follows
+/// the same focus routing; an image or a file has no home in a one-line
+/// answer field, so an open panel, reader or docked ask drops it rather
+/// than attaching it to the draft hidden behind them.
+pub(crate) fn attach_clipboard(chat: &mut View, model: &Model, content: ClipboardContent) {
+    if let ClipboardContent::Text(text) = content {
+        handle_chat_paste(chat, model, &text);
+        return;
+    }
+    chat.send_failure = None;
+    chat.ask_failure = None;
+    chat.quit_guard.disarm();
+    if chat.help {
+        return;
+    }
+    chat.sync_ask(model);
+    if chat.read_only(model)
+        || chat.reader.is_some()
+        || chat.ask_ui.is_some()
+        || chat.inline_ask.is_some()
+    {
+        return;
+    }
+    chat.send_failure = crate::chat::attach::attach_clipboard(&mut chat.composer, content);
 }
 
 /// `<leader> a`: dock the ask the banner names, or send it back (U2).
@@ -715,21 +750,21 @@ mod tests {
     use crate::chat::frame::{FrameSpacing, PaintCache, compose_chat_frame, feed_metrics};
     use crate::chat::viewport::{FeedViewport, apply_scroll};
 
-    fn agent_id() -> amux_ui::AgentId {
+    pub(super) fn agent_id() -> amux_ui::AgentId {
         Uuid::from_u128(7)
     }
 
-    fn t(seconds: i64) -> DateTime<Utc> {
+    pub(super) fn t(seconds: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(1_755_000_000 + seconds, 0).expect("epoch")
     }
 
-    fn fold(model: &mut Model, msgs: Vec<Msg>) {
+    pub(super) fn fold(model: &mut Model, msgs: Vec<Msg>) {
         for msg in msgs {
             update(model, msg);
         }
     }
 
-    fn base_msgs() -> Vec<Msg> {
+    pub(super) fn base_msgs() -> Vec<Msg> {
         let agent = amux_ui::Agent {
             id: agent_id(),
             host_id: Uuid::from_u128(1),
@@ -773,7 +808,7 @@ mod tests {
         ]
     }
 
-    fn rows(at: i64, first_seq: u64, payloads: Vec<serde_json::Value>) -> Msg {
+    pub(super) fn rows(at: i64, first_seq: u64, payloads: Vec<serde_json::Value>) -> Msg {
         Msg::Stream {
             agent: agent_id(),
             event: StreamMsg::Batch {
@@ -790,11 +825,11 @@ mod tests {
         }
     }
 
-    fn ready_row() -> serde_json::Value {
+    pub(super) fn ready_row() -> serde_json::Value {
         json!({"type": "amux.transcript_ready"})
     }
 
-    fn prompt_row(n: u8) -> serde_json::Value {
+    pub(super) fn prompt_row(n: u8) -> serde_json::Value {
         json!({
             "type": "user",
             "uuid": format!("dddddddd-0000-4000-8000-0000000000{n:02}"),
@@ -806,34 +841,34 @@ mod tests {
         })
     }
 
-    fn idle_model() -> Model {
+    pub(super) fn idle_model() -> Model {
         let mut model = Model::default();
         fold(&mut model, base_msgs());
         fold(&mut model, vec![rows(1, 1, vec![ready_row()])]);
         model
     }
 
-    fn working_model() -> Model {
+    pub(super) fn working_model() -> Model {
         let mut model = idle_model();
         fold(&mut model, vec![rows(2, 2, vec![prompt_row(1)])]);
         model
     }
 
-    fn press(code: KeyCode) -> KeyEvent {
+    pub(super) fn press(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    fn ctrl(c: char) -> KeyEvent {
+    pub(super) fn ctrl(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
-    fn chat_with_draft(text: &str) -> View {
+    pub(super) fn chat_with_draft(text: &str) -> View {
         let mut chat = View::open(agent_id(), 'a', false);
         chat.composer.insert_str(text);
         chat
     }
 
-    const VIEWPORT: (u16, u16) = (80, 20);
+    pub(super) const VIEWPORT: (u16, u16) = (80, 20);
 
     #[test]
     fn enter_sends_when_ready_and_clears_the_draft() {
@@ -1321,7 +1356,7 @@ mod tests {
         row
     }
 
-    fn edit_ask_model() -> Model {
+    pub(super) fn edit_ask_model() -> Model {
         let mut model = working_model();
         fold(
             &mut model,
@@ -2285,5 +2320,216 @@ mod tests {
         chat.reconcile(&model);
         assert_eq!(chat.send_failure(), None);
         assert!(chat.composer.is_empty());
+    }
+}
+
+/// Attachment routing: what a paste and Ctrl+V put in the draft, and what
+/// the draft survives. Sibling of `tests` so the check filter names it.
+#[cfg(test)]
+mod attachments {
+    use crate::composer::TokenAttachment;
+
+    use super::tests::{VIEWPORT, chat_with_draft, ctrl, edit_ask_model, idle_model, press, t};
+    use super::*;
+
+    fn long_paste(lines: usize) -> String {
+        (1..=lines)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn labels(chat: &View) -> Vec<String> {
+        chat.composer
+            .tokens()
+            .iter()
+            .map(|token| token.label.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_long_paste_becomes_one_token_and_a_short_one_is_text() {
+        let model = idle_model();
+        let mut chat = View::open(agent_id_local(), 'a', false);
+        handle_chat_paste(&mut chat, &model, &long_paste(9));
+        assert_eq!(labels(&chat), vec!["[Pasted #1 · 9 lines]"]);
+        assert_eq!(chat.composer.text().chars().count(), 1, "one slot char");
+
+        handle_chat_paste(&mut chat, &model, "one\ntwo\nthree");
+        assert_eq!(labels(&chat), vec!["[Pasted #1 · 9 lines]"], "no new token");
+        assert!(
+            chat.composer.text().ends_with("one\ntwo\nthree"),
+            "short text lands as characters"
+        );
+    }
+
+    /// The char threshold catches a single enormous line, which the line
+    /// count alone would let through.
+    #[test]
+    fn a_one_line_paste_over_the_char_threshold_becomes_a_token() {
+        let model = idle_model();
+        let mut chat = View::open(agent_id_local(), 'a', false);
+        handle_chat_paste(&mut chat, &model, &"x".repeat(1000));
+        assert_eq!(labels(&chat), vec!["[Pasted #1 · 1 line]"]);
+    }
+
+    #[test]
+    fn a_clipboard_image_becomes_an_image_token() {
+        let model = idle_model();
+        let mut chat = chat_with_draft("what is wrong here");
+        attach_clipboard(
+            &mut chat,
+            &model,
+            ClipboardContent::Image {
+                mime: "image/png".into(),
+                bytes: b"png bytes".to_vec(),
+            },
+        );
+        assert_eq!(labels(&chat), vec!["[Image #1]"]);
+        assert_eq!(chat.send_failure(), None);
+        let (text, attachments) = chat.composer.export(None);
+        assert!(
+            text.starts_with("what is wrong here<amux-attachment "),
+            "{text}"
+        );
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].mime, "image/png");
+    }
+
+    #[test]
+    fn a_clipboard_file_path_becomes_a_file_token() {
+        let model = idle_model();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.md");
+        std::fs::write(&file, b"notes").unwrap();
+        let mut chat = View::open(agent_id_local(), 'a', false);
+        attach_clipboard(&mut chat, &model, ClipboardContent::Path(file));
+        assert_eq!(labels(&chat), vec!["[File #1 notes.md]"]);
+    }
+
+    /// A file that vanished between copy and paste states why instead of
+    /// attaching a token with nothing behind it.
+    #[test]
+    fn an_unreadable_clipboard_path_states_the_refusal() {
+        let model = idle_model();
+        let mut chat = View::open(agent_id_local(), 'a', false);
+        attach_clipboard(
+            &mut chat,
+            &model,
+            ClipboardContent::Path("/no/such/file.md".into()),
+        );
+        assert!(chat.composer.tokens().is_empty());
+        assert!(
+            chat.send_failure()
+                .is_some_and(|stated| stated.starts_with("file.md could not be read")),
+            "{:?}",
+            chat.send_failure()
+        );
+    }
+
+    /// Ctrl+V on plain text is a paste, so its size decides the same way.
+    #[test]
+    fn clipboard_text_follows_the_paste_rules() {
+        let model = idle_model();
+        let mut chat = View::open(agent_id_local(), 'a', false);
+        attach_clipboard(&mut chat, &model, ClipboardContent::Text("short".into()));
+        assert_eq!(chat.composer.text(), "short");
+        attach_clipboard(&mut chat, &model, ClipboardContent::Text(long_paste(12)));
+        assert_eq!(labels(&chat), vec!["[Pasted #1 · 12 lines]"]);
+    }
+
+    /// An ask panel owns the surface: an attachment has no home in a
+    /// one-line answer field, and must not land in the hidden draft.
+    #[test]
+    fn an_ask_takeover_and_return_keep_the_text_and_both_tokens() {
+        let idle = idle_model();
+        let mut chat = chat_with_draft("look at ");
+        attach_clipboard(
+            &mut chat,
+            &idle,
+            ClipboardContent::Image {
+                mime: "image/png".into(),
+                bytes: b"png bytes".to_vec(),
+            },
+        );
+        handle_chat_paste(&mut chat, &idle, &long_paste(9));
+        let before = chat.composer.export(None);
+        assert_eq!(labels(&chat), vec!["[Image #1]", "[Pasted #1 · 9 lines]"]);
+
+        // The ask takes over.
+        let asking = edit_ask_model();
+        chat.sync_ask(&asking);
+        assert!(chat.ask_ui.is_some(), "the panel owns the surface");
+        attach_clipboard(
+            &mut chat,
+            &asking,
+            ClipboardContent::Image {
+                mime: "image/png".into(),
+                bytes: b"other".to_vec(),
+            },
+        );
+        handle_chat_key(&mut chat, &asking, press(KeyCode::Down), VIEWPORT, t(0));
+
+        // …and hands it back.
+        chat.sync_ask(&idle);
+        assert!(chat.ask_ui.is_none(), "the ask resolved");
+        assert_eq!(
+            chat.composer.export(None),
+            before,
+            "the draft came back whole: text and both tokens"
+        );
+    }
+
+    /// Scrolling and a phase change are view state; the draft is ViewState
+    /// too and neither touches it (D1).
+    #[test]
+    fn scrolling_and_a_phase_change_leave_the_draft_alone() {
+        let idle = idle_model();
+        let mut chat = chat_with_draft("see ");
+        attach_clipboard(
+            &mut chat,
+            &idle,
+            ClipboardContent::Image {
+                mime: "image/png".into(),
+                bytes: b"png bytes".to_vec(),
+            },
+        );
+        let before = chat.composer.export(None);
+
+        handle_chat_key(&mut chat, &idle, press(KeyCode::PageUp), VIEWPORT, t(0));
+        let working = super::tests::working_model();
+        handle_chat_key(&mut chat, &working, ctrl('e'), VIEWPORT, t(0));
+        chat.reconcile(&working);
+        assert_eq!(chat.composer.export(None), before);
+    }
+
+    /// Enter while the gate refuses keeps the whole draft — the tokens
+    /// most of all: re-attaching a screenshot is not a keystroke away.
+    #[test]
+    fn a_gated_enter_leaves_the_tokens_untouched() {
+        let working = super::tests::working_model();
+        let mut chat = chat_with_draft("look at ");
+        attach_clipboard(
+            &mut chat,
+            &working,
+            ClipboardContent::Image {
+                mime: "image/png".into(),
+                bytes: b"png bytes".to_vec(),
+            },
+        );
+        let before = chat.composer.export(None);
+        assert!(
+            handle_chat_key(&mut chat, &working, press(KeyCode::Enter), VIEWPORT, t(0)).is_none(),
+            "the gate refuses"
+        );
+        assert_eq!(chat.composer.export(None), before);
+        assert!(matches!(
+            chat.composer.tokens()[0].attachment,
+            TokenAttachment::Artifact(_)
+        ));
+    }
+
+    fn agent_id_local() -> amux_ui::AgentId {
+        super::tests::agent_id()
     }
 }

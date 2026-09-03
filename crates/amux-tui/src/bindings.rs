@@ -302,6 +302,7 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
         row("ctrl+w/u/k", "kill word / to line start / end", Tier::Plain),
         row("ctrl+d", "delete forward", Tier::Plain),
         row("ctrl+y", "yank the last kill", Tier::Plain),
+        row("ctrl+v", "attach clipboard image or file", Tier::Plain),
         row("?", "this help (empty draft)", Tier::Plain),
     ]);
     let asks = vec![
@@ -388,6 +389,7 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
         row("ctrl+←/→", "word motion", Tier::Ext),
         row("ctrl+w/u/k", "kill word / line", Tier::Plain),
         row("ctrl+d / ctrl+y", "delete forward / yank", Tier::Plain),
+        row("ctrl+v", "attach clipboard image or file", Tier::Plain),
         row("?", "this help (empty draft)", Tier::Plain),
     ]);
     let approvals = vec![

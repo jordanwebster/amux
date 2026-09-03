@@ -57,6 +57,8 @@ sha2 = "0.10"
 fontdue = "0.9"
 gif = "0.14.2"
 png = "0.17.16"
+# The system clipboard, for pasting an image or a file into a chat draft.
+arboard = "3.6"
 socket2 = "0.6"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0.101"

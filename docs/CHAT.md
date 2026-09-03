@@ -910,6 +910,7 @@ excepted, as today.
 | Ctrl+J | composer | newline (canonical) | plain |
 | Shift+Enter | composer | newline (sugar) | kitty |
 | readline set | any text field | C-b/C-f/C-p/C-n motion, Home/End, C-w/C-u/C-k kills, C-d, C-y yank | plain |
+| Ctrl+V | composer | attach the clipboard's image or file as a token | plain |
 | Ctrl+← / Ctrl+→ | any text field | word motion | ext |
 | 1–9 | ask menu | select option (never submits) | plain |
 | ↑ / ↓ | ask / reader | move selection / scroll | plain |

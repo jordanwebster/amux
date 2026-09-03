@@ -31,8 +31,8 @@ pub use amux::{
     HostTrustStatus, Protocol, WorkingOn, claude_io,
 };
 pub use attachments::{
-    AttachmentIndex, AttachmentKind, AttachmentLine, DraftAttachment, Mention, MentionKind,
-    Segment, format_mention, split_mentions,
+    ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DraftAttachment, Mention,
+    MentionKind, Segment, format_mention, split_mentions,
 };
 pub use claude::{ClaudeCommand, SendGate};
 pub use codex::{CodexCommand, CodexDecision, CodexInput};

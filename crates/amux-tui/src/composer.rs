@@ -30,6 +30,12 @@ use serde::{Deserialize, Serialize};
 const SLOT_FIRST: char = '\u{e000}';
 const SLOT_LAST: char = '\u{f8ff}';
 
+/// A bracketed paste this many lines long, or this many chars long, is
+/// long enough to bury the sentence around it, so it becomes one atomic
+/// token instead of filling the draft.
+pub const PASTE_TOKEN_LINES: usize = 8;
+pub const PASTE_TOKEN_CHARS: usize = 1000;
+
 /// The `name` a pasted-text attachment carries into the feed. Pasted text
 /// has no source filename, and the mention format requires a name.
 const PASTED_NAME: &str = "pasted text";
@@ -241,25 +247,33 @@ impl Composer {
     }
 
     /// Bracketed paste: literal text insertion — newlines and tabs land in
-    /// the draft, never as bindings. CRLF/CR normalize to LF (matching the
-    /// send path's `normalize_prompt`), tabs expand to spaces at insertion
-    /// (mirroring the reader's tabs-expand-before-width-math policy) so
-    /// the draft stays sendable — the C6 encoder refuses control bytes
-    /// other than `\n`. Any other control character is stripped: it would
-    /// be invisible in the composer AND unsendable, a trap in both
-    /// directions. Private-use chars are stripped too: they are the token
-    /// slots, and pasted text must never forge one.
+    /// the draft, never as bindings (see [`sanitize_paste`]).
     pub fn paste(&mut self, text: &str) {
-        const TAB: &str = "    ";
-        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-        for c in normalized.chars() {
-            match c {
-                '\n' => self.insert('\n'),
-                '\t' => self.insert_str(TAB),
-                c if c.is_control() || is_slot(c) => {}
-                c => self.insert(c),
-            }
+        self.insert_str(&sanitize_paste(text));
+    }
+
+    /// A bracketed paste routed by size: text long enough to bury the
+    /// sentence around it becomes one atomic token, shorter text lands as
+    /// characters. Returns the token's slot when one was made.
+    pub fn paste_or_attach(&mut self, text: &str) -> Option<char> {
+        let body = sanitize_paste(text);
+        let lines = body.lines().count().max(1);
+        if lines < PASTE_TOKEN_LINES && body.chars().count() < PASTE_TOKEN_CHARS {
+            self.insert_str(&body);
+            return None;
         }
+        Some(self.insert_token(
+            String::new(),
+            TokenAttachment::Text {
+                body,
+                lines: lines as u32,
+            },
+        ))
+    }
+
+    /// Inserts an artifact token at the cursor; `renumber` gives its label.
+    pub fn attach(&mut self, attachment: DraftAttachment) -> char {
+        self.insert_token(String::new(), TokenAttachment::Artifact(attachment))
     }
 
     // --- deletion ----------------------------------------------------------
@@ -556,7 +570,9 @@ impl Composer {
     /// The lowest slot not spoken for by the draft or the send stash.
     fn free_slot(&self) -> char {
         (SLOT_FIRST..=SLOT_LAST)
-            .find(|slot| !self.tokens.live.contains_key(slot) && !self.tokens.sent.contains_key(slot))
+            .find(|slot| {
+                !self.tokens.live.contains_key(slot) && !self.tokens.sent.contains_key(slot)
+            })
             .unwrap_or(SLOT_LAST)
     }
 
@@ -618,6 +634,29 @@ impl Composer {
             }
         }
     }
+}
+
+/// Pasted text made safe for the draft and for the wire.
+///
+/// CRLF/CR normalize to LF (matching the send path's `normalize_prompt`)
+/// and tabs expand to spaces at insertion (mirroring the reader's
+/// tabs-expand-before-width-math policy), so the draft stays sendable —
+/// the C6 encoder refuses control bytes other than `\n`. Any other control
+/// character is stripped: it would be invisible in the composer AND
+/// unsendable, a trap in both directions. Private-use chars go too: they
+/// are the token slots, and pasted text must never forge one.
+fn sanitize_paste(text: &str) -> String {
+    const TAB: &str = "    ";
+    let mut out = String::with_capacity(text.len());
+    for c in text.replace("\r\n", "\n").replace('\r', "\n").chars() {
+        match c {
+            '\n' => out.push('\n'),
+            '\t' => out.push_str(TAB),
+            c if c.is_control() || is_slot(c) => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// The shared readline editing set (P6): cursor and word motion, kills,
@@ -917,9 +956,12 @@ index 1111111..2222222 100644
         }];
         let doc = parse_patch(PATCH, identity, &files).unwrap();
         let row = amux_ui::review::RowRef { file: 0, row: 2 };
-        let mut review = Review::new(doc, "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-            .parse()
-            .unwrap());
+        let mut review = Review::new(
+            doc,
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                .parse()
+                .unwrap(),
+        );
         review.add(anchor(review.document(), row, row).unwrap(), "why?".into());
         review
     }
@@ -995,7 +1037,9 @@ index 1111111..2222222 100644
             .collect();
         assert_eq!(names, vec!["shot.png", "notes.md"]);
         assert!(
-            attachments.iter().all(|attachment| attachment.bytes.is_some()),
+            attachments
+                .iter()
+                .all(|attachment| attachment.bytes.is_some()),
             "the live bytes ride along to be stored"
         );
 
@@ -1057,7 +1101,11 @@ index 1111111..2222222 100644
             "after `q` the cursor sits past the token, where Enter sends"
         );
         c.left();
-        assert_eq!(c.review_token_at_cursor(), Some(slot), "on the slot Enter resumes");
+        assert_eq!(
+            c.review_token_at_cursor(),
+            Some(slot),
+            "on the slot Enter resumes"
+        );
         c.left();
         assert_eq!(c.review_token_at_cursor(), None);
     }
@@ -1078,7 +1126,10 @@ index 1111111..2222222 100644
         c.insert_token("[Review · 1 comment]".into(), TokenAttachment::Review);
 
         let (text, attachments) = c.export(Some(&review));
-        assert!(text.starts_with("notes <amux-attachment kind=\"review\""), "{text}");
+        assert!(
+            text.starts_with("notes <amux-attachment kind=\"review\""),
+            "{text}"
+        );
         assert!(text.contains("why?"), "the comment travels in the body");
         assert_eq!(attachments.len(), 1);
         assert_eq!(attachments[0].id, review.header().diff);
@@ -1105,7 +1156,10 @@ index 1111111..2222222 100644
 
         c.kill_all();
         assert!(c.is_empty());
-        assert!(c.tokens().is_empty(), "a cleared draft holds no attachments");
+        assert!(
+            c.tokens().is_empty(),
+            "a cleared draft holds no attachments"
+        );
 
         c.yank();
         assert_eq!(c.export(None), before, "text and tokens came back together");
@@ -1133,7 +1187,11 @@ index 1111111..2222222 100644
         c.insert_token(String::new(), image("shot.png", b"png"));
         let slot = c.tokens()[0].slot;
         c.paste(&format!("x{slot}y"));
-        assert_eq!(c.text().matches(slot).count(), 1, "the pasted slot was stripped");
+        assert_eq!(
+            c.text().matches(slot).count(),
+            1,
+            "the pasted slot was stripped"
+        );
         assert_eq!(c.tokens().len(), 1);
     }
 

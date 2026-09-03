@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Routed pastes and Ctrl+V into attachments.** A bracketed
+paste of eight lines or a thousand characters now becomes one pasted-text
+token instead of burying the sentence around it; shorter text still lands as
+characters. Ctrl+V asks the platform clipboard directly, because a terminal
+cannot deliver image bytes through a bracketed paste: an image becomes a PNG
+image token, a lone absolute path naming a readable file becomes a file or
+image token by extension, and anything else follows the paste rules. Content
+over the artifact size cap, or a file that vanished between copy and paste, is
+refused in the footer rather than attached with nothing behind it. Reading the
+clipboard stays out of the key handlers, so the binding is tested without a
+host clipboard. Attachments have no home in a one-line answer field, so an
+open panel, reader or docked ask drops them; the draft behind them, tokens
+included, survives the takeover, scrolling, phase changes and a gated Enter.
+
 2026-09-03 — **Made composer attachments atomic tokens.** An attachment now
 occupies one private-use char in the draft, so every existing rule applies to
 it whole: the cursor steps over it in one press, one backspace removes it with

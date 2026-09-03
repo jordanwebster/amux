@@ -27,6 +27,7 @@
       ctrl+w/u/k                kill word / to line start / end                                                         
       ctrl+d                    delete forward                                                                          
       ctrl+y                    yank the last kill                                                                      
+      ctrl+v                    attach clipboard image or file                                                          
       ?                         this help (empty draft)                                                                 
                                                                                                                         
   ask panels                                                                                                            
@@ -34,7 +35,6 @@
       ↑/↓                       move selection                                                                          
       space                     toggle (multi-select)                                                                   
       tab/shift+tab ←/→         cycle question tabs                                                                     
-      enter                     confirm / advance / submit                                                              
   ⋮ more — a taller terminal shows the full list                                                                        
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     any key to close                                                                                                    

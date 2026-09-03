@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use super::View;
 use crate::chat::inline::{InlineAsk, InlineOutcome};
 use crate::chat::viewport::ScrollIntent;
+use crate::clipboard::ClipboardContent;
 use crate::composer;
 use crate::view::UiAction;
 
@@ -146,6 +147,12 @@ pub(crate) fn handle_chat_key(
         KeyCode::Home if ctrl => jump_top(chat, model, viewport),
         KeyCode::End if ctrl => follow(chat),
         KeyCode::Char('?') if !ctrl && chat.composer.is_empty() => chat.help = true,
+        // Ctrl+V: attach what the clipboard holds. A terminal cannot
+        // deliver image bytes through a bracketed paste, so this is the
+        // one path an image reaches a draft by.
+        KeyCode::Char('v') if ctrl => {
+            attach_clipboard(chat, model, crate::clipboard::read_clipboard());
+        }
         KeyCode::Tab | KeyCode::BackTab => {}
         _ => {
             composer::readline_key(&mut chat.composer, &key);
@@ -183,7 +190,40 @@ pub(crate) fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
     {
         return;
     }
-    chat.composer.paste(text);
+    chat.composer.paste_or_attach(text);
+}
+
+/// Ctrl+V: attach what the clipboard holds.
+///
+/// The content is a parameter, not read here, so the binding is testable
+/// without a host clipboard. Text is a paste like any other and follows
+/// the same focus routing; an image or a file has no home in a docked
+/// ask's one-line field, so it is dropped rather than attached to the
+/// draft hidden behind it.
+pub(crate) fn attach_clipboard(chat: &mut View, model: &Model, content: ClipboardContent) {
+    if let ClipboardContent::Text(text) = content {
+        handle_chat_paste(chat, model, &text);
+        return;
+    }
+    chat.send_failure = None;
+    chat.answer_failure = None;
+    chat.quit_guard.disarm();
+    chat.reconcile(model);
+    if chat.help
+        || chat.read_only(model)
+        || chat.inline_ask.is_some()
+        || model
+            .codex(chat.agent)
+            .and_then(|layer| layer.ask_head())
+            .is_some()
+        || matches!(
+            amux_ui::codex::phase(model, chat.agent),
+            CodexPhase::BlockedUnsupported { .. }
+        )
+    {
+        return;
+    }
+    chat.send_failure = crate::chat::attach::attach_clipboard(&mut chat.composer, content);
 }
 
 /// `<leader> a`: dock the ask the banner names, or send it back (U2).
