@@ -6837,3 +6837,18 @@ executing hostname. `docs/DEBUGGING.md` is the standalone path from a local
 report through replay, a mark-bounded tweak and a reviewed committed fixture;
 release builds expose none of these commands while continuing to write bounded
 degraded reports.
+
+2026-09-03 — **Closed the replayable debug-report path without widening the
+release surface.** A report is one private directory rooted at the configured
+`reports_dir` (or `<data_dir>/reports`) with `report.json` declaring five parts:
+the frozen frame stored as `frame.txt` plus `frame.styles`, the renderer-input
+trace in `trace.jsonl`, the Model checkpoint and daemon messages in
+`msgs.jsonl`, the daemon dump in `daemon.json`, and the bounded log tail in
+`log.txt`. The trace records the events the chrome actually consumed — Msg
+boundaries, inputs with viewport and observed time, draws and shell notices —
+from a bounded live Model/view/theme snapshot, because replaying through real
+draws is what restores the paint caches later input handling reads. The
+capture key, report flow, trace ring and `amux debug` commands remain compiled
+only in debug builds; the format, writer and retention policy remain in every
+build so release tripwires and panics still leave bounded, self-describing
+reports with unavailable debug parts explicitly absent.
