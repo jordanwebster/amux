@@ -1101,12 +1101,14 @@ impl wire::client_service_server::ClientService for ClientService {
         let (protocol, event) =
             crate::agents::send_input_event_from_client_wire(request.input_id, request.event)
                 .map_err(decode_remote_status)?;
+        let pin = request.pin;
         if !self.is_local_host(agent.host_id) {
             let (input_id, event) = crate::agents::send_input_event_to_agent_wire(protocol, &event)
                 .map_err(decode_remote_status)?;
             let agent_request = wire::pb::SendInputRequest {
                 agent_id: agent.id.as_bytes().to_vec(),
                 input_id,
+                pin,
                 event: Some(event),
             };
             return self.remote_send_input(agent.host_id, agent_request).await;
@@ -1117,10 +1119,89 @@ impl wire::client_service_server::ClientService for ClientService {
             agent_id: agent.id,
             protocol,
             event,
+            pin,
         })
         .await
         .map_err(protocol_status)?;
         Ok(tonic::Response::new(wire::SendInputResponse {}))
+    }
+
+    async fn put_artifact(
+        &self,
+        request: tonic::Request<wire::ClientPutArtifactRequest>,
+    ) -> TonicResult<wire::PutArtifactResponse> {
+        let request = request.into_inner();
+        let agent = self
+            .resolve_agent(client_agent_ref(
+                "ClientPutArtifactRequest.agent",
+                request.agent,
+            )?)
+            .await
+            .map_err(protocol_status)?;
+        let request = wire::PutArtifactRequest {
+            agent_id: agent.id.as_bytes().to_vec(),
+            kind: request.kind,
+            name: request.name,
+            mime: request.mime,
+            bytes: request.bytes,
+        };
+        if !self.is_local_host(agent.host_id) {
+            return self.remote_put_artifact(agent.host_id, request).await;
+        }
+        wire::agent_service_server::AgentService::put_artifact(
+            &self.local_agents,
+            tonic::Request::new(request),
+        )
+        .await
+    }
+
+    async fn get_artifact(
+        &self,
+        request: tonic::Request<wire::ClientGetArtifactRequest>,
+    ) -> TonicResult<wire::GetArtifactResponse> {
+        let request = request.into_inner();
+        let agent = self
+            .resolve_agent(client_agent_ref(
+                "ClientGetArtifactRequest.agent",
+                request.agent,
+            )?)
+            .await
+            .map_err(protocol_status)?;
+        let request = wire::GetArtifactRequest {
+            agent_id: agent.id.as_bytes().to_vec(),
+            id: request.id,
+        };
+        if !self.is_local_host(agent.host_id) {
+            return self.remote_get_artifact(agent.host_id, request).await;
+        }
+        wire::agent_service_server::AgentService::get_artifact(
+            &self.local_agents,
+            tonic::Request::new(request),
+        )
+        .await
+    }
+
+    async fn diff(
+        &self,
+        request: tonic::Request<wire::ClientDiffRequest>,
+    ) -> TonicResult<wire::DiffResponse> {
+        let request = request.into_inner();
+        let agent = self
+            .resolve_agent(client_agent_ref("ClientDiffRequest.agent", request.agent)?)
+            .await
+            .map_err(protocol_status)?;
+        let request = wire::DiffRequest {
+            agent_id: agent.id.as_bytes().to_vec(),
+            base: request.base,
+        };
+        if !self.is_local_host(agent.host_id) {
+            return self.remote_diff(agent.host_id, request).await;
+        }
+        wire::agent_service_server::AgentService::diff(
+            &self.local_agents,
+            tonic::Request::new(request),
+        )
+        .await
     }
 
     async fn debug(
@@ -2130,7 +2211,7 @@ impl ClientService {
                 return Err(status);
             }
         };
-        Ok(wire::agent_service_client::AgentServiceClient::new(channel))
+        Ok(wire::agent_service_client(channel))
     }
 
     async fn remote_create_agent(
@@ -2311,6 +2392,42 @@ impl ClientService {
             .remote_agent_client("ClientService.SendInput", host_id)
             .await?;
         let response = client.send_input(request).await?.into_inner();
+        Ok(tonic::Response::new(response))
+    }
+
+    async fn remote_put_artifact(
+        &self,
+        host_id: Uuid,
+        request: wire::PutArtifactRequest,
+    ) -> TonicResult<wire::PutArtifactResponse> {
+        let mut client = self
+            .remote_agent_client("ClientService.PutArtifact", host_id)
+            .await?;
+        let response = client.put_artifact(request).await?.into_inner();
+        Ok(tonic::Response::new(response))
+    }
+
+    async fn remote_get_artifact(
+        &self,
+        host_id: Uuid,
+        request: wire::GetArtifactRequest,
+    ) -> TonicResult<wire::GetArtifactResponse> {
+        let mut client = self
+            .remote_agent_client("ClientService.GetArtifact", host_id)
+            .await?;
+        let response = client.get_artifact(request).await?.into_inner();
+        Ok(tonic::Response::new(response))
+    }
+
+    async fn remote_diff(
+        &self,
+        host_id: Uuid,
+        request: wire::DiffRequest,
+    ) -> TonicResult<wire::DiffResponse> {
+        let mut client = self
+            .remote_agent_client("ClientService.Diff", host_id)
+            .await?;
+        let response = client.diff(request).await?.into_inner();
         Ok(tonic::Response::new(response))
     }
 
@@ -3338,6 +3455,7 @@ mod tests {
         wire::ClientSendInputRequest {
             agent: Some(agent_ref_id(agent_id)),
             input_id: b"input-1".to_vec(),
+            pin: Vec::new(),
             event: Some(wire::client_send_input_request::Event::TestEchoV1(
                 wire::TestEchoV1Input {
                     payload: payload.to_vec(),
@@ -4989,6 +5107,55 @@ mod tests {
             panic!("expected test echo output");
         };
         assert_eq!(output.payload, b"remote-input");
+
+        let put_error =
+            <ClientService as wire::client_service_server::ClientService>::put_artifact(
+                service,
+                tonic::Request::new(wire::ClientPutArtifactRequest {
+                    agent: Some(agent_ref_id(agent_id)),
+                    kind: wire::ArtifactKind::File as i32,
+                    name: "notes.txt".to_string(),
+                    mime: "text/plain".to_string(),
+                    bytes: b"notes".to_vec(),
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(put_error.code(), tonic::Code::Unimplemented);
+        assert_eq!(
+            put_error.message(),
+            "PutArtifact is not configured on this host"
+        );
+
+        let get_error =
+            <ClientService as wire::client_service_server::ClientService>::get_artifact(
+                service,
+                tonic::Request::new(wire::ClientGetArtifactRequest {
+                    agent: Some(agent_ref_id(agent_id)),
+                    id: "sha256:missing".to_string(),
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(get_error.code(), tonic::Code::Unimplemented);
+        assert_eq!(
+            get_error.message(),
+            "GetArtifact is not configured on this host"
+        );
+
+        let diff_error = <ClientService as wire::client_service_server::ClientService>::diff(
+            service,
+            tonic::Request::new(wire::ClientDiffRequest {
+                agent: Some(agent_ref_id(agent_id)),
+                base: Some(wire::DiffBase {
+                    base: Some(wire::diff_base::Base::WorkingTree(wire::Empty {})),
+                }),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(diff_error.code(), tonic::Code::Unimplemented);
+        assert_eq!(diff_error.message(), "Diff is not configured on this host");
 
         <ClientService as wire::client_service_server::ClientService>::delete_agent(
             service,

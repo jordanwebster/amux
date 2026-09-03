@@ -31,6 +31,7 @@ pub(crate) struct SendInputRequest {
     pub(crate) agent_id: Uuid,
     pub(crate) protocol: Protocol,
     pub(crate) event: SessionInputEvent,
+    pub(crate) pin: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +111,7 @@ pub(crate) fn send_input_request_from_wire(
         agent_id: required_uuid_from_bytes("agent_id", request.agent_id)?,
         protocol,
         event,
+        pin: request.pin,
     })
 }
 
@@ -1343,12 +1345,14 @@ mod tests {
             let decoded = send_input_request_from_wire(pb::SendInputRequest {
                 agent_id: uuid_to_bytes(agent_id),
                 input_id,
+                pin: vec!["sha256:pinned".to_string()],
                 event: Some(wire_event.clone()),
             })
             .unwrap();
             let (_, encoded) =
                 send_input_event_to_agent_wire(decoded.protocol, &decoded.event).unwrap();
             assert_eq!(encoded, wire_event);
+            assert_eq!(decoded.pin, ["sha256:pinned"]);
         }
     }
 

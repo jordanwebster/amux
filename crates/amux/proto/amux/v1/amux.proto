@@ -91,6 +91,46 @@ message AgentRef {
   }
 }
 
+enum ArtifactKind {
+  ARTIFACT_KIND_UNSPECIFIED = 0;
+  ARTIFACT_KIND_IMAGE = 1;
+  ARTIFACT_KIND_FILE = 2;
+  ARTIFACT_KIND_DIFF = 3;
+}
+
+message ArtifactRef {
+  string id = 1;
+  ArtifactKind kind = 2;
+  string name = 3;
+  string mime = 4;
+  uint64 size = 5;
+}
+
+message DiffBase {
+  oneof base {
+    Empty working_tree = 1;
+    string branch = 2;
+  }
+}
+
+message BaseIdentity {
+  DiffBase base = 1;
+  string head = 2;
+  optional string merge_base = 3;
+  repeated PathBlob blobs = 4;
+}
+
+message PathBlob {
+  string path = 1;
+  string blob = 2;
+}
+
+message DiffFile {
+  string path = 1;
+  uint32 added = 2;
+  uint32 removed = 3;
+}
+
 message Error {
   ErrorCode code = 1;
   string message = 2;
@@ -120,6 +160,23 @@ message SequenceNumberMismatch {
   uint64 actual = 2;
 }
 
+message AttachmentMissing {
+  string id = 1;
+}
+
+message AttachmentTooLarge {
+  uint64 size = 1;
+  uint64 max = 2;
+}
+
+message ArtifactCorrupt {
+  string id = 1;
+}
+
+message DiffUnavailable {
+  string message = 1;
+}
+
 message AmbiguousAgentName {
   string name = 1;
   repeated bytes agent_ids = 2;
@@ -141,6 +198,7 @@ enum ErrorCode {
   ERROR_CODE_UNREACHABLE = 12;
   ERROR_CODE_INTERNAL = 13;
   ERROR_CODE_PAYMENT_REQUIRED = 14;
+  ERROR_CODE_DATA_LOSS = 15;
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +507,10 @@ service AgentService {
 
   // Send input/control to an agent independently of subscriptions.
   rpc SendInput(SendInputRequest) returns (SendInputResponse);
+
+  rpc PutArtifact(PutArtifactRequest) returns (PutArtifactResponse);
+  rpc GetArtifact(GetArtifactRequest) returns (GetArtifactResponse);
+  rpc Diff(DiffRequest) returns (DiffResponse);
 }
 
 message SubscribeAgentEventsRequest {}
@@ -537,6 +599,7 @@ message SendInputRequest {
   bytes agent_id = 1;
   // Client-generated id for correlating protocol-defined input results.
   bytes input_id = 2;
+  repeated string pin = 3;
   oneof event {
     TerminalV1Input terminal_v1 = 10;
     ClaudePtyTranscriptV1Input claude_pty_transcript_v1 = 11;
@@ -548,6 +611,40 @@ message SendInputRequest {
 }
 
 message SendInputResponse {}
+
+message PutArtifactRequest {
+  bytes agent_id = 1;
+  ArtifactKind kind = 2;
+  string name = 3;
+  string mime = 4;
+  bytes bytes = 5;
+}
+
+message PutArtifactResponse {
+  ArtifactRef artifact = 1;
+}
+
+message GetArtifactRequest {
+  bytes agent_id = 1;
+  string id = 2;
+}
+
+message GetArtifactResponse {
+  ArtifactRef artifact = 1;
+  bytes bytes = 2;
+}
+
+message DiffRequest {
+  bytes agent_id = 1;
+  DiffBase base = 2;
+}
+
+message DiffResponse {
+  ArtifactRef artifact = 1;
+  string patch = 2;
+  BaseIdentity identity = 3;
+  repeated DiffFile files = 4;
+}
 
 // Side-channel control event. It is a directive about the session itself,
 // rather than data flowing through one provider protocol.
@@ -606,6 +703,9 @@ service ClientService {
 
   rpc SubscribeSession(ClientSubscribeSessionRequest) returns (stream SubscribeSessionResponse);
   rpc SendInput(ClientSendInputRequest) returns (SendInputResponse);
+  rpc PutArtifact(ClientPutArtifactRequest) returns (PutArtifactResponse);
+  rpc GetArtifact(ClientGetArtifactRequest) returns (GetArtifactResponse);
+  rpc Diff(ClientDiffRequest) returns (DiffResponse);
 
   rpc Debug(DebugRequest) returns (DebugResponse);
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
@@ -706,6 +806,7 @@ message ClientSubscribeSessionRequest {
 message ClientSendInputRequest {
   AgentRef agent = 1;
   bytes input_id = 2;
+  repeated string pin = 3;
   oneof event {
     TerminalV1Input terminal_v1 = 10;
     ClaudePtyTranscriptV1Input claude_pty_transcript_v1 = 11;
@@ -714,6 +815,24 @@ message ClientSendInputRequest {
     SessionControl control = 20;
     TestEchoV1Input test_echo_v1 = 100;
   }
+}
+
+message ClientPutArtifactRequest {
+  AgentRef agent = 1;
+  ArtifactKind kind = 2;
+  string name = 3;
+  string mime = 4;
+  bytes bytes = 5;
+}
+
+message ClientGetArtifactRequest {
+  AgentRef agent = 1;
+  string id = 2;
+}
+
+message ClientDiffRequest {
+  AgentRef agent = 1;
+  DiffBase base = 2;
 }
 
 message HandleHookRequest {

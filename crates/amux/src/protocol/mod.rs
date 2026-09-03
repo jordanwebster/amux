@@ -31,6 +31,44 @@ pub(crate) mod wire {
     pub(crate) mod pb {
         pub(crate) use super::super::amux::v1::*;
     }
+
+    pub(crate) const MESSAGE_SIZE_LIMIT: usize = 16 * 1024 * 1024;
+
+    pub(crate) fn agent_service_client(
+        channel: tonic::transport::Channel,
+    ) -> agent_service_client::AgentServiceClient<tonic::transport::Channel> {
+        agent_service_client::AgentServiceClient::new(channel)
+            .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
+            .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+    }
+
+    pub(crate) fn client_service_client(
+        channel: tonic::transport::Channel,
+    ) -> client_service_client::ClientServiceClient<tonic::transport::Channel> {
+        client_service_client::ClientServiceClient::new(channel)
+            .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
+            .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+    }
+
+    pub(crate) fn agent_service_server<T>(service: T) -> agent_service_server::AgentServiceServer<T>
+    where
+        T: agent_service_server::AgentService,
+    {
+        agent_service_server::AgentServiceServer::new(service)
+            .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
+            .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+    }
+
+    pub(crate) fn client_service_server<T>(
+        service: T,
+    ) -> client_service_server::ClientServiceServer<T>
+    where
+        T: client_service_server::ClientService,
+    {
+        client_service_server::ClientServiceServer::new(service)
+            .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
+            .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+    }
 }
 
 #[cfg(test)]
@@ -79,6 +117,14 @@ mod tests {
             "AgentUpdated",
             "AgentKind",
             "ProtocolNotExposed",
+            "ArtifactRef",
+            "DiffBase",
+            "BaseIdentity",
+            "DiffFile",
+            "AttachmentMissing",
+            "AttachmentTooLarge",
+            "ArtifactCorrupt",
+            "DiffUnavailable",
             "ClaudeKind",
             "CodexKind",
             "TestAgentKind",
@@ -142,6 +188,9 @@ mod tests {
             Some(std::collections::BTreeSet::from([
                 "CreateAgent",
                 "DeleteAgent",
+                "Diff",
+                "GetArtifact",
+                "PutArtifact",
                 "RenameAgent",
                 "SendInput",
                 "SendMessage",
@@ -157,6 +206,8 @@ mod tests {
                 "CreateAgent",
                 "Debug",
                 "DeleteAgent",
+                "Diff",
+                "GetArtifact",
                 "GetPairingStatus",
                 "GetPeer",
                 "HandleHook",
@@ -166,6 +217,7 @@ mod tests {
                 "PairPeer",
                 "PairPinCloudPeer",
                 "PairQrCloudPeer",
+                "PutArtifact",
                 "RenameAgent",
                 "Resume",
                 "SendInput",

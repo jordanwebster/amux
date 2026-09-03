@@ -3267,6 +3267,7 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
             input_id: Uuid::new_v4().as_bytes().to_vec(),
             io_protocol: PTY_TRANSCRIPT_V1.to_string(),
             payload: payload.into(),
+            pin: Vec::new(),
         })
         .await
         .expect_err("readonly session accepted input");

@@ -193,7 +193,7 @@ impl CloudRelay {
         let connections: Arc<ConnectionManager> =
             connections.ok_or_else(|| anyhow::anyhow!("relay has no services for this user"))?;
         let channel = connections.channel_to(host).await?;
-        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = wire::client_service_client(channel);
         client.list_agents(wire::ListAgentsRequest {}).await?;
         Ok(())
     }

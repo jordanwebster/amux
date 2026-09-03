@@ -266,7 +266,7 @@ pub(crate) fn spawn_agent_tonic_server(
 
     tokio::spawn(async move {
         tonic::transport::Server::builder()
-            .add_service(wire::agent_service_server::AgentServiceServer::new(ctx))
+            .add_service(wire::agent_service_server(ctx))
             .serve_with_incoming(incoming)
             .await
     })
@@ -385,6 +385,33 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         let request = decode_send_input_request(request.into_inner())?;
         self.send_input(request).await.map_err(protocol_status)?;
         Ok(tonic::Response::new(wire::SendInputResponse {}))
+    }
+
+    async fn put_artifact(
+        &self,
+        _request: tonic::Request<wire::PutArtifactRequest>,
+    ) -> TonicResult<wire::PutArtifactResponse> {
+        Err(protocol_status(ProtocolError::Unimplemented {
+            message: "PutArtifact is not configured on this host".to_string(),
+        }))
+    }
+
+    async fn get_artifact(
+        &self,
+        _request: tonic::Request<wire::GetArtifactRequest>,
+    ) -> TonicResult<wire::GetArtifactResponse> {
+        Err(protocol_status(ProtocolError::Unimplemented {
+            message: "GetArtifact is not configured on this host".to_string(),
+        }))
+    }
+
+    async fn diff(
+        &self,
+        _request: tonic::Request<wire::DiffRequest>,
+    ) -> TonicResult<wire::DiffResponse> {
+        Err(protocol_status(ProtocolError::Unimplemented {
+            message: "Diff is not configured on this host".to_string(),
+        }))
     }
 }
 
@@ -545,6 +572,7 @@ mod tests {
         wire::pb::SendInputRequest {
             agent_id: agent_id.as_bytes().to_vec(),
             input_id: b"input-1".to_vec(),
+            pin: Vec::new(),
             event: Some(wire::pb::send_input_request::Event::TestEchoV1(
                 wire::pb::TestEchoV1Input {
                     payload: payload.to_vec(),
@@ -589,6 +617,7 @@ mod tests {
             tonic::Request::new(wire::pb::SendInputRequest {
                 agent_id: missing_agent_id.as_bytes().to_vec(),
                 input_id: vec![1],
+                pin: Vec::new(),
                 event: Some(wire::pb::send_input_request::Event::TerminalV1(
                     wire::pb::TerminalV1Input {
                         payload: b"input".to_vec(),
@@ -815,7 +844,7 @@ mod tests {
             .unwrap();
 
         let channel = channel_from_transport(TunnelTransport::new(client_io, Uuid::from_u128(10)));
-        let mut client = wire::agent_service_client::AgentServiceClient::new(channel);
+        let mut client = wire::agent_service_client(channel);
         let mut stream = client
             .subscribe_agent_events(wire::SubscribeAgentEventsRequest::default())
             .await
@@ -827,6 +856,22 @@ mod tests {
             first.event,
             Some(wire::subscribe_agent_events_response::Event::SnapshotComplete(_))
         ));
+
+        let error = client
+            .put_artifact(wire::PutArtifactRequest {
+                agent_id: Uuid::from_u128(1).as_bytes().to_vec(),
+                kind: wire::ArtifactKind::File as i32,
+                name: "large.bin".to_string(),
+                mime: "application/octet-stream".to_string(),
+                bytes: vec![0; 5 * 1024 * 1024],
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::Unimplemented);
+        assert_eq!(
+            error.message(),
+            "PutArtifact is not configured on this host"
+        );
         server_task.abort();
     }
 

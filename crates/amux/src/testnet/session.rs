@@ -176,8 +176,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
         drop(guard);
-        let mut client =
-            crate::protocol::wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = crate::protocol::wire::client_service_client(channel);
         let response = client
             .delete_agent(crate::protocol::wire::ClientDeleteAgentRequest {
                 agent: Some(crate::protocol::wire::AgentRef {
@@ -415,8 +414,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
         drop(guard);
-        let mut client =
-            crate::protocol::wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = crate::protocol::wire::client_service_client(channel);
         let response = client
             .delete_agent(crate::protocol::wire::ClientDeleteAgentRequest {
                 agent: Some(crate::protocol::wire::AgentRef {
@@ -542,8 +540,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
         drop(guard);
-        let mut client =
-            crate::protocol::wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = crate::protocol::wire::client_service_client(channel);
         let error = client
             .send_message(crate::protocol::wire::ClientSendMessageRequest {
                 to: Some(crate::protocol::wire::AgentRef {
@@ -742,8 +739,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
         drop(guard);
-        let mut client =
-            crate::protocol::wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = crate::protocol::wire::client_service_client(channel);
 
         let human_error = client
             .send_message(crate::protocol::wire::ClientSendMessageRequest {
@@ -988,6 +984,7 @@ impl EchoSession {
                 input_id: Uuid::new_v4().as_bytes().to_vec(),
                 io_protocol: TEST_ECHO_V1.to_string(),
                 payload: bytes::Bytes::copy_from_slice(input.as_bytes()),
+                pin: Vec::new(),
             })
             .await
             .unwrap_or_else(|error| {

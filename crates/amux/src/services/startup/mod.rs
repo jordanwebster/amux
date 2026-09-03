@@ -754,10 +754,8 @@ fn spawn_trusted_service_server(
 
     tokio::spawn(async move {
         if let Err(error) = crate::transport::tonic_server_builder()
-            .add_service(wire::client_service_server::ClientServiceServer::new(
-                client,
-            ))
-            .add_service(wire::agent_service_server::AgentServiceServer::new(agent))
+            .add_service(wire::client_service_server(client))
+            .add_service(wire::agent_service_server(agent))
             .add_service(wire::link_service_server::LinkServiceServer::new(routing))
             .serve_with_incoming(incoming)
             .await
@@ -1176,7 +1174,7 @@ mod tests {
             .unwrap();
 
         let channel = channel_from_transport(TunnelTransport::new(client_io, Uuid::from_u128(10)));
-        let mut client = wire::agent_service_client::AgentServiceClient::new(channel);
+        let mut client = wire::agent_service_client(channel);
         let mut stream = client
             .subscribe_agent_events(wire::SubscribeAgentEventsRequest::default())
             .await
@@ -1210,7 +1208,7 @@ mod tests {
             .unwrap();
 
         let channel = channel_from_transport(TunnelTransport::new(client_io, Uuid::from_u128(10)));
-        let mut client = wire::agent_service_client::AgentServiceClient::new(channel);
+        let mut client = wire::agent_service_client(channel);
         let mut stream = client
             .subscribe_agent_events(wire::SubscribeAgentEventsRequest::default())
             .await
@@ -1420,7 +1418,7 @@ mod tests {
             .channel_to(identity_b.host_id)
             .await
             .unwrap();
-        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = wire::client_service_client(channel);
         let response = client
             .list_hosts(wire::ListHostsRequest {
                 scope: wire::list_hosts_request::Scope::All as i32,
@@ -1569,7 +1567,7 @@ mod tests {
             .channel_to(identity_b.host_id)
             .await
             .unwrap();
-        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = wire::client_service_client(channel);
         let response = client
             .list_hosts(wire::ListHostsRequest {
                 scope: wire::list_hosts_request::Scope::All as i32,
@@ -2022,7 +2020,7 @@ mod tests {
     async fn started_services_opens_in_process_client_service_channel() {
         let services = test_started_services().await;
         let (channel, server_task) = services.open_in_process_client_channel();
-        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = wire::client_service_client(channel);
         let agent_id = Uuid::from_u128(42);
 
         let created = client
@@ -2168,6 +2166,7 @@ mod tests {
                 input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
                 io_protocol: TEST_ECHO_V1.to_string(),
                 payload: bytes::Bytes::from_static(b"hello"),
+                pin: Vec::new(),
             })
             .await
             .unwrap();

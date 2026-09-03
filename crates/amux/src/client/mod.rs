@@ -393,9 +393,7 @@ impl Client {
         guard: Option<Arc<dyn Send + Sync>>,
     ) -> Self {
         Self {
-            inner: Arc::new(AsyncMutex::new(
-                wire::client_service_client::ClientServiceClient::new(channel),
-            )),
+            inner: Arc::new(AsyncMutex::new(wire::client_service_client(channel))),
             closed: Arc::new(AtomicBool::new(false)),
             guard,
         }
@@ -563,6 +561,7 @@ impl Client {
             .send_input(wire::ClientSendInputRequest {
                 agent: Some(agent_ref(request.agent)),
                 input_id,
+                pin: request.pin,
                 event: Some(event),
             })
             .await

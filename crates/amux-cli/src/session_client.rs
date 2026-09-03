@@ -936,6 +936,7 @@ pub(crate) async fn attach_loop<W: Write>(
                             input_id: Uuid::new_v4().as_bytes().to_vec(),
                             io_protocol: terminal_io::TERMINAL_V1.to_string(),
                             payload: data.into(),
+                            pin: Vec::new(),
                         })
                         .await
                         .is_err()

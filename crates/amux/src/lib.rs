@@ -204,6 +204,8 @@ pub struct SendInputRequest {
     pub input_id: Vec<u8>,
     pub io_protocol: String,
     pub payload: bytes::Bytes,
+    /// Content-addressed artifact ids to pin and materialise with this input.
+    pub pin: Vec<String>,
 }
 
 #[derive(Clone, Debug)]

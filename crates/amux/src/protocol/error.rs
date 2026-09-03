@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::amux::v1::{
-    AgentProtocol, AmbiguousAgentName, Error, ErrorCode, ErrorDetail, ProtocolNotExposed,
-    ProtocolVersionMismatch, SequenceNumberMismatch, UpdateRequired,
+    AgentProtocol, AmbiguousAgentName, ArtifactCorrupt, AttachmentMissing, AttachmentTooLarge,
+    DiffUnavailable, Error, ErrorCode, ErrorDetail, ProtocolNotExposed, ProtocolVersionMismatch,
+    SequenceNumberMismatch, UpdateRequired,
 };
 use crate::agents::{AgentKind, Protocol};
 
@@ -72,6 +73,18 @@ pub enum ProtocolError {
     /// Structured input seq doesn't match current output seq.
     #[error("sequence number mismatch (client {client_seq}, server {current_seq})")]
     SequenceNumberMismatch { client_seq: u64, current_seq: u64 },
+    /// A message referred to artifact bytes that are not present on the agent's host.
+    #[error("attachment `{id}` is missing")]
+    AttachmentMissing { id: String },
+    /// An artifact exceeded the per-artifact byte limit.
+    #[error("attachment is {size} bytes; maximum is {max} bytes")]
+    AttachmentTooLarge { size: u64, max: u64 },
+    /// Stored bytes no longer match their content-addressed identity.
+    #[error("artifact `{id}` is corrupt")]
+    ArtifactCorrupt { id: String },
+    /// A diff could not be computed for the requested checkout or base.
+    #[error("{message}")]
+    DiffUnavailable { message: String },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -130,6 +143,35 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
             client_seq,
             current_seq,
         } => sequence_number_mismatch_error(*current_seq, *client_seq),
+        ProtocolError::AttachmentMissing { id } => detailed_error(
+            ErrorCode::NotFound as i32,
+            error.to_string(),
+            "amux.v1.AttachmentMissing",
+            AttachmentMissing { id: id.clone() },
+        ),
+        ProtocolError::AttachmentTooLarge { size, max } => detailed_error(
+            ErrorCode::ResourceExhausted as i32,
+            error.to_string(),
+            "amux.v1.AttachmentTooLarge",
+            AttachmentTooLarge {
+                size: *size,
+                max: *max,
+            },
+        ),
+        ProtocolError::ArtifactCorrupt { id } => detailed_error(
+            ErrorCode::DataLoss as i32,
+            error.to_string(),
+            "amux.v1.ArtifactCorrupt",
+            ArtifactCorrupt { id: id.clone() },
+        ),
+        ProtocolError::DiffUnavailable { message } => detailed_error(
+            ErrorCode::FailedPrecondition as i32,
+            message.clone(),
+            "amux.v1.DiffUnavailable",
+            DiffUnavailable {
+                message: message.clone(),
+            },
+        ),
     }
 }
 
@@ -157,6 +199,31 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
                     return ProtocolError::SequenceNumberMismatch {
                         client_seq: detail.actual,
                         current_seq: detail.expected,
+                    };
+                }
+            }
+            "amux.v1.AttachmentMissing" => {
+                if let Ok(detail) = AttachmentMissing::decode(detail.value.as_slice()) {
+                    return ProtocolError::AttachmentMissing { id: detail.id };
+                }
+            }
+            "amux.v1.AttachmentTooLarge" => {
+                if let Ok(detail) = AttachmentTooLarge::decode(detail.value.as_slice()) {
+                    return ProtocolError::AttachmentTooLarge {
+                        size: detail.size,
+                        max: detail.max,
+                    };
+                }
+            }
+            "amux.v1.ArtifactCorrupt" => {
+                if let Ok(detail) = ArtifactCorrupt::decode(detail.value.as_slice()) {
+                    return ProtocolError::ArtifactCorrupt { id: detail.id };
+                }
+            }
+            "amux.v1.DiffUnavailable" => {
+                if let Ok(detail) = DiffUnavailable::decode(detail.value.as_slice()) {
+                    return ProtocolError::DiffUnavailable {
+                        message: detail.message,
                     };
                 }
             }
@@ -307,6 +374,18 @@ pub(crate) fn protocol_status(error: ProtocolError) -> tonic::Status {
             error.to_string(),
             details,
         ),
+        ProtocolError::AttachmentMissing { .. } => {
+            protocol_status_with_details(tonic::Code::NotFound, error.to_string(), details)
+        }
+        ProtocolError::AttachmentTooLarge { .. } => {
+            protocol_status_with_details(tonic::Code::ResourceExhausted, error.to_string(), details)
+        }
+        ProtocolError::ArtifactCorrupt { .. } => {
+            protocol_status_with_details(tonic::Code::DataLoss, error.to_string(), details)
+        }
+        ProtocolError::DiffUnavailable { message } => {
+            protocol_status_with_details(tonic::Code::FailedPrecondition, message, details)
+        }
     }
 }
 
@@ -460,5 +539,51 @@ mod tests {
 
         let status = protocol_status(error.clone());
         assert_eq!(protocol_error_from_status_details(&status), Some(error));
+    }
+
+    #[test]
+    fn attachment_and_diff_errors_round_trip_with_typed_details() {
+        let cases = [
+            (
+                ProtocolError::AttachmentMissing {
+                    id: "sha256:missing".to_string(),
+                },
+                "amux.v1.AttachmentMissing",
+                tonic::Code::NotFound,
+            ),
+            (
+                ProtocolError::AttachmentTooLarge {
+                    size: 10_485_761,
+                    max: 10_485_760,
+                },
+                "amux.v1.AttachmentTooLarge",
+                tonic::Code::ResourceExhausted,
+            ),
+            (
+                ProtocolError::ArtifactCorrupt {
+                    id: "sha256:corrupt".to_string(),
+                },
+                "amux.v1.ArtifactCorrupt",
+                tonic::Code::DataLoss,
+            ),
+            (
+                ProtocolError::DiffUnavailable {
+                    message: "working directory is not a git checkout".to_string(),
+                },
+                "amux.v1.DiffUnavailable",
+                tonic::Code::FailedPrecondition,
+            ),
+        ];
+
+        for (error, detail_type, status_code) in cases {
+            let encoded = encode_protocol_error(&error);
+            assert_eq!(encoded.details.len(), 1);
+            assert_eq!(encoded.details[0].r#type, detail_type);
+            assert_eq!(decode_protocol_error(encoded), error);
+
+            let status = protocol_status(error.clone());
+            assert_eq!(status.code(), status_code);
+            assert_eq!(protocol_error_from_status_details(&status), Some(error));
+        }
     }
 }

@@ -669,6 +669,7 @@ async fn execute_codex_input(
             input_id,
             io_protocol: crate::codex::PROTOCOL.to_string(),
             payload: payload.into(),
+            pin: Vec::new(),
         })
         .await
     {
@@ -699,6 +700,7 @@ async fn execute_claude_input(
                 input_id: input_id.clone(),
                 io_protocol: crate::claude::PROTOCOL.to_string(),
                 payload: payload.into(),
+                pin: Vec::new(),
             })
             .await
         {

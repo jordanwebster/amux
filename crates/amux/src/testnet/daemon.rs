@@ -497,7 +497,7 @@ impl Daemon {
             anyhow::bail!("daemon '{}' is not running", self.name());
         };
         let channel = parts.connections.channel_to(other.host_id()).await?;
-        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = wire::client_service_client(channel);
         let agents = client
             .list_agents(wire::ListAgentsRequest {})
             .await?
@@ -672,7 +672,7 @@ impl Daemon {
                 anyhow::bail!("daemon '{}' is not running", self.name());
             };
             let channel = parts.connections.channel_to(other.host_id()).await?;
-            let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+            let mut client = wire::client_service_client(channel);
             let hosts = client
                 .list_hosts(wire::ListHostsRequest {
                     scope: scope as i32,
@@ -733,7 +733,7 @@ impl Daemon {
             anyhow::bail!("daemon '{}' is not running", self.name());
         };
         let channel = parts.connections.channel_to(other.host_id()).await?;
-        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        let mut client = wire::client_service_client(channel);
         let mut stream = client
             .subscribe_hosts(wire::SubscribeHostsRequest {})
             .await?

@@ -422,6 +422,7 @@ impl StructuredCapture {
                 input_id: input_id.clone(),
                 io_protocol: CODEX_SDK_V1.into(),
                 payload: Bytes::from(amux::codex_io::encode_codex_sdk_v1_input(input)),
+                pin: Vec::new(),
             })
             .await?;
         Ok(input_id)

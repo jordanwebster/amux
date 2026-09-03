@@ -975,6 +975,7 @@ impl CaptureSession {
                     input_id: input_id.clone(),
                     io_protocol: PTY_TRANSCRIPT_V1.to_string(),
                     payload: payload.into(),
+                    pin: Vec::new(),
                 })
                 .await;
             match result {
@@ -1007,6 +1008,7 @@ impl CaptureSession {
                 input_id: Uuid::new_v4().as_bytes().to_vec(),
                 io_protocol: TERMINAL_V1.to_string(),
                 payload: payload.to_vec().into(),
+                pin: Vec::new(),
             })
             .await
             .context("send raw input")

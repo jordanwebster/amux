@@ -372,6 +372,7 @@ fn main() -> anyhow::Result<()> {
                     input_id: input_id.clone(),
                     io_protocol: CLAUDE_SDK_V1.to_string(),
                     payload: Bytes::from(encode_claude_sdk_v1_input(input)?),
+                    pin: Vec::new(),
                 })
                 .await?;
             Ok(input_id)

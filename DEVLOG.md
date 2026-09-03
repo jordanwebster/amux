@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Established the attachment and diff RPC contract.** Both the
+agent-facing and client-facing services now expose put, get, and diff calls;
+client requests resolve an agent reference and preserve remote-host routing.
+Artifact metadata, diff bases and identities, file magnitudes, and typed
+attachment failures have explicit protobuf shapes. Send-input requests carry
+only content-addressed ids to pin, while centralized AgentService and
+ClientService builders raise both directions of the unary message limit to
+16 MiB. Generated Rust and descriptor data are committed with the schema, and
+typed error tests cover protobuf and tonic round trips.
+
 2026-09-03 — **Established the content-addressed artifact store.**
 The standalone `amux-artifacts` crate defines SHA-256 identities, closed blob
 kinds, durable metadata, injected and system clocks, lifetime constants, and
