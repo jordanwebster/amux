@@ -7117,6 +7117,12 @@ scripted-session helper. Each now sits under the gate its callers already
 have, so `cargo build --release` says nothing and a future dead-code
 warning there means something.
 
+2026-09-04 — **Kept captured MCP evidence immutable.** The Codex substrate
+fixture again preserves the five-tool allowlist actually captured with its
+recorded Codex version, while current tool membership remains covered by the
+backend's definition-derived assertion. The fixture test now verifies its
+bytes against the recorded provenance digest before replaying them.
+
 2026-09-04 — **Kept opt-in live suites under CI scrutiny.** The real-Claude
 PTY, real-Codex, and real-Claude SDK executables stay out of ordinary test
 runs, while CI now names each target explicitly during compilation and strict

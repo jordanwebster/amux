@@ -7,6 +7,7 @@ const MCP_TOOLS: &str = include_str!("fixtures/a2a/mcp_tools.jsonl");
 const SESSION_REGISTRY: &str = include_str!("fixtures/a2a/session_registry.jsonl");
 const SESSION_REGISTRY_META: &str = include_str!("fixtures/a2a/session_registry.meta.json");
 const CODEX_MCP_SUBSTRATE: &str = include_str!("fixtures/rows/codex/mcp_substrate.jsonl");
+const CODEX_MCP_SUBSTRATE_META: &str = include_str!("fixtures/rows/codex/mcp_substrate.meta.json");
 
 fn codex_mcp_substrate() -> Vec<Value> {
     CODEX_MCP_SUBSTRATE
@@ -26,6 +27,17 @@ fn rpc_line(row: &Value) -> Value {
 
 #[test]
 fn a2a_fixture_codex_mcp_substrate_replays_offline() {
+    let meta: Value =
+        serde_json::from_str(CODEX_MCP_SUBSTRATE_META).expect("Codex MCP metadata is JSON");
+    let recorded_sha = meta
+        .pointer("/derived/sha256")
+        .and_then(Value::as_str)
+        .expect("Codex MCP metadata records the derived fixture digest");
+    assert_eq!(
+        amux_artifacts::id_of(CODEX_MCP_SUBSTRATE.as_bytes()).as_str(),
+        format!("sha256:{recorded_sha}")
+    );
+
     let rows = codex_mcp_substrate();
     let capture = rows
         .iter()
@@ -78,7 +90,7 @@ fn a2a_fixture_codex_mcp_substrate_replays_offline() {
     assert_eq!(
         start_config.get("enabled_tools"),
         Some(&serde_json::json!([
-            "agents", "send", "spawn", "stop", "status", "attach"
+            "agents", "send", "spawn", "stop", "status"
         ]))
     );
 
@@ -113,7 +125,7 @@ fn a2a_fixture_codex_mcp_substrate_replays_offline() {
     assert_eq!(
         inventory.get("stub_tools"),
         Some(&serde_json::json!([
-            "agents", "send", "spawn", "stop", "status", "attach", "extra"
+            "agents", "send", "spawn", "stop", "status", "extra"
         ]))
     );
     assert_eq!(
