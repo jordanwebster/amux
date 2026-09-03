@@ -215,6 +215,14 @@ impl Composer {
         self.cursor = 0;
         self.tokens.text = std::mem::take(&mut self.chars).iter().collect();
         self.tokens.sent = std::mem::take(&mut self.tokens.live);
+        // The tokens the kill slot was keeping alive belong to the sent
+        // draft now. Their slot chars would yank back as invisible text
+        // with no attachment behind them, so the kill keeps only the
+        // words.
+        self.kill = self.kill.take().and_then(|kill| {
+            let text: String = kill.chars().filter(|c| !is_slot(*c)).collect();
+            (!text.is_empty()).then_some(text)
+        });
         self.prune();
     }
 
@@ -452,10 +460,23 @@ impl Composer {
     }
 
     /// Ctrl+Y — yank the last kill at the cursor.
+    ///
+    /// The kill slot keeps its text so it can be yanked repeatedly, but an
+    /// attachment is not text: a token already back in the draft must not
+    /// come back a second time and send the same file twice.
     pub fn yank(&mut self) {
-        if let Some(kill) = self.kill.clone() {
-            self.insert_str(&kill);
+        let Some(kill) = self.kill.clone() else {
+            return;
+        };
+        let text: String = kill
+            .chars()
+            .filter(|c| !is_slot(*c) || !self.chars.contains(c))
+            .collect();
+        if text.is_empty() {
+            return;
         }
+        self.insert_str(&text);
+        self.renumber();
     }
 
     // --- tokens (atomic mentions) -----------------------------------------
@@ -1182,6 +1203,57 @@ index 1111111..2222222 100644
         assert_eq!(c.export(None), before, "text and tokens came back together");
         let labels: Vec<&str> = c.tokens().iter().map(|t| t.label.as_str()).collect();
         assert_eq!(labels, vec!["[Image #1]", "[File #1 notes.md]"]);
+    }
+
+    #[test]
+    fn a_send_leaves_no_yankable_slot_char_behind() {
+        let mut c = Composer::default();
+        c.insert_str("see ");
+        c.insert_token(String::new(), image("shot.png", b"png"));
+        c.kill_all();
+
+        c.insert_str("a later draft");
+        c.clear_for_send();
+        c.insert_str("next ");
+        c.yank();
+
+        assert_eq!(c.text(), "next see ", "only the words came back");
+        assert!(
+            !c.text().chars().any(is_slot),
+            "no slot char without a live token"
+        );
+        assert!(c.tokens().is_empty());
+        let (text, attachments) = c.export(None);
+        assert!(
+            !text.chars().any(is_slot),
+            "export carries no private-use char: {text:?}"
+        );
+        assert!(attachments.is_empty());
+    }
+
+    #[test]
+    fn yanking_a_killed_token_twice_attaches_it_once() {
+        let mut c = Composer::default();
+        c.insert_str("see ");
+        c.insert_token(String::new(), image("shot.png", b"png"));
+        c.kill_all();
+
+        c.yank();
+        c.yank();
+
+        assert_eq!(
+            c.text(),
+            "see \u{e000}see ",
+            "the second yank repeated the words, not the token"
+        );
+        assert_eq!(c.tokens().len(), 1);
+        let (text, attachments) = c.export(None);
+        assert_eq!(attachments.len(), 1, "one attachment, not two");
+        assert_eq!(
+            text.matches("shot.png").count(),
+            1,
+            "the mention appears once: {text:?}"
+        );
     }
 
     #[test]

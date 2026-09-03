@@ -16,9 +16,29 @@ use crate::composer::Composer;
 /// source file, and the feed line needs something to say.
 const CLIPBOARD_IMAGE: &str = "clipboard.png";
 
-/// File extensions the composer attaches as images rather than files, so
-/// the backend delivers them natively to a model that can see.
-const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+/// File extensions the composer attaches as images rather than files, each
+/// with the media type it is sent under, so the backend delivers them
+/// natively to a model that can see.
+///
+/// The media types are exactly the four an image block accepts. An
+/// extension is not a media type — `.jpg` is `image/jpeg` — and a format
+/// outside this list (`.bmp`, `.tiff`) would be rejected as an image, so
+/// it rides as an ordinary file instead of failing the send.
+const IMAGE_EXTENSIONS: &[(&str, &str)] = &[
+    ("png", "image/png"),
+    ("jpg", "image/jpeg"),
+    ("jpeg", "image/jpeg"),
+    ("gif", "image/gif"),
+    ("webp", "image/webp"),
+];
+
+/// The media type this file extension is sent as an image under, if any.
+fn image_mime(extension: &str) -> Option<&'static str> {
+    IMAGE_EXTENSIONS
+        .iter()
+        .find(|(ext, _)| *ext == extension)
+        .map(|(_, mime)| *mime)
+}
 
 /// Attaches what the clipboard held, or returns the refusal to state.
 ///
@@ -50,13 +70,12 @@ fn attach_path(composer: &mut Composer, path: &Path) -> Option<String> {
         .extension()
         .map(|extension| extension.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let (kind, mime) = if IMAGE_EXTENSIONS.contains(&extension.as_str()) {
-        (ArtifactKind::Image, format!("image/{extension}"))
-    } else {
-        (ArtifactKind::File, "application/octet-stream".to_string())
+    let (kind, mime) = match image_mime(&extension) {
+        Some(mime) => (ArtifactKind::Image, mime),
+        None => (ArtifactKind::File, "application/octet-stream"),
     };
     match std::fs::read(path) {
-        Ok(bytes) => attach_bytes(composer, kind, &name, &mime, bytes),
+        Ok(bytes) => attach_bytes(composer, kind, &name, mime, bytes),
         Err(error) => Some(format!("{name} could not be read: {error}")),
     }
 }
@@ -126,6 +145,44 @@ mod tests {
             None
         );
         assert_eq!(composer.tokens()[0].label, "[Image #1]");
+    }
+
+    #[test]
+    fn image_extensions_map_to_media_types_a_model_accepts() {
+        for (extension, mime) in IMAGE_EXTENSIONS {
+            assert!(
+                matches!(*mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp"),
+                "{extension} claims {mime}, which no image block accepts"
+            );
+        }
+        assert_eq!(image_mime("jpg"), Some("image/jpeg"));
+        assert_eq!(image_mime("jpeg"), Some("image/jpeg"));
+        assert_eq!(image_mime("bmp"), None, "bmp rides as a plain file");
+    }
+
+    #[test]
+    fn a_jpg_path_attaches_as_jpeg_and_a_bmp_path_as_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let jpg = dir.path().join("holiday.JPG");
+        std::fs::write(&jpg, b"jpeg bytes").unwrap();
+        let bmp = dir.path().join("old.bmp");
+        std::fs::write(&bmp, b"bmp bytes").unwrap();
+
+        let mut composer = Composer::default();
+        assert_eq!(
+            attach_clipboard(&mut composer, ClipboardContent::Path(jpg)),
+            None
+        );
+        assert_eq!(
+            attach_clipboard(&mut composer, ClipboardContent::Path(bmp)),
+            None
+        );
+
+        let (_, attachments) = composer.export(None);
+        assert_eq!(attachments[0].kind, ArtifactKind::Image);
+        assert_eq!(attachments[0].mime, "image/jpeg");
+        assert_eq!(attachments[1].kind, ArtifactKind::File);
+        assert_eq!(attachments[1].mime, "application/octet-stream");
     }
 
     #[test]

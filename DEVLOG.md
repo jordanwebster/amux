@@ -7097,3 +7097,14 @@ clipboard image token, and a mixed draft; the sent feed showed the image row,
 Claude described the PNG without a permission ask, and Preview was confirmed
 frontmost. The five canonical pane captures and replay report live under
 `.autopilot/evidence/live/attachments-qa/` and `.autopilot/qa/`.
+
+2026-09-03 — **Two attachment bugs: a stale yank and a wrong image type.**
+A composer that killed an attachment kept the attachment alive so Ctrl+Y would
+bring it back, but a send moved that attachment out from under the kill buffer,
+so a later Ctrl+Y pasted an invisible placeholder into the draft that went out
+with the prompt. A send now leaves only words behind for the yank, and a yank
+repeated on the same kill repeats the words without attaching the same file
+twice. Separately, an attached image took its media type from the filename
+verbatim, so a `.jpg` was sent as `image/jpg` and a `.bmp` as `image/bmp` —
+neither is a type a model accepts. Extensions now map to the four accepted
+image types, and anything outside them attaches as an ordinary file.
