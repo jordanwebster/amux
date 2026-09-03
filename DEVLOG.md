@@ -6851,4 +6851,7 @@ draws is what restores the paint caches later input handling reads. The
 capture key, report flow, trace ring and `amux debug` commands remain compiled
 only in debug builds; the format, writer and retention policy remain in every
 build so release tripwires and panics still leave bounded, self-describing
-reports with unavailable debug parts explicitly absent.
+reports with unavailable debug parts explicitly absent. The process-isolated
+invariant test can preserve its normally temporary report and stamp a validated
+full Git revision, so release-profile evidence comes from the real tripwire
+path and can be read back byte-for-byte instead of being reconstructed.

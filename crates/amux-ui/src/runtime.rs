@@ -1213,6 +1213,10 @@ mod tests {
     /// fold surface (`dispatch`/`observe_now`), which is all the panic-report
     /// path needs. No tokio runtime required.
     fn a_runtime(report_dir: PathBuf) -> Runtime {
+        a_runtime_with_git_sha(report_dir, "test-sha")
+    }
+
+    fn a_runtime_with_git_sha(report_dir: PathBuf, git_sha: &'static str) -> Runtime {
         let log_path = report_dir.join("amux.log");
         std::fs::write(&log_path, "runtime test log\n").expect("write test log");
         let model = Model::default();
@@ -1231,7 +1235,7 @@ mod tests {
             streams: HashMap::new(),
             report_dir: Some(report_dir),
             log_path: Some(log_path),
-            git_sha: "test-sha",
+            git_sha,
             report_extras: None,
             msg_tap: None,
             reported_violations: HashSet::new(),
@@ -1239,6 +1243,8 @@ mod tests {
     }
 
     const INVARIANT_POLICY_CHILD: &str = "AMUX_INVARIANT_POLICY_CHILD";
+    const INVARIANT_REPORT_DIR: &str = "AMUX_INVARIANT_REPORT_DIR";
+    const INVARIANT_REPORT_GIT_SHA: &str = "AMUX_INVARIANT_REPORT_GIT_SHA";
 
     fn corrupt_with_orphan_stream(runtime: &mut Runtime) {
         runtime.model.streams.insert(
@@ -1362,14 +1368,34 @@ mod tests {
         let Ok(case) = std::env::var(INVARIANT_POLICY_CHILD) else {
             return;
         };
-        let dir = tempfile::tempdir().expect("tempdir");
-        let mut runtime = a_runtime(dir.path().to_path_buf());
+        let configured_dir = std::env::var_os(INVARIANT_REPORT_DIR).map(PathBuf::from);
+        let temporary_dir = configured_dir
+            .is_none()
+            .then(|| tempfile::tempdir().expect("tempdir"));
+        let report_dir = configured_dir.clone().unwrap_or_else(|| {
+            temporary_dir
+                .as_ref()
+                .expect("temporary report directory")
+                .path()
+                .to_path_buf()
+        });
+        std::fs::create_dir_all(&report_dir).expect("create report directory");
+        let git_sha = std::env::var(INVARIANT_REPORT_GIT_SHA)
+            .map(|sha| {
+                assert!(
+                    sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                    "{INVARIANT_REPORT_GIT_SHA} must be a full git sha"
+                );
+                &*Box::leak(sha.into_boxed_str())
+            })
+            .unwrap_or("test-sha");
+        let mut runtime = a_runtime_with_git_sha(report_dir.clone(), git_sha);
         match case.as_str() {
             "nonfatal" => {
                 corrupt_with_orphan_stream(&mut runtime);
                 runtime.enforce_invariants();
                 assert!(runtime.model().has_invariant_warning());
-                let reports = report_paths(dir.path());
+                let reports = report_paths(&report_dir);
                 assert_eq!(reports.len(), 1, "one report for the new violation kind");
                 let header =
                     crate::report::read_header(&reports[0]).expect("read invariant report header");
@@ -1394,6 +1420,14 @@ mod tests {
                     crate::report::PartState::Absent { .. }
                 ));
                 assert_eq!(header.parts.log, crate::report::PartState::Present);
+                if configured_dir.is_some() {
+                    println!("written report: {}", reports[0].display());
+                    print!(
+                        "{}",
+                        std::fs::read_to_string(reports[0].join("report.json"))
+                            .expect("read written report header")
+                    );
+                }
                 let replayed = crate::recorder::replay_msgs(&reports[0].join("msgs.jsonl"))
                     .expect("replay invariant report");
                 assert!(
@@ -1403,7 +1437,7 @@ mod tests {
 
                 runtime.enforce_invariants();
                 assert_eq!(
-                    report_paths(dir.path()).len(),
+                    report_paths(&report_dir).len(),
                     1,
                     "persistent corruption stays throttled once per kind"
                 );
@@ -1415,7 +1449,7 @@ mod tests {
             "coherent" => {
                 runtime.enforce_invariants();
                 assert!(!runtime.model().has_invariant_warning());
-                assert!(report_paths(dir.path()).is_empty());
+                assert!(report_paths(&report_dir).is_empty());
             }
             other => panic!("unknown invariant policy child case: {other}"),
         }
