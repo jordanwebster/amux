@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Renamed the reader's typed content model to documents.**
+`AskDocument`, `DiffDocument`, and the `claude::document` module now name
+plans, diffs, and proposed files, including the retained field and serialized
+tag on an ask. Reader prose and `f` affordances use the same vocabulary, which
+leaves artifact available for stored blobs without overloading the existing
+fullscreen viewer. The amux-ui spec suite and complete amux-tui unit and golden
+suites pass with the renamed model and updated frames.
+
 2026-08-31 — **Moved protobuf codegen out of build.rs into committed
 source.** The build script generated `amux.v1.rs` into `OUT_DIR` from
 workspace-local protos, which made the generated API invisible to git,

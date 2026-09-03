@@ -747,7 +747,7 @@ fn interrupt_dispatches_from_any_state_and_the_rows_close_the_asks() {
     assert_eq!(intent, Intent::Interrupt);
     assert_eq!(the_layer(&model).ask_count(), 1, "dispatch closes nothing");
 
-    // The §17 artifacts close the ask and record the entry (B8).
+    // The §17 interrupt markers close the ask and record the entry (B8).
     msgs.push(op_result(op(1), OpOutcome::InputSent));
     msgs.push(batch(
         AGENT,

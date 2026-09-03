@@ -36,7 +36,7 @@ use crate::view::QuitGuard;
 
 /// A dispatched prompt send being watched for its outcome (C5): the
 /// finished op carries the failure fact, and the draft resurfaces from
-/// here — send failures have no transcript artifact.
+/// here — send failures have no transcript record.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct PendingSend {
     op: OpId,
@@ -250,7 +250,7 @@ impl View {
         model.claude(self.agent).and_then(|layer| layer.ask_head())
     }
 
-    /// The reader is open on the pending ask's artifact (as opposed to a
+    /// The reader is open on the pending ask's document (as opposed to a
     /// resolved plan) — the form every ask-lifecycle rule dismisses.
     fn ask_reader_open(&self) -> bool {
         matches!(

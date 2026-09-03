@@ -43,7 +43,7 @@ appear in the chat.
 - **Phase** — the derived activity state of the session (working, idle,
   needs-you, errored, unknown). Every phase value is tagged fact vs
   inferred (E1).
-- **Reader** — the one fullscreen overlay over typed artifacts (plan,
+- **Reader** — the one fullscreen overlay over typed documents (plan,
   diff, new-file content), scrollable, with an action row only when a
   writable ask is open.
 
@@ -404,7 +404,7 @@ carries `{plan, planFilePath}`; the plan is also written under
 `permission-mode` row either — the effective mode becomes acceptEdits
 per hook facts, and edits proceed ask-free.
 
-### Unified diffs and the reader's artifacts
+### Unified diffs and the reader's documents
 
 Every landed diff uses one unified, single-column layout at every supported
 width. A fixed gutter carries independent old and new line numbers; metadata,
@@ -438,18 +438,18 @@ additions only the new number; the counters advance independently. Long lines
 wrap — never horizontal scroll — with blank-gutter continuation rows so the
 gutter never lies; tabs expand before width math. The panel preview budget is at
 most 8 screen rows (wrapped rows count), cut with a remainder line
-that always states the arithmetic: `⋮ +K more lines · f full diff`.
+that always states the arithmetic: `⋮ +K more lines · f full document`.
 The semantic colour family is `diff_added_fg`, `diff_added_bg`,
 `diff_removed_fg`, `diff_removed_bg`, `diff_context`, `diff_meta`, and
 `gutter`; both shipped themes and imported themes resolve all seven.
 
-The reader is one overlay over a typed artifact model — a match, not
+The reader is one overlay over a typed document model — a match, not
 a viewer framework: **Plan** (markdown, the B2 renderer reused),
 **Diff** (above), **NewFile** (Write content as a numbered `+`
 block); **Text** (oversized tool output through the Effect seam) and
 **Image** are reserved kinds, so B4's truncation notice and future
 image placeholders have a stated destination. A new kind is an enum
-variant, a match arm, and golden frames. Ask-time artifacts live with
+variant, a match arm, and golden frames. Ask-time documents live with
 their ask (evict bytes, never obligations); accepted plans keep B6's
 keyed retention; nothing else is retained in V1.
 
@@ -655,12 +655,12 @@ preview when queueing lands (deferred, door open).
      -    pub max_attempts: u8,
      +    pub max_attempts: u8,        // capped at 6
      +    pub jitter_ms: u16,
-      ⋮ +1 more lines · f full diff
+      ⋮ +1 more lines · f full document
 
     › 1. Allow once
       2. Always allow access to /work from this project
       3. Deny — tell the agent why (optional)
-    1-3/↑↓ select · enter confirm · f full diff · esc back (never answers)
+    1-3/↑↓ select · enter confirm · f open document · esc back (never answers)
 ```
 
 ### Question ask (multi-question, multi-select)
@@ -778,11 +778,11 @@ stays visible so scrolling never hides that the agent is active.
      +    drain();
           kill();
       }
-    waiting for a writable client · f read the diff
+    waiting for a writable client · f read document
 
   ⊘ read-only — you are observing this session
 
-    pgup/pgdn scroll · f view diff · q back to fleet
+    pgup/pgdn scroll · f view document · q back to fleet
 ```
 
 ## State transitions
@@ -813,7 +813,7 @@ bytes must be drawn before its keys are handled.
 | ASK | 1–9 / ↑↓ | ASK | select option |
 | ASK | Space | ASK | toggle (multi-select) |
 | ASK | Tab / Shift+Tab / ←→ | ASK | cycle question tabs (when tabs exist) |
-| ASK | f | ASK (reader body) | full diff / full plan |
+| ASK | f | ASK (reader body) | open document |
 | ASK | Enter | next stage or PENDING | scope/feedback/submit stages advance; final Enter submits |
 | ASK | Esc | previous stage | steps back; floors at the menu stage — the panel stays; never answers |
 | PENDING | transcript confirms | COMPOSER (or next ask) | collapses to the B5 fact |
@@ -916,7 +916,7 @@ excepted, as today.
 | Space | ask menu | toggle (multi-select) | plain |
 | Tab / Shift+Tab, ← → | ask with tabs | cycle question tabs | plain |
 | Enter | ask | confirm / advance stage / submit | plain |
-| f | ask menu, read-only ask fact | full diff / full plan in the reader | plain |
+| f | ask menu, read-only ask fact | open document in the reader | plain |
 | Ctrl+T | chat, accepted plan exists | plan reader; ←/→ steps between plans | plain |
 | Shift+Tab | composer | cycle permission mode (D4) | plain (CSI Z) |
 | Tab | composer | reserved (future queueing) | — |

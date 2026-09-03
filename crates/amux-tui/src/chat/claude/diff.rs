@@ -1,8 +1,8 @@
 //! Claude-specific diff chrome: magnitude words and Write-content blocks
-//! (`docs/CHAT.md` §Unified diffs and the reader's artifacts).
+//! (`docs/CHAT.md` §Unified diffs and the reader's documents).
 //!
 //! Unified-diff row geometry is owned by `chat::diff`; this module only adapts
-//! Claude artifacts whose presentation differs from a landed patch.
+//! Claude documents whose presentation differs from a landed patch.
 
 use amux_ui::claude::DiffMagnitude;
 use amux_ui::diff::{RowFact, RowKind};
@@ -33,7 +33,7 @@ pub(crate) fn magnitude_text(magnitude: &DiffMagnitude) -> String {
 }
 
 /// A new file's content as a `+` block: numbered in the reader, numberless in
-/// the panel. This is presentation of a typed content artifact, not patch
+/// the panel. This is presentation of a typed content document, not patch
 /// parsing; unified diff rows still go through the shared painter.
 pub(crate) fn new_file_rows(
     content: &str,
@@ -56,7 +56,7 @@ pub(crate) fn new_file_preview(
         .into_preview(budget);
     let mut lines = preview.lines;
     if preview.hidden > 0 {
-        lines.push(remainder_line(preview.hidden, "f full view", theme));
+        lines.push(remainder_line(preview.hidden, "f full document", theme));
     }
     lines
 }
@@ -109,7 +109,7 @@ mod tests {
             panel,
             vec![
                 "     + use std::time::Duration;",
-                "    ⋮  +2 more lines · f full view",
+                "    ⋮  +2 more lines · f full document",
             ]
         );
         let reader = text_of(&new_file_rows(content, 60, Theme::default(), true));

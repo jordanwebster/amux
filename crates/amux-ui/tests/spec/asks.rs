@@ -14,7 +14,7 @@
 
 use amux_ui::Msg;
 use amux_ui::claude::{
-    Ask, AskArtifact, AskKind, AskState, AskWhy, ClaudeLayer, DiffMagnitude, SuggestionDestination,
+    Ask, AskDocument, AskKind, AskState, AskWhy, ClaudeLayer, DiffMagnitude, SuggestionDestination,
     SuggestionKind, ToolInvocation,
 };
 use serde_json::json;
@@ -364,14 +364,14 @@ fn edit_ask_sequence() -> Vec<Msg> {
 /// An Edit permission ask carries the ask-time mini-diff, computed in the
 /// fold at creation (diff-rendering §1.4): the transcript states no diff
 /// before the tool runs, so the hook's `old_string`/`new_string` become a
-/// numberless, ESTIMATED-magnitude artifact retained with the ask — the
+/// numberless, ESTIMATED-magnitude document retained with the ask — the
 /// panel and reader render it, they never compute it.
 #[test]
 fn an_edit_ask_carries_the_computed_numberless_diff() {
     let model = fold(edit_ask_sequence());
     let ask = head(&model);
-    let Some(AskArtifact::Diff(diff)) = &ask.artifact else {
-        panic!("an Edit ask carries a diff artifact: {:?}", ask.artifact);
+    let Some(AskDocument::Diff(diff)) = &ask.document else {
+        panic!("an Edit ask carries a diff document: {:?}", ask.document);
     };
     assert_eq!(
         diff.document.numbering,
@@ -400,7 +400,7 @@ fn an_edit_ask_carries_the_computed_numberless_diff() {
 }
 
 /// `replace_all` makes the snippet counts a lie (N sites change): the
-/// artifact states the semantics instead of numbers.
+/// document states the semantics instead of numbers.
 #[test]
 fn a_replace_all_edit_ask_states_replaces_every_occurrence() {
     let model = fold(seq([
@@ -411,15 +411,15 @@ fn a_replace_all_edit_ask_states_replaces_every_occurrence() {
             vec![ready(), a_prompt_row(), edit_hook("old\n", "new\n", true)],
         )],
     ]));
-    let Some(AskArtifact::Diff(diff)) = &head(&model).artifact else {
-        panic!("a diff artifact");
+    let Some(AskDocument::Diff(diff)) = &head(&model).document else {
+        panic!("a diff document");
     };
     assert_eq!(diff.magnitude, DiffMagnitude::ReplacesEveryOccurrence);
 }
 
 /// A Write ask carries the proposed content whole (create-vs-overwrite is
-/// unknowable before the tool runs — the artifact claims neither), and a
-/// tool without a body artifact carries none.
+/// unknowable before the tool runs — the document claims neither), and a
+/// tool without a body document carries none.
 #[test]
 fn a_write_ask_carries_its_content_and_bash_carries_none() {
     let model = fold(seq([
@@ -443,14 +443,14 @@ fn a_write_ask_carries_its_content_and_bash_carries_none() {
     let layer = the_layer(&model);
     let asks: Vec<&Ask> = layer.asks().collect();
     assert_eq!(asks.len(), 2);
-    let Some(AskArtifact::NewFile { content }) = &asks[0].artifact else {
-        panic!("a Write ask carries its content: {:?}", asks[0].artifact);
+    let Some(AskDocument::NewFile { content }) = &asks[0].document else {
+        panic!("a Write ask carries its content: {:?}", asks[0].document);
     };
     assert_eq!(
         content,
         "use std::time::Duration;\n\npub struct RetryPolicy;\n"
     );
-    assert_eq!(asks[1].artifact, None, "Bash has no body artifact");
+    assert_eq!(asks[1].document, None, "Bash has no body document");
 }
 
 /// Multiple pending asks queue in arrival order with an honest head +
@@ -783,7 +783,7 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
             "asks::permission_pending",
             feed_through("permission", ChatAnchor::PermissionRequest(0)),
         ),
-        ("asks::edit_artifact", edit_ask_sequence()),
+        ("asks::edit_document", edit_ask_sequence()),
         (
             "asks::permission_correlated",
             feed_through(

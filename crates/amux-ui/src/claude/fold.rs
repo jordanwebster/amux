@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::artifact::{self, AskArtifact};
+use super::document::{self, AskDocument};
 use super::{
     ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, ApiErrorEntry, Ask, AskKind, AskState,
     ClaudeLayer, CompactSummaryEntry, CompactionEntry, FEED_RETAINED, FeedEntry, FeedEntryKind,
@@ -63,7 +63,7 @@ fn head_of(text: &str) -> (String, bool) {
     }
 }
 
-/// The interrupt artifacts are canonical strings (§17, FACT).
+/// The interrupt markers are canonical strings (§17, FACT).
 const INTERRUPT_TURN: &str = "[Request interrupted by user]";
 const INTERRUPT_TOOL: &str = "[Request interrupted by user for tool use]";
 
@@ -334,19 +334,19 @@ fn extract_suggestions(row: &Value) -> Vec<SuggestionFact> {
 /// The ask's typed panel/reader body (C2), computed once at creation — the
 /// one place a diff is ever computed (diff-rendering §1.4: the transcript
 /// states no diff at ask time). Routed on the tool name like everything
-/// else; tools without a body artifact carry `None`.
-fn ask_artifact(tool_name: Option<&str>, input: &Value) -> Option<AskArtifact> {
+/// else; tools without a body document carry `None`.
+fn ask_document(tool_name: Option<&str>, input: &Value) -> Option<AskDocument> {
     match tool_name {
         Some("Edit") => {
             let old = str_of(input, "old_string")?;
             let new = str_of(input, "new_string")?;
-            Some(AskArtifact::Diff(artifact::ask_time_diff(
+            Some(AskDocument::Diff(document::ask_time_diff(
                 old,
                 new,
                 bool_of(input, "replace_all"),
             )))
         }
-        Some("Write") => Some(AskArtifact::NewFile {
+        Some("Write") => Some(AskDocument::NewFile {
             content: str_of(input, "content")?.to_string(),
         }),
         _ => None,
@@ -360,7 +360,7 @@ fn push_ask(
     session_ask_id: String,
     hook_key: Option<u64>,
     kind: AskKind,
-    artifact: Option<AskArtifact>,
+    document: Option<AskDocument>,
 ) {
     let id = layer.next_ask_id;
     layer.next_ask_id += 1;
@@ -371,7 +371,7 @@ fn push_ask(
         session_ask_id,
         kind,
         state: AskState::Pending,
-        artifact,
+        document,
         hook_key,
     });
     if layer.asks.len() > ASKS_RETAINED {
@@ -397,7 +397,7 @@ fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
         return;
     }
     let kind = ask_kind(tool_name, input, extract_suggestions(row));
-    let artifact = ask_artifact(tool_name, input);
+    let document = ask_document(tool_name, input);
     push_ask(
         layer,
         seq,
@@ -405,7 +405,7 @@ fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
         hook_ask_id(row, tool_name.unwrap_or_default()),
         Some(key),
         kind,
-        artifact,
+        document,
     );
 }
 
@@ -448,7 +448,7 @@ fn fold_user(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Va
     match content {
         Some(Value::String(text)) => fold_user_text(layer, seq, row, text),
         Some(Value::Array(blocks)) => {
-            // The interrupt artifacts are text blocks in array content
+            // The interrupt markers are text blocks in array content
             // (§17); detect them before the generic closure so the closure
             // is tagged Interrupted, not Abandoned.
             let interrupt = blocks.iter().find_map(|block| match str_of(block, "text") {
@@ -1353,7 +1353,7 @@ fn correlate_ask(
     match uncorrelated_same_kind {
         Some(ask) => ask.tool_use_id = Some(tool_use_id.to_string()),
         // The transcript-only fallback exists for question and plan asks
-        // only; neither carries a body artifact (the plan markdown rides
+        // only; neither carries a body document (the plan markdown rides
         // the invocation).
         // A transcript-born ask is named by its tool_use id on both sides.
         None => push_ask(

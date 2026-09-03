@@ -18,7 +18,7 @@
 //! randomness may be imported here.
 
 pub mod answer;
-pub mod artifact;
+pub mod document;
 mod envelope;
 mod fold;
 pub(crate) mod update;
@@ -26,8 +26,8 @@ pub(crate) mod update;
 use std::collections::{BTreeSet, VecDeque};
 use std::iter::Peekable;
 
-pub use artifact::{AskArtifact, DiffArtifact, DiffMagnitude};
 use chrono::{DateTime, TimeDelta, Utc};
+pub use document::{AskDocument, DiffDocument, DiffMagnitude};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -166,7 +166,7 @@ pub enum FeedEntryKind {
     /// A message another amux agent sent to this one, read out of the
     /// recipient's own row (no synthetic provenance exists anywhere).
     AgentMessage(AgentMessageEntry),
-    /// Interruption artifact (B8, FACT rows).
+    /// Interruption marker (B8, FACT rows).
     Interruption(InterruptionEntry),
     /// `isApiErrorMessage:true` row (B8, FACT).
     ApiError(ApiErrorEntry),
@@ -632,7 +632,7 @@ pub struct Ask {
     /// the fold at ask creation and retained with the ask (evict bytes,
     /// never obligations). Plan asks carry their markdown on the
     /// invocation instead.
-    pub artifact: Option<AskArtifact>,
+    pub document: Option<AskDocument>,
     /// Hook-side identity: hash of (tool_name, canonical tool_input). The
     /// hook's `tool_input` equals the transcript `tool_use.input`
     /// byte-for-byte (fixture-verified), so one key both dedupes
@@ -738,7 +738,7 @@ pub enum AskState {
     },
     /// The send failed (seq mismatch / transport / server rejection):
     /// resurfaced with the failure stated — never a stuck spinner. No
-    /// transcript artifact exists for this; it is purely client-side
+    /// transcript record exists for this; it is purely client-side
     /// state.
     SendFailed {
         message: String,
@@ -1106,7 +1106,7 @@ impl ChatPhase {
 pub(crate) enum TurnCloseSource {
     /// The in-transcript `turn_duration` row (FACT).
     Authority,
-    /// The §17 interrupt artifacts (FACT — the user closed it).
+    /// The §17 interrupt markers (FACT — the user closed it).
     Interrupt,
 }
 
@@ -2073,7 +2073,7 @@ mod tests {
                 questions: Vec::new(),
             },
             state: AskState::Pending,
-            artifact: None,
+            document: None,
             hook_key: None,
         });
         assert!(fires(&model, "claude-ask-order"));
@@ -2614,7 +2614,7 @@ mod tests {
                 questions: Vec::new(),
             },
             state: AskState::Pending,
-            artifact: None,
+            document: None,
             hook_key: None,
         }
     }

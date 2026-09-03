@@ -53,7 +53,7 @@ pub(crate) enum AskKeyOutcome {
     Handled,
     /// Dispatch this typed answer for the ask.
     Answer(AskAnswer),
-    /// Open the reader on the ask's artifact (`f`).
+    /// Open the reader on the ask's document (`f`).
     OpenReader,
     /// Not a panel key — the caller may route it elsewhere (feed
     /// scrolling).
@@ -74,7 +74,7 @@ pub(crate) fn is_plan(ask: &Ask) -> bool {
 /// Whether the ask carries anything the reader can show (`f`'s liveness:
 /// hints never advertise dead keys).
 pub(crate) fn has_readable(ask: &Ask) -> bool {
-    ask.artifact.is_some()
+    ask.document.is_some()
         || matches!(
             &ask.kind,
             AskKind::Permission {

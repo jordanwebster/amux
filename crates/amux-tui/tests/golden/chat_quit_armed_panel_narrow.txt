@@ -11,7 +11,7 @@
      +    pub retry_budget: u32,                            
      +    pub on_exhausted: Behavior,                       
           pub base_delay: Duration,                         
-      ⋮ +2 more lines · f full diff                         
+      ⋮ +2 more lines · f full document                     
                                                             
     › 1. Allow once                                         
       2. Always allow access to /work from this project     

@@ -37,4 +37,4 @@
      +b                                                                                                                 
                                                                                                                         
     ✗ unverified menu shape — refusing to guess keystrokes: permission menu with 2 suggestions (verified for exactly 1) 
-    answer from the raw attach · f full diff · ctrl+x interrupt                                                         
+    answer from the raw attach · f open document · ctrl+x interrupt                                                     

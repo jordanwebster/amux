@@ -2,7 +2,7 @@
 //! area behind a dim rule; the feed above stays the context you decide
 //! with. Pure formatting over Model facts and panel ViewState — option
 //! labels derive from the hook's suggestion facts, magnitudes from the
-//! ask's computed artifact, refusals from the encoder's typed gate; the
+//! ask's computed document, refusals from the encoder's typed gate; the
 //! code here formats and never decides.
 //!
 //! Lines come back "open" (no padding, no right border); the frame
@@ -10,7 +10,7 @@
 
 use amux_ui::claude::answer::{self, AskAnswer, PermissionAnswer, PlanAnswer};
 use amux_ui::claude::{
-    Ask, AskArtifact, AskKind, AskState, QuestionFact, SuggestionDestination, SuggestionFact,
+    Ask, AskDocument, AskKind, AskState, QuestionFact, SuggestionDestination, SuggestionFact,
     SuggestionKind, ToolInvocation,
 };
 use ratatui::style::Style;
@@ -110,7 +110,7 @@ fn field_line(field: &Composer, theme: Theme) -> Line<'static> {
 
 /// The panel header's tool identity + magnitude: `Edit sync/config.rs
 /// (+2 -1)`, `Write sync/retry.rs (12 lines)`, `Bash`, the tool name
-/// otherwise. Magnitudes come from the ask's artifact (estimated at ask
+/// otherwise. Magnitudes come from the ask's document (estimated at ask
 /// time; `(replaces every occurrence)` under replace_all).
 pub(crate) fn ask_identity(ask: &Ask) -> String {
     let AskKind::Permission {
@@ -141,12 +141,12 @@ pub(crate) fn ask_identity(ask: &Ask) -> String {
         } => format!("{name} {description}"),
         _ => name.to_string(),
     };
-    match &ask.artifact {
-        Some(AskArtifact::Diff(diff_artifact)) => {
+    match &ask.document {
+        Some(AskDocument::Diff(diff_document)) => {
             identity.push(' ');
-            identity.push_str(&diff::magnitude_text(&diff_artifact.magnitude));
+            identity.push_str(&diff::magnitude_text(&diff_document.magnitude));
         }
-        Some(AskArtifact::NewFile { content }) => {
+        Some(AskDocument::NewFile { content }) => {
             let lines = content.lines().count();
             identity.push_str(&format!(" ({lines} lines)"));
         }
@@ -302,9 +302,9 @@ pub(crate) fn permission_actions(
 /// Edit, the `+` block for Write, `$ command` for Bash, the plan preview
 /// for plan review, a compact typed line otherwise.
 fn body_lines(ask: &Ask, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    // A diff artifact is not the panel's to place: the adapter puts its
+    // A diff document is not the panel's to place: the adapter puts its
     // rows above these, through the shared diff rows both chats use.
-    if let Some(AskArtifact::NewFile { content }) = &ask.artifact {
+    if let Some(AskDocument::NewFile { content }) = &ask.document {
         return diff::new_file_preview(content, width, theme, diff::PREVIEW_BUDGET);
     }
     let AskKind::Permission { invocation, .. } = &ask.kind else {
@@ -476,10 +476,7 @@ fn permission_panel(
                 theme,
             ));
             let f_hint = if ask_ui::has_readable(ask) {
-                match &ask.artifact {
-                    Some(AskArtifact::NewFile { .. }) => " · f full view",
-                    _ => " · f full diff",
-                }
+                " · f open document"
             } else {
                 ""
             };
@@ -506,7 +503,7 @@ fn refusal_panel(ask: &Ask, refusal: &str, ask_count: usize, ctx: PanelContext) 
     panel.body.extend(body_lines(ask, width, theme));
     panel.actions.extend(failure_line(refusal, width, theme));
     let f_hint = if ask_ui::has_readable(ask) {
-        "f full diff · "
+        "f open document · "
     } else {
         ""
     };
@@ -847,14 +844,11 @@ pub(crate) fn readonly_ask_panel(
         }
         AskKind::Permission { .. } if ask_ui::is_plan(ask) => (
             "the agent is asking for plan approval".to_string(),
-            Some("f read the plan"),
+            Some("f read document"),
         ),
         AskKind::Permission { .. } => (
             format!("the agent is asking permission — {}", ask_identity(ask)),
-            ask.artifact.as_ref().map(|artifact| match artifact {
-                AskArtifact::Diff(_) => "f read the diff",
-                AskArtifact::NewFile { .. } => "f read the file",
-            }),
+            ask.document.as_ref().map(|_| "f read document"),
         ),
     };
     let mut panel = AskPanel::titled(title, ask_count);

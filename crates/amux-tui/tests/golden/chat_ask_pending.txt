@@ -36,5 +36,5 @@
      +    pub retry_budget: u32,                                                                                        
      +    pub on_exhausted: Behavior,                                                                                   
           pub base_delay: Duration,                                                                                     
-      ⋮ +2 more lines · f full diff                                                                                     
+      ⋮ +2 more lines · f full document                                                                                 
     answer sent — awaiting confirmation                                                                                 

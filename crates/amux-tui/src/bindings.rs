@@ -310,7 +310,7 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
         row("space", "toggle (multi-select)", Tier::Plain),
         row("tab/shift+tab ←/→", "cycle question tabs", Tier::Plain),
         row("enter", "confirm / advance / submit", Tier::Plain),
-        row("f", "full diff / plan in the reader", Tier::Plain),
+        row("f", "open document in the reader", Tier::Plain),
     ];
     let reader = vec![
         row("↑/↓ j/k pgup/pgdn", "scroll", Tier::Plain),
@@ -320,7 +320,7 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
     ];
     let readonly = vec![
         row("↑/↓ j/k pgup/pgdn g/G", "scroll", Tier::Plain),
-        row("f", "read the diff / plan", Tier::Plain),
+        row("f", "read document", Tier::Plain),
         row("q", "back to fleet", Tier::Plain),
     ];
     vec![

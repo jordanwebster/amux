@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use amux_ui::Model;
 use amux_ui::claude::{
-    Ask, AskArtifact, ChatPhase, FeedEntry, FeedEntryKind, FeedItem, InterruptionKind,
+    Ask, AskDocument, ChatPhase, FeedEntry, FeedEntryKind, FeedItem, InterruptionKind,
     SuccessFacts, ToolEntry, ToolInvocation, ToolOutcome, TurnDuration,
 };
 use ratatui::style::Style;
@@ -266,7 +266,7 @@ fn bottom_block(
     lines
 }
 
-/// One docked ask, painted: its diff artifact leads the body through the
+/// One docked ask, painted: its diff document leads the body through the
 /// shared diff rows, then the ask's own words, answers and keys.
 pub(crate) fn ask_panel_lines(
     ask: &Ask,
@@ -274,14 +274,14 @@ pub(crate) fn ask_panel_lines(
     theme: Theme,
     width: usize,
 ) -> Vec<Line<'static>> {
-    if let Some(AskArtifact::Diff(artifact)) = &ask.artifact {
+    if let Some(AskDocument::Diff(document)) = &ask.document {
         let body_width = blocks::panel_body_width(width);
         let preview =
-            diff_painter::paint_rows(&artifact.document.rows(), theme, body_width, 0, true)
+            diff_painter::paint_rows(&document.document.rows(), theme, body_width, 0, true)
                 .into_preview(DIFF_PREVIEW_BUDGET);
         let mut body = preview.lines;
         if preview.hidden > 0 {
-            body.push(remainder_row(preview.hidden, "f full diff", theme));
+            body.push(remainder_row(preview.hidden, "f full document", theme));
         }
         body.append(&mut parts.body);
         parts.body = body;
@@ -298,7 +298,7 @@ pub(crate) fn ask_panel_lines(
     .lines
 }
 
-/// `⋮ +K more lines · f full diff` — a preview always states its own
+/// `⋮ +K more lines · f full document` — a preview always states its own
 /// arithmetic and names what shows the rest.
 fn remainder_row(hidden: usize, affordance: &str, theme: Theme) -> Line<'static> {
     let mut line = Line::default();
@@ -342,11 +342,7 @@ fn readonly_bottom(model: &Model, chat: &View, theme: Theme, width: usize) -> Ve
     if let Some(ask) = chat.ask_head(model)
         && ask_ui::has_readable(ask)
     {
-        hints.push_str(match &ask.artifact {
-            Some(AskArtifact::Diff(_)) => " · f view diff",
-            Some(AskArtifact::NewFile { .. }) => " · f view file",
-            None => " · f view plan",
-        });
+        hints.push_str(" · f view document");
     }
     hints.push_str(" · q back to fleet");
     lines.push(if chat.quit_guard.is_armed() {

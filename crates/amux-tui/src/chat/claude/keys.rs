@@ -1872,7 +1872,7 @@ mod tests {
         handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT, t(0));
         assert!(
             chat.reader.as_ref().expect("reader remains open").scroll > 0,
-            "the retained artifact remains navigable"
+            "the retained document remains navigable"
         );
         handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT, t(0));
         assert!(chat.reader.is_none(), "q still closes the read surface");

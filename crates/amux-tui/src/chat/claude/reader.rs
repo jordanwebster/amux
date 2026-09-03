@@ -1,5 +1,5 @@
 //! The fullscreen reader (`docs/CHAT.md` §Diffs and the reader's
-//! artifacts): ONE overlay over typed artifacts — Plan (the B2 markdown
+//! documents): ONE overlay over typed documents — Plan (the B2 markdown
 //! renderer reused), Diff, NewFile — scrollable with a position
 //! indicator, carrying an action row only while a writable ask is open.
 //! Plan review opens here directly (C3: the full plan is the point); `f`
@@ -7,7 +7,7 @@
 //! accepted plans, ←/→ stepping between them when several exist (B6).
 
 use amux_ui::Model;
-use amux_ui::claude::{Ask, AskArtifact, AskKind, AskState, DiffArtifact, ToolInvocation};
+use amux_ui::claude::{Ask, AskDocument, AskKind, AskState, DiffDocument, ToolInvocation};
 use ratatui::text::{Line, Span};
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ use crate::markdown;
 use crate::render::{Theme, push_right, push_span};
 
 /// Fullscreen reader ViewState: what is being read and where the viewport
-/// sits. The artifact itself is resolved from the Model at render — a
+/// sits. The document itself is resolved from the Model at render — a
 /// stale reader for a resolved ask stops resolving and the frame falls
 /// back to the chat (reconcile also dismisses it).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,7 +27,7 @@ pub(crate) struct ReaderView {
 }
 
 impl ReaderView {
-    /// Open on the pending ask's artifact, at the top.
+    /// Open on the pending ask's document, at the top.
     pub fn ask() -> Self {
         Self {
             source: ReaderSource::Ask,
@@ -38,7 +38,7 @@ impl ReaderView {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ReaderSource {
-    /// The pending ask's artifact (plan review reader-first; `f` from
+    /// The pending ask's document (plan review reader-first; `f` from
     /// panels and fact panels).
     Ask,
     /// An accepted plan (Ctrl+T), by index into `accepted_plans` (oldest
@@ -46,12 +46,12 @@ pub(crate) enum ReaderSource {
     Plans { index: usize },
 }
 
-/// The typed artifact body, borrowed from the Model (§5: a match, not a
+/// The typed document body, borrowed from the Model (§5: a match, not a
 /// viewer framework — Text and Image are reserved kinds with no variant
 /// until something produces them).
 enum Body<'m> {
     Plan(&'m str),
-    Diff(&'m DiffArtifact),
+    Diff(&'m DiffDocument),
     NewFile(&'m str),
 }
 
@@ -72,18 +72,18 @@ fn resolve<'m>(model: &'m Model, chat: &View) -> Option<Resolved<'m>> {
     match &reader.source {
         ReaderSource::Ask => {
             let ask = layer.ask_head()?;
-            let resolved = match (&ask.artifact, &ask.kind) {
-                (Some(AskArtifact::Diff(artifact)), kind) => Resolved {
+            let resolved = match (&ask.document, &ask.kind) {
+                (Some(AskDocument::Diff(document)), kind) => Resolved {
                     title: format!(
                         "diff — {}  {}",
                         permission_path(kind).unwrap_or("(unknown file)"),
-                        diff::magnitude_text(&artifact.magnitude)
+                        diff::magnitude_text(&document.magnitude)
                     ),
-                    body: Body::Diff(artifact),
+                    body: Body::Diff(document),
                     ask: Some(ask),
                     plans_nav: None,
                 },
-                (Some(AskArtifact::NewFile { content }), kind) => Resolved {
+                (Some(AskDocument::NewFile { content }), kind) => Resolved {
                     title: format!(
                         "new file — {}  ({} lines)",
                         permission_path(kind).unwrap_or("(unknown file)"),
@@ -163,7 +163,7 @@ fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'stat
                 })
                 .collect()
         }
-        Body::Diff(artifact) => crate::chat::diff::reader_rows(artifact, width, theme),
+        Body::Diff(document) => crate::chat::diff::reader_rows(document, width, theme),
         Body::NewFile(content) => diff::new_file_rows(content, width, theme, true),
     }
 }

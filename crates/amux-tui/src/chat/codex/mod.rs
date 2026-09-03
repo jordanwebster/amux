@@ -1,5 +1,5 @@
 //! Codex-native chat view state. It consumes only `amux_ui::codex` facts;
-//! no Claude entry, ask, phase, or artifact type crosses this module.
+//! no Claude entry, ask, phase, or document type crosses this module.
 
 mod keys;
 pub(crate) mod render;

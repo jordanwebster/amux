@@ -37,4 +37,4 @@
     › 1. Allow once                                                                                                     
       2. Always allow access to /work/amux from this project                                                            
       3. Deny — tell the agent why (optional)                                                                           
-    1-3/↑↓ select · enter confirm · f full diff · esc back (never answers)                                              
+    1-3/↑↓ select · enter confirm · f open document · esc back (never answers)                                          

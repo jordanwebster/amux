@@ -294,7 +294,7 @@ pub(crate) fn handle_key(model: &Model, inline: &mut InlineAsk, key: &KeyEvent) 
                 }
                 AskKeyOutcome::Handled => InlineOutcome::Handled,
                 // The fullscreen reader belongs to the chat whose agent
-                // the artifact is from; a guest panel does not take the
+                // the document is from; a guest panel does not take the
                 // parent's whole frame over. The key is consumed rather
                 // than leaked into the feed.
                 AskKeyOutcome::OpenReader => InlineOutcome::Handled,

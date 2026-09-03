@@ -12,7 +12,7 @@
 use amux_tui::view::ViewState;
 use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
 use amux_ui::claude::answer::{AskAnswer, PermissionAnswer};
-use amux_ui::claude::{DiffArtifact, DiffMagnitude};
+use amux_ui::claude::{DiffDocument, DiffMagnitude};
 use amux_ui::diff::{Document, Hunk, Numbering};
 use amux_ui::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, OpId, ServerMsg, StreamEntry,
@@ -1393,7 +1393,7 @@ fn unverified_menu_reader_is_readable_but_pager_only() {
 
     assert!(
         rendered.contains("sync/config.rs"),
-        "the artifact remains readable: {rendered}"
+        "the document remains readable: {rendered}"
     );
     assert!(
         rendered.contains("j/k scroll") && rendered.contains("q close"),
@@ -1722,8 +1722,8 @@ fn chat_reader_newfile() {
 /// `⋮` between hunks. Rendered through the same pure body renderer the
 /// reader mounts — no Model path reaches this form in V1 (post-hoc diff
 /// reading is a recorded door), so the body is golden-locked directly.
-fn numbered_diff() -> DiffArtifact {
-    DiffArtifact {
+fn numbered_diff() -> DiffDocument {
+    DiffDocument {
         document: Document {
             numbering: Numbering::Absolute,
             truncated: false,

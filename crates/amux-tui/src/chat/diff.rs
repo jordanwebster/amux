@@ -1,6 +1,6 @@
 //! The terminal's one painter for neutral unified-diff rows.
 
-use amux_ui::claude::DiffArtifact;
+use amux_ui::claude::DiffDocument;
 use amux_ui::diff::{RowFact, RowKind};
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
@@ -97,7 +97,7 @@ pub(crate) fn paint_rows(
     paint_rows_with_layout(rows, theme, width, left, fill, GutterLayout::Dual)
 }
 
-/// Write artifacts keep their established single-new-number gutter while
+/// Write documents keep their established single-new-number gutter while
 /// sharing the same wrapping and continuation painter as unified diffs.
 pub(crate) fn paint_added_rows(
     rows: &[RowFact],
@@ -255,8 +255,8 @@ fn fill(line: &mut Line<'static>, width: usize, style: ratatui::style::Style) {
 
 /// The full diff body for the reader. Scrolling, not this painter, is its
 /// size policy.
-pub fn reader_rows(artifact: &DiffArtifact, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    paint_rows(&artifact.document.rows(), theme, width, 4, false).into_lines()
+pub fn reader_rows(document: &DiffDocument, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    paint_rows(&document.document.rows(), theme, width, 4, false).into_lines()
 }
 
 #[cfg(test)]
