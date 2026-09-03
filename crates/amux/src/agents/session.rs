@@ -347,6 +347,12 @@ pub(crate) trait AgentBackend: Send + Sync {
     fn kind(&self) -> AgentKind;
     fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError>;
 
+    /// The structured output log where daemon-authored attachment metadata is
+    /// published before an agent includes the matching mention in its reply.
+    fn attachment_log(&self) -> Option<StructuredLogSource> {
+        None
+    }
+
     fn spawn_inheritance(&self) -> SpawnInheritance {
         SpawnInheritance::default()
     }

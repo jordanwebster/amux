@@ -12,3 +12,6 @@ Stop one of your amux child agents by name.
 
 status
 Set or clear your current amux work status so agents and humans can find the right collaborator.
+
+attach
+Attach a file from this agent's host to your reply. Returns an amux attachment element; include that element verbatim in your response so every viewer can render and open the file.

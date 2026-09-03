@@ -580,6 +580,34 @@ impl Client {
         mime: &str,
         bytes: Vec<u8>,
     ) -> Result<ArtifactRef, ClientError> {
+        self.put_artifact_inner(agent, kind, name, mime, bytes, false)
+            .await
+    }
+
+    /// Stores an artifact produced by the calling managed agent. Unlike a
+    /// draft attachment put, this pins and publishes the artifact immediately
+    /// so a following reply mention can be rendered from the stream alone.
+    pub async fn put_artifact_by_agent(
+        &self,
+        caller: Uuid,
+        kind: ArtifactKind,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactRef, ClientError> {
+        self.put_artifact_inner(AgentIdentifier::Id(caller), kind, name, mime, bytes, true)
+            .await
+    }
+
+    async fn put_artifact_inner(
+        &self,
+        agent: AgentIdentifier,
+        kind: ArtifactKind,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+        agent_attach: bool,
+    ) -> Result<ArtifactRef, ClientError> {
         self.ensure_open()?;
         let response = self
             .inner
@@ -591,6 +619,7 @@ impl Client {
                 name: name.to_string(),
                 mime: mime.to_string(),
                 bytes,
+                agent_attach,
             })
             .await
             .map_err(status_to_client_error)?

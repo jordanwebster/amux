@@ -18,6 +18,7 @@ pub const SEND_DESCRIPTION: &str = "Send a text message to another amux agent by
 pub const SPAWN_DESCRIPTION: &str = "Create a Claude or Codex child agent with an initial prompt. Use amux spawn for cross-kind delegation and keep Claude's native Agent tool for same-kind work. When cwd is omitted, the child inherits your working directory; it also inherits your permission mode or approval and sandbox policy. If standalone prompt delivery is uncertain after creation, the result identifies the created agent; do not retry spawn.";
 pub const STOP_DESCRIPTION: &str = "Stop one of your amux child agents by name.";
 pub const STATUS_DESCRIPTION: &str = "Set or clear your current amux work status so agents and humans can find the right collaborator.";
+pub const ATTACH_DESCRIPTION: &str = "Attach a file from this agent's host to your reply. Returns an amux attachment element; include that element verbatim in your response so every viewer can render and open the file.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentToolRequest {
@@ -38,6 +39,10 @@ pub enum AgentToolRequest {
     },
     Status {
         working_on: Option<String>,
+    },
+    Attach {
+        path: PathBuf,
+        name: Option<String>,
     },
 }
 
@@ -109,6 +114,14 @@ struct StatusArguments {
     working_on: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttachArguments {
+    path: PathBuf,
+    #[serde(default)]
+    name: Option<String>,
+}
+
 pub fn definitions() -> Vec<AgentToolDefinition> {
     vec![
         AgentToolDefinition {
@@ -154,6 +167,17 @@ pub fn definitions() -> Vec<AgentToolDefinition> {
                 &["working_on"],
             ),
         },
+        AgentToolDefinition {
+            name: "attach",
+            description: ATTACH_DESCRIPTION,
+            input_schema: object_schema(
+                json!({
+                    "path": { "type": "string" },
+                    "name": { "type": "string" }
+                }),
+                &["path"],
+            ),
+        },
     ]
 }
 
@@ -191,6 +215,13 @@ pub fn parse_call(name: &str, arguments: Value) -> Result<AgentToolRequest> {
             let args: StatusArguments = parse_arguments(arguments)?;
             Ok(AgentToolRequest::Status {
                 working_on: args.working_on,
+            })
+        }
+        "attach" => {
+            let args: AttachArguments = parse_arguments(arguments)?;
+            Ok(AgentToolRequest::Attach {
+                path: args.path,
+                name: args.name,
             })
         }
         name => Err(anyhow!("unknown tool: {name}")),
@@ -235,5 +266,48 @@ mod tests {
             "--verbose".to_string(),
         ];
         assert_eq!(claude_permission_args(&args), ["--permission-mode", "plan"]);
+    }
+
+    #[test]
+    fn agent_tools_attach_schema_requires_only_a_path_and_rejects_extra_fields() {
+        let attach = definitions()
+            .into_iter()
+            .find(|definition| definition.name == "attach")
+            .expect("attach tool definition");
+
+        assert_eq!(attach.input_schema["type"], "object");
+        assert_eq!(attach.input_schema["required"], json!(["path"]));
+        assert_eq!(
+            attach.input_schema["properties"],
+            json!({
+                "path": { "type": "string" },
+                "name": { "type": "string" }
+            })
+        );
+        assert_eq!(attach.input_schema["additionalProperties"], false);
+    }
+
+    #[test]
+    fn agent_tools_attach_call_parses_path_and_optional_name() {
+        assert_eq!(
+            parse_call(
+                "attach",
+                json!({ "path": "/tmp/capture.png", "name": "result.png" }),
+            )
+            .unwrap(),
+            AgentToolRequest::Attach {
+                path: PathBuf::from("/tmp/capture.png"),
+                name: Some("result.png".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_call("attach", json!({ "path": "notes.txt" })).unwrap(),
+            AgentToolRequest::Attach {
+                path: PathBuf::from("notes.txt"),
+                name: None,
+            }
+        );
+        assert!(parse_call("attach", json!({ "name": "missing.txt" })).is_err());
+        assert!(parse_call("attach", json!({ "path": "notes.txt", "unexpected": true }),).is_err());
     }
 }

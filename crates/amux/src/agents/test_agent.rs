@@ -149,6 +149,7 @@ impl TestAgentSession {
         #[cfg(any(test, feature = "testnet"))]
         if self.command == io::TEST_ECHO_COMMAND {
             self.pty = Some(PtyHandle::test_echo());
+            self.log_source = Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION));
             self.delivery_ready.store(true, Ordering::Release);
             return Ok(tokio::spawn(std::future::pending::<()>()));
         }
@@ -280,6 +281,10 @@ impl AgentBackend for TestAgentSession {
                 })
             }
         }
+    }
+
+    fn attachment_log(&self) -> Option<StructuredLogSource> {
+        self.log_source.clone()
     }
 
     fn parent(&self) -> Option<AgentParent> {

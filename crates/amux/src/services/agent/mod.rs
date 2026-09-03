@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::agents::{
     Agent, AgentEvent, AgentRecord, ArtifactOwners, ArtifactRef, CreateAgentRpcRequest,
     HookEnvironment, RenameAgentRequest, SendInputRequest, SetAgentStatusRequest, SpawnInheritance,
-    SubscribeSessionRequest,
+    SubscribeSessionRequest, attachments_row,
 };
 use crate::envelope::Envelope;
 use crate::protocol::{ProtocolError, protocol_status, wire};
@@ -77,6 +77,10 @@ pub(crate) trait LocalAgentHost: Send + Sync {
         request: SendInputRequest,
         attachment_owner: Option<Arc<amux_artifacts::Owner>>,
     ) -> Result<(), ProtocolError>;
+    async fn attachment_log(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<crate::agents::StructuredLogSource, ProtocolError>;
     async fn subscribe_session(
         &self,
         request: SubscribeSessionRequest,
@@ -281,6 +285,33 @@ impl AgentServiceCtx {
         self.require_host()?
             .send_input(request, attachment_owner)
             .await
+    }
+
+    /// Stores an artifact produced by a managed agent, pins it immediately,
+    /// and announces its immutable metadata before the tool call returns.
+    pub(crate) async fn put_artifact_by_agent(
+        &self,
+        caller: Uuid,
+        kind: amux_artifacts::ArtifactKind,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactRef, ProtocolError> {
+        let log = self.require_host()?.attachment_log(caller).await?;
+        let owner = self
+            .require_artifact_owners("PutArtifactByAgent")?
+            .owner(caller)?;
+        let artifact = ArtifactRef::from(
+            owner
+                .put(kind, name, mime, &bytes)
+                .map_err(crate::agents::store_error)?,
+        );
+        owner
+            .pin(std::slice::from_ref(&artifact.id))
+            .map_err(crate::agents::store_error)?;
+        log.write(attachments_row(None, std::slice::from_ref(&artifact)))
+            .await;
+        Ok(artifact)
     }
 
     pub(crate) async fn subscribe_session_response_stream(
@@ -817,6 +848,51 @@ mod tests {
         .await
         .unwrap();
         assert!(!artifact_root.exists());
+    }
+
+    #[tokio::test]
+    async fn put_artifact_by_agent_pins_and_publishes_the_ref_before_returning() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let host = service_host();
+        let owners = Arc::new(
+            ArtifactOwners::open(
+                data_dir.path().to_path_buf(),
+                Arc::new(amux_artifacts::SystemClock),
+            )
+            .unwrap(),
+        );
+        let ctx = AgentServiceCtx::new(Some(host.clone()), host.host_id(), false)
+            .with_artifact_owners(owners.clone());
+        let agent_id = Uuid::new_v4();
+        create_test_echo_agent(&ctx, agent_id).await;
+        let log = host.attachment_log(agent_id).await.unwrap();
+        let (mut rows, seq) = log.subscribe_with_query(None).await.unwrap();
+        assert_eq!(seq, 0);
+
+        let artifact = ctx
+            .put_artifact_by_agent(
+                agent_id,
+                amux_artifacts::ArtifactKind::Image,
+                "screen.png",
+                "image/png",
+                b"png bytes".to_vec(),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            owners
+                .owner(agent_id)
+                .unwrap()
+                .meta(&artifact.id)
+                .unwrap()
+                .pinned_at
+                .is_some()
+        );
+        assert_eq!(
+            rows.read().await.unwrap().payload,
+            attachments_row(None, std::slice::from_ref(&artifact))
+        );
     }
 
     #[tokio::test]

@@ -1913,6 +1913,10 @@ impl AgentBackend for CodexBackend {
         }
     }
 
+    fn attachment_log(&self) -> Option<StructuredLogSource> {
+        Some(self.log_source.clone())
+    }
+
     fn spawn_inheritance(&self) -> SpawnInheritance {
         SpawnInheritance {
             codex_approval_policy: self.approval_policy.clone(),
@@ -2143,7 +2147,7 @@ mod tests {
                     "startup_timeout_sec": 10,
                     "tool_timeout_sec": 60,
                     "default_tools_approval_mode": "approve",
-                    "enabled_tools": ["agents", "send", "spawn", "stop", "status"],
+                    "enabled_tools": ["agents", "send", "spawn", "stop", "status", "attach"],
                 }
             }
         });

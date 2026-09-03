@@ -402,6 +402,23 @@ impl LocalAgentHost for PtyAgentHost {
         session_rpc::send_session_input(self, request, attachment_owner).await
     }
 
+    async fn attachment_log(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<crate::agents::StructuredLogSource, ProtocolError> {
+        let state = self.state().read().await;
+        let session = state
+            .local_agents
+            .get(&agent_id)
+            .map(|context| &context.session)
+            .ok_or(ProtocolError::NoAgentFound)?;
+        session
+            .attachment_log()
+            .ok_or_else(|| ProtocolError::FailedPrecondition {
+                message: "agent session has no structured output log".to_string(),
+            })
+    }
+
     async fn subscribe_session(
         &self,
         request: SubscribeSessionRequest,

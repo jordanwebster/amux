@@ -823,6 +823,10 @@ message ClientPutArtifactRequest {
   string name = 3;
   string mime = 4;
   bytes bytes = 5;
+  // Agent-originated puts are pinned and announced on the agent's output
+  // stream before this call returns. The client service accepts this only
+  // for an agent hosted by the local daemon.
+  bool agent_attach = 6;
 }
 
 message ClientGetArtifactRequest {

@@ -805,6 +805,10 @@ impl AgentBackend for ClaudeSdkBackend {
         }
     }
 
+    fn attachment_log(&self) -> Option<StructuredLogSource> {
+        Some(self.log.clone())
+    }
+
     fn spawn_inheritance(&self) -> SpawnInheritance {
         SpawnInheritance {
             claude_permission_args: crate::agent_tools::claude_permission_args(&self.args),

@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Let agents attach files to replies.** Managed Claude and Codex
+sessions now receive an `attach` tool that reads a path on the agent's host,
+classifies the four model-supported image formats or falls back to a generic
+file, and returns the canonical attachment element for the reply. The daemon
+stores and pins an agent-produced artifact in one call, then writes its metadata
+to the agent's structured stream before returning, so every subscribed viewer
+can render the following mention and restart replay retains it. Ordinary user
+draft uploads keep their existing ephemeral lifetime. Codex derives its enabled
+tool list from the shared schema, including across resume, and boundary tests
+cover the exact PNG element, schema parsing, pinning, stream publication, and
+the frozen Codex launch fixture.
+
 2026-09-03 — **Captured the review page and the attachment draft.** The
 review page's eight named states now render as committed 120x40 PNGs, and
 two scripted recordings walk the screens a person actually moves through:

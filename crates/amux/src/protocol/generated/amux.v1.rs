@@ -1509,6 +1509,11 @@ pub struct ClientPutArtifactRequest {
     pub mime: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "5")]
     pub bytes: ::prost::alloc::vec::Vec<u8>,
+    /// Agent-originated puts are pinned and announced on the agent's output
+    /// stream before this call returns. The client service accepts this only
+    /// for an agent hosted by the local daemon.
+    #[prost(bool, tag = "6")]
+    pub agent_attach: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClientGetArtifactRequest {

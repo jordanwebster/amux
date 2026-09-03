@@ -78,7 +78,7 @@ fn a2a_fixture_codex_mcp_substrate_replays_offline() {
     assert_eq!(
         start_config.get("enabled_tools"),
         Some(&serde_json::json!([
-            "agents", "send", "spawn", "stop", "status"
+            "agents", "send", "spawn", "stop", "status", "attach"
         ]))
     );
 
@@ -113,7 +113,7 @@ fn a2a_fixture_codex_mcp_substrate_replays_offline() {
     assert_eq!(
         inventory.get("stub_tools"),
         Some(&serde_json::json!([
-            "agents", "send", "spawn", "stop", "status", "extra"
+            "agents", "send", "spawn", "stop", "status", "attach", "extra"
         ]))
     );
     assert_eq!(

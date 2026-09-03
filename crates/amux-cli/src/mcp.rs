@@ -9,9 +9,10 @@ use amux::agent_tools::{
     parse_call as parse_tool_call,
 };
 use amux::{
-    Agent, AgentIdentifier, AgentParent, AgentType, Client, Config, CreateAgentRequest,
-    SendMessageRequest, SetAgentStatusRequest,
+    Agent, AgentIdentifier, AgentParent, AgentType, ArtifactKind, ArtifactRef, Client, Config,
+    CreateAgentRequest, SendMessageRequest, SetAgentStatusRequest,
 };
+use amux_ui::attachments::{Mention, MentionKind, format_mention};
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -53,6 +54,14 @@ trait DaemonApi: Send + Sync {
     async fn create_agent(&self, request: CreateAgentRequest) -> Result<Agent>;
     async fn delete_child_agent(&self, target: AgentIdentifier, caller: Uuid) -> Result<()>;
     async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<()>;
+    async fn put_artifact_by_agent(
+        &self,
+        caller: Uuid,
+        kind: ArtifactKind,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactRef>;
 }
 
 #[async_trait]
@@ -79,6 +88,17 @@ impl DaemonApi for Client {
 
     async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<()> {
         Ok(Client::set_agent_status(self, request).await?)
+    }
+
+    async fn put_artifact_by_agent(
+        &self,
+        caller: Uuid,
+        kind: ArtifactKind,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactRef> {
+        Ok(Client::put_artifact_by_agent(self, caller, kind, name, mime, bytes).await?)
     }
 }
 
@@ -207,7 +227,7 @@ fn initialize_response(id: Value, _params: &Value) -> Value {
 
 fn tool_result(id: Value, output: Value, is_error: bool) -> Value {
     let text = match output {
-        Value::String(text) if is_error => text,
+        Value::String(text) => text,
         output => serde_json::to_string(&output).expect("JSON values always serialize"),
     };
     rpc_result(
@@ -453,8 +473,69 @@ impl ToolBackend for ClientBackend {
                     .await?;
                 Ok(json!({}))
             }
+            ToolRequest::Attach { path, name } => {
+                let identity = self
+                    .identity
+                    .ok_or_else(|| anyhow!("amux agent identity is unavailable"))?;
+                let mention = attach(client.as_ref(), identity, path, name).await?;
+                Ok(Value::String(mention))
+            }
         }
     }
+}
+
+const IMAGE_EXTENSIONS: &[(&str, &str)] = &[
+    ("png", "image/png"),
+    ("jpg", "image/jpeg"),
+    ("jpeg", "image/jpeg"),
+    ("gif", "image/gif"),
+    ("webp", "image/webp"),
+];
+
+async fn attach(
+    client: &dyn DaemonApi,
+    caller: ManagedIdentity,
+    path: PathBuf,
+    name: Option<String>,
+) -> Result<String> {
+    let bytes = tokio::fs::read(&path)
+        .await
+        .with_context(|| format!("failed to read attachment {}", path.display()))?;
+    let name = name.unwrap_or_else(|| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string())
+    });
+    let extension = path
+        .extension()
+        .map(|extension| extension.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    let image_mime = IMAGE_EXTENSIONS
+        .iter()
+        .find_map(|(candidate, mime)| (*candidate == extension).then_some(*mime));
+    let (kind, mime) = image_mime
+        .map(|mime| (ArtifactKind::Image, mime))
+        .unwrap_or((ArtifactKind::File, "application/octet-stream"));
+    let artifact = client
+        .put_artifact_by_agent(caller.agent_id, kind, &name, mime, bytes)
+        .await?;
+    let kind = match artifact.kind {
+        ArtifactKind::Image => MentionKind::Image {
+            id: artifact.id.clone(),
+        },
+        ArtifactKind::File => MentionKind::File {
+            id: artifact.id.clone(),
+        },
+        ArtifactKind::Diff => {
+            return Err(anyhow!("daemon returned a diff for an attached file"));
+        }
+    };
+    Ok(format_mention(&Mention {
+        kind,
+        name: artifact.name,
+        size: Some(artifact.size),
+        path: None,
+    }))
 }
 
 fn spawn_working_dir(cwd: Option<PathBuf>, caller: Option<&Agent>) -> Result<PathBuf> {
@@ -515,7 +596,8 @@ fn display_agent_name(agent: &Agent) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+mod attach_tests {
+    use std::str::FromStr;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -526,6 +608,15 @@ mod tests {
         calls: Mutex<Vec<ToolRequest>>,
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    struct AttachCall {
+        caller: Uuid,
+        kind: ArtifactKind,
+        name: String,
+        mime: String,
+        bytes: Vec<u8>,
+    }
+
     struct FakeDaemon {
         agents: Vec<Agent>,
         hosts: Vec<amux::HostEntry>,
@@ -533,6 +624,7 @@ mod tests {
         send_calls: AtomicUsize,
         create_calls: AtomicUsize,
         standalone_spawn_shape: Mutex<Option<(Option<AgentParent>, Option<String>)>>,
+        attach_calls: Mutex<Vec<AttachCall>>,
     }
 
     impl FakeDaemon {
@@ -556,6 +648,7 @@ mod tests {
                 send_calls: AtomicUsize::new(0),
                 create_calls: AtomicUsize::new(0),
                 standalone_spawn_shape: Mutex::new(None),
+                attach_calls: Mutex::new(Vec::new()),
             }
         }
     }
@@ -596,6 +689,34 @@ mod tests {
 
         async fn set_agent_status(&self, _request: SetAgentStatusRequest) -> Result<()> {
             Ok(())
+        }
+
+        async fn put_artifact_by_agent(
+            &self,
+            caller: Uuid,
+            kind: ArtifactKind,
+            name: &str,
+            mime: &str,
+            bytes: Vec<u8>,
+        ) -> Result<ArtifactRef> {
+            let size = bytes.len() as u64;
+            self.attach_calls.lock().unwrap().push(AttachCall {
+                caller,
+                kind,
+                name: name.to_string(),
+                mime: mime.to_string(),
+                bytes,
+            });
+            Ok(ArtifactRef {
+                id: amux::ArtifactId::from_str(
+                    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                )
+                .unwrap(),
+                kind,
+                name: name.to_string(),
+                mime: mime.to_string(),
+                size,
+            })
         }
     }
 
@@ -697,6 +818,7 @@ mod tests {
                     "id": Uuid::from_u128(91)
                 }),
                 ToolRequest::Stop { .. } | ToolRequest::Status { .. } => json!({}),
+                ToolRequest::Attach { .. } => Value::String("attached".to_string()),
             };
             self.calls.lock().unwrap().push(request);
             Ok(output)
@@ -712,7 +834,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a2a_mcp_tools_list_exposes_the_five_agreed_schemas() {
+    async fn a2a_mcp_tools_list_exposes_the_six_agreed_schemas() {
         let input = concat!(
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\"}}\n",
             "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
@@ -734,7 +856,7 @@ mod tests {
                 .iter()
                 .map(|tool| tool["name"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["agents", "send", "spawn", "stop", "status"]
+            ["agents", "send", "spawn", "stop", "status", "attach"]
         );
         assert!(tools.iter().all(|tool| {
             tool["description"]
@@ -753,6 +875,7 @@ mod tests {
             tools[4]["inputSchema"]["properties"]["working_on"]["type"],
             json!(["string", "null"])
         );
+        assert_eq!(tools[5]["inputSchema"]["required"], json!(["path"]));
     }
 
     #[test]
@@ -778,7 +901,8 @@ mod tests {
                 "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{{\"name\":\"send\",\"arguments\":{{\"to\":\"worker\",\"text\":\"inspect this\",\"context\":\"{}\"}}}}}}\n",
                 "{{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{{\"name\":\"spawn\",\"arguments\":{{\"kind\":\"codex\",\"prompt\":\"find the fault\",\"name\":\"probe\",\"cwd\":\"/tmp/work\"}}}}}}\n",
                 "{{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{{\"name\":\"stop\",\"arguments\":{{\"name\":\"probe\"}}}}}}\n",
-                "{{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{{\"name\":\"status\",\"arguments\":{{\"working_on\":null}}}}}}\n"
+                "{{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{{\"name\":\"status\",\"arguments\":{{\"working_on\":null}}}}}}\n",
+                "{{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{{\"name\":\"attach\",\"arguments\":{{\"path\":\"/tmp/screenshot.png\",\"name\":\"proof.png\"}}}}}}\n"
             ),
             context
         );
@@ -807,11 +931,15 @@ mod tests {
                     name: "probe".to_string(),
                 },
                 ToolRequest::Status { working_on: None },
+                ToolRequest::Attach {
+                    path: PathBuf::from("/tmp/screenshot.png"),
+                    name: Some("proof.png".to_string()),
+                },
             ]
         );
         let responses = response_lines(output);
-        assert_eq!(responses.len(), 5);
-        assert!(responses.iter().all(|response| {
+        assert_eq!(responses.len(), 6);
+        assert!(responses[..5].iter().all(|response| {
             response["result"]["content"][0]["type"] == "text"
                 && response["result"]["content"][0]["text"]
                     .as_str()
@@ -819,6 +947,54 @@ mod tests {
                     .is_some()
                 && response["result"]["isError"] == false
         }));
+        assert_eq!(responses[5]["result"]["content"][0]["text"], "attached");
+        assert_eq!(responses[5]["result"]["isError"], false);
+    }
+
+    #[tokio::test]
+    async fn attach_png_reads_the_agent_host_file_and_returns_the_exact_element_text() {
+        let caller = Uuid::from_u128(601);
+        let host = Uuid::from_u128(602);
+        let daemon = Arc::new(FakeDaemon::new(vec![test_agent(caller, host, "caller")]));
+        let backend = ClientBackend {
+            connector: Arc::new(FakeConnector::new(daemon.clone(), 0)),
+            identity: Some(ManagedIdentity {
+                agent_id: caller,
+                host_id: host,
+            }),
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.PNG");
+        let bytes = b"png bytes from the agent host";
+        std::fs::write(&path, bytes).unwrap();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "attach",
+                "arguments": { "path": path }
+            }
+        })
+        .to_string();
+
+        let response = handle_line(&request, &backend).await.unwrap();
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(
+            response["result"]["content"][0]["text"],
+            "<amux-attachment id=\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\" kind=\"image\" name=\"capture.PNG\" size=\"29\"/>"
+        );
+        assert_eq!(
+            *daemon.attach_calls.lock().unwrap(),
+            vec![AttachCall {
+                caller,
+                kind: ArtifactKind::Image,
+                name: "capture.PNG".to_string(),
+                mime: "image/png".to_string(),
+                bytes: bytes.to_vec(),
+            }]
+        );
     }
 
     #[test]

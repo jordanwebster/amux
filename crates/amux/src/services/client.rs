@@ -1138,6 +1138,21 @@ impl wire::client_service_server::ClientService for ClientService {
             )?)
             .await
             .map_err(protocol_status)?;
+        if request.agent_attach {
+            if !self.is_local_host(agent.host_id) {
+                return Err(protocol_status(ProtocolError::NoAgentFound));
+            }
+            let kind = crate::agents::artifact_kind_from_wire(request.kind)
+                .map_err(decode_remote_status)?;
+            let artifact = self
+                .local_agents
+                .put_artifact_by_agent(agent.id, kind, &request.name, &request.mime, request.bytes)
+                .await
+                .map_err(protocol_status)?;
+            return Ok(tonic::Response::new(wire::PutArtifactResponse {
+                artifact: Some(crate::agents::artifact_ref_to_wire(&artifact)),
+            }));
+        }
         let request = wire::PutArtifactRequest {
             agent_id: agent.id.as_bytes().to_vec(),
             kind: request.kind,
@@ -5029,6 +5044,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tonic_client_service_agent_attach_put_pins_and_publishes_locally() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let host_id = Uuid::from_u128(1);
+        let host = PtyAgentHost::new(host_id);
+        let owners = Arc::new(
+            ArtifactOwners::open(
+                data_dir.path().to_path_buf(),
+                Arc::new(amux_artifacts::SystemClock),
+            )
+            .unwrap(),
+        );
+        let agent_service = AgentServiceCtx::new(Some(host.clone()), host_id, false)
+            .with_artifact_owners(owners.clone());
+        let (routing, tunnels) = test_routing_and_tunnels(host_id);
+        let service = client_service_with_agent_and_tunnels(agent_service, routing, tunnels);
+        let agent_id = Uuid::from_u128(126);
+        <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(test_agent_create_request(agent_id, "local-echo", None)),
+        )
+        .await
+        .unwrap();
+        let log = host.attachment_log(agent_id).await.unwrap();
+        let (mut rows, seq) = log.subscribe_with_query(None).await.unwrap();
+        assert_eq!(seq, 0);
+
+        let put = <ClientService as wire::client_service_server::ClientService>::put_artifact(
+            &service,
+            tonic::Request::new(wire::ClientPutArtifactRequest {
+                agent: Some(agent_ref_id(agent_id)),
+                kind: wire::ArtifactKind::Image as i32,
+                name: "screen.png".to_string(),
+                mime: "image/png".to_string(),
+                bytes: b"png bytes".to_vec(),
+                agent_attach: true,
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner()
+        .artifact
+        .unwrap();
+        let artifact = crate::agents::artifact_ref_from_wire(put).unwrap();
+
+        assert!(
+            owners
+                .owner(agent_id)
+                .unwrap()
+                .meta(&artifact.id)
+                .unwrap()
+                .pinned_at
+                .is_some()
+        );
+        assert_eq!(
+            rows.read().await.unwrap().payload,
+            crate::attachments_row(None, std::slice::from_ref(&artifact))
+        );
+    }
+
+    #[tokio::test]
     async fn tonic_client_service_dispatches_remote_agent_methods_over_tunnel() {
         let harness = remote_dispatch_harness().await;
         let service = &harness.service;
@@ -5127,6 +5202,7 @@ mod tests {
                 name: "notes.txt".to_string(),
                 mime: "text/plain".to_string(),
                 bytes: b"notes".to_vec(),
+                agent_attach: false,
             }),
         )
         .await
