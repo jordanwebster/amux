@@ -22,6 +22,7 @@ pub mod render;
 pub mod replay;
 #[cfg(any(debug_assertions, test))]
 pub mod report_flow;
+pub mod review;
 pub mod run;
 #[cfg(test)]
 mod serde_roundtrip;
@@ -34,6 +35,7 @@ pub mod view;
 pub use chat::{ChatView, PaintStats};
 pub use diagnostics::{DaemonDump, DiagnosticsSource};
 pub use render::{FrameContext, build_lines, render};
+pub use review::{ReviewOutcome, ReviewView};
 pub use run::{AttachReturn, TuiConfig, run_fleet};
 pub use terminal::{
     TerminalGuard, install_panic_hook, write_enter_chrome, write_osc52, write_restore,

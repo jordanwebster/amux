@@ -35,6 +35,13 @@ impl PaintedDiff {
         self.rows.into_iter().flatten().collect()
     }
 
+    /// Screen lines still grouped by source row, for surfaces that must
+    /// address a diff row rather than a screen line — the review page maps
+    /// its cursor and its scroll onto these groups.
+    pub(crate) fn into_row_groups(self) -> Vec<Vec<Line<'static>>> {
+        self.rows
+    }
+
     /// A screen-row head for feed patches that have no remainder row of their
     /// own. The boolean says whether any painted screen row was omitted.
     pub(crate) fn into_screen_head(self, budget: usize) -> (Vec<Line<'static>>, bool) {

@@ -11,10 +11,10 @@
 
 use amux_tui::view::ViewState;
 use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
+use amux_ui::attachments::ArtifactKind;
 use amux_ui::claude::answer::{AskAnswer, PermissionAnswer};
 use amux_ui::claude::{DiffDocument, DiffMagnitude};
 use amux_ui::diff::{Document, Hunk, Numbering};
-use amux_ui::attachments::ArtifactKind;
 use amux_ui::{
     Agent, AgentId, Command, DraftAttachment, HostEntry, HostId, Mention, MentionKind, Model, Msg,
     OpId, ServerMsg, StreamEntry, StreamMsg, format_mention, update,
@@ -2181,7 +2181,12 @@ fn image_attachment() -> DraftAttachment {
 }
 
 fn file_attachment() -> DraftAttachment {
-    DraftAttachment::from_bytes(ArtifactKind::File, "trace.log", "text/plain", vec![b'x'; 4096])
+    DraftAttachment::from_bytes(
+        ArtifactKind::File,
+        "trace.log",
+        "text/plain",
+        vec![b'x'; 4096],
+    )
 }
 
 fn agent_attachment() -> DraftAttachment {
@@ -2287,7 +2292,11 @@ fn attachment_reply_msgs() -> Vec<Msg> {
         vec![
             ready_row(),
             mode_row("default"),
-            prompt_row(1, "2026-08-12T09:00:00Z", "run the coverage report and show me"),
+            prompt_row(
+                1,
+                "2026-08-12T09:00:00Z",
+                "run the coverage report and show me",
+            ),
             refs_row(&[&attached]),
             assistant_text_row(
                 2,
@@ -2309,7 +2318,13 @@ fn attachment_reply_msgs() -> Vec<Msg> {
 /// the person typed, with the element itself never shown.
 #[test]
 fn chat_attachment_blocks() {
-    let rendered = render_frame(&fold(attachment_prompt_msgs()), &chat_view(), 80, 20, IDLE_NOW);
+    let rendered = render_frame(
+        &fold(attachment_prompt_msgs()),
+        &chat_view(),
+        80,
+        20,
+        IDLE_NOW,
+    );
     assert_golden("chat_attachment_blocks", &rendered);
 }
 
@@ -2317,7 +2332,13 @@ fn chat_attachment_blocks() {
 /// row, on the background rather than on the user's surface.
 #[test]
 fn chat_attachment_reply() {
-    let rendered = render_frame(&fold(attachment_reply_msgs()), &chat_view(), 80, 20, IDLE_NOW);
+    let rendered = render_frame(
+        &fold(attachment_reply_msgs()),
+        &chat_view(),
+        80,
+        20,
+        IDLE_NOW,
+    );
     assert_golden("chat_attachment_reply", &rendered);
 }
 
@@ -2363,4 +2384,166 @@ fn leader(view: &mut ViewState, model: &Model, code: KeyCode) {
     ] {
         amux_tui::chat::handle_chat_key(chat, model, key, (80, 20), at(IDLE_NOW));
     }
+}
+
+// --- the review page --------------------------------------------------------
+
+/// The review page replaces the whole frame, so it draws exactly the way
+/// the chat does: one paragraph of styled lines over the viewport.
+fn review_buffer(view: &amux_tui::ReviewView, theme: Theme) -> ratatui::buffer::Buffer {
+    let backend = TestBackend::new(GOLDEN_VIEWPORT.0, GOLDEN_VIEWPORT.1);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| {
+            let lines = view.frame(theme, GOLDEN_VIEWPORT.0, GOLDEN_VIEWPORT.1);
+            frame.render_widget(ratatui::widgets::Paragraph::new(lines), frame.area());
+        })
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+fn review_open_view() -> amux_tui::ReviewView {
+    let mut view = amux_tui::review::fixture::sample_review();
+    view.set_viewport(GOLDEN_VIEWPORT.0, GOLDEN_VIEWPORT.1);
+    view
+}
+
+fn review_press(view: &mut amux_tui::ReviewView, code: char) {
+    view.handle_key(&KeyEvent::new(KeyCode::Char(code), KeyModifiers::NONE));
+}
+
+/// The page as it opens: header with the base and totals, the current file
+/// and position, both files' rows with dual gutters and hunk meta rows, and
+/// the binding footer.
+#[test]
+fn review_open() {
+    let view = review_open_view();
+    assert_golden(
+        "review_open",
+        &buffer_text(&review_buffer(&view, Theme::default())),
+    );
+}
+
+#[test]
+fn review_open_styles_dark() {
+    let theme = Theme::default();
+    assert_golden(
+        "review_open_styles_dark",
+        &buffer_styles(&review_buffer(&review_open_view(), theme), theme),
+    );
+}
+
+#[test]
+fn review_open_styles_light() {
+    let theme = Theme::light(ColorMode::TrueColor);
+    assert_golden(
+        "review_open_styles_light",
+        &buffer_styles(&review_buffer(&review_open_view(), theme), theme),
+    );
+}
+
+fn review_file_list_view() -> amux_tui::ReviewView {
+    let mut view = amux_tui::review::fixture::sample_review_with_comments();
+    view.set_viewport(GOLDEN_VIEWPORT.0, GOLDEN_VIEWPORT.1);
+    review_press(&mut view, 'f');
+    review_press(&mut view, 'j');
+    view
+}
+
+/// `f` lists the changed files with the magnitudes and comment counts the
+/// review core states, and the footer changes to the overlay's keys.
+#[test]
+fn review_file_list() {
+    assert_golden(
+        "review_file_list",
+        &buffer_text(&review_buffer(&review_file_list_view(), Theme::default())),
+    );
+}
+
+#[test]
+fn review_file_list_styles_dark() {
+    let theme = Theme::default();
+    assert_golden(
+        "review_file_list_styles_dark",
+        &buffer_styles(&review_buffer(&review_file_list_view(), theme), theme),
+    );
+}
+
+#[test]
+fn review_file_list_styles_light() {
+    let theme = Theme::light(ColorMode::TrueColor);
+    assert_golden(
+        "review_file_list_styles_light",
+        &buffer_styles(&review_buffer(&review_file_list_view(), theme), theme),
+    );
+}
+
+fn review_folded_view() -> amux_tui::ReviewView {
+    let mut view = review_open_view();
+    review_press(&mut view, 'z');
+    view
+}
+
+/// `z` collapses the file under the cursor to one dim meta row stating how
+/// many rows it hides; the files below it move up.
+#[test]
+fn review_folded() {
+    assert_golden(
+        "review_folded",
+        &buffer_text(&review_buffer(&review_folded_view(), Theme::default())),
+    );
+}
+
+#[test]
+fn review_folded_styles_dark() {
+    let theme = Theme::default();
+    assert_golden(
+        "review_folded_styles_dark",
+        &buffer_styles(&review_buffer(&review_folded_view(), theme), theme),
+    );
+}
+
+#[test]
+fn review_folded_styles_light() {
+    let theme = Theme::light(ColorMode::TrueColor);
+    assert_golden(
+        "review_folded_styles_light",
+        &buffer_styles(&review_buffer(&review_folded_view(), theme), theme),
+    );
+}
+
+fn review_branch_base_view() -> amux_tui::ReviewView {
+    let mut view = amux_tui::review::fixture::sample_review_against(amux_ui::DiffBase::Branch {
+        base: "main".to_string(),
+    });
+    view.set_viewport(GOLDEN_VIEWPORT.0, GOLDEN_VIEWPORT.1);
+    view
+}
+
+/// The same diff attributed to a branch base: the header names the branch
+/// rather than the working tree.
+#[test]
+fn review_branch_base() {
+    assert_golden(
+        "review_branch_base",
+        &buffer_text(&review_buffer(&review_branch_base_view(), Theme::default())),
+    );
+}
+
+#[test]
+fn review_branch_base_styles_dark() {
+    let theme = Theme::default();
+    assert_golden(
+        "review_branch_base_styles_dark",
+        &buffer_styles(&review_buffer(&review_branch_base_view(), theme), theme),
+    );
+}
+
+#[test]
+fn review_branch_base_styles_light() {
+    let theme = Theme::light(ColorMode::TrueColor);
+    assert_golden(
+        "review_branch_base_styles_light",
+        &buffer_styles(&review_buffer(&review_branch_base_view(), theme), theme),
+    );
 }

@@ -7108,3 +7108,16 @@ twice. Separately, an attached image took its media type from the filename
 verbatim, so a `.jpg` was sent as `image/jpg` and a `.bmp` as `image/bmp` —
 neither is a type a model accepts. Extensions now map to the four accepted
 image types, and anything outside them attaches as an ordinary file.
+
+2026-09-03 — **A fullscreen page for reviewing a diff.** The terminal grew a
+review page over the frozen diff the review core parses: a header naming the
+base, the head commit and the totals; the shared unified-diff painter as the
+body, with wrapped rows continuing under blank gutters and hunk headers as dim
+meta rows; and a footer listing its keys. `j`/`k` walk rows, `J`/`K` hunks,
+`[`/`]` files, `g`/`G` the ends, the wheel scrolls without moving the cursor,
+`n`/`N` step between rows that carry comments, `z` collapses a file to one row
+that states how many it hides, `f` lists the changed files with their
+magnitudes and comment counts, `b` asks for the other base, and `q` leaves. The
+page computes no row, magnitude or comment fact of its own — every one comes
+from the review core — so it owns only width, scroll, cursor, folds and the
+file list. Four 120×40 frames are locked as goldens with their style maps.
