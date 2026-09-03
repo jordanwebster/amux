@@ -10,6 +10,9 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 mod index;
+mod owner;
+
+pub use owner::Owner;
 
 /// The maximum size accepted for one artifact.
 pub const ARTIFACT_SIZE_CAP: u64 = 10 * 1024 * 1024;

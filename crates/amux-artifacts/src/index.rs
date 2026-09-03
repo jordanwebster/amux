@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -15,9 +15,10 @@ pub(crate) const INDEX_FILE: &str = "index.json";
 
 static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Index {
     artifacts: BTreeMap<ArtifactId, ArtifactMeta>,
+    order: Vec<ArtifactId>,
 }
 
 impl Index {
@@ -25,8 +26,8 @@ impl Index {
         fs::create_dir_all(root.join(BLOBS_DIR))?;
         match fs::read(root.join(INDEX_FILE)) {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
-                Ok(index) => Ok(index),
-                Err(_) => Self::recover(root),
+                Ok(index) if Self::is_valid(&index) => Ok(index),
+                Ok(_) | Err(_) => Self::recover(root),
             },
             Err(error) if error.kind() == io::ErrorKind::NotFound => Self::recover(root),
             Err(error) => Err(error.into()),
@@ -43,9 +44,36 @@ impl Index {
         self.artifacts.get(id)
     }
 
-    #[cfg(test)]
-    fn insert(&mut self, meta: ArtifactMeta) {
-        self.artifacts.insert(meta.id.clone(), meta);
+    pub(crate) fn get_mut(&mut self, id: &ArtifactId) -> Option<&mut ArtifactMeta> {
+        self.artifacts.get_mut(id)
+    }
+
+    pub(crate) fn insert(&mut self, meta: ArtifactMeta) {
+        let id = meta.id.clone();
+        if self.artifacts.insert(id.clone(), meta).is_none() {
+            self.order.push(id);
+        }
+    }
+
+    pub(crate) fn remove(&mut self, id: &ArtifactId) -> Option<ArtifactMeta> {
+        let removed = self.artifacts.remove(id);
+        if removed.is_some() {
+            self.order.retain(|candidate| candidate != id);
+        }
+        removed
+    }
+
+    pub(crate) fn ordered(&self) -> impl Iterator<Item = &ArtifactMeta> {
+        self.order.iter().filter_map(|id| self.artifacts.get(id))
+    }
+
+    fn is_valid(index: &Self) -> bool {
+        index.order.len() == index.artifacts.len()
+            && index.order.iter().collect::<BTreeSet<_>>().len() == index.order.len()
+            && index
+                .artifacts
+                .iter()
+                .all(|(id, meta)| id == &meta.id && index.order.contains(id))
     }
 
     fn recover(root: &Path) -> Result<Self, StoreError> {
@@ -80,8 +108,15 @@ impl Index {
                 created_at,
                 pinned_at: None,
             };
-            index.artifacts.insert(id, meta);
+            index.insert(meta);
         }
+        index.order.sort_by(|left, right| {
+            let left = &index.artifacts[left];
+            let right = &index.artifacts[right];
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
         index.write(root)?;
         Ok(index)
     }
@@ -91,15 +126,19 @@ pub(crate) fn blob_path(root: &Path, id: &ArtifactId) -> PathBuf {
     root.join(BLOBS_DIR).join(id.hex())
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::other("index path has no parent"))?;
     fs::create_dir_all(parent)?;
 
     let sequence = NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed);
+    let target_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("blob");
     let temp = parent.join(format!(
-        ".{INDEX_FILE}.{}.{}.tmp",
+        ".{target_name}.{}.{}.tmp",
         std::process::id(),
         sequence
     ));

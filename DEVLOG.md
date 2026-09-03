@@ -11,6 +11,10 @@ typed store failures without depending on `amux`. Its shared `blobs/` and
 atomically replaced `index.json` foundation recovers a missing or malformed
 index by rehashing stored bytes, reconstructing safe generic metadata for
 verified blobs, and removing blobs whose contents no longer match their names.
+The owning role loads that index once, applies the ten-mebibyte cap before
+writing, retains first-put metadata, verifies every read, pins atomically,
+sweeps only indexed expired ephemerals, replays pins in creation order, and
+deletes all stored artifacts with their agent.
 
 2026-09-03 — **Renamed the reader's typed content model to documents.**
 `AskDocument`, `DiffDocument`, and the `claude::document` module now name
