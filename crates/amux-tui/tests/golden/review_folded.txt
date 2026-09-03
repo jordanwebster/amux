@@ -37,4 +37,4 @@
                                                                                                                         
                                                                                                                         
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-    j/k rows · J/K hunks · [/] files · f files · z fold · n/N comments · b base · q close                               
+    j/k rows · v select · c comment · J/K hunks · [/] files · f files · z fold · n/N comments · b base · q close        

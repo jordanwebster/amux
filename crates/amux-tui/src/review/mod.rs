@@ -5,8 +5,10 @@
 //! cursor, folds and the file overlay. A side pane instead of a fullscreen
 //! page would be a change here alone.
 
+pub mod comments;
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixture;
 pub mod view;
 
+pub use comments::{CommentEditor, Selection};
 pub use view::{ReviewOutcome, ReviewView};

@@ -173,6 +173,15 @@ impl Review {
             .count()
     }
 
+    /// The row each comment is rendered under, in comment order. A comment
+    /// whose rows the document no longer holds has none.
+    pub fn comment_rows(&self) -> Vec<Option<RowRef>> {
+        self.comments
+            .iter()
+            .map(|comment| comment_row(&self.doc, comment))
+            .collect()
+    }
+
     /// Returns the row under which each comment thread is rendered.
     pub fn rows_with_comments(&self) -> Vec<RowRef> {
         let mut rows = self

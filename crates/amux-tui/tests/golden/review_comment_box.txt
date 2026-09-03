@@ -1,11 +1,14 @@
   review · working tree @ 4f2a9c1                                                         3 files · +7 −4 · 0 comments  
-  src/lib.rs  +4 −2                                                                                      lines 1-23/23  
+  src/lib.rs  +4 −2                                                                                      lines 1-26/26  
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ▾ src/lib.rs  +4 −2                                                                                                   
-▌       @@ -1,3 +1,3 @@                                                                                                 
+        @@ -1,3 +1,3 @@                                                                                                 
    1  1  pub mod artifacts;                                                                                             
    2    -pub mod legacy_store;                                                                                          
-      2 +pub mod attachments;                                                                                           
+▌     2 +pub mod attachments;                                                                                           
+        ─ comment ──────────────────────────────────────────────────────────────────────────────────────────────────────
+        │ the old name is public; keep a re-export for one release▌                                                    │
+        ─ enter save · ctrl-j newline · esc cancel ─────────────────────────────────────────────────────────────────────
    3  3  pub mod review;                                                                                                
         @@ -10,3 +10,5 @@ impl Session {                                                                                
   10 10      pub fn open(&self) -> Result<Handle> {                                                                     
@@ -33,8 +36,5 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-    j/k rows · v select · c comment · J/K hunks · [/] files · f files · z fold · n/N comments · b base · q close        
+    enter save · ctrl-j newline · esc cancel                                                                            

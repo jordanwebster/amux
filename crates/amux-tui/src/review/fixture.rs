@@ -5,6 +5,7 @@
 use amux_ui::attachments::ArtifactId;
 use amux_ui::review::{Review, RowRef, anchor, parse_patch};
 use amux_ui::{BaseIdentity, DiffBase, DiffFile};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::ReviewView;
 
@@ -103,6 +104,26 @@ pub fn sample_review_with_comments() -> ReviewView {
         let at = RowRef { file, row };
         let anchor = anchor(view.review().document(), at, at).expect("fixture row anchors");
         view.review_mut().add(anchor, text.to_string());
+    }
+    view
+}
+
+/// The page mid-selection: a removed row and the added row under it.
+pub fn sample_review_selecting() -> ReviewView {
+    let mut view = sample_review();
+    view.set_viewport(120, 40);
+    for code in ['j', 'j', 'v', 'j'] {
+        view.handle_key(&KeyEvent::new(KeyCode::Char(code), KeyModifiers::NONE));
+    }
+    view
+}
+
+/// The same selection with the comment box open over it.
+pub fn sample_review_commenting() -> ReviewView {
+    let mut view = sample_review_selecting();
+    view.handle_key(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+    for character in "the old name is public; keep a re-export for one release".chars() {
+        view.handle_key(&KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
     }
     view
 }

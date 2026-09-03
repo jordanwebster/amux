@@ -2547,3 +2547,101 @@ fn review_branch_base_styles_light() {
         &buffer_styles(&review_buffer(&review_branch_base_view(), theme), theme),
     );
 }
+
+fn review_selection_view() -> amux_tui::ReviewView {
+    amux_tui::review::fixture::sample_review_selecting()
+}
+
+/// `v` and `j` mark a run of rows spanning a removed and an added line;
+/// the footer changes to the selection's keys.
+#[test]
+fn review_selection() {
+    assert_golden(
+        "review_selection",
+        &buffer_text(&review_buffer(&review_selection_view(), Theme::default())),
+    );
+}
+
+#[test]
+fn review_selection_styles_dark() {
+    let theme = Theme::default();
+    assert_golden(
+        "review_selection_styles_dark",
+        &buffer_styles(&review_buffer(&review_selection_view(), theme), theme),
+    );
+}
+
+#[test]
+fn review_selection_styles_light() {
+    let theme = Theme::light(ColorMode::TrueColor);
+    assert_golden(
+        "review_selection_styles_light",
+        &buffer_styles(&review_buffer(&review_selection_view(), theme), theme),
+    );
+}
+
+fn review_comment_box_view() -> amux_tui::ReviewView {
+    amux_tui::review::fixture::sample_review_commenting()
+}
+
+/// The bordered comment box, open under the selection with text in it.
+#[test]
+fn review_comment_box() {
+    assert_golden(
+        "review_comment_box",
+        &buffer_text(&review_buffer(&review_comment_box_view(), Theme::default())),
+    );
+}
+
+#[test]
+fn review_comment_box_styles_dark() {
+    let theme = Theme::default();
+    assert_golden(
+        "review_comment_box_styles_dark",
+        &buffer_styles(&review_buffer(&review_comment_box_view(), theme), theme),
+    );
+}
+
+#[test]
+fn review_comment_box_styles_light() {
+    let theme = Theme::light(ColorMode::TrueColor);
+    assert_golden(
+        "review_comment_box_styles_light",
+        &buffer_styles(&review_buffer(&review_comment_box_view(), theme), theme),
+    );
+}
+
+fn review_threads_view() -> amux_tui::ReviewView {
+    let mut view = amux_tui::review::fixture::sample_review_with_comments();
+    view.set_viewport(GOLDEN_VIEWPORT.0, GOLDEN_VIEWPORT.1);
+    review_press(&mut view, 'n');
+    view
+}
+
+/// Saved comments hang under the rows they were anchored to, with the
+/// cursor on the first of them.
+#[test]
+fn review_threads() {
+    assert_golden(
+        "review_threads",
+        &buffer_text(&review_buffer(&review_threads_view(), Theme::default())),
+    );
+}
+
+#[test]
+fn review_threads_styles_dark() {
+    let theme = Theme::default();
+    assert_golden(
+        "review_threads_styles_dark",
+        &buffer_styles(&review_buffer(&review_threads_view(), theme), theme),
+    );
+}
+
+#[test]
+fn review_threads_styles_light() {
+    let theme = Theme::light(ColorMode::TrueColor);
+    assert_golden(
+        "review_threads_styles_light",
+        &buffer_styles(&review_buffer(&review_threads_view(), theme), theme),
+    );
+}

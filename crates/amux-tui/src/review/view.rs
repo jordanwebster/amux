@@ -7,6 +7,7 @@ use amux_ui::review::{Review, RowRef};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::{Line, Span};
 
+use super::comments::{CommentEditor, Selection};
 use crate::chat::diff::paint_rows;
 use crate::render::{Theme, push_right, push_span};
 
@@ -27,6 +28,9 @@ pub enum ReviewOutcome {
     Close,
     /// Re-request the diff against another base and reopen over the result.
     SwitchBase(DiffBase),
+    /// A comment was saved, edited or deleted; the draft's review token has
+    /// to catch up.
+    CommentsChanged,
 }
 
 /// The open file list, with the entry the keyboard is pointing at.
@@ -39,16 +43,18 @@ pub struct FileOverlay {
 /// looking at it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReviewView {
-    core: Review,
-    cursor: RowRef,
-    folded: BTreeSet<usize>,
-    overlay: Option<FileOverlay>,
-    scroll: usize,
+    pub(super) core: Review,
+    pub(super) cursor: RowRef,
+    pub(super) selection: Option<Selection>,
+    pub(super) editor: Option<CommentEditor>,
+    pub(super) folded: BTreeSet<usize>,
+    pub(super) overlay: Option<FileOverlay>,
+    pub(super) scroll: usize,
     /// The base `b` offers when the review is against the working tree.
     /// The page cannot know a repository's trunk, so its host names it.
-    branch: String,
-    width: u16,
-    height: u16,
+    pub(super) branch: String,
+    pub(super) width: u16,
+    pub(super) height: u16,
 }
 
 impl ReviewView {
@@ -57,6 +63,8 @@ impl ReviewView {
         Self {
             core,
             cursor: RowRef { file: 0, row: 0 },
+            selection: None,
+            editor: None,
             folded: BTreeSet::new(),
             overlay: None,
             scroll: 0,
@@ -87,6 +95,14 @@ impl ReviewView {
         self.overlay.as_ref()
     }
 
+    pub fn selection(&self) -> Option<&Selection> {
+        self.selection.as_ref()
+    }
+
+    pub fn editor(&self) -> Option<&CommentEditor> {
+        self.editor.as_ref()
+    }
+
     pub fn scroll(&self) -> usize {
         self.scroll
     }
@@ -100,11 +116,11 @@ impl ReviewView {
         self.follow_cursor();
     }
 
-    fn files(&self) -> &[amux_ui::review::ReviewFile] {
+    pub(super) fn files(&self) -> &[amux_ui::review::ReviewFile] {
         &self.core.document().files
     }
 
-    fn body_height(&self) -> usize {
+    pub(super) fn body_height(&self) -> usize {
         (self.height as usize).saturating_sub(CHROME_ROWS).max(1)
     }
 
@@ -135,7 +151,7 @@ impl ReviewView {
         }
     }
 
-    fn next_position(&self, at: RowRef) -> Option<RowRef> {
+    pub(super) fn next_position(&self, at: RowRef) -> Option<RowRef> {
         if at.row + 1 < self.rows_in(at.file) {
             return Some(RowRef {
                 file: at.file,
@@ -148,7 +164,7 @@ impl ReviewView {
         })
     }
 
-    fn prev_position(&self, at: RowRef) -> Option<RowRef> {
+    pub(super) fn prev_position(&self, at: RowRef) -> Option<RowRef> {
         if at.row > 0 {
             return Some(RowRef {
                 file: at.file,
@@ -195,6 +211,9 @@ impl ReviewView {
     // --- keys ---------------------------------------------------------
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> ReviewOutcome {
+        if self.editor.is_some() {
+            return super::comments::editor_key(self, key);
+        }
         if self.overlay.is_some() {
             return self.handle_overlay_key(key);
         }
@@ -202,6 +221,28 @@ impl ReviewView {
             return ReviewOutcome::Ignored;
         }
         match key.code {
+            KeyCode::Char('v') => {
+                self.selection = match self.selection {
+                    Some(_) => None,
+                    None => Some(Selection {
+                        anchor: self.cursor,
+                        head: self.cursor,
+                    }),
+                };
+                ReviewOutcome::Handled
+            }
+            KeyCode::Char('c') => super::comments::open_editor(self, None),
+            KeyCode::Enter => {
+                let existing = super::comments::comment_at(self, self.cursor);
+                super::comments::open_editor(self, existing)
+            }
+            KeyCode::Char('d') => super::comments::delete_at_cursor(self),
+            KeyCode::Esc => {
+                // Esc steps back out of the selection without leaving the
+                // page; there is nothing else to step out of here.
+                self.selection = None;
+                ReviewOutcome::Handled
+            }
             KeyCode::Char('j') | KeyCode::Down => self.move_to(self.next_position(self.cursor)),
             KeyCode::Char('k') | KeyCode::Up => self.move_to(self.prev_position(self.cursor)),
             KeyCode::Char('J') => {
@@ -299,8 +340,16 @@ impl ReviewView {
         self.scroll = scroll.clamp(0, max as i64) as usize;
     }
 
-    fn move_to(&mut self, position: Option<RowRef>) -> ReviewOutcome {
+    pub(super) fn move_to(&mut self, position: Option<RowRef>) -> ReviewOutcome {
         if let Some(position) = position {
+            // A selection lives inside one file, because an anchor does:
+            // a range crossing files has no path to name.
+            if let Some(selection) = self.selection.as_mut() {
+                if position.file != selection.anchor.file {
+                    return ReviewOutcome::Handled;
+                }
+                selection.head = position;
+            }
             self.cursor = position;
             self.follow_cursor();
         }
@@ -333,6 +382,7 @@ impl ReviewView {
         let width = self.width as usize;
         let mut lines = Vec::new();
         let mut spans = Vec::new();
+        let comment_rows = super::comments::comment_rows(self);
         for (index, file) in self.files().iter().enumerate() {
             let folded = self.folded.contains(&index);
             let comments = self.core.comments_in(index);
@@ -360,22 +410,50 @@ impl ReviewView {
             }
             let groups = paint_rows(&file.rows, theme, width, BODY_LEFT, false).into_row_groups();
             for (row, group) in groups.into_iter().enumerate() {
+                let here = RowRef { file: index, row };
                 // The first row of a file carries its header line, so
                 // stepping into a file always brings the file's name on
                 // screen with it.
                 let at = if row == 0 { start } else { lines.len() };
-                let height = lines.len() - at + group.len();
-                let cursor = self.cursor == RowRef { file: index, row };
+                let marked = self.marks(here);
                 for (offset, mut line) in group.into_iter().enumerate() {
-                    if cursor && offset == 0 {
+                    if marked && offset == 0 {
                         mark_cursor(&mut line, theme);
                     }
                     lines.push(line);
                 }
-                spans.push((RowRef { file: index, row }, at, height));
+                let mut height = lines.len() - at;
+                lines.extend(super::comments::thread_lines(
+                    self,
+                    &comment_rows,
+                    here,
+                    width,
+                    theme,
+                ));
+                if let Some(editor) = self
+                    .editor
+                    .as_ref()
+                    .filter(|editor| editor.target.last() == here)
+                {
+                    // The box must stay on screen while it is typed in, so
+                    // the row it hangs from claims its height.
+                    let box_lines = super::comments::editor_lines(editor, width, theme);
+                    height = lines.len() - at + box_lines.len();
+                    lines.extend(box_lines);
+                }
+                spans.push((here, at, height));
             }
         }
         Body { lines, spans }
+    }
+
+    /// Whether a row wears the cursor bar: the cursor itself, or any row
+    /// inside an open selection.
+    fn marks(&self, row: RowRef) -> bool {
+        match self.selection.as_ref() {
+            Some(selection) => selection.contains(row),
+            None => self.cursor == row,
+        }
     }
 
     fn max_scroll(&self) -> usize {
@@ -384,7 +462,7 @@ impl ReviewView {
     }
 
     /// Keep the cursor's row inside the body window after every motion.
-    fn follow_cursor(&mut self) {
+    pub(super) fn follow_cursor(&mut self) {
         self.clamp_cursor();
         let body = self.body(Theme::default());
         let height = self.body_height();
@@ -396,7 +474,7 @@ impl ReviewView {
         else {
             return;
         };
-        if start < self.scroll {
+        if start < self.scroll || span >= height {
             self.scroll = start;
         } else if start + span > self.scroll + height {
             self.scroll = start + span - height;
@@ -547,10 +625,14 @@ impl ReviewView {
     }
 
     fn footer_line(&self, width: usize, theme: Theme) -> Line<'static> {
-        let text = if self.overlay.is_some() {
+        let text = if self.editor.is_some() {
+            "enter save \u{b7} ctrl-j newline \u{b7} esc cancel"
+        } else if self.selection.is_some() {
+            "j/k extend \u{b7} c comment \u{b7} esc cancel"
+        } else if self.overlay.is_some() {
             "j/k file \u{b7} enter go \u{b7} esc back"
         } else {
-            "j/k rows \u{b7} J/K hunks \u{b7} [/] files \u{b7} f files \u{b7} z fold \u{b7} n/N comments \u{b7} b base \u{b7} q close"
+            "j/k rows \u{b7} v select \u{b7} c comment \u{b7} J/K hunks \u{b7} [/] files \u{b7} f files \u{b7} z fold \u{b7} n/N comments \u{b7} b base \u{b7} q close"
         };
         let mut line = Line::default();
         push_span(&mut line, 4, text.to_string(), theme.muted());

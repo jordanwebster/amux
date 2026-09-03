@@ -7121,3 +7121,14 @@ magnitudes and comment counts, `b` asks for the other base, and `q` leaves. The
 page computes no row, magnitude or comment fact of its own — every one comes
 from the review core — so it owns only width, scroll, cursor, folds and the
 file list. Four 120×40 frames are locked as goldens with their style maps.
+
+2026-09-03 — **Commenting on the review page.** `v` starts a selection the
+cursor extends with `j`/`k`, held inside one file because an anchor names one
+path; `c` — or Enter on a row with nothing on it yet — opens a bordered box
+under the last selected row, where Enter saves, Ctrl+J takes a newline and Esc
+throws the text away. A saved comment is anchored by the review core, so a
+range spanning a removed and an added line records the old-side start, the
+new-side end and both quoted rows without the page deriving any of it. Saved
+comments hang under their rows behind an accent bar; Enter on one reopens it
+for editing and `d` removes it, both through the core. Three more 120×40 frames
+are locked as goldens.
