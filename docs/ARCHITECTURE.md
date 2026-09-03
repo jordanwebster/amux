@@ -1,6 +1,6 @@
 # The amux system architecture
 
-**Status**: current (2026-08-30). This document describes the system —
+**Status**: current (2026-09-04). This document describes the system —
 processes, servers, trust machinery, service surfaces, and internal
 layering. Its companion, [`PROTOCOL.md`](./PROTOCOL.md), owns the wire:
 links, frames, tunnels, the routing rules, and the pairing flow. When this
@@ -27,7 +27,13 @@ Around the daemon sit its clients and consumers:
   exchange, and `amux mcp agent` serves the agent tools over stdio MCP.
   [`A2A.md`](./A2A.md) owns that tool contract.
 - **UI runtime** (`crates/amux-ui`): a reactive client library over the
-  same `ClientService` surface, for embedding in apps.
+  same `ClientService` surface, for embedding in apps. It joins attachment
+  puts before a send, folds stream refs, fetches opened artifacts through the
+  viewing-host cache, and leaves presentation to its client.
+- **Artifact library** (`crates/amux-artifacts`): dependency-light
+  content-addressed storage with an authoritative per-agent Owner role and a
+  disposable per-viewing-host Cache role. It depends on neither the daemon nor
+  the UI, so another client can reuse the storage contract directly.
 - **Test harnesses**: the `testnet` feature compiles an in-process harness
   (`amux::testnet`) that builds whole daemons — real identities, real
   trust stores, real localhost TCP with device mTLS, an optional
@@ -196,8 +202,8 @@ timed out after 10 seconds (`resource_limits.rs`, `dispatcher.rs`).
 
 `ClientService` is the client API: host and agent inventory and
 subscriptions, agent CRUD, message delivery and work status, session
-attach/input, hooks, debug, shutdown/suspend/resume, and the pairing/trust
-administration RPCs.
+attach/input, artifact put/get and diff, hooks, debug,
+shutdown/suspend/resume, and the pairing/trust administration RPCs.
 Pairing is the trust boundary — a paired peer has full runtime authority,
 including disruptive operations — with exactly one carve-out:
 **trust mutation and pairing administration are local-only**.
@@ -218,10 +224,37 @@ recent failed dial, cleared when a route comes up); nothing probes, so
 
 `AgentService` is what tunnels exist for: a peer lists another daemon's
 agents, creates or deletes them, delivers daemon-authored message envelopes,
-updates work status, attaches to a session, and round-trips terminal I/O end
-to end — through the cloud relay if that is the only shared path, with the
-relay seeing ciphertext. Parent edges and the provider-specific carriers are
+updates work status, attaches to a session, round-trips terminal I/O, and
+serves artifact put/get and repository diff requests on the agent's owning
+host — through the cloud relay if that is the only shared path, with the relay
+seeing ciphertext. Parent edges and the provider-specific carriers are
 described in [`A2A.md`](./A2A.md).
+
+## Attachment storage and routing
+
+An agent's daemon is the sole owner of that agent's artifacts. It opens one
+`amux_artifacts::Owner` at
+`<data_dir>/agents/<agent-id>/artifacts`, loads the index once, and keeps it in
+memory. Content starts ephemeral, is pinned when a sent message explicitly
+names its id, is swept after one hour if still ephemeral, and is deleted with
+the agent if pinned. A five-minute background pass visits loaded owners only.
+
+`PutArtifact`, `GetArtifact`, and `Diff` exist on both trusted services.
+`ClientService` resolves the agent and forwards a remote call through the
+ordinary tunnel to `AgentService`; artifact bytes never pass through a session
+subscription. `SendInput` carries only a pin list. After validating and pinning
+that list, the owning daemon writes an `amux.attachments` metadata row before
+the provider input; it replays all pinned refs when a session subscription
+opens. Diff computation also happens there, in the agent's working directory,
+and stores the returned patch as a Diff artifact.
+
+Every viewing host uses one `amux_artifacts::Cache` shared across agents. It
+fetches through `GetArtifact`, verifies content identities, persists recency,
+and uses only byte-bounded LRU eviction. Its root is
+`<cache_dir>/amux/artifacts`; `ui.artifact_cache_mib` sets the bound and
+defaults to 256. [`ATTACHMENTS.md`](./ATTACHMENTS.md) owns the element syntax,
+provider materialisation, complete lifetime rules, and deferred attachment
+surfaces.
 
 ## The cloud deployment
 

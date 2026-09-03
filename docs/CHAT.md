@@ -44,8 +44,12 @@ appear in the chat.
   needs-you, errored, unknown). Every phase value is tagged fact vs
   inferred (E1).
 - **Reader** — the one fullscreen overlay over typed documents (plan,
-  diff, new-file content), scrollable, with an action row only when a
-  writable ask is open.
+  diff, new-file content, pasted text, or a sent review), scrollable,
+  with an action row only when a writable ask is open.
+
+[`ATTACHMENTS.md`](./ATTACHMENTS.md) owns the attachment element, artifact
+lifetime, delivery, and cache. This document owns how attachment tokens,
+blocks, review pages, and readers behave in the terminal.
 
 Borrowed terms, credited: "composer" and the allow-once/allow-for-
 session phrasing are common to Codex CLI and opencode; "working" as the
@@ -202,6 +206,13 @@ truncation recovery must fold to the identical Model.
   a working indicator that quietly exceeds normal latency. Interruption
   entries render from the §-verified artifacts: the canonical interrupt
   user rows, `interruptedMessageId` pairing, and tool-denial rows.
+- **Attachments.** Canonical attachment elements inside prompts and replies
+  paint as individual blocks: Image and File show name and byte size, Text
+  shows its line count, and Review shows comment count and the number of paths
+  those comments touch. The adjacent `amux.attachments` row supplies stored
+  metadata without becoming a block of its own. `<leader> o` opens the focused
+  Image or File in the OS viewer and Text or Review in the reader; bytes are
+  fetched only then.
 - **Unrecognized rows** (G1). Unknown row types are retained and
   rendered as an explicit unrecognized entry, never silently dropped —
   the format is documented as internal and version-drifting, and the
@@ -209,9 +220,9 @@ truncation recovery must fold to the identical Model.
   `agent-name`) appearing and vanishing across versions.
 
 Session-state rows (`permission-mode`, `mode`, `ai-title`,
-`last-prompt`, `queue-operation`) and attachment rows are not feed
-entries; they fold into phase, composer, and header state as
-latest-wins facts.
+`last-prompt`, `queue-operation`) and `amux.attachments` rows are not feed
+entries; attachment rows fold idempotently into the layer's artifact index,
+while session-state rows retain their existing latest-wins rules.
 
 ### Block vocabulary and surfaces
 
@@ -220,8 +231,9 @@ chooses blocks from its own native entry kinds. The vocabulary is: user prompt,
 assistant markdown, thinking marker, tool one-liner, collapsed exploration
 run, file change with magnitude, unified diff, ask panel, collapsed ask fact,
 plan with its reader affordance, subagent line, agent-to-agent message, turn
-rule, compaction rule, error, Codex MCP startup, and unrecognized row. The
-composer and header are shared frame elements rather than feed blocks.
+rule, compaction rule, attachment block, error, Codex MCP startup, and
+unrecognized row. The composer and header are shared frame elements rather
+than feed blocks.
 
 Surfaces are deliberately restrained. A user prompt has a tinted
 `user_surface` and an accent bar in column zero. Unified diffs and ask panels
@@ -445,13 +457,14 @@ The semantic colour family is `diff_added_fg`, `diff_added_bg`,
 
 The reader is one overlay over a typed document model — a match, not
 a viewer framework: **Plan** (markdown, the B2 renderer reused),
-**Diff** (above), **NewFile** (Write content as a numbered `+`
-block); **Text** (oversized tool output through the Effect seam) and
-**Image** are reserved kinds, so B4's truncation notice and future
-image placeholders have a stated destination. A new kind is an enum
-variant, a match arm, and golden frames. Ask-time documents live with
-their ask (evict bytes, never obligations); accepted plans keep B6's
-keyed retention; nothing else is retained in V1.
+**Diff** (above), **NewFile** (Write content as a numbered `+` block),
+**Text** (the literal body of a pasted-text attachment), and **Review**
+(comments threaded over the fetched frozen diff, or comments and quoted rows
+with a missing-diff notice). Image and File attachments open in the OS viewer
+instead. A new reader kind is an enum variant, a match arm, and golden frames.
+Ask-time documents live with their ask (evict bytes, never obligations);
+accepted plans keep B6's keyed retention; attachment documents remain
+addressable from their feed blocks.
 
 ### The semantic input seam (C6)
 
@@ -491,6 +504,16 @@ leader (configurable, default ctrl-a) and chat never shadows it; C-e
 and End serve line-end, Home line-start. Word motion rides
 Ctrl+Left/Right where the terminal delivers it — convenience, never
 the only path.
+
+Image, File, pasted Text, and Review mentions are atomic inline tokens in that
+same field. Ctrl+V attaches a clipboard image or existing file path and pastes
+clipboard text normally; bracketed or clipboard text becomes a Text token at
+8 lines or 1000 characters. A token is one cursor position and one backspace
+removes it. `<leader> r` opens a frozen working-tree review; the first saved
+comment inserts its Review token, `q` returns with the cursor after it, and
+Enter resumes only when the cursor is on that token. Deleting the token drops
+the draft review. Several mixed tokens export in text order, while Ctrl+C
+clears text and all tokens as one recoverable kill.
 
 The draft is always editable; send is gated on phase (D2): while the
 agent works, Enter is a no-op and the footer states the gate plainly
@@ -824,6 +847,10 @@ bytes must be drawn before its keys are handled.
 | chat | `<leader> k` / `<leader> j` | same | focus the older / newer feed block and keep it visible |
 | chat | `<leader> y` | same | copy the focused block, or newest block when none is focused, via OSC 52 |
 | focused exploration run | `<leader> o` | same | expand / collapse the run in place |
+| focused attachment | `<leader> o` | READER or OS viewer | open Text/Review in the reader; fetch and open Image/File on this host |
+| COMPOSER | `<leader> r` | REVIEW | request and freeze the working-tree diff, or resume this draft's review |
+| COMPOSER, cursor on Review token | Enter | REVIEW | resume that draft review rather than send |
+| REVIEW | q | COMPOSER | close page; keep the live Review token and place the cursor after it |
 | COMPOSER | Ctrl+T | READER (plan) | newest accepted plan; ←/→ steps between plans |
 | READER | Esc | previous state | close; nothing answered |
 
@@ -910,7 +937,7 @@ excepted, as today.
 | Ctrl+J | composer | newline (canonical) | plain |
 | Shift+Enter | composer | newline (sugar) | kitty |
 | readline set | any text field | C-b/C-f/C-p/C-n motion, Home/End, C-w/C-u/C-k kills, C-d, C-y yank | plain |
-| Ctrl+V | composer | attach the clipboard's image or file as a token | plain |
+| Ctrl+V | composer | attach a clipboard image/file as a token; clipboard text follows paste rules | plain |
 | Ctrl+← / Ctrl+→ | any text field | word motion | ext |
 | 1–9 | ask menu | select option (never submits) | plain |
 | ↑ / ↓ | ask / reader | move selection / scroll | plain |
@@ -928,7 +955,22 @@ excepted, as today.
 | `<leader> k` / `<leader> j` | chat feed | focus older / newer block and keep it visible | plain |
 | Ctrl+↑ / Ctrl+↓ | chat feed | focus older / newer block | ext |
 | `<leader> y` | chat feed | copy focused block (newest when none) to the clipboard with OSC 52 | plain |
-| `<leader> o` | focused exploration run | expand / collapse the run | plain |
+| `<leader> o` | focused exploration run / attachment | expand the run / open the attachment | plain |
+| `<leader> r` | writable chat | open the frozen diff review, or resume its draft | plain |
+| j / k, ↑ / ↓, wheel | review page | move one diff row / scroll the body | plain |
+| J / K | review page | next / previous hunk | plain |
+| ] / [ | review page | next / previous file | plain |
+| g / G | review page | first / last row | plain |
+| f | review page | open file list with magnitude and comment count | plain |
+| j / k, ↑ / ↓, Enter, Esc | review file list | select file, go to it, or close list | plain |
+| z | review page | fold / unfold current file | plain |
+| n / N | review page | next / previous comment | plain |
+| v, then j / k | review page | start/cancel selection and extend it | plain |
+| c or Enter | review row or selection | open inline comment editor; Enter on a comment edits it | plain |
+| d | review comment | delete comment | plain |
+| Enter / Ctrl+J / Esc | review comment editor | save / newline / cancel | plain |
+| b | review page | switch working-tree / branch base | plain |
+| q | review page | return to chat, keeping the draft Review token | plain |
 | j k, g G, Home/End | reader, read-only chat | pager motion (line, top/bottom) | plain |
 | q | reader, read-only chat | close reader / back to fleet | plain |
 | ? | composer, empty | help overlay (full key list); types `?` otherwise | plain |
@@ -941,8 +983,7 @@ Deliberately unbound, each an act of restraint: **Ctrl+G** (the emacs
 abort reflex must never fire agent actions — no-op), **Ctrl+R**
 (reserved for composer history search), **Ctrl+O** (reserved; freed
 when the parkable panel was cut), **Ctrl+L** (shell redraw reflex —
-harmless), **Ctrl+S/Ctrl+Q** (terminal flow control), **Ctrl+V**
-(paste reflex; bracketed paste owns pasting), **Ctrl+H/I/M/[**
+harmless), **Ctrl+S/Ctrl+Q** (terminal flow control), **Ctrl+H/I/M/[**
 (byte-aliases of Backspace/Tab/Enter/Esc), **Ctrl+Z** (job control),
 **Alt+anything** (permanently).
 
@@ -1217,8 +1258,10 @@ above.
   preview with pop-to-edit is the pattern to adopt. Steering is a
   protocol question before it is a UX one.
 - **Fork-into-writable** from a read-only chat (F2).
-- **Attachments and images** — paste placeholders (`[Pasted N lines]`,
-  `[Image #1]`) are the model when they land.
+- **Attachment extensions** — terminal thumbnails, A2A attachment delivery,
+  another diff base, model fetching, comment re-anchoring, a side pane, and
+  rich clients are listed with the constraint that keeps each open in
+  [`ATTACHMENTS.md`](./ATTACHMENTS.md#deferred-decisions).
 - **Slash commands and @-mentions** — `/` and `@` are unclaimed
   composer grammar; the binding table already feeds a future palette.
 - **Shell-passthrough composer mode** (`!` prefix precedent).

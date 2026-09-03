@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Documented attachments from draft to remote viewer.** A new
+attachment guide gives the four message kinds one canonical element syntax,
+spells out the review body's anchors and frozen repository identity, and traces
+stored bytes through owner lifetime, the RPC pin list and stream refs, provider
+materialisation, and the viewing host's verified LRU cache. The architecture
+map now locates the owner and cache roles and the routed artifact services; the
+agent guide includes `attach` in the shared six-tool contract; and the chat
+guide records attachment blocks, Text and Review reader documents, Ctrl+V,
+the review chord, and every key inside the review page. The guide also records
+each deliberately deferred attachment surface together with the existing
+constraint that keeps it additive.
+
 2026-09-04 — **Let agents attach files to replies.** Managed Claude and Codex
 sessions now receive an `attach` tool that reads a path on the agent's host,
 classifies the four model-supported image formats or falls back to a generic

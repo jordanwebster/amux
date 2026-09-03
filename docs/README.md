@@ -16,6 +16,9 @@ subject; when two overlap, the owner named here wins.
 - `CHAT.md` — the chat TUI view; companion to `UI.md`, which owns the
   client layer it stands on; includes the full-screen frame, interaction
   bindings, theme-file format, and `amux-shot` screenshot workflow.
+- `ATTACHMENTS.md` — chat attachments and diff reviews: the canonical element
+  syntax, artifact lifetime and cache, RPC and stream delivery, agent tool,
+  and deferred client surfaces.
 - `DEBUGGING.md` — agent workflow for local debug reports: bundle layout,
   replay, marked tweaks, redaction, graduation and committed fixtures.
 - `CODEX.md` — the OpenAI Codex integration: process ownership, the two

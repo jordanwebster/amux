@@ -1,13 +1,15 @@
 # Agent-to-agent messaging and families
 
-**Status**: implemented (2026-08-24). This document owns amux's
+**Status**: implemented (2026-09-04). This document owns amux's
 agent-to-agent message envelope, provider carriers, model-facing tools, and
 parent/child lifecycle. [`PROTOCOL.md`](./PROTOCOL.md) owns the links and
 tunnels that carry remote calls; [`ARCHITECTURE.md`](./ARCHITECTURE.md) owns
 the daemon service boundaries; [`UI.md`](./UI.md) and [`CHAT.md`](./CHAT.md)
 own client derivation and presentation. Provider-specific row details remain
 in [`CODEX.md`](./CODEX.md) and
-[`CLAUDE_TRANSCRIPT.md`](./CLAUDE_TRANSCRIPT.md).
+[`CLAUDE_TRANSCRIPT.md`](./CLAUDE_TRANSCRIPT.md). The shared attachment
+element, artifact lifetime, and attachment delivery are specified in
+[`ATTACHMENTS.md`](./ATTACHMENTS.md).
 
 ## The model
 
@@ -32,7 +34,7 @@ a child initializes it from the first line of the prompt (at most 80
 characters), and a completed turn clears it. Parent and work status survive
 daemon suspend/resume.
 
-## The five agent tools
+## The six agent tools
 
 Managed Claude and Codex sessions receive the same definitions from an
 amux-owned stdio MCP server. Its hidden CLI spelling is `amux mcp agent`.
@@ -44,7 +46,7 @@ Managed launches freeze the daemon's exact executable, effective file-backed
 config when one exists, and socket rather than relying on a pre-existing
 provider process's environment. Codex installs that route in the thread-local
 configuration for start, cold resume, and reconnect, marks the server required,
-allowlists exactly these five tools, and preapproves them. Claude appends the
+allowlists exactly these six tools, and preapproves them. Claude appends the
 same route through `--mcp-config` and preapproves `mcp__amux__*` through
 `--allowedTools`. Repeated values for both flags accumulate, so user-supplied
 MCP servers and allow rules remain active; amux deliberately does not use
@@ -65,10 +67,19 @@ amux-managed hooks.
 | `spawn` | `{kind, prompt, name?, cwd?}` | `{name, id, initial_prompt_delivery?}` | Create a Claude or Codex child and deliver its initial prompt. |
 | `stop` | `{name}` | `{}` | Stop a direct child of the caller. |
 | `status` | `{working_on: string|null}` | `{}` | Set or clear the caller's current work. |
+| `attach` | `{path, name?}` | canonical attachment element | Store a file from this agent's host and return the exact text to include in a reply. |
 
 The descriptions steer models to amux for cross-kind work while leaving
 Claude's native same-kind agent tools and Codex's native multi-agent features
 available.
+
+`attach` reads `path` in the managed MCP process, recognizes PNG, JPEG, GIF,
+and WebP as images, and stores other inputs as generic files. The authenticated
+caller, not a tool argument, selects the owner. The daemon pins the artifact
+and emits its stream ref before the model's reply arrives, so the returned
+element renders for every viewer. This is attachment production by one agent;
+the `send` envelope itself still carries text only. Its canonical syntax and
+that deferred A2A extension are owned by `ATTACHMENTS.md`.
 
 ## Spawning and lifecycle
 
