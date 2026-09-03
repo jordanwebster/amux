@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Captured a review across three hosts and a restart.** An
+opt-in live harness now isolates three real daemons, pairs the agent host to
+two viewing hosts by LAN PIN, and drives their structured chat interfaces in
+120×40 tmux sessions. One remote viewer freezes a two-file working-tree diff,
+comments across each removed and added row, and sends the review to managed
+Claude; the other renders and opens the review from stream metadata alone.
+The harness waits for Claude's exact reply, suspends and resumes the agent
+host, lets its persisted direct reachabilities reconnect both viewers, then
+resubscribes the second viewer and opens the replayed review again. Its saved
+frames show both comments before and after restart, while the validated Claude
+transcript proves delivery of both paths, old/new endpoints and quoted rows,
+the frozen base and head, blob identities, and both comment bodies.
+
 2026-09-04 — **Documented attachments from draft to remote viewer.** A new
 attachment guide gives the four message kinds one canonical element syntax,
 spells out the review body's anchors and frozen repository identity, and traces
