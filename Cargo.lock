@@ -172,6 +172,7 @@ name = "amux-ui"
 version = "0.4.0"
 dependencies = [
  "amux",
+ "amux-artifacts",
  "chrono",
  "futures-util",
  "serde",

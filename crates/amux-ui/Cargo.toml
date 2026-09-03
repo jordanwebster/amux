@@ -6,6 +6,7 @@ description = "Client state library for amux UIs: reducer core, effects, runtime
 
 [dependencies]
 amux = { workspace = true }
+amux-artifacts = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 serde = { workspace = true }

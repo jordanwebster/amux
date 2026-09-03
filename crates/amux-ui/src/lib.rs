@@ -11,6 +11,7 @@
 //! IO, clocks, or randomness are imported there. The shell (`runtime`,
 //! `recorder`) owns every resource.
 
+pub mod attachments;
 pub mod claude;
 pub mod codex;
 pub mod diff;
@@ -19,13 +20,17 @@ mod model;
 mod msg;
 mod recorder;
 pub mod report;
+pub mod review;
 mod runtime;
 mod update;
 
 // Kernel entity vocabulary re-exported so renderers depend on amux-ui alone.
 pub use amux::{
-    Agent, AgentId, AgentKind, AgentParent, AgentType, Capabilities, ClaudeDriver, HostEntry,
-    HostId, HostTrustStatus, Protocol, WorkingOn, claude_io,
+    Agent, AgentId, AgentKind, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef,
+    Capabilities, ClaudeDriver, HostEntry, HostId, HostTrustStatus, Protocol, WorkingOn, claude_io,
+};
+pub use attachments::{
+    DraftAttachment, Mention, MentionKind, Segment, format_mention, split_mentions,
 };
 pub use claude::{ClaudeCommand, SendGate};
 pub use codex::{CodexCommand, CodexDecision, CodexInput};

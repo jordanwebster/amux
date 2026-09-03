@@ -6974,3 +6974,12 @@ the agent removes its store. The same boundary tests preserve typed oversized
 and missing-attachment errors. Pinned Claude PTY delivery now accounts for its
 metadata row in transcript sequencing, and stopping an unlinked or scripted
 Claude session no longer waits for a process exit that cannot occur.
+
+2026-09-03 — **Established one lossless attachment syntax in the UI core.**
+Image, file, pasted-text, and review mentions now format into canonical
+`amux-attachment` elements and split back into typed segments. Attribute and
+body escaping preserves user text and paths, materialized paths remain visible
+to consumers, and malformed elements stay byte-for-byte prose while scanning
+continues for later valid mentions. Drafts compute artifact IDs from their
+bytes before upload, and the UI crate exposes the shared artifact metadata
+types needed by renderers.
