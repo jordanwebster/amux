@@ -73,6 +73,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "amux-artifacts"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "amux-cli"
 version = "0.6.0"
 dependencies = [

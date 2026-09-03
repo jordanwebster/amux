@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Established the content-addressed artifact store.**
+The standalone `amux-artifacts` crate defines SHA-256 identities, closed blob
+kinds, durable metadata, injected and system clocks, lifetime constants, and
+typed store failures without depending on `amux`. Its shared `blobs/` and
+atomically replaced `index.json` foundation recovers a missing or malformed
+index by rehashing stored bytes, reconstructing safe generic metadata for
+verified blobs, and removing blobs whose contents no longer match their names.
+
 2026-09-03 — **Renamed the reader's typed content model to documents.**
 `AskDocument`, `DiffDocument`, and the `claude::document` module now name
 plans, diffs, and proposed files, including the retained field and serialized

@@ -9,6 +9,7 @@ edition = "2024"
 [workspace.dependencies]
 # Internal
 amux = { path = "crates/amux" }
+amux-artifacts = { path = "crates/amux-artifacts" }
 amux-ui = { path = "crates/amux-ui" }
 amux-tui = { path = "crates/amux-tui" }
 pty-host = { path = "crates/pty-host" }
