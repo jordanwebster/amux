@@ -272,6 +272,17 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
+    /// The cell the keyboard is pointing at while marking. It is the
+    /// inverse of [`Self::mark`] so that it reads as a cursor whether it
+    /// stands on plain screen or inside a rectangle already drawn.
+    #[cfg(any(debug_assertions, test))]
+    pub(crate) fn mark_cursor(self) -> Style {
+        Style::default()
+            .fg(self.color(self.tokens.background))
+            .bg(self.color(self.tokens.accent))
+            .add_modifier(Modifier::BOLD)
+    }
+
     /// The capture flow's prompt row, filled edge to edge so it reads as a
     /// question about the screen rather than part of it.
     #[cfg(any(debug_assertions, test))]
@@ -326,6 +337,11 @@ impl Theme {
         let fg = style.fg;
         let bg = style.bg;
 
+        // The accent is a foreground everywhere else, so wearing it as a
+        // background is unambiguous — it is the marking cursor.
+        if bg == Some(self.color(self.tokens.accent)) {
+            return 'C';
+        }
         if fg == Some(self.color(self.tokens.accent))
             && bg == Some(self.color(self.tokens.user_surface))
         {

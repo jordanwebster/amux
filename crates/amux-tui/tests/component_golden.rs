@@ -302,17 +302,7 @@ fn serialize(buffer: &Buffer, theme: Theme) -> Capture {
 #[test]
 fn report_overlay_marks_the_frozen_screen_and_asks_about_it() {
     let theme = Theme::dark(ColorMode::TrueColor);
-    let fixture = fixture(NamedState::ComponentGallery);
-    let mut terminal = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1)).expect("terminal");
-    let context = FrameContext {
-        viewport: VIEWPORT,
-        theme,
-        now: fixture.now,
-    };
-    terminal
-        .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
-        .expect("draw the screen that will be frozen");
-    let frozen = terminal.backend().buffer().clone();
+    let frozen = frozen_gallery(theme);
 
     let marks = [
         Mark {
@@ -338,6 +328,7 @@ fn report_overlay_marks_the_frozen_screen_and_asks_about_it() {
                 &frozen,
                 theme,
                 marks.iter(),
+                None,
                 "what is wrong here? the age never updates▏  enter keep · esc discard",
             )
         })
@@ -346,4 +337,46 @@ fn report_overlay_marks_the_frozen_screen_and_asks_about_it() {
     let capture = serialize(overlay.backend().buffer(), theme);
     assert_golden("report_overlay_dark", &capture.text);
     assert_golden("report_overlay_dark_styles", &capture.styles);
+}
+
+/// The same overlay before any box has been drawn: the prompt offers to
+/// move a cursor, and the golden is where that cursor is shown to exist.
+#[test]
+fn report_overlay_shows_the_cursor_before_any_box_is_drawn() {
+    let theme = Theme::dark(ColorMode::TrueColor);
+    let frozen = frozen_gallery(theme);
+
+    let mut overlay = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1)).expect("terminal");
+    overlay
+        .draw(|frame| {
+            paint(
+                frame,
+                &frozen,
+                theme,
+                [].iter(),
+                Some((18, 8)),
+                "marked 0:  move hjkl/arrows · drag or space to start a box · enter finish",
+            )
+        })
+        .expect("draw the overlay");
+
+    let capture = serialize(overlay.backend().buffer(), theme);
+    assert_golden("report_overlay_cursor_dark", &capture.text);
+    assert_golden("report_overlay_cursor_dark_styles", &capture.styles);
+}
+
+/// The gallery, rendered and frozen — the screen both overlay goldens sit
+/// on top of.
+fn frozen_gallery(theme: Theme) -> Buffer {
+    let fixture = fixture(NamedState::ComponentGallery);
+    let mut terminal = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1)).expect("terminal");
+    let context = FrameContext {
+        viewport: VIEWPORT,
+        theme,
+        now: fixture.now,
+    };
+    terminal
+        .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
+        .expect("draw the screen that will be frozen");
+    terminal.backend().buffer().clone()
 }

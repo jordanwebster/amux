@@ -6788,3 +6788,12 @@ captured a tweak report from the worktree's test-agent fallback, including two
 marked regions and notes; the bundle contained all seven expected files,
 self-replayed successfully, and the process-scoped socket check found no
 TCP/UDP sockets. Evidence is under `.autopilot/evidence/live-capture/`.
+
+2026-09-03 — **Showed the marking cursor on the frozen capture screen.** The
+capture overlay's prompt offers "move hjkl/arrows", but until a box was open
+nothing on screen moved, so the keys read as dead. The overlay now paints the
+cursor cell in an inverse of the mark style — the accent worn as a background,
+which nothing else in the theme does, so `Theme::classify` can name it as its
+own class `C` and a golden can hold it. It is painted last, over marks and over
+the prompt row, because a cursor that disappears under whatever it lands on
+would reintroduce exactly the doubt it exists to remove.

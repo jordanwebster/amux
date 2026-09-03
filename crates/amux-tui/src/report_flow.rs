@@ -351,11 +351,16 @@ impl ReportFlow {
             Stage::MarkNote { rect, .. } => Some(rect.clone()),
             _ => None,
         };
+        let cursor = match &self.stage {
+            Stage::Marks { cursor, .. } => Some(*cursor),
+            _ => None,
+        };
         paint(
             frame,
             &self.frozen.frame,
             self.theme,
             self.marks.iter().chain(pending.iter()),
+            cursor,
             &prompt(&self.stage, self.marks.len()),
         );
     }
@@ -539,6 +544,7 @@ pub fn paint<'a>(
     frozen: &Buffer,
     theme: Theme,
     marks: impl Iterator<Item = &'a Mark>,
+    cursor: Option<(u16, u16)>,
     prompt: &str,
 ) {
     let area = frame.area();
@@ -580,6 +586,15 @@ pub fn paint<'a>(
         if let Some(cell) = buffer.cell_mut((x as u16, row)) {
             cell.set_char(grapheme);
         }
+    }
+    // Last, and over everything including the prompt row: the prompt
+    // offers to move this cursor, so it has to be findable wherever it
+    // has been moved to. A cursor hidden under a mark or under the
+    // prompt would make the movement keys look broken.
+    if let Some((x, y)) = cursor
+        && let Some(cell) = buffer.cell_mut((x, y))
+    {
+        cell.set_style(theme.mark_cursor());
     }
 }
 
@@ -936,6 +951,69 @@ mod flow {
     #[test]
     fn a_box_reads_the_same_drawn_in_any_direction() {
         assert_eq!(rectangle((5, 3), (2, 1)), rectangle((2, 1), (5, 3)));
+    }
+
+    /// Every cell the theme calls a marking cursor, by position.
+    fn cursor_cells(flow: &ReportFlow) -> Vec<(u16, u16)> {
+        let theme = Theme::dark(crate::theme::ColorMode::TrueColor);
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
+            VIEWPORT.0, VIEWPORT.1,
+        ))
+        .expect("terminal");
+        terminal.draw(|frame| flow.render(frame)).expect("draw");
+        let buffer = terminal.backend().buffer();
+        let mut found = Vec::new();
+        for y in 0..VIEWPORT.1 {
+            for x in 0..VIEWPORT.0 {
+                let cell = buffer.cell((x, y)).expect("cell");
+                if theme.classify(cell.style()) == 'C' {
+                    found.push((x, y));
+                }
+            }
+        }
+        found
+    }
+
+    fn marking(cursor: &[KeyCode]) -> ReportFlow {
+        let mut flow = begin();
+        press(&mut flow, KeyCode::Char('t'));
+        type_text(&mut flow, "the footer overlaps");
+        press(&mut flow, KeyCode::Enter);
+        for code in cursor {
+            press(&mut flow, *code);
+        }
+        flow
+    }
+
+    #[tokio::test]
+    async fn the_marking_cursor_shows_where_the_movement_keys_have_gone() {
+        let flow = marking(&[
+            KeyCode::Char('l'),
+            KeyCode::Char('l'),
+            KeyCode::Char('j'),
+        ]);
+        assert!(
+            matches!(flow.stage(), Stage::Marks { anchor: None, drag: None, .. }),
+            "no box is open, so only the cursor itself can be showing"
+        );
+        assert_eq!(cursor_cells(&flow), vec![(2, 1)]);
+    }
+
+    #[tokio::test]
+    async fn the_marking_cursor_survives_the_prompt_row_it_lands_on() {
+        let bottom = VIEWPORT.1 - 1;
+        let down = vec![KeyCode::Down; usize::from(VIEWPORT.1) + 2];
+        let flow = marking(&down);
+        assert_eq!(cursor_cells(&flow), vec![(0, bottom)]);
+    }
+
+    #[tokio::test]
+    async fn the_marking_cursor_is_gone_once_the_box_is_being_described() {
+        let mut flow = marking(&[KeyCode::Char('l')]);
+        press(&mut flow, KeyCode::Char(' '));
+        press(&mut flow, KeyCode::Enter);
+        assert!(matches!(flow.stage(), Stage::MarkNote { .. }));
+        assert_eq!(cursor_cells(&flow), Vec::new());
     }
 }
 
