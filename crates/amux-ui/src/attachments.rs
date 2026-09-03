@@ -1,6 +1,6 @@
 //! Canonical attachment mentions embedded in chat text.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -12,6 +12,12 @@ use crate::review::{ReviewComment, ReviewHeader};
 
 const OPEN: &str = "<amux-attachment";
 const CLOSE: &str = "</amux-attachment>";
+
+/// Fetched review patches retained by one chat layer.
+///
+/// Patch artifacts can be large, so they have a small independent bound
+/// instead of inheriting the much larger feed-entry bound.
+pub const FETCHED_DIFFS_RETAINED: usize = 8;
 
 /// One parsed attachment element in prompt or reply text.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -48,6 +54,169 @@ pub enum MentionKind {
 pub enum Segment {
     Prose(String),
     Mention(Mention),
+}
+
+/// The message-level kind a feed attachment line paints.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKind {
+    Image,
+    File,
+    Text,
+    Review,
+}
+
+/// Stream-derived facts needed to paint an attachment without fetching it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AttachmentLine {
+    pub kind: AttachmentKind,
+    pub name: String,
+    pub size: Option<u64>,
+    pub lines: Option<u32>,
+    pub comments: Option<usize>,
+}
+
+/// Attachment metadata and lazily fetched review patches for one chat layer.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AttachmentIndex {
+    refs: BTreeMap<ArtifactId, ArtifactRef>,
+    diffs: BTreeMap<ArtifactId, String>,
+    diff_order: VecDeque<ArtifactId>,
+}
+
+impl AttachmentIndex {
+    /// Observes one synthetic attachment row.
+    ///
+    /// The row is applied atomically and artifact ids are first-write-wins:
+    /// metadata is immutable for a content id, so replaying a row is a no-op.
+    pub fn observe_row(&mut self, payload: &serde_json::Value) -> bool {
+        if payload.get("type").and_then(serde_json::Value::as_str) != Some("amux.attachments") {
+            return false;
+        }
+        let Ok(refs) = serde_json::from_value::<Vec<ArtifactRef>>(
+            payload
+                .get("refs")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        ) else {
+            return false;
+        };
+
+        let mut changed = false;
+        for artifact in refs {
+            if !self.refs.contains_key(&artifact.id) {
+                self.refs.insert(artifact.id.clone(), artifact);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Metadata for an artifact-backed mention, when its refs row was seen.
+    pub fn artifact(&self, id: &ArtifactId) -> Option<&ArtifactRef> {
+        self.refs.get(id)
+    }
+
+    /// Splits message text and overlays authoritative metadata from refs rows.
+    pub fn segments(&self, text: &str) -> Vec<Segment> {
+        split_mentions(text)
+            .into_iter()
+            .map(|segment| match segment {
+                Segment::Mention(mention) => Segment::Mention(self.normalize(mention)),
+                prose => prose,
+            })
+            .collect()
+    }
+
+    /// Describes a mention using only facts already present in the stream.
+    pub fn describe(&self, mention: &Mention) -> AttachmentLine {
+        match &mention.kind {
+            MentionKind::Image { id } | MentionKind::File { id } => {
+                let artifact = self.refs.get(id);
+                let kind = match artifact.map(|artifact| artifact.kind) {
+                    Some(ArtifactKind::Image) => AttachmentKind::Image,
+                    Some(ArtifactKind::File) => AttachmentKind::File,
+                    Some(ArtifactKind::Diff) | None => match mention.kind {
+                        MentionKind::Image { .. } => AttachmentKind::Image,
+                        _ => AttachmentKind::File,
+                    },
+                };
+                AttachmentLine {
+                    kind,
+                    name: artifact
+                        .map(|artifact| artifact.name.clone())
+                        .unwrap_or_else(|| mention.name.clone()),
+                    size: artifact.map(|artifact| artifact.size).or(mention.size),
+                    lines: None,
+                    comments: None,
+                }
+            }
+            MentionKind::Text { lines, .. } => AttachmentLine {
+                kind: AttachmentKind::Text,
+                name: mention.name.clone(),
+                size: None,
+                lines: Some(*lines),
+                comments: None,
+            },
+            MentionKind::Review { comments, .. } => AttachmentLine {
+                kind: AttachmentKind::Review,
+                name: mention.name.clone(),
+                size: None,
+                lines: None,
+                comments: Some(comments.len()),
+            },
+        }
+    }
+
+    /// Retains a fetched review patch under the index's independent bound.
+    pub fn insert_diff(&mut self, id: ArtifactId, patch: String) -> bool {
+        match self.diffs.entry(id.clone()) {
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                if entry.get() == &patch {
+                    return false;
+                }
+                entry.insert(patch);
+                return true;
+            }
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(patch);
+            }
+        }
+        self.diff_order.push_back(id.clone());
+        while self.diff_order.len() > FETCHED_DIFFS_RETAINED {
+            if let Some(evicted) = self.diff_order.pop_front() {
+                self.diffs.remove(&evicted);
+            }
+        }
+        true
+    }
+
+    /// A previously fetched review patch.
+    pub fn diff(&self, id: &ArtifactId) -> Option<&str> {
+        self.diffs.get(id).map(String::as_str)
+    }
+
+    fn normalize(&self, mut mention: Mention) -> Mention {
+        let id = match &mention.kind {
+            MentionKind::Image { id } | MentionKind::File { id } => id,
+            MentionKind::Text { .. } | MentionKind::Review { .. } => return mention,
+        };
+        let Some(artifact) = self.refs.get(id) else {
+            return mention;
+        };
+        mention.name = artifact.name.clone();
+        mention.size = Some(artifact.size);
+        mention.kind = match artifact.kind {
+            ArtifactKind::Image => MentionKind::Image {
+                id: artifact.id.clone(),
+            },
+            ArtifactKind::File => MentionKind::File {
+                id: artifact.id.clone(),
+            },
+            ArtifactKind::Diff => mention.kind,
+        };
+        mention
+    }
 }
 
 /// Artifact data retained by a composer until its message is sent.

@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::attachments::{AttachmentIndex, Segment};
 use crate::model::{
     AgentMessageKind, AgentMessagePresentation, AgentPhase, Attention, Model, StreamPhase,
     Violation, Why, message_digest,
@@ -181,6 +182,8 @@ pub struct PromptEntry {
     pub item_id: String,
     pub source: PromptSource,
     pub parts: Vec<PromptPart>,
+    /// Text parts split into prose and attachment mentions.
+    pub content: Vec<Segment>,
     pub finality: ItemFinality,
 }
 
@@ -220,6 +223,8 @@ pub enum ItemFinality {
 pub struct MessageEntry {
     pub item_id: String,
     pub text: String,
+    /// Message text split into prose and attachment mentions.
+    pub content: Vec<Segment>,
     pub phase: MessagePhase,
     pub finality: ItemFinality,
 }
@@ -1016,6 +1021,7 @@ struct Accumulators {
 /// The Codex layer state for one agent.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CodexLayer {
+    attachments: AttachmentIndex,
     truncated_start: bool,
     evicted: u64,
     history_loss: bool,
@@ -1068,6 +1074,15 @@ impl CodexLayer {
 
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
         self.entries.iter()
+    }
+
+    /// Attachment facts observed from this agent's structured stream.
+    pub fn attachments(&self) -> &AttachmentIndex {
+        &self.attachments
+    }
+
+    pub(crate) fn attachments_mut(&mut self) -> &mut AttachmentIndex {
+        &mut self.attachments
     }
 
     /// Whether closing completion reports would hide any retained content.

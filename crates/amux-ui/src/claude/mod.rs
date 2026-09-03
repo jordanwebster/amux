@@ -31,6 +31,7 @@ pub use document::{AskDocument, DiffDocument, DiffMagnitude};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::attachments::{AttachmentIndex, Segment};
 use crate::claude::answer::AskAnswer;
 use crate::model::{
     AgentMessageKind, AgentMessagePresentation, AgentPhase, Attention, Model, StreamPhase,
@@ -196,6 +197,8 @@ pub struct AgentMessageEntry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PromptEntry {
     pub text: String,
+    /// Parsed message content, with attachment mentions left as typed segments.
+    pub content: Vec<Segment>,
     pub source: PromptSource,
     /// Groups the turn's rows; Phase 3's optimistic-echo reconciliation key.
     pub prompt_id: Option<String>,
@@ -228,6 +231,8 @@ pub struct MessageEntry {
     pub message_id: String,
     /// Markdown source segments, one per `text` block, in file order.
     pub segments: Vec<String>,
+    /// The joined message text split into prose and attachment mentions.
+    pub content: Vec<Segment>,
     pub finality: MessageFinality,
 }
 
@@ -1173,6 +1178,7 @@ struct OpenTool {
 /// read; all interpretation happens in the fold that builds it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ClaudeLayer {
+    attachments: AttachmentIndex,
     /// Replay began past the start of the source buffer (subscription
     /// fact): the feed's first state is the honest boundary (B9).
     truncated_start: bool,
@@ -1296,6 +1302,15 @@ impl ClaudeLayer {
     /// The feed, in file order.
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
         self.entries.iter()
+    }
+
+    /// Attachment facts observed from this agent's structured stream.
+    pub fn attachments(&self) -> &AttachmentIndex {
+        &self.attachments
+    }
+
+    pub(crate) fn attachments_mut(&mut self) -> &mut AttachmentIndex {
+        &mut self.attachments
     }
 
     /// The feed in file order with consecutive exploration entries grouped

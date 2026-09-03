@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Folded attachment metadata into native chat layers.** Claude
+PTY and Codex now consume replayable `amux.attachments` rows into a per-layer,
+idempotent attachment index and split prompt and assistant text with the one
+canonical mention parser. Parsed segments use authoritative kind, name, and
+size from refs rows; inline text and review mentions remain self-describing,
+including review comment counts, so a viewing host can paint the feed without
+fetching bytes. Claude preserves refs replayed immediately before a transcript
+session relink, while full stream reopen rebuilds both providers identically.
+Fetched review patches have an independent eight-entry FIFO bound.
+
 2026-09-03 — **Materialised attachments at provider boundaries.** Send-input
 now validates every explicitly pinned artifact before changing lifetime or
 emitting metadata, pins successful sends, writes the authoritative

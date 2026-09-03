@@ -11,6 +11,11 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
         return;
     };
 
+    if method == "amux.attachments" {
+        layer.attachments_mut().observe_row(row);
+        return;
+    }
+
     // Approval display facts are valid for exactly the immediately following
     // synthesized row. Any intervening row breaks the correlation honestly.
     if method != "amux.codex_approval_required"
@@ -347,6 +352,8 @@ fn fold_item(layer: &mut CodexLayer, seq: u64, row: &Value, finality: ItemFinali
 
     match item_type {
         "userMessage" => {
+            let parts = prompt_parts(item.get("content"));
+            let text = prompt_text(&parts);
             upsert_item(
                 layer,
                 seq,
@@ -354,7 +361,8 @@ fn fold_item(layer: &mut CodexLayer, seq: u64, row: &Value, finality: ItemFinali
                 FeedEntryKind::Prompt(PromptEntry {
                     item_id: item_id.clone(),
                     source: PromptSource::Protocol,
-                    parts: prompt_parts(item.get("content")),
+                    content: layer.attachments().segments(&text),
+                    parts,
                     finality,
                 }),
             );
@@ -383,6 +391,7 @@ fn fold_item(layer: &mut CodexLayer, seq: u64, row: &Value, finality: ItemFinali
                 &item_id,
                 FeedEntryKind::Message(MessageEntry {
                     item_id: item_id.clone(),
+                    content: layer.attachments().segments(&text),
                     text,
                     phase,
                     finality,
@@ -687,6 +696,7 @@ fn fold_agent_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
         item_id,
         FeedEntryKind::Message(MessageEntry {
             item_id: item_id.to_string(),
+            content: layer.attachments().segments(&text),
             text,
             phase,
             finality: ItemFinality::Open,
@@ -1213,6 +1223,7 @@ fn fold_input_result(layer: &mut CodexLayer, seq: u64, row: &Value) {
             FeedEntryKind::Prompt(PromptEntry {
                 item_id: format!("steer:{}", op.0),
                 source: PromptSource::SteerEcho,
+                content: layer.attachments().segments(&text),
                 parts: vec![PromptPart::Text { text }],
                 finality: ItemFinality::Complete,
             }),
@@ -1377,6 +1388,19 @@ fn prompt_parts(value: Option<&Value>) -> Vec<PromptPart> {
             },
         })
         .collect()
+}
+
+fn prompt_text(parts: &[PromptPart]) -> String {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            PromptPart::Text { text } => Some(text.as_str()),
+            PromptPart::Image { .. } | PromptPart::LocalImage { .. } | PromptPart::Other { .. } => {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn file_changes(value: Option<&Value>) -> Vec<FileChange> {

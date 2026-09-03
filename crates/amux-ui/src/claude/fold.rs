@@ -80,6 +80,11 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
 
     let kind = str_of(row, "type");
 
+    if kind == Some("amux.attachments") {
+        layer.attachments_mut().observe_row(row);
+        return;
+    }
+
     // amux-layer rows first: they carry no transcript identity.
     match kind {
         Some("amux.transcript_ready")
@@ -151,8 +156,10 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
     if let Some(session_id) = str_of(row, "sessionId") {
         match layer.session_id.as_deref() {
             Some(current) if current != session_id => {
+                let attachments = std::mem::take(layer.attachments_mut());
                 let truncated = false;
                 layer.begin_window(truncated);
+                *layer.attachments_mut() = attachments;
                 layer.session_id = Some(session_id.to_string());
                 // The reset wiped the arrival clock and seq cursor the
                 // triggering row set; this row is a delivery of the new
@@ -622,6 +629,7 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
         seq,
         FeedEntryKind::Prompt(PromptEntry {
             text: text.to_string(),
+            content: layer.attachments().segments(text),
             source,
             prompt_id: string_of(row, "promptId"),
         }),
@@ -1237,10 +1245,19 @@ fn append_message_text(layer: &mut ClaudeLayer, seq: u64, message_id: &str, text
         .iter()
         .find(|slot| slot.id == message_id)
         .and_then(|slot| slot.entry);
-    if let Some(entry) = existing
-        && let Some(FeedEntryKind::Message(message)) = entry_kind_mut(layer, entry)
-    {
-        message.segments.push(text);
+    if let Some(entry) = existing {
+        let joined = if let Some(FeedEntryKind::Message(message)) = entry_kind_mut(layer, entry) {
+            message.segments.push(text);
+            Some(message.segments.join("\n\n"))
+        } else {
+            None
+        };
+        let content = joined.map(|text| layer.attachments().segments(&text));
+        if let (Some(content), Some(FeedEntryKind::Message(message))) =
+            (content, entry_kind_mut(layer, entry))
+        {
+            message.content = content;
+        }
         return;
     }
     let entry = push(
@@ -1248,6 +1265,7 @@ fn append_message_text(layer: &mut ClaudeLayer, seq: u64, message_id: &str, text
         seq,
         FeedEntryKind::Message(MessageEntry {
             message_id: message_id.to_string(),
+            content: layer.attachments().segments(&text),
             segments: vec![text],
             finality: MessageFinality::Open,
         }),

@@ -540,6 +540,7 @@ pub fn seq(fragments: impl IntoIterator<Item = Vec<Msg>>) -> Vec<Msg> {
 /// them (`wire_free::differential_fold_matches_live_state_after_every_msg`).
 pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     let mut sequences = Vec::new();
+    sequences.extend(crate::attachments::sequences());
     sequences.extend(crate::connection::sequences());
     sequences.extend(crate::inventory::sequences());
     sequences.extend(crate::ops::sequences());

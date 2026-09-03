@@ -30,7 +30,8 @@ pub use amux::{
     Capabilities, ClaudeDriver, HostEntry, HostId, HostTrustStatus, Protocol, WorkingOn, claude_io,
 };
 pub use attachments::{
-    DraftAttachment, Mention, MentionKind, Segment, format_mention, split_mentions,
+    AttachmentIndex, AttachmentKind, AttachmentLine, DraftAttachment, Mention, MentionKind,
+    Segment, format_mention, split_mentions,
 };
 pub use claude::{ClaudeCommand, SendGate};
 pub use codex::{CodexCommand, CodexDecision, CodexInput};

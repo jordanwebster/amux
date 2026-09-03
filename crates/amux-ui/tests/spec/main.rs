@@ -16,6 +16,8 @@ mod harness;
 
 mod diff; // Neutral unified patch facts shared by every client
 
+mod attachments; // Attachment rows, mention folds, and replay
+
 // Declared in reading order (blank lines keep rustfmt from re-sorting).
 
 mod connection; // Chapter 1 — Connection: epochs, snapshots, auth expiry
