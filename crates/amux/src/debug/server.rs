@@ -16,6 +16,7 @@ pub(crate) async fn dump_server_debug_info(
     state: &Arc<RwLock<ServerState>>,
     routing: &RoutingCore,
     tunnel_pool: &TunnelPool,
+    remote_agent_count: usize,
     format: DebugFormat,
     verbose: bool,
 ) -> String {
@@ -29,11 +30,6 @@ pub(crate) async fn dump_server_debug_info(
         Some(host) => (host.debug_dump(verbose).await, host.agent_count().await),
         None => (Vec::new(), 0),
     };
-    let remote_agent_count = agents
-        .iter()
-        .filter(|agent| agent.record.host_id != state_guard.host_id)
-        .count();
-
     let view = ServerDebugView {
         state: &state_guard,
         use_cloud_mode,

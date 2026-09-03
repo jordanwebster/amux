@@ -2029,10 +2029,20 @@ impl ClientService {
     }
 
     async fn debug_dump(&self, format: DebugFormat, verbose: bool) -> String {
+        let local_host_id = self.local_agents.host_id();
+        let remote_agent_count = self
+            .state
+            .read()
+            .await
+            .agents_model
+            .values()
+            .filter(|agent| agent.host_id != local_host_id)
+            .count();
         crate::debug::dump_server_debug_info(
             &self.server_state,
             self.remote_agent_connections.routing(),
             self.remote_agent_connections.tunnels(),
+            remote_agent_count,
             format,
             verbose,
         )

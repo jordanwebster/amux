@@ -32,6 +32,12 @@ async fn debug_dump_reports_live_routing_and_session_state() {
             .unwrap_or_else(|| panic!("laptop dump field {field} is not an array"));
         assert!(!entries.is_empty(), "laptop dump field {field} is empty");
     }
+    assert!(
+        laptop_dump["remote_agent_count"]
+            .as_u64()
+            .is_some_and(|count| count >= 1),
+        "laptop dump counts the remote worker: {laptop_dump:#?}"
+    );
 
     let desktop_dump = desktop.debug_dump(true).await;
     let agents = desktop_dump["users"][0]["agents"]
