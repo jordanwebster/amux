@@ -20,7 +20,10 @@ the production MCP route, and echo the returned element; the captures require
 the refs row, reply, fetched bytes, owner blob, and pinned index to agree. The
 live harnesses also locate the documented prebuilt workspace binary when Cargo
 uses a separate build directory, and keep daemon data and Claude's messaging
-socket inside isolated private scratch directories.
+socket inside isolated private scratch directories. The three live scenario
+executables are excluded from ordinary `cargo test` target selection and remain
+available through explicit `--test` invocations, so a library test filter cannot
+be mistaken for a live scenario name.
 
 2026-09-03 — **Captured the review page and the attachment draft.** The
 review page's eight named states now render as committed 120x40 PNGs, and
