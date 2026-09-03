@@ -52,7 +52,8 @@ pub use recorder::{
     replay_msgs,
 };
 pub use runtime::{
-    BUILD, ConnectFailure, ConnectFuture, Connector, MsgTap, ReportExtras, ReportExtrasProvider,
-    Runtime, RuntimeOptions, write_panic_report,
+    AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ConnectFailure,
+    ConnectFuture, Connector, MsgTap, ReportExtras, ReportExtrasProvider, Runtime, RuntimeOptions,
+    execute_put_then_send, write_panic_report,
 };
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};

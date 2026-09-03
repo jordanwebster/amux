@@ -61,6 +61,12 @@ pub fn default_data_dir() -> PathBuf {
     amux_xdg_dir("XDG_DATA_HOME", ".local/share")
 }
 
+/// Default cache directory: `$XDG_CACHE_HOME/amux`, falling back to
+/// `~/.cache/amux`.
+pub fn default_cache_dir() -> PathBuf {
+    amux_xdg_dir("XDG_CACHE_HOME", ".cache")
+}
+
 /// Default iOS data directory under the app container.
 #[cfg(target_os = "ios")]
 pub fn default_data_dir() -> PathBuf {

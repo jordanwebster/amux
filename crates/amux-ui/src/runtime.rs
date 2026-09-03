@@ -16,10 +16,11 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
 use amux::{
-    AgentId, AgentIdentifier, Client, ClientError, CreateAgentRequest, HostId, ProtocolError,
-    SendInputRequest, SessionCloseReason, SubscribeSessionEvent, SubscribeSessionRequest,
-    claude_io, codex_io,
+    AgentId, AgentIdentifier, ArtifactId, ArtifactKind, ArtifactRef, Client, ClientError,
+    CreateAgentRequest, HostId, ProtocolError, SendInputRequest, SessionCloseReason,
+    SubscribeSessionEvent, SubscribeSessionRequest, claude_io, codex_io,
 };
+use amux_artifacts::{ArtifactMeta, Cache, FetchError, StoreError, SystemClock};
 use chrono::{DateTime, Utc};
 use futures_util::FutureExt;
 use tokio::sync::mpsc;
@@ -90,6 +91,46 @@ pub type ReportExtrasProvider = Arc<dyn Fn() -> ReportExtras + Send + Sync>;
 /// See [`RuntimeOptions::msg_tap`].
 pub type MsgTap = Box<dyn FnMut(&Msg) + Send>;
 
+/// Opens one verified local artifact path with the platform viewer.
+pub type AttachmentOpener = Arc<dyn Fn(&Path) -> io::Result<()> + Send + Sync>;
+
+/// Future returned by an attachment transport operation.
+pub type AttachmentClientFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, ClientError>> + Send + 'a>>;
+
+/// Narrow transport boundary for the compound attachment send.
+pub trait AttachmentClient: Send + Sync {
+    fn put_artifact<'a>(
+        &'a self,
+        agent: AgentIdentifier,
+        kind: ArtifactKind,
+        name: &'a str,
+        mime: &'a str,
+        bytes: Vec<u8>,
+    ) -> AttachmentClientFuture<'a, ArtifactRef>;
+
+    fn send_input(&self, request: SendInputRequest) -> AttachmentClientFuture<'_, ()>;
+}
+
+impl AttachmentClient for Client {
+    fn put_artifact<'a>(
+        &'a self,
+        agent: AgentIdentifier,
+        kind: ArtifactKind,
+        name: &'a str,
+        mime: &'a str,
+        bytes: Vec<u8>,
+    ) -> AttachmentClientFuture<'a, ArtifactRef> {
+        Box::pin(Client::put_artifact(self, agent, kind, name, mime, bytes))
+    }
+
+    fn send_input(&self, request: SendInputRequest) -> AttachmentClientFuture<'_, ()> {
+        Box::pin(Client::send_input(self, request))
+    }
+}
+
+const DEFAULT_ARTIFACT_CACHE_BOUND: u64 = 256 * 1024 * 1024;
+
 pub struct RuntimeOptions {
     /// The daemon's own host id (read from the local device identity);
     /// enters the Model via `ServerMsg::Connected`.
@@ -111,6 +152,12 @@ pub struct RuntimeOptions {
     /// batched, and a wrong guess is a replay that diverges for no visible
     /// reason. `None` in a build that records nothing.
     pub msg_tap: Option<MsgTap>,
+    /// Flat viewing-host artifact cache root. `None` disables attachment opens.
+    pub artifact_cache: Option<PathBuf>,
+    /// Maximum bytes retained by the viewing-host artifact cache.
+    pub artifact_cache_bound: u64,
+    /// Platform opener override. Embedders normally leave this at its default.
+    pub attachment_opener: AttachmentOpener,
 }
 
 impl Default for RuntimeOptions {
@@ -124,6 +171,9 @@ impl Default for RuntimeOptions {
             recorder_capacity: DEFAULT_RECORDER_CAPACITY,
             subscription_status_provider: None,
             msg_tap: None,
+            artifact_cache: None,
+            artifact_cache_bound: DEFAULT_ARTIFACT_CACHE_BOUND,
+            attachment_opener: Arc::new(open_with_platform_viewer),
         }
     }
 }
@@ -149,6 +199,8 @@ pub struct Runtime {
     git_sha: &'static str,
     report_extras: Option<ReportExtrasProvider>,
     msg_tap: Option<MsgTap>,
+    artifact_cache: Option<Result<Arc<Cache>, String>>,
+    attachment_opener: AttachmentOpener,
     /// Violation kinds already reported this session: invariant logs and
     /// reports are throttled to once per kind so a persistent incoherence
     /// cannot fill the report directory.
@@ -166,6 +218,11 @@ impl Runtime {
         )));
         let (msg_tx, msg_rx) = mpsc::channel(MSG_CHANNEL_CAPACITY);
         let client = Arc::new(StdMutex::new(None));
+        let artifact_cache = options.artifact_cache.map(|root| {
+            Cache::open(root, options.artifact_cache_bound, Arc::new(SystemClock))
+                .map(Arc::new)
+                .map_err(|error| error.to_string())
+        });
 
         let subscription_status_provider = options.subscription_status_provider;
         let connection_task = tokio::spawn(connection_task(
@@ -189,6 +246,8 @@ impl Runtime {
             git_sha: options.git_sha,
             report_extras: options.report_extras,
             msg_tap: options.msg_tap,
+            artifact_cache,
+            attachment_opener: options.attachment_opener,
             reported_violations: HashSet::new(),
         }
     }
@@ -411,16 +470,101 @@ impl Runtime {
                     let _ = tx.send(Msg::OpResult { op, outcome }).await;
                 });
             }
-            Effect::PutThenSend { op, .. }
-            | Effect::FetchDiff { op, .. }
-            | Effect::OpenExternally { op, .. }
-            | Effect::Diff { op, .. } => {
-                // These operations must still resolve if a shell lacks their
-                // executor, otherwise the reducer would retain a false spinner.
+            Effect::PutThenSend {
+                op,
+                agent,
+                puts,
+                input,
+                pin,
+            } => {
+                let client = self.client.lock().expect("client mutex poisoned").clone();
                 let tx = self.msg_tx.clone();
                 tokio::spawn(async move {
-                    let outcome = OpOutcome::Error {
-                        error: OpError::general("attachment runtime effect is not available"),
+                    let outcome = match client {
+                        Some(client) => {
+                            execute_put_then_send(&client, op, agent, puts, input, pin).await
+                        }
+                        None => OpOutcome::Error {
+                            error: OpError::general(NOT_CONNECTED_ERROR),
+                        },
+                    };
+                    let _ = tx.send(Msg::OpResult { op, outcome }).await;
+                });
+            }
+            Effect::FetchDiff { op, agent, id } => {
+                let client = self.client.lock().expect("client mutex poisoned").clone();
+                let cache = clone_artifact_cache(&self.artifact_cache);
+                let tx = self.msg_tx.clone();
+                tokio::spawn(async move {
+                    let outcome = match (client, cache) {
+                        (Some(client), Ok(cache)) => {
+                            match fetch_through_cache(&cache, &client, agent, &id).await {
+                                Ok((_, bytes)) => match String::from_utf8(bytes) {
+                                    Ok(patch) => OpOutcome::DiffFetched { id, patch },
+                                    Err(error) => OpOutcome::Error {
+                                        error: OpError::DiffUnavailable {
+                                            message: format!("review patch is not UTF-8: {error}"),
+                                        },
+                                    },
+                                },
+                                Err(error) => OpOutcome::Error { error },
+                            }
+                        }
+                        (None, _) => OpOutcome::Error {
+                            error: OpError::general(NOT_CONNECTED_ERROR),
+                        },
+                        (_, Err(error)) => OpOutcome::Error { error },
+                    };
+                    let _ = tx.send(Msg::OpResult { op, outcome }).await;
+                });
+            }
+            Effect::OpenExternally { op, agent, id } => {
+                let client = self.client.lock().expect("client mutex poisoned").clone();
+                let cache = clone_artifact_cache(&self.artifact_cache);
+                let opener = self.attachment_opener.clone();
+                let tx = self.msg_tx.clone();
+                tokio::spawn(async move {
+                    let outcome = match (client, cache) {
+                        (Some(client), Ok(cache)) => {
+                            match fetch_through_cache(&cache, &client, agent, &id).await {
+                                Ok(_) => match cache.path_of(&id) {
+                                    Ok(path) => match opener(&path) {
+                                        Ok(()) => OpOutcome::AttachmentOpened { id },
+                                        Err(error) => OpOutcome::Error {
+                                            error: OpError::general(format!(
+                                                "failed to open attachment: {error}"
+                                            )),
+                                        },
+                                    },
+                                    Err(error) => OpOutcome::Error {
+                                        error: map_store_error(error, None),
+                                    },
+                                },
+                                Err(error) => OpOutcome::Error { error },
+                            }
+                        }
+                        (None, _) => OpOutcome::Error {
+                            error: OpError::general(NOT_CONNECTED_ERROR),
+                        },
+                        (_, Err(error)) => OpOutcome::Error { error },
+                    };
+                    let _ = tx.send(Msg::OpResult { op, outcome }).await;
+                });
+            }
+            Effect::Diff { op, agent, base } => {
+                let client = self.client.lock().expect("client mutex poisoned").clone();
+                let tx = self.msg_tx.clone();
+                tokio::spawn(async move {
+                    let outcome = match client {
+                        Some(client) => match client.diff(AgentIdentifier::Id(agent), base).await {
+                            Ok(response) => OpOutcome::DiffReady { response },
+                            Err(error) => OpOutcome::Error {
+                                error: map_client_error(&error, None, &[]),
+                            },
+                        },
+                        None => OpOutcome::Error {
+                            error: OpError::general(NOT_CONNECTED_ERROR),
+                        },
                     };
                     let _ = tx.send(Msg::OpResult { op, outcome }).await;
                 });
@@ -616,6 +760,227 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
     }
 }
 
+fn clone_artifact_cache(cache: &Option<Result<Arc<Cache>, String>>) -> Result<Arc<Cache>, OpError> {
+    match cache {
+        Some(Ok(cache)) => Ok(cache.clone()),
+        Some(Err(error)) => Err(OpError::general(format!(
+            "failed to open attachment cache: {error}"
+        ))),
+        None => Err(OpError::general("attachment cache is not configured")),
+    }
+}
+
+async fn fetch_through_cache(
+    cache: &Cache,
+    client: &Client,
+    agent: AgentId,
+    id: &ArtifactId,
+) -> Result<(ArtifactMeta, Vec<u8>), OpError> {
+    let mut remote_error = None;
+    let result = cache
+        .get(id, async {
+            match client.get_artifact(AgentIdentifier::Id(agent), id).await {
+                Ok((artifact, bytes)) => Ok((
+                    ArtifactMeta {
+                        id: artifact.id,
+                        kind: artifact.kind,
+                        name: artifact.name,
+                        mime: artifact.mime,
+                        size: artifact.size,
+                        created_at: Utc::now(),
+                        pinned_at: None,
+                    },
+                    bytes,
+                )),
+                Err(error) => {
+                    remote_error = Some(map_client_error(&error, None, &[]));
+                    Err(FetchError::new(error.to_string()))
+                }
+            }
+        })
+        .await;
+    match (result, remote_error) {
+        (Ok(value), _) => Ok(value),
+        (Err(_), Some(error)) => Err(error),
+        (Err(error), None) => Err(map_store_error(error, None)),
+    }
+}
+
+/// Store every live draft, then deliver one native input carrying all pins.
+/// No input is sent if any put fails.
+pub async fn execute_put_then_send<C: AttachmentClient + ?Sized>(
+    client: &C,
+    op: OpId,
+    agent: AgentId,
+    puts: Vec<crate::attachments::DraftAttachment>,
+    input: InputPayload,
+    pin: Vec<ArtifactId>,
+) -> OpOutcome {
+    for draft in &puts {
+        let Some(bytes) = &draft.bytes else {
+            continue;
+        };
+        match client
+            .put_artifact(
+                AgentIdentifier::Id(agent),
+                draft.kind,
+                &draft.name,
+                &draft.mime,
+                bytes.to_vec(),
+            )
+            .await
+        {
+            Ok(artifact) if artifact.id == draft.id => {}
+            Ok(_) => {
+                return OpOutcome::Error {
+                    error: OpError::ArtifactCorrupt {
+                        id: draft.id.clone(),
+                    },
+                };
+            }
+            Err(error) => {
+                return OpOutcome::Error {
+                    error: map_client_error(&error, Some(&draft.name), &puts),
+                };
+            }
+        }
+    }
+
+    let (io_protocol, payload) = match input {
+        InputPayload::Claude {
+            expected_seq,
+            intent,
+            ..
+        } => (
+            crate::claude::PROTOCOL.to_string(),
+            claude_io::encode_pty_transcript_v1_input(claude_io::ClaudePtyTranscriptV1Input {
+                expected_seq,
+                intent,
+            })
+            .into(),
+        ),
+        InputPayload::Codex { payload } => (
+            crate::codex::PROTOCOL.to_string(),
+            codex_io::encode_codex_sdk_v1_input(codex_wire_input(payload)).into(),
+        ),
+    };
+    match client
+        .send_input(SendInputRequest {
+            agent: AgentIdentifier::Id(agent),
+            input_id: op.0.as_bytes().to_vec(),
+            io_protocol,
+            payload,
+            pin: pin.into_iter().map(|id| id.to_string()).collect(),
+        })
+        .await
+    {
+        Ok(()) => OpOutcome::InputSent,
+        Err(error) => OpOutcome::Error {
+            error: map_client_error(&error, None, &puts),
+        },
+    }
+}
+
+fn codex_wire_input(input: CodexInput) -> codex_io::CodexSdkV1Input {
+    match input {
+        CodexInput::UserTurn { input } => codex_io::CodexSdkV1Input::UserTurn { input },
+        CodexInput::Steer { turn_id, input } => codex_io::CodexSdkV1Input::Steer { turn_id, input },
+        CodexInput::Interrupt { turn_id } => codex_io::CodexSdkV1Input::Interrupt { turn_id },
+        CodexInput::ApprovalDecision {
+            request_id,
+            decision,
+        } => codex_io::CodexSdkV1Input::ApprovalDecision {
+            request_id,
+            decision,
+        },
+    }
+}
+
+fn map_client_error(
+    error: &ClientError,
+    current_name: Option<&str>,
+    puts: &[crate::attachments::DraftAttachment],
+) -> OpError {
+    match error {
+        ClientError::Protocol(ProtocolError::AttachmentMissing { id }) => {
+            let parsed = id.parse::<ArtifactId>();
+            match parsed {
+                Ok(id) => {
+                    let name = puts
+                        .iter()
+                        .find(|draft| draft.id == id)
+                        .map(|draft| draft.name.clone())
+                        .or_else(|| current_name.map(str::to_owned))
+                        .unwrap_or_else(|| id.to_string());
+                    OpError::AttachmentMissing { id, name }
+                }
+                Err(_) => OpError::general(error.to_string()),
+            }
+        }
+        ClientError::Protocol(ProtocolError::AttachmentTooLarge { size, max }) => {
+            OpError::AttachmentTooLarge {
+                name: current_name.unwrap_or("attachment").to_string(),
+                size: *size,
+                max: *max,
+            }
+        }
+        ClientError::Protocol(ProtocolError::ArtifactCorrupt { id }) => match id.parse() {
+            Ok(id) => OpError::ArtifactCorrupt { id },
+            Err(_) => OpError::general(error.to_string()),
+        },
+        ClientError::Protocol(ProtocolError::DiffUnavailable { message }) => {
+            OpError::DiffUnavailable {
+                message: message.clone(),
+            }
+        }
+        _ => OpError::classified(
+            error.to_string(),
+            is_auth_error(error),
+            is_subscription_error(error),
+        ),
+    }
+}
+
+fn map_store_error(error: StoreError, name: Option<&str>) -> OpError {
+    match error {
+        StoreError::TooLarge { size, max } => OpError::AttachmentTooLarge {
+            name: name.unwrap_or("attachment").to_string(),
+            size,
+            max,
+        },
+        StoreError::Missing { id } => OpError::AttachmentMissing {
+            name: name.map(str::to_owned).unwrap_or_else(|| id.to_string()),
+            id,
+        },
+        StoreError::Corrupt { id } => OpError::ArtifactCorrupt { id },
+        StoreError::Fetch(error) => OpError::general(error.to_string()),
+        StoreError::Io(error) => OpError::general(error.to_string()),
+    }
+}
+
+fn open_with_platform_viewer(path: &Path) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "linux")]
+    let mut command = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "start", ""]);
+        command
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    return Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "no platform attachment viewer is available",
+    ));
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+    {
+        command.arg(path).spawn()?;
+        Ok(())
+    }
+}
+
 /// How many times a `retry_stale` input is re-sent with the seq
 /// the refusal reported. Mechanical execution policy only: WHETHER a
 /// send retries is the reducer's decision, carried on the effect.
@@ -632,14 +997,35 @@ async fn execute_send_input(
     input_id: Vec<u8>,
     payload: InputPayload,
 ) -> OpOutcome {
+    execute_send_input_with_pin(client, agent, input_id, payload, Vec::new()).await
+}
+
+async fn execute_send_input_with_pin(
+    client: &Client,
+    agent: AgentId,
+    input_id: Vec<u8>,
+    payload: InputPayload,
+    pin: Vec<String>,
+) -> OpOutcome {
     match payload {
         InputPayload::Claude {
             expected_seq,
             intent,
             retry_stale,
-        } => execute_claude_input(client, agent, input_id, expected_seq, intent, retry_stale).await,
+        } => {
+            execute_claude_input(
+                client,
+                agent,
+                input_id,
+                expected_seq,
+                intent,
+                retry_stale,
+                pin,
+            )
+            .await
+        }
         InputPayload::Codex { payload } => {
-            execute_codex_input(client, agent, input_id, payload).await
+            execute_codex_input(client, agent, input_id, payload, pin).await
         }
     }
 }
@@ -649,19 +1035,9 @@ async fn execute_codex_input(
     agent: AgentId,
     input_id: Vec<u8>,
     input: CodexInput,
+    pin: Vec<String>,
 ) -> OpOutcome {
-    let input = match input {
-        CodexInput::UserTurn { input } => codex_io::CodexSdkV1Input::UserTurn { input },
-        CodexInput::Steer { turn_id, input } => codex_io::CodexSdkV1Input::Steer { turn_id, input },
-        CodexInput::Interrupt { turn_id } => codex_io::CodexSdkV1Input::Interrupt { turn_id },
-        CodexInput::ApprovalDecision {
-            request_id,
-            decision,
-        } => codex_io::CodexSdkV1Input::ApprovalDecision {
-            request_id,
-            decision,
-        },
-    };
+    let input = codex_wire_input(input);
     let payload = codex_io::encode_codex_sdk_v1_input(input);
     match client
         .send_input(SendInputRequest {
@@ -669,7 +1045,7 @@ async fn execute_codex_input(
             input_id,
             io_protocol: crate::codex::PROTOCOL.to_string(),
             payload: payload.into(),
-            pin: Vec::new(),
+            pin,
         })
         .await
     {
@@ -685,6 +1061,7 @@ async fn execute_claude_input(
     expected_seq: u64,
     intent: claude_io::Intent,
     retry_stale: bool,
+    pin: Vec<String>,
 ) -> OpOutcome {
     let mut expected_seq = expected_seq;
     let mut attempts = 0;
@@ -700,7 +1077,7 @@ async fn execute_claude_input(
                 input_id: input_id.clone(),
                 io_protocol: crate::claude::PROTOCOL.to_string(),
                 payload: payload.into(),
-                pin: Vec::new(),
+                pin: pin.clone(),
             })
             .await
         {
@@ -727,11 +1104,7 @@ async fn execute_claude_input(
 
 fn op_error_outcome(error: &ClientError) -> OpOutcome {
     OpOutcome::Error {
-        error: OpError::classified(
-            error.to_string(),
-            is_auth_error(error),
-            is_subscription_error(error),
-        ),
+        error: map_client_error(error, None, &[]),
     }
 }
 
@@ -1236,6 +1609,8 @@ mod tests {
             git_sha,
             report_extras: None,
             msg_tap: None,
+            artifact_cache: None,
+            attachment_opener: Arc::new(open_with_platform_viewer),
             reported_violations: HashSet::new(),
         }
     }

@@ -200,7 +200,7 @@ pub enum ColorSetting {
 
 /// Client UI configuration (the TUI; future desktop clients read the same
 /// keys).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiSettings {
     /// The mode the fleet's Enter opens; the non-default mode opens via
@@ -210,6 +210,19 @@ pub struct UiSettings {
     pub theme: ThemeSetting,
     /// Whether to detect, force, or disable truecolor output.
     pub color: ColorSetting,
+    /// Viewing-host attachment cache bound, in mebibytes.
+    pub artifact_cache_mib: u64,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self {
+            default_open_mode: OpenMode::default(),
+            theme: ThemeSetting::default(),
+            color: ColorSetting::default(),
+            artifact_cache_mib: 256,
+        }
+    }
 }
 
 /// Server configuration
@@ -546,6 +559,17 @@ mod tests {
         let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
         assert_eq!(parsed.ui.theme, ThemeSetting::Light);
         assert_eq!(parsed.ui.color, ColorSetting::Ansi);
+    }
+
+    #[test]
+    fn artifact_cache_bound_defaults_and_parses_from_yaml() {
+        assert_eq!(Config::default().ui.artifact_cache_mib, 256);
+        let parsed: Config = serde_yaml::from_str("ui:\n  artifact_cache_mib: 48\n").unwrap();
+        assert_eq!(parsed.ui.artifact_cache_mib, 48);
+
+        let serialized = serde_yaml::to_string(&parsed).unwrap();
+        let reparsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(reparsed.ui.artifact_cache_mib, 48);
     }
 
     #[test]

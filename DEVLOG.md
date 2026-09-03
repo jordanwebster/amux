@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Executed attachment effects through the UI runtime.** Draft
+bytes are stored before one native input carries the complete pin list, and
+typed daemon failures retain the attachment or diff category needed by the
+composer. Fetch and open operations share one integrity-checking, persistent,
+flat viewing-host cache; cache hits survive runtime restarts and corrupt local
+blobs refetch before a verified path reaches the platform viewer. The CLI
+places that cache under the ordinary per-user cache directory and converts the
+new `ui.artifact_cache_mib` setting, which defaults to 256, into its byte bound.
+
 2026-09-03 — **Added attachment operations to the UI reducer.** One
 `SendPromptWithAttachments` command now reuses the selected provider's send
 gate, encoding, and optimistic state while emitting one `PutThenSend` effect
