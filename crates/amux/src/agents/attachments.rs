@@ -6,6 +6,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use amux_artifacts::{ArtifactId, ArtifactKind, ArtifactMeta, Clock, Owner, StoreError};
+use base64::Engine as _;
+use claude::sdk::{ContentBlock, ImageSource, ImageSourceType};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
@@ -181,6 +183,196 @@ pub fn attachments_row(input_id: Option<&[u8]>, refs: &[ArtifactRef]) -> Value {
         "input_id": input_id.map(hex_bytes),
         "refs": refs,
     })
+}
+
+/// The provider boundary an attachment-bearing prompt is being prepared for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MaterialiseBackend {
+    ClaudePty,
+    ClaudeSdk,
+    Codex,
+}
+
+/// A prompt and its native image representations after its artifacts are pinned.
+pub(crate) struct Materialised {
+    pub(crate) text: String,
+    pub(crate) refs: Vec<ArtifactRef>,
+    pub(crate) image_blocks: Vec<ContentBlock>,
+    #[cfg(all(feature = "local-agents", unix))]
+    pub(crate) codex_items: Vec<codex::InputItem>,
+}
+
+/// Validates every requested artifact, pins them atomically, and prepares a prompt.
+pub(crate) fn materialise(
+    owner: &Owner,
+    text: &str,
+    pin: &[ArtifactId],
+    backend: MaterialiseBackend,
+) -> Result<Materialised, ProtocolError> {
+    if pin.is_empty() {
+        return Ok(Materialised {
+            text: text.to_string(),
+            refs: Vec::new(),
+            image_blocks: Vec::new(),
+            #[cfg(all(feature = "local-agents", unix))]
+            codex_items: Vec::new(),
+        });
+    }
+
+    // Owner::pin is atomic for missing IDs, but reading all records first keeps
+    // validation explicitly ahead of every persistent or streamed side effect.
+    let metas = pin
+        .iter()
+        .map(|id| owner.meta(id).map_err(store_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    let pinned = owner.pin(pin).map_err(store_error)?;
+    debug_assert_eq!(metas.len(), pinned.len());
+    let refs = pinned
+        .into_iter()
+        .map(ArtifactRef::from)
+        .collect::<Vec<_>>();
+    let text = materialise_paths(owner, text, &refs, backend);
+
+    let mut image_blocks = Vec::new();
+    #[cfg(all(feature = "local-agents", unix))]
+    let mut codex_items = Vec::new();
+    for meta in &metas {
+        if meta.kind != ArtifactKind::Image {
+            continue;
+        }
+        match backend {
+            MaterialiseBackend::ClaudeSdk => {
+                let (_, bytes) = owner.get(&meta.id).map_err(store_error)?;
+                image_blocks.push(ContentBlock::Image {
+                    source: ImageSource {
+                        r#type: ImageSourceType::Base64,
+                        media_type: meta.mime.clone(),
+                        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+                        extensions: Default::default(),
+                    },
+                    extensions: Default::default(),
+                });
+            }
+            #[cfg(all(feature = "local-agents", unix))]
+            MaterialiseBackend::Codex => {
+                codex_items.push(codex::InputItem::local_image(owner.path_of(&meta.id)));
+            }
+            MaterialiseBackend::ClaudePty => {}
+            #[cfg(not(all(feature = "local-agents", unix)))]
+            MaterialiseBackend::Codex => {}
+        }
+    }
+
+    Ok(Materialised {
+        text,
+        refs,
+        image_blocks,
+        #[cfg(all(feature = "local-agents", unix))]
+        codex_items,
+    })
+}
+
+/// Materialises first and emits metadata only after every requested ID succeeds.
+pub(crate) async fn materialise_and_log(
+    owner: &Owner,
+    text: &str,
+    pin: &[ArtifactId],
+    backend: MaterialiseBackend,
+    input_id: &[u8],
+    log: &super::log_source::StructuredLogSource,
+) -> Result<Materialised, ProtocolError> {
+    let prepared = materialise(owner, text, pin, backend)?;
+    log.write(attachments_row(Some(input_id), &prepared.refs))
+        .await;
+    Ok(prepared)
+}
+
+pub(crate) fn materialise_paths(
+    owner: &Owner,
+    text: &str,
+    refs: &[ArtifactRef],
+    backend: MaterialiseBackend,
+) -> String {
+    if !matches!(
+        backend,
+        MaterialiseBackend::ClaudePty | MaterialiseBackend::Codex
+    ) {
+        return text.to_string();
+    }
+
+    let paths = refs
+        .iter()
+        .filter(|artifact| matches!(artifact.kind, ArtifactKind::Image | ArtifactKind::File))
+        .map(|artifact| (artifact.id.as_str(), owner.path_of(&artifact.id)))
+        .collect::<HashMap<_, _>>();
+    if paths.is_empty() {
+        return text.to_string();
+    }
+
+    let mut rewritten = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("<amux-attachment") {
+        rewritten.push_str(&rest[..start]);
+        let element = &rest[start..];
+        let Some(end) = element.find('>') else {
+            rewritten.push_str(element);
+            return rewritten;
+        };
+        let opening = &element[..end];
+        let path = if attribute_value(opening, "path").is_none()
+            && let Some(id) = attribute_value(opening, "id")
+            && let Some(path) = paths.get(id)
+        {
+            Some(path)
+        } else {
+            None
+        };
+        if let Some(path) = path {
+            let trimmed = opening.trim_end();
+            let insertion = if trimmed.ends_with('/') {
+                trimmed.len() - 1
+            } else {
+                opening.len()
+            };
+            rewritten.push_str(&opening[..insertion]);
+            rewritten.push_str(" path=\"");
+            rewritten.push_str(&escape_attribute(&path.to_string_lossy()));
+            rewritten.push('"');
+            rewritten.push_str(&opening[insertion..]);
+        } else {
+            rewritten.push_str(opening);
+        }
+        rewritten.push('>');
+        rest = &element[end + 1..];
+    }
+    rewritten.push_str(rest);
+    rewritten
+}
+
+fn attribute_value<'a>(opening: &'a str, name: &str) -> Option<&'a str> {
+    let needle = format!("{name}=\"");
+    for (offset, _) in opening.match_indices(&needle) {
+        if offset > 0 && !opening.as_bytes()[offset - 1].is_ascii_whitespace() {
+            continue;
+        }
+        let start = offset + needle.len();
+        let value = &opening[start..];
+        return Some(&value[..value.find('"')?]);
+    }
+    None
+}
+
+fn escape_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Claude's managed allow rule for one agent's artifact tree.
+pub(crate) fn artifact_read_rule(root: &Path) -> String {
+    format!("Read({}/**)", root.display())
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -841,6 +1033,257 @@ mod owners {
             attachments_row(None, &[]),
             json!({"type": "amux.attachments", "input_id": null, "refs": []})
         );
+    }
+}
+
+#[cfg(test)]
+mod materialise {
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    use amux_artifacts::{ArtifactKind, SystemClock, id_of};
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn owner() -> (TempDir, Owner) {
+        let directory = tempfile::tempdir().unwrap();
+        let owner = Owner::open(directory.path().join("artifacts"), Arc::new(SystemClock)).unwrap();
+        (directory, owner)
+    }
+
+    #[test]
+    fn empty_pin_keeps_text_byte_identical_even_for_an_unknown_mention() {
+        let (_directory, owner) = owner();
+        let text = "before <amux-attachment id=\"sha256:unknown\" kind=\"image\">after";
+
+        for backend in [
+            MaterialiseBackend::ClaudePty,
+            MaterialiseBackend::ClaudeSdk,
+            MaterialiseBackend::Codex,
+        ] {
+            let result = materialise(&owner, text, &[], backend).unwrap();
+            assert_eq!(result.text.as_bytes(), text.as_bytes());
+            assert!(result.refs.is_empty());
+            assert!(result.image_blocks.is_empty());
+            #[cfg(all(feature = "local-agents", unix))]
+            assert!(result.codex_items.is_empty());
+        }
+    }
+
+    #[test]
+    fn missing_pin_fails_before_any_artifact_is_pinned() {
+        let (_directory, owner) = owner();
+        let stored = owner
+            .put(ArtifactKind::File, "present.txt", "text/plain", b"present")
+            .unwrap();
+        let missing = ArtifactId::from_str(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+
+        let error = materialise(
+            &owner,
+            "unchanged",
+            &[stored.id.clone(), missing.clone()],
+            MaterialiseBackend::ClaudePty,
+        )
+        .err()
+        .expect("the missing pin must fail");
+
+        assert!(
+            matches!(error, ProtocolError::AttachmentMissing { id } if id == missing.to_string())
+        );
+        assert_eq!(owner.meta(&stored.id).unwrap().pinned_at, None);
+    }
+
+    #[tokio::test]
+    async fn missing_pin_emits_no_refs_row() {
+        let (_directory, owner) = owner();
+        let log = crate::agents::StructuredLogSource::new(8);
+        let missing = ArtifactId::from_str(
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        .unwrap();
+
+        let result = materialise_and_log(
+            &owner,
+            "prompt",
+            &[missing],
+            MaterialiseBackend::ClaudePty,
+            b"input-1",
+            &log,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(ProtocolError::AttachmentMissing { .. })
+        ));
+        assert_eq!(log.current_seq().await, 0);
+    }
+
+    #[tokio::test]
+    async fn emitted_refs_are_copied_from_the_pinned_store_records() {
+        let (_directory, owner) = owner();
+        let stored = owner
+            .put(ArtifactKind::File, "notes.txt", "text/plain", b"notes")
+            .unwrap();
+        let log = crate::agents::StructuredLogSource::new(8);
+
+        let prepared = materialise_and_log(
+            &owner,
+            "notes",
+            std::slice::from_ref(&stored.id),
+            MaterialiseBackend::ClaudePty,
+            b"input-2",
+            &log,
+        )
+        .await
+        .unwrap();
+
+        let pinned = owner.meta(&stored.id).unwrap();
+        assert!(pinned.pinned_at.is_some());
+        let expected = vec![ArtifactRef::from(pinned)];
+        assert_eq!(prepared.refs, expected);
+        let (mut reader, _) = log.subscribe_with_query(None).await.unwrap();
+        assert_eq!(
+            reader.read().await.unwrap().payload,
+            attachments_row(Some(b"input-2"), &expected)
+        );
+    }
+
+    #[test]
+    fn review_pin_preserves_the_complete_element_body() {
+        let (_directory, owner) = owner();
+        let diff = owner
+            .put(ArtifactKind::Diff, "review.diff", "text/x-diff", b"patch")
+            .unwrap();
+        let text = format!(
+            "review <amux-attachment kind=\"review\" diff=\"{}\" base=\"working-tree\">\npath: src/lib.rs\nquoted: - old + new\n</amux-attachment> tail",
+            diff.id
+        );
+
+        let result = materialise(
+            &owner,
+            &text,
+            std::slice::from_ref(&diff.id),
+            MaterialiseBackend::ClaudePty,
+        )
+        .unwrap();
+
+        assert_eq!(result.text, text);
+        assert!(owner.meta(&diff.id).unwrap().pinned_at.is_some());
+        assert_eq!(
+            result.refs,
+            vec![ArtifactRef::from(owner.meta(&diff.id).unwrap())]
+        );
+    }
+
+    #[test]
+    fn image_is_materialised_for_every_native_backend() {
+        let (_directory, owner) = owner();
+        let image = owner
+            .put(ArtifactKind::Image, "screen.png", "image/png", b"png bytes")
+            .unwrap();
+        let text = format!(
+            "inspect <amux-attachment id=\"{}\" kind=\"image\"/>",
+            image.id
+        );
+        let expected_ref = ArtifactRef::from(image.clone());
+        let expected_path = owner.path_of(&image.id);
+
+        let pty = materialise(
+            &owner,
+            &text,
+            std::slice::from_ref(&image.id),
+            MaterialiseBackend::ClaudePty,
+        )
+        .unwrap();
+        assert_eq!(pty.refs, vec![expected_ref.clone()]);
+        assert!(
+            pty.text
+                .contains(&format!(" path=\"{}\"", expected_path.display()))
+        );
+
+        let sdk = materialise(
+            &owner,
+            &text,
+            std::slice::from_ref(&image.id),
+            MaterialiseBackend::ClaudeSdk,
+        )
+        .unwrap();
+        assert_eq!(sdk.text, text);
+        assert_eq!(sdk.refs, vec![expected_ref.clone()]);
+        assert_eq!(
+            serde_json::to_value(&sdk.image_blocks).unwrap(),
+            json!([{
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "cG5nIGJ5dGVz"
+                }
+            }])
+        );
+
+        #[cfg(all(feature = "local-agents", unix))]
+        {
+            let codex = materialise(
+                &owner,
+                &text,
+                std::slice::from_ref(&image.id),
+                MaterialiseBackend::Codex,
+            )
+            .unwrap();
+            assert!(
+                codex
+                    .text
+                    .contains(&format!(" path=\"{}\"", expected_path.display()))
+            );
+            assert_eq!(codex.refs, vec![expected_ref]);
+            assert_eq!(
+                serde_json::to_value(&codex.codex_items).unwrap(),
+                json!([{"type": "localImage", "path": expected_path}])
+            );
+        }
+    }
+
+    #[test]
+    fn read_permission_covers_the_owner_tree() {
+        let (_directory, owner) = owner();
+        assert_eq!(
+            artifact_read_rule(owner.root()),
+            format!("Read({}/**)", owner.root().display())
+        );
+    }
+
+    #[test]
+    fn path_materialisation_does_not_touch_unlisted_elements() {
+        let (_directory, owner) = owner();
+        let listed = owner
+            .put(ArtifactKind::File, "listed.txt", "text/plain", b"listed")
+            .unwrap();
+        let unlisted = id_of(b"unlisted");
+        let text = format!(
+            "<amux-attachment id=\"{unlisted}\" kind=\"file\"/> <amux-attachment id=\"{}\" kind=\"file\"/>",
+            listed.id
+        );
+
+        let result = materialise(
+            &owner,
+            &text,
+            std::slice::from_ref(&listed.id),
+            MaterialiseBackend::Codex,
+        )
+        .unwrap();
+
+        assert!(result.text.starts_with(&format!(
+            "<amux-attachment id=\"{unlisted}\" kind=\"file\"/>"
+        )));
+        assert_eq!(result.text.matches(" path=\"").count(), 1);
+        assert!(result.text.contains(" path=\"") && result.text.contains("\"/>"));
     }
 }
 

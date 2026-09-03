@@ -24,9 +24,10 @@ mod types;
 mod wire;
 
 pub(crate) use attachments::{
-    ArtifactOwners, artifact_kind_from_wire, artifact_kind_to_wire, artifact_ref_from_wire,
-    artifact_ref_to_wire, compute_diff, diff_base_from_wire, diff_base_to_wire,
-    diff_response_from_wire, diff_response_to_wire, spawn_artifact_sweeper, store_error,
+    ArtifactOwners, MaterialiseBackend, artifact_kind_from_wire, artifact_kind_to_wire,
+    artifact_read_rule, artifact_ref_from_wire, artifact_ref_to_wire, compute_diff,
+    diff_base_from_wire, diff_base_to_wire, diff_response_from_wire, diff_response_to_wire,
+    materialise_and_log, materialise_paths, spawn_artifact_sweeper, store_error,
 };
 pub use attachments::{
     ArtifactRef, BaseIdentity, DiffBase, DiffFile, DiffResponse, attachments_row,

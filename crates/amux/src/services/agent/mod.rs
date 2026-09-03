@@ -20,8 +20,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::agents::{
-    Agent, AgentEvent, AgentRecord, ArtifactOwners, CreateAgentRpcRequest, HookEnvironment,
-    RenameAgentRequest, SendInputRequest, SetAgentStatusRequest, SpawnInheritance,
+    Agent, AgentEvent, AgentRecord, ArtifactOwners, ArtifactRef, CreateAgentRpcRequest,
+    HookEnvironment, RenameAgentRequest, SendInputRequest, SetAgentStatusRequest, SpawnInheritance,
     SubscribeSessionRequest,
 };
 use crate::envelope::Envelope;
@@ -72,10 +72,15 @@ pub(crate) trait LocalAgentHost: Send + Sync {
         timeout: std::time::Duration,
     ) -> Result<(), ProtocolError>;
     async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<(), ProtocolError>;
-    async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError>;
+    async fn send_input(
+        &self,
+        request: SendInputRequest,
+        attachment_owner: Option<Arc<amux_artifacts::Owner>>,
+    ) -> Result<(), ProtocolError>;
     async fn subscribe_session(
         &self,
         request: SubscribeSessionRequest,
+        replay_attachments: Option<Vec<ArtifactRef>>,
     ) -> Result<ResponseStream<wire::SubscribeSessionResponse>, ProtocolError>;
     /// Snapshot of currently-hosted agents plus a live event subscription.
     async fn agent_events_snapshot(&self) -> (Vec<AgentEvent>, mpsc::Receiver<AgentEvent>);
@@ -265,14 +270,35 @@ impl AgentServiceCtx {
     }
 
     pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
-        self.require_host()?.send_input(request).await
+        let attachment_owner = if request.pin.is_empty() {
+            None
+        } else {
+            Some(
+                self.require_artifact_owners("SendInput")?
+                    .owner(request.agent_id)?,
+            )
+        };
+        self.require_host()?
+            .send_input(request, attachment_owner)
+            .await
     }
 
     pub(crate) async fn subscribe_session_response_stream(
         &self,
         request: SubscribeSessionRequest,
     ) -> Result<ResponseStream<wire::SubscribeSessionResponse>, ProtocolError> {
-        self.require_host()?.subscribe_session(request).await
+        let replay_attachments = self
+            .artifact_owners
+            .as_ref()
+            .map(|owners| {
+                owners
+                    .owner(request.agent_id)
+                    .map(|owner| owner.pinned().into_iter().map(ArtifactRef::from).collect())
+            })
+            .transpose()?;
+        self.require_host()?
+            .subscribe_session(request, replay_attachments)
+            .await
     }
 }
 

@@ -51,7 +51,7 @@ impl PtyAgentHost {
         let config = crate::config::Config::default();
         let route = McpLaunchRoute::for_current_process(&config, host_id)
             .expect("default managed MCP route should be usable");
-        Self::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir))
+        Self::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir), config.data_dir)
             .expect("default Codex private socket path should be usable")
     }
 
@@ -63,6 +63,7 @@ impl PtyAgentHost {
     pub(crate) fn new_with_mcp_launch_route(
         route: McpLaunchRoute,
         claude_user_keymap_dir: PathBuf,
+        data_dir: PathBuf,
     ) -> io::Result<Arc<Self>> {
         let server_socket_path = route.socket_path().to_path_buf();
         let runtime_dir = server_socket_path
@@ -72,6 +73,7 @@ impl PtyAgentHost {
             .to_path_buf();
         let host_id = route.host_id();
         let deps = AgentDeps::new(
+            data_dir,
             runtime_dir,
             codex_private_socket_path(&server_socket_path)?,
             route,
@@ -392,15 +394,20 @@ impl LocalAgentHost for PtyAgentHost {
         Ok(())
     }
 
-    async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
-        session_rpc::send_session_input(self, request).await
+    async fn send_input(
+        &self,
+        request: SendInputRequest,
+        attachment_owner: Option<Arc<amux_artifacts::Owner>>,
+    ) -> Result<(), ProtocolError> {
+        session_rpc::send_session_input(self, request, attachment_owner).await
     }
 
     async fn subscribe_session(
         &self,
         request: SubscribeSessionRequest,
+        replay_attachments: Option<Vec<crate::agents::ArtifactRef>>,
     ) -> Result<ResponseStream<wire::SubscribeSessionResponse>, ProtocolError> {
-        session_rpc::subscribe_session_stream(self, request).await
+        session_rpc::subscribe_session_stream(self, request, replay_attachments).await
     }
 
     async fn agent_events_snapshot(&self) -> (Vec<AgentEvent>, mpsc::Receiver<AgentEvent>) {
@@ -768,8 +775,12 @@ mod socket_tests {
             McpLaunchRoute::new(executable, Some(config), socket, Uuid::from_u128(80)).unwrap();
 
         let keymap_dir = temp.path().join("keymaps");
-        let host =
-            PtyAgentHost::new_with_mcp_launch_route(route.clone(), keymap_dir.clone()).unwrap();
+        let host = PtyAgentHost::new_with_mcp_launch_route(
+            route.clone(),
+            keymap_dir.clone(),
+            temp.path().to_path_buf(),
+        )
+        .unwrap();
 
         assert_eq!(host.host_id(), route.host_id());
         let state = host.state().read().await;

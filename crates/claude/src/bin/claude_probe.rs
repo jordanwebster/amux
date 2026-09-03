@@ -282,6 +282,7 @@ async fn capture_pty(entry: SpecEntry) -> Result<PtyCapture, Box<dyn std::error:
     let managed = claude::launch::ManagedSettings {
         hook_command: hook_command.clone(),
         mcp_servers: Vec::new(),
+        permissions_allow: Vec::new(),
     };
     let launch = claude::launch::Launch {
         binary: claude_binary(),

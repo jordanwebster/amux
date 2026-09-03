@@ -60,6 +60,7 @@ pub(crate) struct ClaudePtyBackend {
     keymaps: KeymapSources,
     version_cache: ClaudeVersionCache,
     launch_route: Option<McpLaunchRoute>,
+    artifact_root: PathBuf,
     parent: Option<AgentParent>,
     name_source: LocalAgentNameSource,
     created_at: DateTime<Utc>,
@@ -100,6 +101,7 @@ impl ClaudePtyBackend {
             },
             version_cache,
             launch_route: Some(launch_route),
+            artifact_root: req.working_dir.join(".amux-artifacts"),
             parent: req.parent,
             name_source: if req.name.is_some() {
                 LocalAgentNameSource::Amux
@@ -133,6 +135,11 @@ impl ClaudePtyBackend {
         backend.args = sanitize_resume_args(backend.args);
         backend.name_source = name_source;
         backend.created_at = created_at;
+        backend.artifact_root = deps
+            .data_dir
+            .join("agents")
+            .join(req.agent_id.to_string())
+            .join("artifacts");
         backend
             .runtime
             .lock()
@@ -149,6 +156,7 @@ impl ClaudePtyBackend {
                 driver: ClaudeDriver::Pty
             }
         );
+        let artifact_root = record.working_dir.join(".amux-artifacts");
         Self {
             driver: ClaudeDriver::Pty,
             agent_id: record.id,
@@ -162,6 +170,7 @@ impl ClaudePtyBackend {
             keymaps: KeymapSources::default(),
             version_cache: ClaudeVersionCache::default(),
             launch_route: None,
+            artifact_root,
             parent: record.parent,
             name_source: if record.name.is_some() {
                 LocalAgentNameSource::Amux
@@ -176,6 +185,11 @@ impl ClaudePtyBackend {
             started: false,
             ingest_abort: None,
         }
+    }
+
+    pub(in crate::agents) fn with_artifact_root(mut self, artifact_root: PathBuf) -> Self {
+        self.artifact_root = artifact_root;
+        self
     }
 
     fn new_readonly(agent_id: Uuid, working_dir: PathBuf) -> Self {
@@ -420,6 +434,7 @@ impl ClaudePtyBackend {
             &claude::launch::ManagedSettings {
                 hook_command: hook_command.clone(),
                 mcp_servers: Vec::new(),
+                permissions_allow: vec![crate::agents::artifact_read_rule(&self.artifact_root)],
             },
         );
         let mcp_servers = vec![claude::launch::McpServerConfig {
@@ -1193,6 +1208,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn managed_launch_preapproves_artifact_reads_after_user_settings() {
+        let agent_id = Uuid::new_v4();
+        let artifact_root = PathBuf::from("/var/amux/agents/test/artifacts");
+        let req = CreateAgentRequest {
+            agent_id,
+            host_id: None,
+            name: Some("attachments".to_string()),
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Pty,
+            },
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+            args: vec![
+                "--settings".to_string(),
+                r#"{"permissions":{"allow":["Read(/user/**)"]}}"#.to_string(),
+            ],
+            parent: None,
+            initial_prompt: None,
+        };
+        let backend = ClaudePtyBackend::new(
+            &req,
+            std::env::temp_dir(),
+            ClaudeVersionCache::default(),
+            crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
+            std::env::temp_dir().join("amux-test-keymaps"),
+        )
+        .with_artifact_root(artifact_root.clone());
+
+        let settings = backend.launch().unwrap().settings.into_value();
+        assert_eq!(
+            settings["permissions"]["allow"],
+            json!([
+                "Read(/user/**)",
+                crate::agents::artifact_read_rule(&artifact_root)
+            ])
+        );
+    }
+
     #[tokio::test]
     async fn injected_session_drives_structured_and_terminal_planes() {
         let req = CreateAgentRequest {
@@ -1290,6 +1344,7 @@ mod tests {
         std::fs::write(&user_file, user_keymap).unwrap();
 
         let deps = crate::agents::AgentDeps::new(
+            data_dir.path().to_path_buf(),
             data_dir.path().join("runtime"),
             data_dir.path().join("codex.sock"),
             crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),

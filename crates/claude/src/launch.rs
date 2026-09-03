@@ -36,6 +36,7 @@ pub struct McpServerConfig {
 pub struct ManagedSettings {
     pub hook_command: Vec<String>,
     pub mcp_servers: Vec<McpServerConfig>,
+    pub permissions_allow: Vec<String>,
 }
 
 /// Fully merged settings passed as Claude's one managed `--settings` value.
@@ -95,6 +96,12 @@ pub fn merged_settings(user: Option<Value>, managed: &ManagedSettings) -> Merged
         deep_merge(
             &mut merged,
             serde_json::json!({"mcpServers": Value::Object(servers)}),
+        );
+    }
+    if !managed.permissions_allow.is_empty() {
+        deep_merge(
+            &mut merged,
+            serde_json::json!({"permissions": {"allow": managed.permissions_allow}}),
         );
     }
     MergedSettings(merged)
@@ -310,6 +317,7 @@ mod tests {
                 name: "amux".into(),
                 config: serde_json::json!({"command":"/bin/amux","args":["mcp","agent"]}),
             }],
+            permissions_allow: vec!["Read(/managed/artifacts/**)".into()],
         };
         let settings = merged_settings(Some(user), &managed).into_value();
         assert_eq!(settings["theme"], "dark");
@@ -321,6 +329,10 @@ mod tests {
         );
         assert!(settings["hooks"]["PreToolUse"].is_array());
         assert!(settings["hooks"]["PostToolUse"].is_array());
+        assert_eq!(
+            settings["permissions"]["allow"],
+            serde_json::json!(["Read(/managed/artifacts/**)"])
+        );
     }
 
     #[test]

@@ -230,9 +230,12 @@ pub(crate) async fn start_daemon_runtime(
     let config = crate::config::Config::default();
     let route = crate::agents::McpLaunchRoute::for_current_process(&config, inner.host_id)
         .expect("testnet managed MCP route should be usable");
-    let agent_host =
-        PtyAgentHost::new_with_mcp_launch_route(route, crate::keymap_dir(&inner.data_dir))
-            .expect("testnet Codex private socket path should be usable");
+    let agent_host = PtyAgentHost::new_with_mcp_launch_route(
+        route,
+        crate::keymap_dir(&inner.data_dir),
+        inner.data_dir.clone(),
+    )
+    .expect("testnet Codex private socket path should be usable");
     let mut services = start_user_services(state, Some(agent_host.clone()), security)
         .await
         .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));

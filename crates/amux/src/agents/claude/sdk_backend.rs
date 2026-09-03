@@ -8,9 +8,9 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use claude::sdk::{
-    Control, ElicitationResult, HookOutput, McpServerConfig, McpStdioServerConfig,
-    PermissionResult, QueryOptions, SdkEvent, Session, SettingsConfig, SyncHookOutput,
-    UserDialogResult, UserMessage,
+    ContentBlock, Control, ElicitationResult, HookOutput, McpServerConfig, McpStdioServerConfig,
+    MessageContent, MessageParam, PermissionResult, QueryOptions, Role, SdkEvent, Session,
+    SettingsConfig, SyncHookOutput, UserDialogResult, UserMessage,
 };
 use futures_util::StreamExt;
 use serde::ser::SerializeMap;
@@ -55,6 +55,7 @@ pub(crate) struct ClaudeSdkBackend {
     name_source: LocalAgentNameSource,
     created_at: DateTime<Utc>,
     launch_route: Option<McpLaunchRoute>,
+    artifact_root: PathBuf,
     runtime: Arc<Mutex<Runtime>>,
     input_done: Arc<Notify>,
     log: StructuredLogSource,
@@ -86,6 +87,7 @@ impl ClaudeSdkBackend {
             },
             created_at: Utc::now(),
             launch_route: Some(launch_route),
+            artifact_root: req.working_dir.join(".amux-artifacts"),
             runtime: Arc::new(Mutex::new(Runtime {
                 session_id: Some(req.agent_id),
                 ..Runtime::default()
@@ -128,6 +130,7 @@ impl ClaudeSdkBackend {
             }
         );
         let session_id = session.control.session_id().parse().ok();
+        let artifact_root = record.working_dir.join(".amux-artifacts");
         Self {
             agent_id: record.id,
             name: record.name.clone(),
@@ -142,6 +145,7 @@ impl ClaudeSdkBackend {
             },
             created_at: record.created_at,
             launch_route: None,
+            artifact_root,
             runtime: Arc::new(Mutex::new(Runtime {
                 session_id,
                 ..Runtime::default()
@@ -153,6 +157,11 @@ impl ClaudeSdkBackend {
             started: false,
             ingest_abort: None,
         }
+    }
+
+    pub(in crate::agents) fn with_artifact_root(mut self, artifact_root: PathBuf) -> Self {
+        self.artifact_root = artifact_root;
+        self
     }
 
     fn input_target(&self) -> ClaudeSdkInputTarget {
@@ -199,12 +208,18 @@ impl ClaudeSdkBackend {
             options.session_id = Some(session_id);
         }
 
-        if !settings_sources.is_empty() {
-            let settings =
-                claude::launch::load_user_settings(&self.working_dir, &settings_sources)?
-                    .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-            options.settings = Some(SettingsConfig::Inline(settings));
-        }
+        let user_settings =
+            claude::launch::load_user_settings(&self.working_dir, &settings_sources)?;
+        let settings = claude::launch::merged_settings(
+            user_settings,
+            &claude::launch::ManagedSettings {
+                hook_command: Vec::new(),
+                mcp_servers: Vec::new(),
+                permissions_allow: vec![crate::agents::artifact_read_rule(&self.artifact_root)],
+            },
+        )
+        .into_value();
+        options.settings = Some(SettingsConfig::Inline(settings));
 
         let executable = route
             .executable()
@@ -583,8 +598,29 @@ impl ClaudeSdkInputTarget {
     async fn execute(&self, input: ClaudeSdkV1Input) -> Result<()> {
         let control = self.control()?;
         match input {
-            ClaudeSdkV1Input::Prompt { text } => {
-                control.prompt(UserMessage::text(text)).await?;
+            ClaudeSdkV1Input::Prompt {
+                text,
+                mut image_blocks,
+            } => {
+                let message = if image_blocks.is_empty() {
+                    UserMessage::text(text)
+                } else {
+                    let mut blocks = Vec::with_capacity(image_blocks.len() + 1);
+                    blocks.push(ContentBlock::Text {
+                        text,
+                        extensions: Default::default(),
+                    });
+                    blocks.append(&mut image_blocks);
+                    UserMessage::new(
+                        MessageParam {
+                            role: Role::User,
+                            content: MessageContent::Blocks(blocks),
+                            extensions: Default::default(),
+                        },
+                        None,
+                    )
+                };
+                control.prompt(message).await?;
             }
             ClaudeSdkV1Input::Interrupt => {
                 control.interrupt().await?;
@@ -935,6 +971,41 @@ mod tests {
         assert!(debug["session"]["obligations"].is_array());
     }
 
+    #[test]
+    fn managed_sdk_launch_preapproves_artifact_reads_after_user_settings() {
+        let artifact_root = PathBuf::from("/var/amux/agents/test/artifacts");
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: Some("attachments".to_string()),
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+            args: vec![
+                "--settings".to_string(),
+                r#"{"permissions":{"allow":["Read(/user/**)"]}}"#.to_string(),
+            ],
+            parent: None,
+            initial_prompt: None,
+        };
+        let backend = ClaudeSdkBackend::new(&req, mcp_launch_route_for_tests(Uuid::new_v4()))
+            .with_artifact_root(artifact_root.clone());
+
+        let options = backend.query_options().unwrap();
+        let Some(SettingsConfig::Inline(settings)) = options.settings else {
+            panic!("managed SDK settings must be inline");
+        };
+        assert_eq!(
+            settings["permissions"]["allow"],
+            json!([
+                "Read(/user/**)",
+                crate::agents::artifact_read_rule(&artifact_root)
+            ])
+        );
+    }
+
     async fn provider_session(
         transcript_path: String,
     ) -> (Session, tokio::task::JoinHandle<()>, Uuid) {
@@ -1123,6 +1194,7 @@ mod tests {
                 input_id: b"prompt-1".to_vec(),
                 input: ClaudeSdkV1Input::Prompt {
                     text: "hello from amux".to_string(),
+                    image_blocks: Vec::new(),
                 },
             })
             .await

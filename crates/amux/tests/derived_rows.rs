@@ -456,6 +456,7 @@ async fn send_claude_prompt(
             input_id.as_bytes(),
             ClaudeSdkV1Input::Prompt {
                 text: prompt.to_string(),
+                image_blocks: Vec::new(),
             },
         )
         .await

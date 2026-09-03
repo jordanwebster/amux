@@ -41,6 +41,8 @@ pub struct ClaudeSdkV1Output {
 pub enum ClaudeSdkV1Input {
     Prompt {
         text: String,
+        /// Blocks added after decoding by daemon-side attachment materialisation.
+        image_blocks: Vec<claude::sdk::ContentBlock>,
     },
     Interrupt,
     PermissionDecision {
@@ -173,9 +175,10 @@ pub(crate) fn decode_claude_sdk_v1_input(
         .input
         .ok_or_else(|| invalid_input("payload missing input"))?
     {
-        wire::claude_sdk_v1_input::Input::Prompt(prompt) => {
-            Ok(ClaudeSdkV1Input::Prompt { text: prompt.text })
-        }
+        wire::claude_sdk_v1_input::Input::Prompt(prompt) => Ok(ClaudeSdkV1Input::Prompt {
+            text: prompt.text,
+            image_blocks: Vec::new(),
+        }),
         wire::claude_sdk_v1_input::Input::Interrupt(_) => Ok(ClaudeSdkV1Input::Interrupt),
         wire::claude_sdk_v1_input::Input::PermissionDecision(permission) => {
             let decision = permission
@@ -225,7 +228,7 @@ pub(crate) fn decode_claude_sdk_v1_input(
 
 pub fn encode_claude_sdk_v1_input(input: ClaudeSdkV1Input) -> Result<Vec<u8>, ProtocolError> {
     let input = match input {
-        ClaudeSdkV1Input::Prompt { text } => {
+        ClaudeSdkV1Input::Prompt { text, .. } => {
             wire::claude_sdk_v1_input::Input::Prompt(wire::ClaudeSdkPrompt { text })
         }
         ClaudeSdkV1Input::Interrupt => {
@@ -365,6 +368,7 @@ mod tests {
         let inputs = [
             ClaudeSdkV1Input::Prompt {
                 text: "answer precisely".to_string(),
+                image_blocks: Vec::new(),
             },
             ClaudeSdkV1Input::Interrupt,
             ClaudeSdkV1Input::PermissionDecision {
@@ -538,7 +542,7 @@ mod tests {
 
     fn input_as_json(input: &ClaudeSdkV1Input) -> Value {
         match input {
-            ClaudeSdkV1Input::Prompt { text } => json!({"prompt": text}),
+            ClaudeSdkV1Input::Prompt { text, .. } => json!({"prompt": text}),
             ClaudeSdkV1Input::Interrupt => json!({"interrupt": {}}),
             ClaudeSdkV1Input::PermissionDecision {
                 request_id,

@@ -52,6 +52,7 @@ semver = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }
 shell-words = { workspace = true }
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 codex = { path = "../codex", optional = true }

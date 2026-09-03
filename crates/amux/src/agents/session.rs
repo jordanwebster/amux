@@ -283,6 +283,7 @@ pub(crate) fn mcp_launch_route_for_tests(host_id: Uuid) -> McpLaunchRoute {
 /// Host-owned resources shared by agent backends.
 #[derive(Clone)]
 pub(crate) struct AgentDeps {
+    pub(crate) data_dir: std::path::PathBuf,
     pub(crate) runtime_dir: std::path::PathBuf,
     pub(crate) claude_user_keymap_dir: std::path::PathBuf,
     pub(crate) claude_version_cache: ClaudeVersionCache,
@@ -293,6 +294,7 @@ pub(crate) struct AgentDeps {
 
 impl AgentDeps {
     pub(crate) fn new(
+        data_dir: std::path::PathBuf,
         runtime_dir: std::path::PathBuf,
         codex_private_socket: std::path::PathBuf,
         mcp_launch_route: McpLaunchRoute,
@@ -301,6 +303,7 @@ impl AgentDeps {
         #[cfg(not(unix))]
         let _ = codex_private_socket;
         Self {
+            data_dir,
             runtime_dir,
             claude_user_keymap_dir,
             claude_version_cache: ClaudeVersionCache::default(),
@@ -315,6 +318,13 @@ impl AgentDeps {
     pub(crate) async fn for_claude_spawn(self) -> Self {
         self.claude_version_cache.probe_once().await;
         self
+    }
+
+    fn artifact_root(&self, agent_id: Uuid) -> PathBuf {
+        self.data_dir
+            .join("agents")
+            .join(agent_id.to_string())
+            .join("artifacts")
     }
 }
 
@@ -403,19 +413,22 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
     match &req.agent_type {
         AgentType::Claude {
             driver: ClaudeDriver::Pty,
-        } => Ok(Box::new(ClaudeSession::new(
-            req,
-            deps.runtime_dir.clone(),
-            deps.claude_version_cache.clone(),
-            deps.mcp_launch_route.clone(),
-            deps.claude_user_keymap_dir.clone(),
-        ))),
+        } => Ok(Box::new(
+            ClaudeSession::new(
+                req,
+                deps.runtime_dir.clone(),
+                deps.claude_version_cache.clone(),
+                deps.mcp_launch_route.clone(),
+                deps.claude_user_keymap_dir.clone(),
+            )
+            .with_artifact_root(deps.artifact_root(req.agent_id)),
+        )),
         AgentType::Claude {
             driver: ClaudeDriver::Sdk,
-        } => Ok(Box::new(ClaudeSdkBackend::new(
-            req,
-            deps.mcp_launch_route.clone(),
-        ))),
+        } => Ok(Box::new(
+            ClaudeSdkBackend::new(req, deps.mcp_launch_route.clone())
+                .with_artifact_root(deps.artifact_root(req.agent_id)),
+        )),
         #[cfg(unix)]
         AgentType::Codex { .. } => Ok(Box::new(CodexBackend::new(
             req,
@@ -467,13 +480,16 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                     created_at,
                     deps,
                 )),
-                ClaudeDriver::Sdk => Box::new(ClaudeSdkBackend::from_suspended(
-                    &req,
-                    name_source.into(),
-                    session_id,
-                    created_at,
-                    deps.mcp_launch_route.clone(),
-                )),
+                ClaudeDriver::Sdk => Box::new(
+                    ClaudeSdkBackend::from_suspended(
+                        &req,
+                        name_source.into(),
+                        session_id,
+                        created_at,
+                        deps.mcp_launch_route.clone(),
+                    )
+                    .with_artifact_root(deps.artifact_root(agent_id)),
+                ),
             }
         }
         #[cfg(unix)]
@@ -666,6 +682,7 @@ mod tests {
 
         let deps = AgentDeps::new(
             std::env::temp_dir(),
+            std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
             mcp_launch_route_for_tests(Uuid::new_v4()),
             std::env::temp_dir().join("amux-test-keymaps"),
@@ -708,6 +725,7 @@ mod tests {
             working_on: None,
         };
         let deps = AgentDeps::new(
+            std::env::temp_dir(),
             std::env::temp_dir(),
             std::env::temp_dir().join("amux-test-codex.sock"),
             mcp_launch_route_for_tests(Uuid::new_v4()),

@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Materialised attachments at provider boundaries.** Send-input
+now validates every explicitly pinned artifact before changing lifetime or
+emitting metadata, pins successful sends, writes the authoritative
+`amux.attachments` row before provider delivery, and leaves unpinned payloads
+byte-identical. Claude PTY and Codex prompts gain readable artifact paths,
+Claude SDK prompts gain native base64 image blocks, and Codex turns gain local
+image items. Structured session subscriptions replay all pinned refs directly
+after opening so another host can rebuild its attachment index before retained
+rows. Managed Claude PTY and SDK launches also append a Read allow rule for the
+agent's artifact directory after user settings.
+
 2026-09-03 — **Wired artifact ownership into daemon services.** Daemon startup
 now opens every existing per-agent artifact index and retains one owner per
 agent, creates owners on first touch, and runs a five-minute sweep over only

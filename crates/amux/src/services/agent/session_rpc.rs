@@ -1,7 +1,10 @@
 //! Session subscription and input RPCs, driven by [`PtyAgentHost`].
 
 use std::future::Future;
+use std::str::FromStr;
+use std::sync::Arc;
 
+use amux_artifacts::{ArtifactId, Owner};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -17,9 +20,10 @@ use crate::agents::claude::sdk_io::{
 use crate::agents::codex::io::{self as codex_io, CodexSdkV1Output, CodexSdkV1ReplayQuery};
 use crate::agents::terminal_io::{self, TerminalV1Control, TerminalV1ReplayQuery};
 use crate::agents::{
-    BroadcastRead, ByteReplayQuery, Plane, Protocol, PtyHandle, RawPtyTarget, SendInputRequest,
-    SessionCloseReason, SessionInputEvent, StructuredInput, StructuredInputEvent, StructuredOutput,
-    SubscribeSessionEvent, SubscribeSessionRequest,
+    ArtifactRef, BroadcastRead, ByteReplayQuery, MaterialiseBackend, Plane, Protocol, PtyHandle,
+    RawPtyTarget, SendInputRequest, SessionCloseReason, SessionInputEvent, StructuredInput,
+    StructuredInputEvent, StructuredLogSource, StructuredOutput, SubscribeSessionEvent,
+    SubscribeSessionRequest, attachments_row, materialise_and_log, materialise_paths,
 };
 use crate::protocol::{ProtocolError, protocol_status};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
@@ -27,6 +31,7 @@ use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 pub(super) async fn subscribe_session_stream(
     host: &PtyAgentHost,
     request: SubscribeSessionRequest,
+    replay_attachments: Option<Vec<ArtifactRef>>,
 ) -> Result<super::ResponseStream<crate::protocol::wire::SubscribeSessionResponse>, ProtocolError> {
     let close_rx = host
         .state()
@@ -46,6 +51,7 @@ pub(super) async fn subscribe_session_stream(
         prepared.output,
         close_rx,
         shutdown_rx,
+        replay_attachments,
     ))
 }
 
@@ -344,17 +350,36 @@ fn structured_replay_query(
 pub(super) async fn send_session_input(
     host: &PtyAgentHost,
     request: SendInputRequest,
+    attachment_owner: Option<Arc<Owner>>,
 ) -> Result<(), ProtocolError> {
+    let pins = request
+        .pin
+        .iter()
+        .map(|id| {
+            ArtifactId::from_str(id).map_err(|error| ProtocolError::InvalidArgument {
+                message: format!("invalid attachment id `{id}`: {error}"),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     match request.protocol {
         Protocol::TerminalV1 => {
+            reject_raw_attachments(attachment_owner.as_deref(), &pins, request.protocol)?;
             send_raw_session_input(host, request.agent_id, Protocol::TerminalV1, request.event)
                 .await
         }
         Protocol::ClaudePtyTranscriptV1 => {
-            send_structured_session_input(host, request.agent_id, request.event).await
+            send_structured_session_input(
+                host,
+                request.agent_id,
+                request.event,
+                attachment_owner.as_deref(),
+                &pins,
+            )
+            .await
         }
         Protocol::ClaudeSdkV1 => {
-            let target = structured_input_target(host, request.agent_id, request.protocol).await?;
+            let (log, target) =
+                structured_plane_target(host, request.agent_id, request.protocol).await?;
             let SessionInputEvent::Input { input_id, payload } = request.event else {
                 return Err(ProtocolError::InvalidArgument {
                     message: format!(
@@ -363,7 +388,25 @@ pub(super) async fn send_session_input(
                     ),
                 });
             };
-            let input = claude_sdk_io::decode_claude_sdk_v1_input(&payload)?;
+            let mut input = claude_sdk_io::decode_claude_sdk_v1_input(&payload)?;
+            if let Some(owner) = attachment_owner.as_deref() {
+                let crate::agents::claude::sdk_io::ClaudeSdkV1Input::Prompt { text, image_blocks } =
+                    &mut input
+                else {
+                    return Err(attachments_require_prompt(request.protocol));
+                };
+                let prepared = materialise_and_log(
+                    owner,
+                    text,
+                    &pins,
+                    MaterialiseBackend::ClaudeSdk,
+                    &input_id,
+                    &log,
+                )
+                .await?;
+                *text = prepared.text;
+                *image_blocks = prepared.image_blocks;
+            }
             target
                 .send(StructuredInputEvent::ClaudeSdk { input_id, input })
                 .await
@@ -377,11 +420,49 @@ pub(super) async fn send_session_input(
                     ),
                 });
             };
-            let input = codex_io::decode_codex_sdk_v1_input(&payload)?;
+            let mut input = codex_io::decode_codex_sdk_v1_input(&payload)?;
             #[cfg(unix)]
             {
-                let target =
-                    structured_input_target(host, request.agent_id, request.protocol).await?;
+                let (log, target) =
+                    structured_plane_target(host, request.agent_id, request.protocol).await?;
+                if let Some(owner) = attachment_owner.as_deref() {
+                    let codex_io::CodexSdkV1Input::UserTurn {
+                        input: encoded_items,
+                    } = &mut input
+                    else {
+                        return Err(attachments_require_prompt(request.protocol));
+                    };
+                    let mut items: Vec<codex::InputItem> = serde_json::from_slice(encoded_items)
+                        .map_err(|error| ProtocolError::InvalidArgument {
+                            message: format!(
+                                "Codex user_turn input must be JSON input items: {error}"
+                            ),
+                        })?;
+                    let mut prepared = materialise_and_log(
+                        owner,
+                        "",
+                        &pins,
+                        MaterialiseBackend::Codex,
+                        &input_id,
+                        &log,
+                    )
+                    .await?;
+                    for item in &mut items {
+                        if let codex::InputItem::Text { text } = item {
+                            *text = materialise_paths(
+                                owner,
+                                text,
+                                &prepared.refs,
+                                MaterialiseBackend::Codex,
+                            );
+                        }
+                    }
+                    items.append(&mut prepared.codex_items);
+                    *encoded_items =
+                        serde_json::to_vec(&items).map_err(|error| ProtocolError::ServerError {
+                            message: format!("failed to encode materialised Codex input: {error}"),
+                        })?;
+                }
                 target
                     .send(StructuredInputEvent::Codex { input_id, input })
                     .await
@@ -395,9 +476,32 @@ pub(super) async fn send_session_input(
             }
         }
         Protocol::TestEchoV1 => {
+            reject_raw_attachments(attachment_owner.as_deref(), &pins, request.protocol)?;
             send_raw_session_input(host, request.agent_id, Protocol::TestEchoV1, request.event)
                 .await
         }
+    }
+}
+
+fn reject_raw_attachments(
+    owner: Option<&Owner>,
+    pins: &[ArtifactId],
+    protocol: Protocol,
+) -> Result<(), ProtocolError> {
+    let Some(owner) = owner else {
+        return Ok(());
+    };
+    for id in pins {
+        owner.meta(id).map_err(crate::agents::store_error)?;
+    }
+    Err(ProtocolError::InvalidArgument {
+        message: format!("`{protocol}` does not accept attachment-bearing inputs"),
+    })
+}
+
+fn attachments_require_prompt(protocol: Protocol) -> ProtocolError {
+    ProtocolError::InvalidArgument {
+        message: format!("`{protocol}` attachments require a prompt input"),
     }
 }
 
@@ -445,8 +549,10 @@ async fn send_structured_session_input(
     host: &PtyAgentHost,
     agent_id: Uuid,
     event: SessionInputEvent,
+    attachment_owner: Option<&Owner>,
+    pins: &[ArtifactId],
 ) -> Result<(), ProtocolError> {
-    let SessionInputEvent::Input { payload, .. } = event else {
+    let SessionInputEvent::Input { input_id, payload } = event else {
         return Err(ProtocolError::InvalidArgument {
             message: format!(
                 "`{}` does not accept SendInput control events",
@@ -454,21 +560,48 @@ async fn send_structured_session_input(
             ),
         });
     };
-    let input = claude_io::decode_pty_transcript_v1_input(&payload)?;
-    let target = structured_input_target(host, agent_id, Protocol::ClaudePtyTranscriptV1).await?;
+    let mut input = claude_io::decode_pty_transcript_v1_input(&payload)?;
+    let (log, target) =
+        structured_plane_target(host, agent_id, Protocol::ClaudePtyTranscriptV1).await?;
+    send_claude_pty_to_target(log, target, input_id, &mut input, attachment_owner, pins).await
+}
+
+async fn send_claude_pty_to_target(
+    log: StructuredLogSource,
+    target: Box<dyn StructuredInput>,
+    input_id: Vec<u8>,
+    input: &mut claude_io::ClaudePtyTranscriptV1Input,
+    attachment_owner: Option<&Owner>,
+    pins: &[ArtifactId],
+) -> Result<(), ProtocolError> {
+    if let Some(owner) = attachment_owner {
+        let claude_io::Intent::Prompt { text } = &mut input.intent else {
+            return Err(attachments_require_prompt(Protocol::ClaudePtyTranscriptV1));
+        };
+        let prepared = materialise_and_log(
+            owner,
+            text,
+            pins,
+            MaterialiseBackend::ClaudePty,
+            &input_id,
+            &log,
+        )
+        .await?;
+        *text = prepared.text;
+    }
     target
         .send(StructuredInputEvent::ClaudePty {
             client_seq: input.expected_seq,
-            intent: input.intent,
+            intent: input.intent.clone(),
         })
         .await
 }
 
-async fn structured_input_target(
+async fn structured_plane_target(
     host: &PtyAgentHost,
     agent_id: Uuid,
     protocol: Protocol,
-) -> Result<Box<dyn StructuredInput>, ProtocolError> {
+) -> Result<(StructuredLogSource, Box<dyn StructuredInput>), ProtocolError> {
     let state = host.state().read().await;
     let session = state
         .local_agents
@@ -476,7 +609,7 @@ async fn structured_input_target(
         .map(|context| &context.session)
         .ok_or(ProtocolError::NoAgentFound)?;
     match session.plane(protocol)? {
-        Plane::Structured { input, .. } => Ok(input),
+        Plane::Structured { log, input } => Ok((log, input)),
         Plane::Terminal(_) => Err(ProtocolError::ServerError {
             message: format!("{protocol} resolved to a terminal plane"),
         }),
@@ -493,6 +626,14 @@ enum DirectSessionStreamState {
         reader: SessionOutputReader,
         close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
         shutdown_rx: mpsc::Receiver<ShutdownReason>,
+        replay_attachments: Option<Vec<ArtifactRef>>,
+    },
+    ReplayingAttachments {
+        agent_id: Uuid,
+        reader: SessionOutputReader,
+        close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
+        shutdown_rx: mpsc::Receiver<ShutdownReason>,
+        refs: Vec<ArtifactRef>,
     },
     Reading {
         agent_id: Uuid,
@@ -508,6 +649,7 @@ fn direct_session_response_stream(
     reader: SessionOutputReader,
     close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
     shutdown_rx: mpsc::Receiver<ShutdownReason>,
+    replay_attachments: Option<Vec<ArtifactRef>>,
 ) -> super::ResponseStream<crate::protocol::wire::SubscribeSessionResponse> {
     Box::pin(futures_util::stream::unfold(
         DirectSessionStreamState::Opening {
@@ -515,6 +657,7 @@ fn direct_session_response_stream(
             reader,
             close_rx,
             shutdown_rx,
+            replay_attachments,
         },
         |state| async move {
             match state {
@@ -523,15 +666,58 @@ fn direct_session_response_stream(
                     reader,
                     close_rx,
                     shutdown_rx,
-                } => Some((
-                    session_output_response(SubscribeSessionEvent::Opened, reader.protocol()),
-                    DirectSessionStreamState::Reading {
-                        agent_id,
-                        reader,
-                        close_rx,
-                        shutdown_rx,
-                    },
-                )),
+                    replay_attachments,
+                } => {
+                    let protocol = reader.protocol();
+                    let next = match (replay_attachments, &reader) {
+                        (Some(refs), SessionOutputReader::Structured { .. }) => {
+                            DirectSessionStreamState::ReplayingAttachments {
+                                agent_id,
+                                reader,
+                                close_rx,
+                                shutdown_rx,
+                                refs,
+                            }
+                        }
+                        _ => DirectSessionStreamState::Reading {
+                            agent_id,
+                            reader,
+                            close_rx,
+                            shutdown_rx,
+                        },
+                    };
+                    Some((
+                        session_output_response(SubscribeSessionEvent::Opened, protocol),
+                        next,
+                    ))
+                }
+                DirectSessionStreamState::ReplayingAttachments {
+                    agent_id,
+                    reader,
+                    close_rx,
+                    shutdown_rx,
+                    refs,
+                } => {
+                    let protocol = reader.protocol();
+                    let event = structured_output_event(
+                        StructuredOutput {
+                            seq: 0,
+                            payload: attachments_row(None, &refs),
+                        },
+                        protocol,
+                    );
+                    Some((
+                        event
+                            .map(|event| session_output_response(event, protocol))
+                            .unwrap_or_else(|error| Err(protocol_status(error))),
+                        DirectSessionStreamState::Reading {
+                            agent_id,
+                            reader,
+                            close_rx,
+                            shutdown_rx,
+                        },
+                    ))
+                }
                 DirectSessionStreamState::Reading {
                     agent_id,
                     mut reader,
@@ -725,10 +911,14 @@ pub(super) async fn open_in_process_protocol_plane(
                 message: error.to_string(),
             }
         })?;
-    let host = PtyAgentHost::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir))
-        .map_err(|error| ProtocolError::ServerError {
-            message: error.to_string(),
-        })?;
+    let host = PtyAgentHost::new_with_mcp_launch_route(
+        route,
+        crate::keymap_dir(&config.data_dir),
+        config.data_dir.clone(),
+    )
+    .map_err(|error| ProtocolError::ServerError {
+        message: error.to_string(),
+    })?;
     let agent_id = Uuid::new_v4();
     let agent_type = match kind {
         crate::agents::AgentKind::Claude { driver } => AgentType::Claude { driver },
@@ -815,10 +1005,14 @@ pub(super) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
             message: error.to_string(),
         }
     })?;
-    let host = PtyAgentHost::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir))
-        .map_err(|error| ProtocolError::ServerError {
-            message: error.to_string(),
-        })?;
+    let host = PtyAgentHost::new_with_mcp_launch_route(
+        route,
+        crate::keymap_dir(&config.data_dir),
+        config.data_dir.clone(),
+    )
+    .map_err(|error| ProtocolError::ServerError {
+        message: error.to_string(),
+    })?;
     let request = CreateAgentRequest {
         agent_id: Uuid::new_v4(),
         host_id: None,
@@ -894,6 +1088,7 @@ mod tests {
                 protocol: Protocol::CodexSdkV1,
                 args: None,
             },
+            None,
         )
         .await
         .unwrap();
@@ -934,6 +1129,7 @@ mod tests {
                 protocol: Protocol::TerminalV1,
                 args: None,
             },
+            None,
         )
         .await
         .unwrap();
@@ -1098,6 +1294,7 @@ mod tests {
             }),
             close_rx,
             shutdown_rx,
+            None,
         );
 
         for _ in 0..300 {
@@ -1135,6 +1332,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn structured_session_replays_pinned_refs_immediately_after_opened() {
+        let agent_id = Uuid::from_u128(9);
+        let log = StructuredLogSource::new(8);
+        let (reader, _) = log.subscribe_with_query(None).await.unwrap();
+        let (_close_tx, close_rx) = mpsc::channel(1);
+        let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let artifact = ArtifactRef {
+            id: amux_artifacts::id_of(b"image"),
+            kind: amux_artifacts::ArtifactKind::Image,
+            name: "screen.png".to_string(),
+            mime: "image/png".to_string(),
+            size: 5,
+        };
+        let mut stream = direct_session_response_stream(
+            agent_id,
+            SessionOutputReader::Structured {
+                protocol: Protocol::ClaudeSdkV1,
+                reader,
+                replay_cursor: None,
+            },
+            close_rx,
+            shutdown_rx,
+            Some(vec![artifact.clone()]),
+        );
+
+        let opened = stream.next().await.unwrap().unwrap();
+        assert!(matches!(
+            opened.event,
+            Some(crate::protocol::wire::subscribe_session_response::Event::Opened(_))
+        ));
+        let replay = stream.next().await.unwrap().unwrap();
+        let Some(crate::protocol::wire::subscribe_session_response::Event::Output(output)) =
+            replay.event
+        else {
+            panic!("expected attachment replay output");
+        };
+        let Some(crate::protocol::wire::session_output::Output::ClaudeSdkV1(output)) =
+            output.output
+        else {
+            panic!("expected Claude SDK attachment replay output");
+        };
+        assert_eq!(output.seq_id, 0);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&output.payload).unwrap(),
+            attachments_row(None, &[artifact])
+        );
+
+        let replay_complete = stream.next().await.unwrap().unwrap();
+        assert!(matches!(
+            replay_complete.event,
+            Some(crate::protocol::wire::subscribe_session_response::Event::ReplayComplete(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn direct_session_stream_reports_server_shutdown_reason() {
         let agent_id = Uuid::from_u128(1);
         let buffer = MultiplexByteBuffer::new(1024);
@@ -1151,6 +1403,7 @@ mod tests {
             }),
             close_rx,
             shutdown_rx,
+            None,
         );
 
         let opened = stream.next().await.unwrap().unwrap();

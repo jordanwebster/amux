@@ -133,6 +133,11 @@ impl Owner {
         blob_path(&self.root, id)
     }
 
+    /// Returns the absolute root containing this owner's blobs and index.
+    pub fn root(&self) -> &PathBuf {
+        &self.root
+    }
+
     /// Removes expired ephemeral artifacts from the loaded index and from disk.
     pub fn sweep(&self, ttl: Duration) -> Result<Vec<ArtifactId>, StoreError> {
         let now = self.clock.now();

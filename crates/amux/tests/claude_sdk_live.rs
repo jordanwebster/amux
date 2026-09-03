@@ -383,6 +383,7 @@ fn main() -> anyhow::Result<()> {
                 label,
                 ClaudeSdkV1Input::Prompt {
                     text: text.to_string(),
+                    image_blocks: Vec::new(),
                 },
             )
             .await
