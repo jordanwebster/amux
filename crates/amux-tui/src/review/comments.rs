@@ -6,6 +6,7 @@
 use amux_ui::review::{RowRef, anchor};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Line;
+use serde::{Deserialize, Serialize};
 
 use super::view::{ReviewOutcome, ReviewView};
 use crate::composer::{Composer, readline_key};
@@ -17,7 +18,7 @@ const THREAD_LEFT: usize = 8;
 /// An inclusive run of rows in one file. `anchor` is where `v` was pressed
 /// and `head` is where the cursor has since walked to, so a selection can
 /// run in either direction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Selection {
     pub anchor: RowRef,
     pub head: RowRef,
@@ -47,7 +48,7 @@ impl Selection {
 /// The inline comment box: the composer's rules over the rows a comment
 /// will be anchored to. `editing` names the existing comment being
 /// rewritten, and is absent for a new one.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CommentEditor {
     pub target: Selection,
     pub field: Composer,

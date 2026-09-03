@@ -37,4 +37,4 @@
                                                                                                                         
 ▎   Type a message▌                                                                                                     
                                                                                                                         
-    enter send · ctrl+j newline · ? help                                                               mode acceptEdits 
+    enter send · ctrl+j newline · C-a r review diff · ? help                                           mode acceptEdits 

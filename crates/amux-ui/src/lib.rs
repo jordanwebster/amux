@@ -27,7 +27,7 @@ mod update;
 // Kernel entity vocabulary re-exported so renderers depend on amux-ui alone.
 pub use amux::{
     Agent, AgentId, AgentKind, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef,
-    BaseIdentity, Capabilities, ClaudeDriver, DiffBase, DiffFile, HostEntry, HostId,
+    BaseIdentity, Capabilities, ClaudeDriver, DiffBase, DiffFile, DiffResponse, HostEntry, HostId,
     HostTrustStatus, Protocol, WorkingOn, claude_io,
 };
 pub use attachments::{

@@ -13,6 +13,7 @@
       C-a o                     open / close the focused run                                                            
       esc                       close reader / clear focus / back ask / follow                                          
       ctrl+t                    read accepted plans (←/→ steps)                                                         
+      C-a r                     review the agent's diff (resumes a draft one)                                           
       ctrl+c                    clear field; empty: press twice to quit                                                 
       C-a s                     back to fleet                                                                           
       C-a d                     detach to shell                                                                         
@@ -34,7 +35,6 @@
   ask panels                                                                                                            
       1-9                       select (never submits)                                                                  
       ↑/↓                       move selection                                                                          
-      space                     toggle (multi-select)                                                                   
   ⋮ more — a taller terminal shows the full list                                                                        
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     any key to close                                                                                                    

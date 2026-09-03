@@ -10,7 +10,7 @@
 
 use amux_ui::claude::AskState;
 use amux_ui::claude::answer::{self, AskAnswer};
-use amux_ui::{ClaudeCommand, Command, Model};
+use amux_ui::{ClaudeCommand, Command, DiffBase, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -22,6 +22,7 @@ use crate::chat::viewport::ScrollIntent;
 use crate::clipboard::ClipboardContent;
 use crate::composer;
 use crate::composer::Composer;
+use crate::review::ReviewOutcome;
 use crate::view::UiAction;
 
 pub fn handle_chat_key(
@@ -81,6 +82,12 @@ pub fn handle_chat_key(
                 toggle_inline_ask(chat, model);
                 None
             }
+            // `<leader> r`: review the agent's diff. A leader chord for the
+            // same reason the others are: it opens a whole screen, it must
+            // work from under a panel, and it must never reach a draft. A
+            // read-only chat has no draft to put a review in, so it has no
+            // review either (F1).
+            KeyCode::Char('r') if !chat.read_only(model) => open_review(chat),
             _ => None,
         };
     }
@@ -124,6 +131,14 @@ pub fn handle_chat_key(
     if chat.help {
         chat.help = false;
         return None;
+    }
+
+    // The review page replaces the whole frame while it is open, so it owns
+    // every key the chrome did not already claim — including Esc, which
+    // steps back inside the page, and the letters the composer would
+    // otherwise type.
+    if chat.review_open() {
+        return review_key(chat, key, viewport);
     }
 
     // Read-only chats have a single viewing focus: scroll keys, `f`, and
@@ -188,6 +203,10 @@ fn focused_field<'c>(chat: &'c mut View, model: &Model) -> Option<&'c mut Compos
         Focus::Nothing => None,
         Focus::Ask => chat.ask_ui.as_mut().and_then(AskUi::active_field),
         Focus::Inline => chat.inline_ask.as_mut().and_then(InlineAsk::active_field),
+        Focus::Review => chat
+            .review
+            .as_mut()
+            .and_then(|draft| draft.view.editor_field_mut()),
         Focus::Composer => Some(&mut chat.composer),
     }
 }
@@ -202,6 +221,8 @@ enum Focus {
     Ask,
     /// A child's ask, docked here.
     Inline,
+    /// The open review page — its comment box when one is open.
+    Review,
     Composer,
 }
 
@@ -210,6 +231,10 @@ fn focus(chat: &View, model: &Model) -> Focus {
     // covers whatever field there was.
     if chat.read_only(model) || chat.help {
         return Focus::Nothing;
+    }
+    // The review page covers the composer; only its comment box is a field.
+    if chat.review_open() {
+        return Focus::Review;
     }
     if chat.reader.is_some() {
         return match reader::answer_actionable(model, chat) {
@@ -271,7 +296,19 @@ fn composer_key(
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             chat.composer.insert_newline()
         }
-        KeyCode::Enter => return send(chat, model),
+        // Enter ON the review token resumes the page; anywhere else it
+        // sends. The token is one char wide, so the two are never the same
+        // position, and leaving the page puts the cursor past it.
+        KeyCode::Enter => {
+            if let Some(slot) = chat.composer.review_token_at_cursor()
+                && let Some(draft) = chat.review.as_mut()
+                && draft.slot == Some(slot)
+            {
+                draft.open = true;
+                return None;
+            }
+            return send(chat, model);
+        }
         // Ctrl+J: the guaranteed newline in any terminal (Shift+Enter
         // above is the kitty sugar). Ctrl+P/N and the arrows are
         // multiline row motion — above the one-line readline set.
@@ -321,7 +358,23 @@ fn composer_key(
             composer::readline_key(&mut chat.composer, &key);
         }
     }
+    discard_deleted_review(chat);
     None
+}
+
+/// Deleting the review token discards the review behind it.
+///
+/// The token is the review's only place in the draft, so removing it is
+/// how a person throws one away — there is no other finish step to undo. A
+/// kill is not a deletion: the token stays alive in the kill buffer, so
+/// Ctrl+U then Ctrl+Y brings the review back with the words it sat among.
+fn discard_deleted_review(chat: &mut View) {
+    let Some(slot) = chat.review.as_ref().and_then(|draft| draft.slot) else {
+        return;
+    };
+    if chat.composer.token(slot).is_none() {
+        chat.review = None;
+    }
 }
 
 /// Bracketed paste into the chat: literal insertion into the focused text
@@ -433,6 +486,70 @@ fn toggle_inline_ask(chat: &mut View, model: &Model) {
     chat.inline_ask = InlineAsk::open(model, banner.child);
 }
 
+/// `<leader> r`: open the review page, or come back to the one this draft
+/// already has.
+///
+/// The first press asks the daemon to freeze the repository's diff; the
+/// page opens over the result when it arrives. Every later press resumes
+/// the same frozen diff — a review that refetched would move the rows its
+/// comments are anchored to out from under them. Nothing here is gated on
+/// what the agent is doing: reviewing what it has written so far is most
+/// wanted exactly while it is still writing.
+fn open_review(chat: &mut View) -> Option<UiAction> {
+    if let Some(draft) = chat.review.as_mut() {
+        draft.open = true;
+        return None;
+    }
+    if chat.diff_pending() {
+        return None;
+    }
+    Some(UiAction::Dispatch(Command::RequestDiff {
+        agent: chat.agent,
+        base: DiffBase::WorkingTree,
+    }))
+}
+
+/// Keys while the review page is open.
+///
+/// The page decides everything about itself; this handles only what
+/// leaving it and writing on it mean to the chat around it.
+fn review_key(chat: &mut View, key: KeyEvent, viewport: (u16, u16)) -> Option<UiAction> {
+    // D3: interrupt reaches the agent from every focus state, the open
+    // comment box included — it is a control chord, so it can never be
+    // something the person meant to type.
+    if key.code == KeyCode::Char('x') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return Some(UiAction::Dispatch(Command::Claude(
+            ClaudeCommand::Interrupt { agent: chat.agent },
+        )));
+    }
+    let draft = chat.review.as_mut()?;
+    // Scroll follows the cursor as the key moves it, so the page has to
+    // know the screen it is on before the key arrives, not when it draws.
+    draft.view.set_viewport(viewport.0, viewport.1);
+    match draft.view.handle_key(&key) {
+        ReviewOutcome::CommentsChanged => {
+            let mut draft = chat.review.take()?;
+            draft.sync_token(&mut chat.composer);
+            chat.review = Some(draft);
+            None
+        }
+        ReviewOutcome::Close => {
+            draft.open = false;
+            // Back in the draft the cursor sits just PAST the token, where
+            // Enter sends. On it, Enter would reopen the page just left.
+            if let Some(slot) = draft.slot {
+                chat.composer.cursor_after_token(slot);
+            }
+            None
+        }
+        ReviewOutcome::SwitchBase(base) => Some(UiAction::Dispatch(Command::RequestDiff {
+            agent: chat.agent,
+            base,
+        })),
+        ReviewOutcome::Handled | ReviewOutcome::Ignored => None,
+    }
+}
+
 /// Keys while a child's ask is docked here: the child's layer's own
 /// panel first, this chat's feed scrolling as the fallback — the
 /// conversation stays readable behind a guest exactly as behind an ask
@@ -473,7 +590,9 @@ fn send(chat: &mut View, model: &Model) -> Option<UiAction> {
     // A draft with no tokens sends exactly as it always did: the
     // attachment command exists for drafts that actually carry one.
     let attached = !chat.composer.tokens().is_empty();
-    let (text, attachments) = chat.composer.export(None);
+    let (text, attachments) = chat
+        .composer
+        .export(chat.review.as_ref().map(|draft| draft.view.review()));
     chat.composer.clear_for_send();
     Some(UiAction::Dispatch(if attached {
         Command::SendPromptWithAttachments {
@@ -2639,5 +2758,396 @@ mod attachments {
 
     fn agent_id_local() -> amux_ui::AgentId {
         super::tests::agent_id()
+    }
+}
+
+/// The review page inside the chat that hosts it: opening over a frozen
+/// diff, the token it leaves in the draft, and what leaving, resuming,
+/// discarding and sending it mean. Sibling of `tests` so the check filter
+/// names it.
+#[cfg(test)]
+mod review {
+    use amux_ui::{Msg, OpId, OpOutcome};
+    use uuid::Uuid;
+
+    use super::tests::{VIEWPORT, ctrl, fold, idle_model, press, t, working_model};
+    use super::*;
+    use crate::review::fixture::sample_diff_response;
+
+    fn agent() -> amux_ui::AgentId {
+        super::tests::agent_id()
+    }
+
+    fn chat() -> View {
+        View::open(agent(), 'a', false)
+    }
+
+    fn key(chat: &mut View, model: &Model, key: KeyEvent) -> Option<UiAction> {
+        handle_chat_key(chat, model, key, VIEWPORT, t(0))
+    }
+
+    fn type_text(chat: &mut View, model: &Model, text: &str) {
+        for character in text.chars() {
+            key(chat, model, press(KeyCode::Char(character)));
+        }
+    }
+
+    /// `<leader> r`, and whatever it dispatched.
+    fn leader_r(chat: &mut View, model: &Model) -> Option<Command> {
+        key(chat, model, ctrl('a'));
+        match key(chat, model, press(KeyCode::Char('r'))) {
+            Some(UiAction::Dispatch(command)) => Some(command),
+            other => {
+                assert!(other.is_none(), "the chord dispatches or does nothing");
+                None
+            }
+        }
+    }
+
+    /// The daemon's answer to a diff request, folded in and reconciled.
+    fn deliver(chat: &mut View, model: &mut Model, command: Command, nth: u128) {
+        let op = OpId(Uuid::from_u128(nth));
+        chat.note_dispatched(op, &command);
+        let base = match &command {
+            Command::RequestDiff { base, .. } => base.clone(),
+            other => panic!("expected a diff request, got {other:?}"),
+        };
+        fold(model, vec![Msg::Command { op, command }]);
+        fold(
+            model,
+            vec![Msg::OpResult {
+                op,
+                outcome: OpOutcome::DiffReady {
+                    response: sample_diff_response(base),
+                },
+            }],
+        );
+        chat.reconcile(model);
+    }
+
+    /// The chord, the frozen diff, and the page on screen.
+    fn opened(model: &mut Model) -> View {
+        let mut chat = chat();
+        let command = leader_r(&mut chat, model).expect("the chord requests a diff");
+        deliver(&mut chat, model, command, 1);
+        assert!(chat.review_open(), "the page opens over the frozen diff");
+        chat
+    }
+
+    /// Move to a row, open the comment box, type, and save.
+    fn comment(chat: &mut View, model: &Model, text: &str) {
+        key(chat, model, press(KeyCode::Char('j')));
+        key(chat, model, press(KeyCode::Char('c')));
+        type_text(chat, model, text);
+        key(chat, model, press(KeyCode::Enter));
+    }
+
+    fn labels(chat: &View) -> Vec<String> {
+        chat.composer
+            .tokens()
+            .iter()
+            .map(|token| token.label.clone())
+            .collect()
+    }
+
+    #[test]
+    fn the_chord_requests_the_working_tree_diff_and_opens_the_page_over_it() {
+        let mut model = idle_model();
+        let mut chat = chat();
+        let command = leader_r(&mut chat, &model).expect("the chord requests a diff");
+        assert_eq!(
+            command,
+            Command::RequestDiff {
+                agent: agent(),
+                base: DiffBase::WorkingTree,
+            }
+        );
+        assert!(!chat.review_open(), "nothing opens before the diff arrives");
+        deliver(&mut chat, &mut model, command, 1);
+        assert!(chat.review_open());
+        assert_eq!(
+            chat.review
+                .as_ref()
+                .expect("a review")
+                .view
+                .review()
+                .document()
+                .files
+                .len(),
+            3,
+            "the page holds the whole frozen patch"
+        );
+        assert!(
+            chat.composer.is_empty(),
+            "an unwritten review leaves no token"
+        );
+    }
+
+    /// The token appears the moment there is something to send, and its
+    /// label counts what is behind it.
+    #[test]
+    fn the_first_saved_comment_inserts_the_token_at_the_cursor() {
+        let mut model = idle_model();
+        let mut chat = chat();
+        chat.composer.insert_str("look at ");
+        let command = leader_r(&mut chat, &model).expect("the chord requests a diff");
+        deliver(&mut chat, &mut model, command, 1);
+        comment(&mut chat, &model, "say why");
+        assert_eq!(labels(&chat), vec!["[Review · 1 comment]"]);
+        assert_eq!(
+            chat.composer.text().chars().count(),
+            "look at ".len() + 1,
+            "the token is one char, at the cursor"
+        );
+
+        key(&mut chat, &model, press(KeyCode::Char('j')));
+        key(&mut chat, &model, press(KeyCode::Char('c')));
+        type_text(&mut chat, &model, "and here");
+        key(&mut chat, &model, press(KeyCode::Enter));
+        assert_eq!(
+            labels(&chat),
+            vec!["[Review · 2 comments]"],
+            "the label counts the comments behind it"
+        );
+    }
+
+    /// `q` puts the person back in the draft with the cursor past the
+    /// token, so the next Enter sends rather than reopening the page.
+    #[test]
+    fn q_returns_to_the_draft_with_the_cursor_after_the_token() {
+        let mut model = idle_model();
+        let mut chat = opened(&mut model);
+        comment(&mut chat, &model, "say why");
+        key(&mut chat, &model, press(KeyCode::Char('q')));
+        assert!(!chat.review_open(), "the page closes");
+        assert!(
+            chat.review.is_some(),
+            "the review itself stays in the draft"
+        );
+        assert_eq!(chat.composer.cursor(), 1, "the cursor sits past the token");
+        assert_eq!(chat.composer.review_token_at_cursor(), None);
+    }
+
+    #[test]
+    fn enter_after_the_token_sends_the_review() {
+        let mut model = idle_model();
+        let mut chat = opened(&mut model);
+        comment(&mut chat, &model, "say why");
+        key(&mut chat, &model, press(KeyCode::Char('q')));
+        let Some(UiAction::Dispatch(Command::SendPromptWithAttachments {
+            text, attachments, ..
+        })) = key(&mut chat, &model, press(KeyCode::Enter))
+        else {
+            panic!("enter past the token sends");
+        };
+        assert!(
+            text.contains("kind=\"review\"") && text.contains("say why"),
+            "the review element rides the prompt: {text}"
+        );
+        let diff = &chat_diff_id();
+        assert!(
+            text.contains(diff.as_str()),
+            "the element cites its diff: {text}"
+        );
+        assert_eq!(
+            attachments
+                .iter()
+                .map(|attachment| attachment.id.to_string())
+                .collect::<Vec<_>>(),
+            vec![diff.clone()],
+            "the diff is listed to pin, with no bytes to store"
+        );
+        assert!(attachments[0].bytes.is_none());
+    }
+
+    /// The artifact the fixture diff was stored as.
+    fn chat_diff_id() -> String {
+        crate::review::fixture::sample_diff_response(DiffBase::WorkingTree)
+            .artifact
+            .id
+            .to_string()
+    }
+
+    #[test]
+    fn enter_on_the_token_resumes_the_page_instead_of_sending() {
+        let mut model = idle_model();
+        let mut chat = opened(&mut model);
+        comment(&mut chat, &model, "say why");
+        key(&mut chat, &model, press(KeyCode::Char('q')));
+        chat.composer.left();
+        assert!(chat.composer.review_token_at_cursor().is_some());
+        assert_eq!(
+            key(&mut chat, &model, press(KeyCode::Enter)),
+            None,
+            "enter on the token sends nothing"
+        );
+        assert!(chat.review_open(), "it resumes the page");
+    }
+
+    #[test]
+    fn the_chord_resumes_the_frozen_review_without_asking_again() {
+        let mut model = idle_model();
+        let mut chat = opened(&mut model);
+        comment(&mut chat, &model, "say why");
+        key(&mut chat, &model, press(KeyCode::Char('q')));
+        assert_eq!(
+            leader_r(&mut chat, &model),
+            None,
+            "the second chord asks for no new diff"
+        );
+        assert!(chat.review_open());
+        assert_eq!(
+            chat.review
+                .as_ref()
+                .expect("a review")
+                .view
+                .review()
+                .comment_count(),
+            1,
+            "the comments survive leaving and coming back"
+        );
+    }
+
+    /// The token is the review's only place in the draft, so deleting it is
+    /// how a review is thrown away.
+    #[test]
+    fn backspacing_the_token_discards_the_review() {
+        let mut model = idle_model();
+        let mut chat = opened(&mut model);
+        comment(&mut chat, &model, "say why");
+        key(&mut chat, &model, press(KeyCode::Char('q')));
+        key(&mut chat, &model, press(KeyCode::Backspace));
+        assert!(chat.composer.is_empty(), "the token is gone from the draft");
+        assert!(chat.review.is_none(), "and so is the review behind it");
+        assert!(!chat.review_open());
+    }
+
+    /// Reviewing what the agent has written so far is most wanted while it
+    /// is still writing: the request is not gated, the page stands over the
+    /// diff it froze, and send stays refused until the turn ends.
+    #[test]
+    fn a_review_opened_while_the_agent_works_is_frozen_and_send_stays_gated() {
+        let mut model = working_model();
+        let mut chat = chat();
+        let command = leader_r(&mut chat, &model).expect("a working agent still yields a diff");
+        deliver(&mut chat, &mut model, command, 1);
+        assert!(chat.review_open());
+        comment(&mut chat, &model, "say why");
+        let before = chat
+            .review
+            .as_ref()
+            .expect("a review")
+            .view
+            .review()
+            .document()
+            .clone();
+        key(&mut chat, &model, press(KeyCode::Char('q')));
+        assert_eq!(
+            key(&mut chat, &model, press(KeyCode::Enter)),
+            None,
+            "send is still refused while the agent works"
+        );
+        assert_eq!(
+            labels(&chat),
+            vec!["[Review · 1 comment]"],
+            "the draft is kept"
+        );
+        assert_eq!(
+            &before,
+            chat.review
+                .as_ref()
+                .expect("a review")
+                .view
+                .review()
+                .document(),
+            "the frozen diff never refetched"
+        );
+    }
+
+    /// `b` asks for the same work against the branch base. The comments
+    /// stay with the patch they were anchored into; the token keeps its
+    /// place in the draft.
+    #[test]
+    fn b_re_requests_against_the_branch_base() {
+        let mut model = idle_model();
+        let mut chat = opened(&mut model);
+        comment(&mut chat, &model, "say why");
+        let Some(UiAction::Dispatch(command)) = key(&mut chat, &model, press(KeyCode::Char('b')))
+        else {
+            panic!("b re-requests the diff");
+        };
+        assert_eq!(
+            command,
+            Command::RequestDiff {
+                agent: agent(),
+                base: DiffBase::Branch {
+                    base: "main".to_string()
+                },
+            }
+        );
+        deliver(&mut chat, &mut model, command, 2);
+        assert!(chat.review_open(), "the page reopens over the new base");
+        assert_eq!(
+            chat.review
+                .as_ref()
+                .expect("a review")
+                .view
+                .review()
+                .comment_count(),
+            0,
+            "a comment written on one patch does not follow to another"
+        );
+        assert!(
+            labels(&chat).is_empty(),
+            "and the token it put in the draft goes with it"
+        );
+    }
+
+    /// A diff the repository cannot produce says why in the footer instead
+    /// of opening an empty page.
+    #[test]
+    fn a_refused_diff_states_why_and_opens_nothing() {
+        let mut model = idle_model();
+        let mut chat = chat();
+        let command = leader_r(&mut chat, &model).expect("the chord requests a diff");
+        let op = OpId(Uuid::from_u128(1));
+        chat.note_dispatched(op, &command);
+        fold(&mut model, vec![Msg::Command { op, command }]);
+        fold(
+            &mut model,
+            vec![Msg::OpResult {
+                op,
+                outcome: OpOutcome::Error {
+                    error: amux_ui::OpError::DiffUnavailable {
+                        message: "not a git checkout".to_string(),
+                    },
+                },
+            }],
+        );
+        chat.reconcile(&model);
+        assert!(!chat.review_open());
+        assert_eq!(chat.send_failure(), Some("not a git checkout"));
+    }
+
+    /// A read-only chat has no draft to put a review in, so it has no
+    /// review chord either.
+    #[test]
+    fn a_read_only_chat_has_no_review_chord() {
+        let mut model = idle_model();
+        let readonly = readonly_model(&mut model);
+        let mut chat = chat();
+        assert_eq!(leader_r(&mut chat, &readonly), None);
+        assert!(chat.review.is_none());
+    }
+
+    fn readonly_model(model: &mut Model) -> Model {
+        let mut agent = model.agent(agent()).expect("the agent").agent.clone();
+        agent.readonly = true;
+        let mut readonly = model.clone();
+        fold(
+            &mut readonly,
+            vec![Msg::Server(amux_ui::ServerMsg::AgentUpserted { agent })],
+        );
+        readonly
     }
 }

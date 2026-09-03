@@ -522,6 +522,41 @@ impl Composer {
         }
     }
 
+    /// Takes a token out of the draft, as though it had been deleted.
+    ///
+    /// Unlike a kill this leaves nothing yankable: the caller is discarding
+    /// what the token stood for, so bringing the token back would leave a
+    /// mention with nothing behind it.
+    pub fn remove_token(&mut self, slot: char) {
+        let Some(index) = self.chars.iter().position(|c| *c == slot) else {
+            return;
+        };
+        self.chars.remove(index);
+        if self.cursor > index {
+            self.cursor -= 1;
+        }
+        self.tokens.live.remove(&slot);
+        if let Some(kill) = self.kill.take() {
+            let text: String = kill.chars().filter(|c| *c != slot).collect();
+            self.kill = (!text.is_empty()).then_some(text);
+        }
+        self.prune();
+    }
+
+    /// Puts the cursor immediately after a token, where Enter sends.
+    ///
+    /// Leaving the review page lands here rather than on the slot: on it,
+    /// Enter would resume the page the person just left.
+    pub fn cursor_after_token(&mut self, slot: char) -> bool {
+        match self.chars.iter().position(|c| *c == slot) {
+            Some(index) => {
+                self.cursor = index + 1;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// The review token's slot when the cursor sits ON it.
     ///
     /// Enter there resumes the review; after `q` the cursor sits just after

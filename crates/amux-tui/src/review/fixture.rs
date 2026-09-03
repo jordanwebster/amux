@@ -4,7 +4,7 @@
 
 use amux_ui::attachments::ArtifactId;
 use amux_ui::review::{Review, RowRef, anchor, parse_patch};
-use amux_ui::{BaseIdentity, DiffBase, DiffFile};
+use amux_ui::{ArtifactKind, ArtifactRef, BaseIdentity, DiffBase, DiffFile, DiffResponse};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::ReviewView;
@@ -63,6 +63,30 @@ fn files() -> Vec<DiffFile> {
     ]
 }
 
+/// The artifact the daemon stored the frozen patch as.
+const DIFF_ID: &str = "sha256:8c1f0d2e5a7b4c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f";
+
+fn diff_id() -> ArtifactId {
+    DIFF_ID.parse::<ArtifactId>().expect("fixture artifact id")
+}
+
+/// The same diff as the daemon hands back, so the chat that hosts the page
+/// opens over exactly what the page's own captures show.
+pub fn sample_diff_response(base: DiffBase) -> DiffResponse {
+    DiffResponse {
+        artifact: ArtifactRef {
+            id: diff_id(),
+            kind: ArtifactKind::Diff,
+            name: "review".into(),
+            mime: "text/x-diff".into(),
+            size: PATCH.len() as u64,
+        },
+        patch: PATCH.to_string(),
+        identity: identity(base),
+        files: files(),
+    }
+}
+
 fn identity(base: DiffBase) -> BaseIdentity {
     BaseIdentity {
         base,
@@ -83,12 +107,7 @@ pub fn sample_review() -> ReviewView {
 /// The same diff attributed to another base, for the branch-base capture.
 pub fn sample_review_against(base: DiffBase) -> ReviewView {
     let document = parse_patch(PATCH, identity(base), &files()).expect("fixture patch parses");
-    let core = Review::new(
-        document,
-        "sha256:8c1f0d2e5a7b4c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f"
-            .parse::<ArtifactId>()
-            .expect("fixture artifact id"),
-    );
+    let core = Review::new(document, diff_id());
     ReviewView::new(core, "main")
 }
 

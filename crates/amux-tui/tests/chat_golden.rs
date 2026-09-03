@@ -16,8 +16,8 @@ use amux_ui::claude::answer::{AskAnswer, PermissionAnswer};
 use amux_ui::claude::{DiffDocument, DiffMagnitude};
 use amux_ui::diff::{Document, Hunk, Numbering};
 use amux_ui::{
-    Agent, AgentId, Command, DraftAttachment, HostEntry, HostId, Mention, MentionKind, Model, Msg,
-    OpId, ServerMsg, StreamEntry, StreamMsg, format_mention, update,
+    Agent, AgentId, Command, DiffBase, DraftAttachment, HostEntry, HostId, Mention, MentionKind,
+    Model, Msg, OpId, ServerMsg, StreamEntry, StreamMsg, format_mention, update,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -2644,4 +2644,62 @@ fn review_threads_styles_light() {
         "review_threads_styles_light",
         &buffer_styles(&review_buffer(&review_threads_view(), theme), theme),
     );
+}
+
+/// `<leader> r` opens the review page over the whole chat: the frozen diff
+/// replaces the feed and the composer until `q` brings them back.
+#[test]
+fn chat_review_page() {
+    let mut model = fold(idle_msgs());
+    let mut view = reconciled_view(&model);
+    open_review_page(&mut view, &mut model);
+    let rendered = render_frame(&model, &view, 120, 40, IDLE_NOW);
+    assert_golden("chat_review_page", &rendered);
+}
+
+/// A review that has been written on and left sits in the draft as one
+/// token, counting what is behind it, beside whatever else was typed.
+#[test]
+fn chat_review_token() {
+    let mut model = fold(idle_msgs());
+    let mut view = reconciled_view(&model);
+    open_review_page(&mut view, &mut model);
+    // Two comments, then back to the draft with something typed after the
+    // token: what is on screen is a message that carries a review.
+    for text in ["say why the store had to go", "give it a doc comment"] {
+        press(&mut view, &model, KeyCode::Char('j'));
+        press(&mut view, &model, KeyCode::Char('c'));
+        type_text(&mut view, &model, text);
+        press(&mut view, &model, KeyCode::Enter);
+    }
+    press(&mut view, &model, KeyCode::Char('q'));
+    type_text(&mut view, &model, " — two things before this lands");
+
+    let rendered = render_frame(&model, &view, 120, 40, IDLE_NOW);
+    assert_golden("chat_review_token", &rendered);
+}
+
+/// The chord, the daemon's frozen diff, and the page on screen over the
+/// chat — the whole path a person takes to a review.
+fn open_review_page(view: &mut ViewState, model: &mut Model) {
+    leader(view, model, KeyCode::Char('r'));
+    let command = Command::RequestDiff {
+        agent: agent_id(),
+        base: DiffBase::WorkingTree,
+    };
+    view.chat
+        .as_mut()
+        .expect("chat open")
+        .note_dispatched(op(4), &command);
+    update(model, Msg::Command { op: op(4), command });
+    update(
+        model,
+        Msg::OpResult {
+            op: op(4),
+            outcome: amux_ui::OpOutcome::DiffReady {
+                response: amux_tui::review::fixture::sample_diff_response(DiffBase::WorkingTree),
+            },
+        },
+    );
+    view.chat.as_mut().expect("chat open").reconcile(model);
 }

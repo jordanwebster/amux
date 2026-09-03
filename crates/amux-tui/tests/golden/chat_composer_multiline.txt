@@ -37,4 +37,4 @@
 ▎   second line                                                                                                         
 ▎   third line▌                                                                                                         
                                                                                                                         
-    enter send · ctrl+j newline                                                                            mode default 
+    enter send · ctrl+j newline · C-a r review diff                                                        mode default 

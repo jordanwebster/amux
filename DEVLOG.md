@@ -4,6 +4,24 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Hosted the review page in the chat.** `<leader> r` asks the
+daemon to freeze the repository's diff and opens the review page over the
+whole chat frame when it arrives; every later press resumes the same frozen
+diff rather than refetching, because a comment's rows would move out from
+under it. The first saved comment puts a review token in the draft at the
+cursor, labelled with the count behind it, and that token is the review's
+only place in the message: `q` returns with the cursor just past it so Enter
+sends, Enter on it reopens the page, and backspacing it throws the review
+away. `b` re-freezes the same work against the branch base, which is a new
+review — a line number written on one patch means nothing in another — so the
+old comments and their token stay behind with the diff they were written on.
+Nothing the daemon reports names a repository's trunk, so `b` offers `main`
+until that fact is plumbed through. The request is not gated on what the
+agent is doing: reviewing what it has written so far is wanted most while it
+is still writing, and send stays refused until the turn ends. Sending exports
+the review element with its comments and lists the diff artifact to pin,
+carrying no bytes because the daemon already stored it.
+
 2026-09-03 — **Verified managed Claude launches.** Claude Code 2.1.259 starts
 under both PTY and SDK drivers when the client and daemon use the same config.
 The apparent managed MCP route failure came from a long-lived tmux server that

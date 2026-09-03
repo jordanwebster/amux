@@ -16,6 +16,7 @@
 
 pub(crate) mod ask_ui;
 pub mod diff;
+pub(crate) mod draft;
 mod keys;
 pub(crate) mod panel;
 mod reader;
@@ -24,6 +25,7 @@ mod render;
 use amux_ui::claude::{Ask, AskKind, AskState, ChatPhase, ToolInvocation};
 use amux_ui::{AgentId, Attention, Command, Model, OpId, OpOutcome};
 use ask_ui::AskUi;
+use draft::ReviewDraft;
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 use reader::{ReaderSource, ReaderView};
 pub(crate) use render::{ask_panel_lines, claude_frame_parts};
@@ -50,6 +52,14 @@ struct PendingSend {
 struct PendingAnswer {
     op: OpId,
     ask: u64,
+}
+
+/// A dispatched diff request being watched for the frozen patch it will
+/// return. The review page opens over the result, so nothing about it
+/// exists until the op finishes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PendingDiff {
+    op: OpId,
 }
 
 /// Renderer-local chat state. Never persisted, never authoritative.
@@ -93,6 +103,16 @@ pub struct View {
     /// U2). The child's layer owns the panel and the answer; this chat
     /// owns only the decision to show it.
     pub(crate) inline_ask: Option<InlineAsk>,
+    /// The one review this chat is drafting (`<leader> r`), page and token
+    /// together. One per chat: a second review would need a second token
+    /// and a second frozen diff, and a person reviewing two things at once
+    /// is writing two messages.
+    ///
+    /// Boxed so a chat with no review stays small: the chat view enums are
+    /// size-linted, and a whole frozen patch inline would dominate them.
+    pub(crate) review: Option<Box<ReviewDraft>>,
+    /// A dispatched diff request being watched for its result.
+    pending_diff: Option<PendingDiff>,
 }
 
 impl View {
@@ -114,7 +134,20 @@ impl View {
             help: false,
             reports_open: false,
             inline_ask: None,
+            review: None,
+            pending_diff: None,
         }
+    }
+
+    /// A diff request is in flight; a second `<leader> r` must not queue
+    /// another one behind it.
+    pub(crate) fn diff_pending(&self) -> bool {
+        self.pending_diff.is_some()
+    }
+
+    /// The review page is on screen, over the whole frame.
+    pub(crate) fn review_open(&self) -> bool {
+        self.review.as_ref().is_some_and(|draft| draft.open)
     }
 
     pub(crate) fn send_failure(&self) -> Option<&str> {
@@ -122,7 +155,7 @@ impl View {
     }
 
     pub(crate) fn overlay_open(&self) -> bool {
-        self.help || self.reader.is_some()
+        self.help || self.reader.is_some() || self.review_open()
     }
 
     /// The runtime edge minted an op for a dispatched command: remember
@@ -151,6 +184,9 @@ impl View {
             {
                 self.pending_answer = Some(PendingAnswer { op, ask: *ask });
             }
+            Command::RequestDiff { agent, .. } if *agent == self.agent => {
+                self.pending_diff = Some(PendingDiff { op });
+            }
             _ => {}
         }
     }
@@ -173,6 +209,12 @@ impl View {
                 if self.composer.is_empty() && !self.composer.restore_sent() {
                     self.composer.restore(&pending.text);
                 }
+                // The restored draft carries the review token back, so the
+                // review behind it has to survive the failure too.
+            } else {
+                // The review left with the prompt; a new one starts frozen
+                // against whatever the repository looks like then.
+                self.review = None;
             }
             self.pending_send = None;
         }
@@ -203,8 +245,55 @@ impl View {
             }
             self.pending_answer = None;
         }
+        self.reconcile_diff(model);
         self.sync_ask(model);
         crate::chat::inline::reconcile(model, self.agent, &mut self.inline_ask);
+    }
+
+    /// A requested diff came back: freeze it into a review and put the page
+    /// on screen. A patch the review core cannot read, and a repository
+    /// that could not produce one at all, both state why in the footer
+    /// rather than opening an empty page.
+    fn reconcile_diff(&mut self, model: &Model) {
+        let Some(pending) = self.pending_diff.clone() else {
+            return;
+        };
+        let Some(finished) = model.finished_op(pending.op) else {
+            return;
+        };
+        self.pending_diff = None;
+        let response = match &finished.outcome {
+            OpOutcome::DiffReady { response } => response,
+            OpOutcome::Error { error } => {
+                self.send_failure = Some(error.message());
+                return;
+            }
+            _ => return,
+        };
+        let document = match amux_ui::review::parse_patch(
+            &response.patch,
+            response.identity.clone(),
+            &response.files,
+        ) {
+            Ok(document) => document,
+            Err(error) => {
+                self.send_failure = Some(format!("the diff could not be read: {error}"));
+                return;
+            }
+        };
+        let core = amux_ui::review::Review::new(document, response.artifact.id.clone());
+        // `b` freezes the same work against another base, and that is a new
+        // review: a comment's line numbers mean nothing in a different
+        // patch, so the old ones stay behind with the diff they were
+        // written on, and the draft loses the token that stood for them.
+        if let Some(previous) = self.review.take()
+            && let Some(slot) = previous.slot
+        {
+            self.composer.remove_token(slot);
+        }
+        self.review = Some(Box::new(ReviewDraft::opened(
+            crate::review::ReviewView::new(core, draft::BRANCH_BASE),
+        )));
     }
 
     /// Sync panel and reader to the Model's ask head. Idempotent; also

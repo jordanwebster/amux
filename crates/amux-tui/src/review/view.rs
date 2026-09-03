@@ -6,6 +6,7 @@ use amux_ui::DiffBase;
 use amux_ui::review::{Review, RowRef};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::{Line, Span};
+use serde::{Deserialize, Serialize};
 
 use super::comments::{CommentEditor, Selection};
 use crate::chat::diff::paint_rows;
@@ -34,14 +35,14 @@ pub enum ReviewOutcome {
 }
 
 /// The open file list, with the entry the keyboard is pointing at.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FileOverlay {
     pub selected: usize,
 }
 
 /// One review as a screen: the frozen core plus where the reader is
 /// looking at it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewView {
     pub(super) core: Review,
     pub(super) cursor: RowRef,
@@ -101,6 +102,12 @@ impl ReviewView {
 
     pub fn editor(&self) -> Option<&CommentEditor> {
         self.editor.as_ref()
+    }
+
+    /// The open comment box's text field. The chat's guarded Ctrl+C clears
+    /// whatever field is focused, and while the page is up that is this one.
+    pub fn editor_field_mut(&mut self) -> Option<&mut crate::composer::Composer> {
+        self.editor.as_mut().map(|editor| &mut editor.field)
     }
 
     pub fn scroll(&self) -> usize {

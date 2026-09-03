@@ -18,14 +18,13 @@ use amux_ui::claude::{
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
+use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
 use crate::chat::blocks::{
-    self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant,
-    paint_attachment, paint_compaction_rule, paint_composer_block, paint_error,
-    paint_exploration_run,
+    self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant, paint_attachment,
+    paint_compaction_rule, paint_composer_block, paint_error, paint_exploration_run,
     paint_file_change, paint_header, paint_plan, paint_subagent, paint_thinking, paint_tool_line,
     paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
-use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
 use crate::chat::claude::{View, ask_ui, panel, reader};
 use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
@@ -83,6 +82,8 @@ pub(crate) fn claude_frame_parts(
     // to the chat when its source no longer resolves).
     let overlay = if chat.help {
         Some(help_overlay(model, chat, theme, width, height))
+    } else if let Some(draft) = chat.review.as_ref().filter(|draft| draft.open) {
+        Some(draft.view.frame(theme, ctx.viewport.0, ctx.viewport.1))
     } else if chat.reader.is_some() {
         reader::reader_frame(model, chat, theme, width, height)
     } else {
@@ -419,6 +420,18 @@ fn help_hinted(chat: &View, hints: String) -> String {
         hints
     }
 }
+/// The review chord, saying which of its two acts it would do. A draft
+/// that already holds a review resumes the page it froze; an empty one
+/// asks for a fresh diff.
+fn review_hint(chat: &View) -> String {
+    let action = if chat.review.is_some() {
+        "resume review"
+    } else {
+        "review diff"
+    };
+    format!("{} r {action}", effective(chat).leader_label)
+}
+
 /// One hint line, at most four items, derived purely from Model +
 /// ViewState (no stored footer mode); permission mode on the right (D4,
 /// hook-fact sourced).
@@ -471,7 +484,10 @@ fn footer_line(
         push_span(
             &mut line,
             blocks::TEXT_COL,
-            help_hinted(chat, "enter send · ctrl+j newline".to_string()),
+            help_hinted(
+                chat,
+                format!("enter send · ctrl+j newline · {}", review_hint(chat)),
+            ),
             theme.muted(),
         );
     }

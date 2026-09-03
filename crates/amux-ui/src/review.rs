@@ -91,7 +91,7 @@ pub struct ReviewHeader {
 }
 
 /// A frozen document and its editable, document-ordered comment set.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Review {
     doc: ReviewDocument,
     base: DiffBase,

@@ -271,6 +271,11 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
     chat.extend([
         row("ctrl+t", "read accepted plans (←/→ steps)", Tier::Plain),
         row(
+            format!("{} r", eff.leader_label),
+            "review the agent's diff (resumes a draft one)",
+            Tier::Plain,
+        ),
+        row(
             "ctrl+c",
             "clear field; empty: press twice to quit",
             Tier::Plain,
@@ -514,6 +519,23 @@ mod tests {
         let chat = &sections[0].bindings;
         assert!(chat.iter().any(|b| b.keys == "C-b s"));
         assert!(chat.iter().any(|b| b.keys == "C-b d"));
+        assert!(chat.iter().any(|b| b.keys == "C-b r"), "the review chord");
+    }
+
+    /// Reviewing the agent's diff is a Claude-chat act; the Codex chat has
+    /// no page to open yet, so its table must not offer the chord.
+    #[test]
+    fn only_the_claude_chat_lists_the_review_chord() {
+        let claude = chat_sections(&eff(false), FamilyKeys::default());
+        let review = claude[0]
+            .bindings
+            .iter()
+            .find(|binding| binding.keys == "C-b r")
+            .expect("the review chord");
+        assert!(review.action.contains("review"));
+        assert_eq!(review.tier, Tier::Plain);
+        let codex = codex_chat_sections(&eff(false), FamilyKeys::default());
+        assert!(!codex[0].bindings.iter().any(|b| b.keys == "C-b r"));
     }
 
     /// Everything the feed offers a reader is listed in both chats:
