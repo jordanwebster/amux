@@ -61,6 +61,7 @@ fn main() -> anyhow::Result<()> {
         RawUnnamed,
         UnnamedReconnect,
         Roundtrip,
+        AttachTool,
     }
 
     #[derive(Clone, Copy)]
@@ -127,6 +128,12 @@ fn main() -> anyhow::Result<()> {
             "agent MCP tools and cross-kind child completion",
             600,
             Scenario::Roundtrip,
+        ),
+        scenario(
+            "attach_tool",
+            "agent attaches an amux-shot image",
+            420,
+            Scenario::AttachTool,
         ),
     ];
 
@@ -229,6 +236,185 @@ fn main() -> anyhow::Result<()> {
         let mut capture = StructuredCapture::open(harness, agent).await?;
         let cursor = capture.wait_ready().await?;
         Ok((agent, capture, cursor))
+    }
+
+    async fn attach_tool(harness: &mut Harness, model: &str) -> Result<Value> {
+        use amux::{AgentIdentifier, ArtifactKind, ArtifactRef};
+        use amux_ui::attachments::{Mention, MentionKind, format_mention};
+
+        const NAME: &str = "agent-attach-codex.png";
+        let shot = harness.scratch.project.join(NAME);
+        let agent = harness
+            .create_agent_with_policy(
+                Some("attach-tool"),
+                model,
+                &harness.scratch.project,
+                "never",
+                "workspace-write",
+            )
+            .await?;
+        let mut capture = StructuredCapture::open(harness, agent).await?;
+        let cursor = capture.wait_ready().await?;
+        let prompt = format!(
+            "Run exactly this command with the shell tool: amux-shot render chat-attachment-blocks --out {}\n\
+             Then call the amux attach tool exactly once with path set to {} and name set to {NAME}. \
+             Finally reply with exactly the text returned by attach, with no code fence or other text.",
+            shot.display(),
+            shot.display(),
+        );
+        let input_id = capture.send_prompt(&prompt).await?;
+        let (cursor, _) = capture
+            .wait(
+                cursor,
+                READY_TIMEOUT,
+                "attach-tool prompt accepted",
+                Matcher::InputOk(input_id),
+            )
+            .await?;
+        let (refs_cursor, refs_row) = capture
+            .wait(
+                cursor,
+                TURN_TIMEOUT,
+                "attachment refs row",
+                Matcher::Type("amux.attachments"),
+            )
+            .await?;
+        if !refs_row.json.get("input_id").is_some_and(Value::is_null) {
+            bail!("agent attachment refs row did not carry a null input_id");
+        }
+        let refs = serde_json::from_value::<Vec<ArtifactRef>>(
+            refs_row
+                .json
+                .get("refs")
+                .cloned()
+                .context("attachment row has no refs")?,
+        )?;
+        let [artifact] = refs.as_slice() else {
+            bail!(
+                "agent attachment row carried {} refs, expected one",
+                refs.len()
+            );
+        };
+        if artifact.name != NAME {
+            bail!(
+                "attachment refs row named {}, expected {NAME}",
+                artifact.name
+            );
+        }
+        let mention = format_mention(&Mention {
+            kind: MentionKind::Image {
+                id: artifact.id.clone(),
+            },
+            name: artifact.name.clone(),
+            size: Some(artifact.size),
+            path: None,
+        });
+        let (reply_cursor, _) = capture
+            .wait(
+                refs_cursor,
+                TURN_TIMEOUT,
+                "completed reply containing the attachment mention",
+                Matcher::AgentTextContains(mention.clone()),
+            )
+            .await?;
+        capture
+            .wait(
+                reply_cursor,
+                TURN_TIMEOUT,
+                "attach-tool turn completion",
+                Matcher::TurnCompleted("completed"),
+            )
+            .await?;
+        let tool_use = capture.rows().iter().any(|row| {
+            row.json.pointer("/item/type").and_then(Value::as_str) == Some("mcpToolCall")
+                && row.json.pointer("/item/server").and_then(Value::as_str) == Some("amux")
+                && row.json.pointer("/item/tool").and_then(Value::as_str) == Some("attach")
+                && row.json.pointer("/item/status").and_then(Value::as_str) == Some("completed")
+        });
+        if !tool_use {
+            bail!("Codex reply was not preceded by a completed amux attach tool call");
+        }
+        let render_tool_use = capture.rows().iter().any(|row| {
+            row.json.pointer("/item/type").and_then(Value::as_str) == Some("commandExecution")
+                && row
+                    .json
+                    .pointer("/item/command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|command| {
+                        command.contains("amux-shot render chat-attachment-blocks")
+                    })
+                && row.json.pointer("/item/status").and_then(Value::as_str) == Some("completed")
+                && row.json.pointer("/item/exitCode").and_then(Value::as_i64) == Some(0)
+        });
+        if !render_tool_use {
+            bail!("Codex did not successfully render the screenshot with amux-shot");
+        }
+
+        let source = std::fs::read(&shot)
+            .with_context(|| format!("read rendered screenshot {}", shot.display()))?;
+        let (stored, stored_bytes) = harness
+            .client()
+            .get_artifact(AgentIdentifier::Id(agent), &artifact.id)
+            .await
+            .context("fetch attached artifact from the daemon")?;
+        if stored != *artifact || stored_bytes != source {
+            bail!("stored attachment did not match the refs row and rendered PNG");
+        }
+        if artifact.kind != ArtifactKind::Image
+            || artifact.mime != "image/png"
+            || !source.starts_with(b"\x89PNG\r\n\x1a\n")
+        {
+            bail!(
+                "attached artifact was not the rendered PNG: kind={:?} mime={}",
+                artifact.kind,
+                artifact.mime
+            );
+        }
+
+        let owner_root = harness
+            .scratch
+            .config
+            .data_dir
+            .join("agents")
+            .join(agent.to_string())
+            .join("artifacts");
+        let digest = artifact
+            .id
+            .as_str()
+            .strip_prefix("sha256:")
+            .expect("artifact ids are canonical");
+        let blob = owner_root.join("blobs").join(digest);
+        let index_json: Value = serde_json::from_slice(
+            &std::fs::read(owner_root.join("index.json")).context("read artifact owner index")?,
+        )?;
+        let pinned = index_json
+            .get("artifacts")
+            .and_then(|artifacts| artifacts.get(artifact.id.as_str()))
+            .and_then(|meta| meta.get("pinned_at"))
+            .is_some_and(|pinned_at| !pinned_at.is_null());
+        if std::fs::read(&blob).ok().as_deref() != Some(source.as_slice()) || !pinned {
+            bail!("artifact owner did not persist and pin the rendered PNG");
+        }
+
+        harness.client().delete_agent(agent).await?;
+        Ok(json!({
+            "agent_id": agent,
+            "artifact": artifact,
+            "mention": mention,
+            "world": {
+                "rendered_png": shot,
+                "owner_blob": blob,
+            },
+            "assertions": {
+                "amux_shot_render": true,
+                "attach_tool_use": true,
+                "refs_row": true,
+                "null_input_id": true,
+                "reply_contains_exact_mention": true,
+                "stored_bytes_match_render": true,
+                "owner_blob_pinned": true,
+            }
+        }))
     }
 
     async fn roundtrip(harness: &mut Harness, model: &str) -> Result<Value> {
@@ -685,6 +871,7 @@ fn main() -> anyhow::Result<()> {
             Scenario::RawUnnamed => raw_unnamed(harness, model).await,
             Scenario::UnnamedReconnect => unnamed_reconnect(harness, model).await,
             Scenario::Roundtrip => roundtrip(harness, model).await,
+            Scenario::AttachTool => attach_tool(harness, model).await,
         }
     }
 
@@ -754,8 +941,8 @@ fn main() -> anyhow::Result<()> {
             &mut transcript,
             format!("codex_live: version={version} model={model}"),
         )?;
-        if version != "0.150.1" {
-            bail!("Codex live suite requires codex-cli 0.150.1, found {version}");
+        if version != "0.153.0" {
+            bail!("Codex live suite requires codex-cli 0.153.0, found {version}");
         }
         let mut failures = Vec::new();
 

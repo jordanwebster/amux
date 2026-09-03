@@ -86,6 +86,7 @@ enum Scenario {
     A2aPtyDelivery,
     A2aStopPayload,
     A2aMcpTools,
+    AttachTool,
     A2aSessionRegistry,
     A2aRoundtrip,
 }
@@ -141,6 +142,11 @@ const SCENARIOS: &[ScenarioSpec] = &[
         Scenario::A2aPtyDelivery,
     ),
     scenario("a2a_mcp_tools", "agent MCP tools", Scenario::A2aMcpTools),
+    scenario(
+        "attach_tool",
+        "agent attaches an amux-shot image",
+        Scenario::AttachTool,
+    ),
     scenario(
         "cross_kind_completion",
         "cross-kind child completion round trip",
@@ -370,6 +376,7 @@ async fn run_scenario(
         Scenario::A2aPtyDelivery => a2a_pty_delivery(daemon, scratch, model).await,
         Scenario::A2aStopPayload => a2a_stop_payload(daemon, scratch, model).await,
         Scenario::A2aMcpTools => a2a_mcp_tools(daemon, scratch, model).await,
+        Scenario::AttachTool => attach_tool(daemon, scratch, model).await,
         Scenario::A2aSessionRegistry => a2a_session_registry(daemon, scratch, model).await,
         Scenario::A2aRoundtrip => a2a_roundtrip(daemon, scratch, model).await,
     }
@@ -998,6 +1005,198 @@ async fn a2a_mcp_tools(
             "session_start_hook_observed": false,
             "transcript_tailer_recovered_from_stop": true,
             "stub_send_request": true,
+        }
+    }))
+}
+
+/// A managed Claude renders a fresh screenshot, attaches it through amux's
+/// production MCP registration, and publishes the returned mention unchanged.
+async fn attach_tool(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    use amux::{AgentIdentifier, ArtifactKind, ArtifactRef};
+    use amux_ui::attachments::{Mention, MentionKind, format_mention};
+
+    const NAME: &str = "agent-attach-claude.png";
+    let dir = scratch.project_dir("attach_tool")?;
+    let shot = dir.join(NAME);
+    let prompt = format!(
+        "Use Bash to run exactly: amux-shot render chat-attachment-blocks --out {}\n\
+         Then call mcp__amux__attach exactly once with path set to {} and name set to {NAME}. \
+         Finally reply with exactly the text returned by attach, with no code fence or other text.",
+        shot.display(),
+        shot.display(),
+    );
+    let (session, index) = open(
+        daemon,
+        scratch,
+        "attach_tool",
+        &["--dangerously-skip-permissions"],
+        model,
+        &prompt,
+    )
+    .await?;
+
+    let refs_cursor = session
+        .wait_for_row(index, TURN_TIMEOUT, "attachment refs row", |row| {
+            row.row_type() == "amux.attachments"
+                && row
+                    .json
+                    .pointer("/refs/0/name")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(NAME)
+        })
+        .await?;
+    let rows = session.snapshot().await;
+    let refs_row = rows
+        .iter()
+        .find(|row| {
+            row.row_type() == "amux.attachments"
+                && row
+                    .json
+                    .pointer("/refs/0/name")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(NAME)
+        })
+        .context("attachment refs row vanished from the snapshot")?;
+    if !refs_row
+        .json
+        .get("input_id")
+        .is_some_and(serde_json::Value::is_null)
+    {
+        bail!("agent attachment refs row did not carry a null input_id");
+    }
+    let refs = serde_json::from_value::<Vec<ArtifactRef>>(
+        refs_row
+            .json
+            .get("refs")
+            .cloned()
+            .context("attachment row has no refs")?,
+    )?;
+    let [artifact] = refs.as_slice() else {
+        bail!(
+            "agent attachment row carried {} refs, expected one",
+            refs.len()
+        );
+    };
+    let mention = format_mention(&Mention {
+        kind: MentionKind::Image {
+            id: artifact.id.clone(),
+        },
+        name: artifact.name.clone(),
+        size: Some(artifact.size),
+        path: None,
+    });
+
+    let reply_cursor = session
+        .wait_for_row(
+            refs_cursor,
+            TURN_TIMEOUT,
+            "assistant reply containing the attachment mention",
+            |row| {
+                row.row_type() == "assistant"
+                    && structure::message_blocks(&row.json).iter().any(|block| {
+                        block.get("type").and_then(serde_json::Value::as_str) == Some("text")
+                            && block
+                                .get("text")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|text| text.contains(&mention))
+                    })
+            },
+        )
+        .await?;
+    session
+        .wait_for_turn_end(reply_cursor, TURN_TIMEOUT)
+        .await?;
+
+    let source = std::fs::read(&shot)
+        .with_context(|| format!("read rendered screenshot {}", shot.display()))?;
+    let (stored, stored_bytes) = daemon
+        .client
+        .get_artifact(AgentIdentifier::Id(session.agent_id()), &artifact.id)
+        .await
+        .context("fetch attached artifact from the daemon")?;
+    if stored != *artifact || stored_bytes != source {
+        bail!("stored attachment did not match the refs row and rendered PNG");
+    }
+    if artifact.kind != ArtifactKind::Image
+        || artifact.mime != "image/png"
+        || !source.starts_with(b"\x89PNG\r\n\x1a\n")
+    {
+        bail!(
+            "attached artifact was not the rendered PNG: kind={:?} mime={}",
+            artifact.kind,
+            artifact.mime
+        );
+    }
+
+    let owner_root = scratch
+        .root
+        .join("data/amux/agents")
+        .join(session.agent_id().to_string())
+        .join("artifacts");
+    let digest = artifact
+        .id
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("artifact ids are canonical");
+    let blob = owner_root.join("blobs").join(digest);
+    let index_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(owner_root.join("index.json")).context("read artifact owner index")?,
+    )?;
+    let pinned = index_json
+        .get("artifacts")
+        .and_then(|artifacts| artifacts.get(artifact.id.as_str()))
+        .and_then(|meta| meta.get("pinned_at"))
+        .is_some_and(|pinned_at| !pinned_at.is_null());
+    if std::fs::read(&blob).ok().as_deref() != Some(source.as_slice()) || !pinned {
+        bail!("artifact owner did not persist and pin the rendered PNG");
+    }
+
+    let final_rows = session.snapshot().await;
+    let render_tool_use = final_rows.iter().any(|row| {
+        row.row_type() == "assistant"
+            && structure::message_blocks(&row.json).iter().any(|block| {
+                block.get("type").and_then(serde_json::Value::as_str) == Some("tool_use")
+                    && block.get("name").and_then(serde_json::Value::as_str) == Some("Bash")
+                    && block
+                        .pointer("/input/command")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|command| {
+                            command.contains("amux-shot render chat-attachment-blocks")
+                        })
+            })
+    });
+    if !render_tool_use {
+        bail!("Claude did not render the screenshot with amux-shot");
+    }
+    let tool_use = final_rows
+        .iter()
+        .any(|row| row.is_tool_use("mcp__amux__attach"));
+    if !tool_use {
+        bail!("Claude reply was not preceded by an mcp__amux__attach tool use");
+    }
+    let agent_id = session.agent_id();
+    let keys = session.close().await?;
+    Ok(serde_json::json!({
+        "keys": keys,
+        "agent_id": agent_id,
+        "artifact": artifact,
+        "mention": mention,
+        "world": {
+            "rendered_png": shot,
+            "owner_blob": blob,
+        },
+        "assertions": {
+            "amux_shot_render": true,
+            "attach_tool_use": true,
+            "refs_row": true,
+            "null_input_id": true,
+            "reply_contains_exact_mention": true,
+            "stored_bytes_match_render": true,
+            "owner_blob_pinned": true,
         }
     }))
 }
@@ -2971,7 +3170,7 @@ async fn stale_seq(
         .expect("waited for outcome")
         .outcome
     {
-        OpOutcome::Error { error } => error.message.clone(),
+        OpOutcome::Error { error } => error.message(),
         other => bail!("genuinely stale positional answer unexpectedly succeeded: {other:?}"),
     };
     if !error.contains("input raced the session") || !error.contains("sequence number mismatch") {

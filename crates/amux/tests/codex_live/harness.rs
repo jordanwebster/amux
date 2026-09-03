@@ -68,6 +68,7 @@ impl Scratch {
             host_name: "codex-capture".into(),
             socket_path: root.join("sock/amux.sock"),
             state_path: root.join("state/state.yaml"),
+            data_dir: root.join("data/amux"),
             enable_cloud_mode: Some(false),
             prevent_idle_sleep: Some(false),
             ..Config::default()
@@ -218,6 +219,19 @@ impl Harness {
         model: &str,
         working_dir: &Path,
     ) -> Result<Uuid> {
+        self.create_agent_with_policy(scenario, model, working_dir, "on-request", "read-only")
+            .await
+    }
+
+    /// Creates a capture agent with a scenario-specific execution policy.
+    pub async fn create_agent_with_policy(
+        &self,
+        scenario: Option<&str>,
+        model: &str,
+        working_dir: &Path,
+        approval_policy: &str,
+        sandbox_policy: &str,
+    ) -> Result<Uuid> {
         let agent_id = Uuid::new_v4();
         let agent = self
             .client()
@@ -227,8 +241,8 @@ impl Harness {
                 name: scenario.map(|scenario| format!("codex-c-{scenario}")),
                 agent_type: AgentType::Codex {
                     model: Some(model.to_string()),
-                    approval_policy: Some("on-request".into()),
-                    sandbox_policy: Some("read-only".into()),
+                    approval_policy: Some(approval_policy.into()),
+                    sandbox_policy: Some(sandbox_policy.into()),
                     resume_thread_id: None,
                 },
                 working_dir: working_dir.to_path_buf(),
@@ -275,6 +289,7 @@ async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
         .env("CODEX_HOME", &scratch.codex_home)
         .env("AMUX_CONFIG", &scratch.config_path)
         .env("AMUX_LIVE_OUT", &scratch.out)
+        .env("AMUX_CODEX_CAPTURE_DIR", &scratch.out)
         .env("AMUX_LOG", scratch.root.join("amux.log"))
         .env("XDG_CONFIG_HOME", scratch.root.join("config"))
         .env("XDG_DATA_HOME", scratch.root.join("data"))
@@ -316,11 +331,14 @@ async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
 /// it never executed, and silently "passes" reverts too. The header says to
 /// build the CLI first; this makes it a control rather than an instruction.
 fn target_debug_dir() -> Result<PathBuf> {
-    let exe = std::env::current_exe().context("current_exe")?;
-    exe.parent()
+    // Cargo can place build intermediates (including this test executable) in
+    // a separate build.build-dir. The live suite deliberately drives the
+    // prebuilt workspace binary documented at target/debug/amux.
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
         .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .ok_or_else(|| anyhow!("test binary is not under target/debug/deps"))
+        .expect("amux package lives below the workspace root")
+        .join("target/debug"))
 }
 
 pub struct StructuredCapture {

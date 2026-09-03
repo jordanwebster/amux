@@ -279,7 +279,12 @@ pub struct Scratch {
 
 impl Scratch {
     pub fn create(out: PathBuf) -> Result<Self> {
-        let root = std::env::temp_dir().join(format!("amux-capture-{}", std::process::id()));
+        #[cfg(unix)]
+        let temp_base = Path::new("/tmp").to_path_buf();
+        #[cfg(not(unix))]
+        let temp_base = std::env::temp_dir();
+        let nonce = Uuid::new_v4().simple().to_string();
+        let root = temp_base.join(format!("amux-cap-{}-{}", std::process::id(), &nonce[..8]));
         let socket = root.join("sock/amux.sock");
         let socket_len = socket.as_os_str().len();
         if socket_len > 90 {
@@ -290,6 +295,12 @@ impl Scratch {
         }
         for dir in ["config/amux", "data", "state", "sock", "tmp", "projects"] {
             std::fs::create_dir_all(root.join(dir))?;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+            std::fs::set_permissions(root.join("sock"), std::fs::Permissions::from_mode(0o700))?;
         }
         std::fs::create_dir_all(&out)?;
         std::fs::write(
@@ -605,16 +616,10 @@ pub async fn start_daemon(scratch: &Scratch, env: &DaemonEnv) -> Result<ScratchD
 }
 
 fn target_debug_dir() -> Result<PathBuf> {
-    // This test binary lives in <target>/debug/deps/; the amux binary lands
-    // one level up, in <target>/debug/.
-    let exe = std::env::current_exe().context("current_exe")?;
-    let deps = exe
-        .parent()
-        .ok_or_else(|| anyhow!("exe has no parent dir"))?;
-    let debug = deps
-        .parent()
-        .ok_or_else(|| anyhow!("deps has no parent dir"))?;
-    Ok(debug.to_path_buf())
+    // Cargo can place build intermediates (including this test executable) in
+    // a separate build.build-dir. The live suite deliberately drives the
+    // prebuilt workspace binary documented at target/debug/amux.
+    Ok(crate::structure::workspace_root().join("target/debug"))
 }
 
 /// A live capture session over one claude agent: the transcript subscription

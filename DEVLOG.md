@@ -14,7 +14,13 @@ can render the following mention and restart replay retains it. Ordinary user
 draft uploads keep their existing ephemeral lifetime. Codex derives its enabled
 tool list from the shared schema, including across resume, and boundary tests
 cover the exact PNG element, schema parsing, pinning, stream publication, and
-the frozen Codex launch fixture.
+the frozen Codex launch fixture. Opt-in live scenarios now make a managed
+Claude and a managed Codex render a fresh `amux-shot` PNG, attach it through
+the production MCP route, and echo the returned element; the captures require
+the refs row, reply, fetched bytes, owner blob, and pinned index to agree. The
+live harnesses also locate the documented prebuilt workspace binary when Cargo
+uses a separate build directory, and keep daemon data and Claude's messaging
+socket inside isolated private scratch directories.
 
 2026-09-03 — **Captured the review page and the attachment draft.** The
 review page's eight named states now render as committed 120x40 PNGs, and
