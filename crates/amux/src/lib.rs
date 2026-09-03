@@ -50,9 +50,11 @@ mod user_state;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use agents::{
-    Agent, AgentEvent, AgentKind, AgentParent, AgentType, ClaudeDriver, CreateAgentRequest,
-    Protocol, SessionCloseReason, SubscribeSessionEvent, TerminalSize, WorkingOn,
+    Agent, AgentEvent, AgentKind, AgentParent, AgentType, ArtifactRef, BaseIdentity, ClaudeDriver,
+    CreateAgentRequest, DiffBase, DiffFile, DiffResponse, Protocol, SessionCloseReason,
+    SubscribeSessionEvent, TerminalSize, WorkingOn,
 };
+pub use amux_artifacts::{ArtifactId, ArtifactKind};
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{

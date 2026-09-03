@@ -1,5 +1,6 @@
 //! Agent runtime: session lifecycle, PTY management, and hook dispatch.
 
+mod attachments;
 mod buffer;
 pub(crate) mod claude;
 pub(crate) mod codex;
@@ -22,6 +23,8 @@ mod test_agent;
 mod types;
 mod wire;
 
+pub use attachments::{ArtifactRef, BaseIdentity, DiffBase, DiffFile, DiffResponse};
+pub(crate) use attachments::{compute_diff, store_error};
 pub(crate) use buffer::{
     BroadcastRead, ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader,
     MultiplexStructuredBuffer, MultiplexStructuredReader, SequencedReplayQuery, StructuredOutput,

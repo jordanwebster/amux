@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Added frozen repository diffs.** Any agent with a Git working
+directory can now produce a working-tree review against HEAD, including
+untracked files without changing the real index, or a branch review from a
+named base's merge base to HEAD. Each response carries per-file magnitudes,
+the reviewed commits, and new-side blob identities, and stores the unified
+patch as an ephemeral content-addressed Diff artifact for later pinning.
+
 2026-09-03 — **Established the attachment and diff RPC contract.** Both the
 agent-facing and client-facing services now expose put, get, and diff calls;
 client requests resolve an agent reference and preserve remote-host routing.
