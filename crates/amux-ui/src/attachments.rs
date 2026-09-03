@@ -580,6 +580,44 @@ mod tests {
     }
 
     #[test]
+    fn attachments_review_round_trips_arbitrary_comment_text() {
+        let texts = [
+            "> this belongs to the comment",
+            "before\n## src/looks-like-a-heading.rs @@ old:7..new:8\nafter",
+            "",
+            "first\n\nthird\n",
+        ];
+        let comments = texts
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| ReviewComment {
+                path: format!("src/file-{index}.rs"),
+                start_side: Side::New,
+                start_line: index as u32 + 1,
+                side: Side::New,
+                line: index as u32 + 1,
+                quoted: vec![format!("+row {index}")],
+                text: text.into(),
+            })
+            .collect();
+        round_trip(Mention {
+            kind: MentionKind::Review {
+                header: ReviewHeader {
+                    diff: id_of(b"arbitrary review text"),
+                    base: "working-tree".into(),
+                    head: "4f2a9c1".into(),
+                    merge_base: None,
+                    blobs: vec![("src/file-0.rs".into(), "abc123".into())],
+                },
+                comments,
+            },
+            name: String::new(),
+            size: None,
+            path: None,
+        });
+    }
+
+    #[test]
     fn attachments_round_trip_materialised_path() {
         round_trip(Mention {
             kind: MentionKind::Image {

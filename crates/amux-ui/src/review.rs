@@ -6,6 +6,8 @@ use thiserror::Error;
 
 use crate::diff::{RowFact, RowKind, parse_unified_patch};
 
+const COMMENT_TEXT_PREFIX: &str = "text-bytes: ";
+
 /// A multi-file patch frozen with the repository identity it was derived from.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewDocument {
@@ -329,6 +331,9 @@ pub(crate) fn format_body(header: &ReviewHeader, comments: &[ReviewComment]) -> 
             body.push_str(quoted);
         }
         body.push('\n');
+        body.push_str(COMMENT_TEXT_PREFIX);
+        body.push_str(&comment.text.len().to_string());
+        body.push('\n');
         body.push_str(&comment.text);
     }
     body
@@ -340,35 +345,84 @@ pub(crate) struct ParsedBody {
 }
 
 pub(crate) fn parse_body_parts(body: &str) -> Result<ParsedBody, ReviewError> {
-    let lines = body.split('\n').collect::<Vec<_>>();
-    let blobs = lines
-        .first()
-        .and_then(|line| line.strip_prefix("blobs: "))
+    let (blobs_line, mut cursor, has_comments) = match body.find('\n') {
+        Some(end) => (&body[..end], end + 1, true),
+        None => (body, body.len(), false),
+    };
+    let blobs = blobs_line
+        .strip_prefix("blobs: ")
         .ok_or(ReviewError::MalformedBody { line: 1 })?;
     let blobs = serde_json::from_str(blobs).map_err(|_| ReviewError::MalformedBody { line: 1 })?;
     let mut comments = Vec::new();
-    let mut cursor = 1;
+    let mut line_number = 2;
 
-    while cursor < lines.len() {
-        let heading_line = cursor + 1;
-        let (path, start_side, start_line, side, line) = parse_heading(lines[cursor])
-            .ok_or(ReviewError::MalformedBody { line: heading_line })?;
-        cursor += 1;
-        let quoted_start = cursor;
-        let mut quoted = Vec::new();
-        while let Some(row) = lines.get(cursor).and_then(|line| line.strip_prefix("> ")) {
-            quoted.push(row.to_string());
-            cursor += 1;
-        }
-        if cursor == quoted_start {
+    if has_comments && cursor == body.len() {
+        return Err(ReviewError::MalformedBody { line: 2 });
+    }
+
+    while cursor < body.len() {
+        let heading_line = line_number;
+        let (heading, next, heading_has_newline) = body_line_at(body, cursor);
+        let (path, start_side, start_line, side, line) =
+            parse_heading(heading).ok_or(ReviewError::MalformedBody { line: heading_line })?;
+        if !heading_has_newline {
             return Err(ReviewError::MalformedBody { line: heading_line });
         }
+        cursor = next;
+        line_number += 1;
+
+        let mut quoted = Vec::new();
+        let text_len = loop {
+            let part_line = line_number;
+            let (part, next, has_newline) = body_line_at(body, cursor);
+            if let Some(row) = part.strip_prefix("> ") {
+                quoted.push(row.to_string());
+                if !has_newline {
+                    return Err(ReviewError::MalformedBody { line: part_line });
+                }
+                cursor = next;
+                line_number += 1;
+                continue;
+            }
+
+            if quoted.is_empty() {
+                return Err(ReviewError::MalformedBody { line: heading_line });
+            }
+            let length = part
+                .strip_prefix(COMMENT_TEXT_PREFIX)
+                .filter(|length| {
+                    !length.is_empty() && length.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .and_then(|length| length.parse::<usize>().ok())
+                .ok_or(ReviewError::MalformedBody { line: part_line })?;
+            if !has_newline {
+                return Err(ReviewError::MalformedBody { line: part_line });
+            }
+            cursor = next;
+            line_number += 1;
+            break length;
+        };
 
         let text_start = cursor;
-        while cursor < lines.len() && parse_heading(lines[cursor]).is_none() {
+        let text_end = text_start
+            .checked_add(text_len)
+            .filter(|end| *end <= body.len() && body.is_char_boundary(*end))
+            .ok_or(ReviewError::MalformedBody { line: line_number })?;
+        let text = body[text_start..text_end].to_string();
+        line_number += text.bytes().filter(|byte| *byte == b'\n').count();
+        cursor = text_end;
+
+        if cursor < body.len() {
+            if body.as_bytes()[cursor] != b'\n' {
+                return Err(ReviewError::MalformedBody { line: line_number });
+            }
             cursor += 1;
+            line_number += 1;
+            if cursor == body.len() {
+                return Err(ReviewError::MalformedBody { line: line_number });
+            }
         }
-        let text = lines[text_start..cursor].join("\n");
+
         comments.push(ReviewComment {
             path,
             start_side,
@@ -381,6 +435,16 @@ pub(crate) fn parse_body_parts(body: &str) -> Result<ParsedBody, ReviewError> {
     }
 
     Ok(ParsedBody { blobs, comments })
+}
+
+fn body_line_at(body: &str, start: usize) -> (&str, usize, bool) {
+    match body[start..].find('\n') {
+        Some(relative) => {
+            let end = start + relative;
+            (&body[start..end], end + 1, true)
+        }
+        None => (&body[start..], body.len(), false),
+    }
 }
 
 struct PatchSection {
@@ -684,5 +748,59 @@ index 0000000..4444444
         ];
         let body = format_body(&header, &comments);
         assert_eq!(parse_body(&header, &body).unwrap(), comments);
+    }
+
+    #[test]
+    fn review_body_round_trips_arbitrary_comment_text() {
+        let header = ReviewHeader {
+            diff: id_of(PATCH.as_bytes()),
+            base: "working-tree".into(),
+            head: "2222222".into(),
+            merge_base: None,
+            blobs: identity().blobs,
+        };
+        let texts = [
+            "> this belongs to the comment",
+            "before\n## src/looks-like-a-heading.rs @@ old:7..new:8\nafter",
+            "",
+            "first\n\nthird\n",
+            "Unicode is counted in bytes: åæø",
+        ];
+        let comments = texts
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| ReviewComment {
+                path: format!("src/file-{index}.rs"),
+                start_side: Side::New,
+                start_line: index as u32 + 1,
+                side: Side::New,
+                line: index as u32 + 1,
+                quoted: vec![format!("+row {index}")],
+                text: text.into(),
+            })
+            .collect::<Vec<_>>();
+
+        let body = format_body(&header, &comments);
+        assert_eq!(parse_body(&header, &body).unwrap(), comments);
+    }
+
+    #[test]
+    fn review_body_rejects_ambiguous_unframed_comment_text() {
+        let header = ReviewHeader {
+            diff: id_of(PATCH.as_bytes()),
+            base: "working-tree".into(),
+            head: "2222222".into(),
+            merge_base: None,
+            blobs: identity().blobs,
+        };
+        let blobs = serde_json::to_string(&header.blobs).unwrap();
+        let body = format!(
+            "blobs: {blobs}\n## src/lib.rs @@ old:2..new:2\n> -old\n> this could be quoted or comment text"
+        );
+
+        assert_eq!(
+            parse_body(&header, &body),
+            Err(ReviewError::MalformedBody { line: 4 })
+        );
     }
 }

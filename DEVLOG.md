@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Made review comment bodies unambiguous.** Each comment now
+separates its quoted patch rows from its readable text with an explicit UTF-8
+byte count. Quote-prefixed text, heading-shaped lines, empty comments, blank
+lines, and Unicode therefore round-trip through both the review core and the
+attachment mention grammar. Unframed or length-inconsistent bodies are
+rejected instead of being reinterpreted as different comments or quoted rows.
+
 2026-09-03 — **Executed attachment effects through the UI runtime.** Draft
 bytes are stored before one native input carries the complete pin list, and
 typed daemon failures retain the attachment or diff category needed by the
