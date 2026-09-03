@@ -14,6 +14,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use chrono::{DateTime, Utc};
+use serde::Serialize;
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::Instant;
 
@@ -55,6 +57,61 @@ struct RoutingState {
     next_host_sequence: u64,
     routing_events: EventSource<RoutingEvent>,
     host_events: EventSource<HostReachabilityEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RoutingDebug {
+    pub(crate) hosts: Vec<HostDebug>,
+    pub(crate) routes: Vec<RouteDebug>,
+    pub(crate) links: Vec<LinkDebug>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct HostDebug {
+    pub(crate) id: HostId,
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) capabilities: crate::routing::Capabilities,
+}
+
+impl From<&Host> for HostDebug {
+    fn from(host: &Host) -> Self {
+        Self {
+            id: host.id,
+            name: host.name.clone(),
+            version: host.version.clone(),
+            capabilities: host.capabilities.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RouteDebug {
+    pub(crate) dst: HostId,
+    pub(crate) via: RouteVia,
+    pub(crate) hops: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum RouteVia {
+    Direct { link: String },
+    Relay { host: HostId },
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LinkDirection {
+    Bidirectional,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct LinkDebug {
+    pub(crate) id: String,
+    pub(crate) peer: HostId,
+    pub(crate) direction: LinkDirection,
+    pub(crate) transport: String,
+    pub(crate) established_at: Option<DateTime<Utc>>,
 }
 
 impl RoutingState {
@@ -108,6 +165,66 @@ impl RoutingCore {
             routes.extend(entry.relays.iter().map(|relay| Route::Via(*relay)));
         }
         routes
+    }
+
+    /// A stable snapshot of the live routing table for diagnostics.
+    pub(crate) async fn debug_view(&self) -> RoutingDebug {
+        let state = self.state.read().await;
+
+        let mut hosts = HashMap::new();
+        for entry in state.directs.values() {
+            hosts.insert(entry.host.id, HostDebug::from(&entry.host));
+        }
+        for entry in state.claims.values() {
+            hosts
+                .entry(entry.host.id)
+                .or_insert_with(|| HostDebug::from(&entry.host));
+        }
+        let mut hosts = hosts.into_values().collect::<Vec<_>>();
+        hosts.sort_unstable_by_key(|host| host.id);
+
+        let mut routes = Vec::new();
+        let mut links = Vec::new();
+        for (dst, entry) in &state.directs {
+            for link in &entry.links {
+                let id = link.to_string();
+                routes.push(RouteDebug {
+                    dst: *dst,
+                    via: RouteVia::Direct { link: id.clone() },
+                    hops: 1,
+                });
+                links.push(LinkDebug {
+                    id,
+                    peer: link.peer(),
+                    direction: LinkDirection::Bidirectional,
+                    transport: "channel".to_string(),
+                    established_at: None,
+                });
+            }
+        }
+        for (dst, entry) in &state.claims {
+            for relay in &entry.relays {
+                routes.push(RouteDebug {
+                    dst: *dst,
+                    via: RouteVia::Relay { host: *relay },
+                    hops: 2,
+                });
+            }
+        }
+        routes.sort_unstable_by_key(|route| {
+            let via = match &route.via {
+                RouteVia::Direct { link } => format!("0:{link}"),
+                RouteVia::Relay { host } => format!("1:{host}"),
+            };
+            (route.dst, via)
+        });
+        links.sort_unstable_by(|left, right| left.id.cmp(&right.id));
+
+        RoutingDebug {
+            hosts,
+            routes,
+            links,
+        }
     }
 
     /// The relays claiming adjacency to `host_id`, in claim order.

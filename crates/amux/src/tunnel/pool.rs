@@ -19,7 +19,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 use rustls::pki_types::ServerName;
+use serde::Serialize;
 use tokio::sync::{RwLock, mpsc};
 use tokio_rustls::TlsConnector;
 use tonic::transport::{Channel, Endpoint};
@@ -73,7 +75,17 @@ struct ActiveTunnel {
     link: LinkId,
     /// Whether this daemon opened the tunnel (vs hosting a peer's Open).
     initiated: bool,
+    opened_at: DateTime<Utc>,
     tunnel: Tunnel,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct TunnelDebug {
+    pub(crate) id: String,
+    pub(crate) peer: HostId,
+    pub(crate) link: String,
+    pub(crate) state: String,
+    pub(crate) opened_at: Option<DateTime<Utc>>,
 }
 
 struct PoolState {
@@ -263,6 +275,7 @@ impl TunnelPool {
                 peer,
                 link,
                 initiated: true,
+                opened_at: Utc::now(),
                 tunnel,
             },
         );
@@ -373,6 +386,7 @@ impl TunnelPool {
                     peer: src,
                     link: *origin_link,
                     initiated: false,
+                    opened_at: Utc::now(),
                     tunnel,
                 },
             );
@@ -535,6 +549,28 @@ impl TunnelPool {
         for id in retired {
             self.retire_and_notify(id).await;
         }
+    }
+
+    /// A stable snapshot of every live endpoint in the pool.
+    pub(crate) async fn debug_view(&self) -> Vec<TunnelDebug> {
+        let state = self.state.read().await;
+        let mut tunnels = state
+            .tunnels
+            .iter()
+            .map(|(id, active)| TunnelDebug {
+                id: id.to_string(),
+                peer: active.peer,
+                link: active.link.to_string(),
+                state: if active.initiated {
+                    "open_initiated".to_string()
+                } else {
+                    "open_hosted".to_string()
+                },
+                opened_at: Some(active.opened_at),
+            })
+            .collect::<Vec<_>>();
+        tunnels.sort_unstable_by(|left, right| left.id.cmp(&right.id));
+        tunnels
     }
 
     /// Testnet observation seam: every active tunnel as
@@ -1213,6 +1249,7 @@ mod tests {
                 peer: target,
                 link,
                 initiated: true,
+                opened_at: Utc::now(),
                 tunnel,
             },
         );

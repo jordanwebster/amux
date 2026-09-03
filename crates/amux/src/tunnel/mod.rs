@@ -12,7 +12,7 @@ mod transport;
 mod types;
 
 use bytes::Bytes;
-pub(crate) use pool::{TunnelPool, TunnelPoolError};
+pub(crate) use pool::{TunnelDebug, TunnelPool, TunnelPoolError};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 pub(crate) use transport::TunnelTransport;

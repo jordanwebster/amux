@@ -330,9 +330,12 @@ impl ConnectionManager {
         Err(TunnelPoolError::NotFound { host_id: peer })
     }
 
-    #[cfg(test)]
     pub(crate) fn routing(&self) -> &Arc<RoutingCore> {
         &self.routing
+    }
+
+    pub(crate) fn tunnels(&self) -> &Arc<TunnelPool> {
+        &self.tunnels
     }
 
     #[cfg(any(test, feature = "testnet"))]

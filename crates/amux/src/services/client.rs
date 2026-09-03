@@ -2029,7 +2029,14 @@ impl ClientService {
     }
 
     async fn debug_dump(&self, format: DebugFormat, verbose: bool) -> String {
-        crate::debug::dump_server_debug_info(&self.server_state, format, verbose).await
+        crate::debug::dump_server_debug_info(
+            &self.server_state,
+            self.remote_agent_connections.routing(),
+            self.remote_agent_connections.tunnels(),
+            format,
+            verbose,
+        )
+        .await
     }
 
     async fn request_shutdown(&self) -> Result<(), ProtocolError> {
@@ -6074,6 +6081,53 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(hook_error.code(), tonic::Code::NotFound);
+    }
+
+    mod debug {
+        use super::*;
+
+        #[tokio::test]
+        async fn dump_reports_live_peer_route_link_and_tunnel() {
+            let local = Uuid::from_u128(1);
+            let peer = host(2, non_relay_types());
+            let (routing, tunnels) = test_routing_and_tunnels(local);
+            let service = client_service_with_agent_and_tunnels(
+                agent_service_ctx(local),
+                routing.clone(),
+                tunnels.clone(),
+            );
+            let link = LinkId::new(peer.id);
+            let (link_tx, _link_rx) = mpsc::channel(8);
+            tunnels
+                .link_registry()
+                .register(link, peer.clone(), link_tx, LinkRole::Peer, &[])
+                .await;
+            routing.apply_direct_up(peer.clone(), link).await;
+            let _channel = tunnels.channel_on_link(peer.id, link).await.unwrap();
+
+            let dump = service.debug_dump(DebugFormat::Json, true).await;
+            let dump: serde_json::Value = serde_json::from_str(&dump).unwrap();
+
+            assert_eq!(dump["host_count"], 1);
+            assert_eq!(dump["route_count"], 1);
+            assert_eq!(dump["peer_link_count"], 1);
+            assert_eq!(dump["tunnel_count"], 1);
+            assert_eq!(dump["hosts"][0]["id"], peer.id.to_string());
+            assert_eq!(dump["routes"][0]["dst"], peer.id.to_string());
+            assert_eq!(dump["routes"][0]["via"]["kind"], "direct");
+            assert_eq!(dump["routes"][0]["via"]["link"], link.to_string());
+            assert_eq!(dump["links"][0]["peer"], peer.id.to_string());
+            assert_eq!(dump["links"][0]["id"], link.to_string());
+            assert_eq!(dump["tunnels"][0]["peer"], peer.id.to_string());
+            assert_eq!(dump["tunnels"][0]["link"], link.to_string());
+            assert_eq!(dump["tunnels"][0]["state"], "open_initiated");
+
+            let user = &dump["users"][0];
+            assert_eq!(user["hosts"], dump["hosts"]);
+            assert_eq!(user["routes"], dump["routes"]);
+            assert_eq!(user["links"], dump["links"]);
+            assert_eq!(user["tunnels"], dump["tunnels"]);
+        }
     }
 
     #[tokio::test]

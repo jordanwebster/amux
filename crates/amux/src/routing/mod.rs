@@ -14,7 +14,7 @@ mod link_registry;
 mod types;
 mod wire;
 
-pub(crate) use core::{RouteUpdateOutcome, RoutingCore};
+pub(crate) use core::{RouteUpdateOutcome, RoutingCore, RoutingDebug};
 
 #[cfg(test)]
 pub(crate) use connect::spawn_connector_to_channel;

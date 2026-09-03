@@ -6,15 +6,21 @@ use tokio::sync::RwLock;
 
 use crate::agents::AgentRecord;
 use crate::debug::{DebugFormat, LossyPath};
+use crate::routing::{RoutingCore, RoutingDebug};
 use crate::services::DebugAgent;
 use crate::setup;
+use crate::tunnel::{TunnelDebug, TunnelPool};
 use crate::user_state::ServerState;
 
 pub(crate) async fn dump_server_debug_info(
     state: &Arc<RwLock<ServerState>>,
+    routing: &RoutingCore,
+    tunnel_pool: &TunnelPool,
     format: DebugFormat,
     verbose: bool,
 ) -> String {
+    let routing = routing.debug_view().await;
+    let tunnels = tunnel_pool.debug_view().await;
     let state_guard = state.read().await;
     let use_cloud_mode = setup::cloud_enabled(&state_guard.config);
 
@@ -23,6 +29,10 @@ pub(crate) async fn dump_server_debug_info(
         Some(host) => (host.debug_dump(verbose).await, host.agent_count().await),
         None => (Vec::new(), 0),
     };
+    let remote_agent_count = agents
+        .iter()
+        .filter(|agent| agent.record.host_id != state_guard.host_id)
+        .count();
 
     let view = ServerDebugView {
         state: &state_guard,
@@ -30,6 +40,9 @@ pub(crate) async fn dump_server_debug_info(
         local_version: env!("CARGO_PKG_VERSION"),
         agents: &agents,
         agent_count,
+        remote_agent_count,
+        routing: &routing,
+        tunnels: &tunnels,
         verbose,
     };
 
@@ -45,6 +58,9 @@ struct ServerDebugView<'a> {
     local_version: &'static str,
     agents: &'a [DebugAgent],
     agent_count: usize,
+    remote_agent_count: usize,
+    routing: &'a RoutingDebug,
+    tunnels: &'a [TunnelDebug],
     verbose: bool,
 }
 
@@ -55,10 +71,15 @@ impl Serialize for ServerDebugView<'_> {
         map.serialize_entry("use_cloud_mode", &self.use_cloud_mode)?;
         map.serialize_entry("user_count", &1usize)?;
         map.serialize_entry("agent_count", &self.agent_count)?;
-        map.serialize_entry("remote_agent_count", &0usize)?;
-        map.serialize_entry("host_count", &0usize)?;
-        map.serialize_entry("route_count", &0usize)?;
-        map.serialize_entry("peer_link_count", &0usize)?;
+        map.serialize_entry("remote_agent_count", &self.remote_agent_count)?;
+        map.serialize_entry("host_count", &self.routing.hosts.len())?;
+        map.serialize_entry("route_count", &self.routing.routes.len())?;
+        map.serialize_entry("peer_link_count", &self.routing.links.len())?;
+        map.serialize_entry("tunnel_count", &self.tunnels.len())?;
+        map.serialize_entry("hosts", &self.routing.hosts)?;
+        map.serialize_entry("routes", &self.routing.routes)?;
+        map.serialize_entry("links", &self.routing.links)?;
+        map.serialize_entry("tunnels", &self.tunnels)?;
         map.serialize_entry("config", &self.state.config)?;
 
         if self.verbose {
@@ -76,6 +97,9 @@ impl Serialize for ServerDebugView<'_> {
                     state: self.state,
                     agents: self.agents,
                     agent_count: self.agent_count,
+                    remote_agent_count: self.remote_agent_count,
+                    routing: self.routing,
+                    tunnels: self.tunnels,
                     verbose: self.verbose,
                 },
             )?;
@@ -105,6 +129,9 @@ struct UsersListView<'a> {
     state: &'a ServerState,
     agents: &'a [DebugAgent],
     agent_count: usize,
+    remote_agent_count: usize,
+    routing: &'a RoutingDebug,
+    tunnels: &'a [TunnelDebug],
     verbose: bool,
 }
 
@@ -117,6 +144,9 @@ impl Serialize for UsersListView<'_> {
             user_id: "local",
             agents: self.agents,
             agent_count: self.agent_count,
+            remote_agent_count: self.remote_agent_count,
+            routing: self.routing,
+            tunnels: self.tunnels,
             verbose: self.verbose,
         })?;
         seq.end()
@@ -128,6 +158,9 @@ struct UserView<'a> {
     user_id: &'a str,
     agents: &'a [DebugAgent],
     agent_count: usize,
+    remote_agent_count: usize,
+    routing: &'a RoutingDebug,
+    tunnels: &'a [TunnelDebug],
     verbose: bool,
 }
 
@@ -136,13 +169,15 @@ impl Serialize for UserView<'_> {
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("user_id", self.user_id)?;
         map.serialize_entry("agent_count", &self.agent_count)?;
-        map.serialize_entry("remote_agent_count", &0usize)?;
-        map.serialize_entry("host_count", &0usize)?;
-        map.serialize_entry("route_count", &0usize)?;
-        map.serialize_entry("peer_link_count", &0usize)?;
-        map.serialize_entry("peer_links", &Vec::<String>::new())?;
-        map.serialize_entry("routes", &EmptySeq)?;
-        map.serialize_entry("hosts", &EmptySeq)?;
+        map.serialize_entry("remote_agent_count", &self.remote_agent_count)?;
+        map.serialize_entry("host_count", &self.routing.hosts.len())?;
+        map.serialize_entry("route_count", &self.routing.routes.len())?;
+        map.serialize_entry("peer_link_count", &self.routing.links.len())?;
+        map.serialize_entry("tunnel_count", &self.tunnels.len())?;
+        map.serialize_entry("hosts", &self.routing.hosts)?;
+        map.serialize_entry("routes", &self.routing.routes)?;
+        map.serialize_entry("links", &self.routing.links)?;
+        map.serialize_entry("tunnels", &self.tunnels)?;
         map.serialize_entry(
             "agents",
             &AgentsView {
@@ -152,14 +187,6 @@ impl Serialize for UserView<'_> {
             },
         )?;
         map.end()
-    }
-}
-
-struct EmptySeq;
-
-impl Serialize for EmptySeq {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_seq(Some(0))?.end()
     }
 }
 
