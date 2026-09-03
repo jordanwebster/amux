@@ -4,17 +4,20 @@
 //! reaches it. The report bundle itself remains in `amux-ui` so release builds
 //! can still write degraded tripwire and panic reports.
 
-use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::{fs, io};
 
 use amux::{Config, DebugFormat};
 use amux_tui::replay::{self, Replay};
 use amux_ui::report::{
     self, ReplayVerdict, ReportHeader, ReportKind, ReportStatus, read_frame, set_verdict,
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
+use chrono::{DateTime, Utc};
 use clap::{Subcommand, ValueEnum};
+use replay_support::{Redaction, RedactionSummary, redact_text, redact_value};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Subcommand)]
 pub enum DebugCommands {
@@ -65,8 +68,33 @@ pub enum ReportCommands {
         styles: bool,
     },
 
+    /// Redact a report into a committed replay fixture
+    Graduate {
+        /// Report directory path or name beneath the configured reports directory
+        report: PathBuf,
+
+        /// Fixture name in surface_subject form
+        name: String,
+
+        /// Fixture root; defaults to ./crates/amux-tui/tests/reports when it exists
+        #[arg(long)]
+        into: Option<PathBuf>,
+    },
+
     /// Remove old automatic reports; user-created bug and tweak reports remain
     Prune,
+}
+
+/// Provenance and operator context retained beside a graduated report fixture.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FixtureManifest {
+    pub name: String,
+    pub kind: ReportKind,
+    pub original_stamp: String,
+    pub note: String,
+    pub marks: Vec<amux_ui::report::Mark>,
+    pub graduated_at: DateTime<Utc>,
+    pub redaction: RedactionSummary,
 }
 
 /// CLI-side mirror of `DebugFormat` so the core `amux` crate remains
@@ -87,6 +115,7 @@ impl From<CliDebugFormat> for DebugFormat {
     }
 }
 
+#[derive(Debug)]
 pub struct ReportCommandOutput {
     pub text: String,
     pub exit_code: ExitCode,
@@ -118,8 +147,208 @@ pub fn run_report(command: ReportCommands, config: &Config) -> Result<ReportComm
             frame,
             styles,
         } => replay_report(&reports_dir, &report, at, frame, styles),
+        ReportCommands::Graduate { report, name, into } => {
+            let fixture = graduate(&reports_dir, &report, &name, into.as_deref())?;
+            Ok(ReportCommandOutput::success(format!(
+                "Graduated report to {}\n",
+                fixture.display()
+            )))
+        }
         ReportCommands::Prune => prune_reports(&reports_dir).map(ReportCommandOutput::success),
     }
+}
+
+fn graduate(
+    reports_dir: &Path,
+    requested: &Path,
+    name: &str,
+    into: Option<&Path>,
+) -> Result<PathBuf> {
+    validate_fixture_name(name)?;
+    let report_dir = resolve_report(reports_dir, requested);
+    report::read_header(&report_dir)
+        .with_context(|| format!("failed to read report {}", report_dir.display()))?;
+
+    let fixture_root = match into {
+        Some(path) => path.to_path_buf(),
+        None => {
+            let default = PathBuf::from("crates/amux-tui/tests/reports");
+            if !default.is_dir() {
+                bail!(
+                    "default fixture directory {} does not exist; pass --into",
+                    default.display()
+                );
+            }
+            default
+        }
+    };
+    fs::create_dir_all(&fixture_root)
+        .with_context(|| format!("failed to create fixture root {}", fixture_root.display()))?;
+    let canonical_report = fs::canonicalize(&report_dir)
+        .with_context(|| format!("failed to resolve report {}", report_dir.display()))?;
+    let canonical_root = fs::canonicalize(&fixture_root)
+        .with_context(|| format!("failed to resolve fixture root {}", fixture_root.display()))?;
+    if canonical_root.starts_with(&canonical_report) {
+        bail!(
+            "fixture root {} cannot be inside report {}",
+            fixture_root.display(),
+            report_dir.display()
+        );
+    }
+    let fixture = fixture_root.join(name);
+    if fixture.exists() {
+        bail!("fixture already exists: {}", fixture.display());
+    }
+    fs::create_dir(&fixture)
+        .with_context(|| format!("failed to create fixture {}", fixture.display()))?;
+
+    let result = graduate_into(&report_dir, &fixture, name);
+    if let Err(error) = result {
+        let _ = fs::remove_dir_all(&fixture);
+        return Err(error);
+    }
+    Ok(fixture)
+}
+
+fn validate_fixture_name(name: &str) -> Result<()> {
+    let Some((surface, subject)) = name.split_once('_') else {
+        bail!("fixture name must match surface_subject: {name}");
+    };
+    let valid_segment = |value: &str| {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    };
+    if !valid_segment(surface)
+        || subject.is_empty()
+        || !subject
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        bail!("fixture name must match surface_subject: {name}");
+    }
+    Ok(())
+}
+
+fn local_redaction() -> Redaction {
+    Redaction {
+        home: std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_default(),
+        hostname: Some(gethostname::gethostname().to_string_lossy().into_owned())
+            .filter(|value| !value.is_empty()),
+        user: std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .or_else(|_| std::env::var("USERNAME"))
+            .ok()
+            .filter(|value| !value.is_empty()),
+        ..Redaction::default()
+    }
+}
+
+fn graduate_into(report_dir: &Path, fixture: &Path, name: &str) -> Result<()> {
+    let rules = local_redaction();
+    let mut summary = RedactionSummary::default();
+    redact_tree(report_dir, fixture, &rules, &mut summary)?;
+
+    let header = report::read_header(fixture)
+        .with_context(|| format!("failed to read redacted fixture {}", fixture.display()))?;
+    let manifest = FixtureManifest {
+        name: name.to_string(),
+        kind: header.kind,
+        original_stamp: header.stamp,
+        note: header.note,
+        marks: header.marks,
+        graduated_at: Utc::now(),
+        redaction: summary,
+    };
+    let mut bytes = serde_json::to_vec_pretty(&manifest).context("failed to render manifest")?;
+    bytes.push(b'\n');
+    fs::write(fixture.join("manifest.json"), bytes)
+        .with_context(|| format!("failed to write manifest in {}", fixture.display()))?;
+    Ok(())
+}
+
+fn redact_tree(
+    source: &Path,
+    destination: &Path,
+    rules: &Redaction,
+    summary: &mut RedactionSummary,
+) -> Result<()> {
+    for entry in fs::read_dir(source)
+        .with_context(|| format!("failed to read report directory {}", source.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("failed to read entry in {}", source.display()))?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("failed to inspect {}", entry.path().display()))?;
+        let output = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            fs::create_dir(&output)
+                .with_context(|| format!("failed to create {}", output.display()))?;
+            redact_tree(&entry.path(), &output, rules, summary)?;
+        } else if file_type.is_file() {
+            redact_file(&entry.path(), &output, rules, summary)?;
+        } else {
+            bail!(
+                "report contains unsupported entry {}",
+                entry.path().display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn redact_file(
+    source: &Path,
+    destination: &Path,
+    rules: &Redaction,
+    summary: &mut RedactionSummary,
+) -> Result<()> {
+    let input = fs::read_to_string(source)
+        .with_context(|| format!("report file is not UTF-8 text: {}", source.display()))?;
+    let output = match source.extension().and_then(|extension| extension.to_str()) {
+        Some("json") => {
+            let mut value: serde_json::Value = serde_json::from_str(&input)
+                .with_context(|| format!("invalid JSON in {}", source.display()))?;
+            redact_value(&mut value, rules, summary);
+            let mut rendered =
+                serde_json::to_string_pretty(&value).context("failed to render redacted JSON")?;
+            rendered.push('\n');
+            rendered
+        }
+        Some("jsonl") => redact_json_lines(&input, source, rules, summary)?,
+        _ => redact_text(&input, rules, summary),
+    };
+    fs::write(destination, output)
+        .with_context(|| format!("failed to write {}", destination.display()))?;
+    Ok(())
+}
+
+fn redact_json_lines(
+    input: &str,
+    source: &Path,
+    rules: &Redaction,
+    summary: &mut RedactionSummary,
+) -> Result<String> {
+    let mut output = String::new();
+    for (index, line) in input.lines().enumerate() {
+        if line.trim().is_empty() {
+            output.push('\n');
+            continue;
+        }
+        let mut value: serde_json::Value = serde_json::from_str(line)
+            .with_context(|| format!("invalid JSON in {} line {}", source.display(), index + 1))?;
+        redact_value(&mut value, rules, summary);
+        output.push_str(
+            &serde_json::to_string(&value).context("failed to render redacted JSON line")?,
+        );
+        output.push('\n');
+    }
+    Ok(output)
 }
 
 fn replay_report(
@@ -490,6 +719,25 @@ mod tests {
             } if report == Path::new("capture-name")
         ));
 
+        let graduate = DebugCli::try_parse_from([
+            "debug",
+            "report",
+            "graduate",
+            "capture-name",
+            "chat_wrapped_note",
+            "--into",
+            "/tmp/fixtures",
+        ])
+        .unwrap();
+        assert!(matches!(
+            graduate.command,
+            DebugCommands::Report {
+                command: ReportCommands::Graduate { report, name, into }
+            } if report == Path::new("capture-name")
+                && name == "chat_wrapped_note"
+                && into.as_deref() == Some(Path::new("/tmp/fixtures"))
+        ));
+
         assert!(DebugCli::try_parse_from(["debug", "--verbose"]).is_err());
     }
 
@@ -651,5 +899,135 @@ mod tests {
             report::read_header(&report_dir).unwrap().replay,
             ReplayVerdict::Diverges { .. }
         ));
+    }
+
+    #[test]
+    fn graduate_redacts_every_report_file_and_writes_a_manifest() {
+        let temp = tempdir().unwrap();
+        let reports_dir = temp.path().join("reports");
+        let fixtures_dir = temp.path().join("fixtures");
+        let home = std::env::var("HOME").expect("test process has HOME");
+        let user = std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .expect("test process has a user name");
+        let hostname = gethostname::gethostname()
+            .into_string()
+            .expect("test host name is UTF-8");
+        assert!(!home.is_empty());
+        assert!(!user.is_empty());
+        assert!(!hostname.is_empty());
+        let private = format!("home={home}/project user={user} host={hostname}");
+
+        let mut source_header = header("original-stamp", ReportKind::Tweak, ReportStatus::Open);
+        source_header.note = format!("top-level note: {private}");
+        source_header.marks[0].note = format!("marked by {user} on {hostname}");
+        source_header.parts = Parts {
+            frame: PartState::Present,
+            trace: PartState::Present,
+            msgs: PartState::Present,
+            daemon: PartState::Present,
+            log: PartState::Present,
+        };
+        let report_dir = write_header(&reports_dir, "source-tweak", &source_header);
+        fs::write(report_dir.join("frame.txt"), format!("frame {private}\n")).unwrap();
+        fs::write(
+            report_dir.join("frame.styles"),
+            format!("styles {private}\n"),
+        )
+        .unwrap();
+        fs::write(
+            report_dir.join("trace.jsonl"),
+            format!(
+                "{{\"note\":{}}}\n",
+                serde_json::to_string(&private).unwrap()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            report_dir.join("msgs.jsonl"),
+            format!(
+                "{{\"home_path\":{},\"operator\":{}}}\n",
+                serde_json::to_string(&format!("{home}/project")).unwrap(),
+                serde_json::to_string(&user).unwrap()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            report_dir.join("daemon.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "hostname": hostname.clone(),
+                "user": user.clone(),
+                "cwd": format!("{home}/project"),
+                "api_key": "private-key"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(report_dir.join("log.txt"), format!("log {private}\n")).unwrap();
+
+        let output = run_report(
+            ReportCommands::Graduate {
+                report: PathBuf::from("source-tweak"),
+                name: "chat_wrapped_note".to_string(),
+                into: Some(fixtures_dir.clone()),
+            },
+            &config(&reports_dir),
+        )
+        .unwrap();
+        let fixture = fixtures_dir.join("chat_wrapped_note");
+        assert_eq!(output.exit_code, ExitCode::SUCCESS);
+        assert_eq!(
+            output.text,
+            format!("Graduated report to {}\n", fixture.display())
+        );
+
+        let manifest: FixtureManifest = serde_json::from_slice(
+            &fs::read(fixture.join("manifest.json")).expect("manifest was written"),
+        )
+        .unwrap();
+        assert_eq!(manifest.name, "chat_wrapped_note");
+        assert_eq!(manifest.kind, ReportKind::Tweak);
+        assert_eq!(manifest.original_stamp, "original-stamp");
+        assert!(manifest.note.starts_with("top-level note:"));
+        assert_eq!(manifest.marks.len(), 1);
+        assert!(manifest.redaction.machine_paths > 0);
+        assert!(manifest.redaction.personal_identifiers > 0);
+        assert!(manifest.redaction.secrets > 0);
+
+        for entry in fs::read_dir(&fixture).unwrap() {
+            let path = entry.unwrap().path();
+            let text = fs::read_to_string(&path).unwrap();
+            for sensitive in [&home, &user, &hostname] {
+                assert!(
+                    !text.contains(sensitive),
+                    "{} retained {sensitive:?}",
+                    path.display()
+                );
+            }
+        }
+
+        let collision = run_report(
+            ReportCommands::Graduate {
+                report: PathBuf::from("source-tweak"),
+                name: "chat_wrapped_note".to_string(),
+                into: Some(fixtures_dir.clone()),
+            },
+            &config(&reports_dir),
+        )
+        .unwrap_err();
+        assert!(collision.to_string().contains("fixture already exists"));
+
+        for invalid in ["chat", "Chat_subject", "chat-subject", "chat_/subject"] {
+            let error = run_report(
+                ReportCommands::Graduate {
+                    report: PathBuf::from("source-tweak"),
+                    name: invalid.to_string(),
+                    into: Some(fixtures_dir.clone()),
+                },
+                &config(&reports_dir),
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("must match surface_subject"));
+        }
     }
 }

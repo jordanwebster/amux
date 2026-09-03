@@ -329,6 +329,8 @@ async fn record_pty_one(entry: SpecEntry) -> Result<(), Box<dyn std::error::Erro
             home: owner_home(),
             extra_paths: vec![capture.scratch.clone()],
             secret_env: secret_values(),
+            hostname: None,
+            user: None,
             personal_identifier_keys: Vec::new(),
         },
     );
@@ -635,6 +637,8 @@ async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::er
             home: owner_home(),
             extra_paths: vec![capture.scratch.clone()],
             secret_env: secret_values(),
+            hostname: None,
+            user: None,
             personal_identifier_keys: Vec::new(),
         },
     );

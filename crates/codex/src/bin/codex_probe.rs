@@ -166,6 +166,8 @@ async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::er
             home: owner_home(),
             extra_paths: vec![scratch.path().to_path_buf()],
             secret_env: secret_values(),
+            hostname: None,
+            user: None,
             personal_identifier_keys: vec!["installationId".into(), "serverName".into()],
         },
     );

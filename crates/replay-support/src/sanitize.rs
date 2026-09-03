@@ -15,6 +15,10 @@ pub struct Redaction {
     pub home: PathBuf,
     pub extra_paths: Vec<PathBuf>,
     pub secret_env: Vec<String>,
+    /// Host name whose literal appearances should not leave the capture.
+    pub hostname: Option<String>,
+    /// Local user name whose literal appearances should not leave the capture.
+    pub user: Option<String>,
     /// Exact JSON field names whose values this capture treats as personal identifiers.
     pub personal_identifier_keys: Vec<String>,
 }
@@ -25,7 +29,7 @@ pub fn sanitize(io: &mut [IoEvent], rules: &Redaction) -> RedactionSummary {
     for event in io {
         match serde_json::from_str::<Value>(&event.line) {
             Ok(mut frame) => {
-                sanitize_value(&mut frame, rules, &mut summary);
+                redact_value(&mut frame, rules, &mut summary);
                 event.line = serde_json::to_string(&frame)
                     .expect("serializing a serde_json::Value cannot fail");
             }
@@ -35,7 +39,8 @@ pub fn sanitize(io: &mut [IoEvent], rules: &Redaction) -> RedactionSummary {
     summary
 }
 
-fn sanitize_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionSummary) {
+/// Redact one parsed JSON value with the shared capture rules.
+pub fn redact_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionSummary) {
     match value {
         Value::Object(object) => {
             for (key, value) in object {
@@ -52,13 +57,13 @@ fn sanitize_value(value: &mut Value, rules: &Redaction, summary: &mut RedactionS
                 } else if is_path_key(key) {
                     sanitize_path_value(value, rules, summary);
                 } else {
-                    sanitize_value(value, rules, summary);
+                    redact_value(value, rules, summary);
                 }
             }
         }
         Value::Array(values) => {
             for value in values {
-                sanitize_value(value, rules, summary);
+                redact_value(value, rules, summary);
             }
         }
         Value::String(value) => *value = redact_text(value, rules, summary),
@@ -105,7 +110,7 @@ fn sanitize_path_value(value: &mut Value, rules: &Redaction, summary: &mut Redac
                 sanitize_path_value(value, rules, summary);
             }
         }
-        _ => sanitize_value(value, rules, summary),
+        _ => redact_value(value, rules, summary),
     }
 }
 
@@ -155,7 +160,8 @@ fn is_absolute_machine_path(value: &str) -> bool {
             && matches!(value.as_bytes()[2], b'\\' | b'/'))
 }
 
-fn redact_text(input: &str, rules: &Redaction, summary: &mut RedactionSummary) -> String {
+/// Redact secrets, machine paths, and local machine identifiers in free text.
+pub fn redact_text(input: &str, rules: &Redaction, summary: &mut RedactionSummary) -> String {
     let mut value = input.to_string();
     for secret in &rules.secret_env {
         if !secret.is_empty() && secret != SECRET_PLACEHOLDER {
@@ -202,7 +208,18 @@ fn redact_text(input: &str, rules: &Redaction, summary: &mut RedactionSummary) -
     ] {
         value = redact_spans(&value, marker, PATH_PLACEHOLDER, &mut summary.machine_paths);
     }
-    redact_windows_user_paths(&value, summary)
+    value = redact_windows_user_paths(&value, summary);
+    for identifier in [&rules.hostname, &rules.user].into_iter().flatten() {
+        if !identifier.is_empty() && identifier != IDENTIFIER_PLACEHOLDER {
+            value = redact_literal(
+                &value,
+                identifier,
+                IDENTIFIER_PLACEHOLDER,
+                &mut summary.personal_identifiers,
+            );
+        }
+    }
+    value
 }
 
 fn redact_literal(input: &str, needle: &str, replacement: &str, count: &mut u64) -> String {
@@ -344,6 +361,8 @@ mod tests {
             home: PathBuf::from("/Users/alice"),
             extra_paths: vec![PathBuf::from("/srv/operator")],
             secret_env: vec!["exact-secret".to_string()],
+            hostname: None,
+            user: None,
             personal_identifier_keys: vec!["installationId".into(), "serverName".into()],
         };
 
@@ -376,6 +395,28 @@ mod tests {
         let repeated = io.clone();
         assert_eq!(sanitize(&mut io, &rules), RedactionSummary::default());
         assert_eq!(io, repeated, "sanitization must be idempotent");
+    }
+
+    #[test]
+    fn redact_text_removes_the_configured_hostname_and_user() {
+        let rules = Redaction {
+            hostname: Some("alices-laptop.local".to_string()),
+            user: Some("alice".to_string()),
+            ..Redaction::default()
+        };
+        let mut summary = RedactionSummary::default();
+
+        let redacted = redact_text(
+            "alice captured this on alices-laptop.local",
+            &rules,
+            &mut summary,
+        );
+
+        assert_eq!(
+            redacted,
+            "<REDACTED_IDENTIFIER> captured this on <REDACTED_IDENTIFIER>"
+        );
+        assert_eq!(summary.personal_identifiers, 2);
     }
 
     #[test]

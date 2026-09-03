@@ -17,6 +17,7 @@ amux = { workspace = true }
 claude = { workspace = true }
 amux-tui = { workspace = true }
 amux-ui = { workspace = true }
+replay-support = { path = "../replay-support" }
 tokio = { workspace = true }
 clap = { workspace = true }
 serde_yaml = { workspace = true }
@@ -36,6 +37,7 @@ sha2 = { workspace = true }
 crossterm = { workspace = true }
 qrcode = { workspace = true }
 chrono = { workspace = true }
+gethostname = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

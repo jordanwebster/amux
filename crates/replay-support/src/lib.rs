@@ -15,7 +15,7 @@ pub use manifest::{
 pub use observation::{DriftReport, drift, observe};
 pub use probe::{ProbeAttempt, ProbeOutcome, ProbeResult, ProbeRun, probe};
 pub use registry::{RegistryRow, SpecEntry, below_minimum, orphan_recordings, registry_rows};
-pub use sanitize::{Redaction, is_personal_identifier_key, sanitize};
+pub use sanitize::{Redaction, is_personal_identifier_key, redact_text, redact_value, sanitize};
 pub use transport::{
     ReplayAdvance, ReplayClock, ReplayController, ReplayError, ReplayNotificationIgnore,
     ReplayOptions, ReplayPeek, ReplayReport, ReplayTiming, ReplayTransport, ReplayWriteMismatch,
