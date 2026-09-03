@@ -4,6 +4,43 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **One build configuration for every host command; test
+scaffolding follows the profile, not a feature.** A single worktree had
+grown a 39 GB cargo build directory in a day, and `wt rm` of it took 78
+seconds. Cargo keeps one artifact set per build configuration and never
+deletes a superseded one, and this workspace produced far more
+configurations than it needed: `panic = "abort"` in the dev profile forced
+a second, unwinding copy of every dependency for `cargo test` (tests must
+unwind); the `testnet`, `specs` and `fixtures` features made two versions
+of each library and of everything above it, one for `cargo build` and one
+for `cargo test`; `default-members` and `-p` selections unified dependency
+features differently from the workspace build. Measured in one tree: 21
+distinct fingerprints of the `amux` library, 14 full rlib copies of about
+280 MB each.
+
+The dev profile no longer aborts on panic (release still does;
+`AMUX_INVARIANT_FATAL` keeps invariants fatal), dependencies build without
+debuginfo, and `default-members` is gone so a bare `cargo build` means the
+workspace. The three test features are deleted. Their code is gated on
+`cfg(testnet)` (amux) and `cfg(specs)` (claude, codex), emitted by each
+crate's build script when the profile is debug — `testnet` also needs
+`local-agents` — so every dev command compiles one copy of each library
+and a release binary cannot contain the scaffolding however cargo is
+invoked. `fixtures` is unconditional: amux-shot consumes it in release, so
+it was never test-only. The probe binaries are split into a `main.rs` stub
+and the real `probe.rs`, so the release build still produces the target.
+Dev-dependencies no longer enable features on normal dependencies. wt's
+tasks and CI build with `--workspace --all-targets` and select the spec
+suites by target name (`cargo test --workspace --test spec`) rather than
+`-p`, which unifies differently and compiles a second dependency set; the
+iOS check has its own `mobile-check` task that always names the target.
+Result: 6.8 GB for a full workspace build with tests, every workspace
+crate once, and `cargo test` recompiles nothing after `build`. Release
+builds of binaries pass; a release-profile *test* build never worked
+(integration tests use debug-only support items) and still does not.
+Moving the scaffolding out of the libraries into crates of their own is
+tracked as FOX-312.
+
 2026-08-31 — **Moved protobuf codegen out of build.rs into committed
 source.** The build script generated `amux.v1.rs` into `OUT_DIR` from
 workspace-local protos, which made the generated API invisible to git,

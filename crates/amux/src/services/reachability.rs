@@ -90,7 +90,7 @@ impl ReachabilityLinkConnector {
 
     /// Test-harness seam: register every TCP socket this connector dials in
     /// `tracker`, so the harness can sever them like a process exit.
-    #[cfg(feature = "testnet")]
+    #[cfg(testnet)]
     pub(crate) fn track_dialed_tcp(&self, tracker: TrackedTcpConnections) {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return;

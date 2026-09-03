@@ -18,7 +18,7 @@ pub(crate) use core::{RouteUpdateOutcome, RoutingCore, RoutingDebug};
 
 #[cfg(test)]
 pub(crate) use connect::spawn_connector_to_channel;
-#[cfg(any(test, feature = "testnet"))]
+#[cfg(any(test, testnet))]
 pub(crate) use connect::spawn_connector_to_channel_with_bearer_token;
 pub(crate) use connect::{
     AuthenticatedLinkUser, LinkAuthSession, LinkConnectorAuth, LinkConnectorCtx,

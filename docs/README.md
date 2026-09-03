@@ -32,5 +32,5 @@ subject; when two overlap, the owner named here wins.
   interpretation, provenance, management and screen-detection limits.
 - `../crates/amux/tests/spec/` — the executable spec. The suite reads as
   documentation and locks the protocol's guarantees; run it with
-  `timeout 600 cargo test -p amux --features testnet --test spec`.
+  `timeout 600 cargo test --workspace --test spec`.
 - `../DEVLOG.md` — recent work history and decisions.

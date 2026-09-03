@@ -23,7 +23,7 @@ use super::{
     AgentServiceState, DebugAgent, LocalAgentHost, ResponseStream, SharedAgentServiceState,
     session_rpc,
 };
-#[cfg(feature = "testnet")]
+#[cfg(testnet)]
 use crate::agents::claude::ClaudeSession;
 use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
@@ -99,7 +99,7 @@ impl PtyAgentHost {
         self.host_id
     }
 
-    #[cfg(feature = "testnet")]
+    #[cfg(testnet)]
     pub(crate) async fn register_scripted_claude(
         &self,
         request: CreateAgentRequest,
@@ -121,7 +121,7 @@ impl PtyAgentHost {
         Ok(agent)
     }
 
-    #[cfg(feature = "testnet")]
+    #[cfg(testnet)]
     pub(crate) async fn end_scripted_session(&self, agent_id: Uuid) {
         self.event_tx
             .send(SessionEvent::Ended { agent_id })
@@ -129,7 +129,7 @@ impl PtyAgentHost {
             .expect("scripted session event loop should be running");
     }
 
-    #[cfg(feature = "testnet")]
+    #[cfg(testnet)]
     pub(crate) async fn deliver_scripted_hook(
         &self,
         agent_id: Uuid,

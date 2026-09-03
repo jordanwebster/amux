@@ -226,7 +226,7 @@ impl ClaudePtyBackend {
         )
     }
 
-    #[cfg(feature = "testnet")]
+    #[cfg(testnet)]
     pub(crate) fn scripted_for_testnet(
         req: &CreateAgentRequest,
         runtime_dir: PathBuf,
@@ -243,7 +243,7 @@ impl ClaudePtyBackend {
         )
     }
 
-    #[cfg(any(debug_assertions, test, feature = "testnet"))]
+    #[cfg(any(debug_assertions, test))]
     pub(super) fn scripted(
         req: &CreateAgentRequest,
         runtime_dir: PathBuf,
@@ -1025,7 +1025,7 @@ fn external_session() -> (Session, mpsc::Sender<HookPayload>) {
     (session, hook_tx)
 }
 
-#[cfg(any(debug_assertions, test, feature = "testnet"))]
+#[cfg(any(debug_assertions, test))]
 fn scripted_session(keymaps: &KeymapSources) -> (Session, mpsc::Sender<HookPayload>) {
     use tokio::io::AsyncReadExt;
 

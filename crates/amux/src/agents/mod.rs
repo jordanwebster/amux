@@ -54,7 +54,7 @@ pub(crate) use test_agent::TestAgentSession;
 pub(crate) use test_agent::io::{
     TEST_DELAYED_DELIVERY_COMMAND, TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
 };
-#[cfg(all(feature = "local-agents", any(test, feature = "testnet")))]
+#[cfg(all(feature = "local-agents", any(test, testnet)))]
 pub(crate) use test_agent::io::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 #[cfg(all(feature = "local-agents", unix))]
 pub(crate) use types::AGENT_TYPE_CODEX;

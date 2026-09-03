@@ -78,7 +78,7 @@ impl TrustStore {
         self.save_to_path(&trust_path(data_dir))
     }
 
-    #[cfg(any(test, feature = "testnet"))]
+    #[cfg(any(test, testnet))]
     pub(crate) fn entry(&self, host_id: HostId) -> Option<&TrustEntry> {
         self.entries.get(&host_id)
     }
@@ -89,7 +89,7 @@ impl TrustStore {
             .map(|(host_id, entry)| (*host_id, entry))
     }
 
-    #[cfg(any(test, feature = "testnet"))]
+    #[cfg(any(test, testnet))]
     pub(crate) fn insert_for_test(&mut self, host_id: HostId, entry: TrustEntry) {
         self.entries.insert(host_id, entry);
     }

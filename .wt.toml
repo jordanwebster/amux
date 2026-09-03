@@ -21,23 +21,32 @@ enable_cloud_mode: false
 prevent_idle_sleep: false
 """
 
-# The workspace's default-members is amux-cli only; CI covers the whole
-# workspace, so these do too.
+# One dependency graph for everything below: `build` compiles tests and
+# examples too (without running them), so `test`, `lint` and `spec` reuse
+# its artifacts instead of producing variants of their own.
 [task.build]
-run = "cargo build --workspace"
+run = "cargo build --workspace --all-targets"
 
 [task.test]
 run = "scripts/workspace-test.sh"
 
 [task.lint]
-run = "cargo clippy --workspace --all-targets --features amux/testnet -- -D warnings"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
 
+# Selected by target name across the workspace rather than by package:
+# a `-p` selection unifies dependency features differently from the
+# workspace build and would compile a second copy of every shared crate.
 [task.spec]
 run = "scripts/spec-test.sh"
 
 # Regenerates the committed protobuf code (crates/amux/src/protocol/generated)
 # after a proto change. Not a build step: the output is committed, and CI
 # fails when it goes stale.
+# The iOS library builds without `local-agents`. The check always names the
+# target so it never produces a host variant of the workspace.
+[task.mobile-check]
+run = "cargo check -p amux --no-default-features --target aarch64-apple-ios"
+
 [task.protobuf]
 run = "cargo run -p xtask -- codegen"
 

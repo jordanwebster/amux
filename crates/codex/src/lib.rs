@@ -8,7 +8,7 @@ pub mod init;
 pub mod notification;
 pub mod server;
 pub mod session;
-#[cfg(feature = "specs")]
+#[cfg(specs)]
 pub mod specs;
 pub mod thread;
 pub mod thread_event_stream;

@@ -250,12 +250,10 @@ impl ChatView {
         }
     }
 
-    #[cfg(feature = "fixtures")]
     pub fn paint_stats(&self) -> PaintStats {
         self.paint_cache.borrow().stats()
     }
 
-    #[cfg(feature = "fixtures")]
     pub fn feed_total_rows(&self) -> Option<usize> {
         self.feed_metrics
             .borrow()

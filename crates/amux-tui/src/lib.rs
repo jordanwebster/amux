@@ -12,7 +12,6 @@ pub mod chat;
 pub mod chrome;
 pub mod composer;
 pub mod diagnostics;
-#[cfg(feature = "fixtures")]
 pub mod fixtures;
 pub mod keys;
 pub(crate) mod markdown;

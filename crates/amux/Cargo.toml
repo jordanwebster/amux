@@ -12,14 +12,11 @@ default = ["local-agents"]
 # behaviors (direct reachability, self-update poll) are NOT gated here — they
 # are a runtime builder/config choice, independent of this feature.
 local-agents = ["claude/pty", "dep:pty-host", "dep:codex"]
-# Compiles the in-process spec-test harness (`amux::testnet`) into the
-# library. Test-only; never enable in production builds.
-testnet = ["dep:tempfile", "local-agents"]
 
 [dependencies]
 anyhow = { workspace = true }
 claude = { workspace = true }
-tempfile = { workspace = true, optional = true }
+tempfile = { workspace = true }
 pty-host = { workspace = true, optional = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -69,11 +66,10 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 prost-types = { workspace = true }
 amux-ui = { workspace = true }
-claude = { workspace = true, features = ["specs", "pty"] }
-codex = { path = "../codex", features = ["specs"] }
+claude = { workspace = true }
+codex = { path = "../codex" }
 replay-support = { path = "../replay-support" }
 tokio-tungstenite = { workspace = true }
 nix = { workspace = true }
@@ -81,7 +77,7 @@ nix = { workspace = true }
 [[test]]
 name = "spec"
 path = "tests/spec/main.rs"
-required-features = ["testnet"]
+required-features = ["local-agents"]
 
 # Maintained opt-in real-Claude PTY backend suite. With no arguments it prints
 # usage and exits without live work; see tests/claude_pty_live.rs.

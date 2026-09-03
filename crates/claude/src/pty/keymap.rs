@@ -420,7 +420,7 @@ pub fn load_str(source: &str, origin: &str, kind: KeymapSource) -> Result<Keymap
 /// This is crate-private so the executable-specification probe remains the
 /// only authority that can mint a verified entry. User keymaps are rejected
 /// earlier by [`load_str`].
-#[cfg(feature = "specs")]
+#[cfg(specs)]
 pub(crate) fn append_verified(path: &Path, entry: VerifiedVersion) -> Result<(), KeymapError> {
     let contents = std::fs::read_to_string(path)
         .map_err(|error| KeymapError::Io(path.to_path_buf(), error))?;
@@ -1028,7 +1028,7 @@ fn unsafe_text(reason: impl Into<String>) -> InputError {
     }
 }
 
-#[cfg(all(test, feature = "specs"))]
+#[cfg(all(test, specs))]
 mod provenance {
     use super::*;
 

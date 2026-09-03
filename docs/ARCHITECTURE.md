@@ -28,7 +28,7 @@ Around the daemon sit its clients and consumers:
   [`A2A.md`](./A2A.md) owns that tool contract.
 - **UI runtime** (`crates/amux-ui`): a reactive client library over the
   same `ClientService` surface, for embedding in apps.
-- **Test harnesses**: the `testnet` feature compiles an in-process harness
+- **Test harnesses**: debug builds compile an in-process harness
   (`amux::testnet`) that builds whole daemons — real identities, real
   trust stores, real localhost TCP with device mTLS, an optional
   in-process cloud relay — for the spec suite, plus `WirePeer`, a scripted

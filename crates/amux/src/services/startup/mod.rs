@@ -159,7 +159,7 @@ impl CloudLinkService {
 
     /// Serves the relay on an arbitrary accepted-transport stream. Used by
     /// the testnet harness to keep kill-switch handles on accepted sockets.
-    #[cfg(feature = "testnet")]
+    #[cfg(testnet)]
     pub(crate) fn serve_on_incoming<I, IO>(&self, incoming: I) -> JoinHandle<()>
     where
         I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
@@ -200,7 +200,7 @@ impl CloudLinkService {
     /// Testnet observation seam: the relay-side `ConnectionManager` serving
     /// `user_id`, if that user has attached. Lets spec tests assert what the
     /// relay can (not) do with the traffic it forwards.
-    #[cfg(feature = "testnet")]
+    #[cfg(testnet)]
     pub(crate) async fn user_routing_connections(
         &self,
         user_id: Uuid,
@@ -471,12 +471,12 @@ pub(crate) struct StartedUserServices {
     runtime: StartedRoutingServices,
     #[cfg(test)]
     pub(crate) agent: AgentServiceCtx,
-    #[cfg(any(test, feature = "testnet"))]
+    #[cfg(any(test, testnet))]
     pub(crate) client: ClientService,
     trusted_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
     #[cfg(test)]
     pairing_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
-    #[cfg(any(test, feature = "testnet"))]
+    #[cfg(any(test, testnet))]
     pub(crate) pair_mode: Arc<PairMode>,
     reachability_links: ReachabilityLinkConnector,
     dispatcher: TunnelDispatcher,
@@ -502,7 +502,7 @@ impl DeviceRuntimeSecurity {
         }
     }
 
-    #[cfg(feature = "testnet")]
+    #[cfg(testnet)]
     pub(crate) fn shared_trust_store(&self) -> SharedTrustStore {
         self.trust_store.clone()
     }
@@ -619,12 +619,12 @@ pub(crate) async fn start_user_services(
         runtime: parts.runtime,
         #[cfg(test)]
         agent,
-        #[cfg(any(test, feature = "testnet"))]
+        #[cfg(any(test, testnet))]
         client,
         trusted_incoming_tx,
         #[cfg(test)]
         pairing_incoming_tx,
-        #[cfg(any(test, feature = "testnet"))]
+        #[cfg(any(test, testnet))]
         pair_mode,
         reachability_links,
         dispatcher,
@@ -686,7 +686,7 @@ impl StartedUserServices {
     /// accepted socket in `connections`, so an in-process restart can sever
     /// them like a real process exit (see
     /// [`crate::dispatcher::TunnelDispatcher::serve_tcp_listener_tracked`]).
-    #[cfg(any(test, feature = "testnet"))]
+    #[cfg(any(test, testnet))]
     pub(crate) fn serve_external_tcp_listener_tracked(
         &mut self,
         listener: TcpListener,
@@ -702,7 +702,7 @@ impl StartedUserServices {
         self.reachability_links.spawn_startup_links()
     }
 
-    #[cfg(feature = "testnet")]
+    #[cfg(testnet)]
     pub(crate) fn reachability_link_connector(&self) -> &ReachabilityLinkConnector {
         &self.reachability_links
     }

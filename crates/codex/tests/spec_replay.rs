@@ -1,4 +1,4 @@
-#![cfg(feature = "specs")]
+#![cfg(specs)]
 
 use codex::specs::{MINIMUM_SUPPORTED, SpecSource, fixtures_root, registry, run};
 use replay_support::{

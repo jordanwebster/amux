@@ -127,7 +127,7 @@ impl TunnelDispatcher {
     /// in-process daemon "restart" can sever them the way a real process
     /// exit would (per-connection tasks are detached and would otherwise
     /// keep serving the old runtime).
-    #[cfg(any(test, feature = "testnet"))]
+    #[cfg(any(test, testnet))]
     pub(crate) fn serve_tcp_listener_tracked(
         &self,
         listener: TcpListener,
