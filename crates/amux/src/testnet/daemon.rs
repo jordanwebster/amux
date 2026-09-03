@@ -361,6 +361,22 @@ impl Daemon {
         self.inner.host_id
     }
 
+    /// The same verbose JSON diagnostics a local client requests from this
+    /// daemon, parsed for structural assertions in the protocol spec.
+    pub async fn debug_dump(&self, verbose: bool) -> serde_json::Value {
+        let dump = self
+            .admin_client()
+            .await
+            .debug_dump_verbose(verbose, crate::DebugFormat::Json)
+            .await
+            .unwrap_or_else(|error| {
+                panic!("'{}' failed to read its debug dump: {error}", self.name())
+            });
+        serde_json::from_str(&dump).unwrap_or_else(|error| {
+            panic!("'{}' returned invalid debug JSON: {error}", self.name())
+        })
+    }
+
     /// Presence: `other` shows up as online on this daemon's host-listing
     /// surface.
     pub async fn sees(&self, other: &Daemon) {

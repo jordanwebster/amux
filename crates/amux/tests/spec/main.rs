@@ -23,6 +23,7 @@
 mod smoke; // the harness in one test: the canonical TestNet example
 
 mod agents; // Chapter 7 — Agent messaging & relationships
+mod debug; // Chapter 8 — Live daemon diagnostics
 mod identity; // Chapter 1 — Identity & trust
 mod pairing; // Chapter 2 — Pairing
 mod presence; // Chapter 3 — Presence

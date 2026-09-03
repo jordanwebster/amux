@@ -6807,3 +6807,15 @@ carrying its text and a `Done`/`Problem` tone, set where the outcome is known:
 the report flow, the clipboard write (a truncated copy is a problem, since it
 is not the copy that was asked for), the attach return, and the offline-host
 refusal. The renderer picks `✔` or `✗` from the tone rather than assuming.
+
+2026-09-03 — **Made daemon dumps describe the live route and session.** The
+debug view now reads hosts, selected routes, peer links and open tunnels from
+the routing core and tunnel pool instead of printing placeholder counts. Each
+hosted backend also embeds a common session block sourced from its replay
+buffers and provider runtime: buffer epoch and retained sequence range, live
+subscriber count, process lifecycle and outstanding permissions, questions or
+approvals. Unknown process IDs and exit codes remain `null`; links likewise say
+when their concrete transport or establishment time is not retained rather
+than inventing it. A two-daemon spec opens a real direct TCP session, echoes
+bytes through its tunnel, and checks both the caller's routing state and the
+host's subscriber and buffer state through the public debug RPC.

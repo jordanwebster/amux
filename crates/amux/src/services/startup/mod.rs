@@ -513,6 +513,10 @@ pub(crate) async fn start_user_services(
     agent_host: Option<Arc<dyn LocalAgentHost>>,
     device_security: DeviceRuntimeSecurity,
 ) -> Result<StartedUserServices, IdentityError> {
+    // ClientService and the debug serializer must observe the same concrete
+    // local runtime. Production startup already seeded this slot lazily;
+    // explicit hosts supplied by testnet and other embedders need it too.
+    state.write().await.local_agent_host = agent_host.clone();
     let mut parts =
         start_routing_services_parts(state.clone(), Some(device_security.clone())).await;
     let host_id = parts.runtime.local_host.id;
