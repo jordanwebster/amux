@@ -959,10 +959,9 @@ mod flow {
     /// Every cell the theme calls a marking cursor, by position.
     fn cursor_cells(flow: &ReportFlow) -> Vec<(u16, u16)> {
         let theme = Theme::dark(crate::theme::ColorMode::TrueColor);
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
-            VIEWPORT.0, VIEWPORT.1,
-        ))
-        .expect("terminal");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(VIEWPORT.0, VIEWPORT.1))
+                .expect("terminal");
         terminal.draw(|frame| flow.render(frame)).expect("draw");
         let buffer = terminal.backend().buffer();
         let mut found = Vec::new();
@@ -990,13 +989,16 @@ mod flow {
 
     #[tokio::test]
     async fn the_marking_cursor_shows_where_the_movement_keys_have_gone() {
-        let flow = marking(&[
-            KeyCode::Char('l'),
-            KeyCode::Char('l'),
-            KeyCode::Char('j'),
-        ]);
+        let flow = marking(&[KeyCode::Char('l'), KeyCode::Char('l'), KeyCode::Char('j')]);
         assert!(
-            matches!(flow.stage(), Stage::Marks { anchor: None, drag: None, .. }),
+            matches!(
+                flow.stage(),
+                Stage::Marks {
+                    anchor: None,
+                    drag: None,
+                    ..
+                }
+            ),
             "no box is open, so only the cursor itself can be showing"
         );
         assert_eq!(cursor_cells(&flow), vec![(2, 1)]);

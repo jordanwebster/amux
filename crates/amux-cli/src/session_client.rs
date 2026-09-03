@@ -440,9 +440,9 @@ pub(crate) async fn attach_for_ui(
         AttachOutcome::SessionClosed(reason) => {
             AttachReturn::Fleet(Some(session_close_notice(&reason)))
         }
-        AttachOutcome::Shutdown(reason) => AttachReturn::Fleet(Some(amux_tui::Notice::problem(
-            format!("daemon: {reason}"),
-        ))),
+        AttachOutcome::Shutdown(reason) => {
+            AttachReturn::Fleet(Some(amux_tui::Notice::problem(format!("daemon: {reason}"))))
+        }
     })
 }
 
