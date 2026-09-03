@@ -10,7 +10,9 @@ kinds, durable metadata, injected and system clocks, lifetime constants, and
 typed store failures without depending on `amux`. Its shared `blobs/` and
 atomically replaced `index.json` foundation recovers a missing or malformed
 index by rehashing stored bytes, reconstructing safe generic metadata for
-verified blobs, and removing blobs whose contents no longer match their names.
+verified blobs, conservatively pinning owner records at recovery time so an
+index loss cannot make live attachments sweepable, and removing blobs whose
+contents no longer match their names.
 The owning role loads that index once, applies the ten-mebibyte cap before
 writing, retains first-put metadata, verifies every read, pins atomically,
 sweeps only indexed expired ephemerals, replays pins in creation order, and

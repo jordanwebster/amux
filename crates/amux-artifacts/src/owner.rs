@@ -16,7 +16,7 @@ pub struct Owner {
 impl Owner {
     /// Opens an owner and loads its index into memory.
     pub fn open(root: PathBuf, clock: Arc<dyn Clock>) -> Result<Self, StoreError> {
-        let index = Index::open(&root)?;
+        let index = Index::open(&root, clock.now())?;
         let root = fs::canonicalize(root)?;
         Ok(Self {
             root,
@@ -354,6 +354,37 @@ mod tests {
         assert_eq!(owner.get(&recent.id).unwrap().1, b"recent");
         assert!(owner.path_of(&unindexed).exists());
         assert_eq!(owner.pinned(), vec![owner.meta(&pinned.id).unwrap()]);
+    }
+
+    #[test]
+    fn recovery_pins_old_artifacts_before_the_next_sweep() {
+        let root = TestDir::new();
+        let clock = Arc::new(TestClock::new(at("2026-09-03T08:00:00Z")));
+        let owner = open(&root, clock.clone());
+        let stored = owner
+            .put(ArtifactKind::Image, "kept.png", "image/png", b"kept")
+            .unwrap();
+        owner.pin(std::slice::from_ref(&stored.id)).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(owner.path_of(&stored.id))
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
+            .unwrap();
+        fs::remove_file(owner.root.join("index.json")).unwrap();
+        drop(owner);
+
+        let recovered_at = at("2026-09-03T10:00:00Z");
+        clock.set(recovered_at);
+        let reopened = open(&root, clock);
+
+        assert_eq!(
+            reopened.meta(&stored.id).unwrap().pinned_at,
+            Some(recovered_at)
+        );
+        assert!(reopened.sweep(EPHEMERAL_TTL).unwrap().is_empty());
+        assert_eq!(reopened.get(&stored.id).unwrap().1, b"kept");
+        assert_eq!(reopened.pinned(), vec![reopened.meta(&stored.id).unwrap()]);
     }
 
     #[test]

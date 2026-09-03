@@ -22,14 +22,16 @@ pub(crate) struct Index {
 }
 
 impl Index {
-    pub(crate) fn open(root: &Path) -> Result<Self, StoreError> {
+    pub(crate) fn open(root: &Path, recovered_at: DateTime<Utc>) -> Result<Self, StoreError> {
         fs::create_dir_all(root.join(BLOBS_DIR))?;
         match fs::read(root.join(INDEX_FILE)) {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
                 Ok(index) if Self::is_valid(&index) => Ok(index),
-                Ok(_) | Err(_) => Self::recover(root),
+                Ok(_) | Err(_) => Self::recover(root, recovered_at),
             },
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Self::recover(root),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                Self::recover(root, recovered_at)
+            }
             Err(error) => Err(error.into()),
         }
     }
@@ -76,9 +78,10 @@ impl Index {
                 .all(|(id, meta)| id == &meta.id && index.order.contains(id))
     }
 
-    fn recover(root: &Path) -> Result<Self, StoreError> {
+    fn recover(root: &Path, recovered_at: DateTime<Utc>) -> Result<Self, StoreError> {
         let mut index = Self::default();
-        for meta in recover_artifacts(root)? {
+        for mut meta in recover_artifacts(root)? {
+            meta.pinned_at = Some(recovered_at);
             index.insert(meta);
         }
         index.write(root)?;
@@ -215,19 +218,23 @@ mod tests {
         id
     }
 
+    fn recovery_time() -> DateTime<Utc> {
+        DateTime::<Utc>::from(SystemTime::UNIX_EPOCH)
+    }
+
     #[test]
     fn missing_index_is_rebuilt_from_verified_blobs() {
         let root = TestDir::new();
         let id = write_blob(root.path(), b"one blob");
 
-        let index = Index::open(root.path()).unwrap();
+        let index = Index::open(root.path(), recovery_time()).unwrap();
 
         let meta = index.get(&id).unwrap();
         assert_eq!(meta.id, id);
         assert_eq!(meta.size, 8);
         assert_eq!(meta.kind, ArtifactKind::File);
         assert_eq!(meta.mime, "application/octet-stream");
-        assert!(meta.pinned_at.is_none());
+        assert_eq!(meta.pinned_at, Some(recovery_time()));
         assert!(root.path().join(INDEX_FILE).is_file());
     }
 
@@ -237,10 +244,10 @@ mod tests {
         let id = write_blob(root.path(), b"recover me");
         fs::write(root.path().join(INDEX_FILE), b"{ definitely not json").unwrap();
 
-        let recovered = Index::open(root.path()).unwrap();
+        let recovered = Index::open(root.path(), recovery_time()).unwrap();
         assert_eq!(recovered.get(&id).unwrap().id, id);
 
-        let reopened = Index::open(root.path()).unwrap();
+        let reopened = Index::open(root.path(), recovery_time()).unwrap();
         assert_eq!(reopened.get(&id).unwrap().id, id);
     }
 
@@ -251,7 +258,7 @@ mod tests {
         fs::write(blob_path(root.path(), &expected), b"tampered bytes").unwrap();
         fs::write(root.path().join(INDEX_FILE), b"invalid").unwrap();
 
-        let recovered = Index::open(root.path()).unwrap();
+        let recovered = Index::open(root.path(), recovery_time()).unwrap();
 
         assert!(recovered.get(&expected).is_none());
         assert!(!blob_path(root.path(), &expected).exists());
@@ -276,7 +283,7 @@ mod tests {
         });
 
         index.write(root.path()).unwrap();
-        let reopened = Index::open(root.path()).unwrap();
+        let reopened = Index::open(root.path(), recovery_time()).unwrap();
 
         assert_eq!(reopened.get(&id), index.get(&id));
         assert_eq!(
