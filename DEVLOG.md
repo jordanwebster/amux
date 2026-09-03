@@ -6885,3 +6885,13 @@ looking at, but the capture key exists only in debug builds, and the copy
 was being made in every profile. The clone is now behind the same
 `debug_assertions` gate as its reader, so a release repaint no longer pays
 for a diagnostic it cannot produce.
+
+2026-09-03 — **Made the release build warning-free.** Three items were
+compiled into release builds with nothing left to use them there: the
+paint cache's `stats` accessor, whose only non-test reader is behind the
+`fixtures` feature; the broadcast reader's item-only `read`, used by
+tests and the debug-only derived-rows harness while production readers
+act on `read_event`; and an `AsyncReadExt` import serving one gated
+scripted-session helper. Each now sits under the gate its callers already
+have, so `cargo build --release` says nothing and a future dead-code
+warning there means something.

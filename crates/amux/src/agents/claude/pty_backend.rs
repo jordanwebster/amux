@@ -12,7 +12,6 @@ use claude::pty::{Control, HookSource, PtyEvent, PtySource, Session, Sources, Tr
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
-use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use uuid::Uuid;
@@ -1028,6 +1027,8 @@ fn external_session() -> (Session, mpsc::Sender<HookPayload>) {
 
 #[cfg(any(debug_assertions, test, feature = "testnet"))]
 fn scripted_session(keymaps: &KeymapSources) -> (Session, mpsc::Sender<HookPayload>) {
+    use tokio::io::AsyncReadExt;
+
     let (output_tx, output) = mpsc::channel(64);
     let (writer, mut echo) = tokio::io::duplex(64 * 1024);
     tokio::spawn(async move {
