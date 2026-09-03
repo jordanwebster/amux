@@ -13,8 +13,84 @@
 //! through it (P6 applies to every text field), layering their own
 //! bindings around it.
 
+use std::collections::BTreeMap;
+
+use amux_ui::attachments::{ArtifactKind, DraftAttachment, Mention, MentionKind, format_mention};
+use amux_ui::review::Review;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
+
+/// The Unicode private-use range the composer draws token slots from.
+///
+/// A token is exactly one char in the draft, so every existing cursor,
+/// deletion and kill rule applies to it unchanged: one Left steps over
+/// it, one Backspace removes all of it, and a kill carries it whole.
+/// Private-use code points carry no textual meaning, so they cannot
+/// collide with anything a person types or pastes.
+const SLOT_FIRST: char = '\u{e000}';
+const SLOT_LAST: char = '\u{f8ff}';
+
+/// The `name` a pasted-text attachment carries into the feed. Pasted text
+/// has no source filename, and the mention format requires a name.
+const PASTED_NAME: &str = "pasted text";
+
+/// The `name` and mime a review attachment carries.
+const REVIEW_NAME: &str = "review";
+const DIFF_MIME: &str = "text/x-diff";
+
+fn is_slot(c: char) -> bool {
+    (SLOT_FIRST..=SLOT_LAST).contains(&c)
+}
+
+/// One atomic mention occupying a single slot char in the draft.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Token {
+    pub slot: char,
+    /// Display-only: what the composer paints in place of the slot.
+    pub label: String,
+    pub attachment: TokenAttachment,
+}
+
+/// What a token will become when the draft is exported.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "token", rename_all = "snake_case")]
+pub enum TokenAttachment {
+    Artifact(DraftAttachment),
+    Text { body: String, lines: u32 },
+    Review,
+}
+
+/// The label a token of this kind carries at this per-kind ordinal.
+///
+/// Numbering is per kind and in draft order, so the labels renumber when a
+/// token is deleted: what the person sees always counts what is there.
+pub fn token_label(
+    kind: &TokenAttachment,
+    ordinal: usize,
+    name: &str,
+    detail: Option<&str>,
+) -> String {
+    match kind {
+        TokenAttachment::Artifact(attachment) => match attachment.kind {
+            ArtifactKind::Image => match detail {
+                Some(detail) => format!("[Image #{ordinal} \u{b7} {detail}]"),
+                None => format!("[Image #{ordinal}]"),
+            },
+            _ => format!("[File #{ordinal} {name}]"),
+        },
+        TokenAttachment::Text { lines, .. } => {
+            let detail = detail.map(str::to_owned).unwrap_or_else(|| {
+                let unit = if *lines == 1 { "line" } else { "lines" };
+                format!("{lines} {unit}")
+            });
+            format!("[Pasted #{ordinal} \u{b7} {detail}]")
+        }
+        TokenAttachment::Review => match detail {
+            Some(detail) => format!("[Review \u{b7} {detail}]"),
+            None => "[Review]".to_string(),
+        },
+    }
+}
 
 /// The editable draft with a char-indexed cursor and the single-slot kill
 /// buffer.
@@ -26,6 +102,21 @@ pub struct Composer {
     /// Last kill (single slot, last kill wins). Empty kills never clobber
     /// it — a Ctrl+U at line start must not eat the yankable text.
     kill: Option<String>,
+    /// Boxed so a token-free draft stays small: the ask panels embed several
+    /// composers and the chat view enums are size-linted.
+    tokens: Box<TokenState>,
+}
+
+/// The tokens a draft owns, live and set aside.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct TokenState {
+    /// Every live token by slot. Text order is read off `chars`, so the
+    /// draft's attachment list is derived and never stored twice.
+    live: BTreeMap<char, Token>,
+    /// Tokens of the last send-clear. A send that fails restores its text,
+    /// and the tokens have to come back with it, so `clear_for_send` sets
+    /// them aside exactly as a kill sets text aside.
+    sent: BTreeMap<char, Token>,
 }
 
 impl Composer {
@@ -44,10 +135,33 @@ impl Composer {
     /// The draft with the `▌` cursor glyph inserted at the cursor position
     /// — the renderer's display form (the wireframes' visual language).
     pub fn display_with_cursor(&self) -> String {
-        let mut out: String = self.chars[..self.cursor].iter().collect();
+        let (display, cursor) = self.display_form();
+        let mut out: String = display.chars().take(cursor).collect();
         out.push('▌');
-        out.extend(&self.chars[self.cursor..]);
+        out.extend(display.chars().skip(cursor));
         out
+    }
+
+    /// The painted draft — every token slot replaced by its label — and the
+    /// cursor's char index within it. Labels are wider than their one slot
+    /// char, so display positions and draft positions are different spaces
+    /// and only this function converts between them.
+    fn display_form(&self) -> (String, usize) {
+        let mut out = String::new();
+        let mut cursor = 0usize;
+        for (index, c) in self.chars.iter().enumerate() {
+            if index == self.cursor {
+                cursor = out.chars().count();
+            }
+            match self.tokens.live.get(c) {
+                Some(token) => out.push_str(&token.label),
+                None => out.push(*c),
+            }
+        }
+        if self.cursor >= self.chars.len() {
+            cursor = out.chars().count();
+        }
+        (out, cursor)
     }
 
     /// Hard-wrapped display rows plus the row holding the cursor. This is
@@ -58,7 +172,7 @@ impl Composer {
 
         let width = width.max(1);
         let display = self.display_with_cursor();
-        let cursor_pos = self.cursor();
+        let cursor_pos = self.display_form().1;
         let mut rows = Vec::new();
         let mut cursor_row = 0usize;
         let mut chars_seen = 0usize;
@@ -90,6 +204,8 @@ impl Composer {
     pub fn clear_for_send(&mut self) {
         self.chars.clear();
         self.cursor = 0;
+        self.tokens.sent = std::mem::take(&mut self.tokens.live);
+        self.prune();
     }
 
     /// Restore a failed send's text (C5: the draft resurfaces with the
@@ -97,6 +213,12 @@ impl Composer {
     pub fn restore(&mut self, text: &str) {
         self.chars = text.chars().collect();
         self.cursor = self.chars.len();
+        for c in &self.chars {
+            if let Some(token) = self.tokens.sent.get(c).cloned() {
+                self.tokens.live.insert(*c, token);
+            }
+        }
+        self.prune();
     }
 
     // --- insertion ---------------------------------------------------------
@@ -125,7 +247,8 @@ impl Composer {
     /// the draft stays sendable — the C6 encoder refuses control bytes
     /// other than `\n`. Any other control character is stripped: it would
     /// be invisible in the composer AND unsendable, a trap in both
-    /// directions.
+    /// directions. Private-use chars are stripped too: they are the token
+    /// slots, and pasted text must never forge one.
     pub fn paste(&mut self, text: &str) {
         const TAB: &str = "    ";
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
@@ -133,7 +256,7 @@ impl Composer {
             match c {
                 '\n' => self.insert('\n'),
                 '\t' => self.insert_str(TAB),
-                c if c.is_control() => {}
+                c if c.is_control() || is_slot(c) => {}
                 c => self.insert(c),
             }
         }
@@ -145,6 +268,7 @@ impl Composer {
         if self.cursor > 0 {
             self.cursor -= 1;
             self.chars.remove(self.cursor);
+            self.prune();
         }
     }
 
@@ -152,6 +276,7 @@ impl Composer {
     pub fn delete_forward(&mut self) {
         if self.cursor < self.chars.len() {
             self.chars.remove(self.cursor);
+            self.prune();
         }
     }
 
@@ -261,6 +386,7 @@ impl Composer {
         self.chars.drain(start..end);
         self.cursor = start;
         self.kill = Some(killed);
+        self.prune();
     }
 
     /// Ctrl+U — kill to line start (strict readline; ^C owns clear-all,
@@ -298,6 +424,198 @@ impl Composer {
     pub fn yank(&mut self) {
         if let Some(kill) = self.kill.clone() {
             self.insert_str(&kill);
+        }
+    }
+
+    // --- tokens (atomic mentions) -----------------------------------------
+
+    /// Inserts an atomic token at the cursor and returns its slot char.
+    ///
+    /// The supplied label is what a Review token keeps: only the chat knows
+    /// its comment count. Artifact and text labels are renumbered here and
+    /// after every deletion.
+    pub fn insert_token(&mut self, label: String, attachment: TokenAttachment) -> char {
+        let slot = self.free_slot();
+        self.tokens.live.insert(
+            slot,
+            Token {
+                slot,
+                label,
+                attachment,
+            },
+        );
+        self.insert(slot);
+        self.renumber();
+        slot
+    }
+
+    /// Every live token in draft order.
+    pub fn tokens(&self) -> Vec<&Token> {
+        self.chars
+            .iter()
+            .filter_map(|c| self.tokens.live.get(c))
+            .collect()
+    }
+
+    /// The token occupying a slot, if it is still in the draft.
+    pub fn token(&self, slot: char) -> Option<&Token> {
+        self.tokens.live.get(&slot)
+    }
+
+    /// Replaces a token's label — the review's label counts its comments,
+    /// which change while the draft stands.
+    pub fn set_token_label(&mut self, slot: char, label: String) {
+        if let Some(token) = self.tokens.live.get_mut(&slot) {
+            token.label = label;
+        }
+    }
+
+    /// The review token's slot when the cursor sits ON it.
+    ///
+    /// Enter there resumes the review; after `q` the cursor sits just after
+    /// the token, where Enter sends, so a cursor immediately after the slot
+    /// is deliberately not a match.
+    pub fn review_token_at_cursor(&self) -> Option<char> {
+        let slot = *self.chars.get(self.cursor)?;
+        match self.tokens.live.get(&slot)?.attachment {
+            TokenAttachment::Review => Some(slot),
+            _ => None,
+        }
+    }
+
+    /// The sendable draft: canonical elements in place of the tokens, plus
+    /// the artifacts to store and pin, in draft order.
+    ///
+    /// The review element is rendered from the live draft review, so a
+    /// review token with no review behind it exports nothing.
+    pub fn export(&self, review: Option<&Review>) -> (String, Vec<DraftAttachment>) {
+        let mut text = String::new();
+        let mut attachments = Vec::new();
+        for c in &self.chars {
+            let Some(token) = self.tokens.live.get(c) else {
+                text.push(*c);
+                continue;
+            };
+            match &token.attachment {
+                TokenAttachment::Artifact(attachment) => {
+                    let id = attachment.id.clone();
+                    let kind = match attachment.kind {
+                        ArtifactKind::Image => MentionKind::Image { id },
+                        _ => MentionKind::File { id },
+                    };
+                    text.push_str(&format_mention(&Mention {
+                        kind,
+                        name: attachment.name.clone(),
+                        size: Some(attachment.size),
+                        path: None,
+                    }));
+                    attachments.push(attachment.clone());
+                }
+                TokenAttachment::Text { body, lines } => {
+                    text.push_str(&format_mention(&Mention {
+                        kind: MentionKind::Text {
+                            body: body.clone(),
+                            lines: *lines,
+                        },
+                        name: PASTED_NAME.to_string(),
+                        size: None,
+                        path: None,
+                    }));
+                }
+                TokenAttachment::Review => {
+                    let Some(review) = review else {
+                        continue;
+                    };
+                    let header = review.header();
+                    let diff = header.diff.clone();
+                    text.push_str(&format_mention(&Mention {
+                        kind: MentionKind::Review {
+                            header,
+                            comments: review.comments().to_vec(),
+                        },
+                        name: REVIEW_NAME.to_string(),
+                        size: None,
+                        path: None,
+                    }));
+                    // Bytes-less: the diff is already stored, so this rides
+                    // the send only to be pinned for the reader's lifetime.
+                    attachments.push(DraftAttachment {
+                        id: diff,
+                        kind: ArtifactKind::Diff,
+                        name: REVIEW_NAME.to_string(),
+                        mime: DIFF_MIME.to_string(),
+                        size: 0,
+                        bytes: None,
+                    });
+                }
+            }
+        }
+        (text, attachments)
+    }
+
+    /// The lowest slot not spoken for by the draft or the send stash.
+    fn free_slot(&self) -> char {
+        (SLOT_FIRST..=SLOT_LAST)
+            .find(|slot| !self.tokens.live.contains_key(slot) && !self.tokens.sent.contains_key(slot))
+            .unwrap_or(SLOT_LAST)
+    }
+
+    /// Drops tokens no longer reachable, then renumbers what is left.
+    ///
+    /// A token killed out of the draft stays alive while the kill slot holds
+    /// its char, so Ctrl+Y brings back text and tokens together.
+    fn prune(&mut self) {
+        let kill = self.kill.clone().unwrap_or_default();
+        let dropped: Vec<char> = self
+            .tokens
+            .live
+            .keys()
+            .copied()
+            .filter(|slot| !self.chars.contains(slot) && !kill.contains(*slot))
+            .collect();
+        for slot in dropped {
+            self.tokens.live.remove(&slot);
+        }
+        self.renumber();
+    }
+
+    /// Recomputes the per-kind ordinal in every artifact and text label.
+    fn renumber(&mut self) {
+        let order: Vec<char> = self
+            .chars
+            .iter()
+            .copied()
+            .filter(|c| self.tokens.live.contains_key(c))
+            .collect();
+        let mut images = 0usize;
+        let mut files = 0usize;
+        let mut pastes = 0usize;
+        for slot in order {
+            let Some(token) = self.tokens.live.get(&slot) else {
+                continue;
+            };
+            let (ordinal, name) = match &token.attachment {
+                TokenAttachment::Artifact(attachment) => match attachment.kind {
+                    ArtifactKind::Image => {
+                        images += 1;
+                        (images, attachment.name.clone())
+                    }
+                    _ => {
+                        files += 1;
+                        (files, attachment.name.clone())
+                    }
+                },
+                TokenAttachment::Text { .. } => {
+                    pastes += 1;
+                    (pastes, PASTED_NAME.to_string())
+                }
+                // The review label counts comments, which only the chat knows.
+                TokenAttachment::Review => continue,
+            };
+            let label = token_label(&token.attachment, ordinal, &name, None);
+            if let Some(token) = self.tokens.live.get_mut(&slot) {
+                token.label = label;
+            }
         }
     }
 }
@@ -541,5 +859,291 @@ mod tests {
         let mut c = composer("ab", 1);
         c.paste("XY");
         assert_eq!(c.display_with_cursor(), "aXY▌b");
+    }
+}
+
+#[cfg(test)]
+mod tokens {
+    use amux_ui::review::{Review, anchor, parse_patch};
+    use amux_ui::{BaseIdentity, DiffBase, DiffFile};
+
+    use super::*;
+
+    const PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,2 @@
+ one
+-two
++three";
+
+    fn image(name: &str, bytes: &[u8]) -> TokenAttachment {
+        TokenAttachment::Artifact(DraftAttachment::from_bytes(
+            ArtifactKind::Image,
+            name,
+            "image/png",
+            bytes.to_vec(),
+        ))
+    }
+
+    fn file(name: &str, bytes: &[u8]) -> TokenAttachment {
+        TokenAttachment::Artifact(DraftAttachment::from_bytes(
+            ArtifactKind::File,
+            name,
+            "text/plain",
+            bytes.to_vec(),
+        ))
+    }
+
+    fn pasted(body: &str) -> TokenAttachment {
+        TokenAttachment::Text {
+            body: body.to_string(),
+            lines: body.lines().count() as u32,
+        }
+    }
+
+    fn review() -> Review {
+        let identity = BaseIdentity {
+            base: DiffBase::WorkingTree,
+            head: "4f2a9c1".into(),
+            merge_base: None,
+            blobs: vec![("src/lib.rs".into(), "2222222".into())],
+        };
+        let files = vec![DiffFile {
+            path: "src/lib.rs".into(),
+            added: 1,
+            removed: 1,
+        }];
+        let doc = parse_patch(PATCH, identity, &files).unwrap();
+        let row = amux_ui::review::RowRef { file: 0, row: 2 };
+        let mut review = Review::new(doc, "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            .parse()
+            .unwrap());
+        review.add(anchor(review.document(), row, row).unwrap(), "why?".into());
+        review
+    }
+
+    #[test]
+    fn a_token_is_one_char_so_cursor_motion_steps_over_it() {
+        let mut c = Composer::default();
+        c.insert_str("look ");
+        c.insert_token(String::new(), image("shot.png", b"png"));
+        c.insert_str(" here");
+        assert_eq!(c.cursor(), 11);
+
+        c.home();
+        for _ in 0..5 {
+            c.right();
+        }
+        assert_eq!(c.cursor(), 5, "the cursor stops before the token");
+        c.right();
+        assert_eq!(c.cursor(), 6, "one press clears the whole token");
+        c.left();
+        assert_eq!(c.cursor(), 5, "and one press back sits on it again");
+        assert_eq!(c.display_with_cursor(), "look ▌[Image #1] here");
+    }
+
+    #[test]
+    fn one_backspace_removes_a_whole_token_and_its_attachment() {
+        let mut c = Composer::default();
+        c.insert_str("a ");
+        c.insert_token(String::new(), file("notes.md", b"notes"));
+        assert_eq!(c.tokens().len(), 1);
+
+        c.backspace();
+        assert!(c.tokens().is_empty(), "the token left with its one char");
+        assert_eq!(c.text(), "a ");
+        let (text, attachments) = c.export(None);
+        assert_eq!(text, "a ");
+        assert!(attachments.is_empty(), "its attachment left with it");
+    }
+
+    #[test]
+    fn delete_forward_removes_the_token_under_the_cursor() {
+        let mut c = Composer::default();
+        c.insert_token(String::new(), image("shot.png", b"png"));
+        c.insert_str("tail");
+        c.home();
+        c.delete_forward();
+        assert_eq!(c.text(), "tail");
+        assert!(c.tokens().is_empty());
+    }
+
+    #[test]
+    fn export_renders_the_elements_and_lists_attachments_in_text_order() {
+        let mut c = Composer::default();
+        c.insert_str("see ");
+        c.insert_token(String::new(), image("shot.png", b"png bytes"));
+        c.insert_str(" and ");
+        c.insert_token(String::new(), file("notes.md", b"notes"));
+        c.insert_str(" please");
+
+        let (text, attachments) = c.export(None);
+        assert!(text.starts_with("see <amux-attachment "), "{text}");
+        assert!(text.contains("kind=\"image\" name=\"shot.png\""), "{text}");
+        assert!(text.contains("/> and <amux-attachment "), "{text}");
+        assert!(text.contains("kind=\"file\" name=\"notes.md\""), "{text}");
+        assert!(text.ends_with("/> please"), "{text}");
+        assert!(
+            !text.chars().any(is_slot),
+            "no slot char survives the export"
+        );
+        let names: Vec<&str> = attachments
+            .iter()
+            .map(|attachment| attachment.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["shot.png", "notes.md"]);
+        assert!(
+            attachments.iter().all(|attachment| attachment.bytes.is_some()),
+            "the live bytes ride along to be stored"
+        );
+
+        // Every element the export writes parses back as one mention.
+        let mentions = amux_ui::split_mentions(&text)
+            .into_iter()
+            .filter(|segment| matches!(segment, amux_ui::Segment::Mention(_)))
+            .count();
+        assert_eq!(mentions, 2);
+    }
+
+    #[test]
+    fn a_pasted_text_token_exports_its_body_without_an_artifact() {
+        let mut c = Composer::default();
+        c.insert_token(String::new(), pasted("one\ntwo\nthree"));
+        let (text, attachments) = c.export(None);
+        assert!(text.contains("kind=\"text\""), "{text}");
+        assert!(text.contains("lines=\"3\""), "{text}");
+        assert!(text.contains("one\ntwo\nthree"), "{text}");
+        assert!(attachments.is_empty(), "pasted text is not an artifact");
+    }
+
+    #[test]
+    fn labels_renumber_per_kind_after_a_deletion() {
+        let mut c = Composer::default();
+        c.insert_token(String::new(), image("one.png", b"1"));
+        c.insert_token(String::new(), file("notes.md", b"n"));
+        c.insert_token(String::new(), image("two.png", b"2"));
+        c.insert_token(String::new(), pasted("a\nb"));
+        let labels: Vec<&str> = c.tokens().iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "[Image #1]",
+                "[File #1 notes.md]",
+                "[Image #2]",
+                "[Pasted #1 · 2 lines]"
+            ]
+        );
+
+        // Remove the first image; the second becomes #1.
+        c.home();
+        c.delete_forward();
+        let labels: Vec<&str> = c.tokens().iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["[File #1 notes.md]", "[Image #1]", "[Pasted #1 · 2 lines]"]
+        );
+    }
+
+    #[test]
+    fn the_review_token_answers_only_with_the_cursor_on_its_slot() {
+        let mut c = Composer::default();
+        c.insert_str("ship it ");
+        let slot = c.insert_token("[Review · 1 comment]".into(), TokenAttachment::Review);
+        assert_eq!(
+            c.review_token_at_cursor(),
+            None,
+            "after `q` the cursor sits past the token, where Enter sends"
+        );
+        c.left();
+        assert_eq!(c.review_token_at_cursor(), Some(slot), "on the slot Enter resumes");
+        c.left();
+        assert_eq!(c.review_token_at_cursor(), None);
+    }
+
+    #[test]
+    fn an_image_token_is_never_mistaken_for_the_review_token() {
+        let mut c = Composer::default();
+        c.insert_token(String::new(), image("shot.png", b"png"));
+        c.home();
+        assert_eq!(c.review_token_at_cursor(), None);
+    }
+
+    #[test]
+    fn exporting_a_review_writes_its_element_and_pins_its_diff() {
+        let review = review();
+        let mut c = Composer::default();
+        c.insert_str("notes ");
+        c.insert_token("[Review · 1 comment]".into(), TokenAttachment::Review);
+
+        let (text, attachments) = c.export(Some(&review));
+        assert!(text.starts_with("notes <amux-attachment kind=\"review\""), "{text}");
+        assert!(text.contains("why?"), "the comment travels in the body");
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].id, review.header().diff);
+        assert_eq!(attachments[0].kind, ArtifactKind::Diff);
+        assert!(
+            attachments[0].bytes.is_none(),
+            "the diff is already stored; it only needs pinning"
+        );
+
+        // With no review behind it the token exports nothing at all.
+        let (text, attachments) = c.export(None);
+        assert_eq!(text, "notes ");
+        assert!(attachments.is_empty());
+    }
+
+    #[test]
+    fn kill_all_and_yank_round_trip_text_and_tokens() {
+        let mut c = Composer::default();
+        c.insert_str("look at ");
+        c.insert_token(String::new(), image("shot.png", b"png"));
+        c.insert_str(" and ");
+        c.insert_token(String::new(), file("notes.md", b"notes"));
+        let before = c.export(None);
+
+        c.kill_all();
+        assert!(c.is_empty());
+        assert!(c.tokens().is_empty(), "a cleared draft holds no attachments");
+
+        c.yank();
+        assert_eq!(c.export(None), before, "text and tokens came back together");
+        let labels: Vec<&str> = c.tokens().iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(labels, vec!["[Image #1]", "[File #1 notes.md]"]);
+    }
+
+    #[test]
+    fn a_failed_send_restores_the_draft_with_its_tokens() {
+        let mut c = Composer::default();
+        c.insert_str("see ");
+        c.insert_token(String::new(), image("shot.png", b"png"));
+        let text = c.text();
+        let before = c.export(None);
+
+        c.clear_for_send();
+        assert!(c.tokens().is_empty());
+        c.restore(&text);
+        assert_eq!(c.export(None), before);
+    }
+
+    #[test]
+    fn a_paste_can_never_forge_a_token_slot() {
+        let mut c = Composer::default();
+        c.insert_token(String::new(), image("shot.png", b"png"));
+        let slot = c.tokens()[0].slot;
+        c.paste(&format!("x{slot}y"));
+        assert_eq!(c.text().matches(slot).count(), 1, "the pasted slot was stripped");
+        assert_eq!(c.tokens().len(), 1);
+    }
+
+    #[test]
+    fn display_paints_labels_and_wraps_on_them() {
+        let mut c = Composer::default();
+        c.insert_str("look ");
+        c.insert_token(String::new(), image("shot.png", b"png"));
+        let (rows, cursor_row) = c.display_rows(9);
+        assert_eq!(rows, vec!["look [Ima", "ge #1]▌"]);
+        assert_eq!(cursor_row, 1, "the cursor row follows the painted label");
     }
 }

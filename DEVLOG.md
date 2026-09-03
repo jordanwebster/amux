@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Made composer attachments atomic tokens.** An attachment now
+occupies one private-use char in the draft, so every existing rule applies to
+it whole: the cursor steps over it in one press, one backspace removes it with
+its attachment, and a kill carries it into the yank slot so Ctrl+C stays
+non-destructive. The composer paints each token's label in place of its char,
+renumbers image, file and pasted labels per kind whenever one is removed, and
+exports the draft as canonical attachment elements plus the artifacts to store
+and pin — a review's already-stored diff rides along with no bytes, only to be
+pinned. A pasted private-use char is stripped so text can never forge a slot.
+The review token answers only with the cursor on it, leaving the position just
+after it free to mean send.
+
 2026-09-03 — **Made review comment bodies unambiguous.** Each comment now
 separates its quoted patch rows from its readable text with an explicit UTF-8
 byte count. Quote-prefixed text, heading-shaped lines, empty comments, blank
