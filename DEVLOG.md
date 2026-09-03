@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Captured attachment QA evidence.** The same-host tmux
+captures show pasted text and a clipboard image surviving in one draft, the
+sent image block, Claude's concrete description without a permission request,
+and opening the bytes in Preview. Fresh managed Claude PTY and Codex
+`attach_tool` runs passed and preserved their structured rows, exact mentions,
+owner blobs, and pins. The live harnesses do not emit a second remote TUI
+viewer, so that remaining proof gap is recorded in the QA report.
+
 2026-09-04 — **Captured a review across three hosts and a restart.** An
 opt-in live harness now isolates three real daemons, pairs the agent host to
 two viewing hosts by LAN PIN, and drives their structured chat interfaces in
