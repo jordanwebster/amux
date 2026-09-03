@@ -274,6 +274,16 @@ fn secure_codex_fallback_directory(path: &Path) -> io::Result<()> {
 
 #[async_trait]
 impl LocalAgentHost for PtyAgentHost {
+    async fn agent(&self, agent_id: Uuid) -> Result<Agent, ProtocolError> {
+        self.state()
+            .read()
+            .await
+            .local_agents
+            .get(&agent_id)
+            .map(|context| context.record(self.host_id()).into())
+            .ok_or(ProtocolError::NoAgentFound)
+    }
+
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError> {
         let req = create_rpc_to_domain_request(request.agent_id, request)?;
         if matches!(req.agent_type, AgentType::Codex { .. }) {

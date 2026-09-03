@@ -676,9 +676,10 @@ async fn handle_embedded_shutdown(
     }
 }
 
-/// Background tasks every local host runs: the cloud connection (when cloud
-/// mode is enabled). Both the desktop daemon and the embedded/mobile client run
-/// this; the daemon-only behaviors live in [`spawn_daemon_background_tasks`].
+/// Background tasks every local user service runs: periodic artifact sweeping
+/// and the cloud connection (when cloud mode is enabled). Both the desktop
+/// daemon and the embedded/mobile client run this; daemon-only behaviors live
+/// in [`spawn_daemon_background_tasks`].
 async fn spawn_local_background_tasks(
     state: Arc<RwLock<ServerState>>,
     started_services: &StartedUserServices,
@@ -696,6 +697,9 @@ async fn spawn_local_background_tasks(
             connector_ctx,
         ));
     }
+    tasks.push(crate::agents::spawn_artifact_sweeper(
+        started_services.artifact_owners.clone(),
+    ));
     tasks
 }
 

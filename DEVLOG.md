@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Wired artifact ownership into daemon services.** Daemon startup
+now opens every existing per-agent artifact index and retains one owner per
+agent, creates owners on first touch, and runs a five-minute sweep over only
+the loaded indexes. AgentService implements put, get, and repository diff for
+validated local agents; ClientService continues to route those calls across
+host tunnels, and the public client exposes typed methods for all three.
+Deleting an agent removes its complete artifact root. The shared
+`amux.attachments` stream row has a stable JSON helper and is part of the
+Claude SDK protocol's frozen synthesized-row vocabulary.
+
 2026-09-03 — **Added frozen repository diffs.** Any agent with a Git working
 directory can now produce a working-tree review against HEAD, including
 untracked files without changing the real index, or a branch review from a

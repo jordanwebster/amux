@@ -24,6 +24,7 @@ use tonic::transport::server::Connected;
 use tower::Service;
 use uuid::Uuid;
 
+use crate::agents::ArtifactOwners;
 use crate::audit;
 use crate::connection::ConnectionManager;
 use crate::dispatcher::TunnelDispatcher;
@@ -469,6 +470,7 @@ pub(crate) async fn start_routing_services(
 
 pub(crate) struct StartedUserServices {
     runtime: StartedRoutingServices,
+    pub(crate) artifact_owners: Arc<ArtifactOwners>,
     #[cfg(test)]
     pub(crate) agent: AgentServiceCtx,
     #[cfg(any(test, feature = "testnet"))]
@@ -525,7 +527,15 @@ pub(crate) async fn start_user_services(
         state.is_cloud_server()
     };
 
-    let agent = AgentServiceCtx::new(agent_host.clone(), host_id, is_cloud_server);
+    let artifact_owners = Arc::new(
+        ArtifactOwners::open(
+            device_security.data_dir.clone(),
+            Arc::new(amux_artifacts::SystemClock),
+        )
+        .map_err(|error| IdentityError::Io(std::io::Error::other(error)))?,
+    );
+    let agent = AgentServiceCtx::new(agent_host.clone(), host_id, is_cloud_server)
+        .with_artifact_owners(artifact_owners.clone());
     let trust_commit_lock = Arc::new(Mutex::new(()));
     let pair_mode = Arc::new(PairMode::new());
     let reachability_links = ReachabilityLinkConnector::new(
@@ -617,6 +627,7 @@ pub(crate) async fn start_user_services(
 
     Ok(StartedUserServices {
         runtime: parts.runtime,
+        artifact_owners,
         #[cfg(test)]
         agent,
         #[cfg(any(test, feature = "testnet"))]
@@ -911,6 +922,48 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn daemon_startup_preloads_every_existing_artifact_owner() {
+        let host_id = Uuid::new_v4();
+        let data_dir = tempfile::tempdir().unwrap();
+        for agent_id in [Uuid::new_v4(), Uuid::new_v4()] {
+            let owner = amux_artifacts::Owner::open(
+                data_dir
+                    .path()
+                    .join("agents")
+                    .join(agent_id.to_string())
+                    .join("artifacts"),
+                Arc::new(amux_artifacts::SystemClock),
+            )
+            .unwrap();
+            owner
+                .put(
+                    amux_artifacts::ArtifactKind::File,
+                    "existing.txt",
+                    "text/plain",
+                    agent_id.as_bytes(),
+                )
+                .unwrap();
+        }
+        let identity = DeviceIdentity::for_test(host_id);
+        let agent_host: Option<Arc<dyn LocalAgentHost>> =
+            Some(crate::services::PtyAgentHost::new(host_id));
+
+        let services = start_user_services(
+            test_state(host_id),
+            agent_host,
+            DeviceRuntimeSecurity::new(
+                identity,
+                TrustStore::default(),
+                data_dir.path().to_path_buf(),
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(services.artifact_owners.loaded_count(), 2);
     }
 
     fn trust_store_for(peers: &[&DeviceIdentity]) -> TrustStore {
@@ -2092,6 +2145,34 @@ mod tests {
             .unwrap();
         assert_eq!(created.id, agent_id);
         assert_eq!(created.host_id, Uuid::from_u128(1));
+
+        let artifact = client
+            .put_artifact(
+                crate::AgentIdentifier::Id(agent_id),
+                amux_artifacts::ArtifactKind::File,
+                "notes.txt",
+                "text/plain",
+                b"public client bytes".to_vec(),
+            )
+            .await
+            .unwrap();
+        let (fetched, bytes) = client
+            .get_artifact(crate::AgentIdentifier::Id(agent_id), &artifact.id)
+            .await
+            .unwrap();
+        assert_eq!(fetched, artifact);
+        assert_eq!(bytes, b"public client bytes");
+        let diff_error = client
+            .diff(
+                crate::AgentIdentifier::Id(agent_id),
+                crate::DiffBase::WorkingTree,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            diff_error,
+            crate::ClientError::Protocol(ProtocolError::DiffUnavailable { .. })
+        ));
 
         let other_agent_id = Uuid::from_u128(45);
         let injected = services

@@ -1,13 +1,15 @@
 //! Claude SDK protocol payloads and structured row vocabulary.
 //!
 //! Provider messages retain their stream-JSON value unchanged. Rows authored
-//! by amux occupy the `amux.claude_sdk.*` namespace and are deliberately a
-//! closed enum so additions require a protocol change and a frozen-shape test.
+//! only for this protocol occupy the `amux.claude_sdk.*` namespace; the shared
+//! `amux.attachments` row is also synthesized here. Both are a closed enum so
+//! additions require a protocol change and a frozen-shape test.
 
 use prost::Message as ProstMessage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::agents::ArtifactRef;
 use crate::protocol::{ProtocolError, wire};
 
 pub const CLAUDE_SDK_V1: &str = "claude_sdk_v1";
@@ -71,6 +73,11 @@ pub enum ClaudeSdkSynthesized {
     InputResult { input_id: Vec<u8>, outcome: String },
     #[serde(rename = "amux.claude_sdk.message")]
     Message { envelope: Value, delivery: String },
+    #[serde(rename = "amux.attachments")]
+    Attachments {
+        input_id: Option<String>,
+        refs: Vec<ArtifactRef>,
+    },
 }
 
 /// One row on `claude_sdk_v1`.
@@ -93,7 +100,9 @@ impl ClaudeSdkV1Row {
         let synthesized = value
             .get("type")
             .and_then(Value::as_str)
-            .is_some_and(|row_type| row_type.starts_with(SYNTHESIZED_PREFIX));
+            .is_some_and(|row_type| {
+                row_type.starts_with(SYNTHESIZED_PREFIX) || row_type == "amux.attachments"
+            });
         if !synthesized {
             return Ok(Self::Verbatim(value));
         }
@@ -319,6 +328,7 @@ fn invalid_input(message: impl std::fmt::Display) -> ProtocolError {
 
 #[cfg(test)]
 mod tests {
+    use amux_artifacts::{ArtifactKind, id_of};
     use serde_json::json;
 
     use super::*;
@@ -457,6 +467,29 @@ mod tests {
                     delivery: "stream".to_string(),
                 },
                 json!({"type": "amux.claude_sdk.message", "envelope": {"from": "sender", "text": "hello"}, "delivery": "stream"}),
+            ),
+            (
+                ClaudeSdkSynthesized::Attachments {
+                    input_id: Some("00af10".to_string()),
+                    refs: vec![ArtifactRef {
+                        id: id_of(b"image"),
+                        kind: ArtifactKind::Image,
+                        name: "screen.png".to_string(),
+                        mime: "image/png".to_string(),
+                        size: 5,
+                    }],
+                },
+                json!({
+                    "type": "amux.attachments",
+                    "input_id": "00af10",
+                    "refs": [{
+                        "id": id_of(b"image"),
+                        "kind": "image",
+                        "name": "screen.png",
+                        "mime": "image/png",
+                        "size": 5
+                    }]
+                }),
             ),
         ];
 

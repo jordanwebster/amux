@@ -20,8 +20,9 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::agents::{
-    Agent, AgentEvent, AgentRecord, CreateAgentRpcRequest, HookEnvironment, RenameAgentRequest,
-    SendInputRequest, SetAgentStatusRequest, SpawnInheritance, SubscribeSessionRequest,
+    Agent, AgentEvent, AgentRecord, ArtifactOwners, CreateAgentRpcRequest, HookEnvironment,
+    RenameAgentRequest, SendInputRequest, SetAgentStatusRequest, SpawnInheritance,
+    SubscribeSessionRequest,
 };
 use crate::envelope::Envelope;
 use crate::protocol::{ProtocolError, protocol_status, wire};
@@ -59,6 +60,7 @@ pub(crate) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
 /// only implementor is [`PtyAgentHost`], compiled with `local-agents`.
 #[async_trait]
 pub(crate) trait LocalAgentHost: Send + Sync {
+    async fn agent(&self, agent_id: Uuid) -> Result<Agent, ProtocolError>;
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError>;
     async fn spawn_inheritance(&self, agent_id: Uuid) -> Result<SpawnInheritance, ProtocolError>;
     async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError>;
@@ -128,6 +130,7 @@ pub(crate) struct AgentServiceCtx {
     host: Option<Arc<dyn LocalAgentHost>>,
     host_id: Uuid,
     is_cloud_server: bool,
+    artifact_owners: Option<Arc<ArtifactOwners>>,
 }
 
 impl AgentServiceCtx {
@@ -140,7 +143,13 @@ impl AgentServiceCtx {
             host,
             host_id,
             is_cloud_server,
+            artifact_owners: None,
         }
+    }
+
+    pub(crate) fn with_artifact_owners(mut self, owners: Arc<ArtifactOwners>) -> Self {
+        self.artifact_owners = Some(owners);
+        self
     }
 
     pub(crate) fn host(&self) -> Option<&Arc<dyn LocalAgentHost>> {
@@ -163,6 +172,18 @@ impl AgentServiceCtx {
 
     fn require_host(&self) -> Result<&Arc<dyn LocalAgentHost>, ProtocolError> {
         self.host.as_ref().ok_or_else(local_agents_disabled)
+    }
+
+    fn require_artifact_owners(&self, method: &str) -> Result<&Arc<ArtifactOwners>, ProtocolError> {
+        self.artifact_owners
+            .as_ref()
+            .ok_or_else(|| ProtocolError::Unimplemented {
+                message: format!("{method} is not configured on this host"),
+            })
+    }
+
+    pub(crate) async fn agent(&self, agent_id: Uuid) -> Result<Agent, ProtocolError> {
+        self.require_host()?.agent(agent_id).await
     }
 
     pub(crate) async fn subscribe_agent_events(
@@ -211,10 +232,15 @@ impl AgentServiceCtx {
     }
 
     pub(crate) async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError> {
-        match self.host() {
+        let result = match self.host() {
             Some(host) => host.delete(agent_id).await,
             None => Err(ProtocolError::NoAgentFound),
+        };
+        result?;
+        if let Some(owners) = &self.artifact_owners {
+            owners.delete_agent(agent_id)?;
         }
+        Ok(())
     }
 
     pub(crate) async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError> {
@@ -389,29 +415,78 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
 
     async fn put_artifact(
         &self,
-        _request: tonic::Request<wire::PutArtifactRequest>,
+        request: tonic::Request<wire::PutArtifactRequest>,
     ) -> TonicResult<wire::PutArtifactResponse> {
-        Err(protocol_status(ProtocolError::Unimplemented {
-            message: "PutArtifact is not configured on this host".to_string(),
+        let owners = self
+            .require_artifact_owners("PutArtifact")
+            .map_err(protocol_status)?;
+        let request = request.into_inner();
+        let agent_id = decode_agent_id("PutArtifactRequest.agent_id", request.agent_id)?;
+        self.agent(agent_id).await.map_err(protocol_status)?;
+        let kind = crate::agents::artifact_kind_from_wire(request.kind).map_err(decode_status)?;
+        let owner = owners.owner(agent_id).map_err(protocol_status)?;
+        let artifact = owner
+            .put(kind, &request.name, &request.mime, &request.bytes)
+            .map_err(crate::agents::store_error)
+            .map_err(protocol_status)?
+            .into();
+        Ok(tonic::Response::new(wire::PutArtifactResponse {
+            artifact: Some(crate::agents::artifact_ref_to_wire(&artifact)),
         }))
     }
 
     async fn get_artifact(
         &self,
-        _request: tonic::Request<wire::GetArtifactRequest>,
+        request: tonic::Request<wire::GetArtifactRequest>,
     ) -> TonicResult<wire::GetArtifactResponse> {
-        Err(protocol_status(ProtocolError::Unimplemented {
-            message: "GetArtifact is not configured on this host".to_string(),
+        let owners = self
+            .require_artifact_owners("GetArtifact")
+            .map_err(protocol_status)?;
+        let request = request.into_inner();
+        let agent_id = decode_agent_id("GetArtifactRequest.agent_id", request.agent_id)?;
+        self.agent(agent_id).await.map_err(protocol_status)?;
+        let id = request.id.parse().map_err(|error| {
+            decode_status(wire::DecodeError::Invalid(format!(
+                "GetArtifactRequest.id is invalid: {error}"
+            )))
+        })?;
+        let owner = owners.owner(agent_id).map_err(protocol_status)?;
+        let (artifact, bytes) = owner
+            .get(&id)
+            .map_err(crate::agents::store_error)
+            .map_err(protocol_status)?;
+        let artifact = artifact.into();
+        Ok(tonic::Response::new(wire::GetArtifactResponse {
+            artifact: Some(crate::agents::artifact_ref_to_wire(&artifact)),
+            bytes,
         }))
     }
 
     async fn diff(
         &self,
-        _request: tonic::Request<wire::DiffRequest>,
+        request: tonic::Request<wire::DiffRequest>,
     ) -> TonicResult<wire::DiffResponse> {
-        Err(protocol_status(ProtocolError::Unimplemented {
-            message: "Diff is not configured on this host".to_string(),
-        }))
+        let owners = self
+            .require_artifact_owners("Diff")
+            .map_err(protocol_status)?;
+        let request = request.into_inner();
+        let agent_id = decode_agent_id("DiffRequest.agent_id", request.agent_id)?;
+        let agent = self.agent(agent_id).await.map_err(protocol_status)?;
+        let base = request
+            .base
+            .ok_or_else(|| {
+                decode_status(wire::DecodeError::Invalid(
+                    "DiffRequest.base is required".to_string(),
+                ))
+            })
+            .and_then(|base| crate::agents::diff_base_from_wire(base).map_err(decode_status))?;
+        let owner = owners.owner(agent_id).map_err(protocol_status)?;
+        let response = crate::agents::compute_diff(&owner, &agent, base)
+            .await
+            .map_err(protocol_status)?;
+        Ok(tonic::Response::new(crate::agents::diff_response_to_wire(
+            &response,
+        )))
     }
 }
 
@@ -433,6 +508,16 @@ fn decode_rename_request(
 
 fn decode_delete_request(request: wire::DeleteAgentRequest) -> Result<Uuid, tonic::Status> {
     crate::agents::delete_agent_id_from_wire(request).map_err(decode_status)
+}
+
+fn decode_agent_id(field: &str, bytes: Vec<u8>) -> Result<Uuid, tonic::Status> {
+    let bytes: [u8; 16] = bytes.try_into().map_err(|bytes: Vec<u8>| {
+        decode_status(wire::DecodeError::Invalid(format!(
+            "{field} must be 16 bytes, got {}",
+            bytes.len()
+        )))
+    })?;
+    Ok(Uuid::from_bytes(bytes))
 }
 
 fn decode_send_input_request(
@@ -644,6 +729,68 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(delete_error.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn configured_artifact_service_puts_gets_and_deletes_with_the_agent() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let host = service_host();
+        let owners = Arc::new(
+            ArtifactOwners::open(
+                data_dir.path().to_path_buf(),
+                Arc::new(amux_artifacts::SystemClock),
+            )
+            .unwrap(),
+        );
+        let ctx = AgentServiceCtx::new(Some(host.clone()), host.host_id(), false)
+            .with_artifact_owners(owners);
+        let agent_id = Uuid::new_v4();
+        create_test_echo_agent(&ctx, agent_id).await;
+
+        let put = <AgentServiceCtx as wire::agent_service_server::AgentService>::put_artifact(
+            &ctx,
+            tonic::Request::new(wire::PutArtifactRequest {
+                agent_id: agent_id.as_bytes().to_vec(),
+                kind: wire::ArtifactKind::File as i32,
+                name: "notes.txt".to_string(),
+                mime: "text/plain".to_string(),
+                bytes: b"artifact bytes".to_vec(),
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner()
+        .artifact
+        .unwrap();
+        let artifact_root = data_dir
+            .path()
+            .join("agents")
+            .join(agent_id.to_string())
+            .join("artifacts");
+        assert!(artifact_root.is_dir());
+
+        let get = <AgentServiceCtx as wire::agent_service_server::AgentService>::get_artifact(
+            &ctx,
+            tonic::Request::new(wire::GetArtifactRequest {
+                agent_id: agent_id.as_bytes().to_vec(),
+                id: put.id,
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        assert_eq!(get.bytes, b"artifact bytes");
+        assert_eq!(get.artifact.unwrap().name, "notes.txt");
+
+        <AgentServiceCtx as wire::agent_service_server::AgentService>::delete_agent(
+            &ctx,
+            tonic::Request::new(wire::DeleteAgentRequest {
+                agent_id: agent_id.as_bytes().to_vec(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!artifact_root.exists());
     }
 
     #[tokio::test]

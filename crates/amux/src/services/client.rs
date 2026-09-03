@@ -2835,8 +2835,8 @@ mod tests {
 
     use super::*;
     use crate::agents::{
-        AGENT_TYPE_CLAUDE, HookEnvironment, TEST_DELAYED_DELIVERY_COMMAND, TEST_ECHO_COMMAND,
-        TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
+        AGENT_TYPE_CLAUDE, ArtifactOwners, HookEnvironment, TEST_DELAYED_DELIVERY_COMMAND,
+        TEST_ECHO_COMMAND, TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
     };
     use crate::config::Config;
     use crate::identity::DeviceIdentity;
@@ -3176,6 +3176,7 @@ mod tests {
     struct RemoteDispatchHarness {
         service: ClientService,
         _remote_server: JoinHandle<Result<(), tonic::transport::Error>>,
+        _remote_data_dir: TempDir,
         bridges: Vec<JoinHandle<()>>,
     }
 
@@ -3279,8 +3280,17 @@ mod tests {
             spawn_tunnel_bridge(remote_to_relay_rx, relay_tunnels, relay_to_remote),
             spawn_tunnel_bridge(relay_to_local_rx, local_tunnels.clone(), local_to_relay),
         ];
-        let remote_server =
-            spawn_agent_tonic_server(agent_service_ctx(remote_host_id), remote_incoming_rx);
+        let remote_data_dir = tempfile::tempdir().unwrap();
+        let remote_owners = Arc::new(
+            ArtifactOwners::open(
+                remote_data_dir.path().to_path_buf(),
+                Arc::new(amux_artifacts::SystemClock),
+            )
+            .unwrap(),
+        );
+        let remote_agent_service =
+            agent_service_ctx(remote_host_id).with_artifact_owners(remote_owners);
+        let remote_server = spawn_agent_tonic_server(remote_agent_service, remote_incoming_rx);
 
         let service = client_service_with_agent_and_tunnels(
             agent_service_ctx(local_host_id),
@@ -3291,6 +3301,7 @@ mod tests {
         RemoteDispatchHarness {
             service,
             _remote_server: remote_server,
+            _remote_data_dir: remote_data_dir,
             bridges,
         }
     }
@@ -5108,40 +5119,36 @@ mod tests {
         };
         assert_eq!(output.payload, b"remote-input");
 
-        let put_error =
-            <ClientService as wire::client_service_server::ClientService>::put_artifact(
-                service,
-                tonic::Request::new(wire::ClientPutArtifactRequest {
-                    agent: Some(agent_ref_id(agent_id)),
-                    kind: wire::ArtifactKind::File as i32,
-                    name: "notes.txt".to_string(),
-                    mime: "text/plain".to_string(),
-                    bytes: b"notes".to_vec(),
-                }),
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(put_error.code(), tonic::Code::Unimplemented);
-        assert_eq!(
-            put_error.message(),
-            "PutArtifact is not configured on this host"
-        );
+        let put = <ClientService as wire::client_service_server::ClientService>::put_artifact(
+            service,
+            tonic::Request::new(wire::ClientPutArtifactRequest {
+                agent: Some(agent_ref_id(agent_id)),
+                kind: wire::ArtifactKind::File as i32,
+                name: "notes.txt".to_string(),
+                mime: "text/plain".to_string(),
+                bytes: b"notes".to_vec(),
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner()
+        .artifact
+        .unwrap();
+        assert_eq!(put.kind, wire::ArtifactKind::File as i32);
+        assert_eq!(put.name, "notes.txt");
 
-        let get_error =
-            <ClientService as wire::client_service_server::ClientService>::get_artifact(
-                service,
-                tonic::Request::new(wire::ClientGetArtifactRequest {
-                    agent: Some(agent_ref_id(agent_id)),
-                    id: "sha256:missing".to_string(),
-                }),
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(get_error.code(), tonic::Code::Unimplemented);
-        assert_eq!(
-            get_error.message(),
-            "GetArtifact is not configured on this host"
-        );
+        let get = <ClientService as wire::client_service_server::ClientService>::get_artifact(
+            service,
+            tonic::Request::new(wire::ClientGetArtifactRequest {
+                agent: Some(agent_ref_id(agent_id)),
+                id: put.id,
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        assert_eq!(get.bytes, b"notes");
+        assert_eq!(get.artifact.unwrap().name, "notes.txt");
 
         let diff_error = <ClientService as wire::client_service_server::ClientService>::diff(
             service,
@@ -5154,8 +5161,8 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(diff_error.code(), tonic::Code::Unimplemented);
-        assert_eq!(diff_error.message(), "Diff is not configured on this host");
+        assert_eq!(diff_error.code(), tonic::Code::FailedPrecondition);
+        assert!(diff_error.message().contains("resolve HEAD"));
 
         <ClientService as wire::client_service_server::ClientService>::delete_agent(
             service,

@@ -24,8 +24,8 @@ use crate::routing::{HostEntry, HostEvent, HostTrustStatus, capabilities_from_wi
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::transport::TransportError;
 use crate::{
-    AgentIdentifier, PeerIdentifier, SendInputRequest, SendMessageRequest, SetAgentStatusRequest,
-    SubscribeSessionRequest,
+    AgentIdentifier, ArtifactId, ArtifactKind, ArtifactRef, DiffBase, DiffResponse, PeerIdentifier,
+    SendInputRequest, SendMessageRequest, SetAgentStatusRequest, SubscribeSessionRequest,
 };
 
 const PAIRING_PUBKEY_LEN: usize = 32;
@@ -43,6 +43,9 @@ mod method {
     pub(super) const CLIENT_DELETE_NAME: &str = "/amux.v1.ClientService/DeleteAgent";
     pub(super) const CLIENT_SEND_MESSAGE_NAME: &str = "/amux.v1.ClientService/SendMessage";
     pub(super) const CLIENT_SEND_INPUT_NAME: &str = "/amux.v1.ClientService/SendInput";
+    pub(super) const CLIENT_PUT_ARTIFACT_NAME: &str = "/amux.v1.ClientService/PutArtifact";
+    pub(super) const CLIENT_GET_ARTIFACT_NAME: &str = "/amux.v1.ClientService/GetArtifact";
+    pub(super) const CLIENT_DIFF_NAME: &str = "/amux.v1.ClientService/Diff";
     pub(super) const CLIENT_SUBSCRIBE_SESSION_NAME: &str =
         "/amux.v1.ClientService/SubscribeSession";
     pub(super) const CLIENT_HANDLE_HOOK_NAME: &str = "/amux.v1.ClientService/HandleHook";
@@ -567,6 +570,92 @@ impl Client {
             .await
             .map_err(status_to_client_error)?;
         Ok(())
+    }
+
+    pub async fn put_artifact(
+        &self,
+        agent: AgentIdentifier,
+        kind: ArtifactKind,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactRef, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .put_artifact(wire::ClientPutArtifactRequest {
+                agent: Some(agent_ref(agent)),
+                kind: crate::agents::artifact_kind_to_wire(kind) as i32,
+                name: name.to_string(),
+                mime: mime.to_string(),
+                bytes,
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let artifact = response.artifact.ok_or_else(|| ClientError::Decode {
+            method: method::CLIENT_PUT_ARTIFACT_NAME,
+            message: "missing PutArtifactResponse.artifact".to_string(),
+        })?;
+        crate::agents::artifact_ref_from_wire(artifact).map_err(|error| ClientError::Decode {
+            method: method::CLIENT_PUT_ARTIFACT_NAME,
+            message: error.to_string(),
+        })
+    }
+
+    pub async fn get_artifact(
+        &self,
+        agent: AgentIdentifier,
+        id: &ArtifactId,
+    ) -> Result<(ArtifactRef, Vec<u8>), ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .get_artifact(wire::ClientGetArtifactRequest {
+                agent: Some(agent_ref(agent)),
+                id: id.to_string(),
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let artifact = response.artifact.ok_or_else(|| ClientError::Decode {
+            method: method::CLIENT_GET_ARTIFACT_NAME,
+            message: "missing GetArtifactResponse.artifact".to_string(),
+        })?;
+        let artifact = crate::agents::artifact_ref_from_wire(artifact).map_err(|error| {
+            ClientError::Decode {
+                method: method::CLIENT_GET_ARTIFACT_NAME,
+                message: error.to_string(),
+            }
+        })?;
+        Ok((artifact, response.bytes))
+    }
+
+    pub async fn diff(
+        &self,
+        agent: AgentIdentifier,
+        base: DiffBase,
+    ) -> Result<DiffResponse, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .diff(wire::ClientDiffRequest {
+                agent: Some(agent_ref(agent)),
+                base: Some(crate::agents::diff_base_to_wire(&base)),
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        crate::agents::diff_response_from_wire(response).map_err(|error| ClientError::Decode {
+            method: method::CLIENT_DIFF_NAME,
+            message: error.to_string(),
+        })
     }
 
     pub async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid, ClientError> {

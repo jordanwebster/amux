@@ -52,7 +52,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub use agents::{
     Agent, AgentEvent, AgentKind, AgentParent, AgentType, ArtifactRef, BaseIdentity, ClaudeDriver,
     CreateAgentRequest, DiffBase, DiffFile, DiffResponse, Protocol, SessionCloseReason,
-    SubscribeSessionEvent, TerminalSize, WorkingOn,
+    SubscribeSessionEvent, TerminalSize, WorkingOn, attachments_row,
 };
 pub use amux_artifacts::{ArtifactId, ArtifactKind};
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
