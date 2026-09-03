@@ -96,7 +96,10 @@ impl View {
         {
             if let OpOutcome::Error { error } = &finished.outcome {
                 self.send_failure = Some(error.message());
-                if self.composer.is_empty() {
+                // The command carries the EXPORTED text; a draft with
+                // tokens is not that, so the composer's own set-aside copy
+                // wins when it has one.
+                if self.composer.is_empty() && !self.composer.restore_sent() {
                     self.composer.restore(&pending.text);
                 }
             }
@@ -140,6 +143,12 @@ impl View {
             Command::Codex(
                 CodexCommand::Prompt { agent, text } | CodexCommand::Steer { agent, text },
             ) if *agent == self.agent => {
+                self.pending_send = Some(PendingSend {
+                    op,
+                    text: text.clone(),
+                });
+            }
+            Command::SendPromptWithAttachments { agent, text, .. } if *agent == self.agent => {
                 self.pending_send = Some(PendingSend {
                     op,
                     text: text.clone(),

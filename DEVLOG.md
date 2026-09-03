@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Sent drafts that carry attachments.** Enter on a draft holding
+a token exports it into one attachment prompt: canonical elements in the text
+and the artifacts to store and pin alongside. A draft with nothing attached
+still sends as the plain prompt it always did. A failed send now puts back the
+composer's own set-aside copy of the draft rather than the command's exported
+text, so the token returns as a token, ready to send again, with the daemon's
+typed failure naming the attachment in the footer. Codex takes attachments only
+at a turn boundary, so a draft with a token is prompted rather than steered.
+
 2026-09-03 — **Routed pastes and Ctrl+V into attachments.** A bracketed
 paste of eight lines or a thousand characters now becomes one pasted-text
 token instead of burying the sentence around it; shorter text still lands as

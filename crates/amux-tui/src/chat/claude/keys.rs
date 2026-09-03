@@ -470,14 +470,23 @@ fn send(chat: &mut View, model: &Model) -> Option<UiAction> {
     {
         return None;
     }
-    let text = chat.composer.text();
+    // A draft with no tokens sends exactly as it always did: the
+    // attachment command exists for drafts that actually carry one.
+    let attached = !chat.composer.tokens().is_empty();
+    let (text, attachments) = chat.composer.export(None);
     chat.composer.clear_for_send();
-    Some(UiAction::Dispatch(Command::Claude(
-        ClaudeCommand::SendPrompt {
+    Some(UiAction::Dispatch(if attached {
+        Command::SendPromptWithAttachments {
             agent: chat.agent,
             text,
-        },
-    )))
+            attachments,
+        }
+    } else {
+        Command::Claude(ClaudeCommand::SendPrompt {
+            agent: chat.agent,
+            text,
+        })
+    }))
 }
 
 /// The deterministic view-only Esc chain (`docs/CHAT.md` §State
@@ -2527,6 +2536,105 @@ mod attachments {
             chat.composer.tokens()[0].attachment,
             TokenAttachment::Artifact(_)
         ));
+    }
+
+    /// A send that carries attachments dispatches the attachment command
+    /// with the artifacts in draft order, not the plain prompt.
+    #[test]
+    fn enter_sends_the_exported_draft_with_its_attachments() {
+        let model = idle_model();
+        let mut chat = chat_with_draft("what is wrong here ");
+        attach_clipboard(
+            &mut chat,
+            &model,
+            ClipboardContent::Image {
+                mime: "image/png".into(),
+                bytes: b"png bytes".to_vec(),
+            },
+        );
+        let Some(UiAction::Dispatch(Command::SendPromptWithAttachments {
+            text, attachments, ..
+        })) = handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0))
+        else {
+            panic!("a draft with a token sends as an attachment prompt");
+        };
+        assert!(
+            text.starts_with("what is wrong here <amux-attachment "),
+            "{text}"
+        );
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].name, "clipboard.png");
+        assert!(chat.composer.is_empty(), "the draft cleared for the send");
+    }
+
+    /// A draft with nothing attached still sends as the plain prompt: the
+    /// attachment command exists for drafts that carry one.
+    #[test]
+    fn a_plain_draft_still_sends_as_a_plain_prompt() {
+        let model = idle_model();
+        let mut chat = chat_with_draft("no attachments here");
+        assert!(matches!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
+            Some(UiAction::Dispatch(Command::Claude(
+                amux_ui::ClaudeCommand::SendPrompt { .. }
+            )))
+        ));
+    }
+
+    /// A typed failure names the attachment and puts the draft back as it
+    /// was — canonical elements are not a draft, so the token returns as a
+    /// token, ready to send again.
+    #[test]
+    fn failed_send_restores_the_draft_with_its_token_and_states_the_failure() {
+        let mut model = idle_model();
+        let mut chat = chat_with_draft("look at ");
+        attach_clipboard(
+            &mut chat,
+            &model,
+            ClipboardContent::Image {
+                mime: "image/png".into(),
+                bytes: b"png bytes".to_vec(),
+            },
+        );
+        let before = chat.composer.export(None);
+        let Some(UiAction::Dispatch(command)) =
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0))
+        else {
+            panic!("enter dispatches");
+        };
+        let Command::SendPromptWithAttachments { attachments, .. } = &command else {
+            panic!("an attachment send");
+        };
+        let missing = attachments[0].id.clone();
+        let op = amux_ui::OpId(uuid::Uuid::from_u128(99));
+        chat.note_dispatched(op, &command);
+        super::tests::fold(&mut model, vec![amux_ui::Msg::Command { op, command }]);
+        super::tests::fold(
+            &mut model,
+            vec![amux_ui::Msg::OpResult {
+                op,
+                outcome: amux_ui::OpOutcome::Error {
+                    error: amux_ui::OpError::AttachmentMissing {
+                        id: missing,
+                        name: "clipboard.png".into(),
+                    },
+                },
+            }],
+        );
+        chat.reconcile(&model);
+
+        assert_eq!(
+            chat.composer.export(None),
+            before,
+            "text and token came back exactly as sent"
+        );
+        assert_eq!(labels(&chat), vec!["[Image #1]"]);
+        assert!(
+            chat.send_failure()
+                .is_some_and(|stated| stated.contains("clipboard.png")),
+            "the footer names the attachment: {:?}",
+            chat.send_failure()
+        );
     }
 
     fn agent_id_local() -> amux_ui::AgentId {

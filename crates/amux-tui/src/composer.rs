@@ -116,6 +116,10 @@ pub struct Composer {
 /// The tokens a draft owns, live and set aside.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct TokenState {
+    /// The last send-cleared draft, verbatim — slot chars and all, which
+    /// is what a failed send has to put back. The command carries the
+    /// EXPORTED text, and canonical elements are not a draft.
+    text: String,
     /// Every live token by slot. Text order is read off `chars`, so the
     /// draft's attachment list is derived and never stored twice.
     live: BTreeMap<char, Token>,
@@ -208,8 +212,8 @@ impl Composer {
     /// the optimistic echo (and is restored from the finished-op failure
     /// fact if the send fails), so it must not clobber the kill slot.
     pub fn clear_for_send(&mut self) {
-        self.chars.clear();
         self.cursor = 0;
+        self.tokens.text = std::mem::take(&mut self.chars).iter().collect();
         self.tokens.sent = std::mem::take(&mut self.tokens.live);
         self.prune();
     }
@@ -225,6 +229,19 @@ impl Composer {
             }
         }
         self.prune();
+    }
+
+    /// Put back the exact draft the last send cleared, tokens included.
+    ///
+    /// Returns false when there is nothing set aside, so the caller can
+    /// fall back to the text the failed command carried.
+    pub fn restore_sent(&mut self) -> bool {
+        if self.tokens.text.is_empty() {
+            return false;
+        }
+        let text = self.tokens.text.clone();
+        self.restore(&text);
+        true
     }
 
     // --- insertion ---------------------------------------------------------

@@ -272,22 +272,39 @@ fn send(chat: &mut View, model: &Model) -> Option<UiAction> {
     if chat.composer.is_empty() {
         return None;
     }
-    let text = chat.composer.text();
-    let native = if amux_ui::codex::allows_steer(model, chat.agent) {
-        CodexCommand::Steer {
+    // A draft with no tokens sends exactly as it always did: the
+    // attachment command exists for drafts that actually carry one, and
+    // it always prompts — Codex takes attachments at a turn boundary, so
+    // a draft with a token pending mid-turn is refused and resurfaces
+    // rather than being steered in without its files.
+    let attached = !chat.composer.tokens().is_empty();
+    let (text, attachments) = chat.composer.export(None);
+    let command = if attached {
+        if !amux_ui::codex::allows_steer(model, chat.agent)
+            && !amux_ui::codex::allows_prompt(model, chat.agent)
+        {
+            return None;
+        }
+        Command::SendPromptWithAttachments {
             agent: chat.agent,
             text,
+            attachments,
         }
+    } else if amux_ui::codex::allows_steer(model, chat.agent) {
+        Command::Codex(CodexCommand::Steer {
+            agent: chat.agent,
+            text,
+        })
     } else if amux_ui::codex::allows_prompt(model, chat.agent) {
-        CodexCommand::Prompt {
+        Command::Codex(CodexCommand::Prompt {
             agent: chat.agent,
             text,
-        }
+        })
     } else {
         return None;
     };
     chat.composer.clear_for_send();
-    Some(UiAction::Dispatch(Command::Codex(native)))
+    Some(UiAction::Dispatch(command))
 }
 
 fn approval_key(
