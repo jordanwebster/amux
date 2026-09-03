@@ -7117,6 +7117,11 @@ scripted-session helper. Each now sits under the gate its callers already
 have, so `cargo build --release` says nothing and a future dead-code
 warning there means something.
 
+2026-09-04 — **Kept opt-in live suites under CI scrutiny.** The real-Claude
+PTY, real-Codex, and real-Claude SDK executables stay out of ordinary test
+runs, while CI now names each target explicitly during compilation and strict
+Clippy linting so their code cannot silently decay.
+
 2026-09-03 — **Proved artifact ownership across routes, restarts, and
 lifetime transitions.** The daemon spec now sends put, get, diff, and pinned
 prompt requests from another host, then restarts the owning daemon and verifies

@@ -19,7 +19,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run cargo check
-        run: cargo check --workspace --all-targets
+        run: |
+          cargo check --workspace --all-targets
+          # These live suites are opt-in (`test = false`), so all-targets does
+          # not select them unless they are named explicitly.
+          cargo check -p amux \
+            --test claude_pty_live \
+            --test codex_live \
+            --test claude_sdk_live
 
   fmt:
     name: Format
@@ -62,7 +69,13 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --features amux/testnet -- -D warnings
+        run: |
+          cargo clippy --workspace --all-targets --features amux/testnet -- -D warnings
+          cargo clippy -p amux \
+            --test claude_pty_live \
+            --test codex_live \
+            --test claude_sdk_live \
+            -- -D warnings
 
   test:
     name: Test
