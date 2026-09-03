@@ -5,6 +5,11 @@ it. Start with the report directory instead of asking the person who captured
 it to reconstruct the session from memory. Reports never leave the machine;
 amux does not upload or share them.
 
+If your prompt contains only this document and a report directory, begin by
+running `amux debug report replay <report-directory>`. Then read `report.json`
+and `frame.txt` and describe where every marked rectangle lands before
+inspecting source code.
+
 The capture and inspection commands in this document exist only in debug
 builds. A release binary still writes bounded tripwire and panic reports, but
 those reports declare the debug-only frame and trace parts absent and cannot be

@@ -6854,4 +6854,7 @@ build so release tripwires and panics still leave bounded, self-describing
 reports with unavailable debug parts explicitly absent. The process-isolated
 invariant test can preserve its normally temporary report and stamp a validated
 full Git revision, so release-profile evidence comes from the real tripwire
-path and can be read back byte-for-byte instead of being reconstructed.
+path and can be read back byte-for-byte instead of being reconstructed. The
+standalone debugging guide also makes a path-only agent handoff start with the
+actual replay command and a frame-based description of every mark, rather than
+trusting the header's stored verdict as if it were a fresh replay.
