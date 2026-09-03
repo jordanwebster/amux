@@ -6814,8 +6814,9 @@ the routing core and tunnel pool instead of printing placeholder counts. Each
 hosted backend also embeds a common session block sourced from its replay
 buffers and provider runtime: buffer epoch and retained sequence range, live
 subscriber count, process lifecycle and outstanding permissions, questions or
-approvals. Unknown process IDs and exit codes remain `null`; links likewise say
-when their concrete transport or establishment time is not retained rather
-than inventing it. A two-daemon spec opens a real direct TCP session, echoes
-bytes through its tunnel, and checks both the caller's routing state and the
-host's subscriber and buffer state through the public debug RPC.
+approvals. Unknown process IDs and exit codes remain `null`; links identify
+their registered role as `peer` or `cloud_relay`, while a missing registry role
+and the unretained establishment time remain `null`. A two-daemon spec opens a
+real direct TCP session, echoes bytes through its tunnel, and checks both the
+caller's routing state and the host's subscriber and buffer state through the
+public debug RPC.

@@ -38,7 +38,8 @@ struct LinkRegistryState {
     writers: HashMap<LinkId, LinkWriter>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum LinkRole {
     Peer,
     CloudRelay,
@@ -247,12 +248,18 @@ impl LinkRegistry {
     }
 
     pub(crate) async fn is_cloud_relay(&self, link: &LinkId) -> bool {
+        self.link_role(link)
+            .await
+            .is_some_and(|role| role == LinkRole::CloudRelay)
+    }
+
+    pub(crate) async fn link_role(&self, link: &LinkId) -> Option<LinkRole> {
         self.state
             .read()
             .await
             .writers
             .get(link)
-            .is_some_and(|writer| writer.role == LinkRole::CloudRelay)
+            .map(|writer| writer.role)
     }
 
     /// Whether any live link to `peer` is the authenticated cloud link.

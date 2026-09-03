@@ -23,6 +23,7 @@ use crate::HostId;
 use crate::resource_limits::{CLIENT_VISIBLE_ACTIVITY_RECENT_WINDOW, ROUTING_HOST_CAP};
 use crate::routing::events::{EventSource, HostReachabilityEvent, RoutingEvent};
 use crate::routing::types::{Host, LinkId, Route};
+use crate::routing::{LinkRegistry, LinkRole};
 use crate::trust::SharedTrustStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +111,7 @@ pub(crate) struct LinkDebug {
     pub(crate) id: String,
     pub(crate) peer: HostId,
     pub(crate) direction: LinkDirection,
-    pub(crate) transport: String,
+    pub(crate) transport: Option<LinkRole>,
     pub(crate) established_at: Option<DateTime<Utc>>,
 }
 
@@ -168,7 +169,7 @@ impl RoutingCore {
     }
 
     /// A stable snapshot of the live routing table for diagnostics.
-    pub(crate) async fn debug_view(&self) -> RoutingDebug {
+    pub(crate) async fn debug_view(&self, link_registry: &LinkRegistry) -> RoutingDebug {
         let state = self.state.read().await;
 
         let mut hosts = HashMap::new();
@@ -193,13 +194,16 @@ impl RoutingCore {
                     via: RouteVia::Direct { link: id.clone() },
                     hops: 1,
                 });
-                links.push(LinkDebug {
-                    id,
-                    peer: link.peer(),
-                    direction: LinkDirection::Bidirectional,
-                    transport: "channel".to_string(),
-                    established_at: None,
-                });
+                links.push((
+                    *link,
+                    LinkDebug {
+                        id,
+                        peer: link.peer(),
+                        direction: LinkDirection::Bidirectional,
+                        transport: None,
+                        established_at: None,
+                    },
+                ));
             }
         }
         for (dst, entry) in &state.claims {
@@ -218,6 +222,12 @@ impl RoutingCore {
             };
             (route.dst, via)
         });
+        drop(state);
+
+        for (link_id, link) in &mut links {
+            link.transport = link_registry.link_role(link_id).await;
+        }
+        let mut links = links.into_iter().map(|(_, link)| link).collect::<Vec<_>>();
         links.sort_unstable_by(|left, right| left.id.cmp(&right.id));
 
         RoutingDebug {
@@ -598,7 +608,7 @@ mod tests {
     use chrono::{DateTime, Utc};
 
     use super::*;
-    use crate::routing::{Capabilities, SupportedAgentType};
+    use crate::routing::{Capabilities, LinkRegistry, LinkRole, SupportedAgentType};
     use crate::trust::{Reachability, TrustEntry, TrustStore};
 
     fn host(id: u128, name: &str) -> Host {
@@ -634,6 +644,38 @@ mod tests {
             },
         );
         trust_store
+    }
+
+    #[tokio::test]
+    async fn debug_links_serialize_registered_roles_and_leave_unknown_roles_null() {
+        let core = RoutingCore::new();
+        let registry = LinkRegistry::default();
+        let cloud_link = link(1, 1);
+        let peer_link = link(2, 1);
+        let unknown_link = link(3, 1);
+        let (cloud_tx, _cloud_rx) = mpsc::channel(8);
+        let (peer_tx, _peer_rx) = mpsc::channel(8);
+        registry
+            .register(
+                cloud_link,
+                host(1, "cloud"),
+                cloud_tx,
+                LinkRole::CloudRelay,
+                &[],
+            )
+            .await;
+        registry
+            .register(peer_link, host(2, "peer"), peer_tx, LinkRole::Peer, &[])
+            .await;
+        core.apply_direct_up(host(1, "cloud"), cloud_link).await;
+        core.apply_direct_up(host(2, "peer"), peer_link).await;
+        core.apply_direct_up(host(3, "unknown"), unknown_link).await;
+
+        let debug = serde_json::to_value(core.debug_view(&registry).await).unwrap();
+        let links = debug["links"].as_array().unwrap();
+        assert_eq!(links[0]["transport"], "cloud_relay");
+        assert_eq!(links[1]["transport"], "peer");
+        assert!(links[2]["transport"].is_null());
     }
 
     #[tokio::test]

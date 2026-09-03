@@ -20,7 +20,8 @@ pub(crate) async fn dump_server_debug_info(
     format: DebugFormat,
     verbose: bool,
 ) -> String {
-    let routing = routing.debug_view().await;
+    let link_registry = tunnel_pool.link_registry();
+    let routing = routing.debug_view(&link_registry).await;
     let tunnels = tunnel_pool.debug_view().await;
     let state_guard = state.read().await;
     let use_cloud_mode = setup::cloud_enabled(&state_guard.config);
