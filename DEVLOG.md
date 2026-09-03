@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Verified the complete attachment path.** The workspace and
+specification suites now pass together after the document rename, standalone
+artifact store, routed wire services, client attachment fold, atomic composer
+tokens, diff review page, managed-agent `attach` tool, and attachment guide
+landed. Closing evidence identifies the rename as the first feature commit and
+indexes the syntax, document vocabulary, and review binding in the published
+documentation; reproducible commands cover the boundary tests, rendered
+states, and approved live scenarios.
+
 2026-09-04 — **Captured attachment QA evidence.** The same-host tmux
 captures show pasted text and a clipboard image surviving in one draft, the
 sent image block, Claude's concrete description without a permission request,
