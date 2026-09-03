@@ -6,10 +6,14 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use amux::{Config, DebugFormat};
-use amux_ui::report::{self, ReplayVerdict, ReportHeader, ReportKind, ReportStatus};
-use anyhow::{Context, Result};
+use amux_tui::replay::{self, Replay};
+use amux_ui::report::{
+    self, ReplayVerdict, ReportHeader, ReportKind, ReportStatus, read_frame, set_verdict,
+};
+use anyhow::{Context, Result, anyhow};
 use clap::{Subcommand, ValueEnum};
 
 #[derive(Debug, Subcommand)]
@@ -43,6 +47,24 @@ pub enum ReportCommands {
         report: PathBuf,
     },
 
+    /// Replay a report and compare it with the captured frame
+    Replay {
+        /// Report directory path or name beneath the configured reports directory
+        report: PathBuf,
+
+        /// Render the frame after this draw event instead of the final frame
+        #[arg(long)]
+        at: Option<usize>,
+
+        /// Print the rendered frame text
+        #[arg(long)]
+        frame: bool,
+
+        /// Print the rendered frame style map
+        #[arg(long)]
+        styles: bool,
+    },
+
     /// Remove old automatic reports; user-created bug and tweak reports remain
     Prune,
 }
@@ -65,17 +87,140 @@ impl From<CliDebugFormat> for DebugFormat {
     }
 }
 
+pub struct ReportCommandOutput {
+    pub text: String,
+    pub exit_code: ExitCode,
+}
+
+impl ReportCommandOutput {
+    fn success(text: String) -> Self {
+        Self {
+            text,
+            exit_code: ExitCode::SUCCESS,
+        }
+    }
+}
+
 /// Run a report command against the single directory selected by the config.
 ///
 /// Returning text keeps command behavior testable without redirecting the
 /// process-wide stdout stream; the binary owns the final print.
-pub fn run_report(command: ReportCommands, config: &Config) -> Result<String> {
+pub fn run_report(command: ReportCommands, config: &Config) -> Result<ReportCommandOutput> {
     let reports_dir = config.reports_dir();
     match command {
-        ReportCommands::List => list_reports(&reports_dir),
-        ReportCommands::Show { report } => show_report(&reports_dir, &report),
-        ReportCommands::Prune => prune_reports(&reports_dir),
+        ReportCommands::List => list_reports(&reports_dir).map(ReportCommandOutput::success),
+        ReportCommands::Show { report } => {
+            show_report(&reports_dir, &report).map(ReportCommandOutput::success)
+        }
+        ReportCommands::Replay {
+            report,
+            at,
+            frame,
+            styles,
+        } => replay_report(&reports_dir, &report, at, frame, styles),
+        ReportCommands::Prune => prune_reports(&reports_dir).map(ReportCommandOutput::success),
     }
+}
+
+fn replay_report(
+    reports_dir: &Path,
+    requested: &Path,
+    at: Option<usize>,
+    print_frame: bool,
+    print_styles: bool,
+) -> Result<ReportCommandOutput> {
+    let report_dir = resolve_report(reports_dir, requested);
+    let expected = read_frame(&report_dir)
+        .with_context(|| format!("failed to read captured frame in {}", report_dir.display()))?
+        .ok_or_else(|| anyhow!("report {} has no captured frame", report_dir.display()))?;
+    let mut replay = Replay::load(&report_dir)
+        .with_context(|| format!("failed to load report {}", report_dir.display()))?;
+
+    if let Some(index) = at {
+        let draw_indices = replay.draw_indices();
+        if !draw_indices.contains(&index) {
+            let available = draw_indices
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(anyhow!(
+                "event {index} is not a draw in report {}; draw events: [{}]",
+                report_dir.display(),
+                available
+            ));
+        }
+    }
+
+    replay
+        .step_to_end()
+        .with_context(|| format!("failed to replay report {}", report_dir.display()))?;
+    let actual = replay
+        .frame()
+        .context("the replay produced no final frame")?;
+    let diff = replay::frame_diff(&expected, &actual);
+    let verdict = replay::verdict(&expected, &actual);
+    set_verdict(&report_dir, verdict.clone())
+        .with_context(|| format!("failed to update report {}", report_dir.display()))?;
+
+    let mut output = String::new();
+    match &verdict {
+        ReplayVerdict::Reproduces => output.push_str("Reproduces\n"),
+        ReplayVerdict::Diverges { first_diff } => {
+            output.push_str(&format!("Diverges: {first_diff}\n"));
+        }
+        ReplayVerdict::Unchecked => unreachable!("comparing two frames always yields a verdict"),
+    }
+    if diff.cells.is_empty() {
+        output.push_str("Differing cells: none\nBounding rectangle: none\n");
+    } else {
+        let cells = diff
+            .cells
+            .iter()
+            .map(|(x, y)| format!("({x},{y})"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        output.push_str(&format!("Differing cells: {cells}\n"));
+        let bounding = diff.bounding.expect("a non-empty diff has a bounding mark");
+        output.push_str(&format!(
+            "Bounding rectangle: x={} y={} width={} height={}\n",
+            bounding.x, bounding.y, bounding.width, bounding.height
+        ));
+    }
+
+    if print_frame || print_styles {
+        let (capture, position) = match at {
+            Some(index) => {
+                let mut positioned = Replay::load(&report_dir)
+                    .with_context(|| format!("failed to reload report {}", report_dir.display()))?;
+                positioned
+                    .step_to(index)
+                    .with_context(|| format!("failed to replay report to event {index}"))?;
+                (
+                    positioned
+                        .frame()
+                        .context("the selected draw produced no frame")?,
+                    index,
+                )
+            }
+            None => (actual, replay.position().saturating_sub(1)),
+        };
+        if print_frame {
+            output.push_str(&format!("Frame at event {position}:\n{}", capture.text));
+        }
+        if print_styles {
+            output.push_str(&format!("Styles at event {position}:\n{}", capture.styles));
+        }
+    }
+
+    Ok(ReportCommandOutput {
+        text: output,
+        exit_code: if matches!(verdict, ReplayVerdict::Diverges { .. }) {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        },
+    })
 }
 
 fn list_reports(reports_dir: &Path) -> Result<String> {
@@ -188,7 +333,14 @@ fn verdict_name(verdict: &ReplayVerdict) -> &'static str {
 mod tests {
     use std::fs;
 
-    use amux_ui::report::{Mark, PartState, Parts, REPORT_SCHEMA_VERSION};
+    use amux_tui::chrome::TraceEvent;
+    use amux_tui::trace::{Snapshot, TraceWindow};
+    use amux_tui::{Notice, Theme, ViewState};
+    use amux_ui::report::{
+        FrameCapture, Mark, PartState, Parts, REPORT_SCHEMA_VERSION, ReportDraft, ReportParts,
+        ReportWriter,
+    };
+    use amux_ui::{BUILD, Model};
     use chrono::{TimeZone, Utc};
     use clap::Parser;
     use tempfile::tempdir;
@@ -260,6 +412,64 @@ mod tests {
         report_dir
     }
 
+    fn write_replayable_report(root: &Path) -> PathBuf {
+        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        let event = |event: TraceEvent| serde_json::to_string(&event).unwrap();
+        let window = TraceWindow {
+            snapshot: Snapshot {
+                model: Model::default(),
+                view: ViewState::default(),
+                theme: Theme::default(),
+                at: now,
+            },
+            events: vec![
+                event(TraceEvent::Draw {
+                    viewport: (80, 24),
+                    now,
+                }),
+                event(TraceEvent::Notice(Some(Notice::done(
+                    "the replay reached the later frame",
+                )))),
+                event(TraceEvent::Draw {
+                    viewport: (80, 24),
+                    now,
+                }),
+            ],
+        };
+        let report_dir = ReportWriter::new(root.to_path_buf(), BUILD, "test-sha")
+            .write(
+                ReportDraft {
+                    kind: ReportKind::Bug,
+                    detail: None,
+                    note: "replay command test".to_string(),
+                    marks: Vec::new(),
+                    viewport: Some((80, 24)),
+                    replay: ReplayVerdict::Unchecked,
+                },
+                ReportParts {
+                    frame: Some(FrameCapture {
+                        text: "placeholder\n".to_string(),
+                        styles: "?\n".to_string(),
+                    }),
+                    trace: Some(window.to_bytes().unwrap()),
+                    msgs: None,
+                    daemon: None,
+                    log: None,
+                    absent_reason: "not captured by this test".to_string(),
+                    log_absent_reason: None,
+                    daemon_absent_reason: None,
+                },
+            )
+            .unwrap();
+
+        let mut replay = Replay::load(&report_dir).unwrap();
+        replay.step_to_end().unwrap();
+        let captured = replay.frame().unwrap();
+        fs::write(report_dir.join("frame.txt"), captured.text).unwrap();
+        fs::write(report_dir.join("frame.styles"), captured.styles).unwrap();
+        report_dir
+    }
+
     #[test]
     fn debug_tree_nests_daemon_and_report_commands() {
         let daemon =
@@ -296,7 +506,8 @@ mod tests {
         let config = config(&reports_dir);
 
         let listing = run_report(ReportCommands::List, &config).unwrap();
-        let lines = listing.lines().collect::<Vec<_>>();
+        assert_eq!(listing.exit_code, ExitCode::SUCCESS);
+        let lines = listing.text.lines().collect::<Vec<_>>();
         assert!(lines[0].contains("3000-broken\tunreadable"));
         assert!(lines[1].contains("2000\ttweak\tdone\tunchecked"));
         assert!(lines[2].contains("1000\tbug\topen\tunchecked"));
@@ -313,7 +524,11 @@ mod tests {
             &config,
         )
         .unwrap();
-        assert_eq!(serde_json::from_str::<ReportHeader>(&shown).unwrap(), newer);
+        assert_eq!(shown.exit_code, ExitCode::SUCCESS);
+        assert_eq!(
+            serde_json::from_str::<ReportHeader>(&shown.text).unwrap(),
+            newer
+        );
     }
 
     #[test]
@@ -336,9 +551,10 @@ mod tests {
         );
 
         let output = run_report(ReportCommands::Prune, &config(&reports_dir)).unwrap();
-        assert!(output.contains("removed\t"));
-        assert!(output.contains("0000-tripwire"));
-        assert!(output.contains("Removed 1 automatic report(s)"));
+        assert_eq!(output.exit_code, ExitCode::SUCCESS);
+        assert!(output.text.contains("removed\t"));
+        assert!(output.text.contains("0000-tripwire"));
+        assert!(output.text.contains("Removed 1 automatic report(s)"));
         assert!(!reports_dir.join("0000-tripwire").exists());
         assert!(reports_dir.join("user-bug").exists());
     }
@@ -352,12 +568,88 @@ mod tests {
         assert!(
             run_report(ReportCommands::List, &config)
                 .unwrap()
+                .text
                 .starts_with("No reports in ")
         );
         assert!(
             run_report(ReportCommands::Prune, &config)
                 .unwrap()
+                .text
                 .contains("Removed 0 automatic report(s)")
         );
+    }
+
+    #[test]
+    fn replay_cmd_verifies_renders_an_earlier_frame_and_flags_tampering() {
+        let temp = tempdir().unwrap();
+        let reports_dir = temp.path().join("reports");
+        let report_dir = write_replayable_report(&reports_dir);
+        let report_name = PathBuf::from(report_dir.file_name().unwrap());
+        let config = config(&reports_dir);
+
+        let verified = run_report(
+            ReportCommands::Replay {
+                report: report_name.clone(),
+                at: None,
+                frame: false,
+                styles: false,
+            },
+            &config,
+        )
+        .unwrap();
+        assert_eq!(verified.exit_code, ExitCode::SUCCESS);
+        assert!(verified.text.starts_with("Reproduces\n"));
+        assert!(verified.text.contains("Differing cells: none"));
+        assert!(verified.text.contains("Bounding rectangle: none"));
+        assert_eq!(
+            report::read_header(&report_dir).unwrap().replay,
+            ReplayVerdict::Reproduces
+        );
+
+        let earlier = run_report(
+            ReportCommands::Replay {
+                report: report_name.clone(),
+                at: Some(0),
+                frame: true,
+                styles: false,
+            },
+            &config,
+        )
+        .unwrap();
+        assert_eq!(earlier.exit_code, ExitCode::SUCCESS);
+        assert!(earlier.text.contains("Frame at event 0:"));
+        assert!(!earlier.text.contains("the replay reached the later frame"));
+
+        let captured = fs::read_to_string(report_dir.join("frame.txt")).unwrap();
+        let mut chars = captured.chars();
+        let _ = chars.next().expect("captured frame has a first cell");
+        fs::write(
+            report_dir.join("frame.txt"),
+            format!("\u{2588}{}", chars.collect::<String>()),
+        )
+        .unwrap();
+
+        let diverged = run_report(
+            ReportCommands::Replay {
+                report: report_name,
+                at: None,
+                frame: false,
+                styles: false,
+            },
+            &config,
+        )
+        .unwrap();
+        assert_eq!(diverged.exit_code, ExitCode::FAILURE);
+        assert!(diverged.text.starts_with("Diverges:"));
+        assert!(diverged.text.contains("Differing cells: (0,0)"));
+        assert!(
+            diverged
+                .text
+                .contains("Bounding rectangle: x=0 y=0 width=1 height=1")
+        );
+        assert!(matches!(
+            report::read_header(&report_dir).unwrap().replay,
+            ReplayVerdict::Diverges { .. }
+        ));
     }
 }

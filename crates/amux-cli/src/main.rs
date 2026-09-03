@@ -14,6 +14,7 @@ use std::future::Future;
 use std::io::{IsTerminal, Read, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::time::Duration;
 
 use amux::{AgentType, Config, PairingSecret, PairingStart, setup};
@@ -362,7 +363,7 @@ enum McpProvider {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<ExitCode> {
     let _log_guard = init_tracing();
 
     let cli = Cli::parse();
@@ -373,17 +374,18 @@ async fn main() -> Result<()> {
         // bare CLI; explicit `amux ui` still errors honestly there.
         if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
             Cli::command().print_help()?;
-            return Ok(());
+            return Ok(ExitCode::SUCCESS);
         }
         let config = load_config(cli.config)?;
         config
             .validate(false)
             .map_err(|e| anyhow!("invalid config: {e}"))?;
-        return ui::run(config).await;
+        ui::run(config).await?;
+        return Ok(ExitCode::SUCCESS);
     };
 
     if handle_server_start_from_stdin(&command).await? {
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
 
     let config = load_validated_config(&command, cli.config)?;
@@ -439,7 +441,7 @@ fn command_server_mode(command: &Commands) -> ServerMode {
     }
 }
 
-async fn run_command(command: Commands, mut config: Config) -> Result<()> {
+async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> {
     match command {
         Commands::Ui => ui::run(config).await?,
         Commands::New {
@@ -526,7 +528,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 let client = client_common::require_running_client(&config, None).await?;
                 client.cancel_pairing().await?;
                 println!("Pairing mode cancelled.");
-                return Ok(());
+                return Ok(ExitCode::SUCCESS);
             }
             if demo {
                 let (Some(pin), Some(ttl)) = (pin, r#for) else {
@@ -544,7 +546,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                     "Demo pairing: this PIN pairs any device that presents it, repeatedly, \
                      until it expires or `amux pair --cancel`. It does not survive a daemon restart."
                 );
-                return Ok(());
+                return Ok(ExitCode::SUCCESS);
             }
             if let Some(connect_target) = connect {
                 match parse_pair_connect_target(connect_target) {
@@ -559,7 +561,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                         let host = prompt_pairing_host(&hosts)?;
                         let peer = pair_cloud_host(&client, &host).await?;
                         println!("Paired with {} ({}) via cloud.", peer.name, peer.host_id);
-                        return Ok(());
+                        return Ok(ExitCode::SUCCESS);
                     }
                     PairConnectTarget::CloudName(target) => {
                         ensure_initialized(&mut config).await?;
@@ -571,7 +573,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                         let host = resolve_pairing_host_by_name(&hosts, &target)?;
                         let peer = pair_cloud_host(&client, &host).await?;
                         println!("Paired with {} ({}) via cloud.", peer.name, peer.host_id);
-                        return Ok(());
+                        return Ok(ExitCode::SUCCESS);
                     }
                     PairConnectTarget::Direct(addr) => {
                         ensure_initialized(&mut config).await?;
@@ -592,7 +594,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                             "Paired with {} ({}) via direct TCP.",
                             peer.name, peer.host_id
                         );
-                        return Ok(());
+                        return Ok(ExitCode::SUCCESS);
                     }
                 }
             }
@@ -611,7 +613,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 )
                 .await?;
                 println!("Paired with {} ({}) via SSH.", peer.name, peer.host_id);
-                return Ok(());
+                return Ok(ExitCode::SUCCESS);
             }
 
             let retry_command = pair_start_retry_command(qr, listen);
@@ -655,7 +657,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             let entry = client.get_peer(peer.as_str()).await?;
             if !force && !confirm_unpair(&entry)? {
                 println!("Unpair cancelled.");
-                return Ok(());
+                return Ok(ExitCode::SUCCESS);
             }
             let removed = client.unpair(peer.as_str(), "user").await?;
             println!("Unpaired {} ({}).", removed.name, removed.host_id);
@@ -678,7 +680,11 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 print!("{dump}");
             }
             DebugCommands::Report { command } => {
-                print!("{}", debug_cmd::run_report(command, &config)?);
+                let output = debug_cmd::run_report(command, &config)?;
+                print!("{}", output.text);
+                if output.exit_code != ExitCode::SUCCESS {
+                    return Ok(output.exit_code);
+                }
             }
         },
         Commands::Hooks { provider } => match provider {
@@ -693,7 +699,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         },
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn run_new_agent_command<Action, ActionFuture>(
