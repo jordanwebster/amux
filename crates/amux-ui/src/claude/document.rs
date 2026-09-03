@@ -58,7 +58,7 @@ impl DiffDocument {
 /// retains them in V1. Plan asks carry no entry here: the plan markdown
 /// already rides `ToolInvocation::Plan`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "document", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AskDocument {
     /// An Edit ask's mini-diff of `old_string` → `new_string`.
     Diff(DiffDocument),
@@ -137,6 +137,37 @@ pub(crate) fn ask_time_diff(old: &str, new: &str, replace_all: bool) -> DiffDocu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_json_round_trip(document: AskDocument, expected_keys: &[&str]) {
+        let json = serde_json::to_string(&document).expect("ask document serializes");
+        assert_eq!(
+            json.matches("\"kind\":").count(),
+            1,
+            "the enum emits exactly one discriminator: {json}"
+        );
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON object");
+        let object = value.as_object().expect("ask document is an object");
+        let keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        assert_eq!(keys, expected_keys, "one unambiguous key per field: {json}");
+        assert_eq!(
+            serde_json::from_str::<AskDocument>(&json).expect("ask document deserializes"),
+            document
+        );
+    }
+
+    #[test]
+    fn every_ask_document_variant_round_trips_without_duplicate_json_keys() {
+        assert_json_round_trip(
+            AskDocument::Diff(ask_time_diff("before\n", "after\n", false)),
+            &["document", "kind", "magnitude"],
+        );
+        assert_json_round_trip(
+            AskDocument::NewFile {
+                content: "fn main() {}\n".to_string(),
+            },
+            &["content", "kind"],
+        );
+    }
 
     #[test]
     fn a_single_site_edit_computes_one_context_grouped_hunk() {

@@ -241,6 +241,7 @@ pub fn record_shared(trace: &SharedTrace, event: &TraceEvent) {
 
 #[cfg(test)]
 mod tests {
+    use amux_ui::claude::AskDocument;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use super::*;
@@ -356,6 +357,32 @@ mod tests {
             back.to_bytes().expect("re-serializes"),
             bytes,
             "reading and writing a trace is lossless"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_round_trip_retains_an_edit_ask_document() {
+        let built = fixture(NamedState::ClaudePermissionAsk);
+        let agent = built.view.chat.as_ref().expect("Claude chat open").agent;
+        let mut ring = TraceRing::new(SEGMENT_LEN);
+        ring.roll_if_due(&built.model, &built.view, Theme::default(), built.now);
+
+        let bytes = ring
+            .window()
+            .expect("snapshot window")
+            .to_bytes()
+            .expect("snapshot serializes");
+        let back = TraceWindow::read_jsonl(&bytes).expect("snapshot parses");
+        let ask = back
+            .snapshot
+            .model
+            .claude(agent)
+            .and_then(|layer| layer.ask_head())
+            .expect("Edit ask retained");
+        assert!(
+            matches!(ask.document, Some(AskDocument::Diff(_))),
+            "Edit ask retains its diff document: {:?}",
+            ask.document
         );
     }
 

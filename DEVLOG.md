@@ -7,7 +7,9 @@ This file tracks significant development work, decisions made, and current state
 2026-09-03 — **Renamed the reader's typed content model to documents.**
 `AskDocument`, `DiffDocument`, and the `claude::document` module now name
 plans, diffs, and proposed files, including the retained field and serialized
-tag on an ask. Reader prose and `f` affordances use the same vocabulary, which
+tag on an ask. The tag is `kind`, distinct from the diff document's `document`
+field, so diff asks and diagnostic trace snapshots round-trip without duplicate
+JSON keys. Reader prose and `f` affordances use the same vocabulary, which
 leaves artifact available for stored blobs without overloading the existing
 fullscreen viewer. The amux-ui spec suite and complete amux-tui unit and golden
 suites pass with the renamed model and updated frames.
