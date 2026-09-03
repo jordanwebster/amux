@@ -17,7 +17,7 @@
 pub(crate) mod ask_ui;
 pub mod diff;
 pub(crate) mod draft;
-mod keys;
+pub(crate) mod keys;
 pub(crate) mod panel;
 mod reader;
 mod render;

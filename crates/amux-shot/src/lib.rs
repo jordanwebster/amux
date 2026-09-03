@@ -5,10 +5,13 @@ use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use amux_tui::chat::{FeedScroll, handle_chat_mouse};
-use amux_tui::fixtures::{Fixture, NamedState, fixture, long_feed};
+use amux_tui::clipboard::ClipboardContent;
+use amux_tui::fixtures::{
+    Fixture, NamedState, ScriptStep, apply_step, fixture, long_feed, recording_start,
+};
 use amux_tui::{ColorMode, FrameContext, Theme, render};
-use amux_ui::StructuredProtocol;
-use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+use amux_ui::{DiffBase, StructuredProtocol};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use fontdue::{Font, FontSettings};
 use gif::{Encoder as GifEncoder, Frame as GifFrame, Repeat};
 use ratatui::Terminal;
@@ -137,6 +140,32 @@ pub struct ScrollEventLog {
     pub version: u32,
     pub viewport: [u16; 2],
     pub recordings: Vec<ScrollRecording>,
+}
+
+/// One scripted input and the frame it produced.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct KeyEventRecord {
+    pub frame: usize,
+    pub input: String,
+}
+
+/// One scripted recording's receipt in `events.json`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct KeyRecording {
+    pub name: String,
+    pub gif: String,
+    pub frames: usize,
+    pub events: Vec<KeyEventRecord>,
+}
+
+/// The receipt beside a scripted GIF: every input, in order, and the frame
+/// it produced, so a reader can tell what was pressed without reading the
+/// recorder's source.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct KeyEventLog {
+    pub version: u32,
+    pub viewport: [u16; 2],
+    pub recordings: Vec<KeyRecording>,
 }
 
 /// Errors from state lookup, rendering, encoding, or verification.
@@ -331,6 +360,231 @@ pub fn record_scroll(
     }
     update_scroll_event_log(out, recording.clone())?;
     Ok(recording)
+}
+
+/// The keystroke recordings: one frame per scripted input, through the
+/// chat's own handlers.
+///
+/// A GIF of a screen nobody can reach is worth nothing, so nothing here
+/// reaches inside the view. The script is what a person presses; the
+/// frames are what the program drew in answer.
+fn record_script(
+    name: &str,
+    mut fixture: Fixture,
+    script: &[ScriptStep],
+    theme: Theme,
+    theme_label: &str,
+    out: &Path,
+) -> Result<KeyRecording, ShotError> {
+    const FRAME_DELAY_CENTISECONDS: u16 = 22;
+
+    fs::create_dir_all(out)?;
+    let gif_name = format!("{name}.gif");
+    let gif_path = out.join(&gif_name);
+    let temporary = out.join(format!("{gif_name}.tmp"));
+
+    let initial = rasterize(&render_fixture_buffer(&fixture, theme)?, theme)?;
+    let width = u16::try_from(initial.width)
+        .map_err(|_| ShotError::Encode("GIF width exceeds u16".to_string()))?;
+    let height = u16::try_from(initial.height)
+        .map_err(|_| ShotError::Encode("GIF height exceeds u16".to_string()))?;
+    let writer = BufWriter::new(File::create(&temporary)?);
+    let mut encoder = GifEncoder::new(writer, width, height, &[])
+        .map_err(|error| ShotError::Encode(error.to_string()))?;
+    encoder
+        .set_repeat(Repeat::Infinite)
+        .map_err(|error| ShotError::Encode(error.to_string()))?;
+    write_gif_frame(&mut encoder, initial, FRAME_DELAY_CENTISECONDS)?;
+
+    let mut events = Vec::with_capacity(script.len());
+    for (index, step) in script.iter().enumerate() {
+        apply_step(&mut fixture, step);
+        let raster = rasterize(&render_fixture_buffer(&fixture, theme)?, theme)?;
+        write_gif_frame(&mut encoder, raster, FRAME_DELAY_CENTISECONDS)?;
+        events.push(KeyEventRecord {
+            frame: index + 1,
+            input: step.label(),
+        });
+    }
+
+    let mut writer = encoder
+        .into_inner()
+        .map_err(|error| ShotError::Encode(error.to_string()))?;
+    writer.flush()?;
+    fs::rename(temporary, gif_path)?;
+
+    // The last frame also lands as a still, in the manifest beside the
+    // PNGs: a GIF is not something `verify` can check, and the screen a
+    // recording ends on is worth looking at on its own.
+    let still = format!("{name}-final.png");
+    let raster = rasterize(&render_fixture_buffer(&fixture, theme)?, theme)?;
+    let path = out.join(&still);
+    write_png(&raster, &path)?;
+    let bytes = fs::read(&path)?;
+    append_entry(
+        out,
+        ManifestEntry {
+            state: format!("{name}-recording"),
+            theme: theme_label.to_string(),
+            color: color_mode_name(theme.mode).to_string(),
+            viewport: [VIEWPORT.0, VIEWPORT.1],
+            pixels: [raster.width, raster.height],
+            file: still.clone(),
+            sha256: hex_digest(&bytes),
+        },
+    )?;
+    // Its own set name: a recording lands in the same directory as the
+    // rendered set it illustrates, and the two must not overwrite each
+    // other's receipt.
+    append_set(out, &format!("{name}-recording"), vec![still])?;
+
+    let recording = KeyRecording {
+        name: name.to_string(),
+        gif: gif_name,
+        frames: events.len() + 1,
+        events,
+    };
+    update_key_event_log(out, recording.clone())?;
+    Ok(recording)
+}
+
+/// The trip through a review: the chord, the frozen diff, a selection over
+/// a removed row and the added one under it, a comment saved, `q` back to
+/// the draft, and Enter on the token to resume the page.
+pub fn record_review(
+    out: &Path,
+    theme: Theme,
+    theme_label: &str,
+) -> Result<KeyRecording, ShotError> {
+    record_script(
+        "review",
+        recording_start(),
+        &review_script(),
+        theme,
+        theme_label,
+        out,
+    )
+}
+
+/// The inputs `record-review` presses, in order.
+pub fn review_script() -> Vec<ScriptStep> {
+    let mut script = vec![
+        ScriptStep::Key(control('a')),
+        ScriptStep::Key(plain('r')),
+        ScriptStep::FrozenDiff(DiffBase::WorkingTree),
+    ];
+    for character in ['j', 'j', 'v', 'j', 'c'] {
+        script.push(ScriptStep::Key(plain(character)));
+    }
+    script.push(ScriptStep::Type(
+        "the old name is public; keep a re-export for one release".to_string(),
+    ));
+    script.extend([
+        ScriptStep::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        ScriptStep::Key(plain('q')),
+        // After `q` the cursor sits past the token; one step back puts it
+        // on the token, where Enter resumes the page instead of sending.
+        ScriptStep::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+        ScriptStep::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+    ]);
+    script
+}
+
+/// The trip through a draft that carries attachments: two of them added,
+/// one deleted, an ask taking the surface over and handing it back, the
+/// guarded clear and its undo, and the review chord pressed while the
+/// agent is still working.
+pub fn record_draft(
+    out: &Path,
+    theme: Theme,
+    theme_label: &str,
+) -> Result<KeyRecording, ShotError> {
+    record_script(
+        "draft",
+        recording_start(),
+        &draft_script(),
+        theme,
+        theme_label,
+        out,
+    )
+}
+
+/// The inputs `record-draft` presses, in order.
+pub fn draft_script() -> Vec<ScriptStep> {
+    vec![
+        ScriptStep::Type("compare ".to_string()),
+        ScriptStep::Clipboard(ClipboardContent::Image {
+            mime: "image/png".to_string(),
+            bytes: vec![b'p'; 120_433],
+        }),
+        ScriptStep::Type(" against the trace ".to_string()),
+        ScriptStep::Paste(pasted_lines(240)),
+        // One backspace takes the whole paste out; the image stays.
+        ScriptStep::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
+        // An ask takes the surface, then resolves and hands it back with
+        // the draft untouched.
+        ScriptStep::Conversation(NamedState::ClaudePermissionAsk),
+        ScriptStep::Conversation(NamedState::ClaudeWorking),
+        // The guarded clear, and the yank that undoes it.
+        ScriptStep::Key(control('c')),
+        ScriptStep::Key(control('y')),
+        // The review chord while the agent is still working: the page
+        // opens over what it has written so far.
+        ScriptStep::Key(control('a')),
+        ScriptStep::Key(plain('r')),
+        ScriptStep::FrozenDiff(DiffBase::WorkingTree),
+    ]
+}
+
+fn plain(character: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE)
+}
+
+fn control(character: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(character), KeyModifiers::CONTROL)
+}
+
+fn pasted_lines(count: usize) -> String {
+    (1..=count).map(|n| format!("stack frame {n}\n")).collect()
+}
+
+fn update_key_event_log(out: &Path, recording: KeyRecording) -> Result<(), ShotError> {
+    let path = out.join("events.json");
+    let mut log = match fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice::<KeyEventLog>(&bytes)
+            .map_err(|error| ShotError::Verify(format!("{}: {error}", path.display())))?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => KeyEventLog {
+            version: 1,
+            viewport: [VIEWPORT.0, VIEWPORT.1],
+            recordings: Vec::new(),
+        },
+        Err(error) => return Err(error.into()),
+    };
+    if log.version != 1 || log.viewport != [VIEWPORT.0, VIEWPORT.1] {
+        return Err(ShotError::Verify(format!(
+            "{} is not a compatible 120x40 event log",
+            path.display()
+        )));
+    }
+    if let Some(existing) = log
+        .recordings
+        .iter_mut()
+        .find(|existing| existing.name == recording.name)
+    {
+        *existing = recording;
+    } else {
+        log.recordings.push(recording);
+    }
+    log.recordings
+        .sort_by(|left, right| left.name.cmp(&right.name));
+
+    let temporary = out.join("events.json.tmp");
+    let mut bytes = serde_json::to_vec_pretty(&log)
+        .map_err(|error| ShotError::Verify(format!("event log serialization: {error}")))?;
+    bytes.push(b'\n');
+    fs::write(&temporary, bytes)?;
+    fs::rename(temporary, path)?;
+    Ok(())
 }
 
 fn write_gif_frame<W: Write>(
@@ -1047,5 +1301,101 @@ mod tests {
         fs::write(&output, bytes).unwrap();
         let error = verify(directory.path()).unwrap_err();
         assert!(error.to_string().contains("verification failed"));
+    }
+}
+
+#[cfg(test)]
+mod script_tests {
+    use amux_tui::fixtures::apply_step;
+
+    use super::*;
+
+    /// The text of the frame a script has reached.
+    fn screen(fixture: &Fixture) -> String {
+        let buffer =
+            render_fixture_buffer(fixture, Theme::dark(ColorMode::TrueColor)).expect("frame");
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer.cell((x, y)).expect("cell in area").symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    /// A recording is only worth keeping if each input did what the script
+    /// says it did, so the draft script is walked one step at a time and
+    /// the screen checked where it matters.
+    #[test]
+    fn the_draft_script_attaches_deletes_survives_a_takeover_and_opens_the_review() {
+        let script = draft_script();
+        let mut fixture = recording_start();
+        let mut screens = Vec::new();
+        for step in &script {
+            apply_step(&mut fixture, step);
+            screens.push(screen(&fixture));
+        }
+
+        assert!(
+            screens[3].contains("[Image #1]") && screens[3].contains("[Pasted #1"),
+            "both attachments ride one draft: {}",
+            screens[3]
+        );
+        assert!(
+            screens[4].contains("[Image #1]") && !screens[4].contains("[Pasted #1"),
+            "one backspace took only the paste: {}",
+            screens[4]
+        );
+        assert!(
+            !screens[5].contains("[Image #1]"),
+            "the ask owns the surface and the draft is hidden behind it: {}",
+            screens[5]
+        );
+        assert!(
+            screens[6].contains("[Image #1]"),
+            "the draft came back whole when the ask resolved: {}",
+            screens[6]
+        );
+        assert!(
+            !screens[7].contains("[Image #1]"),
+            "the guarded clear emptied the draft: {}",
+            screens[7]
+        );
+        assert!(
+            screens[8].contains("[Image #1]"),
+            "the yank put the draft back, token and all: {}",
+            screens[8]
+        );
+        assert!(
+            screens[11].contains("j/k rows") && screens[11].contains("v select"),
+            "the review page is open over a working agent: {}",
+            screens[11]
+        );
+    }
+
+    /// The review script has to end where the chord started: back on the
+    /// page, resumed from the token rather than sent.
+    #[test]
+    fn the_review_script_comments_leaves_and_resumes_from_the_token() {
+        let script = review_script();
+        let mut fixture = recording_start();
+        let mut screens = Vec::new();
+        for step in &script {
+            apply_step(&mut fixture, step);
+            screens.push(screen(&fixture));
+        }
+        let last = screens.len() - 1;
+        assert!(
+            screens[last - 2].contains("[Review \u{b7} 1 comment]"),
+            "`q` left the review in the draft as one token: {}",
+            screens[last - 2]
+        );
+        assert!(
+            screens[last].contains("keep a re-export for one release")
+                && screens[last].contains("j/k rows"),
+            "enter on the token reopened the page with the comment on it: {}",
+            screens[last]
+        );
     }
 }

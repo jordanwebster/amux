@@ -30,6 +30,7 @@ use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
 use viewport::{FeedViewport, apply_scroll, move_focus, toggle_focused_run};
 
+use crate::clipboard::ClipboardContent;
 use crate::composer::Composer;
 use crate::render::{FrameContext, Theme};
 use crate::view::{QuitGuard, UiAction};
@@ -552,6 +553,21 @@ pub fn handle_chat_key(
         );
     }
     action
+}
+
+/// Ctrl+V: attach whatever the clipboard holds.
+///
+/// The content is a parameter rather than read here, so the binding runs
+/// the same way in a test and in a recording as it does under a person's
+/// hands — a capture of pasting an image must not depend on what the
+/// recording machine's clipboard happened to hold.
+pub fn handle_chat_clipboard(chat: &mut ChatView, model: &Model, content: ClipboardContent) {
+    match &mut chat.inner {
+        AgentChatView::Claude(view) => claude::keys::attach_clipboard(view, model, content),
+        AgentChatView::Codex(view) => codex::keys::attach_clipboard(view, model, content),
+        // The placeholder has no draft to attach anything to.
+        AgentChatView::Unsupported(_) => {}
+    }
 }
 
 pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {

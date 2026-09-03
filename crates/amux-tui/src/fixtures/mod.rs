@@ -52,6 +52,14 @@ pub enum NamedState {
     ExplorationExpanded,
     ChatAttachmentBlocks,
     ChatMixedDraft,
+    ReviewOpen,
+    ReviewSelection,
+    ReviewCommentBox,
+    ReviewThreads,
+    ReviewFileList,
+    ReviewFolded,
+    ReviewBranchBase,
+    ChatReviewToken,
 }
 
 const ALL_STATES: &[NamedState] = &[
@@ -79,6 +87,14 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::ExplorationExpanded,
     NamedState::ChatAttachmentBlocks,
     NamedState::ChatMixedDraft,
+    NamedState::ReviewOpen,
+    NamedState::ReviewSelection,
+    NamedState::ReviewCommentBox,
+    NamedState::ReviewThreads,
+    NamedState::ReviewFileList,
+    NamedState::ReviewFolded,
+    NamedState::ReviewBranchBase,
+    NamedState::ChatReviewToken,
 ];
 
 impl NamedState {
@@ -108,6 +124,14 @@ impl NamedState {
             Self::ExplorationExpanded => "exploration-expanded",
             Self::ChatAttachmentBlocks => "chat-attachment-blocks",
             Self::ChatMixedDraft => "chat-mixed-draft",
+            Self::ReviewOpen => "review-open",
+            Self::ReviewSelection => "review-selection",
+            Self::ReviewCommentBox => "review-comment-box",
+            Self::ReviewThreads => "review-threads",
+            Self::ReviewFileList => "review-file-list",
+            Self::ReviewFolded => "review-folded",
+            Self::ReviewBranchBase => "review-branch-base",
+            Self::ChatReviewToken => "chat-review-token",
         }
     }
 
@@ -249,7 +273,316 @@ pub fn fixture(state: NamedState) -> Fixture {
             composer.paste_or_attach(&pasted_body(240));
             fixture
         }
+        NamedState::ReviewOpen => review_fixture(review_working_tree(), &[]),
+        NamedState::ReviewSelection => review_fixture(review_working_tree(), &REVIEW_SELECT),
+        NamedState::ReviewCommentBox => {
+            let mut fixture = review_fixture(review_working_tree(), &REVIEW_SELECT);
+            review_keys(&mut fixture, &[ReviewKey::Char('c')]);
+            review_type(
+                &mut fixture,
+                "the old name is public; keep a re-export for one release",
+            );
+            fixture
+        }
+        NamedState::ReviewThreads => {
+            let mut fixture = commented_review();
+            // Back to the top, then `n` to the first row anybody wrote on.
+            review_keys(&mut fixture, &[ReviewKey::Char('g'), ReviewKey::Char('n')]);
+            fixture
+        }
+        NamedState::ReviewFileList => {
+            let mut fixture = commented_review();
+            review_keys(
+                &mut fixture,
+                &[
+                    ReviewKey::Char('g'),
+                    ReviewKey::Char('f'),
+                    ReviewKey::Char('j'),
+                ],
+            );
+            fixture
+        }
+        NamedState::ReviewFolded => {
+            let mut fixture = review_fixture(review_working_tree(), &[]);
+            review_keys(&mut fixture, &[ReviewKey::Char('z')]);
+            fixture
+        }
+        NamedState::ReviewBranchBase => review_fixture(
+            amux_ui::DiffBase::Branch {
+                base: "main".to_string(),
+            },
+            &[],
+        ),
+        NamedState::ChatReviewToken => {
+            let mut fixture = review_fixture(review_working_tree(), &[]);
+            for text in ["say why the store had to go", "give it a doc comment"] {
+                review_keys(&mut fixture, &[ReviewKey::Char('j'), ReviewKey::Char('c')]);
+                review_type(&mut fixture, text);
+                review_keys(&mut fixture, &[ReviewKey::Enter]);
+            }
+            // Back to the draft, with something typed after the token: the
+            // message a review actually rides in.
+            review_keys(&mut fixture, &[ReviewKey::Char('q')]);
+            review_type(&mut fixture, " \u{2014} two things before this lands");
+            fixture
+        }
     }
+}
+
+// --- the review page --------------------------------------------------------
+
+/// A key the scripted review states press. Naming them rather than
+/// building `KeyEvent`s inline keeps a state's script readable as the
+/// sequence a person would type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReviewKey {
+    Char(char),
+    Enter,
+}
+
+impl ReviewKey {
+    fn event(self) -> KeyEvent {
+        match self {
+            Self::Char(character) => KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+            Self::Enter => KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        }
+    }
+}
+
+/// Down two rows, then a selection running over the removed row and the
+/// added one under it.
+const REVIEW_SELECT: [ReviewKey; 4] = [
+    ReviewKey::Char('j'),
+    ReviewKey::Char('j'),
+    ReviewKey::Char('v'),
+    ReviewKey::Char('j'),
+];
+
+fn review_working_tree() -> amux_ui::DiffBase {
+    amux_ui::DiffBase::WorkingTree
+}
+
+/// The chat with `<leader> r` pressed, the daemon's frozen diff delivered,
+/// and `script` typed into the page that opened over it.
+///
+/// Every state below reaches the page the way a person does — through the
+/// chord, the reducer, and the chat's own key handler — so a capture can
+/// never show a page the running program cannot produce.
+fn review_fixture(base: amux_ui::DiffBase, script: &[ReviewKey]) -> Fixture {
+    let mut fixture = recording_start();
+    press_leader(&mut fixture, 'r');
+    deliver_frozen_diff(&mut fixture, base);
+    review_keys(&mut fixture, script);
+    fixture
+}
+
+/// The page after three comments have been written on it, the way the
+/// threads, file-list and token captures need it.
+///
+/// Each comment is walked to from where the last one was saved: `j` steps
+/// rows and `]` steps files, so the script reads as the trip a person
+/// takes rather than as a set of coordinates.
+fn commented_review() -> Fixture {
+    let mut fixture = review_fixture(review_working_tree(), &[]);
+    for (walk, text) in [
+        (
+            &[
+                ReviewKey::Char('j'),
+                ReviewKey::Char('j'),
+                ReviewKey::Char('j'),
+            ][..],
+            "Say why the store had to go.",
+        ),
+        (
+            &[
+                ReviewKey::Char(']'),
+                ReviewKey::Char(']'),
+                ReviewKey::Char('j'),
+            ][..],
+            "Name the crate this belongs to.",
+        ),
+        (
+            &[ReviewKey::Char('j'), ReviewKey::Char('j')][..],
+            "Give it a doc comment.",
+        ),
+    ] {
+        review_keys(&mut fixture, walk);
+        review_keys(&mut fixture, &[ReviewKey::Char('c')]);
+        review_type(&mut fixture, text);
+        review_keys(&mut fixture, &[ReviewKey::Enter]);
+    }
+    fixture
+}
+
+// --- scripted recordings ----------------------------------------------------
+
+/// One scripted input for a recording: what a person does, not what a
+/// terminal happens to send.
+///
+/// Everything here runs through the same entry points the running program
+/// uses, so a recording can never show a screen the program cannot reach.
+#[derive(Clone, Debug)]
+pub enum ScriptStep {
+    /// One key, exactly as the terminal delivers it.
+    Key(KeyEvent),
+    /// A run of characters typed one key at a time.
+    Type(String),
+    /// A bracketed paste.
+    Paste(String),
+    /// Ctrl+V with a stated clipboard, so a recording does not depend on
+    /// what the recording machine happens to be holding.
+    Clipboard(crate::clipboard::ClipboardContent),
+    /// The daemon answers the review chord with the fixture's frozen diff.
+    FrozenDiff(amux_ui::DiffBase),
+    /// The conversation under the chat becomes another named state's: how
+    /// a recording shows an ask taking the surface over and handing it
+    /// back, without inventing a transcript of its own.
+    Conversation(NamedState),
+}
+
+impl ScriptStep {
+    /// What this step is, for the recording's event log.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Key(key) => key_label(*key),
+            Self::Type(text) => format!("type {text:?}"),
+            Self::Paste(text) => format!("paste {} lines", text.lines().count()),
+            Self::Clipboard(content) => format!("ctrl+v {}", clipboard_label(content)),
+            Self::FrozenDiff(base) => match base {
+                amux_ui::DiffBase::WorkingTree => "diff ready (working tree)".to_string(),
+                amux_ui::DiffBase::Branch { base } => format!("diff ready (branch {base})"),
+            },
+            Self::Conversation(state) => format!("conversation becomes {}", state.name()),
+        }
+    }
+}
+
+fn key_label(key: KeyEvent) -> String {
+    let mut label = String::new();
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        label.push_str("ctrl+");
+    }
+    match key.code {
+        KeyCode::Char(character) => label.push(character),
+        KeyCode::Enter => label.push_str("enter"),
+        KeyCode::Backspace => label.push_str("backspace"),
+        KeyCode::Left => label.push_str("left"),
+        KeyCode::Right => label.push_str("right"),
+        other => label.push_str(&format!("{other:?}")),
+    }
+    label
+}
+
+fn clipboard_label(content: &crate::clipboard::ClipboardContent) -> String {
+    match content {
+        crate::clipboard::ClipboardContent::Image { mime, bytes } => {
+            format!("{mime} ({} bytes)", bytes.len())
+        }
+        crate::clipboard::ClipboardContent::Path(path) => path.display().to_string(),
+        crate::clipboard::ClipboardContent::Text(text) => format!("{} chars", text.chars().count()),
+        crate::clipboard::ClipboardContent::Empty => "an empty clipboard".to_string(),
+    }
+}
+
+/// Apply one scripted step to a fixture, through the production handlers.
+pub fn apply_step(fixture: &mut Fixture, step: &ScriptStep) {
+    match step {
+        ScriptStep::Key(key) => press(fixture, *key),
+        ScriptStep::Type(text) => review_type(fixture, text),
+        ScriptStep::Paste(text) => {
+            let chat = fixture.view.chat.as_mut().expect("chat open");
+            crate::chat::handle_chat_paste(chat, &fixture.model, text);
+        }
+        ScriptStep::Clipboard(content) => {
+            let chat = fixture.view.chat.as_mut().expect("chat open");
+            crate::chat::handle_chat_clipboard(chat, &fixture.model, content.clone());
+        }
+        ScriptStep::FrozenDiff(base) => deliver_frozen_diff(fixture, base.clone()),
+        ScriptStep::Conversation(state) => {
+            fixture.model = fixture_model(*state);
+            fixture
+                .view
+                .chat
+                .as_mut()
+                .expect("chat open")
+                .reconcile(&fixture.model);
+        }
+    }
+}
+
+/// The chat a recording starts from: an idle Claude conversation with an
+/// empty draft.
+pub fn recording_start() -> Fixture {
+    claude_fixture(claude_idle_rows())
+}
+
+/// The daemon's answer to the review chord, delivered the way the runtime
+/// delivers it: the dispatched command, then its outcome, then a reconcile.
+fn deliver_frozen_diff(fixture: &mut Fixture, base: amux_ui::DiffBase) {
+    let agent = agent_id(StructuredProtocol::Claude);
+    let op = amux_ui::OpId(uuid::Uuid::from_u128(0x5eed_0000_0000_0004));
+    let command = amux_ui::Command::RequestDiff {
+        agent,
+        base: base.clone(),
+    };
+    fixture
+        .view
+        .chat
+        .as_mut()
+        .expect("chat open")
+        .note_dispatched(op, &command);
+    update(&mut fixture.model, Msg::Command { op, command });
+    update(
+        &mut fixture.model,
+        Msg::OpResult {
+            op,
+            outcome: amux_ui::OpOutcome::DiffReady {
+                response: crate::review::fixture::sample_diff_response(base),
+            },
+        },
+    );
+    fixture
+        .view
+        .chat
+        .as_mut()
+        .expect("chat open")
+        .reconcile(&fixture.model);
+}
+
+/// The model one named state stands on, for a recording that swaps the
+/// conversation under a draft.
+fn fixture_model(state: NamedState) -> Model {
+    fixture(state).model
+}
+
+fn press_leader(fixture: &mut Fixture, code: char) {
+    for key in [
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        KeyEvent::new(KeyCode::Char(code), KeyModifiers::NONE),
+    ] {
+        press(fixture, key);
+    }
+}
+
+/// Apply one scripted key through the chat's own handler.
+pub fn review_keys(fixture: &mut Fixture, script: &[ReviewKey]) {
+    for key in script {
+        press(fixture, key.event());
+    }
+}
+
+fn review_type(fixture: &mut Fixture, text: &str) {
+    for character in text.chars() {
+        press(
+            fixture,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+}
+
+fn press(fixture: &mut Fixture, key: KeyEvent) {
+    let chat = fixture.view.chat.as_mut().expect("Claude chat open");
+    handle_chat_key(chat, &fixture.model, key, (120, 40), fixture.now);
 }
 
 // --- attachments ------------------------------------------------------------

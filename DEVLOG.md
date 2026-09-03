@@ -4,6 +4,26 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Captured the review page and the attachment draft.** The
+review page's eight named states now render as committed 120x40 PNGs, and
+two scripted recordings walk the screens a person actually moves through:
+one takes the review chord, comments on a selection spanning a removed row
+and the added one under it, leaves with `q`, and resumes from the token in
+the draft; the other builds a draft carrying an image and a long paste,
+deletes one of them, lets an ask take the surface and hand it back, clears
+and un-clears the draft, and opens the review while the agent is still
+working. Every input goes through the same handlers the running program
+uses — the chat's key handler, its paste and clipboard entry points, and
+the reducer for the daemon's frozen diff — so a capture can never show a
+screen the program cannot reach. Ctrl+V's clipboard is now a parameter of a
+public entry point rather than read inside the binding, which is what makes
+a recording of pasting an image independent of what the recording machine
+happens to be holding. Each recording also leaves its last frame as a still
+in the directory's manifest, because a GIF is not something the verifier can
+check. A test walks both scripts step by step and asserts what each input
+did, and the page states are checked against the goldens the page's own
+tests produce.
+
 2026-09-03 — **Read a sent review back.** A review that has been sent leaves
 one row in the feed saying what it is, how many comments it carries and over
 how many files — all counted from the element itself, so a host that has

@@ -1,7 +1,7 @@
 //! Codex-native chat view state. It consumes only `amux_ui::codex` facts;
 //! no Claude entry, ask, phase, or document type crosses this module.
 
-mod keys;
+pub(crate) mod keys;
 pub(crate) mod render;
 
 use amux_ui::codex::{AskContext, CodexCommand, CodexPhase};

@@ -380,3 +380,52 @@ fn frozen_gallery(theme: Theme) -> Buffer {
         .expect("draw the screen that will be frozen");
     terminal.backend().buffer().clone()
 }
+
+/// The screenshot states for the review page reach it the way a person
+/// does — the chord, the daemon's frozen diff, and the chat's own key
+/// handler — while the page's goldens drive `ReviewView` directly. Both
+/// must land on the same screen, or a committed PNG would show a page the
+/// running program never produces.
+///
+/// Only the page states are compared. The page covers the whole frame, so
+/// the conversation underneath it cannot show through; the token state
+/// hands the screen back to the chat, and these fixtures and the chat
+/// goldens sit on different conversations.
+#[test]
+fn review_screenshot_states_render_the_pages_their_goldens_describe() {
+    for (state, golden) in [
+        (NamedState::ReviewOpen, "review_open"),
+        (NamedState::ReviewSelection, "review_selection"),
+        (NamedState::ReviewCommentBox, "review_comment_box"),
+        (NamedState::ReviewThreads, "review_threads"),
+        (NamedState::ReviewFileList, "review_file_list"),
+        (NamedState::ReviewFolded, "review_folded"),
+        (NamedState::ReviewBranchBase, "review_branch_base"),
+    ] {
+        let rendered = capture(state, Theme::default()).text;
+        let expected = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/golden")
+                .join(format!("{golden}.txt")),
+        )
+        .unwrap_or_else(|_| panic!("golden {golden} exists"));
+        assert_eq!(
+            rendered,
+            expected,
+            "{} diverged from {golden}",
+            state.name()
+        );
+    }
+}
+
+/// `q` hands the screen back to the chat with the review folded into one
+/// draft token, counting what is behind it, beside the words typed after
+/// it — the state the screenshot set captures a sent review from.
+#[test]
+fn the_review_token_state_shows_the_draft_the_review_rides_in() {
+    let rendered = capture(NamedState::ChatReviewToken, Theme::default()).text;
+    assert!(
+        rendered.contains("[Review \u{b7} 2 comments] \u{2014} two things before this lands"),
+        "the draft carries the token and the words after it: {rendered}"
+    );
+}

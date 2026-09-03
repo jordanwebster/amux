@@ -30,6 +30,7 @@ png = { workspace = true }
 # versions ratatui itself renders with, so the two never disagree.
 unicode-width = "0.2"
 unicode-segmentation = "1"
+uuid = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
@@ -39,6 +40,5 @@ signal-hook = { workspace = true }
 amux-tui = { path = ".", features = ["fixtures"] }
 gethostname = { workspace = true }
 tempfile = { workspace = true }
-uuid = { workspace = true }
 unicode-width = "0.2"
 vt100 = "0.15"

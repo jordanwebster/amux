@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use amux_shot::{ShotError, append_set, record_scroll, render_to_path, verify};
+use amux_shot::{
+    ShotError, append_set, record_draft, record_review, record_scroll, render_to_path, verify,
+};
 use amux_tui::fixtures::{NamedState, all_states};
 use amux_tui::{ColorMode, Theme, parse_theme_file, theme_from_file};
 use amux_ui::StructuredProtocol;
@@ -16,6 +18,7 @@ const SET_NAMES: &[&str] = &[
     "copy",
     "collapse",
     "attachments",
+    "review",
     "themes",
     "fleet",
     "all",
@@ -52,6 +55,16 @@ enum Command {
     RecordScroll {
         #[arg(value_enum)]
         agent: AgentArg,
+        #[arg(long, default_value = "target/amux-shot")]
+        out: PathBuf,
+    },
+    /// Record the trip through a review as an animated GIF.
+    RecordReview {
+        #[arg(long, default_value = "target/amux-shot")]
+        out: PathBuf,
+    },
+    /// Record the trip through a draft carrying attachments as an animated GIF.
+    RecordDraft {
         #[arg(long, default_value = "target/amux-shot")]
         out: PathBuf,
     },
@@ -238,6 +251,46 @@ const ATTACHMENTS: &[SetMember] = &[
     ),
 ];
 
+/// The review page's named states, dark and light for the two a reader
+/// judges the page's look from and dark alone for the rest: the set is
+/// about the page's shape, and doubling every state would bury it.
+const REVIEW: &[SetMember] = &[
+    member("review-open", "review-open-dark.png", ThemeSpec::Dark),
+    member("review-open", "review-open-light.png", ThemeSpec::Light),
+    member(
+        "review-selection",
+        "review-selection-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "review-comment-box",
+        "review-comment-box-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member("review-threads", "review-threads-dark.png", ThemeSpec::Dark),
+    member(
+        "review-threads",
+        "review-threads-light.png",
+        ThemeSpec::Light,
+    ),
+    member(
+        "review-file-list",
+        "review-file-list-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member("review-folded", "review-folded-dark.png", ThemeSpec::Dark),
+    member(
+        "review-branch-base",
+        "review-branch-base-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "chat-review-token",
+        "chat-review-token-dark.png",
+        ThemeSpec::Dark,
+    ),
+];
+
 const THEMES: &[SetMember] = &[
     member("claude-working", "claude-working-dark.png", ThemeSpec::Dark),
     member(
@@ -312,6 +365,26 @@ fn run(cli: Cli) -> Result<(), ShotError> {
             );
             Ok(())
         }
+        Command::RecordReview { out } => {
+            let recording = record_review(&out, Theme::dark(ColorMode::TrueColor), "dark")?;
+            println!(
+                "recorded {} frames of {} to {}",
+                recording.frames,
+                recording.name,
+                out.join(recording.gif).display()
+            );
+            Ok(())
+        }
+        Command::RecordDraft { out } => {
+            let recording = record_draft(&out, Theme::dark(ColorMode::TrueColor), "dark")?;
+            println!(
+                "recorded {} frames of {} to {}",
+                recording.frames,
+                recording.name,
+                out.join(recording.gif).display()
+            );
+            Ok(())
+        }
         Command::Verify { dir } => {
             let manifest = verify(&dir)?;
             println!(
@@ -365,6 +438,7 @@ fn set_members(name: &str) -> Result<Vec<SetMember>, ShotError> {
         "copy" => COPY,
         "collapse" => COLLAPSE,
         "attachments" => ATTACHMENTS,
+        "review" => REVIEW,
         "themes" => THEMES,
         "fleet" => FLEET,
         "all" => {
@@ -378,6 +452,7 @@ fn set_members(name: &str) -> Result<Vec<SetMember>, ShotError> {
                 COPY,
                 COLLAPSE,
                 ATTACHMENTS,
+                REVIEW,
                 THEMES,
                 FLEET,
             ] {
