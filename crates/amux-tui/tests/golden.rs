@@ -466,11 +466,7 @@ fn fleet_cloud_auth_banner() {
     msgs.push(Msg::OpResult {
         op: op(1),
         outcome: amux_ui::OpOutcome::Error {
-            error: amux_ui::OpError {
-                message: "Invalid or missing credentials".to_string(),
-                auth_required: true,
-                subscription_required: false,
-            },
+            error: amux_ui::OpError::classified("Invalid or missing credentials", true, false),
         },
     });
     let model = fold(msgs);
@@ -498,11 +494,7 @@ fn fleet_cloud_subscription_banner() {
     msgs.push(Msg::OpResult {
         op: op(1),
         outcome: amux_ui::OpOutcome::Error {
-            error: amux_ui::OpError {
-                message: "Cloud subscription required".to_string(),
-                auth_required: false,
-                subscription_required: true,
-            },
+            error: amux_ui::OpError::classified("Cloud subscription required", false, true),
         },
     });
     let model = fold(msgs);

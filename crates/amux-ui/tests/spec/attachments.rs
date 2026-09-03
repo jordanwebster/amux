@@ -6,7 +6,10 @@ use amux_artifacts::id_of;
 use amux_ui::attachments::{AttachmentIndex, AttachmentKind, Mention, MentionKind, Segment};
 use amux_ui::claude::FeedEntryKind as ClaudeEntry;
 use amux_ui::codex::FeedEntryKind as CodexEntry;
-use amux_ui::{ArtifactKind, ArtifactRef, Msg, StreamMsg, format_mention};
+use amux_ui::{
+    ArtifactKind, ArtifactRef, Command, Effect, InputPayload, Msg, OpError, OpOutcome, Recorder,
+    StreamMsg, format_mention,
+};
 use serde_json::{Value, json};
 
 use crate::harness::*;
@@ -152,6 +155,25 @@ fn assert_image_segment(index: &AttachmentIndex, content: &[Segment]) {
             comments: None,
         }
     );
+}
+
+fn draft_attachments() -> Vec<amux_ui::DraftAttachment> {
+    vec![
+        amux_ui::DraftAttachment::from_bytes(
+            ArtifactKind::Image,
+            "shot.png",
+            "image/png",
+            b"recorder must not keep these image bytes".to_vec(),
+        ),
+        amux_ui::DraftAttachment {
+            id: id_of(b"review patch"),
+            kind: ArtifactKind::Diff,
+            name: "working-tree.diff".into(),
+            mime: "text/x-diff".into(),
+            size: 12,
+            bytes: None,
+        },
+    ]
 }
 
 #[test]
@@ -330,6 +352,181 @@ fn attachments_fetched_diffs_have_an_independent_count_bound() {
     );
 }
 
+#[test]
+fn attachments_send_is_one_put_then_send_with_every_pin_and_one_echo() {
+    let attachments = draft_attachments();
+    let command = Command::SendPromptWithAttachments {
+        agent: agent_id(CLAUDE),
+        text: "Review the image and patch.".into(),
+        attachments: attachments.clone(),
+    };
+    let (model, effects) = fold_with_effects(seq([
+        chat_base(CLAUDE),
+        vec![crate::harness::command(op(13), command)],
+    ]));
+    let sends: Vec<_> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::PutThenSend {
+                op,
+                agent,
+                puts,
+                input,
+                pin,
+            } => Some((op, agent, puts, input, pin)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sends.len(), 1, "one reducer send owns puts and delivery");
+    let (effect_op, effect_agent, puts, input, pin) = sends[0];
+    assert_eq!(*effect_op, op(13));
+    assert_eq!(*effect_agent, agent_id(CLAUDE));
+    assert_eq!(puts, &attachments);
+    assert_eq!(
+        pin,
+        &attachments
+            .iter()
+            .map(|attachment| attachment.id.clone())
+            .collect::<Vec<_>>(),
+        "the existing review diff is pinned even though it has no bytes to put"
+    );
+    assert!(matches!(input, InputPayload::Claude { .. }));
+    assert_eq!(
+        claude_layer(&model, CLAUDE).pending_echoes().len(),
+        1,
+        "the provider's ordinary optimistic prompt semantics are reused"
+    );
+    let pending = model
+        .pending_ops()
+        .find(|pending| pending.op == op(13))
+        .expect("send remains pending");
+    let Command::SendPromptWithAttachments { attachments, .. } = &pending.command else {
+        panic!("pending command retains its public kind");
+    };
+    assert!(
+        attachments
+            .iter()
+            .all(|attachment| attachment.bytes.is_none()),
+        "reducer state retains metadata, never payload bytes"
+    );
+}
+
+#[test]
+fn attachments_typed_send_failure_names_the_attachment_and_withdraws_echo() {
+    let attachments = draft_attachments();
+    let missing = attachments[0].clone();
+    let model = fold(seq([
+        chat_base(CLAUDE),
+        vec![
+            crate::harness::command(
+                op(14),
+                Command::SendPromptWithAttachments {
+                    agent: agent_id(CLAUDE),
+                    text: "Inspect this.".into(),
+                    attachments,
+                },
+            ),
+            op_result(
+                op(14),
+                OpOutcome::Error {
+                    error: OpError::AttachmentMissing {
+                        id: missing.id.clone(),
+                        name: missing.name.clone(),
+                    },
+                },
+            ),
+        ],
+    ]));
+    assert!(claude_layer(&model, CLAUDE).pending_echoes().is_empty());
+    let failure = model.finished_op(op(14)).expect("typed failure retained");
+    let OpOutcome::Error {
+        error: OpError::AttachmentMissing { id, name },
+    } = &failure.outcome
+    else {
+        panic!("attachment failure stays typed");
+    };
+    assert_eq!(id, &missing.id);
+    assert_eq!(name, "shot.png");
+    assert!(failure.outcome.is_error());
+}
+
+#[test]
+fn attachments_fetched_diff_outcome_lands_in_the_requesting_layer() {
+    let id = id_of(b"fetched review patch");
+    let model = fold(seq([
+        codex_base(CODEX),
+        vec![
+            crate::harness::command(
+                op(15),
+                Command::FetchDiff {
+                    agent: agent_id(CODEX),
+                    id: id.clone(),
+                },
+            ),
+            op_result(
+                op(15),
+                OpOutcome::DiffFetched {
+                    id: id.clone(),
+                    patch: "diff --git a/a b/a\n+new\n".into(),
+                },
+            ),
+        ],
+    ]));
+    assert_eq!(
+        codex_layer(&model, CODEX).attachments().diff(&id),
+        Some("diff --git a/a b/a\n+new\n")
+    );
+}
+
+#[test]
+fn attachments_recorder_keeps_identity_and_size_but_redacts_bytes() {
+    let attachments = draft_attachments();
+    let command = Command::SendPromptWithAttachments {
+        agent: agent_id(CLAUDE),
+        text: "Inspect this.".into(),
+        attachments: attachments.clone(),
+    };
+    let msg = crate::harness::command(op(16), command);
+    let mut recorder = Recorder::new(4, &amux_ui::Model::default());
+    recorder.record(&msg);
+    let snapshot = recorder.snapshot();
+    let recorded: Value = serde_json::from_str(&snapshot.msgs[0]).expect("recorded JSON");
+    let first = &recorded["command"]["attachments"][0];
+    assert_eq!(first["id"], attachments[0].id.to_string());
+    assert_eq!(first["size"], attachments[0].size);
+    assert!(first.get("bytes").is_none());
+    assert!(
+        !snapshot.msgs[0].contains("recorder must not keep these image bytes"),
+        "payload bytes never enter the recorder line"
+    );
+    let replayed: Msg = serde_json::from_str(&snapshot.msgs[0]).expect("redacted Msg replays");
+    let Msg::Command {
+        command: Command::SendPromptWithAttachments { attachments, .. },
+        ..
+    } = replayed
+    else {
+        panic!("recorded attachment command shape");
+    };
+    assert_eq!(
+        attachments[0].id,
+        first["id"].as_str().unwrap().parse().unwrap()
+    );
+    assert_eq!(attachments[0].size, first["size"]);
+    assert!(attachments[0].bytes.is_none());
+
+    let disconnected = fold([msg]);
+    let failure = disconnected.finished_op(op(16)).expect("failed fast");
+    let Command::SendPromptWithAttachments { attachments, .. } = &failure.command else {
+        panic!("failed command shape");
+    };
+    assert!(
+        attachments
+            .iter()
+            .all(|attachment| attachment.bytes.is_none()),
+        "even a synchronous refusal keeps reducer state byte-free"
+    );
+}
+
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     let text = format!("Inspect {}", image_element());
     vec![
@@ -352,6 +549,20 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
                     CODEX,
                     10,
                     vec![attachment_row(), codex_prompt(&text)],
+                )],
+            ]),
+        ),
+        (
+            "Attachment send state is recorder-stable",
+            seq([
+                chat_base(CLAUDE),
+                vec![crate::harness::command(
+                    op(17),
+                    Command::SendPromptWithAttachments {
+                        agent: agent_id(CLAUDE),
+                        text: "Inspect this.".into(),
+                        attachments: draft_attachments(),
+                    },
                 )],
             ]),
         ),

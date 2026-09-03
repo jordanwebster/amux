@@ -387,11 +387,7 @@ impl Runtime {
                     let outcome = match client {
                         Some(client) => execute_rpc(&client, command).await,
                         None => OpOutcome::Error {
-                            error: OpError {
-                                message: NOT_CONNECTED_ERROR.to_string(),
-                                auth_required: false,
-                                subscription_required: false,
-                            },
+                            error: OpError::general(NOT_CONNECTED_ERROR),
                         },
                     };
                     let _ = tx.send(Msg::OpResult { op, outcome }).await;
@@ -409,12 +405,22 @@ impl Runtime {
                     let outcome = match client {
                         Some(client) => execute_send_input(&client, agent, input_id, payload).await,
                         None => OpOutcome::Error {
-                            error: OpError {
-                                message: NOT_CONNECTED_ERROR.to_string(),
-                                auth_required: false,
-                                subscription_required: false,
-                            },
+                            error: OpError::general(NOT_CONNECTED_ERROR),
                         },
+                    };
+                    let _ = tx.send(Msg::OpResult { op, outcome }).await;
+                });
+            }
+            Effect::PutThenSend { op, .. }
+            | Effect::FetchDiff { op, .. }
+            | Effect::OpenExternally { op, .. }
+            | Effect::Diff { op, .. } => {
+                // These operations must still resolve if a shell lacks their
+                // executor, otherwise the reducer would retain a false spinner.
+                let tx = self.msg_tx.clone();
+                tokio::spawn(async move {
+                    let outcome = OpOutcome::Error {
+                        error: OpError::general("attachment runtime effect is not available"),
                     };
                     let _ = tx.send(Msg::OpResult { op, outcome }).await;
                 });
@@ -599,19 +605,13 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
         },
         // Input commands never ride Effect::Rpc — the reducer emits
         // Effect::SendInput for them (typed input + seq guard).
-        Command::Claude(_) => OpOutcome::Error {
-            error: OpError {
-                message: "input command routed to the RPC executor".to_string(),
-                auth_required: false,
-                subscription_required: false,
-            },
-        },
-        Command::Codex(_) => OpOutcome::Error {
-            error: OpError {
-                message: "input command routed to the RPC executor".to_string(),
-                auth_required: false,
-                subscription_required: false,
-            },
+        Command::Claude(_)
+        | Command::Codex(_)
+        | Command::SendPromptWithAttachments { .. }
+        | Command::FetchDiff { .. }
+        | Command::OpenAttachment { .. }
+        | Command::RequestDiff { .. } => OpOutcome::Error {
+            error: OpError::general("input command routed to the RPC executor"),
         },
     }
 }
@@ -717,11 +717,7 @@ async fn execute_claude_input(
             }
             Err(error @ ClientError::Protocol(ProtocolError::SequenceNumberMismatch { .. })) => {
                 return OpOutcome::Error {
-                    error: OpError {
-                        message: format!("{STALE_INPUT_ERROR} ({error})"),
-                        auth_required: false,
-                        subscription_required: false,
-                    },
+                    error: OpError::general(format!("{STALE_INPUT_ERROR} ({error})")),
                 };
             }
             Err(error) => return op_error_outcome(&error),
@@ -731,11 +727,11 @@ async fn execute_claude_input(
 
 fn op_error_outcome(error: &ClientError) -> OpOutcome {
     OpOutcome::Error {
-        error: OpError {
-            message: error.to_string(),
-            auth_required: is_auth_error(error),
-            subscription_required: is_subscription_error(error),
-        },
+        error: OpError::classified(
+            error.to_string(),
+            is_auth_error(error),
+            is_subscription_error(error),
+        ),
     }
 }
 

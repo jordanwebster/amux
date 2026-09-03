@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-03 — **Added attachment operations to the UI reducer.** One
+`SendPromptWithAttachments` command now reuses the selected provider's send
+gate, encoding, and optimistic state while emitting one `PutThenSend` effect
+with every artifact id in its pin list, including already-stored review diffs.
+Fetch, open, and diff requests have typed effects and outcomes; fetched patch
+text lands in the requesting layer's bounded attachment index. Attachment
+failures are typed by missing, oversized, corrupt, and unavailable-diff cases,
+while existing transport errors retain their authentication and subscription
+classification. Draft bytes exist only on the live effect: reducer state and
+recorder JSON retain the artifact id and size but always redact the payload.
+
 2026-09-03 — **Folded attachment metadata into native chat layers.** Claude
 PTY and Codex now consume replayable `amux.attachments` rows into a per-layer,
 idempotent attachment index and split prompt and assistant text with the one

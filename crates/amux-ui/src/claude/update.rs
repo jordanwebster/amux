@@ -195,7 +195,7 @@ pub(crate) fn update_failed_command(
             });
         }
         ClaudeCommand::AnswerAsk { agent, ask, .. } => {
-            let message = error.message.clone();
+            let message = error.message();
             let ask = *ask;
             with_existing_layer(model, *agent, |layer| {
                 layer.note_ask_send_failed(ask, op, message);

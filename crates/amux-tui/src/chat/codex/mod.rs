@@ -95,7 +95,7 @@ impl View {
             && let Some(finished) = model.finished_op(pending.op)
         {
             if let OpOutcome::Error { error } = &finished.outcome {
-                self.send_failure = Some(error.message.clone());
+                self.send_failure = Some(error.message());
                 if self.composer.is_empty() {
                     self.composer.restore(&pending.text);
                 }
@@ -111,7 +111,7 @@ impl View {
                     .and_then(|layer| layer.ask_head())
                     .is_some_and(|ask| ask.request_id == pending.request_id)
             {
-                self.answer_failure = Some(error.message.clone());
+                self.answer_failure = Some(error.message());
             }
             self.pending_answer = None;
         }

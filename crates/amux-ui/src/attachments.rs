@@ -220,13 +220,15 @@ impl AttachmentIndex {
 }
 
 /// Artifact data retained by a composer until its message is sent.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DraftAttachment {
     pub id: ArtifactId,
     pub kind: ArtifactKind,
     pub name: String,
     pub mime: String,
     pub size: u64,
+    /// Live-only payload. Recorded commands retain metadata but never bytes.
+    #[serde(skip)]
     pub bytes: Option<Arc<[u8]>>,
 }
 

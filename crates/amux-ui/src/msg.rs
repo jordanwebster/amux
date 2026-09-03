@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use amux::{Agent, AgentId, HostEntry, HostId};
+use amux::{Agent, AgentId, ArtifactId, DiffBase, DiffResponse, HostEntry, HostId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -97,6 +97,27 @@ pub enum Command {
     DeleteAgent {
         agent: AgentId,
     },
+    /// One atomic chat send whose artifact puts complete before input delivery.
+    SendPromptWithAttachments {
+        agent: AgentId,
+        text: String,
+        attachments: Vec<crate::attachments::DraftAttachment>,
+    },
+    /// Fetch and retain the patch backing a sent review.
+    FetchDiff {
+        agent: AgentId,
+        id: ArtifactId,
+    },
+    /// Fetch an artifact and hand its verified local path to the OS viewer.
+    OpenAttachment {
+        agent: AgentId,
+        id: ArtifactId,
+    },
+    /// Freeze the agent's current repository diff for review.
+    RequestDiff {
+        agent: AgentId,
+        base: DiffBase,
+    },
     /// Claude-native writes. Other agents add sibling typed command arms;
     /// their asymmetry is preserved rather than normalized.
     Claude(crate::claude::ClaudeCommand),
@@ -177,6 +198,16 @@ pub enum OpOutcome {
     /// is not confirmation: prompts confirm by echo reconciliation, ask
     /// answers by the transcript's resolution fact (C5).
     InputSent,
+    DiffFetched {
+        id: ArtifactId,
+        patch: String,
+    },
+    AttachmentOpened {
+        id: ArtifactId,
+    },
+    DiffReady {
+        response: DiffResponse,
+    },
     Error {
         error: OpError,
     },
@@ -190,14 +221,86 @@ impl OpOutcome {
 
 /// A failed operation, as shown in the status line.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpError {
-    pub message: String,
-    /// True when the failure was an authentication failure
-    /// (`ProtocolError::InvalidCredentials`): the fleet degrades to the
-    /// cloud-auth banner instead of a dead screen.
-    pub auth_required: bool,
-    /// True when cloud access requires an active subscription.
-    pub subscription_required: bool,
+#[serde(tag = "error", rename_all = "snake_case")]
+pub enum OpError {
+    /// An existing transport, protocol, or local validation failure.
+    General {
+        message: String,
+        /// Authentication failures raise the fleet's cloud-auth banner.
+        auth_required: bool,
+        /// Payment failures raise the cloud-subscription banner.
+        subscription_required: bool,
+    },
+    AttachmentMissing {
+        id: ArtifactId,
+        name: String,
+    },
+    AttachmentTooLarge {
+        name: String,
+        size: u64,
+        max: u64,
+    },
+    ArtifactCorrupt {
+        id: ArtifactId,
+    },
+    DiffUnavailable {
+        message: String,
+    },
+}
+
+impl OpError {
+    pub fn general(message: impl Into<String>) -> Self {
+        Self::General {
+            message: message.into(),
+            auth_required: false,
+            subscription_required: false,
+        }
+    }
+
+    pub fn classified(
+        message: impl Into<String>,
+        auth_required: bool,
+        subscription_required: bool,
+    ) -> Self {
+        Self::General {
+            message: message.into(),
+            auth_required,
+            subscription_required,
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            Self::General { message, .. } | Self::DiffUnavailable { message } => message.clone(),
+            Self::AttachmentMissing { id, name } => {
+                format!("attachment {name} is missing ({id})")
+            }
+            Self::AttachmentTooLarge { name, size, max } => {
+                format!("attachment {name} is too large ({size} bytes; maximum {max})")
+            }
+            Self::ArtifactCorrupt { id } => format!("attachment data is corrupt ({id})"),
+        }
+    }
+
+    pub fn auth_required(&self) -> bool {
+        matches!(
+            self,
+            Self::General {
+                auth_required: true,
+                ..
+            }
+        )
+    }
+
+    pub fn subscription_required(&self) -> bool {
+        matches!(
+            self,
+            Self::General {
+                subscription_required: true,
+                ..
+            }
+        )
+    }
 }
 
 /// Per-agent session-stream lifecycle and content.

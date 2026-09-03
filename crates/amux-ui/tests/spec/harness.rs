@@ -183,11 +183,7 @@ pub fn op_failed(op: OpId, message: &str) -> Msg {
     op_result(
         op,
         OpOutcome::Error {
-            error: amux_ui::OpError {
-                message: message.to_string(),
-                auth_required: false,
-                subscription_required: false,
-            },
+            error: amux_ui::OpError::general(message),
         },
     )
 }
@@ -196,11 +192,7 @@ pub fn op_failed_auth(op: OpId) -> Msg {
     op_result(
         op,
         OpOutcome::Error {
-            error: amux_ui::OpError {
-                message: "Invalid or missing credentials".to_string(),
-                auth_required: true,
-                subscription_required: false,
-            },
+            error: amux_ui::OpError::classified("Invalid or missing credentials", true, false),
         },
     )
 }
@@ -209,11 +201,7 @@ pub fn op_failed_subscription(op: OpId) -> Msg {
     op_result(
         op,
         OpOutcome::Error {
-            error: amux_ui::OpError {
-                message: "Cloud subscription required".to_string(),
-                auth_required: false,
-                subscription_required: true,
-            },
+            error: amux_ui::OpError::classified("Cloud subscription required", false, true),
         },
     )
 }

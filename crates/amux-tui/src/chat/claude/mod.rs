@@ -160,7 +160,7 @@ impl View {
             && let Some(finished) = model.finished_op(pending.op)
         {
             if let OpOutcome::Error { error } = &finished.outcome {
-                self.send_failure = Some(error.message.clone());
+                self.send_failure = Some(error.message());
                 if self.composer.is_empty() {
                     self.composer.restore(&pending.text);
                 }
@@ -180,7 +180,7 @@ impl View {
                         head.id == pending.ask && matches!(head.state, AskState::Pending)
                     });
                 if still_pending {
-                    self.ask_failure = Some(error.message.clone());
+                    self.ask_failure = Some(error.message());
                     // An answer submitted FROM the reader that was refused
                     // synchronously must state its failure somewhere
                     // visible: the reader closes to the docked panel,

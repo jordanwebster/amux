@@ -3,7 +3,7 @@
 //! shell executes them against `amux::Client` and feeds results back as Msgs.
 //! Replay folds Msgs but never executes Effects.
 
-use amux::{AgentId, claude_io};
+use amux::{AgentId, ArtifactId, DiffBase, claude_io};
 use serde::{Deserialize, Serialize};
 
 use crate::codex::CodexInput;
@@ -57,6 +57,32 @@ pub enum Effect {
         /// Derived deterministically from `op`; retries preserve it.
         input_id: Vec<u8>,
         payload: InputPayload,
+    },
+    /// Put draft bytes, then send one input carrying the complete pin list.
+    PutThenSend {
+        op: OpId,
+        agent: AgentId,
+        puts: Vec<crate::attachments::DraftAttachment>,
+        input: InputPayload,
+        pin: Vec<ArtifactId>,
+    },
+    /// Fetch a review patch for the bounded layer index.
+    FetchDiff {
+        op: OpId,
+        agent: AgentId,
+        id: ArtifactId,
+    },
+    /// Fetch and open an artifact through the viewing-host cache.
+    OpenExternally {
+        op: OpId,
+        agent: AgentId,
+        id: ArtifactId,
+    },
+    /// Ask the agent's host to freeze a repository diff.
+    Diff {
+        op: OpId,
+        agent: AgentId,
+        base: DiffBase,
     },
     /// A reducer tripwire observed an impossible state: report the recorder
     /// ring for diagnosis. The pure reducer never writes files — it requests.

@@ -74,7 +74,7 @@ fn the_layer(model: &amux_ui::Model) -> &amux_ui::claude::ClaudeLayer {
 fn failure_message(model: &amux_ui::Model, op_n: u8) -> String {
     let finished = model.finished_op(op(op_n)).expect("op finished");
     match &finished.outcome {
-        OpOutcome::Error { error } => error.message.clone(),
+        OpOutcome::Error { error } => error.message(),
         other => panic!("expected an error outcome, got {other:?}"),
     }
 }

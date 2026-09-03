@@ -112,7 +112,7 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
 
     if !model.is_connected() {
         // Commands fail fast while disconnected — no offline queue.
-        return refuse(model, op, seq, command, NOT_CONNECTED_ERROR);
+        return refuse(model, op, seq, redact_command(command), NOT_CONNECTED_ERROR);
     }
 
     match command {
@@ -127,9 +127,149 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
             );
             vec![Effect::Rpc { op, command }]
         }
+        Command::SendPromptWithAttachments {
+            agent,
+            text,
+            attachments,
+        } => update_attachment_prompt(model, op, seq, agent, text, attachments),
+        Command::FetchDiff { agent, id } => dispatch_operation(
+            model,
+            op,
+            seq,
+            Command::FetchDiff {
+                agent,
+                id: id.clone(),
+            },
+            Effect::FetchDiff { op, agent, id },
+        ),
+        Command::OpenAttachment { agent, id } => dispatch_operation(
+            model,
+            op,
+            seq,
+            Command::OpenAttachment {
+                agent,
+                id: id.clone(),
+            },
+            Effect::OpenExternally { op, agent, id },
+        ),
+        Command::RequestDiff { agent, base } => dispatch_operation(
+            model,
+            op,
+            seq,
+            Command::RequestDiff {
+                agent,
+                base: base.clone(),
+            },
+            Effect::Diff { op, agent, base },
+        ),
         Command::Claude(command) => crate::claude::update::update_command(model, op, seq, command),
         Command::Codex(command) => crate::codex::update::update_command(model, op, seq, command),
     }
+}
+
+fn redact_command(mut command: Command) -> Command {
+    if let Command::SendPromptWithAttachments { attachments, .. } = &mut command {
+        for attachment in attachments {
+            attachment.bytes = None;
+        }
+    }
+    command
+}
+
+fn dispatch_operation(
+    model: &mut Model,
+    op: OpId,
+    seq: u64,
+    command: Command,
+    effect: Effect,
+) -> Vec<Effect> {
+    model.pending_ops.insert(op, PendingOp { op, seq, command });
+    vec![effect]
+}
+
+fn update_attachment_prompt(
+    model: &mut Model,
+    op: OpId,
+    seq: u64,
+    agent: amux::AgentId,
+    text: String,
+    attachments: Vec<crate::attachments::DraftAttachment>,
+) -> Vec<Effect> {
+    let state_attachments = attachments
+        .iter()
+        .cloned()
+        .map(|mut attachment| {
+            attachment.bytes = None;
+            attachment
+        })
+        .collect();
+    let command = Command::SendPromptWithAttachments {
+        agent,
+        text: text.clone(),
+        attachments: state_attachments,
+    };
+    let kind = model.agents.get(&agent).map(|card| card.agent.kind);
+    let native = match kind {
+        Some(amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        }) => crate::claude::update::update_command(
+            model,
+            op,
+            seq,
+            crate::claude::ClaudeCommand::SendPrompt { agent, text },
+        ),
+        Some(amux::AgentKind::Codex) => crate::codex::update::update_command(
+            model,
+            op,
+            seq,
+            crate::codex::CodexCommand::Prompt { agent, text },
+        ),
+        Some(amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Sdk,
+        })
+        | Some(amux::AgentKind::TestAgent)
+        | None => {
+            return refuse(
+                model,
+                op,
+                seq,
+                command,
+                "chat input unavailable for this agent",
+            );
+        }
+    };
+
+    if let Some(pending) = model.pending_ops.get_mut(&op) {
+        pending.command = command.clone();
+    }
+    if let Some(finished) = model
+        .finished_ops
+        .iter_mut()
+        .rev()
+        .find(|finished| finished.op == op)
+    {
+        finished.command = command;
+    }
+
+    let pin: Vec<amux::ArtifactId> = attachments
+        .iter()
+        .map(|attachment| attachment.id.clone())
+        .collect();
+    native
+        .into_iter()
+        .map(|effect| match effect {
+            Effect::SendInput {
+                op, agent, payload, ..
+            } => Effect::PutThenSend {
+                op,
+                agent,
+                puts: attachments.clone(),
+                input: payload,
+                pin: pin.clone(),
+            },
+            other => other,
+        })
+        .collect()
 }
 
 /// A synchronous command refusal: the outcome is finished state
@@ -149,11 +289,7 @@ pub(crate) fn refuse(
             seq,
             command,
             outcome: OpOutcome::Error {
-                error: OpError {
-                    message: message.to_string(),
-                    auth_required: false,
-                    subscription_required: false,
-                },
+                error: OpError::general(message),
             },
         },
     );
@@ -186,12 +322,12 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
         return Vec::new();
     };
     if let OpOutcome::Error { error } = &outcome
-        && error.auth_required
+        && error.auth_required()
     {
         model.cloud_auth_required = true;
     }
     if let OpOutcome::Error { error } = &outcome
-        && error.subscription_required
+        && error.subscription_required()
     {
         model.cloud_subscription_required = true;
     }
@@ -210,6 +346,50 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
         && let Command::Codex(command) = &pending.command
     {
         crate::codex::update::update_failed_command(model, op, command, error)
+    }
+    if let OpOutcome::Error { error } = &outcome
+        && let Command::SendPromptWithAttachments { agent, text, .. } = &pending.command
+    {
+        match model.agents.get(agent).map(|card| &card.agent.kind) {
+            Some(amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            }) => crate::claude::update::update_failed_command(
+                model,
+                op,
+                &crate::claude::ClaudeCommand::SendPrompt {
+                    agent: *agent,
+                    text: text.clone(),
+                },
+                error,
+            ),
+            Some(amux::AgentKind::Codex) => crate::codex::update::update_failed_command(
+                model,
+                op,
+                &crate::codex::CodexCommand::Prompt {
+                    agent: *agent,
+                    text: text.clone(),
+                },
+                error,
+            ),
+            _ => {}
+        }
+    }
+    if let OpOutcome::DiffFetched { id, patch } = &outcome
+        && let Command::FetchDiff { agent, .. } = &pending.command
+    {
+        with_layer(model, *agent, |layer| match layer {
+            AgentLayer::Claude(layer) => {
+                layer
+                    .attachments_mut()
+                    .insert_diff(id.clone(), patch.clone());
+            }
+            AgentLayer::Codex(layer) => {
+                layer
+                    .attachments_mut()
+                    .insert_diff(id.clone(), patch.clone());
+            }
+            AgentLayer::ClaudeSdk(_) => {}
+        });
     }
     // Entity payloads riding on the outcome resolve the op only —
     // subscriptions are the sole writer of entity state.

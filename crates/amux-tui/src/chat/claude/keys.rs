@@ -1176,11 +1176,7 @@ mod tests {
             vec![Msg::OpResult {
                 op,
                 outcome: amux_ui::OpOutcome::Error {
-                    error: amux_ui::OpError {
-                        message: "input raced the session".to_string(),
-                        auth_required: false,
-                        subscription_required: false,
-                    },
+                    error: amux_ui::OpError::general("input raced the session"),
                 },
             }],
         );
@@ -1211,11 +1207,7 @@ mod tests {
             vec![Msg::OpResult {
                 op,
                 outcome: amux_ui::OpOutcome::Error {
-                    error: amux_ui::OpError {
-                        message: "transport lost".to_string(),
-                        auth_required: false,
-                        subscription_required: false,
-                    },
+                    error: amux_ui::OpError::general("transport lost"),
                 },
             }],
         );

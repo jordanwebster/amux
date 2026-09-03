@@ -860,11 +860,9 @@ fn chat_send_failure() {
     msgs.push(Msg::OpResult {
         op: op(1),
         outcome: amux_ui::OpOutcome::Error {
-            error: amux_ui::OpError {
-                message: "input raced the session — it moved on before the keys landed".to_string(),
-                auth_required: false,
-                subscription_required: false,
-            },
+            error: amux_ui::OpError::general(
+                "input raced the session — it moved on before the keys landed",
+            ),
         },
     });
     let model = fold(msgs);
@@ -1453,11 +1451,9 @@ fn chat_ask_send_failed() {
     msgs.push(Msg::OpResult {
         op: op(2),
         outcome: amux_ui::OpOutcome::Error {
-            error: amux_ui::OpError {
-                message: "input raced the session — it moved on before the keys landed".to_string(),
-                auth_required: false,
-                subscription_required: false,
-            },
+            error: amux_ui::OpError::general(
+                "input raced the session — it moved on before the keys landed",
+            ),
         },
     });
     let model = fold(msgs);

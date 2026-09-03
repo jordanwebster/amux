@@ -93,7 +93,7 @@ fn failed_op_clears_pending_and_carries_error() {
     let OpOutcome::Error { error } = &failure.outcome else {
         panic!("expected error outcome");
     };
-    assert_eq!(error.message, "not connected — daemon unreachable");
+    assert_eq!(error.message(), "not connected — daemon unreachable");
 }
 
 /// Commands dispatched while disconnected fail fast with a finished-op
@@ -107,7 +107,7 @@ fn commands_fail_fast_while_disconnected() {
     let OpOutcome::Error { error } = &failure.outcome else {
         panic!("expected error outcome");
     };
-    assert_eq!(error.message, NOT_CONNECTED_ERROR);
+    assert_eq!(error.message(), NOT_CONNECTED_ERROR);
 }
 
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
