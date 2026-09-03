@@ -48,6 +48,7 @@ pub(crate) struct ArtifactOwners {
 impl ArtifactOwners {
     /// Opens every artifact owner already present below the daemon's data directory.
     pub(crate) fn open(data_dir: PathBuf, clock: Arc<dyn Clock>) -> Result<Self, StoreError> {
+        let data_dir = fs::canonicalize(data_dir)?;
         let mut owners = HashMap::new();
         let agents_dir = data_dir.join("agents");
         match fs::read_dir(&agents_dir) {

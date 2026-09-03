@@ -135,11 +135,7 @@ impl ClaudePtyBackend {
         backend.args = sanitize_resume_args(backend.args);
         backend.name_source = name_source;
         backend.created_at = created_at;
-        backend.artifact_root = deps
-            .data_dir
-            .join("agents")
-            .join(req.agent_id.to_string())
-            .join("artifacts");
+        backend.artifact_root = deps.artifact_root(req.agent_id);
         backend
             .runtime
             .lock()
@@ -190,6 +186,11 @@ impl ClaudePtyBackend {
     pub(in crate::agents) fn with_artifact_root(mut self, artifact_root: PathBuf) -> Self {
         self.artifact_root = artifact_root;
         self
+    }
+
+    #[cfg(test)]
+    pub(in crate::agents) fn permissions_allow_for_tests(&self) -> Result<Value> {
+        Ok(self.launch()?.settings.into_value()["permissions"]["allow"].clone())
     }
 
     fn new_readonly(agent_id: Uuid, working_dir: PathBuf) -> Self {
@@ -1349,7 +1350,8 @@ mod tests {
             data_dir.path().join("codex.sock"),
             crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
             user_dir.clone(),
-        );
+        )
+        .unwrap();
         let sources = KeymapSources {
             baked: BAKED_KEYMAPS,
             user_dir: Some(deps.claude_user_keymap_dir.clone()),

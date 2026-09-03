@@ -299,18 +299,18 @@ impl AgentDeps {
         codex_private_socket: std::path::PathBuf,
         mcp_launch_route: McpLaunchRoute,
         claude_user_keymap_dir: std::path::PathBuf,
-    ) -> Self {
+    ) -> io::Result<Self> {
         #[cfg(not(unix))]
         let _ = codex_private_socket;
-        Self {
-            data_dir,
+        Ok(Self {
+            data_dir: std::fs::canonicalize(data_dir)?,
             runtime_dir,
             claude_user_keymap_dir,
             claude_version_cache: ClaudeVersionCache::default(),
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
             mcp_launch_route,
-        }
+        })
     }
 
     /// Finish the daemon's one Claude version probe before taking the registry
@@ -320,7 +320,7 @@ impl AgentDeps {
         self
     }
 
-    fn artifact_root(&self, agent_id: Uuid) -> PathBuf {
+    pub(crate) fn artifact_root(&self, agent_id: Uuid) -> PathBuf {
         self.data_dir
             .join("agents")
             .join(agent_id.to_string())
@@ -638,6 +638,68 @@ mod tests {
         assert_eq!(route.config_path(), None);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_data_dir_uses_owner_root_for_managed_claude_permissions() {
+        let directory = tempfile::tempdir().unwrap();
+        let canonical_data_dir = directory.path().join("canonical-data");
+        let linked_data_dir = directory.path().join("linked-data");
+        std::fs::create_dir(&canonical_data_dir).unwrap();
+        std::os::unix::fs::symlink(&canonical_data_dir, &linked_data_dir).unwrap();
+
+        let agent_id = Uuid::new_v4();
+        let owners = crate::agents::ArtifactOwners::open(
+            linked_data_dir.clone(),
+            Arc::new(amux_artifacts::SystemClock),
+        )
+        .unwrap();
+        let owner = owners.owner(agent_id).unwrap();
+        let artifact = owner
+            .put(
+                amux_artifacts::ArtifactKind::Image,
+                "screen.png",
+                "image/png",
+                b"image bytes",
+            )
+            .unwrap();
+        assert!(owner.path_of(&artifact.id).starts_with(owner.root()));
+
+        let deps = AgentDeps::new(
+            linked_data_dir,
+            directory.path().join("runtime"),
+            directory.path().join("codex.sock"),
+            mcp_launch_route_for_tests(Uuid::new_v4()),
+            directory.path().join("keymaps"),
+        )
+        .unwrap();
+        let request = |driver| CreateAgentRequest {
+            agent_id,
+            host_id: None,
+            name: Some("attachments".to_string()),
+            agent_type: AgentType::Claude { driver },
+            working_dir: directory.path().to_path_buf(),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        };
+        let expected = serde_json::json!([crate::agents::artifact_read_rule(owner.root())]);
+
+        let pty = ClaudeSession::new(
+            &request(ClaudeDriver::Pty),
+            deps.runtime_dir.clone(),
+            deps.claude_version_cache.clone(),
+            deps.mcp_launch_route.clone(),
+            deps.claude_user_keymap_dir.clone(),
+        )
+        .with_artifact_root(deps.artifact_root(agent_id));
+        assert_eq!(pty.permissions_allow_for_tests().unwrap(), expected);
+
+        let sdk = ClaudeSdkBackend::new(&request(ClaudeDriver::Sdk), deps.mcp_launch_route.clone())
+            .with_artifact_root(deps.artifact_root(agent_id));
+        assert_eq!(sdk.permissions_allow_for_tests().unwrap(), expected);
+    }
+
     #[tokio::test]
     async fn test_agent_refuses_structured_protocols() {
         let session = TestAgentSession::echo_for_tests(Uuid::new_v4(), None);
@@ -686,7 +748,8 @@ mod tests {
             std::env::temp_dir().join("amux-test-codex.sock"),
             mcp_launch_route_for_tests(Uuid::new_v4()),
             std::env::temp_dir().join("amux-test-keymaps"),
-        );
+        )
+        .unwrap();
         let session = agent_from_suspended(sa, &deps);
 
         assert_eq!(
@@ -730,7 +793,8 @@ mod tests {
             std::env::temp_dir().join("amux-test-codex.sock"),
             mcp_launch_route_for_tests(Uuid::new_v4()),
             std::env::temp_dir().join("amux-test-keymaps"),
-        );
+        )
+        .unwrap();
 
         let session = agent_from_suspended(suspended, &deps);
         let restored = session.suspended_state().unwrap();

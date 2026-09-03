@@ -13,7 +13,10 @@ Claude SDK prompts gain native base64 image blocks, and Codex turns gain local
 image items. Structured session subscriptions replay all pinned refs directly
 after opening so another host can rebuild its attachment index before retained
 rows. Managed Claude PTY and SDK launches also append a Read allow rule for the
-agent's artifact directory after user settings.
+agent's artifact directory after user settings. The daemon canonicalizes its
+state root before deriving both that rule and the materialized path, so
+symlinked data directories cannot turn an approved read into a permission
+prompt.
 
 2026-09-03 — **Wired artifact ownership into daemon services.** Daemon startup
 now opens every existing per-agent artifact index and retains one owner per

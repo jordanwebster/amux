@@ -164,6 +164,14 @@ impl ClaudeSdkBackend {
         self
     }
 
+    #[cfg(test)]
+    pub(in crate::agents) fn permissions_allow_for_tests(&self) -> Result<Value> {
+        let Some(SettingsConfig::Inline(settings)) = self.query_options()?.settings else {
+            return Err(anyhow!("managed SDK settings must be inline"));
+        };
+        Ok(settings["permissions"]["allow"].clone())
+    }
+
     fn input_target(&self) -> ClaudeSdkInputTarget {
         ClaudeSdkInputTarget {
             runtime: self.runtime.clone(),

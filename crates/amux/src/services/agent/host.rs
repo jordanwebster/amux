@@ -78,7 +78,7 @@ impl PtyAgentHost {
             codex_private_socket_path(&server_socket_path)?,
             route,
             claude_user_keymap_dir,
-        );
+        )?;
         let state = Arc::new(RwLock::new(AgentServiceState::new(deps)));
         let (event_tx, event_rx) = mpsc::channel(256);
         spawn_session_event_loop(state.clone(), event_rx, host_id);
