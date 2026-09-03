@@ -1,0 +1,91 @@
+{
+  "agent_count": 2,
+  "config": {
+    "cloud_url": "https://amux.sh",
+    "data_dir": "<MACHINE_PATH>",
+    "enable_cloud_mode": false,
+    "host_name": "amux_debugging_aed4fabf",
+    "keybinds": {
+      "leader": "ctrl+a"
+    },
+    "prevent_idle_sleep": false,
+    "socket_path": "<MACHINE_PATH>",
+    "state_path": "<MACHINE_PATH>",
+    "ui": {
+      "color": "auto",
+      "default_open_mode": "raw",
+      "theme": "dark"
+    }
+  },
+  "host_count": 0,
+  "is_cloud_server": false,
+  "local_host": {
+    "id": "864028b0-6c13-4ae2-9cff-d0784765a8bd",
+    "name": "amux_debugging_aed4fabf",
+    "version": "0.6.0"
+  },
+  "peer_link_count": 0,
+  "remote_agent_count": 0,
+  "route_count": 0,
+  "use_cloud_mode": false,
+  "user_count": 1,
+  "users": [
+    {
+      "agent_count": 2,
+      "agents": [
+        {
+          "args": [],
+          "command": "claude",
+          "created_at": "2026-09-03T03:58:20.807232Z",
+          "host_id": "864028b0-6c13-4ae2-9cff-d0784765a8bd",
+          "host_name": "amux_debugging_aed4fabf",
+          "id": "83ab0268-182e-4c56-b5f6-31a83619d97a",
+          "kind": {
+            "driver": "pty",
+            "kind": "claude"
+          },
+          "location": "local",
+          "name": "live-claude",
+          "readonly": false,
+          "session": {
+            "has_messaging_credentials": true,
+            "has_pty": true,
+            "kind": "claude",
+            "readonly": false,
+            "session_id": "a62a5f0c-149d-4ea5-9832-99140395e806",
+            "structured_seq": 0
+          },
+          "working_dir": "<MACHINE_PATH>"
+        },
+        {
+          "args": [],
+          "command": "test-agent",
+          "created_at": "2026-09-02T23:29:20.260237Z",
+          "host_id": "864028b0-6c13-4ae2-9cff-d0784765a8bd",
+          "host_name": "amux_debugging_aed4fabf",
+          "id": "37e20043-7250-4cde-8fab-85668704f4de",
+          "kind": {
+            "kind": "test_agent"
+          },
+          "location": "local",
+          "name": "live-qa",
+          "readonly": false,
+          "session": {
+            "has_pty": true,
+            "has_structured_log": true,
+            "kind": "test_agent"
+          },
+          "working_dir": "<MACHINE_PATH>"
+        }
+      ],
+      "host_count": 0,
+      "hosts": [],
+      "peer_link_count": 0,
+      "peer_links": [],
+      "remote_agent_count": 0,
+      "route_count": 0,
+      "routes": [],
+      "user_id": "<REDACTED_IDENTIFIER>"
+    }
+  ]
+}

@@ -1,0 +1,471 @@
+2026-08-24T17:21:23.729226Z  INFO amux::services::agent::lifecycle: agent created agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=Some("mcp-dedup") agents=3
+2026-08-24T17:21:23.729328Z DEBUG amux::services::agent::lifecycle: session created agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d agent_type=Codex { model: None, approval_policy: None, sandbox_policy: None, resume_thread_id: None } args=[]
+2026-08-24T17:21:25.540909Z  INFO amux::services::agent::host: agent message delivered envelope_id=4f25e463-c39a-49ec-9cf9-aeee624be4c3 recipient_agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d carrier="inject_started"
+2026-08-24T17:21:33.914141Z DEBUG amux::hooks: received Claude hook
+2026-08-24T17:21:33.915000Z DEBUG amux::services::agent::host: received Claude hook event agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc external=false
+2026-08-24T17:21:33.915132Z DEBUG amux::agents::claude::session::hooks: structured hook agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc hook="hook.stop"
+2026-08-24T17:22:48.218687Z  INFO amux::session_client: leader chord
+2026-08-24T17:23:02.592567Z  INFO amux::session_client: subscribed to raw session agent=Id(bcd4161d-1d02-4b75-986d-f61ffaab11fc)
+2026-08-24T17:23:06.746488Z  INFO amux::session_client: leader chord
+2026-08-24T17:23:17.024280Z  INFO session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-24T17:23:17.030708Z DEBUG amux::agents::pty: pty resized cols=181 rows=48
+2026-08-24T17:23:17.031284Z  INFO amux::session_client: subscribed to raw session agent=Id(309fa5ad-5af0-4309-a583-8b1a8611da4d)
+2026-08-24T17:23:37.311503Z DEBUG amux::hooks: received Claude hook
+2026-08-24T17:23:37.312443Z DEBUG amux::services::agent::host: received Claude hook event agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc external=false
+2026-08-24T17:23:37.312610Z DEBUG amux::agents::claude::session::hooks: structured hook agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc hook="hook.stop"
+2026-08-24T17:23:41.959685Z  INFO amux::session_client: leader chord
+2026-08-24T17:23:41.960105Z DEBUG session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: pty writer ended
+2026-08-24T17:23:41.968048Z DEBUG session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: pty reader ended
+2026-08-24T17:23:41.968073Z  INFO session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-24T17:24:00.018119Z  INFO amux::session_client: subscribed to raw session agent=Id(bcd4161d-1d02-4b75-986d-f61ffaab11fc)
+2026-08-24T17:24:37.316901Z DEBUG amux::hooks: received Claude hook
+2026-08-24T17:24:37.317613Z DEBUG amux::services::agent::host: received Claude hook event agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc external=false
+2026-08-24T17:24:37.317689Z DEBUG amux::agents::claude::session::hooks: structured hook agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc hook="hook.notification"
+2026-08-24T17:25:05.129308Z DEBUG amux::hooks: received Claude hook
+2026-08-24T17:25:05.130115Z DEBUG amux::services::agent::host: received Claude hook event agent_id=26ac9d5f-4101-4171-a9cb-9a025df0f666 external=true
+2026-08-24T17:25:05.130183Z DEBUG amux::agents::claude::session::hooks: session started agent_id=26ac9d5f-4101-4171-a9cb-9a025df0f666 session_id=26ac9d5f-4101-4171-a9cb-9a025df0f666 transcript_path="<MACHINE_PATH>"
+2026-08-24T17:25:05.130239Z  INFO amux::services::agent::host: created readonly session from external hook agent_id=26ac9d5f-4101-4171-a9cb-9a025df0f666
+2026-08-24T17:25:14.478839Z DEBUG amux::hooks: received Claude hook
+2026-08-24T17:25:14.479779Z DEBUG amux::services::agent::host: received Claude hook event agent_id=26ac9d5f-4101-4171-a9cb-9a025df0f666 external=true
+2026-08-24T17:25:14.479890Z DEBUG amux::agents::claude::session::hooks: structured hook agent_id=26ac9d5f-4101-4171-a9cb-9a025df0f666 hook="hook.stop"
+2026-08-24T17:25:14.592481Z DEBUG amux::hooks: received Claude hook
+2026-08-24T17:25:14.593275Z DEBUG amux::services::agent::host: received Claude hook event agent_id=26ac9d5f-4101-4171-a9cb-9a025df0f666 external=true
+2026-08-24T17:25:14.593337Z DEBUG amux::agents::claude::session::hooks: session ended agent_id=26ac9d5f-4101-4171-a9cb-9a025df0f666
+2026-08-24T17:25:14.593355Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=26ac9d5f-4101-4171-a9cb-9a025df0f666 name=None remaining=3
+2026-08-24T17:25:14.593368Z  INFO amux::agents::claude::session::core: shutting down claude session agent_id=26ac9d5f-4101-4171-a9cb-9a025df0f666
+2026-08-24T17:45:35.058505Z DEBUG amux::init: running init explicit=false reset=false
+2026-08-24T17:45:36.511443Z  INFO amux::client_common: starting server cloud=false
+2026-08-24T17:45:36.523948Z  INFO amux::server: listening on local ClientService path=<MACHINE_PATH>
+2026-08-24T17:45:36.617950Z  INFO amux::session_client: creating agent agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 name=Some("managed-manual")
+2026-08-24T17:45:36.730246Z  INFO session{agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 command=claude}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-24T17:45:36.732924Z  INFO amux::services::agent::lifecycle: agent created agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 host_id=1a210726-9fd1-495f-a84d-5c888a76f1ca name=Some("managed-manual") agents=1
+2026-08-24T17:45:36.733278Z DEBUG amux::services::agent::lifecycle: session created agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 agent_type=Claude args=["--mcp-config", "<MACHINE_PATH>", "--allowedTools=mcp__amux_probe_a__tool_a", "--settings", "<MACHINE_PATH>", "--permission-mode", "dontAsk", "-p", "--output-format", "stream-json", "--verbose", "--include-hook-events", "--no-session-persistence", "Call mcp__amux_probe_a__tool_a, then call mcp__amux__agents. Do not call any other tools. Report the probe output and the number of agents returned."]
+2026-08-24T17:45:36.734302Z  INFO amux::session_client: subscribed to raw session agent=Id(bdf53bbe-be7f-4195-b504-f971575bd2b6)
+2026-08-24T17:45:37.194313Z DEBUG amux::hooks: received Claude hook
+2026-08-24T17:45:37.195287Z DEBUG amux::services::agent::host: received Claude hook event agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 external=false
+2026-08-24T17:45:37.195349Z  WARN amux::services::agent::host: hook target not found agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6
+2026-08-24T17:45:37.195675Z DEBUG amux::hooks: server not running or hook delivery failed error=No agent found
+2026-08-24T17:45:51.686498Z DEBUG amux::hooks: received Claude hook
+2026-08-24T17:45:51.687240Z DEBUG amux::services::agent::host: received Claude hook event agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 external=false
+2026-08-24T17:45:51.687273Z  WARN amux::services::agent::host: hook target not found agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6
+2026-08-24T17:45:51.687535Z DEBUG amux::hooks: server not running or hook delivery failed error=No agent found
+2026-08-24T17:45:51.782557Z DEBUG amux::hooks: received Claude hook
+2026-08-24T17:45:51.783529Z DEBUG amux::services::agent::host: received Claude hook event agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 external=false
+2026-08-24T17:45:51.783570Z  WARN amux::services::agent::host: hook target not found agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6
+2026-08-24T17:45:51.783950Z DEBUG amux::hooks: server not running or hook delivery failed error=No agent found
+2026-08-24T17:45:52.294501Z DEBUG session{agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 command=claude}: amux::agents::pty: pty reader ended
+2026-08-24T17:45:52.294498Z  INFO session{agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 command=claude}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-24T17:45:52.295467Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 name=Some("managed-manual") remaining=0
+2026-08-24T17:45:52.295546Z DEBUG session{agent_id=bdf53bbe-be7f-4195-b504-f971575bd2b6 command=claude}: amux::agents::pty: pty writer ended
+2026-08-24T17:45:52.295550Z  INFO amux::session_client: session closed reason=AgentExited { exit_code: None }
+2026-08-24T17:46:17.681754Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.Shutdown" caller="local" agent_id=None
+2026-08-24T17:46:17.884574Z  INFO amux::server: server exiting
+2026-08-24T18:07:02.967998Z  INFO amux::session_client: leader chord
+2026-08-24T18:07:07.152304Z  INFO session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-24T18:07:07.162118Z DEBUG amux::agents::pty: pty resized cols=181 rows=48
+2026-08-24T18:07:07.163037Z  INFO amux::session_client: subscribed to raw session agent=Id(309fa5ad-5af0-4309-a583-8b1a8611da4d)
+2026-08-24T18:12:05.249190Z  INFO amux::client_common: starting server cloud=false
+2026-08-24T18:12:05.262357Z  INFO amux::server: listening on local ClientService path=<MACHINE_PATH>
+2026-08-24T18:12:05.354568Z  INFO amux::session_client: creating agent agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 name=Some("handoff-live")
+2026-08-24T18:12:05.485072Z  INFO session{agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 command=claude}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-24T18:12:05.487941Z  INFO amux::services::agent::lifecycle: agent created agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 host_id=1a210726-9fd1-495f-a84d-5c888a76f1ca name=Some("handoff-live") agents=1
+2026-08-24T18:12:05.488227Z DEBUG amux::services::agent::lifecycle: session created agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 agent_type=Claude args=["--model", "haiku", "-p", "Call the amux agents tool and the amux_probe_a tool_a tool. Then reply with one short sentence confirming both results.", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--setting-sources", "project", "--mcp-config", "<MACHINE_PATH>", "--allowedTools", "mcp__amux_probe_a__tool_a", "--settings", "<MACHINE_PATH>"]
+2026-08-24T18:12:05.489508Z  INFO amux::session_client: subscribed to raw session agent=Id(6f9cafd4-f54c-488c-8ef7-834af6975822)
+2026-08-24T18:12:05.948269Z DEBUG amux::hooks: received Claude hook
+2026-08-24T18:12:05.949137Z DEBUG amux::services::agent::host: received Claude hook event agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 external=false
+2026-08-24T18:12:05.949181Z  WARN amux::services::agent::host: hook target not found agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822
+2026-08-24T18:12:05.949576Z DEBUG amux::hooks: server not running or hook delivery failed error=No agent found
+2026-08-24T18:12:17.520845Z DEBUG amux::hooks: received Claude hook
+2026-08-24T18:12:17.521622Z DEBUG amux::services::agent::host: received Claude hook event agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 external=false
+2026-08-24T18:12:17.521657Z  WARN amux::services::agent::host: hook target not found agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822
+2026-08-24T18:12:17.521967Z DEBUG amux::hooks: server not running or hook delivery failed error=No agent found
+2026-08-24T18:12:17.582255Z DEBUG amux::hooks: received Claude hook
+2026-08-24T18:12:17.583070Z DEBUG amux::services::agent::host: received Claude hook event agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 external=false
+2026-08-24T18:12:17.583108Z  WARN amux::services::agent::host: hook target not found agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822
+2026-08-24T18:12:17.583401Z DEBUG amux::hooks: server not running or hook delivery failed error=No agent found
+2026-08-24T18:12:18.095618Z DEBUG session{agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 command=claude}: amux::agents::pty: pty reader ended
+2026-08-24T18:12:18.095660Z  INFO session{agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 command=claude}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-24T18:12:18.096268Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 name=Some("handoff-live") remaining=0
+2026-08-24T18:12:18.096347Z DEBUG session{agent_id=6f9cafd4-f54c-488c-8ef7-834af6975822 command=claude}: amux::agents::pty: pty writer ended
+2026-08-24T18:12:18.096513Z  INFO amux::session_client: session closed reason=AgentExited { exit_code: None }
+2026-08-24T18:17:00.954051Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.Shutdown" caller="local" agent_id=None
+2026-08-24T18:17:01.156789Z  INFO amux::server: server exiting
+2026-08-24T18:17:36.223250Z  INFO amux::session_client: leader chord
+2026-08-24T18:17:36.223634Z DEBUG session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: pty writer ended
+2026-08-24T18:17:36.232690Z DEBUG session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: pty reader ended
+2026-08-24T18:17:36.232728Z  INFO session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-24T18:17:39.729288Z  INFO amux::session_client: subscribed to raw session agent=Id(bcd4161d-1d02-4b75-986d-f61ffaab11fc)
+2026-08-24T18:17:44.549718Z  INFO amux::session_client: leader chord
+2026-08-24T18:18:01.269781Z  INFO session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-24T18:18:01.279229Z DEBUG amux::agents::pty: pty resized cols=181 rows=48
+2026-08-24T18:18:01.280075Z  INFO amux::session_client: subscribed to raw session agent=Id(309fa5ad-5af0-4309-a583-8b1a8611da4d)
+2026-08-24T18:23:06.510540Z  INFO amux::session_client: creating agent agent_id=b7d0f2f3-780b-4548-a23a-9084b5175756 name=Some("codex-scroll-probe-20260824")
+2026-08-24T18:23:06.516514Z  INFO amux::services::agent::lifecycle: agent created agent_id=b7d0f2f3-780b-4548-a23a-9084b5175756 host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=Some("codex-scroll-probe-20260824") agents=4
+2026-08-24T18:23:06.516602Z DEBUG amux::services::agent::lifecycle: session created agent_id=b7d0f2f3-780b-4548-a23a-9084b5175756 agent_type=Codex { model: None, approval_policy: None, sandbox_policy: None, resume_thread_id: None } args=[]
+2026-08-24T18:23:07.852254Z  INFO session{agent_id=b7d0f2f3-780b-4548-a23a-9084b5175756 command=codex}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-24T18:23:07.856077Z  INFO amux::session_client: subscribed to raw session agent=Id(b7d0f2f3-780b-4548-a23a-9084b5175756)
+2026-08-24T18:23:28.986070Z  INFO amux::session_client: leader chord
+2026-08-24T18:23:28.986883Z DEBUG session{agent_id=b7d0f2f3-780b-4548-a23a-9084b5175756 command=codex}: amux::agents::pty: pty writer ended
+2026-08-24T18:23:28.993445Z DEBUG session{agent_id=b7d0f2f3-780b-4548-a23a-9084b5175756 command=codex}: amux::agents::pty: pty reader ended
+2026-08-24T18:23:28.993447Z  INFO session{agent_id=b7d0f2f3-780b-4548-a23a-9084b5175756 command=codex}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-24T18:23:35.725588Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.DeleteAgent" caller="local" agent_id=Some(b7d0f2f3-780b-4548-a23a-9084b5175756)
+2026-08-24T18:23:35.725651Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=b7d0f2f3-780b-4548-a23a-9084b5175756 name=Some("codex-scroll-probe-20260824") remaining=3
+2026-08-24T18:23:35.725735Z  INFO amux::agents::codex::session: stopping Codex session agent_id=b7d0f2f3-780b-4548-a23a-9084b5175756
+2026-08-24T18:35:06.349009Z  INFO amux::services::agent::host: agent message delivered envelope_id=292a0149-3efe-4e33-823a-d13a18649bd3 recipient_agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc carrier="socket"
+2026-08-24T18:47:51.115553Z  INFO amux::session_client: leader chord
+2026-08-24T18:47:51.116175Z DEBUG session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: pty writer ended
+2026-08-24T18:47:51.125175Z DEBUG session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: pty reader ended
+2026-08-24T18:47:51.125221Z  INFO session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-24T18:47:53.149343Z  INFO amux::session_client: subscribed to raw session agent=Id(bcd4161d-1d02-4b75-986d-f61ffaab11fc)
+2026-08-24T18:51:32.366741Z  INFO amux::session_client: leader chord
+2026-08-24T18:51:33.337293Z  INFO session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-24T18:51:33.343421Z DEBUG amux::agents::pty: pty resized cols=181 rows=48
+2026-08-24T18:51:33.343881Z  INFO amux::session_client: subscribed to raw session agent=Id(309fa5ad-5af0-4309-a583-8b1a8611da4d)
+2026-08-24T18:53:10.272702Z  INFO amux::session_client: leader chord
+2026-08-24T18:53:10.273191Z DEBUG session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: pty writer ended
+2026-08-24T18:53:10.280535Z DEBUG session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: pty reader ended
+2026-08-24T18:53:10.280562Z  INFO session{agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d command=codex}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-24T18:53:12.565515Z  INFO amux::session_client: subscribed to raw session agent=Id(bcd4161d-1d02-4b75-986d-f61ffaab11fc)
+2026-08-24T18:55:44.708098Z  INFO amux::session_client: leader chord
+2026-08-24T18:55:44.709163Z DEBUG session{agent_id=493f49d5-1b65-4048-bd2f-3b85de256574 command=codex}: amux::agents::pty: pty writer ended
+2026-08-24T18:55:44.723808Z DEBUG session{agent_id=493f49d5-1b65-4048-bd2f-3b85de256574 command=codex}: amux::agents::pty: pty reader ended
+2026-08-24T18:55:44.723845Z  INFO session{agent_id=493f49d5-1b65-4048-bd2f-3b85de256574 command=codex}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-24T19:44:19.234818Z  INFO amux::session_client: leader chord
+2026-08-24T19:44:27.158200Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.DeleteAgent" caller="local" agent_id=Some(493f49d5-1b65-4048-bd2f-3b85de256574)
+2026-08-24T19:44:27.158311Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=493f49d5-1b65-4048-bd2f-3b85de256574 name=Some("bob") remaining=2
+2026-08-24T19:44:27.158412Z  INFO amux::agents::codex::session: stopping Codex session agent_id=493f49d5-1b65-4048-bd2f-3b85de256574
+2026-08-24T19:44:38.070571Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.DeleteAgent" caller="local" agent_id=Some(309fa5ad-5af0-4309-a583-8b1a8611da4d)
+2026-08-24T19:44:38.070630Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d name=Some("mcp-dedup") remaining=1
+2026-08-24T19:44:38.070655Z  INFO amux::agents::codex::session: stopping Codex session agent_id=309fa5ad-5af0-4309-a583-8b1a8611da4d
+2026-08-24T19:44:46.926793Z  INFO amux::session_client: subscribed to raw session agent=Id(bcd4161d-1d02-4b75-986d-f61ffaab11fc)
+2026-08-24T19:53:26.223508Z DEBUG session{agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc command=claude}: amux::agents::pty: pty reader ended
+2026-08-24T19:53:26.223587Z  INFO session{agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc command=claude}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-24T19:53:26.224393Z  INFO amux::session_client: session closed reason=AgentExited { exit_code: None }
+2026-08-24T19:53:26.225284Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc name=Some("alice") remaining=0
+2026-08-24T19:53:26.229753Z DEBUG session{agent_id=bcd4161d-1d02-4b75-986d-f61ffaab11fc command=claude}: amux::agents::pty: pty writer ended
+2026-08-25T13:45:55.918085Z  INFO amux::client_common: starting server cloud=false
+2026-08-25T13:45:55.928233Z  INFO amux::sleep_inhibitor::macos: idle sleep prevention active via IOKit
+2026-08-25T13:45:55.930263Z  INFO amux::server: listening on local ClientService path=<MACHINE_PATH>
+2026-08-25T13:45:55.930421Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T13:45:56.060977Z  WARN cloud{url=https://amux.sh}: amux::audit: auth.jwt_failure category="auth.jwt_failure" reason=cloud routing credentials were rejected
+2026-08-25T13:45:56.061021Z ERROR cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud non-retriable error, stopping error=Authentication failed — run 'amux init' to re-authenticate
+2026-08-25T13:48:34.751425Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.Shutdown" caller="local" agent_id=None
+2026-08-25T13:48:34.954567Z  INFO amux::server: server exiting
+2026-08-25T13:50:17.524730Z  INFO amux::client_common: starting server cloud=false
+2026-08-25T13:50:17.535909Z  INFO amux::sleep_inhibitor::macos: idle sleep prevention active via IOKit
+2026-08-25T13:50:17.536481Z  INFO amux::server: listening on local ClientService path=<MACHINE_PATH>
+2026-08-25T13:50:17.536554Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T13:50:17.819005Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: connecting to cloud routing host=s1.amux.sh port=9001
+2026-08-25T13:50:18.312024Z  INFO amux::audit: link.up category="link.up" host_id=d14b3dd7-8cac-41f2-8fc7-5249d4c06c9a link=d14b3dd78cac41f28fc75249d4c06c9a#3c8a7b8c role=CloudRelay
+2026-08-25T14:08:03.937277Z  WARN amux::audit: auth.mtls_handshake_failure category="auth.mtls_handshake_failure" reason=tls handshake eof
+2026-08-25T14:08:03.938752Z  WARN amux::dispatcher: dispatcher rejected tunnel stream error=TLS handshake failed: tls handshake eof
+2026-08-25T14:17:37.187019Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.Unpair" caller="local" agent_id=None
+2026-08-25T14:17:37.199396Z  INFO amux::audit: trust.remove category="trust.remove" host_id=46534cd7-727e-47cd-a18c-357e6df9ebbf name="Jordan Webster" paired_at=2026-06-20T10:28:48.336524+00:00 removed_at=2026-08-25T14:17:37.199391+00:00 reason="user"
+2026-08-25T14:17:47.069191Z  INFO amux::audit: pairing.start category="pairing.start" method="qr"
+2026-08-25T14:22:48.058023Z  WARN amux::audit: pairing.failure category="pairing.failure" method="qr" reason=pair mode expired
+2026-08-25T15:37:59.992416Z  INFO amux::audit: pairing.start category="pairing.start" method="cloud_pin"
+2026-08-25T15:38:00.423106Z  INFO amux::audit: trust update category="trust.insert" host_id=fa08270e-9fc4-466b-aabc-031718b31662 outcome=Inserted
+2026-08-25T15:38:00.423581Z  INFO amux::audit: pairing.success category="pairing.success" method="cloud_pin" host_id=fa08270e-9fc4-466b-aabc-031718b31662
+2026-08-25T15:45:13.859809Z  INFO session{agent_id=5d743626-10ed-46d9-aa16-4612660590c4 command=claude}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-25T15:45:13.882247Z  INFO amux::services::agent::lifecycle: agent created agent_id=5d743626-10ed-46d9-aa16-4612660590c4 host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=Some("test") agents=1
+2026-08-25T15:45:37.755682Z  INFO amux::agents::claude::session::input: structured input accepted client_seq=0 action_count=3
+2026-08-25T15:46:35.088034Z  INFO amux::session_client: subscribed to raw session agent=Id(5d743626-10ed-46d9-aa16-4612660590c4)
+2026-08-25T15:57:19.198269Z  INFO amux::agents::claude::session::input: structured input accepted client_seq=0 action_count=3
+2026-08-25T15:57:22.483343Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=5d743626-10ed-46d9-aa16-4612660590c4 name=Some("test") remaining=0
+2026-08-25T15:57:22.483409Z  INFO amux::agents::claude::session::core: shutting down claude session agent_id=5d743626-10ed-46d9-aa16-4612660590c4
+2026-08-25T15:57:22.484074Z  INFO amux::session_client: session closed reason=AgentDeleted
+2026-08-25T15:57:22.597477Z  WARN amux::services::agent::host: hook target not found agent_id=5d743626-10ed-46d9-aa16-4612660590c4
+2026-08-25T15:57:23.088595Z  INFO session{agent_id=5d743626-10ed-46d9-aa16-4612660590c4 command=claude}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-25T16:09:22.229239Z  INFO session{agent_id=fc81b94f-1504-41b3-9f84-4b066126fa6d command=claude}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-25T16:09:22.234226Z  INFO amux::services::agent::lifecycle: agent created agent_id=fc81b94f-1504-41b3-9f84-4b066126fa6d host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=Some("test2") agents=1
+2026-08-25T16:09:27.298179Z  INFO amux::agents::claude::session::input: structured input accepted client_seq=0 action_count=3
+2026-08-25T16:12:39.842813Z  INFO amux::agents::claude::session::input: structured input accepted client_seq=19 action_count=3
+2026-08-25T16:13:13.404577Z  INFO amux::agents::claude::session::input: structured input accepted client_seq=35 action_count=3
+2026-08-25T16:13:18.469739Z  INFO amux::services::agent::lifecycle: agent created agent_id=c8554665-730e-4e82-af6e-f90d1cc8cb16 host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=Some("math-check") agents=2
+2026-08-25T16:13:48.511420Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.CreateAgentRollback" caller="local" agent_id=Some(c8554665-730e-4e82-af6e-f90d1cc8cb16)
+2026-08-25T16:13:48.511477Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=c8554665-730e-4e82-af6e-f90d1cc8cb16 name=Some("math-check") remaining=1
+2026-08-25T16:13:48.511537Z  INFO amux::agents::codex::session: stopping Codex session agent_id=c8554665-730e-4e82-af6e-f90d1cc8cb16
+2026-08-25T16:13:53.968699Z  INFO amux::services::agent::lifecycle: agent created agent_id=fa185be1-cbab-40e9-aa3a-c4a53afdf2d0 host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=Some("math-check-2") agents=2
+2026-08-25T16:14:24.020616Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.CreateAgentRollback" caller="local" agent_id=Some(fa185be1-cbab-40e9-aa3a-c4a53afdf2d0)
+2026-08-25T16:14:24.020677Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=fa185be1-cbab-40e9-aa3a-c4a53afdf2d0 name=Some("math-check-2") remaining=1
+2026-08-25T16:14:24.020695Z  INFO amux::agents::codex::session: stopping Codex session agent_id=fa185be1-cbab-40e9-aa3a-c4a53afdf2d0
+2026-08-25T16:16:05.283094Z  INFO amux::session_client: creating agent agent_id=9df83c5e-8921-48f2-ba92-961b0a5c9c60 name=None
+2026-08-25T16:16:05.283447Z  INFO session{agent_id=9df83c5e-8921-48f2-ba92-961b0a5c9c60 command=claude}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-25T16:16:05.288680Z  INFO amux::services::agent::lifecycle: agent created agent_id=9df83c5e-8921-48f2-ba92-961b0a5c9c60 host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=None agents=2
+2026-08-25T16:16:05.289130Z  INFO amux::session_client: subscribed to raw session agent=Id(9df83c5e-8921-48f2-ba92-961b0a5c9c60)
+2026-08-25T16:16:23.923900Z  INFO amux::services::agent::lifecycle: agent created agent_id=37d09da0-ecb3-4d9c-abbe-9d9aab6f1e62 host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=None agents=3
+2026-08-25T16:16:49.567175Z  INFO session{agent_id=9df83c5e-8921-48f2-ba92-961b0a5c9c60 command=claude}: amux::agents::pty: agent exited status=Ok(ExitStatus { code: 0, signal: None })
+2026-08-25T16:16:49.567331Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=9df83c5e-8921-48f2-ba92-961b0a5c9c60 name=Some("9df83c5e-8921-48f2-ba92-961b0a5c9c60") remaining=2
+2026-08-25T16:16:49.567422Z  INFO amux::session_client: session closed reason=AgentExited { exit_code: None }
+2026-08-25T16:23:10.595245Z  INFO amux::agents::claude::session::input: structured input accepted client_seq=148 action_count=3
+2026-08-25T16:23:12.873279Z  INFO amux::services::agent::lifecycle: agent created agent_id=fcac320f-d67c-4755-8217-05ec5abbb4bc host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=Some("math-check") agents=3
+2026-08-25T16:23:14.589921Z  INFO amux::services::agent::host: agent message delivered envelope_id=219a4eec-2974-4991-9342-439c2e60d035 recipient_agent_id=fcac320f-d67c-4755-8217-05ec5abbb4bc carrier="inject_started"
+2026-08-25T16:23:22.622168Z  INFO amux::services::agent::host: agent message delivered envelope_id=7ad8d52f-ebe6-4b4d-929b-ea4ab0cc17c7 recipient_agent_id=fc81b94f-1504-41b3-9f84-4b066126fa6d carrier="socket"
+2026-08-25T16:23:27.314714Z  INFO amux::services::agent::host: agent message delivered envelope_id=a2088e31-4916-4a8a-acc1-8ab72b19353e recipient_agent_id=fc81b94f-1504-41b3-9f84-4b066126fa6d carrier="socket"
+2026-08-25T16:24:50.864387Z  INFO amux::agents::claude::session::input: structured input accepted client_seq=203 action_count=3
+2026-08-25T16:24:54.196830Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.DeleteAgent" caller="local" agent_id=Some(fcac320f-d67c-4755-8217-05ec5abbb4bc)
+2026-08-25T16:24:54.196875Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=fcac320f-d67c-4755-8217-05ec5abbb4bc name=Some("math-check") remaining=2
+2026-08-25T16:24:54.196888Z  INFO amux::agents::codex::session: stopping Codex session agent_id=fcac320f-d67c-4755-8217-05ec5abbb4bc
+2026-08-25T16:28:00.412285Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.DeleteAgent" caller="local" agent_id=Some(37d09da0-ecb3-4d9c-abbe-9d9aab6f1e62)
+2026-08-25T16:28:00.412305Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=37d09da0-ecb3-4d9c-abbe-9d9aab6f1e62 name=None remaining=1
+2026-08-25T16:28:00.412308Z  INFO amux::agents::codex::session: stopping Codex session agent_id=37d09da0-ecb3-4d9c-abbe-9d9aab6f1e62
+2026-08-25T18:48:43.424704Z  INFO amux::audit: pairing.start category="pairing.start" method="cloud_pin"
+2026-08-25T18:48:43.853880Z  INFO amux::audit: trust update category="trust.insert" host_id=c149457d-deb5-4d03-ba01-040450eb3409 outcome=Inserted
+2026-08-25T18:48:43.853891Z  INFO amux::audit: pairing.success category="pairing.success" method="cloud_pin" host_id=c149457d-deb5-4d03-ba01-040450eb3409
+2026-08-25T18:49:22.153552Z  INFO session{agent_id=6b1e2b54-f471-433a-816f-2f1841283838 command=claude}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-25T18:49:22.162330Z  INFO amux::services::agent::lifecycle: agent created agent_id=6b1e2b54-f471-433a-816f-2f1841283838 host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=Some("hanna") agents=2
+2026-08-25T18:49:25.994428Z  INFO amux::agents::claude::session::input: structured input accepted client_seq=0 action_count=3
+2026-08-25T22:03:14.704442Z  INFO amux::audit: link.down category="link.down" host_id=d14b3dd7-8cac-41f2-8fc7-5249d4c06c9a link=d14b3dd78cac41f28fc75249d4c06c9a#3c8a7b8c reason=removed
+2026-08-25T22:03:14.704743Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection closed cleanly
+2026-08-25T22:03:14.704835Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=1s retry_delay=1.868850939s
+2026-08-25T22:03:16.576510Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:03:46.583093Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: error sending request for url (https://amux.sh/api/connect)
+2026-08-25T22:03:46.583164Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=2s retry_delay=5.702246739s
+2026-08-25T22:03:52.289137Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:04:22.291073Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: error sending request for url (https://amux.sh/api/connect)
+2026-08-25T22:04:22.291120Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=4s retry_delay=4.722620989s
+2026-08-25T22:04:27.016471Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:04:57.020997Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: error sending request for url (https://amux.sh/api/connect)
+2026-08-25T22:04:57.021044Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=8s retry_delay=10.873601924s
+2026-08-25T22:05:07.896503Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:05:37.901018Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: error sending request for url (https://amux.sh/api/connect)
+2026-08-25T22:05:37.901099Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=16s retry_delay=18.651134039s
+2026-08-25T22:05:56.554727Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:06:26.558853Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: error sending request for url (https://amux.sh/api/connect)
+2026-08-25T22:06:26.558934Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=32s retry_delay=42.439510443s
+2026-08-25T22:07:09.000806Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:07:39.005222Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: error sending request for url (https://amux.sh/api/connect)
+2026-08-25T22:07:39.005312Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=64s retry_delay=56.831040073s
+2026-08-25T22:08:35.838123Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:09:50.845433Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: error sending request for url (https://amux.sh/api/connect)
+2026-08-25T22:09:50.845511Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=128s retry_delay=122.774218824s
+2026-08-25T22:11:53.622460Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:13:08.631204Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T22:13:08.631277Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=256s retry_delay=264.835255642s
+2026-08-25T22:17:33.470641Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:18:48.484356Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T22:18:48.484424Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=299.849030837s
+2026-08-25T22:23:48.336380Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:25:03.344142Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T22:25:03.344224Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=242.989624892s
+2026-08-25T22:29:06.335198Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:30:21.344490Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T22:30:21.344598Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=316.142809175s
+2026-08-25T22:35:37.490363Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:36:52.502644Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T22:36:52.502708Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=245.949551882s
+2026-08-25T22:40:58.455639Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:42:13.466847Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T22:42:13.466933Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=282.571596815s
+2026-08-25T22:46:56.042249Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:48:11.049823Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T22:48:11.049871Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=264.244028026s
+2026-08-25T22:52:35.296064Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:53:50.302115Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T22:53:50.302199Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=265.909156097s
+2026-08-25T22:58:16.213766Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T22:59:31.227046Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T22:59:31.227124Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=358.133335437s
+2026-08-25T23:05:29.362756Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T23:06:44.371432Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T23:06:44.371510Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=237.688402284s
+2026-08-25T23:10:42.063044Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T23:11:57.072661Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T23:11:57.072744Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=270.547807573s
+2026-08-25T23:16:27.622634Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T23:17:42.630822Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T23:17:42.630890Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=361.134522827s
+2026-08-25T23:23:43.768544Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T23:24:58.779403Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T23:24:58.779485Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=320.934070185s
+2026-08-25T23:30:19.715517Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T23:31:34.729418Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T23:31:34.729507Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=261.793232137s
+2026-08-25T23:35:56.526635Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T23:37:11.535929Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T23:37:11.536006Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=265.225237159s
+2026-08-25T23:41:36.765133Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T23:42:51.778900Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T23:42:51.778982Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=261.037739996s
+2026-08-25T23:47:12.819858Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T23:48:27.828541Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T23:48:27.828620Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=300.069298858s
+2026-08-25T23:53:27.900862Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-25T23:54:42.909864Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-25T23:54:42.909913Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=325.701520751s
+2026-08-26T00:00:08.615345Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-26T00:01:23.628418Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-26T00:01:23.628498Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=311.805307212s
+2026-08-26T00:06:35.437192Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-26T00:07:50.445534Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-26T00:07:50.445617Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=287.292871527s
+2026-08-26T00:12:37.740686Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-26T00:13:52.749642Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-26T00:13:52.749679Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=354.565840344s
+2026-08-26T00:19:47.318113Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-26T00:21:02.326376Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-26T00:21:02.326432Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=364.0007789s
+2026-08-26T00:27:06.330014Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-26T00:28:21.342888Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-26T00:28:21.342963Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=257.739595955s
+2026-08-26T00:32:39.085379Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-26T00:33:54.094671Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-26T00:33:54.094757Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=240.3705418s
+2026-08-26T00:37:54.467340Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-26T00:39:09.476874Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-26T00:39:09.476960Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=284.528621962s
+2026-08-26T00:43:54.008259Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-26T00:45:09.017087Z  WARN cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection error, will retry error=Connection failed: Connection failed: OAuth request error: Request failed
+2026-08-26T00:45:09.017170Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=300s retry_delay=298.143778443s
+2026-08-26T00:50:07.164977Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-26T00:50:07.746471Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: connecting to cloud routing host=s1.amux.sh port=9001
+2026-08-26T00:50:07.905356Z  INFO amux::audit: link.up category="link.up" host_id=d14b3dd7-8cac-41f2-8fc7-5249d4c06c9a link=d14b3dd78cac41f28fc75249d4c06c9a#725e95dd role=CloudRelay
+2026-08-26T00:52:50.105455Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T01:52:50.444127Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T02:52:50.918807Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T03:52:51.313485Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T04:52:52.335647Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T05:52:52.584349Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T06:52:54.079295Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T07:52:54.465928Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T08:52:54.994555Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T09:52:55.355372Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T10:52:55.893665Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T11:52:56.814047Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T12:52:56.895813Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T13:52:57.061776Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T14:52:57.318381Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T15:52:57.447955Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T16:52:57.562193Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T17:52:58.346089Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T18:52:58.484485Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T19:52:58.408929Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T20:52:58.730066Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T21:52:58.973298Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T22:52:59.076075Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-26T23:53:00.047385Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T00:53:00.196920Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T01:53:00.708282Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T02:53:01.245661Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T03:53:01.689583Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T04:53:02.749975Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T05:53:04.368547Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T06:53:04.552681Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T07:53:04.834799Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T08:53:05.061060Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T09:53:05.303496Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T10:53:05.455843Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T11:53:06.910863Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T12:53:07.099727Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T13:53:08.059210Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T14:53:06.526579Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T15:53:08.633389Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T16:53:08.915076Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T17:53:10.739778Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T18:53:10.922680Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T19:53:11.319348Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T20:53:11.369331Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T21:53:11.630772Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T22:53:12.116823Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-27T23:53:13.755552Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T00:53:14.192612Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T01:53:14.631911Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T02:53:14.799504Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T03:53:16.140517Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T04:53:17.369224Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T05:53:18.578991Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T06:53:19.029753Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T07:53:19.199025Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T08:53:19.433768Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T09:53:19.725072Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T10:53:21.010132Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T11:53:21.800630Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T12:53:22.889165Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T13:53:23.398140Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T14:53:23.491021Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T15:53:23.771405Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T16:53:24.946415Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T17:53:26.286677Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T18:53:26.314293Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T19:53:26.558326Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T20:53:26.749876Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T21:53:27.248201Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T22:53:27.471000Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-28T23:53:28.768385Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T00:53:29.168600Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T01:53:29.360096Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T02:53:29.865017Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T03:53:30.030864Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T04:53:31.290446Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T05:53:31.996155Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T06:53:32.130263Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T07:53:32.605390Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T08:53:32.804353Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T09:53:33.773759Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T10:53:33.893437Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T11:53:35.775902Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T12:53:36.281107Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T13:53:36.380905Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T14:53:36.807056Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T15:53:37.422274Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T16:53:37.498562Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T17:53:38.409302Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T18:53:39.701351Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T19:53:39.849570Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T20:53:40.941570Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T21:53:41.071094Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T22:53:41.159474Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-29T23:53:42.198751Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-30T00:53:43.508668Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-30T01:53:43.895297Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-30T02:13:00.511519Z  INFO session{agent_id=7e96ee2e-0831-4cd4-b97d-29ead7dd00ff command=claude}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-08-30T02:13:00.515296Z  INFO amux::services::agent::lifecycle: agent created agent_id=7e96ee2e-0831-4cd4-b97d-29ead7dd00ff host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=None agents=3
+2026-08-30T02:13:19.933616Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.Shutdown" caller="local" agent_id=None
+2026-08-30T02:13:19.934563Z  INFO amux::services::agent::lifecycle: shutting down agent agent_id=7e96ee2e-0831-4cd4-b97d-29ead7dd00ff
+2026-08-30T02:13:19.934570Z  INFO amux::agents::claude::session::core: shutting down claude session agent_id=7e96ee2e-0831-4cd4-b97d-29ead7dd00ff
+2026-08-30T02:13:20.013499Z  INFO amux::services::agent::lifecycle: shutting down agent agent_id=fc81b94f-1504-41b3-9f84-4b066126fa6d
+2026-08-30T02:13:20.013511Z  INFO amux::agents::claude::session::core: shutting down claude session agent_id=fc81b94f-1504-41b3-9f84-4b066126fa6d
+2026-08-30T02:13:20.036608Z  INFO amux::services::agent::lifecycle: shutting down agent agent_id=6b1e2b54-f471-433a-816f-2f1841283838
+2026-08-30T02:13:20.036614Z  INFO amux::agents::claude::session::core: shutting down claude session agent_id=6b1e2b54-f471-433a-816f-2f1841283838
+2026-08-30T02:13:20.085876Z  INFO amux::audit: link.down category="link.down" host_id=d14b3dd7-8cac-41f2-8fc7-5249d4c06c9a link=d14b3dd78cac41f28fc75249d4c06c9a#725e95dd reason=removed
+2026-08-30T02:13:20.085935Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection closed cleanly
+2026-08-30T02:13:20.085956Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=1s retry_delay=1.705283172s
+2026-08-30T02:13:20.261342Z  INFO amux::server: server exiting
+2026-08-30T02:13:47.004478Z  INFO amux::session_client: attaching agent=3f2fda91-8990-4d37-b433-08a9445564a2
+2026-08-31T19:17:20.554018Z  INFO amux::client_common: starting server cloud=false
+2026-08-31T19:17:20.566243Z  INFO amux::sleep_inhibitor::macos: idle sleep prevention active via IOKit
+2026-08-31T19:17:20.570755Z  INFO amux::server: listening on local ClientService path=<MACHINE_PATH>
+2026-08-31T19:17:20.570916Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-31T19:17:21.238117Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: connecting to cloud routing host=s1.amux.sh port=9001
+2026-08-31T19:17:21.474948Z  INFO amux::server: update available current=0.5.0 latest=0.6.0
+2026-08-31T19:17:21.505009Z  INFO amux::audit: link.up category="link.up" host_id=ed719be3-4ebc-467a-b1a9-e83819a2471e link=ed719be34ebc467ab1a9e83819a2471e#1db1a210 role=CloudRelay
+2026-08-31T19:17:46.667747Z  INFO amux::audit: client_service.disruptive_call category="client_service.disruptive_call" method="ClientService.Shutdown" caller="local" agent_id=None
+2026-08-31T19:17:46.696857Z  INFO amux::audit: link.down category="link.down" host_id=ed719be3-4ebc-467a-b1a9-e83819a2471e link=ed719be34ebc467ab1a9e83819a2471e#1db1a210 reason=removed
+2026-08-31T19:17:46.696945Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: cloud routing connection closed cleanly
+2026-08-31T19:17:46.696966Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: reconnecting to cloud base_backoff=1s retry_delay=1.631366093s
+2026-08-31T19:17:46.870562Z  INFO amux::server: server exiting
+2026-08-31T19:19:20.938571Z  INFO amux::client_common: starting server cloud=false
+2026-08-31T19:19:20.947918Z  INFO amux::sleep_inhibitor::macos: idle sleep prevention active via IOKit
+2026-08-31T19:19:20.950366Z  INFO amux::server: listening on local ClientService path=<MACHINE_PATH>
+2026-08-31T19:19:20.950673Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-08-31T19:19:21.289588Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: connecting to cloud routing host=s1.amux.sh port=9001
+2026-08-31T19:19:21.414100Z  INFO amux::audit: link.up category="link.up" host_id=ed719be3-4ebc-467a-b1a9-e83819a2471e link=ed719be34ebc467ab1a9e83819a2471e#386129db role=CloudRelay
+2026-08-31T19:19:24.971318Z  INFO amux::session_client: creating agent agent_id=26df2755-6afb-488d-b939-df542cbb8d43 name=Some("test")
+2026-08-31T19:19:25.040291Z  INFO amux::services::agent::lifecycle: agent created agent_id=26df2755-6afb-488d-b939-df542cbb8d43 host_id=b9066e81-2f7b-429b-902c-c1f69bf3193c name=Some("test") agents=1
+2026-08-31T19:19:25.040675Z  INFO amux::session_client: subscribed to raw session agent=Id(26df2755-6afb-488d-b939-df542cbb8d43)
+2026-08-31T19:22:30.170506Z  INFO amux::session_client: leader chord
+2026-08-31T19:22:39.944479Z  INFO amux::session_client: subscribed to raw session agent=Id(26df2755-6afb-488d-b939-df542cbb8d43)
+2026-08-31T19:22:52.816134Z  INFO amux::session_client: leader chord
+2026-08-31T19:33:28.421281Z  INFO amux::session_client: subscribed to raw session agent=Id(26df2755-6afb-488d-b939-df542cbb8d43)
+2026-08-31T19:34:45.289474Z  INFO amux::session_client: leader chord
+2026-08-31T19:36:17.979085Z  INFO amux::session_client: subscribed to raw session agent=Id(26df2755-6afb-488d-b939-df542cbb8d43)
+2026-08-31T19:36:35.964634Z  INFO amux::session_client: leader chord
+2026-08-31T19:36:50.509704Z  INFO amux::session_client: subscribed to raw session agent=Id(26df2755-6afb-488d-b939-df542cbb8d43)
+2026-08-31T19:38:33.454682Z  INFO amux::services::agent::lifecycle: agent withdrawn agent_id=26df2755-6afb-488d-b939-df542cbb8d43 name=Some("test") remaining=0
+2026-08-31T19:38:33.454779Z  INFO amux::session_client: session closed reason=AgentExited { exit_code: None }
+2026-09-03T03:48:55.589018Z  INFO amux::client_common: starting server cloud=false
+2026-09-03T03:48:55.597801Z  INFO amux::sleep_inhibitor::macos: idle sleep prevention active via IOKit
+2026-09-03T03:48:55.600996Z  INFO amux::server: listening on local ClientService path=<MACHINE_PATH>
+2026-09-03T03:48:55.602046Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: attempting cloud routing connection
+2026-09-03T03:48:55.871089Z  INFO cloud{url=https://amux.sh}: amux::services::startup::cloud: connecting to cloud routing host=s1.amux.sh port=9001
+2026-09-03T03:48:56.061183Z  INFO amux::audit: link.up category="link.up" host_id=ed719be3-4ebc-467a-b1a9-e83819a2471e link=ed719be34ebc467ab1a9e83819a2471e#08f95dd3 role=CloudRelay

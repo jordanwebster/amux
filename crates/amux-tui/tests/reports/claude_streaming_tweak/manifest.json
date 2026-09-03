@@ -1,0 +1,28 @@
+{
+  "name": "claude_streaming_tweak",
+  "kind": "tweak",
+  "original_stamp": "1788407957503-4821",
+  "note": "current real Claude stream needs a focused renderer tweak",
+  "marks": [
+    {
+      "x": 0,
+      "y": 2,
+      "width": 11,
+      "height": 3,
+      "note": "Claude output row"
+    },
+    {
+      "x": 34,
+      "y": 11,
+      "width": 1,
+      "height": 1,
+      "note": "Claude status bar"
+    }
+  ],
+  "graduated_at": "2026-09-03T04:01:07.326198Z",
+  "redaction": {
+    "secrets": 0,
+    "machine_paths": 67,
+    "personal_identifiers": 15
+  }
+}

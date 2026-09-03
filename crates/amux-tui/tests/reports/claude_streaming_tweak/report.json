@@ -1,0 +1,39 @@
+{
+  "build": "amux-ui/0.4.0",
+  "created_at": "2026-09-03T03:59:17.503699Z",
+  "detail": null,
+  "git_sha": "975622320ddcaacb8966d5d28371ca0d7c37439e",
+  "kind": "tweak",
+  "marks": [
+    {
+      "height": 3,
+      "note": "Claude output row",
+      "width": 11,
+      "x": 0,
+      "y": 2
+    },
+    {
+      "height": 1,
+      "note": "Claude status bar",
+      "width": 1,
+      "x": 34,
+      "y": 11
+    }
+  ],
+  "note": "current real Claude stream needs a focused renderer tweak",
+  "parts": {
+    "daemon": "present",
+    "frame": "present",
+    "log": "present",
+    "msgs": "present",
+    "trace": "present"
+  },
+  "replay": "reproduces",
+  "schema_version": 1,
+  "stamp": "1788407957503-4821",
+  "status": "open",
+  "viewport": [
+    140,
+    40
+  ]
+}
