@@ -35,6 +35,7 @@ signal-hook = { workspace = true }
 
 [dev-dependencies]
 amux-tui = { path = ".", features = ["fixtures"] }
+gethostname = { workspace = true }
 tempfile = { workspace = true }
 uuid = { workspace = true }
 unicode-width = "0.2"

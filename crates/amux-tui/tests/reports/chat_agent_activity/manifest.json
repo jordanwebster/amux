@@ -1,0 +1,28 @@
+{
+  "name": "chat_agent_activity",
+  "kind": "tweak",
+  "original_stamp": "1788395144348-47628",
+  "note": "the agent row shows no activity while it is running",
+  "marks": [
+    {
+      "x": 3,
+      "y": 3,
+      "width": 59,
+      "height": 1,
+      "note": "this row never shows the agent working"
+    },
+    {
+      "x": 2,
+      "y": 38,
+      "width": 39,
+      "height": 1,
+      "note": "the status bar still says connected"
+    }
+  ],
+  "graduated_at": "2026-09-03T01:58:10.544809Z",
+  "redaction": {
+    "secrets": 0,
+    "machine_paths": 8,
+    "personal_identifiers": 1
+  }
+}

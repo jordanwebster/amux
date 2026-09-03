@@ -137,6 +137,7 @@ dependencies = [
  "chrono",
  "crossterm 0.29.0",
  "futures-util",
+ "gethostname",
  "libc",
  "ratatui",
  "serde",

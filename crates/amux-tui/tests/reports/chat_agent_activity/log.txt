@@ -1,0 +1,13 @@
+2026-09-02T23:28:48.247263Z DEBUG amux::init: running init explicit=false reset=false
+2026-09-02T23:28:48.268688Z  INFO amux::client_common: starting server cloud=false
+2026-09-02T23:28:59.286956Z  INFO amux::client_common: starting server cloud=false
+2026-09-02T23:28:59.297025Z  INFO amux::server: listening on local ClientService path=<MACHINE_PATH>
+2026-09-02T23:29:20.259044Z  INFO amux::session_client: creating agent agent_id=37e20043-7250-4cde-8fab-85668704f4de name=Some("live-qa")
+2026-09-02T23:29:20.260320Z  INFO session{agent_id=37e20043-7250-4cde-8fab-85668704f4de command=test-agent}: amux::agents::pty: creating session dir=<MACHINE_PATH>
+2026-09-02T23:29:20.263625Z  INFO amux::services::agent::lifecycle: agent created agent_id=37e20043-7250-4cde-8fab-85668704f4de host_id=864028b0-6c13-4ae2-9cff-d0784765a8bd name=Some("live-qa") agents=1
+2026-09-02T23:29:20.263831Z DEBUG amux::services::agent::lifecycle: session created agent_id=37e20043-7250-4cde-8fab-85668704f4de agent_type=TestAgent { command: "test-agent" } args=[]
+2026-09-02T23:29:20.265358Z  INFO amux::session_client: subscribed to raw session agent=Id(37e20043-7250-4cde-8fab-85668704f4de)
+2026-09-02T23:30:08.008849Z  INFO amux::session_client: subscribed to raw session agent=Id(37e20043-7250-4cde-8fab-85668704f4de)
+2026-09-02T23:30:48.295639Z  INFO amux::session_client: leader chord
+2026-09-02T23:31:15.785619Z  INFO amux::session_client: subscribed to raw session agent=Id(37e20043-7250-4cde-8fab-85668704f4de)
+2026-09-02T23:31:27.229908Z  INFO amux::session_client: leader chord
