@@ -14,9 +14,10 @@ use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
 use amux_ui::claude::answer::{AskAnswer, PermissionAnswer};
 use amux_ui::claude::{DiffDocument, DiffMagnitude};
 use amux_ui::diff::{Document, Hunk, Numbering};
+use amux_ui::attachments::ArtifactKind;
 use amux_ui::{
-    Agent, AgentId, Command, HostEntry, HostId, Model, Msg, OpId, ServerMsg, StreamEntry,
-    StreamMsg, update,
+    Agent, AgentId, Command, DraftAttachment, HostEntry, HostId, Mention, MentionKind, Model, Msg,
+    OpId, ServerMsg, StreamEntry, StreamMsg, format_mention, update,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -2165,5 +2166,201 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
                 }
             }
         }
+    }
+}
+
+// --- attachments ------------------------------------------------------------
+
+fn image_attachment() -> DraftAttachment {
+    DraftAttachment::from_bytes(
+        ArtifactKind::Image,
+        "screenshot.png",
+        "image/png",
+        vec![b'p'; 120_433],
+    )
+}
+
+fn file_attachment() -> DraftAttachment {
+    DraftAttachment::from_bytes(ArtifactKind::File, "trace.log", "text/plain", vec![b'x'; 4096])
+}
+
+fn agent_attachment() -> DraftAttachment {
+    DraftAttachment::from_bytes(
+        ArtifactKind::File,
+        "coverage.html",
+        "text/html",
+        vec![b'y'; 20_000],
+    )
+}
+
+fn element(attachment: &DraftAttachment) -> String {
+    let kind = match attachment.kind {
+        ArtifactKind::Image => MentionKind::Image {
+            id: attachment.id.clone(),
+        },
+        _ => MentionKind::File {
+            id: attachment.id.clone(),
+        },
+    };
+    format_mention(&Mention {
+        kind,
+        name: attachment.name.clone(),
+        size: Some(attachment.size),
+        path: None,
+    })
+}
+
+fn pasted_element(name: &str, lines: usize) -> String {
+    let body: String = (1..=lines).map(|n| format!("stack frame {n}\n")).collect();
+    format_mention(&Mention {
+        kind: MentionKind::Text {
+            lines: lines as u32,
+            body,
+        },
+        name: name.to_string(),
+        size: None,
+        path: None,
+    })
+}
+
+/// The synthetic row the daemon emits before an input carrying pinned
+/// artifacts. It is what makes a name and a size paintable on a host
+/// that never saw the bytes.
+fn refs_row(attachments: &[&DraftAttachment]) -> Value {
+    json!({
+        "type": "amux.attachments",
+        "input_id": null,
+        "refs": attachments
+            .iter()
+            .map(|attachment| json!({
+                "id": attachment.id,
+                "kind": match attachment.kind {
+                    ArtifactKind::Image => "image",
+                    ArtifactKind::Diff => "diff",
+                    _ => "file",
+                },
+                "name": attachment.name,
+                "mime": attachment.mime,
+                "size": attachment.size,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// A prompt carrying an image, a file and a long paste.
+fn attachment_prompt_msgs() -> Vec<Msg> {
+    let image = image_attachment();
+    let file = file_attachment();
+    let mut msgs = base_msgs();
+    msgs.extend(opened(false));
+    msgs.push(batch(
+        "2026-08-12T09:02:00Z",
+        1,
+        vec![
+            ready_row(),
+            mode_row("default"),
+            refs_row(&[&image, &file]),
+            prompt_row(
+                1,
+                "2026-08-12T09:00:00Z",
+                &format!(
+                    "the sync panel looks wrong — here is the screen, the log, and the stack I pasted\n{}\n{}\n{}",
+                    element(&image),
+                    element(&file),
+                    pasted_element("pasted-1", 240),
+                ),
+            ),
+            turn_duration_row(2, "2026-08-12T09:01:42Z", 102_000),
+        ],
+    ));
+    msgs
+}
+
+/// A reply carrying a file the agent attached back.
+fn attachment_reply_msgs() -> Vec<Msg> {
+    let attached = agent_attachment();
+    let mut msgs = base_msgs();
+    msgs.extend(opened(false));
+    msgs.push(batch(
+        "2026-08-12T09:02:00Z",
+        1,
+        vec![
+            ready_row(),
+            mode_row("default"),
+            prompt_row(1, "2026-08-12T09:00:00Z", "run the coverage report and show me"),
+            refs_row(&[&attached]),
+            assistant_text_row(
+                2,
+                "2026-08-12T09:01:20Z",
+                "msg_01",
+                &format!(
+                    "Line coverage is 82.4%, worst in sync/retry.rs. The full report:\n{}",
+                    element(&attached),
+                ),
+                Some("end_turn"),
+            ),
+            turn_duration_row(3, "2026-08-12T09:01:42Z", 102_000),
+        ],
+    ));
+    msgs
+}
+
+/// A prompt's attachment rows: one line per attachment under the words
+/// the person typed, with the element itself never shown.
+#[test]
+fn chat_attachment_blocks() {
+    let rendered = render_frame(&fold(attachment_prompt_msgs()), &chat_view(), 80, 20, IDLE_NOW);
+    assert_golden("chat_attachment_blocks", &rendered);
+}
+
+/// An agent's own attachment reads exactly like the person's: the same
+/// row, on the background rather than on the user's surface.
+#[test]
+fn chat_attachment_reply() {
+    let rendered = render_frame(&fold(attachment_reply_msgs()), &chat_view(), 80, 20, IDLE_NOW);
+    assert_golden("chat_attachment_reply", &rendered);
+}
+
+/// The fold chord on a focused pasted-text row opens the reader on the
+/// text itself: an inline attachment has no file to hand a viewer.
+#[test]
+fn chat_attachment_reader() {
+    let model = fold(attachment_prompt_msgs());
+    let mut view = reconciled_view(&model);
+    // The newest block is the turn rule, then the pasted-text row.
+    leader(&mut view, &model, KeyCode::Char('k'));
+    leader(&mut view, &model, KeyCode::Char('k'));
+    leader(&mut view, &model, KeyCode::Char('o'));
+    let rendered = render_frame(&model, &view, 80, 20, IDLE_NOW);
+    assert_golden("chat_attachment_reader", &rendered);
+}
+
+/// The optimistic echo carries its attachment rows from the moment Enter
+/// is pressed: what is on the screen while the send is in flight is what
+/// will be there once it lands.
+#[test]
+fn chat_attachment_send() {
+    let image = image_attachment();
+    let mut msgs = idle_msgs();
+    msgs.push(Msg::Command {
+        op: op(1),
+        command: Command::SendPromptWithAttachments {
+            agent: agent_id(),
+            text: format!("look at this\n{}", element(&image)),
+            attachments: vec![image],
+        },
+    });
+    let rendered = render_frame(&fold(msgs), &chat_view(), 80, 22, IDLE_NOW);
+    assert_golden("chat_attachment_send", &rendered);
+}
+
+/// Press the chrome leader and then one chord key.
+fn leader(view: &mut ViewState, model: &Model, code: KeyCode) {
+    let chat = view.chat.as_mut().expect("chat open");
+    for key in [
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        KeyEvent::new(code, KeyModifiers::NONE),
+    ] {
+        amux_tui::chat::handle_chat_key(chat, model, key, (80, 20), at(IDLE_NOW));
     }
 }

@@ -44,6 +44,11 @@ pub(crate) enum ReaderSource {
     /// An accepted plan (Ctrl+T), by index into `accepted_plans` (oldest
     /// first; opened at the newest).
     Plans { index: usize },
+    /// A text attachment from the feed. Its body is carried here rather
+    /// than resolved from the Model: an inline attachment's words are
+    /// part of the message that carried them and never change, so there
+    /// is nothing to look up and nothing that can go stale.
+    Text { name: String, body: String },
 }
 
 /// The typed document body, borrowed from the Model (§5: a match, not a
@@ -53,6 +58,9 @@ enum Body<'m> {
     Plan(&'m str),
     Diff(&'m DiffDocument),
     NewFile(&'m str),
+    /// Words with no markup: a pasted attachment is read as it was
+    /// pasted, not as markdown a renderer guessed at.
+    Text(&'m str),
 }
 
 struct Resolved<'m> {
@@ -66,7 +74,7 @@ struct Resolved<'m> {
 
 /// Resolve what the reader shows, or `None` when its source no longer
 /// exists (the frame then falls back to the chat).
-fn resolve<'m>(model: &'m Model, chat: &View) -> Option<Resolved<'m>> {
+fn resolve<'m>(model: &'m Model, chat: &'m View) -> Option<Resolved<'m>> {
     let reader = chat.reader.as_ref()?;
     let layer = model.claude(chat.agent)?;
     match &reader.source {
@@ -112,6 +120,12 @@ fn resolve<'m>(model: &'m Model, chat: &View) -> Option<Resolved<'m>> {
             };
             Some(resolved)
         }
+        ReaderSource::Text { name, body } => Some(Resolved {
+            title: format!("{name} \u{b7} {} lines", body.lines().count()),
+            body: Body::Text(body),
+            ask: None,
+            plans_nav: None,
+        }),
         ReaderSource::Plans { index } => {
             let plans = layer.accepted_plans();
             if plans.is_empty() {
@@ -165,6 +179,15 @@ fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'stat
         }
         Body::Diff(document) => crate::chat::diff::reader_rows(document, width, theme),
         Body::NewFile(content) => diff::new_file_rows(content, width, theme, true),
+        Body::Text(content) => markdown::plain_rows(content, width.saturating_sub(3).max(1), theme.text())
+            .into_iter()
+            .map(|spans| {
+                let mut line = Line::default();
+                push_span(&mut line, 2, "", theme.text());
+                line.spans.extend(spans);
+                line
+            })
+            .collect(),
     }
 }
 

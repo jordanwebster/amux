@@ -1,0 +1,40 @@
+  fix-auth · claude @ mbp                                                                                   chat · idle 
+                                                                                                                        
+▎   run the coverage report and show me                                                                                 
+                                                                                                                        
+    Line coverage is 82.4%, worst in sync/retry.rs. The full report:                                                    
+                                                                                                                        
+  ▤ coverage.html · 19.5 KiB                                                                                            
+                                                                                                                        
+  ─ turn · 1m 42s ──────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+▎   Type a message▌                                                                                                     
+                                                                                                                        
+    enter send · ctrl+j newline · ? help                                                                   mode default 

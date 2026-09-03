@@ -7063,3 +7063,13 @@ magnitudes against daemon metadata. Inclusive selections become stable
 path/side/line anchors with exact quoted rows. Review comments stay in document
 order through add, edit, and delete, and their human-readable body carries blob
 identity and round-trips independently of any terminal renderer.
+
+2026-09-03 — **Attachments became rows in the feed.** A message's attachment
+elements no longer reach the markdown renderer: both chats paint the prose
+alone and hang one focusable row per attachment under it — a kind glyph, the
+name, and the one measurement the kind offers (bytes, lines, or comments), all
+read from the stream's refs row so a viewing host paints without fetching a
+byte. The optimistic echo carries the same rows from the moment Enter is
+pressed. The feed's fold chord now opens what the focus is on: an image or file
+leaves for the host's viewer through the runtime, and pasted text opens in the
+reader, which grew a body kind that renders words with no markup.

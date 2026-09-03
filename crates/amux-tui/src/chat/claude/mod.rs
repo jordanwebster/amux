@@ -261,6 +261,14 @@ impl View {
 
     /// The reader is open on the pending ask's document (as opposed to a
     /// resolved plan) — the form every ask-lifecycle rule dismisses.
+    /// Open the fullscreen reader on a text attachment from the feed.
+    pub(crate) fn open_text_reader(&mut self, name: String, body: String) {
+        self.reader = Some(ReaderView {
+            source: ReaderSource::Text { name, body },
+            scroll: 0,
+        });
+    }
+
     fn ask_reader_open(&self) -> bool {
         matches!(
             self.reader,

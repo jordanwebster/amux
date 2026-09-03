@@ -20,10 +20,12 @@
 //! painter leaves the background alone so the screen stays calm and the
 //! style map reads a plain row or a single foreground token.
 
+use amux_ui::attachments::{AttachmentKind, AttachmentLine};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde::{Deserialize, Serialize};
 
+use super::attach::human_size;
 use super::frame::{BlockKey, PaintedBlock};
 use crate::markdown;
 use crate::render::{
@@ -421,6 +423,62 @@ fn magnitude(added: u64, removed: u64) -> String {
         (0, removed) => format!("−{removed}"),
         (added, removed) => format!("+{added} −{removed}"),
     }
+}
+
+// --- what came attached ------------------------------------------------------
+
+/// One attached thing, on its own row under the message that carries it.
+///
+/// Everything on the row is already in the stream: the daemon states an
+/// artifact's name and size on the refs row, and an inline attachment
+/// states its own length, so a viewer paints the row without fetching a
+/// byte — a feed that scrolls past a hundred attachments downloads none
+/// of them.
+pub(crate) fn paint_attachment(
+    key: BlockKey,
+    attachment: &AttachmentLine,
+    theme: Theme,
+    width: usize,
+) -> PaintedBlock {
+    let detail = attachment_detail(attachment);
+    let mut line = Line::default();
+    push_span(&mut line, GLYPH_COL, attachment_glyph(attachment.kind), theme.text());
+    let room = text_width(width).saturating_sub(str_width(&detail) + 3);
+    push_span(
+        &mut line,
+        TEXT_COL,
+        clip_to_width(&attachment.name, room).to_string(),
+        theme.text(),
+    );
+    if !detail.is_empty() {
+        line.spans
+            .push(Span::styled(format!(" \u{b7} {detail}"), theme.muted()));
+    }
+    block(key, vec![line])
+}
+
+/// The kind, in one cell. An attachment row has no other space for its
+/// kind: the name is the useful half of the row and the size is the
+/// other, so the glyph carries what an image is and a file is not.
+fn attachment_glyph(kind: AttachmentKind) -> &'static str {
+    match kind {
+        AttachmentKind::Image => "\u{25a3}",
+        AttachmentKind::File => "\u{25a4}",
+        AttachmentKind::Text => "\u{b6}",
+        AttachmentKind::Review => "\u{2317}",
+    }
+}
+
+/// The one measurement the kind makes available: bytes for stored
+/// artifacts, lines for pasted text, comments for a review.
+fn attachment_detail(attachment: &AttachmentLine) -> String {
+    if let Some(lines) = attachment.lines {
+        return plural(lines as usize, "line", "lines");
+    }
+    if let Some(comments) = attachment.comments {
+        return plural(comments, "comment", "comments");
+    }
+    attachment.size.map(human_size).unwrap_or_default()
 }
 
 /// What an ask settled, once it is settled: one plain row, because a

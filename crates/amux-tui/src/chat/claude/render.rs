@@ -20,10 +20,12 @@ use ratatui::text::{Line, Span};
 
 use crate::chat::blocks::{
     self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant,
-    paint_compaction_rule, paint_composer_block, paint_error, paint_exploration_run,
+    paint_attachment, paint_compaction_rule, paint_composer_block, paint_error,
+    paint_exploration_run,
     paint_file_change, paint_header, paint_plan, paint_subagent, paint_thinking, paint_tool_line,
     paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
+use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
 use crate::chat::claude::{View, ask_ui, panel, reader};
 use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
@@ -527,6 +529,14 @@ fn feed_blocks(
                         )
                         .clone(),
                 );
+                push_attachment_blocks(
+                    &mut blocks,
+                    cache,
+                    entry.id,
+                    &entry_attachments(layer, entry),
+                    theme,
+                    width,
+                );
             }
             FeedItem::ExplorationRun {
                 id,
@@ -588,16 +598,64 @@ fn feed_blocks(
     }
     for (index, echo) in layer.pending_echoes().iter().enumerate() {
         let key = BlockKey(ECHO_KEY_BASE - index as u64);
+        // An echo is painted from the same segments a landed prompt is:
+        // what was sent already carries its elements, so the attachment
+        // rows appear the moment Enter is pressed and simply survive
+        // reconciliation rather than arriving with it.
+        let content = layer.attachments().segments(&echo.text);
         blocks.push(
             cache
                 .get_or_paint(key, echo, width, theme, false, || {
-                    paint_user_prompt(key, &echo.text, true, theme, width)
+                    paint_user_prompt(key, &prose(&content), true, theme, width)
                 })
                 .clone(),
+        );
+        push_attachment_blocks(
+            &mut blocks,
+            cache,
+            echo_owner(index),
+            &described(layer.attachments(), &content),
+            theme,
+            width,
         );
     }
     cache.retain(&blocks.iter().map(|block| block.key).collect::<Vec<_>>());
     blocks
+}
+
+/// The attachments one entry carries, described from the layer's index.
+fn entry_attachments(
+    layer: &amux_ui::claude::ClaudeLayer,
+    entry: &FeedEntry,
+) -> Vec<amux_ui::attachments::AttachmentLine> {
+    match &entry.kind {
+        FeedEntryKind::Prompt(prompt) => described(layer.attachments(), &prompt.content),
+        FeedEntryKind::Message(message) => described(layer.attachments(), &message.content),
+        _ => Vec::new(),
+    }
+}
+
+/// Append one focusable row per attachment under the block that carries
+/// them, so the feed can put the focus on a single attachment and open
+/// exactly that one.
+fn push_attachment_blocks(
+    blocks: &mut Vec<PaintedBlock>,
+    cache: &mut PaintCache,
+    owner: u64,
+    attachments: &[amux_ui::attachments::AttachmentLine],
+    theme: Theme,
+    width: usize,
+) {
+    for (index, attachment) in attachments.iter().enumerate() {
+        let key = attachment_key(owner, index);
+        blocks.push(
+            cache
+                .get_or_paint(key, attachment, width, theme, false, || {
+                    paint_attachment(key, attachment, theme, width)
+                })
+                .clone(),
+        );
+    }
 }
 
 /// This chat's effective binding table — the one source every hint that
@@ -616,11 +674,13 @@ fn entry_block(
 ) -> PaintedBlock {
     let key = BlockKey(entry.id);
     match &entry.kind {
-        FeedEntryKind::Prompt(prompt) => paint_user_prompt(key, &prompt.text, false, theme, width),
+        FeedEntryKind::Prompt(prompt) => {
+            paint_user_prompt(key, &prose(&prompt.content), false, theme, width)
+        }
         // One markdown source per message: blocks joined the way the API
         // separates them.
         FeedEntryKind::Message(message) => {
-            paint_assistant(key, &message.segments.join("\n\n"), theme, width)
+            paint_assistant(key, &prose(&message.content), theme, width)
         }
         FeedEntryKind::Thinking(thinking) => {
             let mut text = match thinking.duration_ms {

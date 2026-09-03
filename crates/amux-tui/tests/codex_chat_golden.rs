@@ -261,6 +261,93 @@ fn mcp_startup_rows() -> Vec<Value> {
     ]
 }
 
+fn attachment(kind: amux_ui::ArtifactKind, name: &str, mime: &str, size: usize) -> amux_ui::DraftAttachment {
+    amux_ui::DraftAttachment::from_bytes(kind, name, mime, vec![b'z'; size])
+}
+
+fn element(attachment: &amux_ui::DraftAttachment) -> String {
+    let kind = match attachment.kind {
+        amux_ui::ArtifactKind::Image => amux_ui::MentionKind::Image {
+            id: attachment.id.clone(),
+        },
+        _ => amux_ui::MentionKind::File {
+            id: attachment.id.clone(),
+        },
+    };
+    amux_ui::format_mention(&amux_ui::Mention {
+        kind,
+        name: attachment.name.clone(),
+        size: Some(attachment.size),
+        path: None,
+    })
+}
+
+fn pasted_element(name: &str, lines: usize) -> String {
+    amux_ui::format_mention(&amux_ui::Mention {
+        kind: amux_ui::MentionKind::Text {
+            lines: lines as u32,
+            body: (1..=lines).map(|n| format!("stack frame {n}\n")).collect(),
+        },
+        name: name.to_string(),
+        size: None,
+        path: None,
+    })
+}
+
+fn refs_row(attachments: &[&amux_ui::DraftAttachment]) -> Value {
+    json!({
+        "type": "amux.attachments",
+        "input_id": null,
+        "refs": attachments
+            .iter()
+            .map(|attachment| json!({
+                "id": attachment.id,
+                "kind": match attachment.kind {
+                    amux_ui::ArtifactKind::Image => "image",
+                    amux_ui::ArtifactKind::Diff => "diff",
+                    _ => "file",
+                },
+                "name": attachment.name,
+                "mime": attachment.mime,
+                "size": attachment.size,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn attachment_rows() -> Vec<Value> {
+    let image = attachment(amux_ui::ArtifactKind::Image, "screenshot.png", "image/png", 120_433);
+    let file = attachment(amux_ui::ArtifactKind::File, "trace.log", "text/plain", 4096);
+    let report = attachment(amux_ui::ArtifactKind::File, "coverage.html", "text/html", 20_000);
+    let prompt = format!(
+        "the sync panel looks wrong\n{}\n{}\n{}",
+        element(&image),
+        element(&file),
+        pasted_element("pasted-1", 240),
+    );
+    let reply = format!(
+        "The panel drops rows above 4k. The full report:\n{}",
+        element(&report),
+    );
+    vec![
+        ready(),
+        json!({"type":"turn/started","turn":{"id":"turn-attach","status":"inProgress"}}),
+        refs_row(&[&image, &file]),
+        json!({"type":"item/completed","turnId":"turn-attach","item":{"id":"user-3","type":"userMessage","content":[{"type":"text","text":prompt}]}}),
+        refs_row(&[&report]),
+        json!({"type":"item/completed","item":{"id":"msg-3","type":"agentMessage","text":reply,"phase":"final_answer"}}),
+        json!({"type":"turn/completed","turn":{"id":"turn-attach","status":"completed"}}),
+    ]
+}
+
+/// Codex's feed paints attachments with the same rows Claude's does: a
+/// prompt carrying an image, a file and a long paste, and a reply
+/// carrying a file the agent attached back.
+#[test]
+fn codex_attachment_blocks_both_themes() {
+    assert_surface("attachment_blocks", &model(attachment_rows()));
+}
+
 #[test]
 fn codex_streaming_turn_both_themes() {
     let extra = vec![

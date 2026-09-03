@@ -3,6 +3,7 @@
 //! semantics separate while sharing only proven terminal renderers.
 
 pub(crate) mod attach;
+pub(crate) mod attachments;
 pub(crate) mod blocks;
 pub(crate) mod claude;
 mod codex;
@@ -359,6 +360,17 @@ impl ChatView {
         }
     }
 
+    /// Read a text attachment in the fullscreen reader.
+    ///
+    /// Only Claude's chat has a reader; a Codex chat states the pasted
+    /// text's length on the feed row and leaves it there until Codex's
+    /// screen grows one of its own.
+    fn open_text_reader(&mut self, name: String, body: String) {
+        if let AgentChatView::Claude(view) = &mut self.inner {
+            view.open_text_reader(name, body);
+        }
+    }
+
     fn consume_shared_leader(&mut self) {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.pending_leader = false,
@@ -377,6 +389,27 @@ impl ChatView {
                 .find(|block| block.key == focused)
                 .map(|block| block.copy_text.clone()),
             None => blocks.last().map(|block| block.copy_text.clone()),
+        }
+    }
+}
+
+/// Open the attachment the feed's focus is on, if it is on one.
+///
+/// An image or a file leaves for the host's viewer through the runtime,
+/// which fetches and verifies the bytes first; pasted text is read here,
+/// because there is no file to hand anyone. A review has its own page
+/// and is not opened from this chord.
+fn open_focused_attachment(chat: &mut ChatView, model: &Model) -> Option<UiAction> {
+    let focus = chat.viewport.focus?;
+    let mention = attachments::focused_mention(model, chat.agent, focus)?;
+    match attachments::opening(&mention)? {
+        attachments::Opening::External(id) => Some(UiAction::Dispatch(Command::OpenAttachment {
+            agent: chat.agent,
+            id,
+        })),
+        attachments::Opening::Read { title, body } => {
+            chat.open_text_reader(title, body);
+            None
         }
     }
 }
@@ -428,6 +461,13 @@ pub fn handle_chat_key(
                 }
                 KeyCode::Char('o') => {
                     chat.consume_shared_leader();
+                    // The chord opens what the focus is on: an
+                    // attachment row goes to the host's viewer or the
+                    // reader, an exploration run opens and shuts. One
+                    // chord, because the feed has one focus.
+                    if let Some(action) = open_focused_attachment(chat, model) {
+                        return Some(action);
+                    }
                     let cached = chat.feed_metrics.get_mut();
                     let blocks = cached
                         .as_ref()
@@ -975,6 +1015,111 @@ mod tests {
             },
         );
         (model, agent)
+    }
+
+    /// A Claude chat whose one prompt carries an image attachment, with
+    /// the refs row that states its name and size.
+    fn image_prompt_model() -> (Model, AgentId, amux_ui::DraftAttachment) {
+        let (mut model, agent) = idle_claude_model();
+        let image = amux_ui::DraftAttachment::from_bytes(
+            amux_ui::ArtifactKind::Image,
+            "screenshot.png",
+            "image/png",
+            vec![b'p'; 2048],
+        );
+        let element = amux_ui::format_mention(&amux_ui::Mention {
+            kind: amux_ui::MentionKind::Image {
+                id: image.id.clone(),
+            },
+            name: image.name.clone(),
+            size: Some(image.size),
+            path: None,
+        });
+        update(
+            &mut model,
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Batch {
+                    at: at(3),
+                    entries: vec![
+                        StreamEntry {
+                            seq: 1,
+                            payload: json!({"type": "amux.transcript_ready"}),
+                        },
+                        StreamEntry {
+                            seq: 2,
+                            payload: json!({
+                                "type": "amux.attachments",
+                                "input_id": null,
+                                "refs": [{
+                                    "id": image.id,
+                                    "kind": "image",
+                                    "name": image.name,
+                                    "mime": image.mime,
+                                    "size": image.size,
+                                }],
+                            }),
+                        },
+                        StreamEntry {
+                            seq: 3,
+                            payload: json!({
+                                "type": "user",
+                                "uuid": "dddddddd-0000-4000-8000-000000000001",
+                                "sessionId": "22222222-2222-4222-8222-222222222222",
+                                "timestamp": "2026-08-12T09:00:00.000Z",
+                                "message": {"role": "user", "content": format!("look\n{element}")},
+                                "origin": {"kind": "human"},
+                                "promptSource": "typed"
+                            }),
+                        },
+                    ],
+                },
+            },
+        );
+        (model, agent, image)
+    }
+
+    /// The fold chord opens what the focus is on. On an image row that
+    /// means the host's viewer, through the runtime, which is the only
+    /// place the bytes exist — the chat never holds them.
+    #[test]
+    fn the_fold_chord_opens_the_focused_image_attachment() {
+        let (model, agent, image) = image_prompt_model();
+        let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
+        let ctx = FrameContext {
+            viewport: (100, 30),
+            theme: Theme::default(),
+            now: at(0),
+        };
+        // Painting fills the metrics the focus moves through.
+        build_chat_lines(&model, &chat, &ctx);
+
+        // The newest block is the prompt's one attachment row.
+        let leader = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        super::handle_chat_key(&mut chat, &model, leader, (100, 30), at(0));
+        super::handle_chat_key(
+            &mut chat,
+            &model,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+            (100, 30),
+            at(0),
+        );
+        super::handle_chat_key(&mut chat, &model, leader, (100, 30), at(0));
+        let action = super::handle_chat_key(
+            &mut chat,
+            &model,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+            (100, 30),
+            at(0),
+        );
+        assert_eq!(
+            action,
+            Some(UiAction::Dispatch(Command::OpenAttachment {
+                agent,
+                id: image.id
+            })),
+            "the chord opened the focused image"
+        );
     }
 
     fn seed_focus_cache(chat: &mut ChatView) {

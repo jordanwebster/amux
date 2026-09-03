@@ -11,8 +11,8 @@
 use amux_ui::codex::{
     ApprovalResolution, Ask, AskActionMeaning, AskContext, BoundaryEntry, CodexPhase,
     ErrorSeverity, FeedEntry, FeedEntryKind, ItemFinality, McpStartupEntry, McpStartupStatus,
-    MessagePhase, NetworkPolicyAction, PromptPart, PromptSource, TokenUsage, TurnStatus, WorkEntry,
-    WorkKind, WorkOutcome, WorkState,
+    MessagePhase, NetworkPolicyAction, PromptEntry, PromptPart, PromptSource, TokenUsage,
+    TurnStatus, WorkEntry, WorkKind, WorkOutcome, WorkState,
 };
 use amux_ui::{AgentId, Model};
 use ratatui::style::Style;
@@ -20,8 +20,9 @@ use ratatui::text::{Line, Span};
 use serde_json::Value;
 
 use super::View;
+use crate::chat::attachments::{attachment_key, described, prose};
 use crate::chat::blocks::{
-    self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant,
+    self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant, paint_attachment,
     paint_compaction_rule, paint_composer_block, paint_error, paint_header, paint_mcp_startup,
     paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
@@ -725,9 +726,9 @@ fn feed_blocks(
         return Vec::new();
     };
     let reports = MessageView::new(model, chat.agent, chat.reports_open, chat.leader);
-    let blocks: Vec<_> = layer
-        .entries()
-        .map(|entry| {
+    let mut blocks: Vec<PaintedBlock> = Vec::new();
+    for entry in layer.entries() {
+        blocks.push(
             cache
                 .get_or_paint(
                     BlockKey(entry.id),
@@ -737,11 +738,35 @@ fn feed_blocks(
                     chat.reports_open,
                     || entry_block(entry, theme, width, reports),
                 )
-                .clone()
-        })
-        .collect();
+                .clone(),
+        );
+        // One focusable row per attachment, under the message that
+        // carries it, so the feed can open exactly one of them.
+        for (index, attachment) in entry_attachments(layer, entry).iter().enumerate() {
+            let key = attachment_key(entry.id, index);
+            blocks.push(
+                cache
+                    .get_or_paint(key, attachment, width, theme, false, || {
+                        paint_attachment(key, attachment, theme, width)
+                    })
+                    .clone(),
+            );
+        }
+    }
     cache.retain(&blocks.iter().map(|block| block.key).collect::<Vec<_>>());
     blocks
+}
+
+/// The attachments one entry carries, described from the layer's index.
+fn entry_attachments(
+    layer: &amux_ui::codex::CodexLayer,
+    entry: &FeedEntry,
+) -> Vec<amux_ui::attachments::AttachmentLine> {
+    match &entry.kind {
+        FeedEntryKind::Prompt(prompt) => described(layer.attachments(), &prompt.content),
+        FeedEntryKind::Message(message) => described(layer.attachments(), &message.content),
+        _ => Vec::new(),
+    }
 }
 
 /// Join a second painted block onto the first: some entries say one
@@ -769,7 +794,7 @@ fn entry_block(
                 PromptSource::Protocol => String::new(),
                 PromptSource::SteerEcho => "steer · ".to_string(),
             };
-            text.push_str(&prompt_parts(&prompt.parts));
+            text.push_str(&prompt_body(prompt));
             paint_user_prompt(
                 key,
                 &text,
@@ -779,7 +804,7 @@ fn entry_block(
             )
         }
         FeedEntryKind::Message(message) => {
-            let mut block = paint_assistant(key, &message.text, theme, width);
+            let mut block = paint_assistant(key, &prose(&message.content), theme, width);
             if message.phase == MessagePhase::Commentary {
                 block = merged(
                     paint_thinking(key, "· commentary", None, theme, width),
@@ -1179,11 +1204,20 @@ fn resolution_label(reason: ApprovalResolution) -> &'static str {
     }
 }
 
-fn prompt_parts(parts: &[PromptPart]) -> String {
-    parts
-        .iter()
-        .map(|part| match part {
-            PromptPart::Text { text } => text.clone(),
+/// The prompt's words: its text parts with their attachment elements
+/// removed, then whatever the protocol sent that was not text. The
+/// elements have their own rows, so leaving them in the body would say
+/// everything twice.
+fn prompt_body(prompt: &PromptEntry) -> String {
+    let mut pieces = vec![prose(&prompt.content)];
+    pieces.extend(prompt.parts.iter().filter_map(non_text_part));
+    pieces.retain(|piece| !piece.is_empty());
+    pieces.join(" ")
+}
+
+fn non_text_part(part: &PromptPart) -> Option<String> {
+    Some(match part {
+            PromptPart::Text { .. } => return None,
             PromptPart::Image { url } => format!(
                 "[image{}]",
                 url.as_deref()
@@ -1201,9 +1235,7 @@ fn prompt_parts(parts: &[PromptPart]) -> String {
                 item_type.as_deref().unwrap_or("input"),
                 json_text(raw)
             ),
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    })
 }
 
 fn usage_text(usage: &TokenUsage) -> String {
