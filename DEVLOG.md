@@ -7073,3 +7073,13 @@ byte. The optimistic echo carries the same rows from the moment Enter is
 pressed. The feed's fold chord now opens what the focus is on: an image or file
 leaves for the host's viewer through the runtime, and pasted text opens in the
 reader, which grew a body kind that renders words with no markup.
+
+2026-09-03 — **Pinned what a draft promises, and captured it.** A new spec
+chapter states the guarantees a sent draft makes independently of any
+terminal: an artifact-backed attachment is put and pinned while pasted text
+rides the words, a send pins exactly its own command's attachments so a
+deleted token can leave nothing behind, nothing is put until the person
+presses Enter, an open question gates the send and hands the screen back once
+answered, and a refused send puts nothing so the whole draft can be restored.
+The screenshot registry grew two states — the feed's attachment rows and a
+draft holding two kinds at once — rendered by a new `attachments` set.

@@ -15,6 +15,7 @@ const SET_NAMES: &[&str] = &[
     "scroll",
     "copy",
     "collapse",
+    "attachments",
     "themes",
     "fleet",
     "all",
@@ -212,6 +213,31 @@ const COLLAPSE: &[SetMember] = &[
     ),
 ];
 
+/// What a message carries besides its words: the feed's attachment rows
+/// and a draft holding two attachments of different kinds at once.
+const ATTACHMENTS: &[SetMember] = &[
+    member(
+        "chat-attachment-blocks",
+        "chat-attachment-blocks-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "chat-attachment-blocks",
+        "chat-attachment-blocks-light.png",
+        ThemeSpec::Light,
+    ),
+    member(
+        "chat-mixed-draft",
+        "chat-mixed-draft-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "chat-mixed-draft",
+        "chat-mixed-draft-light.png",
+        ThemeSpec::Light,
+    ),
+];
+
 const THEMES: &[SetMember] = &[
     member("claude-working", "claude-working-dark.png", ThemeSpec::Dark),
     member(
@@ -338,6 +364,7 @@ fn set_members(name: &str) -> Result<Vec<SetMember>, ShotError> {
         "scroll" => SCROLL,
         "copy" => COPY,
         "collapse" => COLLAPSE,
+        "attachments" => ATTACHMENTS,
         "themes" => THEMES,
         "fleet" => FLEET,
         "all" => {
@@ -350,6 +377,7 @@ fn set_members(name: &str) -> Result<Vec<SetMember>, ShotError> {
                 SCROLL,
                 COPY,
                 COLLAPSE,
+                ATTACHMENTS,
                 THEMES,
                 FLEET,
             ] {

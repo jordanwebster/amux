@@ -50,6 +50,8 @@ pub enum NamedState {
     ComponentGalleryCodex,
     ExplorationCollapsed,
     ExplorationExpanded,
+    ChatAttachmentBlocks,
+    ChatMixedDraft,
 }
 
 const ALL_STATES: &[NamedState] = &[
@@ -75,6 +77,8 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::ComponentGalleryCodex,
     NamedState::ExplorationCollapsed,
     NamedState::ExplorationExpanded,
+    NamedState::ChatAttachmentBlocks,
+    NamedState::ChatMixedDraft,
 ];
 
 impl NamedState {
@@ -102,6 +106,8 @@ impl NamedState {
             Self::ComponentGalleryCodex => "component-gallery-codex",
             Self::ExplorationCollapsed => "exploration-collapsed",
             Self::ExplorationExpanded => "exploration-expanded",
+            Self::ChatAttachmentBlocks => "chat-attachment-blocks",
+            Self::ChatMixedDraft => "chat-mixed-draft",
         }
     }
 
@@ -232,7 +238,138 @@ pub fn fixture(state: NamedState) -> Fixture {
             chat.viewport.expanded.insert(run);
             fixture
         }
+        NamedState::ChatAttachmentBlocks => claude_fixture(claude_attachment_rows()),
+        NamedState::ChatMixedDraft => {
+            let mut fixture = claude_fixture(claude_idle_rows());
+            let chat = fixture.view.chat.as_mut().expect("Claude chat open");
+            let composer = chat.composer_mut();
+            composer.insert_str("compare ");
+            composer.attach(fixture_image());
+            composer.insert_str(" against the trace ");
+            composer.paste_or_attach(&pasted_body(240));
+            fixture
+        }
     }
+}
+
+// --- attachments ------------------------------------------------------------
+
+fn fixture_image() -> amux_ui::DraftAttachment {
+    amux_ui::DraftAttachment::from_bytes(
+        amux_ui::ArtifactKind::Image,
+        "screenshot.png",
+        "image/png",
+        vec![b'p'; 120_433],
+    )
+}
+
+fn fixture_file() -> amux_ui::DraftAttachment {
+    amux_ui::DraftAttachment::from_bytes(
+        amux_ui::ArtifactKind::File,
+        "trace.log",
+        "text/plain",
+        vec![b'x'; 4096],
+    )
+}
+
+fn fixture_report() -> amux_ui::DraftAttachment {
+    amux_ui::DraftAttachment::from_bytes(
+        amux_ui::ArtifactKind::File,
+        "coverage.html",
+        "text/html",
+        vec![b'y'; 20_000],
+    )
+}
+
+fn pasted_body(lines: usize) -> String {
+    (1..=lines).map(|n| format!("stack frame {n}\n")).collect()
+}
+
+fn attachment_element(attachment: &amux_ui::DraftAttachment) -> String {
+    let kind = match attachment.kind {
+        amux_ui::ArtifactKind::Image => amux_ui::MentionKind::Image {
+            id: attachment.id.clone(),
+        },
+        _ => amux_ui::MentionKind::File {
+            id: attachment.id.clone(),
+        },
+    };
+    amux_ui::format_mention(&amux_ui::Mention {
+        kind,
+        name: attachment.name.clone(),
+        size: Some(attachment.size),
+        path: None,
+    })
+}
+
+/// The synthetic row the daemon emits before delivering an input that
+/// pins artifacts: it is what lets a host that never saw the bytes paint
+/// a name and a size.
+fn attachment_refs_row(attachments: &[&amux_ui::DraftAttachment]) -> Value {
+    json!({
+        "type": "amux.attachments",
+        "input_id": null,
+        "refs": attachments
+            .iter()
+            .map(|attachment| json!({
+                "id": attachment.id,
+                "kind": match attachment.kind {
+                    amux_ui::ArtifactKind::Image => "image",
+                    amux_ui::ArtifactKind::Diff => "diff",
+                    _ => "file",
+                },
+                "name": attachment.name,
+                "mime": attachment.mime,
+                "size": attachment.size,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn claude_attachment_rows() -> Vec<Value> {
+    let image = fixture_image();
+    let file = fixture_file();
+    let report = fixture_report();
+    let pasted = amux_ui::format_mention(&amux_ui::Mention {
+        kind: amux_ui::MentionKind::Text {
+            lines: 240,
+            body: pasted_body(240),
+        },
+        name: "pasted-1".into(),
+        size: None,
+        path: None,
+    });
+    vec![
+        claude_ready(),
+        json!({"type": "permission-mode", "permissionMode": "default"}),
+        attachment_refs_row(&[&image, &file]),
+        claude_prompt(
+            1,
+            &format!(
+                "The sync panel drops rows — here is the screen, the log, and the stack I pasted.\n{}\n{}\n{}",
+                attachment_element(&image),
+                attachment_element(&file),
+                pasted,
+            ),
+        ),
+        attachment_refs_row(&[&report]),
+        claude_assistant(
+            2,
+            &format!(
+                "It drops rows above 4k. The coverage run is next to it:\n{}",
+                attachment_element(&report),
+            ),
+            Some("end_turn"),
+        ),
+        json!({
+            "type": "system",
+            "subtype": "turn_duration",
+            "uuid": "ffffffff-0000-4000-8000-000000000004",
+            "sessionId": SESSION,
+            "timestamp": "2026-08-12T09:12:06Z",
+            "durationMs": 6200,
+        }),
+    ]
 }
 
 /// Build a retained feed of exactly `entries` provider-native items.

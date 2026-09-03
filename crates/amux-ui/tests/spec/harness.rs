@@ -529,6 +529,7 @@ pub fn seq(fragments: impl IntoIterator<Item = Vec<Msg>>) -> Vec<Msg> {
 pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     let mut sequences = Vec::new();
     sequences.extend(crate::attachments::sequences());
+    sequences.extend(crate::draft::sequences());
     sequences.extend(crate::connection::sequences());
     sequences.extend(crate::inventory::sequences());
     sequences.extend(crate::ops::sequences());
