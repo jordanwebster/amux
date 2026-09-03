@@ -1,1 +1,0 @@
-TUI pid 37988: no TCP or UDP sockets
