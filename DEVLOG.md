@@ -4,11 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
-2026-09-03 — **Live attachment QA blocked at Claude launch.** The local amux
-daemon starts, but creating a Claude agent fails for both PTY and SDK drivers
-with `managed Claude MCP launch route is no longer valid` under Claude Code
-2.1.259. The five named tmux checkpoint captures and exact reproduction are in
-`.autopilot/evidence/live/attachments-qa/`; follow-up is tracked as Task 40.
+2026-09-03 — **Verified managed Claude launches.** Claude Code 2.1.259 starts
+under both PTY and SDK drivers when the client and daemon use the same config.
+The apparent managed MCP route failure came from a long-lived tmux server that
+dropped the worktree's `AMUX_CONFIG` and connected to an unrelated default
+daemon whose development executable had been removed. Live QA now passes the
+config explicitly inside tmux panes so the selected daemon is unambiguous.
 
 2026-09-03 — **Sent drafts that carry attachments.** Enter on a draft holding
 a token exports it into one attachment prompt: canonical elements in the text
