@@ -150,6 +150,15 @@ impl View {
         self.review.as_ref().is_some_and(|draft| draft.open)
     }
 
+    /// The page a wheel notch or any other whole-frame input belongs to
+    /// while the review is on screen.
+    pub(crate) fn open_review_mut(&mut self) -> Option<&mut crate::review::ReviewView> {
+        self.review
+            .as_mut()
+            .filter(|draft| draft.open)
+            .map(|draft| &mut draft.view)
+    }
+
     pub(crate) fn send_failure(&self) -> Option<&str> {
         self.send_failure.as_deref()
     }

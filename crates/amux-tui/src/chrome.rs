@@ -635,9 +635,10 @@ impl Chrome {
             }
             InputEvent::Mouse(mouse) => {
                 // The fleet deliberately ignores the mouse. An open chat
-                // accepts wheel motion only over its feed and reports
-                // whether the shared viewport actually moved, so a clamped
-                // wheel event costs no repaint.
+                // accepts wheel motion over its feed, or anywhere on the
+                // review page while that covers the frame, and reports
+                // whether anything actually moved, so a clamped wheel
+                // event costs no repaint.
                 if let Some(chat) = self.view.chat.as_mut() {
                     self.dirty |=
                         crate::chat::handle_chat_mouse(chat, model, mouse.to_event(), viewport);

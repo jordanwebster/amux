@@ -118,9 +118,18 @@ impl ReviewView {
     /// as it moves, so the page has to know the height before the key
     /// arrives, not only when it draws.
     pub fn set_viewport(&mut self, width: u16, height: u16) {
+        self.resize(width, height);
+        self.follow_cursor();
+    }
+
+    /// Learn the screen without pulling the body back to the cursor.
+    ///
+    /// The wheel deliberately scrolls away from the cursor, so a wheel
+    /// notch cannot go through `set_viewport`: following the cursor there
+    /// would undo the previous notch before the next one applied.
+    pub fn resize(&mut self, width: u16, height: u16) {
         self.width = width;
         self.height = height;
-        self.follow_cursor();
     }
 
     pub(super) fn files(&self) -> &[amux_ui::review::ReviewFile] {

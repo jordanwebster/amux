@@ -352,6 +352,15 @@ impl ChatView {
         }
     }
 
+    /// The review page, while it is the frame.
+    fn open_review_mut(&mut self) -> Option<&mut crate::review::ReviewView> {
+        match &mut self.inner {
+            AgentChatView::Claude(view) => view.open_review_mut(),
+            // Only Claude's chat can draft a review.
+            AgentChatView::Codex(_) | AgentChatView::Unsupported(_) => None,
+        }
+    }
+
     fn overlay_open(&self) -> bool {
         match &self.inner {
             AgentChatView::Claude(view) => view.overlay_open(),
@@ -589,11 +598,25 @@ pub fn handle_chat_mouse(
     event: MouseEvent,
     size: (u16, u16),
 ) -> bool {
-    let intent = match event.kind {
-        MouseEventKind::ScrollUp => viewport::ScrollIntent::Rows(-3),
-        MouseEventKind::ScrollDown => viewport::ScrollIntent::Rows(3),
+    const NOTCH_ROWS: i32 = 3;
+    let rows = match event.kind {
+        MouseEventKind::ScrollUp => -NOTCH_ROWS,
+        MouseEventKind::ScrollDown => NOTCH_ROWS,
         _ => return false,
     };
+
+    // The review page is the whole frame while it is open, so a notch
+    // anywhere on screen scrolls its body rather than the feed it hides.
+    // It scrolls without moving the cursor, exactly as its own scroll
+    // keys do.
+    if let Some(review) = chat.open_review_mut() {
+        review.resize(size.0, size.1);
+        let before = review.scroll();
+        review.handle_wheel(rows);
+        return review.scroll() != before;
+    }
+
+    let intent = viewport::ScrollIntent::Rows(rows);
     let (metrics, geometry) = chat.layout_for(
         model,
         size,
@@ -1489,6 +1512,69 @@ mod tests {
 
         assert_eq!(leader_chat(&mut chat, &model, 'o'), None);
         assert!(chat.viewport.expanded.is_empty());
+    }
+
+    /// The running program hands wheel events to `handle_chat_mouse`, so
+    /// the review page only scrolls under a mouse if that entry point knows
+    /// about it — reaching into the page's own wheel handler would prove
+    /// nothing about the program.
+    #[test]
+    fn mouse_wheel_scrolls_the_open_review_page_without_moving_its_cursor() {
+        let (model, agent) = model_with_protocol(StructuredProtocol::Claude.as_str());
+        let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
+        let AgentChatView::Claude(view) = &mut chat.inner else {
+            panic!("a Claude chat");
+        };
+        view.review = Some(Box::new(crate::chat::claude::draft::ReviewDraft::opened(
+            crate::review::fixture::sample_review(),
+        )));
+
+        let wheel = |kind| MouseEvent {
+            kind,
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        fn page(chat: &mut ChatView) -> &mut crate::review::ReviewView {
+            let AgentChatView::Claude(view) = &mut chat.inner else {
+                panic!("a Claude chat");
+            };
+            view.open_review_mut().expect("the page is open")
+        }
+        let cursor = page(&mut chat).cursor();
+
+        // At the top there is nothing above to reveal, so the frame is
+        // unchanged and the program has no reason to redraw.
+        assert!(!super::handle_chat_mouse(
+            &mut chat,
+            &model,
+            wheel(MouseEventKind::ScrollUp),
+            (80, 12),
+        ));
+        assert_eq!(page(&mut chat).scroll(), 0);
+
+        assert!(super::handle_chat_mouse(
+            &mut chat,
+            &model,
+            wheel(MouseEventKind::ScrollDown),
+            (80, 12),
+        ));
+        assert_eq!(page(&mut chat).scroll(), 3, "one notch is three rows");
+        assert_eq!(
+            page(&mut chat).cursor(),
+            cursor,
+            "the wheel scrolls the body, it does not move the cursor"
+        );
+
+        assert!(super::handle_chat_mouse(
+            &mut chat,
+            &model,
+            wheel(MouseEventKind::ScrollUp),
+            (80, 12),
+        ));
+        assert_eq!(page(&mut chat).scroll(), 0);
+        // The feed underneath never moved while the page had the frame.
+        assert_eq!(chat.viewport.scroll, FeedScroll::Following);
     }
 
     #[test]

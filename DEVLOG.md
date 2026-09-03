@@ -7184,3 +7184,13 @@ new-side end and both quoted rows without the page deriving any of it. Saved
 comments hang under their rows behind an accent bar; Enter on one reopens it
 for editing and `d` removes it, both through the core. Three more 120×40 frames
 are locked as goldens.
+
+2026-09-03 — **The wheel reaches the review page.** The page's wheel scrolling
+existed but nothing in the running program called it: chat mouse routing
+treated any open overlay as a reason to drop the event, so a notch over the
+review page did nothing. The chat's mouse entry point now hands a notch to the
+open page — from anywhere on screen, since the page is the whole frame — and
+reports whether the body actually moved. Learning the screen size split in two
+for this: keys go on using the setter that pulls the body back to the cursor,
+while the wheel only resizes, because following the cursor there would have
+undone each notch before the next one arrived.
