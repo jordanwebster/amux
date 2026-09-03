@@ -11,7 +11,10 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::agents::{ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader, TerminalSize};
+use crate::agents::{
+    BackendState, ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader, OutputDebug,
+    TerminalSize,
+};
 
 /// Maximum replay buffer size for PTY bytes.
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
@@ -89,6 +92,32 @@ impl PtyHandle {
         query: Option<ByteReplayQuery>,
     ) -> Option<MultiplexByteReader> {
         self.buffer.subscribe_with_query(query).await
+    }
+
+    pub(crate) async fn debug_output(&self) -> OutputDebug {
+        self.buffer.debug_snapshot().await
+    }
+
+    pub(crate) fn backend_state(&self, _output: &OutputDebug) -> BackendState {
+        let (pid, status) = match &self.hosted {
+            HostedPty::Process(process) => (Some(process.handle.pid()), process.exit.status()),
+            HostedPty::Claude(control) => (
+                control.terminal().map(|terminal| terminal.pid()),
+                control.exit_status(),
+            ),
+            #[cfg(any(test, feature = "testnet"))]
+            HostedPty::TestEcho(_) if _output.closed => {
+                return BackendState::Exited { code: None };
+            }
+            #[cfg(any(test, feature = "testnet"))]
+            HostedPty::TestEcho(_) => (None, None),
+        };
+        match status {
+            Some(status) => BackendState::Exited {
+                code: i32::try_from(status.exit_code()).ok(),
+            },
+            None => BackendState::Running { pid },
+        }
     }
 
     /// Resize the PTY.

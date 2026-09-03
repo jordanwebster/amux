@@ -25,9 +25,9 @@ use super::sdk_io::{ClaudeSdkSynthesized, ClaudeSdkV1Input, ClaudeSdkV1Row};
 use super::suspend::{ClaudeSuspendRecord, sanitize_resume_args};
 use crate::agents::{
     AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, AgentRecord, AgentType,
-    ClaudeDriver, CreateAgentRequest, LocalAgentNameSource, McpLaunchRoute, Plane, Protocol,
-    SessionEvent, SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent,
-    StructuredLogSource,
+    BackendState, ClaudeDriver, CreateAgentRequest, LocalAgentNameSource, McpLaunchRoute,
+    ObligationDebug, Plane, Protocol, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy,
+    StructuredInput, StructuredInputEvent, StructuredLogSource,
 };
 use crate::debug::DebugView;
 use crate::protocol::ProtocolError;
@@ -807,8 +807,43 @@ impl AgentBackend for ClaudeSdkBackend {
         .into())
     }
 
-    fn debug_json(&self, verbose: bool) -> serde_json::Result<Value> {
-        serde_json::to_value(DebugView::new(self, verbose))
+    async fn debug_json(&self, verbose: bool) -> serde_json::Result<Value> {
+        let (active, ready, exited, pending_permissions) = {
+            let runtime = self.runtime.lock().expect("Claude SDK runtime poisoned");
+            (
+                runtime.control.is_some(),
+                runtime.ready,
+                runtime.exited,
+                runtime
+                    .pending_permissions
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let output = self.log.debug_snapshot().await;
+        let backend = if exited {
+            BackendState::Exited { code: None }
+        } else if active || ready {
+            BackendState::Running { pid: None }
+        } else {
+            BackendState::Starting
+        };
+        let obligations = pending_permissions
+            .into_iter()
+            .map(|id| ObligationDebug {
+                kind: "permission".to_string(),
+                id: Some(id),
+            })
+            .collect();
+        let session =
+            SessionDebug::new(Some(&output), output.subscriber_count, backend, obligations);
+        let mut value = serde_json::to_value(DebugView::new(self, verbose))?;
+        value
+            .as_object_mut()
+            .expect("Claude SDK debug view is an object")
+            .insert("session".to_string(), serde_json::to_value(session)?);
+        Ok(value)
     }
 }
 
@@ -827,9 +862,7 @@ impl Serialize for DebugView<'_, ClaudeSdkBackend> {
         map.serialize_entry("pending_permissions", &runtime.pending_permissions.len())?;
         map.serialize_entry("active", &runtime.control.is_some())?;
         map.serialize_entry("exited", &runtime.exited)?;
-        if self.verbose {
-            map.serialize_entry("structured_seq", &0u64)?;
-        }
+        let _ = self.verbose;
         map.end()
     }
 }
@@ -876,6 +909,30 @@ mod tests {
             parent: None,
             working_on: None,
         }
+    }
+
+    #[tokio::test]
+    async fn debug_json_embeds_sdk_session_state() {
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: None,
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        };
+        let backend = ClaudeSdkBackend::new(&req, mcp_launch_route_for_tests(Uuid::new_v4()));
+        let debug = backend.debug_json(true).await.unwrap();
+
+        assert_eq!(debug["session"]["epoch"], 0);
+        assert!(debug["session"]["buffer"].is_object());
+        assert_eq!(debug["session"]["backend"]["state"], "starting");
+        assert!(debug["session"]["obligations"].is_array());
     }
 
     async fn provider_session(

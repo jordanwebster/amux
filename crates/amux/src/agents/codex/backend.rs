@@ -27,10 +27,10 @@ use crate::agent_tools;
 #[cfg(test)]
 use crate::agents::Delivery;
 use crate::agents::{
-    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CreateAgentRequest,
-    LocalAgentNameSource, McpLaunchRoute, Plane, Protocol, PtyHandle, RawPtyTarget, SessionEvent,
-    SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent, StructuredLogSource,
-    spawn_pty_agent,
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, BackendState, CreateAgentRequest,
+    LocalAgentNameSource, McpLaunchRoute, ObligationDebug, Plane, Protocol, PtyHandle,
+    RawPtyTarget, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy, StructuredInput,
+    StructuredInputEvent, StructuredLogSource, spawn_pty_agent,
 };
 #[cfg(test)]
 use crate::envelope::{Envelope, Sender};
@@ -1971,20 +1971,84 @@ impl AgentBackend for CodexBackend {
         .into())
     }
 
-    fn debug_json(&self, _verbose: bool) -> serde_json::Result<Value> {
-        let runtime = self
-            .runtime
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        Ok(json!({
-            "kind": "codex",
-            "thread_id": runtime.attached.as_ref().map(|attached| &attached.thread_id).or(self.resume_thread_id.as_ref()),
-            "daemon_mode": runtime.attached.as_ref().and_then(|attached| attached.daemon_mode.as_deref()).or(runtime.resume_daemon_mode.as_deref()),
-            "startup_error": runtime.startup_error,
-            "has_event_ingest": runtime.ingest_abort.is_some(),
-            "connected": runtime.attached.as_ref().is_some_and(|attached| attached.live.is_some()),
-            "has_pty": runtime.pty.is_some(),
-        }))
+    async fn debug_json(&self, _verbose: bool) -> serde_json::Result<Value> {
+        let (base, pty, connected, pending) = {
+            let runtime = self
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let base = json!({
+                "kind": "codex",
+                "thread_id": runtime.attached.as_ref().map(|attached| &attached.thread_id).or(self.resume_thread_id.as_ref()),
+                "daemon_mode": runtime.attached.as_ref().and_then(|attached| attached.daemon_mode.as_deref()).or(runtime.resume_daemon_mode.as_deref()),
+                "startup_error": runtime.startup_error,
+                "has_event_ingest": runtime.ingest_abort.is_some(),
+                "connected": runtime.attached.as_ref().is_some_and(|attached| attached.live.is_some()),
+                "has_pty": runtime.pty.is_some(),
+            });
+            let pty = runtime.pty.as_ref().map(|pty| pty.handle.clone());
+            let connected = runtime
+                .attached
+                .as_ref()
+                .is_some_and(|attached| attached.live.is_some());
+            let pending = runtime
+                .attached
+                .as_ref()
+                .map(|attached| {
+                    attached
+                        .pending
+                        .iter()
+                        .map(|(id, kind)| (id.clone(), *kind))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            (base, pty, connected, pending)
+        };
+        let pty_output = match &pty {
+            Some(pty) => Some(pty.debug_output().await),
+            None => None,
+        };
+        let log_output = self.log_source.debug_snapshot().await;
+        let subscriber_count = pty_output
+            .iter()
+            .chain(std::iter::once(&log_output))
+            .map(|output| output.subscriber_count)
+            .sum();
+        let backend = if *self.stop_tx.borrow() {
+            BackendState::Exited { code: None }
+        } else if connected {
+            BackendState::Running { pid: None }
+        } else {
+            BackendState::Starting
+        };
+        let mut obligations = Vec::with_capacity(pending.len());
+        for (id, kind) in pending {
+            let id = match serde_json::to_value(id)? {
+                Value::String(id) => id,
+                Value::Number(id) => id.to_string(),
+                other => other.to_string(),
+            };
+            obligations.push(ObligationDebug {
+                kind: match kind {
+                    PendingRequestKind::Approval => "approval",
+                    PendingRequestKind::ToolCall => "tool_call",
+                }
+                .to_string(),
+                id: Some(id),
+            });
+        }
+        let session = SessionDebug::new(
+            pty_output.as_ref().or(Some(&log_output)),
+            subscriber_count,
+            backend,
+            obligations,
+        );
+        let mut value = base;
+        value
+            .as_object_mut()
+            .expect("Codex debug view is an object")
+            .insert("session".to_string(), serde_json::to_value(session)?);
+        Ok(value)
     }
 }
 
@@ -2031,6 +2095,17 @@ mod tests {
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
             crate::agents::mcp_launch_route_for_tests(Uuid::from_u128(10)),
         )
+    }
+
+    #[tokio::test]
+    async fn debug_json_embeds_codex_session_state() {
+        let backend = session();
+        let debug = backend.debug_json(true).await.unwrap();
+
+        assert_eq!(debug["session"]["epoch"], 0);
+        assert!(debug["session"]["buffer"].is_object());
+        assert_eq!(debug["session"]["backend"]["state"], "starting");
+        assert!(debug["session"]["obligations"].is_array());
     }
 
     fn file_backed_session() -> (tempfile::TempDir, CodexBackend, Value) {

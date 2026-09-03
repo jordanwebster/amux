@@ -550,16 +550,17 @@ impl LocalAgentHost for PtyAgentHost {
     async fn debug_dump(&self, verbose: bool) -> Vec<DebugAgent> {
         let host_id = self.host_id();
         let state = self.state().read().await;
-        let mut agents: Vec<DebugAgent> = state
-            .local_agents
-            .values()
-            .map(|context| DebugAgent {
+        let mut agents = Vec::with_capacity(state.local_agents.len());
+        for context in state.local_agents.values() {
+            agents.push(DebugAgent {
                 record: context.record(host_id),
-                session: verbose
-                    .then(|| context.session.debug_json(verbose).ok())
-                    .flatten(),
-            })
-            .collect();
+                session: if verbose {
+                    context.session.debug_json(verbose).await.ok()
+                } else {
+                    None
+                },
+            });
+        }
         agents.sort_unstable_by(|a, b| {
             a.record
                 .name

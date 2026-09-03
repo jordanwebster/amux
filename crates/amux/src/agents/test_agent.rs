@@ -18,9 +18,9 @@ use uuid::Uuid;
 
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agents::{
-    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, CreateAgentRequest, Delivery,
-    DeliveryError, DeliveryLiveness, LocalAgentNameSource, Plane, Protocol, RawPtyTarget,
-    SessionEvent, StopPolicy, StructuredLogSource, TerminalSize,
+    AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, BackendState, CreateAgentRequest,
+    Delivery, DeliveryError, DeliveryLiveness, LocalAgentNameSource, Plane, Protocol, RawPtyTarget,
+    SessionDebug, SessionEvent, StopPolicy, StructuredLogSource, TerminalSize,
 };
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
@@ -306,8 +306,37 @@ impl AgentBackend for TestAgentSession {
         })
     }
 
-    fn debug_json(&self, verbose: bool) -> serde_json::Result<serde_json::Value> {
-        serde_json::to_value(DebugView::new(self, verbose))
+    async fn debug_json(&self, verbose: bool) -> serde_json::Result<serde_json::Value> {
+        let pty_output = match &self.pty {
+            Some(pty) => Some(pty.debug_output().await),
+            None => None,
+        };
+        let log_output = match &self.log_source {
+            Some(log) => Some(log.debug_snapshot().await),
+            None => None,
+        };
+        let subscriber_count = pty_output
+            .iter()
+            .chain(log_output.iter())
+            .map(|output| output.subscriber_count)
+            .sum();
+        let backend = match (&self.pty, &pty_output) {
+            (Some(pty), Some(output)) => pty.backend_state(output),
+            _ if self.delivery_ready.load(Ordering::Acquire) => BackendState::Running { pid: None },
+            _ => BackendState::Starting,
+        };
+        let session = SessionDebug::new(
+            pty_output.as_ref().or(log_output.as_ref()),
+            subscriber_count,
+            backend,
+            Vec::new(),
+        );
+        let mut value = serde_json::to_value(DebugView::new(self, verbose))?;
+        value
+            .as_object_mut()
+            .expect("test-agent debug view is an object")
+            .insert("session".to_string(), serde_json::to_value(session)?);
+        Ok(value)
     }
 }
 
@@ -350,5 +379,28 @@ mod tests {
         .unwrap();
 
         assert_eq!(seq, 0);
+    }
+
+    #[tokio::test]
+    async fn debug_json_reports_live_subscriber_and_moving_buffer_tail() {
+        let session = TestAgentSession::echo_for_tests(Uuid::new_v4(), Some("echo".to_string()));
+        let pty = session.pty.as_ref().unwrap();
+        let mut reader = pty.subscribe_with_query(None).await.unwrap();
+
+        let before = session.debug_json(true).await.unwrap();
+        assert_eq!(before["session"]["subscriber_count"], 1);
+        assert_eq!(before["session"]["buffer"]["tail_seq"], 0);
+
+        pty.send_input(b"hello".to_vec()).await.unwrap();
+        assert_eq!(reader.read().await.unwrap(), b"hello");
+
+        let after = session.debug_json(true).await.unwrap();
+        assert_eq!(after["session"]["subscriber_count"], 1);
+        assert_eq!(after["session"]["buffer"]["head_seq"], 0);
+        assert_eq!(after["session"]["buffer"]["tail_seq"], 5);
+        assert_eq!(after["session"]["buffer"]["bytes"], 5);
+        assert_eq!(after["session"]["backend"]["state"], "running");
+        assert!(after["session"]["backend"]["pid"].is_null());
+        assert_eq!(after["session"]["obligations"], serde_json::json!([]));
     }
 }

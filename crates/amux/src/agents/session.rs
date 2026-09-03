@@ -393,7 +393,7 @@ pub(crate) trait AgentBackend: Send + Sync {
 
     fn suspended_state(&self) -> Result<SuspendedAgent>;
 
-    fn debug_json(&self, verbose: bool) -> serde_json::Result<Value>;
+    async fn debug_json(&self, verbose: bool) -> serde_json::Result<Value>;
 }
 
 /// Unified agent session handle backed by dynamic trait dispatch.

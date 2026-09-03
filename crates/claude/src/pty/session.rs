@@ -405,6 +405,29 @@ pub struct Control {
 }
 
 impl Control {
+    /// Return the provider asks that still require a client response.
+    pub fn pending_asks(&self) -> Vec<AskFacts> {
+        let semantic = self
+            .semantic
+            .lock()
+            .expect("Claude semantic state mutex poisoned");
+        let mut asks = semantic
+            .asks
+            .iter()
+            .map(|(id, kind)| AskFacts {
+                id: id.clone(),
+                kind: kind.clone(),
+            })
+            .collect::<Vec<_>>();
+        asks.sort_unstable_by(|left, right| left.id.0.cmp(&right.id.0));
+        asks
+    }
+
+    /// Return the child exit status without waiting, when it is known.
+    pub fn exit_status(&self) -> Option<pty_host::ExitStatus> {
+        self.exit.borrow().clone()
+    }
+
     /// Attach the executable-spec recorder to the actual PTY write boundary.
     /// Normal hosts never install an observer.
     #[doc(hidden)]

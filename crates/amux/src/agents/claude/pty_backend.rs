@@ -23,10 +23,10 @@ use super::suspend::{ClaudeSuspendRecord, sanitize_resume_args};
 use crate::agents::claude::ClaudeVersionCache;
 use crate::agents::{
     AgentBackend, AgentDeliveryTarget, AgentDeps, AgentKind, AgentParent, AgentRecord, AgentType,
-    ClaudeDriver, CreateAgentRequest, HookEnvironment, HookError, HookOutcome,
-    LocalAgentNameSource, McpLaunchRoute, Plane, Protocol, PtyHandle, RawPtyTarget, SessionEvent,
-    SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent, StructuredLogSource,
-    TerminalSize,
+    BackendState, ClaudeDriver, CreateAgentRequest, HookEnvironment, HookError, HookOutcome,
+    LocalAgentNameSource, McpLaunchRoute, ObligationDebug, Plane, Protocol, PtyHandle,
+    RawPtyTarget, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy, StructuredInput,
+    StructuredInputEvent, StructuredLogSource, TerminalSize,
 };
 use crate::debug::DebugView;
 use crate::protocol::ProtocolError;
@@ -721,8 +721,55 @@ impl AgentBackend for ClaudePtyBackend {
         .into())
     }
 
-    fn debug_json(&self, verbose: bool) -> serde_json::Result<Value> {
-        serde_json::to_value(DebugView::new(self, verbose))
+    async fn debug_json(&self, verbose: bool) -> serde_json::Result<Value> {
+        let (pty, control) = {
+            let runtime = self.runtime.lock().expect("Claude runtime poisoned");
+            (runtime.pty.clone(), runtime.control.clone())
+        };
+        let pty_output = match &pty {
+            Some(pty) => Some(pty.debug_output().await),
+            None => None,
+        };
+        let log_output = self.log.debug_snapshot().await;
+        let subscriber_count = pty_output
+            .iter()
+            .chain(std::iter::once(&log_output))
+            .map(|output| output.subscriber_count)
+            .sum();
+        let backend = match (&pty, &pty_output) {
+            (Some(pty), Some(output)) => pty.backend_state(output),
+            _ if control.is_some() => BackendState::Running { pid: None },
+            _ => BackendState::Starting,
+        };
+        let obligations = control
+            .as_ref()
+            .map(|control| {
+                control
+                    .pending_asks()
+                    .into_iter()
+                    .map(|ask| ObligationDebug {
+                        kind: match ask.kind {
+                            claude::pty::AskKind::Permission { .. } => "permission",
+                            claude::pty::AskKind::Question { .. } => "question",
+                        }
+                        .to_string(),
+                        id: Some(ask.id.0),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let session = SessionDebug::new(
+            pty_output.as_ref().or(Some(&log_output)),
+            subscriber_count,
+            backend,
+            obligations,
+        );
+        let mut value = serde_json::to_value(DebugView::new(self, verbose))?;
+        value
+            .as_object_mut()
+            .expect("Claude PTY debug view is an object")
+            .insert("session".to_string(), serde_json::to_value(session)?);
+        Ok(value)
     }
 }
 
@@ -1030,9 +1077,7 @@ impl Serialize for DebugView<'_, ClaudePtyBackend> {
         map.serialize_entry("readonly", &self.inner.readonly)?;
         map.serialize_entry("has_pty", &runtime.pty.is_some())?;
         map.serialize_entry("has_messaging_credentials", &runtime.messaging.is_some())?;
-        if self.verbose {
-            map.serialize_entry("structured_seq", &0u64)?;
-        }
+        let _ = self.verbose;
         map.end()
     }
 }
@@ -1117,6 +1162,20 @@ mod tests {
         })
         .await
         .expect("hook session id was not ingested");
+    }
+
+    #[tokio::test]
+    async fn debug_json_embeds_pty_session_state() {
+        let (backend, _hooks, _rows, ingest) = injected_backend();
+        let debug = backend.debug_json(true).await.unwrap();
+
+        assert_eq!(debug["session"]["epoch"], 0);
+        assert!(debug["session"]["buffer"].is_object());
+        assert_eq!(debug["session"]["backend"]["state"], "running");
+        assert!(debug["session"]["backend"]["pid"].is_null());
+        assert!(debug["session"]["obligations"].is_array());
+
+        ingest.abort();
     }
 
     #[test]

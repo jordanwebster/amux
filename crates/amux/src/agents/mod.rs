@@ -3,6 +3,7 @@
 mod buffer;
 pub(crate) mod claude;
 pub(crate) mod codex;
+mod debug;
 mod events;
 #[cfg(feature = "local-agents")]
 mod hook;
@@ -27,6 +28,7 @@ pub(crate) use buffer::{
 };
 #[cfg(all(feature = "local-agents", unix))]
 pub(crate) use codex::CodexRawPtyLease;
+pub(crate) use debug::{BackendState, BufferDebug, ObligationDebug, OutputDebug, SessionDebug};
 pub use events::AgentEvent;
 pub(crate) use events::{agent_event_from_wire, agent_event_to_wire};
 #[cfg(feature = "local-agents")]

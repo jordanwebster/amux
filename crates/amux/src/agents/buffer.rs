@@ -8,11 +8,13 @@
 //! storage lock, ensuring no data loss or duplication between replay and live data.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{RwLock, mpsc};
+
+use super::{BufferDebug, OutputDebug};
 
 /// Replay query for sequenced output buffers.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -87,6 +89,8 @@ pub(crate) trait BufferPolicy: Send + Sync + 'static {
     fn clear(storage: &mut Self::Storage);
     /// Channel capacity for a buffer with the given max capacity.
     fn channel_capacity(buffer_capacity: usize) -> usize;
+    /// Retained sequence coordinates and encoded size for diagnostics.
+    fn debug(storage: &Self::Storage) -> BufferDebug;
 }
 
 // ── Byte buffer policy ──────────────────────────────────────────────────
@@ -97,37 +101,46 @@ pub(crate) trait BufferPolicy: Send + Sync + 'static {
 /// count. Replay sends the entire buffer as one chunk.
 pub(crate) struct BytePolicy;
 
+#[derive(Default)]
+pub(crate) struct ByteStorage {
+    bytes: Vec<u8>,
+    tail_seq: u64,
+}
+
 impl BufferPolicy for BytePolicy {
     type Input = Vec<u8>;
     type Item = Vec<u8>;
-    type Storage = Vec<u8>;
+    type Storage = ByteStorage;
     type Filter = Option<ByteReplayQuery>;
 
-    fn publish(storage: &mut Vec<u8>, input: Vec<u8>, capacity: usize) -> Option<Vec<u8>> {
+    fn publish(storage: &mut ByteStorage, input: Vec<u8>, capacity: usize) -> Option<Vec<u8>> {
         if input.is_empty() {
             return None;
         }
 
-        storage.extend_from_slice(&input);
-        if storage.len() > capacity {
-            let excess = storage.len() - capacity;
-            storage.drain(..excess);
+        storage.tail_seq = storage
+            .tail_seq
+            .saturating_add(u64::try_from(input.len()).unwrap_or(u64::MAX));
+        storage.bytes.extend_from_slice(&input);
+        if storage.bytes.len() > capacity {
+            let excess = storage.bytes.len() - capacity;
+            storage.bytes.drain(..excess);
         }
 
         Some(input)
     }
 
     fn replay(
-        storage: &Vec<u8>,
+        storage: &ByteStorage,
         tx: &mpsc::Sender<Vec<u8>>,
         filter: &Option<ByteReplayQuery>,
     ) -> usize {
         let replay = match filter {
-            None => storage.as_slice(),
+            None => storage.bytes.as_slice(),
             Some(ByteReplayQuery::Tail { count }) => {
                 let count = usize::try_from(*count).unwrap_or(usize::MAX);
-                let start = storage.len().saturating_sub(count);
-                &storage[start..]
+                let start = storage.bytes.len().saturating_sub(count);
+                &storage.bytes[start..]
             }
         };
 
@@ -138,12 +151,22 @@ impl BufferPolicy for BytePolicy {
         }
     }
 
-    fn clear(storage: &mut Vec<u8>) {
-        storage.clear();
+    fn clear(storage: &mut ByteStorage) {
+        storage.bytes.clear();
     }
 
     fn channel_capacity(_buffer_capacity: usize) -> usize {
         CHANNEL_HEADROOM
+    }
+
+    fn debug(storage: &ByteStorage) -> BufferDebug {
+        BufferDebug {
+            head_seq: storage
+                .tail_seq
+                .saturating_sub(u64::try_from(storage.bytes.len()).unwrap_or(u64::MAX)),
+            tail_seq: storage.tail_seq,
+            bytes: storage.bytes.len(),
+        }
     }
 }
 
@@ -207,6 +230,33 @@ impl BufferPolicy for StructuredPolicy {
     fn channel_capacity(buffer_capacity: usize) -> usize {
         buffer_capacity + CHANNEL_HEADROOM
     }
+
+    fn debug(storage: &StructuredStorage) -> BufferDebug {
+        let head_seq = storage
+            .entries
+            .first()
+            .map(|entry| entry.seq)
+            .unwrap_or_else(|| {
+                storage
+                    .last_seq
+                    .saturating_add(u64::from(storage.last_seq > 0))
+            });
+        let tail_seq = storage
+            .entries
+            .last()
+            .map(|entry| entry.seq.saturating_add(1))
+            .unwrap_or(head_seq);
+        let bytes = storage
+            .entries
+            .iter()
+            .map(|entry| entry.payload.to_string().len())
+            .sum();
+        BufferDebug {
+            head_seq,
+            tail_seq,
+            bytes,
+        }
+    }
 }
 
 fn structured_replay_entries<'a>(
@@ -246,6 +296,7 @@ struct BroadcastInner<P: BufferPolicy> {
     subscribers: RwLock<Vec<BroadcastSubscriber<P::Item>>>,
     capacity: usize,
     closed: RwLock<bool>,
+    epoch: AtomicU64,
 }
 
 struct BroadcastSubscriber<T> {
@@ -265,6 +316,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
                 subscribers: RwLock::new(Vec::new()),
                 capacity,
                 closed: RwLock::new(false),
+                epoch: AtomicU64::new(0),
             }),
         }
     }
@@ -359,6 +411,22 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
         inspect(&storage)
     }
 
+    /// Snapshot retained coordinates and live subscribers under the same lock
+    /// ordering used by write and subscribe.
+    pub(crate) async fn debug_snapshot(&self) -> OutputDebug {
+        let storage = self.inner.storage.read().await;
+        let subscribers = self.inner.subscribers.read().await;
+        OutputDebug {
+            epoch: self.inner.epoch.load(Ordering::Relaxed),
+            subscriber_count: subscribers
+                .iter()
+                .filter(|subscriber| !subscriber.tx.is_closed())
+                .count(),
+            buffer: P::debug(&storage),
+            closed: *self.inner.closed.read().await,
+        }
+    }
+
     /// Clear all stored data but keep the buffer open.
     ///
     /// Existing subscribers remain connected and will receive future writes.
@@ -366,6 +434,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     pub(crate) async fn clear(&self) {
         let mut storage = self.inner.storage.write().await;
         P::clear(&mut storage);
+        self.inner.epoch.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Close the buffer, causing all readers to receive `None` on their next read.
@@ -533,6 +602,33 @@ mod tests {
 
         assert_eq!(data1, b"broadcast");
         assert_eq!(data2, b"broadcast");
+    }
+
+    #[tokio::test]
+    async fn debug_snapshot_tracks_epoch_subscribers_and_retained_byte_range() {
+        let buffer = MultiplexByteBuffer::new(4);
+        let reader = buffer.subscribe().await.unwrap();
+
+        let initial = buffer.debug_snapshot().await;
+        assert_eq!(initial.epoch, 0);
+        assert_eq!(initial.subscriber_count, 1);
+        assert_eq!(initial.buffer.head_seq, 0);
+        assert_eq!(initial.buffer.tail_seq, 0);
+
+        buffer.write(b"abcdef".to_vec()).await;
+        let written = buffer.debug_snapshot().await;
+        assert_eq!(written.buffer.head_seq, 2);
+        assert_eq!(written.buffer.tail_seq, 6);
+        assert_eq!(written.buffer.bytes, 4);
+
+        drop(reader);
+        buffer.clear().await;
+        let cleared = buffer.debug_snapshot().await;
+        assert_eq!(cleared.epoch, 1);
+        assert_eq!(cleared.subscriber_count, 0);
+        assert_eq!(cleared.buffer.head_seq, 6);
+        assert_eq!(cleared.buffer.tail_seq, 6);
+        assert_eq!(cleared.buffer.bytes, 0);
     }
 
     #[tokio::test]

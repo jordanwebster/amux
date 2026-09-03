@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use crate::agents::{MultiplexStructuredBuffer, MultiplexStructuredReader, SequencedReplayQuery};
+use crate::agents::{
+    MultiplexStructuredBuffer, MultiplexStructuredReader, OutputDebug, SequencedReplayQuery,
+};
 
 /// A retained structured log that supports replay and live subscriptions.
 #[derive(Clone)]
@@ -68,6 +70,11 @@ impl StructuredLogSource {
     /// Return the current sequence number.
     pub(crate) async fn current_seq(&self) -> u64 {
         self.buffer.current_seq().await
+    }
+
+    /// Snapshot retained coordinates and active readers for diagnostics.
+    pub(crate) async fn debug_snapshot(&self) -> OutputDebug {
+        self.buffer.debug_snapshot().await
     }
 
     /// Clear retained entries without resetting the sequence number.
