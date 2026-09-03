@@ -21,7 +21,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 pub use crate::theme::Theme;
-use crate::view::{Mode, QuitGuard, ViewState, VisibleRow, visible_rows};
+use crate::view::{Mode, NoticeTone, QuitGuard, ViewState, VisibleRow, visible_rows};
 
 // Column grid (0-indexed), from the aligned 68-column frames in the spec.
 const MARKER_COL: usize = 2;
@@ -663,8 +663,14 @@ fn status_line(model: &Model, view: &ViewState, width: usize, theme: Theme) -> L
         return line;
     }
     if let Some(notice) = &view.notice {
-        push_span(&mut line, MARKER_COL, "✗", theme.error());
-        push_span(&mut line, BADGE_COL, notice.clone(), theme.text());
+        // The marker is the only thing that says whether this went well,
+        // so it has to follow the notice rather than assume the worst.
+        let (marker, marker_style) = match notice.tone {
+            NoticeTone::Done => ("✔", theme.ok()),
+            NoticeTone::Problem => ("✗", theme.error()),
+        };
+        push_span(&mut line, MARKER_COL, marker, marker_style);
+        push_span(&mut line, BADGE_COL, notice.text.clone(), theme.text());
         finish_line(&mut line, width, theme);
         return line;
     }
@@ -951,7 +957,8 @@ mod tests {
     use chrono::{DateTime, Utc};
     use uuid::Uuid;
 
-    use super::{FrameContext, INVARIANT_WARNING, Theme, build_lines};
+    use super::{FrameContext, INVARIANT_WARNING, Style, Theme, build_lines};
+    use crate::view::Notice;
     use crate::{ChatView, ViewState};
 
     fn model_with_invariant_warning() -> Model {
@@ -997,5 +1004,48 @@ mod tests {
             ..ViewState::default()
         };
         assert!(frame_contains_warning(&model, &codex));
+    }
+
+    /// The marker span of the status line, with the notice `view` carries.
+    fn notice_marker(notice: Notice) -> (String, Style) {
+        let view = ViewState {
+            notice: Some(notice.clone()),
+            ..ViewState::default()
+        };
+        let context = context();
+        let line = build_lines(&Model::default(), &view, &context)
+            .into_iter()
+            .find(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+                    .contains(&notice.text)
+            })
+            .expect("the notice reaches a line");
+        let text_at = line
+            .spans
+            .iter()
+            .position(|span| span.content.contains(&notice.text))
+            .expect("the notice is a span of its own");
+        let marker = line.spans[..text_at]
+            .iter()
+            .rev()
+            .find(|span| !span.content.trim().is_empty())
+            .expect("the notice is preceded by a marker");
+        (marker.content.to_string(), marker.style)
+    }
+
+    #[test]
+    fn a_notice_that_worked_is_not_marked_as_a_failure() {
+        let theme = context().theme;
+        let (done, done_style) = notice_marker(Notice::done("wrote /tmp/reports/1-tweak"));
+        let (problem, problem_style) = notice_marker(Notice::problem("attach failed: no route"));
+
+        assert_eq!(problem, "✗");
+        assert_eq!(problem_style, theme.error());
+        assert_eq!(done, "✔");
+        assert_eq!(done_style, theme.ok());
+        assert_ne!(done_style, problem_style);
     }
 }

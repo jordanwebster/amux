@@ -373,7 +373,7 @@ pub(crate) mod tests {
         /// A notice the shell put up — the way `run.rs` records the
         /// outcome of an attach, a clipboard write or a written report.
         fn notice(&mut self, notice: &str) {
-            let event = TraceEvent::Notice(Some(notice.to_string()));
+            let event = TraceEvent::Notice(Some(crate::view::Notice::done(notice)));
             self.ring.record(&event);
             self.chrome.step(&self.model, &event);
         }

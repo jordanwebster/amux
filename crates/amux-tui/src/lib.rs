@@ -39,4 +39,4 @@ pub use theme::{
     ColorMode, ColorPreference, Theme, ThemeError, ThemeFile, ThemeName, Token, Tokens, Variant,
     detect_color_mode, nearest_ansi, parse_theme_file, theme_from_file,
 };
-pub use view::{Mode, OpenMode, UiAction, ViewState};
+pub use view::{Mode, Notice, NoticeTone, OpenMode, UiAction, ViewState};

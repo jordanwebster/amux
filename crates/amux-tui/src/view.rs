@@ -9,6 +9,44 @@ use amux_ui::{AgentId, Attention, Command, FleetItem, Model};
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Whether a status-line notice reports something that worked or
+/// something that did not.
+///
+/// The status line has one marker column, so the marker is the only thing
+/// that says which. Without the distinction every notice wore the failure
+/// glyph, and a report the flow had just written and verified announced
+/// itself as an error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticeTone {
+    Done,
+    Problem,
+}
+
+/// A transient message in the status line, and how it should read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Notice {
+    pub tone: NoticeTone,
+    pub text: String,
+}
+
+impl Notice {
+    /// Something happened that the person asked for.
+    pub fn done(text: impl Into<String>) -> Self {
+        Self {
+            tone: NoticeTone::Done,
+            text: text.into(),
+        }
+    }
+
+    /// Something did not happen, or happened only in part.
+    pub fn problem(text: impl Into<String>) -> Self {
+        Self {
+            tone: NoticeTone::Problem,
+            text: text.into(),
+        }
+    }
+}
+
 /// The chrome-wide guarded Ctrl+C (`docs/CHAT.md` §Keybindings) — ONE
 /// rule for the whole TUI: with a focused non-empty text field the press
 /// clears that field (and never arms); otherwise the first press arms
@@ -138,7 +176,7 @@ pub struct ViewState {
     pub dismissed_error_seq: u64,
     /// Transient view-side notice (e.g. refusing to attach to an offline
     /// host); cleared on the next keypress.
-    pub notice: Option<String>,
+    pub notice: Option<Notice>,
     /// The configured leader character (`a` for ctrl+a). View-config, set
     /// once at startup; the chat's leader chords compose against it and
     /// the help overlays derive their `C-<leader>` labels from it.

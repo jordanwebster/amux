@@ -6797,3 +6797,13 @@ which nothing else in the theme does, so `Theme::classify` can name it as its
 own class `C` and a golden can hold it. It is painted last, over marks and over
 the prompt row, because a cursor that disappears under whatever it lands on
 would reintroduce exactly the doubt it exists to remove.
+
+2026-09-03 — **Gave the status-line notice a tone.** The fleet's notice line
+hard-coded the failure glyph and the error colour for every notice, so the
+capture flow's "wrote <path>" — a report that had just been written and
+self-verified — announced itself as an error, as did a successful clipboard
+copy and a session that had simply ended. `ViewState.notice` is now a `Notice`
+carrying its text and a `Done`/`Problem` tone, set where the outcome is known:
+the report flow, the clipboard write (a truncated copy is a problem, since it
+is not the copy that was asked for), the attach return, and the offline-host
+refusal. The renderer picks `✔` or `✗` from the tone rather than assuming.

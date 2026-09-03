@@ -22,14 +22,14 @@ use crate::render::Theme;
 use crate::report_flow::{CAPTURE_KEY, FlowStep, Frozen, ReportFlow};
 use crate::terminal::{TerminalGuard, write_osc52};
 use crate::trace::{SharedTrace, record_shared};
-use crate::view::{ViewState, next_agent_name};
+use crate::view::{Notice, ViewState, next_agent_name};
 
 /// What the embedding CLI's attach handoff decided: resume the fleet
 /// (optionally with a status-line notice) or exit the TUI entirely
 /// (`<leader>d` — detach means back to the shell).
 #[derive(Debug)]
 pub enum AttachReturn {
-    Fleet(Option<String>),
+    Fleet(Option<Notice>),
     Exit,
 }
 
@@ -123,7 +123,7 @@ where
                         runtime,
                         &config,
                         &mut chrome,
-                        Some(format!("attach failed: {error:#}")),
+                        Some(Notice::problem(format!("attach failed: {error:#}"))),
                     ),
                 }
             }
@@ -309,8 +309,12 @@ fn perform(
             ShellEffect::Attach(agent) => *exit_request = Some(ChromeExit::Attach(agent)),
             ShellEffect::NoteAttached(agent) => runtime.note_attached(agent),
             ShellEffect::WriteClipboard(text) => {
-                let notice = write_osc52(&mut io::stdout(), &text)?;
-                let notice = notice.unwrap_or_else(|| "copied message to clipboard".to_string());
+                // A truncated copy is not the copy that was asked for,
+                // so it reads as a problem even though bytes did land.
+                let notice = match write_osc52(&mut io::stdout(), &text)? {
+                    Some(truncated) => Notice::problem(truncated),
+                    None => Notice::done("copied message to clipboard"),
+                };
                 set_notice(runtime, config, chrome, Some(notice));
             }
             ShellEffect::Dispatch(command) => {
@@ -345,7 +349,7 @@ async fn report_flow(
     frozen: Frozen,
     theme: Theme,
     config: &TuiConfig,
-) -> Result<Option<String>> {
+) -> Result<Option<Notice>> {
     let Some(diagnostics) = config.diagnostics.as_ref() else {
         return Ok(None);
     };
@@ -370,8 +374,10 @@ async fn report_flow(
                 // while the daemon dump and the self-replay are awaited.
                 terminal.draw(|frame| flow.render(frame))?;
                 return Ok(Some(match flow.finish(draft, &writer).await {
-                    Ok(path) => format!("wrote {}", path.display()),
-                    Err(error) => format!("the report could not be written: {error}"),
+                    Ok(path) => Notice::done(format!("wrote {}", path.display())),
+                    Err(error) => {
+                        Notice::problem(format!("the report could not be written: {error}"))
+                    }
                 }));
             }
         }
@@ -388,7 +394,7 @@ async fn report_flow(
     frozen: std::convert::Infallible,
     _theme: Theme,
     _config: &TuiConfig,
-) -> Result<Option<String>> {
+) -> Result<Option<Notice>> {
     match frozen {}
 }
 
@@ -442,7 +448,7 @@ fn capture(
 /// a written report — but writing the view directly would leave the
 /// status line out of the trace, and a replay would draw the frame
 /// without it.
-fn set_notice(runtime: &Runtime, config: &TuiConfig, chrome: &mut Chrome, notice: Option<String>) {
+fn set_notice(runtime: &Runtime, config: &TuiConfig, chrome: &mut Chrome, notice: Option<Notice>) {
     let event = TraceEvent::Notice(notice);
     record(config, &event);
     chrome.step(runtime.model(), &event);

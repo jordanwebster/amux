@@ -434,11 +434,15 @@ pub(crate) async fn attach_for_ui(
     Ok(match outcome {
         AttachOutcome::Detached => AttachReturn::Exit,
         AttachOutcome::SwitchedToFleet => AttachReturn::Fleet(None),
-        AttachOutcome::SessionEnded => AttachReturn::Fleet(Some("session ended".to_string())),
-        AttachOutcome::SessionClosed(reason) => {
-            AttachReturn::Fleet(Some(session_close_label(&reason).to_string()))
+        AttachOutcome::SessionEnded => {
+            AttachReturn::Fleet(Some(amux_tui::Notice::done("session ended")))
         }
-        AttachOutcome::Shutdown(reason) => AttachReturn::Fleet(Some(format!("daemon: {reason}"))),
+        AttachOutcome::SessionClosed(reason) => {
+            AttachReturn::Fleet(Some(session_close_notice(&reason)))
+        }
+        AttachOutcome::Shutdown(reason) => AttachReturn::Fleet(Some(amux_tui::Notice::problem(
+            format!("daemon: {reason}"),
+        ))),
     })
 }
 
@@ -978,6 +982,21 @@ fn session_close_label(reason: &SessionCloseReason) -> &'static str {
         }
         SessionCloseReason::HostUnreachable => "host unreachable",
         SessionCloseReason::InternalError { .. } => "session error",
+    }
+}
+
+/// The same label, for a status line that also shows whether it went
+/// well: the agent finishing or being deleted is the session doing what it
+/// was told, and only losing it is a problem.
+fn session_close_notice(reason: &SessionCloseReason) -> amux_tui::Notice {
+    let label = session_close_label(reason);
+    match reason {
+        SessionCloseReason::AgentDeleted | SessionCloseReason::AgentExited { .. } => {
+            amux_tui::Notice::done(label)
+        }
+        SessionCloseReason::HostUnreachable | SessionCloseReason::InternalError { .. } => {
+            amux_tui::Notice::problem(label)
+        }
     }
 }
 
@@ -1741,7 +1760,7 @@ mod attach {
             chrono::Utc::now(),
         );
         assert_eq!(action, None, "no attach action for an offline host");
-        let notice = view.notice.clone().expect("status-line notice");
+        let notice = view.notice.clone().expect("status-line notice").text;
         assert!(
             notice.contains("dial tcp: connection refused"),
             "notice carries last_dial_error: {notice}"

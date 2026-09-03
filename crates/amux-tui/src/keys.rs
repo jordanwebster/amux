@@ -5,7 +5,7 @@ use amux_ui::{Command, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::view::{Mode, OpenMode, UiAction, ViewState, VisibleRow, visible_rows};
+use crate::view::{Mode, Notice, OpenMode, UiAction, ViewState, VisibleRow, visible_rows};
 
 pub fn handle_key(
     view: &mut ViewState,
@@ -258,7 +258,7 @@ fn open_selected(view: &mut ViewState, model: &Model, other_mode: bool) -> Optio
             .host(host_id)
             .and_then(|state| state.entry.last_dial_error.clone())
             .unwrap_or_else(|| "no route".to_string());
-        view.notice = Some(format!("{host} is offline: {detail}"));
+        view.notice = Some(Notice::problem(format!("{host} is offline: {detail}")));
         return None;
     }
     let mut mode = view.default_open_mode;
@@ -570,7 +570,7 @@ mod tests {
         for key in [enter(), o_key()] {
             assert_eq!(handle_key(&mut view, &model, key, 10, t(0)), None);
             assert_eq!(
-                view.notice.as_deref(),
+                view.notice.as_ref().map(|notice| notice.text.as_str()),
                 Some("mbp is offline: connection refused")
             );
         }

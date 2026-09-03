@@ -735,7 +735,10 @@ mod frozen {
             &diagnostics(None, "{}"),
             Utc::now(),
         );
-        record_shared(&trace, &TraceEvent::Notice(Some("after the freeze".into())));
+        record_shared(
+            &trace,
+            &TraceEvent::Notice(Some(crate::view::Notice::done("after the freeze"))),
+        );
 
         let window = frozen.trace.expect("primed ring");
         assert_eq!(window.events.len(), 1);

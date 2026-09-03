@@ -32,7 +32,7 @@ use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
 
 use crate::render::{FrameContext, Theme, build_lines, list_capacity};
-use crate::view::{UiAction, ViewState};
+use crate::view::{Notice, UiAction, ViewState};
 
 /// A key event in a form that survives a round trip through JSON.
 ///
@@ -423,7 +423,7 @@ pub enum TraceEvent {
     /// written report. The shell knows the outcome; the chrome owns the
     /// view, so the outcome comes back in as an event rather than the
     /// shell reaching into the view behind the trace's back.
-    Notice(Option<String>),
+    Notice(Option<Notice>),
     /// The clock moved far enough to disarm a quit guard. The shell's
     /// 1 Hz tick is not itself an event — most of them change nothing —
     /// but the expiry it triggers is view state, so it enters the trace

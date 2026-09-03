@@ -146,7 +146,7 @@ fn fleet_modes_round_trip() {
         scroll: 2,
         pending_g: true,
         dismissed_error_seq: 9,
-        notice: Some("host offline".to_string()),
+        notice: Some(crate::view::Notice::problem("host offline")),
         ..ViewState::default()
     };
     for mode in [
