@@ -137,9 +137,7 @@ async fn run_inner(
             amux::OpenMode::Raw => amux_tui::OpenMode::RawAttach,
             amux::OpenMode::Chat => amux_tui::OpenMode::Chat,
         },
-        default_agent_type: amux::AgentType::Claude {
-            driver: amux::ClaudeDriver::Pty,
-        },
+        default_agent_type: default_agent_type(&config),
         initial_chat,
         initial_chat_configuration,
         #[cfg(debug_assertions)]
@@ -153,6 +151,12 @@ async fn run_inner(
         async move { crate::session_client::attach_for_ui(&config, agent).await }
     })
     .await
+}
+
+fn default_agent_type(config: &Config) -> amux::AgentType {
+    amux::AgentType::Claude {
+        driver: amux::resolve_claude_driver(None, config),
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -225,6 +229,24 @@ mod tests {
             term: Some("xterm-256color".into()),
             no_color,
         }
+    }
+
+    #[test]
+    fn claude_driver_tui_create_flow_uses_config() {
+        assert_eq!(
+            default_agent_type(&Config::default()),
+            amux::AgentType::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            }
+        );
+
+        let config: Config = serde_yaml::from_str("claude:\n  driver: sdk\n").unwrap();
+        assert_eq!(
+            default_agent_type(&config),
+            amux::AgentType::Claude {
+                driver: amux::ClaudeDriver::Sdk,
+            }
+        );
     }
 
     #[test]

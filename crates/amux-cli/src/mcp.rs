@@ -105,6 +105,10 @@ impl DaemonApi for Client {
 #[async_trait]
 trait ClientConnector: Send + Sync {
     async fn connect(&self) -> Result<Arc<dyn DaemonApi>>;
+
+    fn claude_driver(&self) -> amux::ClaudeDriver {
+        amux::resolve_claude_driver(None, &Config::default())
+    }
 }
 
 struct ConfigConnector {
@@ -115,6 +119,10 @@ struct ConfigConnector {
 impl ClientConnector for ConfigConnector {
     async fn connect(&self) -> Result<Arc<dyn DaemonApi>> {
         Ok(Arc::new(require_running_client(&self.config, None).await?))
+    }
+
+    fn claude_driver(&self) -> amux::ClaudeDriver {
+        amux::resolve_claude_driver(None, &self.config)
     }
 }
 
@@ -418,7 +426,7 @@ impl ToolBackend for ClientBackend {
                 let (agent_type, args) = match kind {
                     SpawnKind::Claude => (
                         AgentType::Claude {
-                            driver: amux::ClaudeDriver::Pty,
+                            driver: self.connector.claude_driver(),
                         },
                         Vec::new(),
                     ),
@@ -750,6 +758,14 @@ mod attach_tests {
 
     fn test_agent(id: Uuid, host_id: Uuid, name: &str) -> Agent {
         agent_with_kind(id, host_id, name, amux::AgentKind::TestAgent)
+    }
+
+    #[test]
+    fn claude_driver_mcp_spawn_connector_uses_config() {
+        let config: Config = serde_yaml::from_str("claude:\n  driver: sdk\n").unwrap();
+        let connector = ConfigConnector { config };
+
+        assert_eq!(connector.claude_driver(), amux::ClaudeDriver::Sdk);
     }
 
     fn agent_with_kind(id: Uuid, host_id: Uuid, name: &str, kind: amux::AgentKind) -> Agent {

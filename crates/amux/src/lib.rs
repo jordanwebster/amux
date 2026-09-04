@@ -63,7 +63,8 @@ pub use client::{
     SuspendSummary,
 };
 pub use config::{
-    ColorSetting, Config, ConfigError, Keybinds, LeaderKey, OpenMode, ThemeSetting, UiSettings,
+    ClaudeSettings, ColorSetting, Config, ConfigError, Keybinds, LeaderKey, OpenMode, ThemeSetting,
+    UiSettings, resolve_claude_driver,
 };
 pub use debug::DebugFormat;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};

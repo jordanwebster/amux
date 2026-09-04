@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Made the Claude driver a creation default.** Configuration now
+accepts a closed `claude.driver` setting with `pty` as the shipped default and
+`sdk` as the alternative. One resolver applies explicit command-line choice
+before configuration, and the command-line, fleet create action, and managed
+agent spawn tool all use it. Focused tests cover absent configuration, SDK
+configuration, explicit PTY override, and rejected Claude-section keys.
+
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by
 real composer exports and explains that an empty name may be omitted. A focused

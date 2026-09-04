@@ -6,6 +6,7 @@ use gethostname::gethostname;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::agents::ClaudeDriver;
 use crate::paths::{amux_xdg_dir, default_data_dir, default_state_path};
 use crate::routing::MAX_HOST_NAME_BYTES;
 
@@ -136,6 +137,14 @@ impl<'de> Deserialize<'de> for LeaderKey {
 pub struct Keybinds {
     /// Leader key prefix for keybinds (default: ctrl+a)
     pub leader: LeaderKey,
+}
+
+/// Defaults for newly created Claude agents.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClaudeSettings {
+    /// The driver used when a creation surface has no explicit override.
+    pub driver: ClaudeDriver,
 }
 
 /// Which mode Enter opens a Claude agent in from the fleet
@@ -283,6 +292,10 @@ pub struct Config {
     #[serde(default)]
     pub ui: UiSettings,
 
+    /// Defaults for newly created Claude agents.
+    #[serde(default)]
+    pub claude: ClaudeSettings,
+
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -302,9 +315,18 @@ impl Default for Config {
             minimum_client_versions: HashMap::new(),
             keybinds: Keybinds::default(),
             ui: UiSettings::default(),
+            claude: ClaudeSettings::default(),
             path: None,
         }
     }
+}
+
+/// Resolve the driver for a newly created Claude agent.
+///
+/// A creation-time override wins over the configured default. With neither,
+/// the shipped default remains the PTY driver.
+pub fn resolve_claude_driver(explicit: Option<ClaudeDriver>, config: &Config) -> ClaudeDriver {
+    explicit.unwrap_or(config.claude.driver)
 }
 
 impl Config {
@@ -383,6 +405,30 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_driver_config_defaults_to_pty_and_accepts_sdk() {
+        let absent: Config = serde_yaml::from_str("host_name: test\n").unwrap();
+        assert_eq!(resolve_claude_driver(None, &absent), ClaudeDriver::Pty);
+
+        let sdk: Config = serde_yaml::from_str("claude:\n  driver: sdk\n").unwrap();
+        assert_eq!(resolve_claude_driver(None, &sdk), ClaudeDriver::Sdk);
+        assert_eq!(
+            resolve_claude_driver(Some(ClaudeDriver::Pty), &sdk),
+            ClaudeDriver::Pty
+        );
+    }
+
+    #[test]
+    fn claude_driver_config_rejects_unknown_keys_and_values() {
+        assert!(
+            serde_yaml::from_str::<Config>("claude:\n  backend: sdk\n")
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field")
+        );
+        assert!(serde_yaml::from_str::<Config>("claude:\n  driver: other\n").is_err());
+    }
 
     /// Verify serde_yaml round-trips Windows-style backslash paths correctly.
     /// serde_yaml serializes paths unquoted, which YAML parses literally.
