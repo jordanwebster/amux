@@ -4,6 +4,11 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Keep the profile listener tied to runtime ownership.**
+Dropping a runtime aborts its separately owned Unix accept task, preserving
+the cleanup previously supplied by the service task list. A regression test
+waits for task termination and confirms the listener no longer accepts.
+
 2026-09-05 — **Preserve configured cloud mode in profile services.**
 Runtime options now carry the cloud-mode flag independently of credentials,
 including its unset pre-init value. Testnet sets the flag explicitly. Tests

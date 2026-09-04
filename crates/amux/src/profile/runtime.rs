@@ -527,6 +527,15 @@ impl ProfileRuntime {
     }
 }
 
+impl Drop for ProfileRuntime {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(task) = &self.unix_accept_task {
+            task.abort();
+        }
+    }
+}
+
 async fn stop_tasks(tasks: Vec<JoinHandle<()>>) {
     for task in &tasks {
         task.abort();
@@ -1049,6 +1058,28 @@ mod tests {
         })
         .await
         .expect("daemon shutdown timed out");
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_drop_closes_the_unix_listener() {
+        let root = tempdir().unwrap();
+        let socket_path = root.path().join("profile.sock");
+        let runtime = start(options(root.path(), Listeners::Sockets))
+            .await
+            .unwrap();
+        let accept_task = runtime.unix_accept_task.as_ref().unwrap().abort_handle();
+        UnixStream::connect(&socket_path).unwrap();
+
+        drop(runtime);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !accept_task.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(UnixStream::connect(&socket_path).is_err());
     }
 
     #[tokio::test]
