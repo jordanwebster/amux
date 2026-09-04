@@ -1017,7 +1017,7 @@ mod owners {
         };
 
         assert_eq!(
-            attachments_row(Some(&[0x00, 0xaf, 0x10]), &[artifact.clone()]),
+            attachments_row(Some(&[0x00, 0xaf, 0x10]), std::slice::from_ref(&artifact)),
             json!({
                 "type": "amux.attachments",
                 "input_id": "00af10",
