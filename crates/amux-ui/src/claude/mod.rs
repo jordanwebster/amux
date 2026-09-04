@@ -18,8 +18,7 @@
 //! randomness may be imported here.
 
 pub mod answer;
-pub mod document;
-mod envelope;
+pub mod facts;
 mod fold;
 pub(crate) mod update;
 
@@ -27,7 +26,10 @@ use std::collections::{BTreeSet, VecDeque};
 use std::iter::Peekable;
 
 use chrono::{DateTime, TimeDelta, Utc};
-pub use document::{AskDocument, DiffDocument, DiffMagnitude};
+pub use facts::{
+    AcceptedPlan, AskDocument, DiffDocument, DiffMagnitude, QuestionFact, QuestionOption,
+    ToolInvocation,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -46,11 +48,6 @@ pub const PROTOCOL: &str = "claude_pty_transcript_v1";
 /// folds it; the name exists so screens can say which protocol they are
 /// declining to render.
 pub const SDK_PROTOCOL: &str = "claude_sdk_v1";
-
-/// The tool name Claude records for an amux message send. amux registers
-/// its tools with the MCP server named `amux`, and Claude prefixes every
-/// MCP tool the same way, so this is the name the transcript carries.
-pub(crate) const MCP_SEND_TOOL: &str = "mcp__amux__send";
 
 /// Claude-native client writes. This vocabulary stays deliberately
 /// asymmetric with every other agent layer.
@@ -316,64 +313,6 @@ pub struct ToolEntry {
     pub message_id: Option<String>,
 }
 
-/// Typed invocation facts per tool family, extracted tolerantly from
-/// `tool_use.input` — absent fields are `None`, never an error.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "tool", rename_all = "snake_case")]
-pub enum ToolInvocation {
-    Edit {
-        file_path: Option<String>,
-        replace_all: bool,
-    },
-    Write {
-        file_path: Option<String>,
-    },
-    Bash {
-        command: Option<String>,
-        description: Option<String>,
-    },
-    Read {
-        file_path: Option<String>,
-    },
-    /// The read/search family beyond `Read`: Grep, Glob, WebSearch,
-    /// WebFetch, ToolSearch — one line, one query-ish string.
-    Query {
-        text: Option<String>,
-    },
-    /// An amux message sent to another agent (`mcp__amux__send`). The
-    /// only amux tool with its own row shape: the rest are ordinary tool
-    /// calls, but a message leaving for a named agent is the outbound half
-    /// of a conversation and reads as one.
-    AmuxSend {
-        to: Option<String>,
-        text: Option<String>,
-    },
-    /// Subagent spawn (`Task` / `Agent`), B7.
-    Task {
-        description: Option<String>,
-        subagent_type: Option<String>,
-        background: bool,
-    },
-    /// `AskUserQuestion` (B5/C4 facts; options are `{label, description}`
-    /// objects — Phase 0 capture).
-    Question {
-        questions: Vec<QuestionFact>,
-    },
-    /// `ExitPlanMode` (B6): the plan payload rides `input.plan`.
-    Plan {
-        plan: Option<String>,
-        plan_file_path: Option<String>,
-    },
-    /// A tool this build does not know: name-only rendering.
-    Other,
-}
-
-impl ToolInvocation {
-    fn is_exploration(&self) -> bool {
-        matches!(self, Self::Read { .. } | Self::Query { .. })
-    }
-}
-
 /// One native Claude entry, or a consecutive run of read-only exploration.
 /// Raw entries remain available through [`ClaudeLayer::entries`]; this
 /// projection states Claude's grouping semantics without imposing a shared
@@ -484,20 +423,6 @@ fn count_exploration<'a>(
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuestionFact {
-    pub header: Option<String>,
-    pub question: Option<String>,
-    pub multi_select: bool,
-    pub options: Vec<QuestionOption>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuestionOption {
-    pub label: String,
-    pub description: Option<String>,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum ToolOutcome {
@@ -599,14 +524,6 @@ pub struct SessionFacts {
     pub permission_mode: Option<String>,
     pub ai_title: Option<String>,
     pub agent_name: Option<String>,
-}
-
-/// An accepted plan retained as session state (B6): keyed by tool_use id,
-/// outside feed windowing, bounded by count.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AcceptedPlan {
-    pub tool_use_id: String,
-    pub plan: String,
 }
 
 /// An agent-initiated blocking request (`docs/CHAT.md` §Asks) — the

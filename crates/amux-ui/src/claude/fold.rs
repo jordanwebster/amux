@@ -15,18 +15,17 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::document::{self, AskDocument};
+use super::facts::{self, AskDocument, InboundMessage};
 use super::{
     ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, ApiErrorEntry, Ask, AskKind, AskState,
     ClaudeLayer, CompactSummaryEntry, CompactionEntry, FEED_RETAINED, FeedEntry, FeedEntryKind,
     InterruptionEntry, InterruptionKind, MESSAGES_RETAINED, MessageEntry, MessageFinality,
     MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry,
-    PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED,
-    STRUCTURED_PATCH_BYTES_RETAINED, STRUCTURED_PATCH_HUNKS_RETAINED,
-    STRUCTURED_PATCH_LINES_RETAINED, SlotState, SuccessFacts, SuggestionDestination,
-    SuggestionFact, SuggestionKind, TaskNotificationEntry, ThinkingEntry, ToolEntry,
-    ToolInvocation, ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry,
-    envelope,
+    PromptSource, QuestionAnswer, SEEN_ROWS_RETAINED, STRUCTURED_PATCH_BYTES_RETAINED,
+    STRUCTURED_PATCH_HUNKS_RETAINED, STRUCTURED_PATCH_LINES_RETAINED, SlotState, SuccessFacts,
+    SuggestionDestination, SuggestionFact, SuggestionKind, TaskNotificationEntry, ThinkingEntry,
+    ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry,
+    UnrecognizedEntry,
 };
 use crate::diff::{Document, Hunk, Numbering};
 
@@ -295,7 +294,7 @@ fn ask_key(tool_name: &str, input: &Value) -> u64 {
 /// has none — its permission menu shape is unknown, which the C6 encoder
 /// states honestly).
 fn ask_kind(tool_name: Option<&str>, input: &Value, suggestions: Vec<SuggestionFact>) -> AskKind {
-    match extract_invocation(tool_name.unwrap_or_default(), input) {
+    match facts::invocation(tool_name.unwrap_or_default(), input) {
         ToolInvocation::Question { questions } => AskKind::Question { questions },
         invocation => AskKind::Permission {
             tool_name: tool_name.map(str::to_string),
@@ -336,28 +335,6 @@ fn extract_suggestions(row: &Value) -> Vec<SuggestionFact> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// The ask's typed panel/reader body (C2), computed once at creation — the
-/// one place a diff is ever computed (diff-rendering §1.4: the transcript
-/// states no diff at ask time). Routed on the tool name like everything
-/// else; tools without a body document carry `None`.
-fn ask_document(tool_name: Option<&str>, input: &Value) -> Option<AskDocument> {
-    match tool_name {
-        Some("Edit") => {
-            let old = str_of(input, "old_string")?;
-            let new = str_of(input, "new_string")?;
-            Some(AskDocument::Diff(document::ask_time_diff(
-                old,
-                new,
-                bool_of(input, "replace_all"),
-            )))
-        }
-        Some("Write") => Some(AskDocument::NewFile {
-            content: str_of(input, "content")?.to_string(),
-        }),
-        _ => None,
-    }
 }
 
 fn push_ask(
@@ -404,7 +381,7 @@ fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
         return;
     }
     let kind = ask_kind(tool_name, input, extract_suggestions(row));
-    let document = ask_document(tool_name, input);
+    let document = facts::ask_document(tool_name, input);
     push_ask(
         layer,
         seq,
@@ -438,7 +415,7 @@ fn fold_user(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Va
     // inbox carrier's row is meta) and before the prompt path (the paste
     // carrier's row wears human discriminators it did not earn).
     if let Some(text) = row.pointer("/message/content").and_then(Value::as_str)
-        && let Some(message) = envelope::read(text)
+        && let Some(message) = facts::inbound_message(text)
     {
         fold_agent_message(layer, seq, row, message);
         return;
@@ -505,12 +482,7 @@ fn fold_user(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Va
 /// own discriminators — when the harness treated the delivery as the start
 /// of a turn, the recipient IS working, and saying otherwise would leave a
 /// wrong badge on the fleet.
-fn fold_agent_message(
-    layer: &mut ClaudeLayer,
-    seq: u64,
-    row: &Value,
-    message: envelope::InboundMessage,
-) {
+fn fold_agent_message(layer: &mut ClaudeLayer, seq: u64, row: &Value, message: InboundMessage) {
     let starts_turn = row.pointer("/origin/kind").and_then(Value::as_str) == Some("human")
         || matches!(
             str_of(row, "promptSource"),
@@ -1285,7 +1257,7 @@ fn fold_tool_use(
     let tool_use_id = str_of(block, "id").unwrap_or_default().to_string();
     let name = str_of(block, "name").unwrap_or_default().to_string();
     let input = block.get("input").unwrap_or(&Value::Null);
-    let invocation = extract_invocation(&name, input);
+    let invocation = facts::invocation(&name, input);
 
     // Grouping fact (B4): strictly consecutive read/search one-liners.
     let group_with_previous = groupable(&invocation)
@@ -1388,86 +1360,6 @@ fn correlate_ask(
 
 fn groupable(invocation: &ToolInvocation) -> bool {
     invocation.is_exploration()
-}
-
-fn extract_invocation(name: &str, input: &Value) -> ToolInvocation {
-    match name {
-        "Edit" => ToolInvocation::Edit {
-            file_path: string_of(input, "file_path"),
-            replace_all: bool_of(input, "replace_all"),
-        },
-        "Write" => ToolInvocation::Write {
-            file_path: string_of(input, "file_path"),
-        },
-        "Bash" => ToolInvocation::Bash {
-            command: string_of(input, "command"),
-            description: string_of(input, "description"),
-        },
-        "Read" => ToolInvocation::Read {
-            file_path: string_of(input, "file_path"),
-        },
-        "Grep" | "Glob" => ToolInvocation::Query {
-            text: string_of(input, "pattern"),
-        },
-        "WebSearch" | "ToolSearch" => ToolInvocation::Query {
-            text: string_of(input, "query"),
-        },
-        "WebFetch" => ToolInvocation::Query {
-            text: string_of(input, "url"),
-        },
-        crate::claude::MCP_SEND_TOOL => ToolInvocation::AmuxSend {
-            to: string_of(input, "to"),
-            text: string_of(input, "text"),
-        },
-        "Task" | "Agent" => ToolInvocation::Task {
-            description: string_of(input, "description"),
-            subagent_type: string_of(input, "subagent_type"),
-            background: bool_of(input, "run_in_background"),
-        },
-        "AskUserQuestion" => ToolInvocation::Question {
-            questions: input
-                .get("questions")
-                .and_then(Value::as_array)
-                .map(|questions| questions.iter().map(question_fact).collect())
-                .unwrap_or_default(),
-        },
-        "ExitPlanMode" => ToolInvocation::Plan {
-            plan: string_of(input, "plan"),
-            plan_file_path: string_of(input, "planFilePath"),
-        },
-        _ => ToolInvocation::Other,
-    }
-}
-
-fn question_fact(question: &Value) -> QuestionFact {
-    QuestionFact {
-        header: string_of(question, "header"),
-        question: string_of(question, "question"),
-        multi_select: bool_of(question, "multiSelect"),
-        options: question
-            .get("options")
-            .and_then(Value::as_array)
-            .map(|options| {
-                options
-                    .iter()
-                    .filter_map(|option| {
-                        // Options are `{label, description}` objects (Phase
-                        // 0 capture); tolerate the older plain-string form.
-                        match option {
-                            Value::String(label) => Some(QuestionOption {
-                                label: label.clone(),
-                                description: None,
-                            }),
-                            _ => str_of(option, "label").map(|label| QuestionOption {
-                                label: label.to_string(),
-                                description: string_of(option, "description"),
-                            }),
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-    }
 }
 
 fn finalize_message(layer: &mut ClaudeLayer, message_id: &str, stop_reason: String) {

@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Shared Claude's provider facts between chat layers.** Claude
+tool invocations, question and plan facts, ask-time documents, and inbound
+agent-message envelope parsing now live in one provider-specific facts module.
+The existing PTY fold consumes that module without changing its public types,
+serialized shapes, tolerant parsing, or feed and ask behavior, leaving the SDK
+chat free to read the same Claude vocabulary without sharing PTY lifecycle
+inferences.
+
 2026-09-04 — **Kept user hooks owned by Claude's settings.** The managed SDK
 launch now has a boundary test that captures the real provider argument vector
 and proves it carries no setting-source restriction, no merged hook block, and
