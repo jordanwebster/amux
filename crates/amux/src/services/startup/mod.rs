@@ -740,16 +740,12 @@ impl StartedUserServices {
 
     #[cfg(unix)]
     pub(crate) fn serve_client_service_on_unix_listener(
-        &mut self,
+        &self,
         listener: tokio::net::UnixListener,
-    ) {
+    ) -> JoinHandle<()> {
         let incoming = unix_incoming(listener);
         let trusted_tx = self.trusted_incoming_tx.clone();
-        self.tasks.push(spawn_forward_to_trusted(
-            incoming,
-            trusted_tx,
-            "Unix socket",
-        ));
+        spawn_forward_to_trusted(incoming, trusted_tx, "Unix socket")
     }
 
     pub(crate) fn serve_external_tcp_listener(&mut self, listener: TcpListener) {

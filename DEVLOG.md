@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Release the daemon socket before acknowledging shutdown.**
+Profile quiescence now closes its Unix accept loop and removes its owned socket
+before replying to shutdown or suspend, keeping accepted connections alive
+long enough to deliver the reply. Daemon RPC tests prove immediate reconnect
+fails, a fresh bind succeeds, and final teardown preserves the replacement.
+
 2026-09-05 — **Publish profile connectivity independently of clients.**
 Each runtime retains an observed-status watch channel fed by startup and
 cloud connection outcomes, including authentication, subscription, update,

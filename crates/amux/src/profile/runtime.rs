@@ -200,6 +200,8 @@ pub(crate) struct ProfileRuntime {
     status: RuntimeStatus,
     prepared_suspend: bool,
     #[cfg(unix)]
+    unix_accept_task: Option<JoinHandle<()>>,
+    #[cfg(unix)]
     socket_ownership: Option<SocketOwnership>,
 }
 
@@ -305,10 +307,11 @@ async fn build(
     .map_err(|error| ProfileStartError::State(error.to_string()))?;
 
     #[cfg(unix)]
-    if let Some(listener) = bound.unix_listener.take() {
-        services.serve_client_service_on_unix_listener(listener);
+    let unix_accept_task = bound.unix_listener.take().map(|listener| {
+        let task = services.serve_client_service_on_unix_listener(listener);
         tracing::info!(path = %options.paths.socket_path.display(), "listening on profile ClientService");
-    }
+        task
+    });
     if let Some(listener) = bound.tcp_listener.take() {
         let addr = listener.local_addr()?;
         services.serve_external_tcp_listener(listener);
@@ -371,6 +374,8 @@ async fn build(
         cloud_connector: Mutex::new(None),
         status,
         prepared_suspend: false,
+        #[cfg(unix)]
+        unix_accept_task,
         #[cfg(unix)]
         socket_ownership: bound.disarm_socket_cleanup(),
     })
@@ -463,6 +468,7 @@ impl ProfileRuntime {
     }
 
     pub(crate) async fn quiesce(&mut self, reason: ShutdownReason) {
+        self.stop_accepting_local_clients().await;
         self.stop_cloud().await;
 
         if let Some(host) = &self.agent_host {
@@ -482,18 +488,30 @@ impl ProfileRuntime {
         }
     }
 
+    /// Close and unlink the listener before acknowledging shutdown, so callers
+    /// cannot reconnect to a dying server. Accepted connections stay alive to
+    /// deliver the reply, and a replacement listener keeps its socket path.
+    pub(crate) async fn stop_accepting_local_clients(&mut self) {
+        #[cfg(unix)]
+        {
+            if let Some(task) = self.unix_accept_task.take() {
+                task.abort();
+                let _ = task.await;
+            }
+            if let Some(ownership) = self.socket_ownership.take() {
+                ownership.remove_if_owned();
+            }
+        }
+    }
+
     pub(crate) async fn finish_stop(mut self) {
+        self.stop_accepting_local_clients().await;
         tokio::time::sleep(LINK_CLOSE_FLUSH_TIMEOUT).await;
         self.client.close();
         self.in_process_connection.close();
         tokio::task::yield_now().await;
         stop_tasks(std::mem::take(&mut self.background_tasks)).await;
         self.services.stop_tasks().await;
-
-        #[cfg(unix)]
-        if let Some(ownership) = self.socket_ownership.take() {
-            ownership.remove_if_owned();
-        }
     }
 
     pub(crate) fn take_shutdown_receiver(&mut self) -> mpsc::Receiver<ShutdownRequest> {
@@ -913,6 +931,63 @@ mod tests {
         println!("embedded guard dropped: service tasks released and relay link removed");
         server.abort();
         let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_daemon_shutdown_reply_releases_socket() {
+        assert_daemon_reply_releases_socket(false).await;
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_daemon_suspend_reply_releases_socket() {
+        assert_daemon_reply_releases_socket(true).await;
+    }
+
+    async fn assert_daemon_reply_releases_socket(suspend: bool) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let root = tempdir().unwrap();
+            let config = options(root.path(), Listeners::Sockets).service_config();
+            let socket_path = config.socket_path.clone();
+            let server_config = config.clone();
+            let server = tokio::spawn(async move {
+                crate::server::Server::builder()
+                    .config(server_config)
+                    .run()
+                    .await
+                    .unwrap();
+            });
+            let channel = loop {
+                match crate::client::connect_existing_client_service(&config).await {
+                    Ok(channel) => break channel,
+                    Err(_) => {
+                        assert!(
+                            !server.is_finished(),
+                            "daemon exited before serving clients"
+                        );
+                        tokio::task::yield_now().await;
+                    }
+                }
+            };
+            let client = Client::from_client_service_channel(channel, None);
+            if suspend {
+                client.suspend().await.unwrap();
+            } else {
+                client.shutdown().await.unwrap();
+            }
+
+            assert!(UnixStream::connect(&socket_path).is_err());
+            assert!(!socket_path.exists());
+            let replacement = crate::transport::bind_unix_listener(&socket_path).unwrap();
+            println!(
+                "{} reply received: reconnect fails and a fresh socket bind succeeds",
+                if suspend { "Suspend" } else { "Shutdown" }
+            );
+            server.await.unwrap();
+            UnixStream::connect(&socket_path).unwrap();
+            drop(replacement);
+        })
+        .await
+        .expect("daemon shutdown timed out");
     }
 
     #[tokio::test]
