@@ -1,9 +1,11 @@
 # The amux client layer
 
 Status: normative, with full native layers for Claude PTY (`docs/CHAT.md`)
-and Codex (`docs/CODEX.md`), plus an explicit unsupported layer for Claude
-SDK — revised after external review (see git history; review findings in the
-2026-08 devlog entries).
+and Codex (`docs/CODEX.md`), and a third native layer for Claude driven over
+its stream-JSON interface, whose surfaces are specified in
+`docs/CLAUDE_SDK.md` and which is a placeholder in this build until that
+layer lands — revised after external review (see git history; review findings
+in the 2026-08 devlog entries).
 This document owns the client side of amux: the `amux-ui` state library,
 its renderers (the TUI first, desktop and mobile clients later), and the
 rules that keep per-agent knowledge in the right place. Companions:
@@ -153,11 +155,12 @@ card without falling through to another provider's layer.
 
 The registry as built: `AgentLayer` is an exhaustive enum over
 `Claude`, `ClaudeSdk`, and `Codex`; the test agent has no structured layer.
-`AgentLayer::from_kind` exhaustively selects among them. `ClaudeSdkLayer` is a
-deliberate typed hole: it holds no folded state, observes no SDK rows, reports
-unknown attention, accepts no composer input, and makes the TUI render “this
-chat is unsupported in this build.” Opening it does not subscribe to a PTY or
-silently reuse the Claude PTY fold. Exhaustive `match` is the mechanism —
+`AgentLayer::from_kind` exhaustively selects among them. `ClaudeSdkLayer` is
+currently a deliberate typed hole: it holds no folded state, observes no SDK
+rows, reports unknown attention, accepts no composer input, and makes the TUI
+render “this chat is unsupported in this build.” Opening it does not subscribe
+to a PTY or silently reuse the Claude PTY fold. Exhaustive `match` is the
+mechanism —
 adding a layer is a compile error at every site that must decide something,
 which is the point. `Model`'s fields are `pub(crate)`, so a renderer
 structurally cannot reach past the projections to raw layer state.
@@ -316,11 +319,21 @@ parses its delivered user row and Codex parses `amux.codex_message`. The shared
 kernel owns only presentation facts common to both envelope kinds; it does not
 invent a generic message feed.
 
-Claude SDK is currently the explicit exception to “native chat”: the daemon
-protocol and provider driver exist, but the client layer is intentionally an
-unsupported placeholder. Streaming partials, model or mode switching, context
-usage, MCP status, and SDK request controls are parked until a real SDK chat
-layer is designed.
+Claude driven over stream-JSON gets a native chat of its own rather than a
+second consumer of the transcript layer, and the two Claude layers are
+deliberately separate: two folds, two private classifications, two feeds. They
+share exactly one thing — Claude's own tool vocabulary, meaning how an `Edit`,
+`Write`, `Bash`, `Task`, `AskUserQuestion` or `ExitPlanMode` input reads and
+which document an ask puts in the reader — through a facts module both consume.
+That is translation of one provider's JSON by the crate that owns it, not a
+normalized agent representation, and it stops there: no shared state
+vocabulary, no shared condition, no cross-layer trait. The reason is the
+asymmetry rule above. The transcript layer infers working, streaming and turn
+ends from a burst-written file; the stream-JSON session states them as facts,
+and a shared fold would have to force one onto the other. `docs/CLAUDE_SDK.md`
+owns that layer's surfaces and records, per surface, which of them the other
+two chats adopt and which backend capability they lack. In this build the SDK
+client layer is still the unsupported placeholder described above.
 On Windows the chrome must build and run (crossterm); byte passthrough is
 untested pending e2e-driver support there, and the structured chat path is the
 guaranteed Windows client direction.

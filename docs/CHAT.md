@@ -21,6 +21,14 @@ Agent-to-agent envelopes and parent/child lifecycle are specified in
 `docs/A2A.md`; this document owns how their recipient rows and family actions
 appear in the chat.
 
+The Claude agent this document describes is the one driven through a terminal.
+The same provider driven through its stream-JSON interface gets its own chat,
+whose header, streaming block, task and context surfaces and five ask panels
+are specified in `docs/CLAUDE_SDK.md`; that document also records, surface by
+surface, which of them this chat and the Codex chat take up and which
+capability the other backends lack. The two Claude chats share Claude's own
+tool vocabulary and nothing else.
+
 ## Vocabulary
 
 - **Chat** — the shared structured conversation screen over a known agent
@@ -34,10 +42,16 @@ appear in the chat.
   marker, a collapsed ask fact.
 - **Composer** — the user's input surface, docked at the bottom.
 - **Ask** — an agent-initiated blocking request that needs the user
-  before the session proceeds. Exactly two kinds: **permission** and
-  **question**. Plan review is a permission variant — the
-  `ExitPlanMode` tool with a plan payload and a specialized fullscreen
-  presentation — not a third kind. An ask is the chat-layer surface of
+  before the session proceeds. Four kinds exist across the Claude chats:
+  **permission**, **question**, **elicitation** (an MCP server's own form)
+  and **dialog** (a request the CLI would have drawn itself). This chat
+  carries exactly two of them, permission and question, because Claude's
+  terminal answers elicitations and dialogs in band and writes nothing about
+  them to the transcript; the SDK chat carries all four and
+  `docs/CLAUDE_SDK.md` specifies their panels. Plan review is a permission
+  variant in both — the `ExitPlanMode` tool with a plan payload and a
+  specialized fullscreen presentation — not a kind of its own. An ask is the
+  chat-layer surface of
   what `docs/UI.md` calls a live obligation; its retention rule (evict
   bytes, never obligations) applies to asks verbatim.
 - **Phase** — the derived activity state of the session (working, idle,
@@ -302,7 +316,11 @@ fixture-verified); `tool_name` + `tool_input` equals the transcript
 `tool_use.input` byte-for-byte, and that equality is the correlation.
 Kind is permission or question; the payload is typed per kind, and a
 permission carrying an `ExitPlanMode` plan is the plan-review
-variant. Pending signals: the amux
+variant. The other two kinds a Claude session can raise — an MCP
+server's elicitation and a CLI user dialog — reach a client only over the
+stream-JSON interface, where they carry their own request ids and answer
+shapes; their panels live in `docs/CLAUDE_SDK.md`, and the lifecycle,
+docking and Esc rules below apply to them verbatim. Pending signals: the amux
 `hook.permission_request` row (FACT, arrival-ordered), which fires
 for tool permissions AND for `AskUserQuestion`/`ExitPlanMode` (Phase
 0, observed) — extraction routes on its `tool_name`, never assuming a

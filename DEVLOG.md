@@ -7360,3 +7360,28 @@ reports whether the body actually moved. Learning the screen size split in two
 for this: keys go on using the setter that pulls the body back to the cursor,
 while the wheel only resizes, because following the cursor there would have
 undone each notch before the next one arrived.
+
+2026-09-04 — **The design record for Claude's stream-JSON chat.** Claude driven
+over stream-JSON now has a written chat design in `docs/CLAUDE_SDK.md`: session
+facts on a second header line, an assistant message that is genuinely open
+while it streams and is replaced by its final row, a task block per subagent
+run, a context meter read passively from the usage that arrives anyway, and a
+per-category breakdown fetched only when someone asks for it. Five asks are
+specified with wireframes and with the wire shapes recorded against Claude Code
+2.1.260: permission, question and plan review all arrive on the permission
+channel, while an MCP elicitation and a user dialog have their own request ids
+and answer shapes. Two findings from the recordings shaped the plan review.
+A bare allow on `ExitPlanMode` is followed by a status row switching the session
+to accept-edits, so approving a plan *manually* has to send the mode back to
+default explicitly or it silently means the same thing as approving
+automatically. And no user dialog has ever been recorded — the kind is an open
+string — so a payload with a message and labelled options is answered as a
+choice and anything else renders visibly blocked with cancel, rather than
+guessing at a live agent's request. The record ends with a table naming, per
+surface, whether the terminal-driven Claude chat and the Codex chat take it up
+or which backend capability they lack: streaming is impossible on a
+burst-written transcript but free in Codex, the terminal chat's context meter
+can have no denominator because no row states the window, and neither of the
+other two gets a task list for want of a task lifecycle. `docs/UI.md` now
+states the boundary between the two Claude layers: they share the provider's
+own tool vocabulary and nothing else.

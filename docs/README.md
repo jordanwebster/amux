@@ -16,6 +16,10 @@ subject; when two overlap, the owner named here wins.
 - `CHAT.md` — the chat TUI view; companion to `UI.md`, which owns the
   client layer it stands on; includes the full-screen frame, interaction
   bindings, theme-file format, and `amux-shot` screenshot workflow.
+- `CLAUDE_SDK.md` — the chat for a Claude agent driven over its stream-JSON
+  interface: session facts in the header, streaming replies, tasks, context,
+  the five kinds of ask it can answer, and which of those surfaces the other
+  two chats take up.
 - `ATTACHMENTS.md` — chat attachments and diff reviews: the canonical element
   syntax, artifact lifetime and cache, RPC and stream delivery, agent tool,
   and deferred client surfaces.
