@@ -186,6 +186,7 @@ pub(crate) async fn start_daemon_runtime(
         state_path: inner.data_dir.join("state.yaml"),
         data_dir: inner.data_dir.clone(),
         tcp_port: inner.tcp_addr.map(|addr| addr.port()),
+        enable_cloud_mode: Some(inner.cloud.is_some()),
         prevent_idle_sleep: Some(false),
         ..crate::config::Config::default()
     };

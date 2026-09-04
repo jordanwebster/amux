@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Preserve configured cloud mode in profile services.**
+Runtime options now carry the cloud-mode flag independently of credentials,
+including its unset pre-init value. Testnet sets the flag explicitly. Tests
+verify configuration round-trips and a daemon with credentials but cloud mode
+disabled reports that state in its debug dump and refuses QR pairing.
+
 2026-09-05 — **Release the daemon socket before acknowledging shutdown.**
 Profile quiescence now closes its Unix accept loop and removes its owned socket
 before replying to shutdown or suspend, keeping accepted connections alive
