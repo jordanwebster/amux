@@ -22,7 +22,9 @@ use crate::client::connect_existing_client_service;
 use crate::client::{Client, ConnectError};
 use crate::config::{Config, ConfigError};
 use crate::identity;
-use crate::profile::runtime::{Listeners, ProfileRuntimeOptions, start_with_security};
+use crate::profile::runtime::{
+    Listeners, ProfileRuntime, ProfileRuntimeOptions, start_with_security,
+};
 use crate::protocol::{ProtocolError, wire};
 use crate::services::{CloudLinkService, DeviceRuntimeSecurity, LocalAgentHost};
 use crate::subscription::SubscriptionReporter;
@@ -509,7 +511,7 @@ impl EmbeddedBuilder {
             subscription_reporter,
             Listeners::InProcessOnly,
         );
-        let mut runtime = crate::profile::runtime::start(options)
+        let runtime = crate::profile::runtime::start(options)
             .await
             .map_err(|error| ServerError::State(error.to_string()))?;
         if cloud_enabled {
@@ -518,51 +520,55 @@ impl EmbeddedBuilder {
                 .await
                 .map_err(|error| ServerError::State(error.to_string()))?;
         }
-        let client = runtime.client();
-        let mut shutdown_rx = runtime.take_shutdown_receiver();
-        let (stop_tx, mut stop_rx) = oneshot::channel();
-        let task = tokio::spawn(async move {
-            loop {
-                let req = tokio::select! {
-                    _ = &mut stop_rx => {
+        Ok(spawn_embedded_runtime(runtime))
+    }
+}
+
+pub(crate) fn spawn_embedded_runtime(mut runtime: ProfileRuntime) -> Client {
+    let client = runtime.client();
+    let mut shutdown_rx = runtime.take_shutdown_receiver();
+    let (stop_tx, mut stop_rx) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        loop {
+            let req = tokio::select! {
+                _ = &mut stop_rx => {
+                    runtime.stop(ShutdownReason::UserRequested).await;
+                    return;
+                }
+                req = shutdown_rx.recv() => {
+                    let Some(req) = req else {
                         runtime.stop(ShutdownReason::UserRequested).await;
                         return;
-                    }
-                    req = shutdown_rx.recv() => {
-                        let Some(req) = req else {
-                            runtime.stop(ShutdownReason::UserRequested).await;
+                    };
+                    req
+                }
+            };
+            match req {
+                ShutdownRequest::Shutdown { reply } => {
+                    runtime.quiesce(ShutdownReason::UserRequested).await;
+                    let _ = reply.send(Ok(()));
+                    runtime.finish_stop().await;
+                    return;
+                }
+                ShutdownRequest::Suspend { reason, reply } => {
+                    match runtime.prepare_suspend().await {
+                        Ok(suspended_count) => {
+                            runtime.quiesce(reason).await;
+                            let _ = reply.send(Ok(suspended_count));
+                            runtime.finish_stop().await;
                             return;
-                        };
-                        req
-                    }
-                };
-                match req {
-                    ShutdownRequest::Shutdown { reply } => {
-                        runtime.quiesce(ShutdownReason::UserRequested).await;
-                        let _ = reply.send(Ok(()));
-                        runtime.finish_stop().await;
-                        return;
-                    }
-                    ShutdownRequest::Suspend { reason, reply } => {
-                        match runtime.prepare_suspend().await {
-                            Ok(suspended_count) => {
-                                runtime.quiesce(reason).await;
-                                let _ = reply.send(Ok(suspended_count));
-                                runtime.finish_stop().await;
-                                return;
-                            }
-                            Err(error) => {
-                                let _ = reply.send(Err(error));
-                            }
+                        }
+                        Err(error) => {
+                            let _ = reply.send(Err(error));
                         }
                     }
                 }
             }
-        });
+        }
+    });
 
-        let guard = Arc::new(EmbeddedServerGuard::new(stop_tx, task));
-        Ok(client.with_guard(guard))
-    }
+    let guard = Arc::new(EmbeddedServerGuard::new(stop_tx, task));
+    client.with_guard(guard)
 }
 
 impl DaemonBuilder {

@@ -309,15 +309,17 @@ pub(crate) fn spawn_connector_to_channel_with_bearer_token_and_shutdown(
     channel: Channel,
     token: String,
     shutdown_rx: watch::Receiver<bool>,
-) -> ConnectorTask {
-    spawn_connector_to_channel_with_authorization_and_signal(
+) -> (ConnectorTask, EstablishmentReceiver) {
+    let (established_tx, established_rx) = oneshot::channel();
+    let task = spawn_connector_to_channel_with_authorization_and_signal(
         ctx.with_link_role(LinkRole::CloudRelay),
         channel,
         Some(format!("Bearer {token}")),
         None,
-        None,
+        Some(established_tx),
         Some(shutdown_rx),
-    )
+    );
+    (task, established_rx)
 }
 
 #[cfg(test)]

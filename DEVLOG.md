@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Publish profile connectivity independently of clients.**
+Each runtime retains an observed-status watch channel fed by startup and
+cloud connection outcomes, including authentication, subscription, update,
+and retry states. Existing marker reporters adapt those observations, with
+minimum-version details preserved. Regression tests exercise real cloud API
+and relay failures, client-independent service and link lifetime, failed
+startup status, and the embedded owner's cooperative teardown on final drop.
+
 2026-09-05 — **Run specification daemons through the profile runtime.**
 Testnet now uses the same identity loading, local agent host, service startup,
 cloud ownership, and cooperative shutdown as production. Its clock and

@@ -11,6 +11,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock, mpsc, watch};
 use tokio::task::JoinHandle;
 
+use super::status::{Observed, RuntimeStatus};
 use crate::auth::CredentialProvider;
 use crate::client::Client;
 use crate::config::{Config, ConfigError, Keybinds, UiSettings};
@@ -63,20 +64,6 @@ pub(crate) struct InstallationSettings {
 pub(crate) enum Listeners {
     InProcessOnly,
     Sockets,
-}
-
-/// The currently observed connectivity state of a profile.
-#[allow(dead_code)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Observed {
-    Local,
-    Connecting,
-    Connected,
-    Retrying,
-    AuthenticationRequired,
-    SubscriptionRequired,
-    UpdateRequired,
-    StartupFailed,
 }
 
 #[cfg(testnet)]
@@ -210,7 +197,7 @@ pub(crate) struct ProfileRuntime {
     in_process_connection: InProcessConnection,
     background_tasks: Vec<JoinHandle<()>>,
     cloud_connector: Mutex<Option<CloudConnector>>,
-    status_tx: watch::Sender<Observed>,
+    status: RuntimeStatus,
     prepared_suspend: bool,
     #[cfg(unix)]
     socket_ownership: Option<SocketOwnership>,
@@ -221,19 +208,53 @@ pub(crate) struct ProfileRuntime {
 pub(crate) async fn start(
     options: ProfileRuntimeOptions,
 ) -> Result<ProfileRuntime, ProfileStartError> {
-    let device_files = identity::ensure_device_files_with_trust_in(&options.paths.data_dir)
-        .map_err(|error| ProfileStartError::State(error.to_string()))?;
-    let security = DeviceRuntimeSecurity::new(
-        device_files.identity,
-        device_files.trust_store,
-        options.paths.data_dir.clone(),
+    let status = RuntimeStatus::new(
+        options.shared.update_reporter.clone(),
+        options.shared.subscription_reporter.clone(),
     );
-    start_with_security(options, security).await
+    start_observed(options, status).await
+}
+
+pub(crate) async fn start_observed(
+    options: ProfileRuntimeOptions,
+    status: RuntimeStatus,
+) -> Result<ProfileRuntime, ProfileStartError> {
+    let result = async {
+        let device_files = identity::ensure_device_files_with_trust_in(&options.paths.data_dir)
+            .map_err(|error| ProfileStartError::State(error.to_string()))?;
+        let security = DeviceRuntimeSecurity::new(
+            device_files.identity,
+            device_files.trust_store,
+            options.paths.data_dir.clone(),
+        );
+        build(options, security, status.clone()).await
+    }
+    .await;
+    if result.is_err() {
+        status.report(Observed::StartupFailed);
+    }
+    result
 }
 
 pub(crate) async fn start_with_security(
     options: ProfileRuntimeOptions,
     security: DeviceRuntimeSecurity,
+) -> Result<ProfileRuntime, ProfileStartError> {
+    let status = RuntimeStatus::new(
+        options.shared.update_reporter.clone(),
+        options.shared.subscription_reporter.clone(),
+    );
+    let result = build(options, security, status.clone()).await;
+    if result.is_err() {
+        status.report(Observed::StartupFailed);
+    }
+    result
+}
+
+async fn build(
+    options: ProfileRuntimeOptions,
+    security: DeviceRuntimeSecurity,
+    status: RuntimeStatus,
 ) -> Result<ProfileRuntime, ProfileStartError> {
     #[cfg(testnet)]
     let mut options = options;
@@ -328,7 +349,7 @@ pub(crate) async fn start_with_security(
         services.open_managed_in_process_client_channel();
     services.push_task(client_task);
     let client = Client::from_client_service_channel(client_channel.clone(), None);
-    let (status_tx, _) = watch::channel(Observed::Local);
+    status.report(Observed::Local);
 
     Ok(ProfileRuntime {
         paths: options.paths,
@@ -348,7 +369,7 @@ pub(crate) async fn start_with_security(
         in_process_connection,
         background_tasks,
         cloud_connector: Mutex::new(None),
-        status_tx,
+        status,
         prepared_suspend: false,
         #[cfg(unix)]
         socket_ownership: bound.disarm_socket_cleanup(),
@@ -362,7 +383,7 @@ impl ProfileRuntime {
 
     #[allow(dead_code)]
     pub(crate) fn status(&self) -> watch::Receiver<Observed> {
-        self.status_tx.subscribe()
+        self.status.subscribe()
     }
 
     pub(crate) async fn start_cloud(&self) -> Result<(), CloudStartError> {
@@ -380,16 +401,23 @@ impl ProfileRuntime {
             }
             let ctx = self.services.link_connector_ctx();
             *connector = Some(match auth {
-                CloudFixtureAuth::Bearer(token) => {
-                    CloudConnector::testnet_bearer(ctx, channel.clone(), token.clone())
-                }
-                CloudFixtureAuth::Refreshing(auth) => {
-                    CloudConnector::testnet_with_auth(ctx, channel.clone(), auth.clone())
-                }
+                CloudFixtureAuth::Bearer(token) => CloudConnector::testnet_bearer(
+                    ctx,
+                    channel.clone(),
+                    token.clone(),
+                    self.status.clone(),
+                ),
+                CloudFixtureAuth::Refreshing(auth) => CloudConnector::testnet_with_auth(
+                    ctx,
+                    channel.clone(),
+                    auth.clone(),
+                    self.status.clone(),
+                ),
             });
             return Ok(());
         }
         if self.state.read().await.credentials.is_none() {
+            self.status.report(Observed::AuthenticationRequired);
             return Err(CloudStartError::MissingCredentials);
         }
 
@@ -405,11 +433,12 @@ impl ProfileRuntime {
         }
 
         let config = self.state.read().await.config.clone();
-        let _ = self.status_tx.send(Observed::Connecting);
+        self.status.report(Observed::Connecting);
         *connector = Some(establish_cloud_connection(
             config,
             self.state.clone(),
             self.services.link_connector_ctx(),
+            self.status.clone(),
         ));
         Ok(())
     }
@@ -425,7 +454,7 @@ impl ProfileRuntime {
         if let Some(connector) = connector.take() {
             connector.stop().await;
         }
-        let _ = self.status_tx.send(Observed::Local);
+        self.status.report(Observed::Local);
     }
 
     pub(crate) async fn stop(mut self, reason: ShutdownReason) {
@@ -484,7 +513,7 @@ impl ProfileRuntime {
     }
 
     #[cfg(test)]
-    fn weak_state(&self) -> std::sync::Weak<RwLock<ServerState>> {
+    pub(crate) fn weak_state(&self) -> std::sync::Weak<RwLock<ServerState>> {
         Arc::downgrade(&self.state)
     }
 }
@@ -641,6 +670,252 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profile_runtime_outlives_clients() {
+        let root = tempdir().unwrap();
+        let runtime = start(options(root.path(), Listeners::InProcessOnly))
+            .await
+            .unwrap();
+        let client = runtime.client();
+        client.list_agents().await.unwrap();
+        let other = client.clone();
+        drop(client);
+        drop(other);
+        tokio::task::yield_now().await;
+
+        runtime.client().list_agents().await.unwrap();
+        let weak_state = runtime.weak_state();
+        assert!(weak_state.upgrade().is_some());
+        runtime.stop(ShutdownReason::UserRequested).await;
+        assert!(weak_state.upgrade().is_none());
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_embedded_guard_stops_services_on_last_drop() {
+        let root = tempdir().unwrap();
+        let runtime = start(options(root.path(), Listeners::InProcessOnly))
+            .await
+            .unwrap();
+        let weak_state = runtime.weak_state();
+        // An independent transport client observes shutdown without keeping the
+        // embedding guard alive.
+        let observer = runtime.client();
+        let client = crate::server::spawn_embedded_runtime(runtime);
+        let other = client.clone();
+        drop(client);
+        other.list_agents().await.unwrap();
+        drop(other);
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while weak_state.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("embedded guard did not finish runtime teardown");
+        assert!(observer.list_agents().await.is_err());
+    }
+
+    struct StaticCredentials;
+
+    #[async_trait::async_trait]
+    impl CredentialProvider for StaticCredentials {
+        async fn access_token(&self) -> Result<crate::auth::AccessToken, crate::auth::AuthError> {
+            Ok(crate::auth::AccessToken {
+                bearer: "test-token".into(),
+                expires_at: None,
+            })
+        }
+        fn invalidate(&self, _token: &crate::auth::AccessToken) {}
+    }
+
+    async fn wait_for_status(runtime: &ProfileRuntime, expected: Observed) {
+        let mut status = runtime.status();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            status.wait_for(|value| *value == expected).await.unwrap();
+        })
+        .await
+        .unwrap_or_else(|_| panic!("expected {expected:?}, got {:?}", *status.borrow()));
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_reports_status() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Real /api/connect responses drive the production preparation and
+        // retry loop. Subscribe only after startup to prove retained state.
+        for (response, expected) in [
+            ("401 Unauthorized", Observed::AuthenticationRequired),
+            ("403 Forbidden", Observed::SubscriptionRequired),
+            ("503 Service Unavailable", Observed::Retrying),
+        ] {
+            let root = tempdir().unwrap();
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let mut options = options(root.path(), Listeners::InProcessOnly);
+            options.config.cloud_url = format!("http://{}", listener.local_addr().unwrap());
+            options.credentials = Some(Arc::new(StaticCredentials));
+            let server = tokio::spawn(async move {
+                loop {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    let mut buffer = [0; 1024];
+                    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                        let read = stream.read(&mut buffer).await.unwrap();
+                        assert!(read > 0, "cloud request closed before its headers arrived");
+                        request.extend_from_slice(&buffer[..read]);
+                    }
+                    let body = r#"{"error":"payment_required"}"#;
+                    stream.write_all(format!("HTTP/1.1 {response}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                }
+            });
+            let runtime = start(options).await.unwrap();
+            assert_eq!(*runtime.status().borrow(), Observed::Local);
+            runtime.start_cloud().await.unwrap();
+            assert_eq!(*runtime.status().borrow(), Observed::Connecting);
+            wait_for_status(&runtime, expected.clone()).await;
+            runtime.client().list_agents().await.unwrap();
+            println!("cloud {response}: {expected:?}; local calls remain available");
+            runtime.stop_cloud().await;
+            assert_eq!(*runtime.status().borrow(), Observed::Local);
+            runtime.stop(ShutdownReason::UserRequested).await;
+            server.abort();
+            let _ = server.await;
+        }
+    }
+
+    #[cfg(testnet)]
+    #[tokio::test]
+    async fn profile_runtime_reports_status_from_relay_and_outlives_cloud_clients() {
+        use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
+        use crate::services::CloudLinkService;
+
+        struct RelayAuth {
+            user: uuid::Uuid,
+            rejection: std::sync::Mutex<Option<tonic::Status>>,
+        }
+        #[tonic::async_trait]
+        impl LinkTokenAuthenticator for RelayAuth {
+            async fn authenticate_token(
+                &self,
+                _: &str,
+            ) -> Result<AuthenticatedLinkUser, tonic::Status> {
+                if let Some(error) = self.rejection.lock().unwrap().clone() {
+                    return Err(error);
+                }
+                Ok(AuthenticatedLinkUser {
+                    user_id: self.user,
+                    client_id: "runtime-test".into(),
+                    expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
+                })
+            }
+        }
+
+        let auth = Arc::new(RelayAuth {
+            user: uuid::Uuid::new_v4(),
+            rejection: std::sync::Mutex::new(None),
+        });
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let state = Arc::new(RwLock::new(ServerState::new(
+            Config::default(),
+            uuid::Uuid::new_v4(),
+            shutdown_tx,
+            None,
+            None,
+        )));
+        state.write().await.is_cloud_server = true;
+        let relay = CloudLinkService::with_authenticator(state, auth.clone());
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let channel = tonic::transport::Endpoint::from_shared(format!(
+            "http://{}",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap()
+        .connect_lazy();
+        let server = relay.serve_on_tcp_listener(listener);
+        let root = tempdir().unwrap();
+        let mut options = options(root.path(), Listeners::InProcessOnly);
+        options.fixtures.cloud = Some((channel, CloudFixtureAuth::Bearer("runtime-token".into())));
+        let runtime = start(options).await.unwrap();
+        let host_id = runtime.state.read().await.host_id();
+        let wait_for_relay_detach = || async {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while relay.user_has_link_to(auth.user, host_id).await {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("relay did not observe connector teardown");
+        };
+        runtime.start_cloud().await.unwrap();
+        assert_eq!(*runtime.status().borrow(), Observed::Connecting);
+        wait_for_status(&runtime, Observed::Connected).await;
+        let client = runtime.client();
+        client.list_agents().await.unwrap();
+        drop(client);
+        tokio::task::yield_now().await;
+        assert!(relay.user_has_link_to(auth.user, host_id).await);
+        runtime.client().list_agents().await.unwrap();
+        assert_eq!(*runtime.status().borrow(), Observed::Connected);
+        println!("last cloud client dropped: Connected; relay link and local calls survive");
+        runtime.stop_cloud().await;
+        wait_for_relay_detach().await;
+
+        for (error, expected) in [
+            (
+                tonic::Status::unauthenticated("expired"),
+                Observed::AuthenticationRequired,
+            ),
+            (
+                crate::protocol::protocol_status(ProtocolError::PaymentRequired),
+                Observed::SubscriptionRequired,
+            ),
+            (
+                crate::protocol::protocol_status(ProtocolError::UpdateRequired {
+                    minimum_version: "99.0.0".into(),
+                    client_version: "0.6.0".into(),
+                }),
+                Observed::UpdateRequired {
+                    minimum_version: Some("99.0.0".into()),
+                },
+            ),
+            (
+                tonic::Status::failed_precondition("amux update required"),
+                Observed::UpdateRequired {
+                    minimum_version: None,
+                },
+            ),
+            (tonic::Status::unavailable("try again"), Observed::Retrying),
+        ] {
+            *auth.rejection.lock().unwrap() = Some(error);
+            runtime.start_cloud().await.unwrap();
+            wait_for_status(&runtime, expected.clone()).await;
+            runtime.client().list_agents().await.unwrap();
+            println!("relay: {expected:?}; local calls remain available");
+            runtime.stop_cloud().await;
+            assert_eq!(*runtime.status().borrow(), Observed::Local);
+            wait_for_relay_detach().await;
+        }
+        *auth.rejection.lock().unwrap() = None;
+        runtime.start_cloud().await.unwrap();
+        wait_for_status(&runtime, Observed::Connected).await;
+        // The same embedding owner must also tear down an established cloud
+        // link when its final guarded client is dropped.
+        let weak_state = runtime.weak_state();
+        let client = crate::server::spawn_embedded_runtime(runtime);
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while weak_state.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        wait_for_relay_detach().await;
+        println!("embedded guard dropped: service tasks released and relay link removed");
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
     async fn profile_runtime_stop_removes_the_socket_it_owns() {
         let root = tempdir().unwrap();
         let socket_path = root.path().join("profile.sock");
@@ -678,9 +953,11 @@ mod tests {
         let mut options = options(root.path(), Listeners::Sockets);
         options.config.tcp_port = Some(occupied.local_addr().unwrap().port());
 
-        let result = start(options).await;
+        let status = RuntimeStatus::new(None, None);
+        let result = start_observed(options, status.clone()).await;
 
         assert!(result.is_err());
+        assert_eq!(*status.subscribe().borrow(), Observed::StartupFailed);
         assert!(!socket_path.exists());
     }
 
