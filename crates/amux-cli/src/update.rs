@@ -212,6 +212,52 @@ mod tests {
         assert!(!reporter.is_update_dismissed("0.4.0"));
     }
 
+    #[tokio::test]
+    async fn profile_runtime_local_lifecycle_preserves_update_markers() {
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let temp = tempfile::tempdir().unwrap();
+            let config = Config {
+                state_path: temp.path().join("state.yaml"),
+                data_dir: temp.path().join("data"),
+                socket_path: temp.path().join("amux.sock"),
+                enable_cloud_mode: Some(false),
+                prevent_idle_sleep: Some(false),
+                ..Config::default()
+            };
+            let reporter = Arc::new(MarkerFileReporter::from_state_path(&config.state_path));
+            reporter.report(UpdateStatus::Required(Some("99.0.0".into())));
+            reporter.dismiss_update_required("99.0.0");
+            reporter.report_subscription_required(true);
+
+            let client = amux::Server::builder()
+                .config(config)
+                .update_reporter(reporter.clone())
+                .subscription_reporter(reporter.clone())
+                .embedded()
+                .open()
+                .await
+                .unwrap();
+            client.list_agents().await.unwrap();
+            assert_eq!(reporter.read_update_required().as_deref(), Some("99.0.0"));
+            assert!(reporter.is_update_dismissed("99.0.0"));
+            assert!(!reporter.subscription_required());
+            println!("Runtime started: update-required=99.0.0, update-dismissed=99.0.0, subscription-required absent");
+
+            reporter.report_subscription_required(true);
+            client.shutdown().await.unwrap();
+
+            assert_eq!(reporter.read_update_required().as_deref(), Some("99.0.0"));
+            assert!(reporter.is_update_dismissed("99.0.0"));
+            assert!(!reporter.subscription_required());
+            println!("Shutdown acknowledged: update-required=99.0.0, update-dismissed=99.0.0, subscription-required absent");
+        })
+        .await
+        .expect("runtime marker test timed out");
+    }
+
     #[test]
     fn active_required_marker_clears_when_current_satisfies_minimum() {
         let temp = tempfile::tempdir().unwrap();

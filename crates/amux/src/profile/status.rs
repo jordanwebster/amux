@@ -53,7 +53,11 @@ impl RuntimeStatus {
         // after publishing, and teardown must not discard its marker update.
         match observed {
             Observed::Local | Observed::Connected => {
-                if let Some(reporter) = &self.update_reporter {
+                // Local operation says nothing about whether the cloud still
+                // requires an update. Clear that marker only after connecting.
+                if observed == Observed::Connected
+                    && let Some(reporter) = &self.update_reporter
+                {
                     reporter.report(UpdateStatus::Required(None));
                 }
                 if let Some(reporter) = &self.subscription_reporter {
@@ -74,5 +78,64 @@ impl RuntimeStatus {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct CapturingReporter {
+        updates: Mutex<Vec<UpdateStatus>>,
+        subscriptions: Mutex<Vec<bool>>,
+    }
+
+    impl UpdateReporter for CapturingReporter {
+        fn report(&self, status: UpdateStatus) {
+            self.updates.lock().unwrap().push(status);
+        }
+    }
+
+    impl SubscriptionReporter for CapturingReporter {
+        fn report_subscription_required(&self, required: bool) {
+            self.subscriptions.lock().unwrap().push(required);
+        }
+    }
+
+    #[test]
+    fn profile_runtime_local_preserves_update_required_until_connected() {
+        let reporter = Arc::new(CapturingReporter::default());
+        let status = RuntimeStatus::new(Some(reporter.clone()), Some(reporter.clone()));
+        status.report(Observed::UpdateRequired {
+            minimum_version: Some("99.0.0".into()),
+        });
+        status.report(Observed::SubscriptionRequired);
+        status.report(Observed::Local);
+
+        assert!(matches!(
+            reporter.updates.lock().unwrap().as_slice(),
+            [UpdateStatus::Required(Some(version))] if version == "99.0.0"
+        ));
+        assert_eq!(*reporter.subscriptions.lock().unwrap(), [true, false]);
+        assert_eq!(*status.subscribe().borrow(), Observed::Local);
+        println!("Local: update-required remains; subscription-required clears");
+
+        status.report(Observed::SubscriptionRequired);
+        status.report(Observed::Connected);
+
+        assert!(matches!(
+            reporter.updates.lock().unwrap().as_slice(),
+            [UpdateStatus::Required(Some(version)), UpdateStatus::Required(None)]
+                if version == "99.0.0"
+        ));
+        assert_eq!(
+            *reporter.subscriptions.lock().unwrap(),
+            [true, false, true, false]
+        );
+        assert_eq!(*status.subscribe().borrow(), Observed::Connected);
+        println!("Connected: update-required and subscription-required clear");
     }
 }

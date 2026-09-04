@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Retain required-update notices during local operation.**
+The runtime status adapter clears required-update markers only after a cloud
+connection succeeds. Startup and cloud teardown preserve both the notice and
+its dismissal while continuing to clear subscription notices. Captured-status
+and file-backed reporter tests cover these transitions through runtime startup
+and a successful shutdown reply.
+
 2026-09-05 — **Keep the profile listener tied to runtime ownership.**
 Dropping a runtime aborts its separately owned Unix accept task, preserving
 the cleanup previously supplied by the service task list. A regression test
