@@ -27,6 +27,7 @@ mod dispatcher;
 #[path = "agents/envelope.rs"]
 pub mod envelope;
 mod identity;
+pub mod installation;
 mod pairing;
 mod paths;
 mod profile;

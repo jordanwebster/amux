@@ -29,15 +29,7 @@ use crate::user_state::{ServerState, ShutdownRequest, new_local_agent_host};
 
 const LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
 
-/// Filesystem locations owned by one profile runtime.
-#[derive(Clone, Debug)]
-pub(crate) struct ProfilePaths {
-    pub(crate) config_path: Option<PathBuf>,
-    pub(crate) socket_path: PathBuf,
-    pub(crate) state_path: PathBuf,
-    pub(crate) data_dir: PathBuf,
-    pub(crate) reports_dir: PathBuf,
-}
+use crate::installation::ProfilePaths;
 
 /// Settings that vary between profiles.
 #[derive(Clone, Debug)]

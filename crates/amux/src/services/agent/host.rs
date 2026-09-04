@@ -171,30 +171,16 @@ fn codex_private_socket_path_with_fallback(
 ) -> io::Result<PathBuf> {
     use std::os::unix::ffi::OsStrExt;
 
-    const MAX_CODEX_SOCKET_PATH_BYTES: usize = 103;
+    use crate::installation::{MAX_CODEX_SOCKET_PATH_BYTES, adjacent_codex_socket_path};
 
-    let socket_dir = server_socket_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    // Stable FNV-1a keeps servers with different configured socket paths
-    // isolated without copying a potentially long filename into `sun_path`.
-    let hash = server_socket_path
-        .as_os_str()
-        .as_bytes()
-        .iter()
-        .fold(0xcbf29ce484222325_u64, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-        });
-    let file_name = format!("c{hash:016x}.sock");
-    let adjacent = socket_dir.join(&file_name);
+    let adjacent = adjacent_codex_socket_path(server_socket_path);
     if adjacent.as_os_str().as_bytes().len() <= MAX_CODEX_SOCKET_PATH_BYTES {
         Ok(adjacent)
     } else {
         // Move only the Codex runtime socket when the configured amux
         // directory leaves too little room for codex's sun_path cap.
         secure_codex_fallback_directory(fallback_dir)?;
-        Ok(fallback_dir.join(file_name))
+        Ok(fallback_dir.join(adjacent.file_name().expect("Codex socket has a filename")))
     }
 }
 

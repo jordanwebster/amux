@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Add exclusive installation storage and UUID profile paths.**
+An installation registry holds its root lock until drop, persists profile
+records with atomic file replacement, and rejects stale per-profile revisions.
+Runtime paths now share an allocator that creates private UUID directories,
+rejects symlink redirection, and checks socket lengths before creating storage.
+Filesystem tests cover restart persistence, failed-write cleanup, independent
+profile paths and permissions, and the platform socket boundary.
+
 2026-09-05 — **Retain required-update notices during local operation.**
 The runtime status adapter clears required-update markers only after a cloud
 connection succeeds. Startup and cloud teardown preserve both the notice and
