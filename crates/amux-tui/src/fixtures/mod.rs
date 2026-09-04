@@ -520,11 +520,26 @@ pub fn recording_start() -> Fixture {
 /// delivers it: the dispatched command, then its outcome, then a reconcile.
 fn deliver_frozen_diff(fixture: &mut Fixture, base: amux_ui::DiffBase) {
     let agent = agent_id(StructuredProtocol::Claude);
-    let op = amux_ui::OpId(uuid::Uuid::from_u128(0x5eed_0000_0000_0004));
     let command = amux_ui::Command::RequestDiff {
         agent,
         base: base.clone(),
     };
+    deliver_diff_response(
+        fixture,
+        command,
+        crate::review::fixture::sample_diff_response(base),
+    );
+}
+
+/// Deliver a caller-supplied diff through the same command/outcome/reconcile
+/// boundary as the runtime. Integration tests use this to freeze a real
+/// repository patch without teaching the fixture layer how to run git.
+pub fn deliver_diff_response(
+    fixture: &mut Fixture,
+    command: amux_ui::Command,
+    response: amux_ui::DiffResponse,
+) {
+    let op = amux_ui::OpId(uuid::Uuid::from_u128(0x5eed_0000_0000_0004));
     fixture
         .view
         .chat
@@ -536,9 +551,7 @@ fn deliver_frozen_diff(fixture: &mut Fixture, base: amux_ui::DiffBase) {
         &mut fixture.model,
         Msg::OpResult {
             op,
-            outcome: amux_ui::OpOutcome::DiffReady {
-                response: crate::review::fixture::sample_diff_response(base),
-            },
+            outcome: amux_ui::OpOutcome::DiffReady { response },
         },
     );
     fixture

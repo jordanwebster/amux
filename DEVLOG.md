@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Proved working-tree reviews stay frozen.** A deterministic
+boundary test now opens the review page while the agent is working over a
+patch read from a real temporary Git checkout, changes the file again after
+the page is open, and verifies that both the visible page and the eventual
+review element retain the original patch ID, commit, and new-side blob. The
+test also resumes the draft without requesting another diff and confirms that
+send remains gated while working without discarding the review token.
+
 2026-09-04 — **Verified the complete attachment path.** The workspace and
 specification suites now pass together after the document rename, standalone
 artifact store, routed wire services, client attachment fold, atomic composer

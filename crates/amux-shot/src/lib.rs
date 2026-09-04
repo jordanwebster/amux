@@ -1306,7 +1306,12 @@ mod tests {
 
 #[cfg(test)]
 mod script_tests {
-    use amux_tui::fixtures::apply_step;
+    use std::process::Command as ProcessCommand;
+
+    use amux_tui::fixtures::{apply_step, deliver_diff_response};
+    use amux_tui::{UiAction, chat::handle_chat_key};
+    use amux_ui::{ArtifactKind, ArtifactRef, BaseIdentity, Command, DiffFile, DiffResponse};
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -1322,6 +1327,58 @@ mod script_tests {
             text.push('\n');
         }
         text
+    }
+
+    fn git(project: &Path, arguments: &[&str]) -> String {
+        let output = ProcessCommand::new("git")
+            .args(arguments)
+            .current_dir(project)
+            .output()
+            .expect("run git for frozen-review boundary");
+        assert!(
+            output.status.success(),
+            "git {arguments:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .expect("git output is UTF-8")
+            .trim()
+            .to_string()
+    }
+
+    fn repository_diff(project: &Path) -> DiffResponse {
+        let patch = git(project, &["diff", "--binary", "HEAD", "--"]);
+        let head = git(project, &["rev-parse", "HEAD"]);
+        let blob = git(project, &["hash-object", "sample.txt"]);
+        let id = format!("sha256:{}", hex_digest(patch.as_bytes()))
+            .parse()
+            .expect("sha256 diff id");
+        DiffResponse {
+            artifact: ArtifactRef {
+                id,
+                kind: ArtifactKind::Diff,
+                name: "working-tree.diff".into(),
+                mime: "text/x-diff".into(),
+                size: patch.len() as u64,
+            },
+            patch,
+            identity: BaseIdentity {
+                base: DiffBase::WorkingTree,
+                head,
+                merge_base: None,
+                blobs: vec![("sample.txt".into(), blob)],
+            },
+            files: vec![DiffFile {
+                path: "sample.txt".into(),
+                added: 1,
+                removed: 1,
+            }],
+        }
+    }
+
+    fn press(fixture: &mut Fixture, key: KeyEvent) -> Option<UiAction> {
+        let chat = fixture.view.chat.as_mut().expect("Claude chat open");
+        handle_chat_key(chat, &fixture.model, key, VIEWPORT, fixture.now)
     }
 
     /// A recording is only worth keeping if each input did what the script
@@ -1371,6 +1428,126 @@ mod script_tests {
             screens[11].contains("j/k rows") && screens[11].contains("v select"),
             "the review page is open over a working agent: {}",
             screens[11]
+        );
+    }
+
+    /// This is the repository boundary behind the last scene in the draft
+    /// recording. The patch is obtained from a real git checkout, the file is
+    /// changed again after the page opens, and only then do we exercise resume,
+    /// the working-phase send gate, and the eventual exported mention.
+    #[test]
+    fn a_working_review_keeps_the_post_open_repository_change_out_of_its_draft() {
+        let directory = tempdir().expect("temporary repository");
+        let project = directory.path();
+        git(project, &["init", "-q", "--initial-branch=main"]);
+        git(project, &["config", "user.name", "amux frozen review"]);
+        git(
+            project,
+            &["config", "user.email", "frozen-review@example.invalid"],
+        );
+        fs::write(project.join("sample.txt"), "base value\n").expect("write base file");
+        git(project, &["add", "sample.txt"]);
+        git(project, &["commit", "-q", "-m", "seed fixture"]);
+        fs::write(project.join("sample.txt"), "first frozen value\n")
+            .expect("write patch opened by the review");
+        let opened = repository_diff(project);
+
+        let mut fixture = recording_start();
+        apply_step(
+            &mut fixture,
+            &ScriptStep::Conversation(NamedState::ClaudeWorking),
+        );
+        assert_eq!(press(&mut fixture, control('a')), None);
+        let Some(UiAction::Dispatch(request @ Command::RequestDiff { .. })) =
+            press(&mut fixture, plain('r'))
+        else {
+            panic!("a working agent still permits the review request");
+        };
+        deliver_diff_response(&mut fixture, request, opened.clone());
+
+        fs::write(project.join("sample.txt"), "second newer value\n")
+            .expect("change the repository after review open");
+        let changed = repository_diff(project);
+        assert_ne!(opened.patch, changed.patch, "the repository patch changed");
+        assert_ne!(
+            opened.artifact.id, changed.artifact.id,
+            "the changed patch has a different content identity"
+        );
+        assert_ne!(
+            opened.identity.blobs, changed.identity.blobs,
+            "the changed file has a different new-side blob identity"
+        );
+
+        let frozen_screen = screen(&fixture);
+        assert!(frozen_screen.contains("first frozen value"));
+        assert!(!frozen_screen.contains("second newer value"));
+
+        for key in ['j', 'j', 'c'] {
+            assert_eq!(press(&mut fixture, plain(key)), None);
+        }
+        for character in "keep the opened version".chars() {
+            assert_eq!(press(&mut fixture, plain(character)), None);
+        }
+        assert_eq!(
+            press(
+                &mut fixture,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            ),
+            None
+        );
+        assert_eq!(press(&mut fixture, plain('q')), None);
+
+        assert_eq!(press(&mut fixture, control('a')), None);
+        assert_eq!(
+            press(&mut fixture, plain('r')),
+            None,
+            "resuming the draft must not request a newer diff"
+        );
+        let resumed_screen = screen(&fixture);
+        assert!(resumed_screen.contains("first frozen value"));
+        assert!(!resumed_screen.contains("second newer value"));
+        assert_eq!(press(&mut fixture, plain('q')), None);
+
+        assert_eq!(
+            press(
+                &mut fixture,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            ),
+            None,
+            "send remains gated while the agent works"
+        );
+        let gated_screen = screen(&fixture);
+        assert!(gated_screen.contains("draft kept — send gated while working"));
+        assert!(gated_screen.contains("[Review · 1 comment]"));
+
+        apply_step(
+            &mut fixture,
+            &ScriptStep::Conversation(NamedState::ClaudeIdle),
+        );
+        let Some(UiAction::Dispatch(Command::SendPromptWithAttachments {
+            text, attachments, ..
+        })) = press(
+            &mut fixture,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )
+        else {
+            panic!("the retained draft sends when the turn becomes idle");
+        };
+        let opened_blob = &opened.identity.blobs[0].1;
+        let changed_blob = &changed.identity.blobs[0].1;
+        assert!(text.contains(opened.artifact.id.as_str()));
+        assert!(text.contains(&opened.identity.head));
+        assert!(text.contains(opened_blob));
+        assert!(text.contains("keep the opened version"));
+        assert!(!text.contains(changed.artifact.id.as_str()));
+        assert!(!text.contains(changed_blob));
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].id, opened.artifact.id);
+        assert!(attachments[0].bytes.is_none());
+
+        println!(
+            "frozen-review-boundary: opened_diff={} changed_diff={} opened_blob={} changed_blob={} refetch=false send_while_working=gated draft=retained export=opened_identity",
+            opened.artifact.id, changed.artifact.id, opened_blob, changed_blob
         );
     }
 
