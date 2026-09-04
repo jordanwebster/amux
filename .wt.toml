@@ -47,11 +47,14 @@ run = 'scripts/spec-test.sh "$@"'
 [task.mobile-check]
 run = "cargo check -p amux --no-default-features --target aarch64-apple-ios"
 
+[task.embed-test]
+run = "CARGO_TARGET_DIR=target/embed cargo test -p amux --no-default-features --test embedding"
+
 [task.protobuf]
 run = "cargo run -p xtask -- codegen"
 
 [task.e2e]
-run = "timeout 900 cargo run -p e2e-runner -- run"
+run = 'timeout 900 cargo run -p e2e-runner -- run "$@"'
 needs = ["build"]
 
 # This checkout's daemon. A resource: `wt remove` stops it.

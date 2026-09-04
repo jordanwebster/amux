@@ -49,6 +49,8 @@ pub async fn run_device_flow(cloud_url: &str) -> Result<String, OAuthError> {
     let details: StandardDeviceAuthorizationResponse = client
         .exchange_device_code()
         .add_scope(Scope::new("openid".to_string()))
+        .add_scope(Scope::new("profile".to_string()))
+        .add_scope(Scope::new("email".to_string()))
         .add_scope(Scope::new("offline_access".to_string()))
         .add_scope(Scope::new("api".to_string()))
         .request_async(&http)

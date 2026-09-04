@@ -40,6 +40,8 @@ dependencies = [
  "curve25519-dalek",
  "futures-util",
  "gethostname",
+ "http-body-util",
+ "hyper",
  "hyper-util",
  "jsonwebtoken",
  "libc",

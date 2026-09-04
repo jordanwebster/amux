@@ -41,7 +41,7 @@ use crate::services::{
 };
 #[cfg(test)]
 use crate::transport::PreTrustPairingReachability;
-#[cfg(test)]
+#[cfg(any(test, test_fixtures))]
 use crate::transport::tcp_incoming;
 use crate::transport::{
     BoxedGrpcIo, TcpServerTransport, in_process_channel, in_process_transport_pair,
@@ -153,7 +153,7 @@ impl CloudLinkService {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, test_fixtures))]
     pub(crate) fn serve_on_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
         spawn_cloud_link_service_server(self.clone(), tcp_incoming(listener))
     }

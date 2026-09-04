@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Built the profile test substrate and fixed shared roots.** Unix
+socket startup now refuses to replace a live listener or any non-socket path,
+cloud connector stop waits for link, tunnel, route, and relay-claim cleanup,
+and viewing-host artifact caches live under the configured device data. A
+debug-only identity fixture exercises the production device and rotating
+refresh flows with userinfo, while a feature-independent relay and dedicated
+embedding recipe keep no-local-agents integration tests isolated from the
+workspace build.
+
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by
 real composer exports and explains that an empty name may be omitted. A focused

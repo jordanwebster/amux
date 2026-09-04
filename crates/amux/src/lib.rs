@@ -38,6 +38,9 @@ pub mod setup;
 mod sleep_inhibitor;
 mod subscription;
 mod suspend;
+#[cfg(test_fixtures)]
+#[doc(hidden)]
+pub mod test_fixtures;
 #[cfg(testnet)]
 #[doc(hidden)]
 pub mod testnet;
