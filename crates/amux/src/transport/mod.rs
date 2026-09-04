@@ -17,7 +17,10 @@ pub(crate) use io::{
 };
 #[cfg(test)]
 pub(crate) use memory::in_process_incoming;
-pub(crate) use memory::{in_process_channel, in_process_transport_pair};
+pub(crate) use memory::{
+    InProcessConnection, in_process_channel, in_process_transport_pair,
+    managed_in_process_transport_pair,
+};
 pub(crate) use single_io::{channel_from_single_io, connect_single_io};
 #[allow(unused_imports)]
 pub(crate) use ssh::{SshRelayIo, spawn_ssh_pair_recv, spawn_ssh_relay};

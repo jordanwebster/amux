@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 #[cfg(feature = "local-agents")]
@@ -43,23 +43,21 @@ pub(crate) struct ServerState {
 /// is compiled in (cloud-vs-device is decided by runtime guards, not host
 /// presence), `None` for the embedded client. Spawns the host's session-event
 /// loop, so it must be called from within a tokio runtime.
-fn new_local_agent_host(
+pub(crate) fn new_local_agent_host(
     host_id: Uuid,
     config: &Config,
+    keymap_dir: std::path::PathBuf,
+    data_dir: std::path::PathBuf,
 ) -> std::io::Result<Option<Arc<dyn LocalAgentHost>>> {
     #[cfg(feature = "local-agents")]
     {
         let route = McpLaunchRoute::for_current_process(config, host_id)?;
-        PtyAgentHost::new_with_mcp_launch_route(
-            route,
-            crate::keymap_dir(&config.data_dir),
-            config.data_dir.clone(),
-        )
-        .map(|host| Some(host as Arc<dyn LocalAgentHost>))
+        PtyAgentHost::new_with_mcp_launch_route(route, keymap_dir, data_dir)
+            .map(|host| Some(host as Arc<dyn LocalAgentHost>))
     }
     #[cfg(not(feature = "local-agents"))]
     {
-        let _ = (host_id, config);
+        let _ = (host_id, config, keymap_dir, data_dir);
         Ok(None)
     }
 }
@@ -80,9 +78,8 @@ impl ServerState {
             update_reporter,
             is_cloud_server: false,
             jwt_validator: None,
-            // Constructed lazily in `ensure_local_agent_host` from within the
-            // async startup path: building it spawns a tokio task, which
-            // `ServerState::new` (sync, sometimes off-runtime) cannot do.
+            // Device startup injects the host after entering an async runtime;
+            // cloud relays and service-level tests intentionally keep `None`.
             local_agent_host: None,
             shutdown_tx,
         }
@@ -122,18 +119,4 @@ impl ServerState {
     pub(crate) fn local_agent_host(&self) -> Option<Arc<dyn LocalAgentHost>> {
         self.local_agent_host.clone()
     }
-}
-
-/// Return this daemon's local agent host, constructing (and storing) it on
-/// first call. Must run inside a tokio runtime — building the host spawns its
-/// session-event loop. Cloud relays never call this, so they keep `None`.
-pub(crate) async fn ensure_local_agent_host(
-    state: &Arc<RwLock<ServerState>>,
-) -> std::io::Result<Option<Arc<dyn LocalAgentHost>>> {
-    let mut guard = state.write().await;
-    if guard.local_agent_host.is_none() {
-        let host_id = guard.host_id;
-        guard.local_agent_host = new_local_agent_host(host_id, &guard.config)?;
-    }
-    Ok(guard.local_agent_host.clone())
 }

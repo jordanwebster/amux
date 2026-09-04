@@ -29,6 +29,7 @@ pub mod envelope;
 mod identity;
 mod pairing;
 mod paths;
+mod profile;
 mod protocol;
 mod resource_limits;
 mod routing;

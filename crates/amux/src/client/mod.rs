@@ -402,6 +402,15 @@ impl Client {
         }
     }
 
+    pub(crate) fn with_guard(mut self, guard: Arc<dyn Send + Sync>) -> Self {
+        self.guard = Some(guard);
+        self
+    }
+
+    pub(crate) fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+    }
+
     pub fn owns_embedded_server(&self) -> bool {
         self.guard.is_some()
     }

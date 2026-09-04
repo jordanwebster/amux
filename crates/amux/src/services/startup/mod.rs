@@ -5,7 +5,7 @@ mod cloud;
 use std::collections::HashMap;
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -43,11 +43,12 @@ use crate::services::{
 use crate::transport::PreTrustPairingReachability;
 #[cfg(any(test, test_fixtures))]
 use crate::transport::tcp_incoming;
-use crate::transport::{
-    BoxedGrpcIo, TcpServerTransport, in_process_channel, in_process_transport_pair,
-};
 #[cfg(unix)]
-use crate::transport::{bind_unix_listener, unix_incoming};
+use crate::transport::unix_incoming;
+use crate::transport::{
+    BoxedGrpcIo, InProcessConnection, TcpServerTransport, in_process_channel,
+    in_process_transport_pair, managed_in_process_transport_pair,
+};
 use crate::trust::{SharedTrustStore, TrustStore};
 use crate::tunnel::{TunnelPool, TunnelTransport};
 use crate::user_state::ServerState;
@@ -523,6 +524,10 @@ impl DeviceRuntimeSecurity {
         }
     }
 
+    pub(crate) fn host_id(&self) -> HostId {
+        self.identity.host_id
+    }
+
     #[cfg(testnet)]
     pub(crate) fn shared_trust_store(&self) -> SharedTrustStore {
         self.trust_store.clone()
@@ -713,12 +718,28 @@ impl StartedUserServices {
         (in_process_channel(client_transport), task)
     }
 
+    pub(crate) fn open_managed_in_process_client_channel(
+        &self,
+    ) -> (Channel, JoinHandle<()>, InProcessConnection) {
+        let (client_transport, server_transport, connection) = managed_in_process_transport_pair();
+        let trusted_tx = self.trusted_incoming_tx.clone();
+        let task = tokio::spawn(async move {
+            if trusted_tx
+                .send(BoxedGrpcIo::local_trusted(server_transport))
+                .await
+                .is_err()
+            {
+                tracing::warn!("trusted server closed before in-process stream was accepted");
+            }
+        });
+        (in_process_channel(client_transport), task, connection)
+    }
+
     #[cfg(unix)]
-    pub(crate) fn serve_client_service_on_unix_socket(
+    pub(crate) fn serve_client_service_on_unix_listener(
         &mut self,
-        socket_path: &Path,
-    ) -> std::io::Result<()> {
-        let listener = bind_unix_listener(socket_path)?;
+        listener: tokio::net::UnixListener,
+    ) {
         let incoming = unix_incoming(listener);
         let trusted_tx = self.trusted_incoming_tx.clone();
         self.tasks.push(spawn_forward_to_trusted(
@@ -726,7 +747,6 @@ impl StartedUserServices {
             trusted_tx,
             "Unix socket",
         ));
-        Ok(())
     }
 
     pub(crate) fn serve_external_tcp_listener(&mut self, listener: TcpListener) {
@@ -752,6 +772,20 @@ impl StartedUserServices {
 
     pub(crate) fn spawn_reachability_links(&self) -> Vec<JoinHandle<()>> {
         self.reachability_links.spawn_startup_links()
+    }
+
+    pub(crate) fn push_task(&mut self, task: JoinHandle<()>) {
+        self.tasks.push(task);
+    }
+
+    pub(crate) async fn stop_tasks(&mut self) {
+        let tasks = std::mem::take(&mut self.tasks);
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
     }
 
     #[cfg(testnet)]

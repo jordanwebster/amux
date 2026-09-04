@@ -1,0 +1,603 @@
+//! Runtime ownership for one complete amux device profile.
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use thiserror::Error;
+use tokio::net::TcpListener;
+use tokio::sync::{Mutex, RwLock, mpsc, watch};
+use tokio::task::JoinHandle;
+
+use crate::auth::CredentialProvider;
+use crate::client::Client;
+use crate::config::{Config, ConfigError, Keybinds, UiSettings};
+use crate::identity;
+use crate::protocol::{ProtocolError, wire};
+use crate::server::ShutdownReason;
+use crate::services::{
+    CloudConnector, DeviceRuntimeSecurity, LocalAgentHost, StartedUserServices,
+    establish_cloud_connection, start_user_services,
+};
+use crate::subscription::SubscriptionReporter;
+use crate::transport::InProcessConnection;
+use crate::update::UpdateReporter;
+use crate::user_state::{ServerState, ShutdownRequest, new_local_agent_host};
+
+const LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Filesystem locations owned by one profile runtime.
+#[derive(Clone, Debug)]
+pub(crate) struct ProfilePaths {
+    pub(crate) config_path: Option<PathBuf>,
+    pub(crate) socket_path: PathBuf,
+    pub(crate) state_path: PathBuf,
+    pub(crate) data_dir: PathBuf,
+    pub(crate) reports_dir: PathBuf,
+}
+
+/// Settings that vary between profiles.
+#[derive(Clone, Debug)]
+pub(crate) struct ProfileConfig {
+    pub(crate) cloud_url: String,
+    pub(crate) tcp_port: Option<u16>,
+}
+
+/// Installation-owned settings shared by every profile runtime.
+#[derive(Clone)]
+pub(crate) struct InstallationSettings {
+    pub(crate) host_name: String,
+    pub(crate) prevent_idle_sleep: Option<bool>,
+    pub(crate) keybinds: Keybinds,
+    pub(crate) ui: UiSettings,
+    pub(crate) keymaps_dir: PathBuf,
+    pub(crate) minimum_client_versions: HashMap<String, String>,
+    pub(crate) update_reporter: Option<Arc<dyn UpdateReporter>>,
+    pub(crate) subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
+}
+
+/// Which externally reachable listeners a runtime owns.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Listeners {
+    InProcessOnly,
+    Sockets,
+}
+
+/// The currently observed connectivity state of a profile.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Observed {
+    Local,
+    Connecting,
+    Connected,
+    Retrying,
+    AuthenticationRequired,
+    SubscriptionRequired,
+    UpdateRequired,
+    StartupFailed,
+}
+
+pub(crate) struct ProfileRuntimeOptions {
+    pub(crate) paths: ProfilePaths,
+    pub(crate) config: ProfileConfig,
+    pub(crate) shared: Arc<InstallationSettings>,
+    pub(crate) credentials: Option<Arc<dyn CredentialProvider>>,
+    pub(crate) listeners: Listeners,
+}
+
+impl ProfileRuntimeOptions {
+    pub(crate) fn from_legacy_config(
+        config: Config,
+        credentials: Option<Arc<dyn CredentialProvider>>,
+        update_reporter: Option<Arc<dyn UpdateReporter>>,
+        subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
+        listeners: Listeners,
+    ) -> Self {
+        let paths = ProfilePaths {
+            config_path: config.path.clone(),
+            socket_path: config.socket_path.clone(),
+            state_path: config.state_path.clone(),
+            data_dir: config.data_dir.clone(),
+            reports_dir: config.reports_dir(),
+        };
+        let profile = ProfileConfig {
+            cloud_url: config.cloud_url.clone(),
+            tcp_port: config.tcp_port,
+        };
+        let shared = InstallationSettings {
+            host_name: config.host_name,
+            prevent_idle_sleep: config.prevent_idle_sleep,
+            keybinds: config.keybinds,
+            ui: config.ui,
+            keymaps_dir: crate::keymap_dir(&config.data_dir),
+            minimum_client_versions: config.minimum_client_versions,
+            update_reporter,
+            subscription_reporter,
+        };
+        Self {
+            paths,
+            config: profile,
+            shared: Arc::new(shared),
+            credentials,
+            listeners,
+        }
+    }
+
+    fn service_config(&self) -> Config {
+        Config {
+            host_name: self.shared.host_name.clone(),
+            cloud_url: self.config.cloud_url.clone(),
+            socket_path: self.paths.socket_path.clone(),
+            tcp_port: self.config.tcp_port,
+            state_path: self.paths.state_path.clone(),
+            data_dir: self.paths.data_dir.clone(),
+            reports_dir: Some(self.paths.reports_dir.clone()),
+            enable_cloud_mode: Some(self.credentials.is_some()),
+            prevent_idle_sleep: self.shared.prevent_idle_sleep,
+            minimum_client_versions: self.shared.minimum_client_versions.clone(),
+            keybinds: self.shared.keybinds.clone(),
+            ui: self.shared.ui.clone(),
+            path: self.paths.config_path.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum ProfileStartError {
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("profile state error: {0}")]
+    State(String),
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum CloudStartError {
+    #[error("profile has no cloud credentials")]
+    MissingCredentials,
+}
+
+/// All state and tasks owned by one complete device profile.
+pub(crate) struct ProfileRuntime {
+    paths: ProfilePaths,
+    state: Arc<RwLock<ServerState>>,
+    shutdown_rx: Option<mpsc::Receiver<ShutdownRequest>>,
+    agent_host: Option<Arc<dyn LocalAgentHost>>,
+    services: StartedUserServices,
+    client: Client,
+    in_process_connection: InProcessConnection,
+    background_tasks: Vec<JoinHandle<()>>,
+    cloud_connector: Mutex<Option<CloudConnector>>,
+    status_tx: watch::Sender<Observed>,
+    prepared_suspend: bool,
+    #[cfg(unix)]
+    socket_ownership: Option<SocketOwnership>,
+}
+
+/// Start local services and listeners for one profile. Cloud attachment is
+/// intentionally a separate operation.
+pub(crate) async fn start(
+    options: ProfileRuntimeOptions,
+) -> Result<ProfileRuntime, ProfileStartError> {
+    let device_files = identity::ensure_device_files_with_trust_in(&options.paths.data_dir)
+        .map_err(|error| ProfileStartError::State(error.to_string()))?;
+    let security = DeviceRuntimeSecurity::new(
+        device_files.identity,
+        device_files.trust_store,
+        options.paths.data_dir.clone(),
+    );
+    start_with_security(options, security).await
+}
+
+pub(crate) async fn start_with_security(
+    options: ProfileRuntimeOptions,
+    security: DeviceRuntimeSecurity,
+) -> Result<ProfileRuntime, ProfileStartError> {
+    let service_config = options.service_config();
+    service_config.validate(false)?;
+
+    let mut bound = BoundListeners::bind(&options).await?;
+    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+    let host_id = security.host_id();
+    let state = Arc::new(RwLock::new(ServerState::new(
+        service_config.clone(),
+        host_id,
+        shutdown_tx,
+        options.credentials.clone(),
+        options.shared.update_reporter.clone(),
+    )));
+    state.write().await.subscription_reporter = options.shared.subscription_reporter.clone();
+
+    let agent_host = new_local_agent_host(
+        host_id,
+        &service_config,
+        options.shared.keymaps_dir.clone(),
+        options.paths.data_dir.clone(),
+    )?;
+    let mut services = start_user_services(state.clone(), agent_host.clone(), security)
+        .await
+        .map_err(|error| ProfileStartError::State(error.to_string()))?;
+
+    #[cfg(unix)]
+    if let Some(listener) = bound.unix_listener.take() {
+        services.serve_client_service_on_unix_listener(listener);
+        tracing::info!(path = %options.paths.socket_path.display(), "listening on profile ClientService");
+    }
+    if let Some(listener) = bound.tcp_listener.take() {
+        let addr = listener.local_addr()?;
+        services.serve_external_tcp_listener(listener);
+        tracing::info!(addr = %addr, "listening on profile direct dispatcher TCP");
+    }
+
+    let mut background_tasks = vec![crate::agents::spawn_artifact_sweeper(
+        services.artifact_owners.clone(),
+    )];
+    if options.listeners == Listeners::Sockets {
+        background_tasks.extend(services.spawn_reachability_links());
+        if let Some(task) = crate::server::spawn_periodic_update_check(
+            options.shared.update_reporter.clone(),
+            options.config.cloud_url.clone(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            Duration::from_secs(3600),
+        ) {
+            background_tasks.push(task);
+        }
+    }
+
+    let (client_channel, client_task, in_process_connection) =
+        services.open_managed_in_process_client_channel();
+    services.push_task(client_task);
+    let client = Client::from_client_service_channel(client_channel, None);
+    let (status_tx, _) = watch::channel(Observed::Local);
+
+    Ok(ProfileRuntime {
+        paths: options.paths,
+        state,
+        shutdown_rx: Some(shutdown_rx),
+        agent_host,
+        services,
+        client,
+        in_process_connection,
+        background_tasks,
+        cloud_connector: Mutex::new(None),
+        status_tx,
+        prepared_suspend: false,
+        #[cfg(unix)]
+        socket_ownership: bound.disarm_socket_cleanup(),
+    })
+}
+
+impl ProfileRuntime {
+    pub(crate) fn client(&self) -> Client {
+        self.client.clone()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn status(&self) -> watch::Receiver<Observed> {
+        self.status_tx.subscribe()
+    }
+
+    pub(crate) async fn start_cloud(&self) -> Result<(), CloudStartError> {
+        if self.state.read().await.credentials.is_none() {
+            return Err(CloudStartError::MissingCredentials);
+        }
+
+        let mut connector = self.cloud_connector.lock().await;
+        if connector
+            .as_ref()
+            .is_some_and(|connector| !connector.is_finished())
+        {
+            return Ok(());
+        }
+        if let Some(finished) = connector.take() {
+            finished.stop().await;
+        }
+
+        let config = self.state.read().await.config.clone();
+        let _ = self.status_tx.send(Observed::Connecting);
+        *connector = Some(establish_cloud_connection(
+            config,
+            self.state.clone(),
+            self.services.link_connector_ctx(),
+        ));
+        Ok(())
+    }
+
+    pub(crate) async fn stop_cloud(&self) {
+        let mut connector = self.cloud_connector.lock().await;
+        if let Some(connector) = connector.take() {
+            connector.stop().await;
+        }
+        let _ = self.status_tx.send(Observed::Local);
+    }
+
+    pub(crate) async fn stop(mut self, reason: ShutdownReason) {
+        self.quiesce(reason).await;
+        self.finish_stop().await;
+    }
+
+    pub(crate) async fn quiesce(&mut self, reason: ShutdownReason) {
+        self.stop_cloud().await;
+
+        if let Some(host) = &self.agent_host {
+            host.notify_shutdown(reason).await;
+        }
+        self.services
+            .tunnels
+            .link_registry()
+            .send_link_close_to_all(link_close_reason(reason))
+            .await;
+        if let Some(host) = &self.agent_host {
+            if self.prepared_suspend {
+                host.commit_suspend().await;
+            } else {
+                host.stop_all().await;
+            }
+        }
+    }
+
+    pub(crate) async fn finish_stop(mut self) {
+        tokio::time::sleep(LINK_CLOSE_FLUSH_TIMEOUT).await;
+        self.client.close();
+        self.in_process_connection.close();
+        tokio::task::yield_now().await;
+        stop_tasks(std::mem::take(&mut self.background_tasks)).await;
+        self.services.stop_tasks().await;
+
+        #[cfg(unix)]
+        if let Some(ownership) = self.socket_ownership.take() {
+            ownership.remove_if_owned();
+        }
+    }
+
+    pub(crate) fn take_shutdown_receiver(&mut self) -> mpsc::Receiver<ShutdownRequest> {
+        self.shutdown_rx
+            .take()
+            .expect("profile runtime shutdown receiver taken twice")
+    }
+
+    pub(crate) async fn prepare_suspend(&mut self) -> Result<u64, ProtocolError> {
+        let Some(host) = &self.agent_host else {
+            self.prepared_suspend = true;
+            return Ok(0);
+        };
+        let count = host.prepare_suspend(self.paths.state_path.clone()).await?;
+        self.prepared_suspend = true;
+        Ok(count)
+    }
+
+    #[cfg(test)]
+    fn weak_state(&self) -> std::sync::Weak<RwLock<ServerState>> {
+        Arc::downgrade(&self.state)
+    }
+}
+
+async fn stop_tasks(tasks: Vec<JoinHandle<()>>) {
+    for task in &tasks {
+        task.abort();
+    }
+    for task in tasks {
+        let _ = task.await;
+    }
+}
+
+fn link_close_reason(reason: ShutdownReason) -> wire::pb::LinkCloseReason {
+    match reason {
+        ShutdownReason::UpdateRequired => wire::pb::LinkCloseReason::UpdateRequired,
+        ShutdownReason::ProtocolError => wire::pb::LinkCloseReason::ProtocolError,
+        ShutdownReason::UserRequested => wire::pb::LinkCloseReason::UserShutdown,
+        ShutdownReason::Updating => wire::pb::LinkCloseReason::Updating,
+        ShutdownReason::Suspending => wire::pb::LinkCloseReason::Suspending,
+        ShutdownReason::Restarting => wire::pb::LinkCloseReason::Restarting,
+        ShutdownReason::AuthExpired => wire::pb::LinkCloseReason::AuthExpired,
+    }
+}
+
+struct BoundListeners {
+    tcp_listener: Option<TcpListener>,
+    #[cfg(unix)]
+    unix_listener: Option<tokio::net::UnixListener>,
+    #[cfg(unix)]
+    socket_ownership: Option<SocketOwnership>,
+}
+
+impl BoundListeners {
+    async fn bind(options: &ProfileRuntimeOptions) -> std::io::Result<Self> {
+        if options.listeners == Listeners::InProcessOnly {
+            return Ok(Self {
+                tcp_listener: None,
+                #[cfg(unix)]
+                unix_listener: None,
+                #[cfg(unix)]
+                socket_ownership: None,
+            });
+        }
+
+        #[cfg(unix)]
+        let unix_listener = crate::transport::bind_unix_listener(&options.paths.socket_path)?;
+        #[cfg(unix)]
+        let socket_ownership = Some(SocketOwnership::capture(options.paths.socket_path.clone())?);
+
+        let mut bound = Self {
+            tcp_listener: None,
+            #[cfg(unix)]
+            unix_listener: Some(unix_listener),
+            #[cfg(unix)]
+            socket_ownership,
+        };
+        if let Some(port) = options.config.tcp_port {
+            bound.tcp_listener =
+                Some(TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).await?);
+        }
+        Ok(bound)
+    }
+
+    #[cfg(unix)]
+    fn disarm_socket_cleanup(&mut self) -> Option<SocketOwnership> {
+        self.socket_ownership.take()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for BoundListeners {
+    fn drop(&mut self) {
+        if let Some(ownership) = self.socket_ownership.take() {
+            ownership.remove_if_owned();
+        }
+    }
+}
+
+#[cfg(unix)]
+struct SocketOwnership {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+impl SocketOwnership {
+    fn capture(path: PathBuf) -> std::io::Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+
+        let metadata = std::fs::symlink_metadata(&path)?;
+        Ok(Self {
+            path,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+
+    fn remove_if_owned(self) {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+        let Ok(metadata) = std::fs::symlink_metadata(&self.path) else {
+            return;
+        };
+        if metadata.file_type().is_socket()
+            && metadata.dev() == self.device
+            && metadata.ino() == self.inode
+            && let Err(error) = std::fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(path = %self.path.display(), error = %error, "failed to remove profile socket");
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream};
+
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn options(root: &std::path::Path, listeners: Listeners) -> ProfileRuntimeOptions {
+        let data_dir = root.join("profile-data");
+        ProfileRuntimeOptions {
+            paths: ProfilePaths {
+                config_path: None,
+                socket_path: root.join("profile.sock"),
+                state_path: root.join("profile-state.yaml"),
+                reports_dir: data_dir.join("reports"),
+                data_dir,
+            },
+            config: ProfileConfig {
+                cloud_url: "http://127.0.0.1:1".to_string(),
+                tcp_port: None,
+            },
+            shared: Arc::new(InstallationSettings {
+                host_name: "profile-runtime-test".to_string(),
+                prevent_idle_sleep: Some(false),
+                keybinds: Keybinds::default(),
+                ui: UiSettings::default(),
+                keymaps_dir: root.join("installation-keymaps"),
+                minimum_client_versions: HashMap::new(),
+                update_reporter: None,
+                subscription_reporter: None,
+            }),
+            credentials: None,
+            listeners,
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_stop_removes_the_socket_it_owns() {
+        let root = tempdir().unwrap();
+        let socket_path = root.path().join("profile.sock");
+        let runtime = start(options(root.path(), Listeners::Sockets))
+            .await
+            .unwrap();
+
+        UnixStream::connect(&socket_path).unwrap();
+        runtime.stop(ShutdownReason::UserRequested).await;
+
+        assert!(!socket_path.exists());
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_stop_refuses_to_unlink_a_replacement_listener() {
+        let root = tempdir().unwrap();
+        let socket_path = root.path().join("profile.sock");
+        let runtime = start(options(root.path(), Listeners::Sockets))
+            .await
+            .unwrap();
+        std::fs::remove_file(&socket_path).unwrap();
+        let replacement = StdUnixListener::bind(&socket_path).unwrap();
+
+        runtime.stop(ShutdownReason::UserRequested).await;
+
+        UnixStream::connect(&socket_path).unwrap();
+        drop(replacement);
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_start_failure_removes_its_bound_socket() {
+        let root = tempdir().unwrap();
+        let socket_path = root.path().join("profile.sock");
+        let occupied = TcpListener::bind(("0.0.0.0", 0)).await.unwrap();
+        let mut options = options(root.path(), Listeners::Sockets);
+        options.config.tcp_port = Some(occupied.local_addr().unwrap().port());
+
+        let result = start(options).await;
+
+        assert!(result.is_err());
+        assert!(!socket_path.exists());
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_stop_leaves_no_spawned_service_task() {
+        let root = tempdir().unwrap();
+        let runtime = start(options(root.path(), Listeners::InProcessOnly))
+            .await
+            .unwrap();
+        let weak_state = runtime.weak_state();
+        let client = runtime.client();
+
+        runtime.stop(ShutdownReason::UserRequested).await;
+
+        assert!(client.list_agents().await.is_err());
+        drop(client);
+        tokio::task::yield_now().await;
+        assert!(weak_state.upgrade().is_none());
+    }
+
+    #[test]
+    fn profile_runtime_paths_are_profile_scoped_and_keymaps_are_installation_scoped() {
+        let root = tempdir().unwrap();
+        let options = options(root.path(), Listeners::Sockets);
+        let config = options.service_config();
+
+        assert_eq!(config.socket_path, options.paths.socket_path);
+        assert_eq!(config.state_path, options.paths.state_path);
+        assert_eq!(config.data_dir, options.paths.data_dir);
+        assert_eq!(config.reports_dir(), options.paths.reports_dir);
+        assert_ne!(
+            options.shared.keymaps_dir,
+            crate::keymap_dir(&config.data_dir)
+        );
+    }
+}

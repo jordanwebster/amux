@@ -20,6 +20,7 @@ claude = { workspace = true }
 tempfile = { workspace = true }
 pty-host = { workspace = true, optional = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

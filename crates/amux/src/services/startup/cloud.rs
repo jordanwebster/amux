@@ -44,6 +44,10 @@ pub(crate) struct CloudConnector {
 }
 
 impl CloudConnector {
+    pub(crate) fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+
     pub(crate) fn request_stop(&self) {
         let _ = self.stop_tx.send(true);
     }
@@ -51,10 +55,6 @@ impl CloudConnector {
     pub(crate) async fn stop(self) {
         self.request_stop();
         let _ = self.task.await;
-    }
-
-    pub(crate) fn into_task(self) -> JoinHandle<()> {
-        self.task
     }
 
     #[cfg(testnet)]
