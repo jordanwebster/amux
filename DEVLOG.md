@@ -4,6 +4,26 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Agents build and test through wt.** `AGENTS.md` now says so
+in place of the old "wrap every test in `timeout`" rule, which the wt task
+recipes already satisfy: `wt build`, `wt test`, `wt lint`, `wt fmt`,
+`wt run spec`, `wt run mobile-check`. The point is the single build
+configuration that yesterday's Cargo changes established — a bare `cargo`
+invocation with `-p`, `--features` or `--release` compiles a second copy of
+every shared dependency, and wt's sweep keeps such variants on purpose
+because each command reuses its own. The one thing that used to push an
+agent back to bare cargo was filtering: the test scripts did not forward
+arguments, so `wt test -- <filter>` was refused. Both scripts now pass
+their arguments through, under the same timeout — which surfaced a second
+obstacle: cargo hands a filter to every test binary, and the three opt-in
+live suites (`claude_pty_live`, `codex_live`, `claude_sdk_live`) treated a
+name that is no scenario as an error, so any workspace-wide filtered run
+failed in them. They now treat it as libtest does, a filter that matched
+nothing: the unknown names are echoed with the known list and the binary
+exits clean, and the PTY suite checks for the built `amux` only once a
+scenario is actually selected. The Co-Authored-By rule moves out of this
+file; it is a user-level rule and was duplicated here.
+
 2026-09-04 — **Two CI legs that had been red before the build-configuration
 change go green again.** Neither failure was new. The Windows test job died
 in the debug report's redaction test, which read `HOME` and `USER` straight

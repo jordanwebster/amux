@@ -10,10 +10,17 @@ fn live_suite_argument_grammar_covers_usage_all_names_and_unknowns() {
         args::select(&["resume".into(), "raw".into()], &known).unwrap(),
         [1, 0]
     );
+    // A name that is no scenario is a filter that matched nothing, as cargo
+    // hands a workspace-wide filter to this binary too; known names beside
+    // it still select.
     assert!(
         args::select(&["missing".into()], &known)
-            .unwrap_err()
-            .contains("unknown Codex live scenario `missing`")
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        args::select(&["missing".into(), known[0].into()], &known).unwrap(),
+        [0]
     );
     assert!(args::select(&["all".into(), "raw".into()], &known).is_err());
 }

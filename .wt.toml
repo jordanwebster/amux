@@ -28,7 +28,7 @@ prevent_idle_sleep: false
 run = "cargo build --workspace --all-targets"
 
 [task.test]
-run = "scripts/workspace-test.sh"
+run = 'scripts/workspace-test.sh "$@"'
 
 [task.lint]
 run = "cargo clippy --workspace --all-targets -- -D warnings"
@@ -37,7 +37,7 @@ run = "cargo clippy --workspace --all-targets -- -D warnings"
 # a `-p` selection unifies dependency features differently from the
 # workspace build and would compile a second copy of every shared crate.
 [task.spec]
-run = "scripts/spec-test.sh"
+run = 'scripts/spec-test.sh "$@"'
 
 # Regenerates the committed protobuf code (crates/amux/src/protocol/generated)
 # after a proto change. Not a build step: the output is committed, and CI
