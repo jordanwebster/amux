@@ -347,7 +347,7 @@ impl Daemon {
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
+        let channel = runtime.client_channel.clone();
         drop(guard);
         let mut client = crate::protocol::wire::client_service_client(channel);
         let response = client
@@ -585,7 +585,7 @@ impl Daemon {
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
+        let channel = runtime.client_channel.clone();
         drop(guard);
         let mut client = crate::protocol::wire::client_service_client(channel);
         let response = client
@@ -711,7 +711,7 @@ impl Daemon {
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
+        let channel = runtime.client_channel.clone();
         drop(guard);
         let mut client = crate::protocol::wire::client_service_client(channel);
         let error = client
@@ -910,7 +910,7 @@ impl Daemon {
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
+        let channel = runtime.client_channel.clone();
         drop(guard);
         let mut client = crate::protocol::wire::client_service_client(channel);
 

@@ -207,3 +207,51 @@ async fn two_cloud_users_are_isolated_from_each_other() {
         "another user's daemon must not be offered for pairing"
     );
 }
+
+/// A profile stop uses production teardown while the other profiles continue
+/// routing over the relay. No testnet socket sever participates in shutdown.
+#[tokio::test]
+async fn profile_runtime_stop_leaves_other_runtimes_routing() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("work")
+        .cloud_only()
+        .daemon("personal")
+        .cloud_only()
+        .daemon("peer")
+        .cloud_only()
+        .paired("work", "peer", Via::Cloud)
+        .paired("personal", "peer", Via::Cloud)
+        .start()
+        .await;
+    let [work, personal, peer] = net.daemons(["work", "personal", "peer"]);
+    let stopped_stream = peer.open_event_stream_to(&work).await;
+    personal.can_call(&peer).await;
+
+    work.stop().await;
+
+    net.cloud_relay_sees_offline(&work).await;
+    peer.sees_offline(&work).await;
+    peer.cannot_call(&work).await;
+    stopped_stream.expect_disconnect().await;
+    personal.sees(&peer).await;
+    personal.can_call(&peer).await;
+    peer.can_call(&personal).await;
+}
+
+#[tokio::test]
+async fn profile_runtime_stop_closes_direct_links_without_severing() {
+    let net = TestNet::builder()
+        .daemon("laptop")
+        .daemon("desktop")
+        .paired("laptop", "desktop", Via::Tcp)
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+    laptop.can_call(&desktop).await;
+
+    desktop.stop().await;
+
+    laptop.sees_offline(&desktop).await;
+    laptop.cannot_call(&desktop).await;
+}

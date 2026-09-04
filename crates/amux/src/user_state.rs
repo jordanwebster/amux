@@ -39,6 +39,11 @@ pub(crate) struct ServerState {
     pub(crate) shutdown_tx: mpsc::Sender<ShutdownRequest>,
 }
 
+#[cfg(feature = "local-agents")]
+pub(crate) type LocalAgentHostHandle = Arc<PtyAgentHost>;
+#[cfg(not(feature = "local-agents"))]
+pub(crate) type LocalAgentHostHandle = Arc<dyn LocalAgentHost>;
+
 /// Build the local agent host for this build: `Some` whenever `local-agents`
 /// is compiled in (cloud-vs-device is decided by runtime guards, not host
 /// presence), `None` for the embedded client. Spawns the host's session-event
@@ -48,12 +53,11 @@ pub(crate) fn new_local_agent_host(
     config: &Config,
     keymap_dir: std::path::PathBuf,
     data_dir: std::path::PathBuf,
-) -> std::io::Result<Option<Arc<dyn LocalAgentHost>>> {
+) -> std::io::Result<Option<LocalAgentHostHandle>> {
     #[cfg(feature = "local-agents")]
     {
         let route = McpLaunchRoute::for_current_process(config, host_id)?;
-        PtyAgentHost::new_with_mcp_launch_route(route, keymap_dir, data_dir)
-            .map(|host| Some(host as Arc<dyn LocalAgentHost>))
+        PtyAgentHost::new_with_mcp_launch_route(route, keymap_dir, data_dir).map(Some)
     }
     #[cfg(not(feature = "local-agents"))]
     {

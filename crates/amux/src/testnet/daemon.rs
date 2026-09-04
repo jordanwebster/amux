@@ -14,22 +14,23 @@ use tonic::transport::{Channel, Endpoint};
 
 use super::NetInner;
 use super::assertions::eventually;
-use super::net::{RegisteredToken, TokenRegistry, bind_addr_with_retries, testnet_server_state};
+use super::net::{RegisteredToken, TokenRegistry, bind_addr_with_retries};
 use crate::HostId;
 use crate::client::Client;
 use crate::connection::ConnectionManager;
 use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::{device_key_path, load_or_create_device_identity_in};
+use crate::profile::runtime::{
+    self, CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
+};
 use crate::protocol::wire;
 use crate::routing::{
-    HostEntry, HostTrustStatus, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken,
-    LinkConnectorTokenRefresher, Route, RoutingCore,
+    HostEntry, HostTrustStatus, LinkConnectorAuth, LinkConnectorToken, LinkConnectorTokenRefresher,
+    Route, RoutingCore,
 };
-use crate::services::{
-    ClientService, CloudConnector, DeviceRuntimeSecurity, PtyAgentHost, StartedUserServices,
-    start_user_services_with_artifact_clock,
-};
-use crate::trust::{Reachability, SharedTrustStore, TrustStore};
+use crate::server::ShutdownReason;
+use crate::services::{ClientService, PtyAgentHost};
+use crate::trust::{Reachability, SharedTrustStore};
 use crate::tunnel::TunnelPool;
 
 /// Parameters a daemon needs to (re)connect to the testnet cloud relay.
@@ -52,12 +53,8 @@ pub(crate) struct DaemonInner {
     pub(crate) cloud: Option<CloudAttachment>,
     pub(crate) runtime: Mutex<Option<DaemonRuntime>>,
     /// OS-level duplicates of every TCP socket this daemon's runtime holds
-    /// open to direct peers: sockets its external TCP listener has accepted
-    /// and direct-link sockets it dialed. A real restart closes all of them
-    /// with the process; the in-process
-    /// restart severs direct connections after awaiting cloud cleanup.
-    /// Per-connection dispatcher tasks are detached, so merely dropping the
-    /// runtime is not enough for those direct connections.
+    /// open to direct peers. Only explicit outage simulation severs these;
+    /// normal stop and restart use the production runtime cleanup.
     pub(crate) tracked_tcp: TrackedTcpConnections,
 }
 
@@ -93,66 +90,43 @@ fn sever_registry(registry: &TrackedTcpConnections) {
 }
 
 pub(crate) struct DaemonRuntime {
-    pub(crate) services: StartedUserServices,
-    pub(crate) agent_host: Arc<PtyAgentHost>,
-    pub(crate) trust: SharedTrustStore,
-    reachability_tasks: Vec<JoinHandle<()>>,
-    cloud_connector: Option<CloudConnector>,
-    /// Listens for `ClientService.Shutdown`/`Suspend` requests and tears the
-    /// daemon down, so a paired peer's routed disruptive op is observable as
-    /// the daemon going offline. Aborted when the runtime is dropped.
+    profile: Option<ProfileRuntime>,
     shutdown_task: Option<JoinHandle<()>>,
+}
+
+impl std::ops::Deref for DaemonRuntime {
+    type Target = ProfileRuntime;
+    fn deref(&self) -> &Self::Target {
+        self.profile.as_ref().expect("daemon runtime is running")
+    }
 }
 
 impl DaemonRuntime {
     pub(crate) async fn spawn_cloud_connector(&mut self, inner: &DaemonInner) {
-        let (ctx, channel, token) = self.cloud_connector_parts(inner);
-        self.stop_cloud_connector().await;
-        self.cloud_connector = Some(CloudConnector::testnet_bearer(ctx, channel, token));
+        let cloud = inner.cloud.as_ref().expect("daemon has cloud attachment");
+        self.profile
+            .as_mut()
+            .unwrap()
+            .set_test_cloud_auth(CloudFixtureAuth::Bearer(cloud.token.clone()))
+            .await;
+        self.start_cloud().await.expect("start test cloud");
     }
 
-    /// Like [`Self::spawn_cloud_connector`], but with the production-shaped
-    /// connector auth: an initial token with an expiry plus a refresher the
-    /// Reauth flow calls before that expiry.
-    pub(crate) async fn spawn_cloud_connector_with_auth(
-        &mut self,
-        inner: &DaemonInner,
-        auth: LinkConnectorAuth,
-    ) {
-        let (ctx, channel, _token) = self.cloud_connector_parts(inner);
-        self.stop_cloud_connector().await;
-        self.cloud_connector = Some(CloudConnector::testnet_with_auth(ctx, channel, auth));
-    }
-
-    fn cloud_connector_parts(
-        &mut self,
-        inner: &DaemonInner,
-    ) -> (LinkConnectorCtx, Channel, String) {
-        let cloud = inner
-            .cloud
-            .as_ref()
-            .expect("spawn_cloud_connector on a daemon without a cloud attachment");
-        let channel = cloud_channel(cloud.addr);
-        // Every (re)connection is a fresh link instance: a restarted daemon
-        // comes back under a new link identity by construction.
-        let ctx = self.services.link_connector_ctx();
-        (ctx, channel, cloud.token.clone())
-    }
-
-    async fn stop_cloud_connector(&mut self) {
-        if let Some(connector) = self.cloud_connector.take() {
-            connector.stop().await;
-        }
+    pub(crate) async fn spawn_cloud_connector_with_auth(&mut self, auth: LinkConnectorAuth) {
+        self.profile
+            .as_mut()
+            .unwrap()
+            .set_test_cloud_auth(CloudFixtureAuth::Refreshing(auth))
+            .await;
+        self.start_cloud().await.expect("start test cloud");
     }
 
     async fn stop(mut self) {
-        self.stop_cloud_connector().await;
-        for task in &self.reachability_tasks {
-            task.abort();
-        }
-        if let Some(task) = &self.shutdown_task {
-            task.abort();
-        }
+        self.profile
+            .take()
+            .unwrap()
+            .stop(ShutdownReason::UserRequested)
+            .await;
     }
 }
 
@@ -166,16 +140,12 @@ fn cloud_channel(addr: SocketAddr) -> Channel {
 
 impl Drop for DaemonRuntime {
     fn drop(&mut self) {
-        for task in &self.reachability_tasks {
-            task.abort();
-        }
-        if let Some(connector) = &self.cloud_connector {
-            connector.request_stop();
-        }
         if let Some(task) = &self.shutdown_task {
             task.abort();
         }
-        // `services` aborts its own tasks on drop.
+        if let Some(profile) = self.profile.take() {
+            tokio::spawn(profile.stop(ShutdownReason::UserRequested));
+        }
     }
 }
 
@@ -205,66 +175,54 @@ pub(crate) async fn start_daemon_runtime(
     inner: &Arc<DaemonInner>,
     listener: Option<TcpListener>,
 ) -> DaemonRuntime {
-    let identity = load_or_create_device_identity_in(&inner.data_dir)
-        .unwrap_or_else(|error| panic!("load identity for daemon '{}': {error}", inner.name));
-    let trust_store = TrustStore::load_or_create_in(&inner.data_dir)
-        .unwrap_or_else(|error| panic!("load trust store for daemon '{}': {error}", inner.name));
-    let security = DeviceRuntimeSecurity::new(identity, trust_store, inner.data_dir.clone());
-    let trust = security.shared_trust_store();
-
-    let (state, shutdown_rx) = testnet_server_state(
-        &inner.name,
-        inner.host_id,
-        inner.tcp_addr.map(|addr| addr.port()),
-        inner.cloud.is_some(),
+    let listener = match (listener, inner.tcp_addr) {
+        (Some(listener), _) => Some(listener),
+        (None, Some(addr)) => Some(bind_addr_with_retries(addr).await),
+        (None, None) => None,
+    };
+    let config = crate::config::Config {
+        host_name: inner.name.clone(),
+        socket_path: inner.data_dir.join("amux.sock"),
+        state_path: inner.data_dir.join("state.yaml"),
+        data_dir: inner.data_dir.clone(),
+        tcp_port: inner.tcp_addr.map(|addr| addr.port()),
+        prevent_idle_sleep: Some(false),
+        ..crate::config::Config::default()
+    };
+    let mut options = ProfileRuntimeOptions::from_legacy_config(
+        config,
+        None,
+        None,
+        None,
+        Listeners::InProcessOnly,
     );
-    let config = crate::config::Config::default();
-    let route = crate::agents::McpLaunchRoute::for_current_process(&config, inner.host_id)
-        .expect("testnet managed MCP route should be usable");
-    let agent_host = PtyAgentHost::new_with_mcp_launch_route(
-        route,
-        crate::keymap_dir(&inner.data_dir),
-        inner.data_dir.clone(),
-    )
-    .expect("testnet Codex private socket path should be usable");
-    let mut services = start_user_services_with_artifact_clock(
-        state,
-        Some(agent_host.clone()),
-        security,
-        inner.artifact_clock.clone(),
-    )
-    .await
-    .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
-
-    if let Some(addr) = inner.tcp_addr {
-        let listener = match listener {
-            Some(listener) => listener,
-            None => bind_addr_with_retries(addr).await,
-        };
-        services.serve_external_tcp_listener_tracked(listener, inner.tracked_tcp.clone());
-    }
-
-    // Track dialed direct-link sockets too: with both ends of a link
-    // recording routes, a leaked dialer socket would keep the *acceptor*
-    // treating a stopped daemon as online.
-    services
-        .reachability_link_connector()
-        .track_dialed_tcp(inner.tracked_tcp.clone());
-    let reachability_tasks = services.spawn_reachability_links();
-    let shutdown_task = Some(spawn_shutdown_handler(Arc::downgrade(inner), shutdown_rx));
+    options.fixtures = RuntimeFixtures {
+        listener,
+        tracked_tcp: Some(inner.tracked_tcp.clone()),
+        artifact_clock: Some(inner.artifact_clock.clone()),
+        cloud: inner.cloud.as_ref().map(|cloud| {
+            (
+                cloud_channel(cloud.addr),
+                CloudFixtureAuth::Bearer(cloud.token.clone()),
+            )
+        }),
+    };
+    let mut profile = runtime::start(options)
+        .await
+        .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
+    let shutdown_task = Some(spawn_shutdown_handler(
+        Arc::downgrade(inner),
+        profile.take_shutdown_receiver(),
+    ));
     DaemonRuntime {
-        services,
-        agent_host,
-        trust,
-        reachability_tasks,
-        cloud_connector: None,
+        profile: Some(profile),
         shutdown_task,
     }
 }
 
 /// Drives the daemon's `ClientService.Shutdown`/`Suspend` requests: when a
 /// paired peer invokes one over the route, the handler replies success and
-/// stops the daemon (severs its external sockets and drops the runtime), so
+/// stops the production runtime, so
 /// the network observes it going down — the in-process stand-in for a process
 /// exit. Suspend is treated like Shutdown for the purposes of the network
 /// observable (it parks agents and ends the server in production too).
@@ -298,7 +256,6 @@ fn spawn_shutdown_handler(
             if let Some(runtime) = runtime {
                 runtime.stop().await;
             }
-            sever_registry(&inner.tracked_tcp);
         });
     })
 }
@@ -774,10 +731,8 @@ impl Daemon {
         }
     }
 
-    /// Stops the daemon like a process exit: its tasks die and every socket
-    /// it held to the outside world is severed. Returns once every other
-    /// daemon has observed it going offline, so follow-up assertions start
-    /// from a settled network.
+    /// Stops the production runtime cooperatively and waits until every
+    /// other daemon observes it offline. No transport severing is involved.
     ///
     /// The runtime lock is released before the wait: holding it across
     /// `wait_until_peers_see_us_down` would deadlock the failure dump,
@@ -787,8 +742,12 @@ impl Daemon {
         if let Some(runtime) = runtime {
             runtime.stop().await;
         }
-        sever_registry(&self.inner.tracked_tcp);
         self.wait_until_peers_see_us_down().await;
+    }
+
+    /// Simulates an abrupt direct-transport outage without a graceful link close.
+    pub async fn sever_direct_connections(&self) {
+        sever_registry(&self.inner.tracked_tcp);
     }
 
     /// Stop and restart with the same data dir; identity, trust, and the
@@ -926,15 +885,14 @@ impl Daemon {
         .await;
     }
 
-    /// Opens a fresh local-admin client to this daemon's `ClientService`,
+    /// Gets a local-admin client to this daemon's `ClientService`,
     /// exactly what a local CLI gets over the Unix socket.
     pub(crate) async fn admin_client(&self) -> Client {
         let guard = self.inner.runtime.lock().await;
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
-        Client::from_client_service_channel(channel, None)
+        runtime.client()
     }
 
     async fn trusts_now(&self, other: &Daemon) -> bool {
@@ -953,7 +911,7 @@ impl Daemon {
         let runtime = guard.as_ref()?;
         Some(DaemonParts {
             client: runtime.services.client.clone(),
-            agent_host: runtime.agent_host.clone(),
+            agent_host: runtime.test_agent_host.clone(),
             connections: runtime.services.connections.clone(),
             routing: runtime.services.routing.clone(),
             tunnels: runtime.services.tunnels.clone(),
@@ -1012,14 +970,8 @@ impl Daemon {
     /// Stops only this daemon's cloud connector through its cleanup path.
     /// The runtime and every direct socket stay alive.
     pub async fn stop_cloud(&self) {
-        let connector = {
-            let mut guard = self.inner.runtime.lock().await;
-            guard
-                .as_mut()
-                .and_then(|runtime| runtime.cloud_connector.take())
-        };
-        if let Some(connector) = connector {
-            connector.stop().await;
+        if let Some(runtime) = self.inner.runtime.lock().await.as_ref() {
+            runtime.stop_cloud().await;
         }
     }
 
@@ -1078,9 +1030,7 @@ impl Daemon {
             let runtime = guard
                 .as_mut()
                 .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-            runtime
-                .spawn_cloud_connector_with_auth(&self.inner, auth)
-                .await;
+            runtime.spawn_cloud_connector_with_auth(auth).await;
         }
         let assertion = format!(
             "'{}' reattaches to the cloud relay under the short-lived JWT",

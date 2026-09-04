@@ -41,13 +41,15 @@ use crate::services::{
 };
 #[cfg(test)]
 use crate::transport::PreTrustPairingReachability;
+#[cfg(test)]
+use crate::transport::in_process_transport_pair;
 #[cfg(any(test, test_fixtures))]
 use crate::transport::tcp_incoming;
 #[cfg(unix)]
 use crate::transport::unix_incoming;
 use crate::transport::{
     BoxedGrpcIo, InProcessConnection, TcpServerTransport, in_process_channel,
-    in_process_transport_pair, managed_in_process_transport_pair,
+    managed_in_process_transport_pair,
 };
 use crate::trust::{SharedTrustStore, TrustStore};
 use crate::tunnel::{TunnelPool, TunnelTransport};
@@ -703,6 +705,7 @@ impl DerefMut for StartedUserServices {
 }
 
 impl StartedUserServices {
+    #[cfg(test)]
     pub(crate) fn open_in_process_client_channel(&self) -> (Channel, JoinHandle<()>) {
         let (client_transport, server_transport) = in_process_transport_pair();
         let trusted_tx = self.trusted_incoming_tx.clone();

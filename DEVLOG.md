@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Run specification daemons through the profile runtime.**
+Testnet now uses the same identity loading, local agent host, service startup,
+cloud ownership, and cooperative shutdown as production. Its clock and
+prebound transport fixtures keep tests deterministic. Normal stop and restart
+no longer sever sockets to make peers notice shutdown; regression tests cover
+cloud and direct link cleanup while other profiles keep routing. In-process
+spec clients share the runtime's managed server connection so teardown closes
+them too.
+
 2026-09-04 — **Built the profile test substrate and fixed shared roots.** Unix
 socket startup now refuses to replace a live listener or any non-socket path,
 cloud connector stop waits for link, tunnel, route, and relay-claim cleanup,
