@@ -11,7 +11,9 @@ and viewing-host artifact caches live under the configured device data. A
 debug-only identity fixture exercises the production device and rotating
 refresh flows with userinfo, while a feature-independent relay and dedicated
 embedding recipe keep no-local-agents integration tests isolated from the
-workspace build.
+workspace build. Discarding a connector's stop handle preserves cloud retry
+and subscription backoff, while an explicit stop still interrupts either
+wait immediately.
 
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by

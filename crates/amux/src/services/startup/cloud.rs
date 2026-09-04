@@ -302,9 +302,23 @@ async fn sleep_or_stop(duration: Duration, stop_rx: &mut watch::Receiver<bool>) 
     if *stop_rx.borrow() {
         return true;
     }
-    tokio::select! {
-        _ = tokio::time::sleep(duration) => false,
-        changed = stop_rx.changed() => changed.is_ok() && *stop_rx.borrow(),
+
+    let sleep = tokio::time::sleep(duration);
+    tokio::pin!(sleep);
+    loop {
+        tokio::select! {
+            _ = &mut sleep => return false,
+            changed = stop_rx.changed() => match changed {
+                Ok(()) if *stop_rx.borrow() => return true,
+                Ok(()) => {}
+                Err(_) => {
+                    // Losing the stop handle means this task can no longer be
+                    // stopped cooperatively; it does not waive the backoff.
+                    sleep.await;
+                    return false;
+                }
+            },
+        }
     }
 }
 
@@ -499,7 +513,7 @@ mod tests {
         cloud_connection_error_from_fetch, cloud_connection_error_from_status,
         cloud_token_refresh_status, jittered_backoff_with_samples, next_backoff,
         payment_required_from_status, report_subscription_required, report_update_status,
-        should_reset_backoff_after_connection,
+        should_reset_backoff_after_connection, sleep_or_stop,
     };
     use crate::config::Config;
     use crate::protocol::{ProtocolError, protocol_status};
@@ -723,6 +737,32 @@ mod tests {
                 panic!("timeout must not become subscription-required")
             }
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cloud_backoff_waits_after_stop_handle_is_dropped_and_honors_stop() {
+        let delay = Duration::from_secs(5);
+        let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+        drop(stop_tx);
+
+        let wait = tokio::spawn(async move { sleep_or_stop(delay, &mut stop_rx).await });
+        tokio::task::yield_now().await;
+        assert!(!wait.is_finished());
+
+        tokio::time::advance(delay - Duration::from_millis(1)).await;
+        tokio::task::yield_now().await;
+        assert!(!wait.is_finished());
+
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(!wait.await.unwrap());
+
+        let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+        let wait = tokio::spawn(async move { sleep_or_stop(delay, &mut stop_rx).await });
+        tokio::task::yield_now().await;
+        assert!(!wait.is_finished());
+
+        stop_tx.send(true).unwrap();
+        assert!(wait.await.unwrap());
     }
 
     #[test]

@@ -858,8 +858,14 @@ async fn wait_for_connector_shutdown(shutdown_rx: &mut Option<watch::Receiver<bo
         if *shutdown_rx.borrow() {
             return;
         }
-        if shutdown_rx.changed().await.is_err() {
-            future::pending::<()>().await;
+        match shutdown_rx.changed().await {
+            Ok(()) => {}
+            Err(_) => {
+                // Dropping the sender only removes the ability to request a
+                // shutdown. It must not turn ordinary handle disposal into
+                // an implicit connector shutdown.
+                future::pending::<()>().await;
+            }
         }
     }
 }
