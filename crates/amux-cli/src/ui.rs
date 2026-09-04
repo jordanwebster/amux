@@ -98,7 +98,7 @@ async fn run_inner(
             report_dir: Some(config.reports_dir()),
             log_path: Some(amux_cli::diagnostics::resolved_log_path()),
             git_sha: GIT_SHA,
-            artifact_cache: Some(amux::default_cache_dir().join("artifacts")),
+            artifact_cache: Some(config.artifact_cache_dir()),
             artifact_cache_bound: config.ui.artifact_cache_mib.saturating_mul(1024 * 1024),
             subscription_status_provider: Some(Arc::new(move || {
                 subscription_reporter.subscription_required()

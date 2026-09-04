@@ -319,6 +319,11 @@ impl Config {
             .unwrap_or_else(|| self.data_dir.join("reports"))
     }
 
+    /// The viewing-host artifact cache owned by this configured device.
+    pub fn artifact_cache_dir(&self) -> PathBuf {
+        self.data_dir.join("cache/artifacts")
+    }
+
     /// Default config file path: `$XDG_CONFIG_HOME/amux/config.yaml`,
     /// falling back to `~/.config/amux/config.yaml`.
     pub fn default_path() -> PathBuf {
@@ -570,6 +575,40 @@ mod tests {
         let serialized = serde_yaml::to_string(&parsed).unwrap();
         let reparsed: Config = serde_yaml::from_str(&serialized).unwrap();
         assert_eq!(reparsed.ui.artifact_cache_mib, 48);
+    }
+
+    #[test]
+    fn artifact_cache_root_is_isolated_by_configured_data_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let xdg_cache = temp.path().join("xdg-cache/amux/artifacts");
+        let first = Config {
+            data_dir: temp.path().join("first-profile"),
+            ..Config::default()
+        };
+        let second = Config {
+            data_dir: temp.path().join("second-profile"),
+            ..Config::default()
+        };
+
+        let first_root = first.artifact_cache_dir();
+        let second_root = second.artifact_cache_dir();
+        let _first_cache = amux_artifacts::Cache::open(
+            first_root.clone(),
+            1024,
+            std::sync::Arc::new(amux_artifacts::SystemClock),
+        )
+        .unwrap();
+        let _second_cache = amux_artifacts::Cache::open(
+            second_root.clone(),
+            1024,
+            std::sync::Arc::new(amux_artifacts::SystemClock),
+        )
+        .unwrap();
+
+        assert_ne!(first_root, second_root);
+        assert!(first_root.is_dir());
+        assert!(second_root.is_dir());
+        assert!(!xdg_cache.exists());
     }
 
     #[test]
