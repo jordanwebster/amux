@@ -1,4 +1,6 @@
-#![cfg(unix)]
+// Test scaffolding exists only in debug profiles (see build.rs); a
+// release-profile test build compiles this crate empty rather than failing.
+#![cfg(all(unix, testnet))]
 
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};

@@ -4,10 +4,6 @@ version = "0.4.0"
 edition.workspace = true
 description = "amux chrome TUI: the fleet around raw attach"
 
-[features]
-default = []
-fixtures = []
-
 # This crate consumes `amux-ui` exclusively. Depending on `amux` here is a
 # review-rejectable offense — the TUI must never touch `amux::Client`.
 [dependencies]
@@ -37,7 +33,6 @@ libc = { workspace = true }
 signal-hook = { workspace = true }
 
 [dev-dependencies]
-amux-tui = { path = ".", features = ["fixtures"] }
 gethostname = { workspace = true }
 tempfile = { workspace = true }
 unicode-width = "0.2"

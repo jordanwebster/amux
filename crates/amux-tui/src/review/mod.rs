@@ -6,7 +6,6 @@
 //! page would be a change here alone.
 
 pub mod comments;
-#[cfg(any(test, feature = "fixtures"))]
 pub mod fixture;
 pub mod reader;
 pub mod view;

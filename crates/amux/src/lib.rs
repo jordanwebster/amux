@@ -38,7 +38,7 @@ pub mod setup;
 mod sleep_inhibitor;
 mod subscription;
 mod suspend;
-#[cfg(feature = "testnet")]
+#[cfg(testnet)]
 #[doc(hidden)]
 pub mod testnet;
 mod transport;

@@ -1,4 +1,4 @@
-#![cfg(feature = "specs")]
+#![cfg(specs)]
 
 use std::collections::BTreeSet;
 use std::time::Duration;

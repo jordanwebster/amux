@@ -70,7 +70,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy
         run: |
-          cargo clippy --workspace --all-targets --features amux/testnet -- -D warnings
+          cargo clippy --workspace --all-targets -- -D warnings
           cargo clippy -p amux \
             --test claude_pty_live \
             --test codex_live \
@@ -93,7 +93,7 @@ jobs:
         env:
           AMUX_INVARIANT_FATAL: "1"
       - name: Run spec tests
-        run: cargo test -p amux --features testnet --test spec
+        run: cargo test --workspace --test spec
         env:
           AMUX_INVARIANT_FATAL: "1"
 

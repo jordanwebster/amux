@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(any(test, feature = "testnet"))]
+#[cfg(any(test, testnet))]
 use std::time::Duration;
 
 use anyhow::Result;
@@ -29,7 +29,7 @@ use crate::protocol::ProtocolError;
 
 const STRUCTURED_LOG_RETENTION: usize = 1000;
 
-#[cfg(any(test, feature = "testnet"))]
+#[cfg(any(test, testnet))]
 pub(crate) mod io {
     pub(crate) const TEST_ECHO_COMMAND: &str = "__amux_test_echo__";
     pub(crate) const TEST_DELAYED_DELIVERY_COMMAND: &str = "__amux_test_delayed_delivery__";
@@ -146,14 +146,14 @@ impl TestAgentSession {
     /// Spawn the test agent process. Returns an exit handle that completes
     /// when the process exits.
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
-        #[cfg(any(test, feature = "testnet"))]
+        #[cfg(any(test, testnet))]
         if self.command == io::TEST_ECHO_COMMAND {
             self.pty = Some(PtyHandle::test_echo());
             self.log_source = Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION));
             self.delivery_ready.store(true, Ordering::Release);
             return Ok(tokio::spawn(std::future::pending::<()>()));
         }
-        #[cfg(any(test, feature = "testnet"))]
+        #[cfg(any(test, testnet))]
         if self.command == io::TEST_DELAYED_DELIVERY_COMMAND {
             self.pty = Some(PtyHandle::test_echo());
             let ready = self.delivery_ready.clone();
@@ -163,11 +163,11 @@ impl TestAgentSession {
                 std::future::pending::<()>().await;
             }));
         }
-        #[cfg(any(test, feature = "testnet"))]
+        #[cfg(any(test, testnet))]
         if self.command == io::TEST_UNAVAILABLE_DELIVERY_COMMAND {
             return Ok(tokio::spawn(std::future::pending::<()>()));
         }
-        #[cfg(any(test, feature = "testnet"))]
+        #[cfg(any(test, testnet))]
         if self.command == io::TEST_FAILED_DELIVERY_COMMAND {
             self.delivery_ready.store(true, Ordering::Release);
             return Ok(tokio::spawn(std::future::pending::<()>()));

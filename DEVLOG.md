@@ -293,6 +293,71 @@ JSON keys. Reader prose and `f` affordances use the same vocabulary, which
 leaves artifact available for stored blobs without overloading the existing
 fullscreen viewer. The amux-ui spec suite and complete amux-tui unit and golden
 suites pass with the renamed model and updated frames.
+2026-09-04 — **Agents build and test through wt.** `AGENTS.md` now says so
+in place of the old "wrap every test in `timeout`" rule, which the wt task
+recipes already satisfy: `wt build`, `wt test`, `wt lint`, `wt fmt`,
+`wt run spec`, `wt run mobile-check`. The point is the single build
+configuration that yesterday's Cargo changes established — a bare `cargo`
+invocation with `-p`, `--features` or `--release` compiles a second copy of
+every shared dependency, and wt's sweep keeps such variants on purpose
+because each command reuses its own. The one thing that used to push an
+agent back to bare cargo was filtering: the test scripts did not forward
+arguments, so `wt test -- <filter>` was refused. Both scripts now pass
+their arguments through, under the same timeout — which surfaced a second
+obstacle: cargo hands a filter to every test binary, and the three opt-in
+live suites (`claude_pty_live`, `codex_live`, `claude_sdk_live`) treated a
+name that is no scenario as an error, so any workspace-wide filtered run
+failed in them. They now treat it as libtest does, a filter that matched
+nothing: the unknown names are echoed with the known list and the binary
+exits clean, and the PTY suite checks for the built `amux` only once a
+scenario is actually selected. The Co-Authored-By rule moves out of this
+file; it is a user-level rule and was duplicated here.
+
+2026-09-04 — **Two CI legs that had been red before the build-configuration
+change go green again.** Neither failure was new. The Windows test job died
+in the debug report's redaction test, which read `HOME` and `USER` straight
+from the environment and unwrapped them; Windows runners carry `USERPROFILE`
+and `USERNAME` instead, which the redaction itself already falls back to,
+so the test now falls back the same way. The E2E job's `bare_help`
+expectation predated the `debug` subcommand and lacked its help line; the
+line is added. Everything else in both jobs was already passing.
+
+2026-09-03 — **One build configuration for every host command; test
+scaffolding follows the profile, not a feature.** A single worktree had
+grown a 39 GB cargo build directory in a day, and `wt rm` of it took 78
+seconds. Cargo keeps one artifact set per build configuration and never
+deletes a superseded one, and this workspace produced far more
+configurations than it needed: `panic = "abort"` in the dev profile forced
+a second, unwinding copy of every dependency for `cargo test` (tests must
+unwind); the `testnet`, `specs` and `fixtures` features made two versions
+of each library and of everything above it, one for `cargo build` and one
+for `cargo test`; `default-members` and `-p` selections unified dependency
+features differently from the workspace build. Measured in one tree: 21
+distinct fingerprints of the `amux` library, 14 full rlib copies of about
+280 MB each.
+
+The dev profile no longer aborts on panic (release still does;
+`AMUX_INVARIANT_FATAL` keeps invariants fatal), dependencies build without
+debuginfo, and `default-members` is gone so a bare `cargo build` means the
+workspace. The three test features are deleted. Their code is gated on
+`cfg(testnet)` (amux) and `cfg(specs)` (claude, codex), emitted by each
+crate's build script when the profile is debug — `testnet` also needs
+`local-agents` — so every dev command compiles one copy of each library
+and a release binary cannot contain the scaffolding however cargo is
+invoked. `fixtures` is unconditional: amux-shot consumes it in release, so
+it was never test-only. The probe binaries are split into a `main.rs` stub
+and the real `probe.rs`, so the release build still produces the target.
+Dev-dependencies no longer enable features on normal dependencies. wt's
+tasks and CI build with `--workspace --all-targets` and select the spec
+suites by target name (`cargo test --workspace --test spec`) rather than
+`-p`, which unifies differently and compiles a second dependency set; the
+iOS check has its own `mobile-check` task that always names the target.
+Result: 6.8 GB for a full workspace build with tests, every workspace
+crate once, and `cargo test` recompiles nothing after `build`. Release
+builds of binaries pass; a release-profile *test* build never worked
+(integration tests use debug-only support items) and still does not.
+Moving the scaffolding out of the libraries into crates of their own is
+tracked as FOX-312.
 
 2026-08-31 — **Moved protobuf codegen out of build.rs into committed
 source.** The build script generated `amux.v1.rs` into `OUT_DIR` from

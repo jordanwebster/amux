@@ -5,7 +5,7 @@
 //! top-to-bottom works as documentation; the modules below are declared in
 //! that reading order.
 //!
-//! Run with: `timeout 600 cargo test -p amux --features testnet --test spec`
+//! Run with: `timeout 600 cargo test --workspace --test spec`
 //!
 //! Adding a test: build a topology with `TestNet::builder()` —
 //! `.daemon(name)`, `.cloud()`, `.paired(a, b, Via::Tcp | Via::Cloud)`,
@@ -20,6 +20,9 @@
 //! daemon with real TLS); anything exercising a shared rate limiter gets
 //! its own `TestNet`.
 
+// Test scaffolding exists only in debug profiles (see build.rs); a
+// release-profile test build compiles this crate empty rather than failing.
+#![cfg(testnet)]
 mod smoke; // the harness in one test: the canonical TestNet example
 
 mod agents; // Chapter 7 — Agent messaging & relationships

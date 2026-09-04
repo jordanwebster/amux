@@ -435,9 +435,7 @@ impl PaintCache {
         self.entries.retain(|key, _| live.contains(key));
     }
 
-    /// Read by tests and by the fixtures feature's `paint_stats`; a build
-    /// with neither has nothing that looks at the counters.
-    #[cfg(any(test, feature = "fixtures"))]
+    /// Read by tests and by the fixtures' `paint_stats`.
     pub(crate) fn stats(&self) -> PaintStats {
         self.stats
     }

@@ -162,8 +162,8 @@ fn main() -> Result<()> {
         .map_err(anyhow::Error::msg)?
         .into_iter()
         .map(|index| &SCENARIOS[index])
-        .collect();
-    if scenario_names.is_empty() {
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
         println!("{}", args::USAGE);
         return Ok(());
     }

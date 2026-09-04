@@ -28,6 +28,7 @@ Commands:
   peer    Show trusted peers
   unpair  Remove trust for a peer
   update  Update amux to the latest version
+  debug   Inspect daemon state and locally captured reports
   help    Print this message or the help of the given subcommand(s)
 
 Options:

@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 amux-ui = { workspace = true }
-amux-tui = { workspace = true, features = ["fixtures"] }
+amux-tui = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
 fontdue = { workspace = true }

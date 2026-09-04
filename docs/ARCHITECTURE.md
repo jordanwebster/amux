@@ -34,7 +34,7 @@ Around the daemon sit its clients and consumers:
   content-addressed storage with an authoritative per-agent Owner role and a
   disposable per-viewing-host Cache role. It depends on neither the daemon nor
   the UI, so another client can reuse the storage contract directly.
-- **Test harnesses**: the `testnet` feature compiles an in-process harness
+- **Test harnesses**: debug builds compile an in-process harness
   (`amux::testnet`) that builds whole daemons — real identities, real
   trust stores, real localhost TCP with device mTLS, an optional
   in-process cloud relay — for the spec suite, plus `WirePeer`, a scripted

@@ -369,7 +369,7 @@ Four tiers, in increasing cost:
    inert when no scenario is named.
 
 ```sh
-timeout 900 cargo test -p codex --features specs --test spec_replay
+timeout 900 cargo test --workspace --test spec_replay
 timeout 900 cargo test -p amux --test derived_rows codex
 cargo build -p amux-cli
 AMUX_CODEX_LIVE_MODEL=gpt-5.6-luna \
