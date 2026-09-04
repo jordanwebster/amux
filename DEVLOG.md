@@ -22,8 +22,11 @@ the chat's leader-o chord. That last check exposed macOS classifying the
 extensionless cache blob as generic data, so the platform opener now carries
 artifact metadata and explicitly selects Preview for images. Fresh managed
 Claude PTY and Codex `attach_tool` runs passed and preserved their structured
-rows, exact mentions, owner blobs, and pins. Their remote-viewer half remains
-to be captured separately.
+rows, exact mentions, owner blobs, and pins. Two isolated agent hosts were then
+paired to a second viewing host, whose 120×40 structured chats rendered each
+agent-produced image inline in the reply. The viewer focused and opened both
+blocks with the leader-o chord; its isolated cache and Preview document agreed
+with the content hash published by both tool runs.
 
 2026-09-04 — **Captured a review across three hosts and a restart.** An
 opt-in live harness now isolates three real daemons, pairs the agent host to
