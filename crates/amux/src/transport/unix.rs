@@ -66,6 +66,18 @@ pub(crate) fn bind_unix_listener(socket_path: &Path) -> io::Result<UnixListener>
     Ok(listener)
 }
 
+pub(crate) fn unix_incoming(
+    listener: UnixListener,
+) -> impl Stream<Item = io::Result<UnixClientTransport>> + Send + 'static {
+    stream::unfold(listener, |listener| async move {
+        let item = match listener.accept().await {
+            Ok((stream, _addr)) => Ok(UnixClientTransport::new(stream)),
+            Err(error) => Err(error),
+        };
+        Some((item, listener))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::{PermissionsExt as _, symlink};
@@ -132,16 +144,4 @@ mod tests {
         );
         drop(listener);
     }
-}
-
-pub(crate) fn unix_incoming(
-    listener: UnixListener,
-) -> impl Stream<Item = io::Result<UnixClientTransport>> + Send + 'static {
-    stream::unfold(listener, |listener| async move {
-        let item = match listener.accept().await {
-            Ok((stream, _addr)) => Ok(UnixClientTransport::new(stream)),
-            Err(error) => Err(error),
-        };
-        Some((item, listener))
-    })
 }
