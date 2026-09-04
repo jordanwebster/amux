@@ -27,7 +27,11 @@ captures now come from amux's 120×40 structured chat: they show the atomic
 Pasted and Image tokens, the exact image prompt and sent feed block, Claude
 reading the materialised owner path and describing concrete diagram defects
 without a permission request, and the focused image opening in Preview through
-the chat's leader-o chord. That last check exposed macOS classifying the
+the chat's leader-o chord. The permission proof was replayed with the ordinary
+`amux new claude --name image-same-host-default -- --model haiku` launch: its
+unmodified transcript reports `permissionMode: default`, contains the matching
+artifact-path `Read` and concrete description, and has no permission-request
+row. That open check exposed macOS classifying the
 extensionless cache blob as generic data, so the platform opener now carries
 artifact metadata and explicitly selects Preview for images. Fresh managed
 Claude PTY and Codex `attach_tool` runs passed and preserved their structured
