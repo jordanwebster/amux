@@ -1018,6 +1018,60 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sdk_launch_settings_leave_user_hooks_to_claude() {
+        let directory = tempfile::tempdir().unwrap();
+        let cli = directory.path().join("capture-claude-argv.sh");
+        let argv = directory.path().join("argv.txt");
+        std::fs::write(
+            &cli,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AMUX_ARGV_CAPTURE\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: Some("settings-test".to_string()),
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            working_dir: directory.path().to_path_buf(),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        };
+        let mut backend = ClaudeSdkBackend::new(&req, mcp_launch_route_for_tests(Uuid::new_v4()));
+        backend.command = cli.to_string_lossy().into_owned();
+        let mut options = backend.query_options().unwrap();
+
+        assert!(options.setting_sources.is_empty());
+        assert!(options.hook_subscriptions.is_empty());
+        let Some(SettingsConfig::Inline(settings)) = options.settings.as_ref() else {
+            panic!("managed SDK settings must be inline");
+        };
+        assert!(settings.get("hooks").is_none());
+
+        options.env.as_mut().unwrap().insert(
+            "AMUX_ARGV_CAPTURE".to_string(),
+            argv.to_string_lossy().into_owned(),
+        );
+        let _ = tokio::time::timeout(Duration::from_secs(2), claude::sdk::spawn(options)).await;
+        let launched = std::fs::read_to_string(&argv).expect("capture Claude launch arguments");
+        let launched = launched.lines().collect::<Vec<_>>();
+        assert!(!launched.contains(&"--setting-sources"));
+        let settings_index = launched
+            .iter()
+            .position(|argument| *argument == "--settings")
+            .expect("managed settings argument");
+        let launched_settings: Value =
+            serde_json::from_str(launched[settings_index + 1]).expect("inline settings JSON");
+        assert!(launched_settings.get("hooks").is_none());
+    }
+
     async fn provider_session(
         transcript_path: String,
     ) -> (Session, tokio::task::JoinHandle<()>, Uuid) {

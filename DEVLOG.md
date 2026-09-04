@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Kept user hooks owned by Claude's settings.** The managed SDK
+launch now has a boundary test that captures the real provider argument vector
+and proves it carries no setting-source restriction, no merged hook block, and
+no SDK hook subscription. An opt-in live harness installs one Stop hook in an
+isolated Claude config directory, runs it through direct print mode and an amux
+SDK agent, and preserves both observable marker files for comparison.
+
 2026-09-04 — **Made the Claude driver a creation default.** Configuration now
 accepts a closed `claude.driver` setting with `pty` as the shipped default and
 `sdk` as the alternative. One resolver applies explicit command-line choice
