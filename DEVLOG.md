@@ -7385,3 +7385,11 @@ can have no denominator because no row states the window, and neither of the
 other two gets a task list for want of a task lifecycle. `docs/UI.md` now
 states the boundary between the two Claude layers: they share the provider's
 own tool vocabulary and nothing else.
+
+2026-09-04 — **The SDK replay registry names only observed traffic.** The
+question, plan-review and accepted-elicitation captures from Claude Code
+2.1.260 now replay as part of the complete SDK corpus. The attempted user
+dialog scenario did not produce a dialog frame, so its executable probe stays
+available for future investigation but is no longer advertised as recorded
+evidence. This keeps the strict corpus check honest: every registered
+specification has a manifest and consumes its captured stream completely.

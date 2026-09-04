@@ -935,7 +935,6 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("tools/plan_reviewed", "plan_reviewed"),
     entry("tools/in_process_mcp", "in_process_mcp"),
     entry("tools/elicitation_accepted", "elicitation_accepted"),
-    entry("tools/dialog_requested", "dialog_requested"),
     entry("tools/hook_lifecycle", "hook_lifecycle"),
     entry("options/configured_turn", "configured_turn"),
     entry("options/every_hook_event", "every_hook_event"),
@@ -1023,9 +1022,9 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
                 options.cwd = Some(cwd.clone());
                 options.env = environment.clone();
                 let sandbox = serde_json::json!({"enabled": false});
-                if let Some(crate::sdk::SettingsConfig::Inline(
-                    serde_json::Value::Object(settings),
-                )) = &mut options.settings
+                if let Some(crate::sdk::SettingsConfig::Inline(serde_json::Value::Object(
+                    settings,
+                ))) = &mut options.settings
                 {
                     settings.insert("sandbox".to_owned(), sandbox);
                 } else {
