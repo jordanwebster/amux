@@ -8,16 +8,16 @@
 //! Lines come back "open" (no padding, no right border); the frame
 //! assembler finishes everything once.
 
-use amux_ui::claude::answer::{self, AskAnswer, PermissionAnswer, PlanAnswer};
 use amux_ui::claude::{
-    Ask, AskDocument, AskKind, AskState, QuestionFact, SuggestionDestination, SuggestionFact,
-    SuggestionKind, ToolInvocation,
+    AskDocument, QuestionFact, SuggestionDestination, SuggestionFact, SuggestionKind,
+    ToolInvocation,
 };
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::chat::claude::ask_ui::{self, AskStage, AskUi, QuestionDraft, QuestionUi};
-use crate::chat::claude::diff;
+use crate::chat::blocks::{self, paint_ask_panel};
+use crate::chat::claude_shared::ask_ui::{self, AskStage, AskUi, QuestionDraft, QuestionUi};
+use crate::chat::claude_shared::{SharedAsk, SharedAskKind, SharedAskState, diff};
+use crate::chat::frame::BlockKey;
 use crate::composer::Composer;
 use crate::markdown;
 use crate::render::{Theme, line_len, push_span, str_width};
@@ -112,8 +112,8 @@ fn field_line(field: &Composer, theme: Theme) -> Line<'static> {
 /// (+2 -1)`, `Write sync/retry.rs (12 lines)`, `Bash`, the tool name
 /// otherwise. Magnitudes come from the ask's document (estimated at ask
 /// time; `(replaces every occurrence)` under replace_all).
-pub(crate) fn ask_identity(ask: &Ask) -> String {
-    let AskKind::Permission {
+pub(crate) fn ask_identity(ask: &SharedAsk<'_>) -> String {
+    let SharedAskKind::Permission {
         tool_name,
         invocation,
         ..
@@ -121,7 +121,7 @@ pub(crate) fn ask_identity(ask: &Ask) -> String {
     else {
         return "question".to_string();
     };
-    let name = tool_name.as_deref().unwrap_or("tool");
+    let name = tool_name.unwrap_or("tool");
     let mut identity = match invocation {
         ToolInvocation::Edit {
             file_path: Some(path),
@@ -141,7 +141,7 @@ pub(crate) fn ask_identity(ask: &Ask) -> String {
         } => format!("{name} {description}"),
         _ => name.to_string(),
     };
-    match &ask.document {
+    match ask.document {
         Some(AskDocument::Diff(diff_document)) => {
             identity.push(' ');
             identity.push_str(&diff::magnitude_text(&diff_document.magnitude));
@@ -174,23 +174,6 @@ fn scoped_label(suggestions: &[SuggestionFact]) -> String {
     match suggestion.destination.as_ref() {
         Some(SuggestionDestination::Session) => "Allow for this session".to_string(),
         _ => "Allow — apply the suggested rule".to_string(),
-    }
-}
-
-/// The optimistic pending marker's summary: what was answered, plainly.
-fn answer_summary(answer: &AskAnswer, theme: Theme) -> (&'static str, Style, &'static str) {
-    match answer {
-        AskAnswer::Permission(PermissionAnswer::AllowOnce) => ("✔", theme.ok(), "allowed once"),
-        AskAnswer::Permission(PermissionAnswer::AllowScoped { .. }) => {
-            ("✔", theme.ok(), "allowed (scoped)")
-        }
-        AskAnswer::Permission(PermissionAnswer::Deny { .. }) => ("✗", theme.error(), "denied"),
-        AskAnswer::Plan(PlanAnswer::ApproveAuto) => ("✔", theme.ok(), "plan approved (auto)"),
-        AskAnswer::Plan(PlanAnswer::ApproveManual) => ("✔", theme.ok(), "plan approved (manual)"),
-        AskAnswer::Plan(PlanAnswer::RequestChanges { .. }) => {
-            ("✗", theme.error(), "changes requested")
-        }
-        AskAnswer::Question(_) => ("?", theme.warn(), "answered"),
     }
 }
 
@@ -301,13 +284,13 @@ pub(crate) fn permission_actions(
 /// The ask's body under the permission header (C2): the mini-diff for
 /// Edit, the `+` block for Write, `$ command` for Bash, the plan preview
 /// for plan review, a compact typed line otherwise.
-fn body_lines(ask: &Ask, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    // A diff document is not the panel's to place: the adapter puts its
-    // rows above these, through the shared diff rows both chats use.
-    if let Some(AskDocument::NewFile { content }) = &ask.document {
+fn body_lines(ask: &SharedAsk<'_>, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    // A diff document is not the panel's to place: `paint` puts its rows
+    // above these, through the shared diff rows both chats use.
+    if let Some(AskDocument::NewFile { content }) = ask.document {
         return diff::new_file_preview(content, width, theme, diff::PREVIEW_BUDGET);
     }
-    let AskKind::Permission { invocation, .. } = &ask.kind else {
+    let SharedAskKind::Permission { invocation, .. } = &ask.kind else {
         return Vec::new();
     };
     match invocation {
@@ -375,7 +358,7 @@ fn body_lines(ask: &Ask, width: usize, theme: Theme) -> Vec<Line<'static>> {
 /// asked, what it is about, the answers on offer and the keys that give
 /// them. The caller guarantees an ask heads the queue.
 pub(crate) fn ask_panel(
-    ask: &Ask,
+    ask: &SharedAsk<'_>,
     ask_count: usize,
     ui: Option<&AskUi>,
     ask_failure: Option<&str>,
@@ -390,8 +373,8 @@ pub(crate) fn ask_panel(
     };
     // The optimistic collapse (C5): a dim pending marker holds the
     // collapsed entry until the transcript confirms.
-    if let AskState::AnsweredOptimistic { answer, .. } = &ask.state {
-        let (glyph, _, summary) = answer_summary(answer, theme);
+    if let SharedAskState::Answered { summary } = &ask.state {
+        let (glyph, summary) = (summary.glyph(), summary.text());
         return AskPanel::titled(
             format!("{glyph} {summary} — {} · sending…", ask_identity(ask)),
             ask_count,
@@ -415,18 +398,20 @@ pub(crate) fn ask_panel(
     // the failure verbatim (C5); a synchronous refusal reports the same
     // way.
     let failed = match &ask.state {
-        AskState::SendFailed { message } => Some(message.as_str()),
+        SharedAskState::Failed { message } => Some(*message),
         _ => ask_failure,
     };
 
     match &ask.kind {
-        AskKind::Question { questions } => question_panel(questions, ui, failed, ask_count, ctx),
-        AskKind::Permission { suggestions, .. } => {
-            if ask_ui::is_plan(ask) {
+        SharedAskKind::Question { questions } => {
+            question_panel(questions, ui, failed, ask_count, ctx)
+        }
+        SharedAskKind::Permission { suggestions, .. } => {
+            if ask.is_plan() {
                 return plan_panel(ask, ui, failed, ask_count, ctx);
             }
-            if let Some(refusal) = answer::menu_shape_refusal(&ask.kind) {
-                return refusal_panel(ask, &refusal.to_string(), ask_count, ctx);
+            if let Some(refusal) = &ask.refusal {
+                return refusal_panel(ask, refusal, ask_count, ctx);
             }
             permission_panel(ask, suggestions, ui, failed, ask_count, ctx)
         }
@@ -434,7 +419,7 @@ pub(crate) fn ask_panel(
 }
 
 fn permission_panel(
-    ask: &Ask,
+    ask: &SharedAsk<'_>,
     suggestions: &[SuggestionFact],
     ui: &AskUi,
     failed: Option<&str>,
@@ -475,7 +460,7 @@ fn permission_panel(
                 width,
                 theme,
             ));
-            let f_hint = if ask_ui::has_readable(ask) {
+            let f_hint = if ask.has_readable() {
                 " · f open document"
             } else {
                 ""
@@ -493,7 +478,12 @@ fn permission_panel(
 /// from the suggestions, and shapes no capture confirmed have no digit
 /// table — the panel states the typed refusal read-only-style instead of
 /// offering actions the encoder would refuse.
-fn refusal_panel(ask: &Ask, refusal: &str, ask_count: usize, ctx: PanelContext) -> AskPanel {
+fn refusal_panel(
+    ask: &SharedAsk<'_>,
+    refusal: &str,
+    ask_count: usize,
+    ctx: PanelContext,
+) -> AskPanel {
     let PanelContext {
         width,
         theme,
@@ -502,7 +492,7 @@ fn refusal_panel(ask: &Ask, refusal: &str, ask_count: usize, ctx: PanelContext) 
     let mut panel = AskPanel::titled(format!("permission — {}", ask_identity(ask)), ask_count);
     panel.body.extend(body_lines(ask, width, theme));
     panel.actions.extend(failure_line(refusal, width, theme));
-    let f_hint = if ask_ui::has_readable(ask) {
+    let f_hint = if ask.has_readable() {
         "f open document · "
     } else {
         ""
@@ -515,7 +505,7 @@ fn refusal_panel(ask: &Ask, refusal: &str, ask_count: usize, ctx: PanelContext) 
 }
 
 fn plan_panel(
-    ask: &Ask,
+    ask: &SharedAsk<'_>,
     ui: &AskUi,
     failed: Option<&str>,
     ask_count: usize,
@@ -824,13 +814,13 @@ fn review_lines(
 /// The read-only ask fact panel: what the agent is asking, the identical
 /// preview, and the honest wait — read affordances only, no action row.
 pub(crate) fn readonly_ask_panel(
-    ask: &Ask,
+    ask: &SharedAsk<'_>,
     ask_count: usize,
     width: usize,
     theme: Theme,
 ) -> AskPanel {
     let (title, read_hint) = match &ask.kind {
-        AskKind::Question { questions } => {
+        SharedAskKind::Question { questions } => {
             let text = questions
                 .first()
                 .and_then(|question| {
@@ -842,13 +832,13 @@ pub(crate) fn readonly_ask_panel(
                 .unwrap_or_default();
             (format!("the agent is asking a question — {text}"), None)
         }
-        AskKind::Permission { .. } if ask_ui::is_plan(ask) => (
+        SharedAskKind::Permission { .. } if ask.is_plan() => (
             "the agent is asking for plan approval".to_string(),
             Some("f read document"),
         ),
-        AskKind::Permission { .. } => (
+        SharedAskKind::Permission { .. } => (
             format!("the agent is asking permission — {}", ask_identity(ask)),
-            ask.document.as_ref().map(|_| "f read document"),
+            ask.document.map(|_| "f read document"),
         ),
     };
     let mut panel = AskPanel::titled(title, ask_count);
@@ -860,4 +850,55 @@ pub(crate) fn readonly_ask_panel(
     }
     panel.hints = wait;
     panel
+}
+
+// --- painting ----------------------------------------------------------------
+
+/// One docked ask, painted: its diff document leads the body through the
+/// shared diff rows, then the ask's own words, answers and keys.
+///
+/// The parts and the paint are separate so a chat can retitle a panel
+/// before it lands — a child's ask docked in its parent's chat says whose
+/// it is in the title row.
+pub(crate) fn paint(
+    ask: &SharedAsk<'_>,
+    mut parts: AskPanel,
+    theme: Theme,
+    width: usize,
+) -> Vec<Line<'static>> {
+    if let Some(AskDocument::Diff(document)) = ask.document {
+        let body_width = blocks::panel_body_width(width);
+        let preview =
+            crate::chat::diff::paint_rows(&document.document.rows(), theme, body_width, 0, true)
+                .into_preview(diff::PREVIEW_BUDGET);
+        let mut body = preview.lines;
+        if preview.hidden > 0 {
+            body.push(remainder_row(preview.hidden, "f full document", theme));
+        }
+        body.append(&mut parts.body);
+        parts.body = body;
+    }
+    paint_ask_panel(
+        BlockKey(ask.id),
+        &parts.title,
+        parts.body,
+        parts.actions,
+        &parts.hints,
+        theme,
+        width,
+    )
+    .lines
+}
+
+/// `⋮ +K more lines · f full document` — a preview always states its own
+/// arithmetic and names what shows the rest.
+fn remainder_row(hidden: usize, affordance: &str, theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(
+        &mut line,
+        blocks::TEXT_COL - 2,
+        format!("⋮ +{hidden} more lines · {affordance}"),
+        theme.muted(),
+    );
+    line
 }

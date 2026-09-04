@@ -6,16 +6,35 @@
 //! reaches it from ask panels and read-only fact panels; Ctrl+T reopens
 //! accepted plans, ←/→ stepping between them when several exist (B6).
 
-use amux_ui::Model;
-use amux_ui::claude::{Ask, AskDocument, AskKind, AskState, DiffDocument, ToolInvocation};
+use amux_ui::attachments::AttachmentIndex;
+use amux_ui::claude::{AcceptedPlan, AskDocument, DiffDocument};
 use amux_ui::review::{ReviewComment, ReviewHeader};
 use ratatui::text::{Line, Span};
 use serde::{Deserialize, Serialize};
 
-use crate::chat::claude::ask_ui::{AskStage, AskUi};
-use crate::chat::claude::{View, diff, panel};
+use crate::chat::claude_shared::ask_ui::{AskStage, AskUi};
+use crate::chat::claude_shared::{SharedAsk, SharedAskKind, armed_quit_line, diff, panel};
 use crate::markdown;
 use crate::render::{Theme, push_right, push_span};
+
+/// Everything the reader needs from the chat around it, gathered by that
+/// chat from its own layer. The reader knows nothing about which
+/// transport folded these facts.
+pub(crate) struct ReaderContext<'m> {
+    /// What is being read and where the viewport sits.
+    pub reader: &'m ReaderView,
+    /// The pending ask, when one heads the queue.
+    pub ask: Option<SharedAsk<'m>>,
+    /// Panel state for that ask, when the chat holds any.
+    pub ask_ui: Option<&'m AskUi>,
+    /// This client may answer at all (a read-only observer may not).
+    pub can_answer: bool,
+    /// Accepted plans, oldest first — what Ctrl+T steps through.
+    pub accepted_plans: &'m [AcceptedPlan],
+    /// The layer's artifact index: a sent review's diff resolves here.
+    pub attachments: &'m AttachmentIndex,
+    pub quit_guard_armed: bool,
+}
 
 /// Fullscreen reader ViewState: what is being read and where the viewport
 /// sits. The document itself is resolved from the Model at render — a
@@ -83,50 +102,39 @@ struct Resolved<'m> {
     title: String,
     body: Body<'m>,
     /// The pending ask whose action row is live (writable chats only).
-    ask: Option<&'m Ask>,
+    ask: Option<&'m SharedAsk<'m>>,
     /// (index, count) when stepping between accepted plans.
     plans_nav: Option<(usize, usize)>,
 }
 
 /// Resolve what the reader shows, or `None` when its source no longer
 /// exists (the frame then falls back to the chat).
-fn resolve<'m>(model: &'m Model, chat: &'m View) -> Option<Resolved<'m>> {
-    let reader = chat.reader.as_ref()?;
-    let layer = model.claude(chat.agent)?;
-    match &reader.source {
+fn resolve<'m>(ctx: &'m ReaderContext<'m>) -> Option<Resolved<'m>> {
+    match &ctx.reader.source {
         ReaderSource::Ask => {
-            let ask = layer.ask_head()?;
-            let resolved = match (&ask.document, &ask.kind) {
-                (Some(AskDocument::Diff(document)), kind) => Resolved {
+            let ask = ctx.ask.as_ref()?;
+            let resolved = match (ask.document, ask.plan()) {
+                (Some(AskDocument::Diff(document)), _) => Resolved {
                     title: format!(
                         "diff — {}  {}",
-                        permission_path(kind).unwrap_or("(unknown file)"),
+                        ask.path().unwrap_or("(unknown file)"),
                         diff::magnitude_text(&document.magnitude)
                     ),
                     body: Body::Diff(document),
                     ask: Some(ask),
                     plans_nav: None,
                 },
-                (Some(AskDocument::NewFile { content }), kind) => Resolved {
+                (Some(AskDocument::NewFile { content }), _) => Resolved {
                     title: format!(
                         "new file — {}  ({} lines)",
-                        permission_path(kind).unwrap_or("(unknown file)"),
+                        ask.path().unwrap_or("(unknown file)"),
                         content.lines().count()
                     ),
                     body: Body::NewFile(content),
                     ask: Some(ask),
                     plans_nav: None,
                 },
-                (
-                    None,
-                    AskKind::Permission {
-                        invocation:
-                            ToolInvocation::Plan {
-                                plan: Some(plan), ..
-                            },
-                        ..
-                    },
-                ) => Resolved {
+                (None, Some(plan)) => Resolved {
                     title: "plan".to_string(),
                     body: Body::Plan(plan),
                     ask: Some(ask),
@@ -141,7 +149,7 @@ fn resolve<'m>(model: &'m Model, chat: &'m View) -> Option<Resolved<'m>> {
             body: Body::Review {
                 header,
                 comments,
-                diff: layer.attachments().diff(&header.diff),
+                diff: ctx.attachments.diff(&header.diff),
             },
             ask: None,
             plans_nav: None,
@@ -153,7 +161,7 @@ fn resolve<'m>(model: &'m Model, chat: &'m View) -> Option<Resolved<'m>> {
             plans_nav: None,
         }),
         ReaderSource::Plans { index } => {
-            let plans = layer.accepted_plans();
+            let plans = ctx.accepted_plans;
             if plans.is_empty() {
                 return None;
             }
@@ -198,23 +206,6 @@ fn review_title(header: &ReviewHeader, comments: &[ReviewComment]) -> String {
         paths.len(),
         if paths.len() == 1 { "file" } else { "files" },
     )
-}
-
-fn permission_path(kind: &AskKind) -> Option<&str> {
-    match kind {
-        AskKind::Permission {
-            invocation:
-                ToolInvocation::Edit {
-                    file_path: Some(path),
-                    ..
-                }
-                | ToolInvocation::Write {
-                    file_path: Some(path),
-                },
-            ..
-        } => Some(path),
-        _ => None,
-    }
 }
 
 fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'static>> {
@@ -264,25 +255,19 @@ pub(crate) fn rule_line(width: usize, theme: Theme) -> Line<'static> {
 /// when the reader's source no longer resolves. Non-actionable readers
 /// suppress the action row and retain only read affordances.
 pub(crate) fn reader_frame(
-    model: &Model,
-    chat: &View,
+    ctx: &ReaderContext<'_>,
     theme: Theme,
     width: usize,
     height: usize,
 ) -> Option<Vec<Line<'static>>> {
-    let resolved = resolve(model, chat)?;
+    let resolved = resolve(ctx)?;
     let body = body_lines(&resolved.body, width, theme);
     let total = body.len();
-    let tail = reader_tail(model, &resolved, chat, width, theme);
+    let tail = reader_tail(ctx, &resolved, width, theme);
 
     // Frame rows: title, the gap under it, two rules, and the tail.
     let body_h = height.saturating_sub(4 + tail.len()).max(1);
-    let start = chat
-        .reader
-        .as_ref()
-        .map(|reader| reader.scroll)
-        .unwrap_or(0)
-        .min(total.saturating_sub(body_h));
+    let start = ctx.reader.scroll.min(total.saturating_sub(body_h));
     let shown = total.saturating_sub(start).min(body_h);
 
     let mut content: Vec<Line<'static>> = Vec::new();
@@ -311,21 +296,18 @@ pub(crate) fn reader_frame(
 /// stage, or the read hints — ONE derivation, consumed by the frame and
 /// by the scroll metrics so paging and rendering agree on the viewport.
 fn reader_tail(
-    model: &Model,
+    ctx: &ReaderContext<'_>,
     resolved: &Resolved<'_>,
-    chat: &View,
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     // The action row lives only while a writable ask is open.
-    let acting = answer_actionable(model, chat)
-        .then_some(resolved.ask)
-        .flatten();
+    let acting = answer_actionable(ctx).then_some(resolved.ask).flatten();
 
     let mut tail: Vec<Line<'static>> = Vec::new();
     if let Some(ask) = acting {
-        let plan_review = super::ask_ui::is_plan(ask);
-        let ui = chat.ask_ui.as_ref().filter(|ui| ui.ask_id == ask.id);
+        let plan_review = ask.is_plan();
+        let ui = ctx.ask_ui.filter(|ui| ui.ask_id == ask.id);
         if plan_review
             && let Some(ui) = ui
             && ui.stage == AskStage::PlanFeedback
@@ -358,7 +340,7 @@ fn reader_tail(
                     "↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)",
                     theme,
                 ));
-            } else if let AskKind::Permission { suggestions, .. } = &ask.kind {
+            } else if let SharedAskKind::Permission { suggestions, .. } = &ask.kind {
                 tail.extend(indented(panel::permission_actions(
                     suggestions,
                     Some(cursor),
@@ -383,10 +365,10 @@ fn reader_tail(
     // The armed quit guard replaces the tail's hint row (the reader's
     // footer hint line) — same rule as every other bottom block. The row
     // count is unchanged, so scroll metrics agree.
-    if chat.quit_guard.is_armed()
+    if ctx.quit_guard_armed
         && let Some(last) = tail.last_mut()
     {
-        *last = super::render::armed_quit_line(theme);
+        *last = armed_quit_line(theme);
     }
     tail
 }
@@ -396,15 +378,14 @@ fn reader_tail(
 /// PgDn land exactly where render clamps and a following Up moves
 /// immediately.
 pub(crate) fn scroll_metrics(
-    model: &Model,
-    chat: &View,
+    ctx: &ReaderContext<'_>,
     viewport: (u16, u16),
 ) -> Option<(usize, usize)> {
-    let resolved = resolve(model, chat)?;
+    let resolved = resolve(ctx)?;
     let width = viewport.0 as usize;
     let height = viewport.1 as usize;
     // Layout is theme-independent (tokens change styles, never cells).
-    let tail = reader_tail(model, &resolved, chat, width, Theme::default());
+    let tail = reader_tail(ctx, &resolved, width, Theme::default());
     let total = body_lines(&resolved.body, width, Theme::default()).len();
     let body_h = height.saturating_sub(4 + tail.len()).max(1);
     Some((body_h, total.saturating_sub(body_h)))
@@ -413,16 +394,13 @@ pub(crate) fn scroll_metrics(
 /// Whether the current reader owns a writable answer surface. This is the
 /// single TUI-side focus fact shared by rendering, keys, Ctrl+C, and paste;
 /// observation-only policy is already carried by the classified query.
-pub(crate) fn answer_actionable(model: &Model, chat: &View) -> bool {
-    if !amux_ui::claude::allows_answer(model, chat.agent) {
+pub(crate) fn answer_actionable(ctx: &ReaderContext<'_>) -> bool {
+    if !ctx.can_answer {
         return false;
     }
-    resolve(model, chat)
+    resolve(ctx)
         .and_then(|resolved| resolved.ask)
-        .is_some_and(|ask| {
-            matches!(ask.state, AskState::Pending)
-                && amux_ui::claude::answer::menu_shape_refusal(&ask.kind).is_none()
-        })
+        .is_some_and(|ask| ask.is_pending() && ask.refusal.is_none())
 }
 
 /// The ask actions are formatted for the inside of a panel, where the
@@ -464,10 +442,9 @@ fn title_line(
 
 /// Whether ←/→ can step and to which plan index (resolved-plans reader
 /// only).
-pub(crate) fn plans_step(model: &Model, chat: &View, delta: i64) -> Option<usize> {
-    let layer = model.claude(chat.agent)?;
-    let count = layer.accepted_plans().len();
-    let ReaderSource::Plans { index } = &chat.reader.as_ref()?.source else {
+pub(crate) fn plans_step(ctx: &ReaderContext<'_>, delta: i64) -> Option<usize> {
+    let count = ctx.accepted_plans.len();
+    let ReaderSource::Plans { index } = &ctx.reader.source else {
         return None;
     };
     let index = (*index).min(count.checked_sub(1)?) as i64;

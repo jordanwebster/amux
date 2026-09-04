@@ -12,27 +12,27 @@ use std::collections::HashMap;
 
 use amux_ui::Model;
 use amux_ui::claude::{
-    Ask, AskDocument, ChatPhase, FeedEntry, FeedEntryKind, FeedItem, InterruptionKind,
-    SuccessFacts, ToolEntry, ToolInvocation, ToolOutcome, TurnDuration,
+    ChatPhase, FeedEntry, FeedEntryKind, FeedItem, InterruptionKind, SuccessFacts, ToolEntry,
+    ToolInvocation, ToolOutcome, TurnDuration,
 };
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
 use crate::chat::blocks::{
-    self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant, paint_attachment,
+    self, paint_agent_message, paint_ask_fact, paint_assistant, paint_attachment,
     paint_compaction_rule, paint_composer_block, paint_error, paint_exploration_run,
     paint_file_change, paint_header, paint_plan, paint_subagent, paint_thinking, paint_tool_line,
     paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
-use crate::chat::claude::{View, ask_ui, panel, reader};
+use crate::chat::claude::{View, reader_context, shared_ask};
+use crate::chat::claude_shared::{armed_quit_line, panel, reader};
 use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{
     FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph, subagent_marker,
 };
 use crate::render::{FrameContext, Theme, line_len, push_span, str_width};
-use crate::view::QuitGuard;
 
 /// One 1 Hz Tick drives the spinner and the elapsed text together (D5);
 /// the frame index derives from elapsed seconds — no renderer state.
@@ -85,7 +85,7 @@ pub(crate) fn claude_frame_parts(
     } else if let Some(draft) = chat.review.as_ref().filter(|draft| draft.open) {
         Some(draft.view.frame(theme, ctx.viewport.0, ctx.viewport.1))
     } else if chat.reader.is_some() {
-        reader::reader_frame(model, chat, theme, width, height)
+        reader_context(model, chat).and_then(|ctx| reader::reader_frame(&ctx, theme, width, height))
     } else {
         None
     };
@@ -207,15 +207,6 @@ fn working_row(model: &Model, chat: &View, ctx: &FrameContext, readonly: bool) -
     line
 }
 
-/// The armed quit guard's replacement hint row (`docs/CHAT.md`
-/// §Keybindings): it replaces the hint line — wherever that line lives —
-/// in warning color.
-pub(crate) fn armed_quit_line(theme: Theme) -> Line<'static> {
-    let mut line = Line::default();
-    push_span(&mut line, blocks::TEXT_COL, QuitGuard::HINT, theme.warn());
-    line
-}
-
 // --- the bottom block -------------------------------------------------------
 
 /// Everything below the feed: the read-only statement, a docked ask —
@@ -242,10 +233,11 @@ fn bottom_block(
             .claude(chat.agent)
             .map(|layer| layer.ask_count())
             .unwrap_or(1);
-        ask_panel_lines(
-            ask,
+        let shared = shared_ask(ask);
+        panel::paint(
+            &shared,
             panel::ask_panel(
-                ask,
+                &shared,
                 count,
                 chat.ask_ui.as_ref(),
                 chat.ask_failure.as_deref(),
@@ -269,51 +261,6 @@ fn bottom_block(
     lines
 }
 
-/// One docked ask, painted: its diff document leads the body through the
-/// shared diff rows, then the ask's own words, answers and keys.
-pub(crate) fn ask_panel_lines(
-    ask: &Ask,
-    mut parts: panel::AskPanel,
-    theme: Theme,
-    width: usize,
-) -> Vec<Line<'static>> {
-    if let Some(AskDocument::Diff(document)) = &ask.document {
-        let body_width = blocks::panel_body_width(width);
-        let preview =
-            diff_painter::paint_rows(&document.document.rows(), theme, body_width, 0, true)
-                .into_preview(DIFF_PREVIEW_BUDGET);
-        let mut body = preview.lines;
-        if preview.hidden > 0 {
-            body.push(remainder_row(preview.hidden, "f full document", theme));
-        }
-        body.append(&mut parts.body);
-        parts.body = body;
-    }
-    paint_ask_panel(
-        BlockKey(ask.id),
-        &parts.title,
-        parts.body,
-        parts.actions,
-        &parts.hints,
-        theme,
-        width,
-    )
-    .lines
-}
-
-/// `⋮ +K more lines · f full document` — a preview always states its own
-/// arithmetic and names what shows the rest.
-fn remainder_row(hidden: usize, affordance: &str, theme: Theme) -> Line<'static> {
-    let mut line = Line::default();
-    push_span(
-        &mut line,
-        blocks::TEXT_COL - 2,
-        format!("⋮ +{hidden} more lines · {affordance}"),
-        theme.muted(),
-    );
-    line
-}
-
 /// The read-only chat's bottom block (F1): the ask fact panel when one
 /// pends, the `⊘ read-only` statement where the composer would be, and
 /// the pager hints.
@@ -324,9 +271,10 @@ fn readonly_bottom(model: &Model, chat: &View, theme: Theme, width: usize) -> Ve
             .claude(chat.agent)
             .map(|layer| layer.ask_count())
             .unwrap_or(1);
-        lines.extend(ask_panel_lines(
-            ask,
-            panel::readonly_ask_panel(ask, count, blocks::panel_body_width(width), theme),
+        let shared = shared_ask(ask);
+        lines.extend(panel::paint(
+            &shared,
+            panel::readonly_ask_panel(&shared, count, blocks::panel_body_width(width), theme),
             theme,
             width,
         ));
@@ -343,7 +291,7 @@ fn readonly_bottom(model: &Model, chat: &View, theme: Theme, width: usize) -> Ve
     lines.push(Line::default());
     let mut hints = String::from("pgup/pgdn scroll");
     if let Some(ask) = chat.ask_head(model)
-        && ask_ui::has_readable(ask)
+        && shared_ask(ask).has_readable()
     {
         hints.push_str(" · f view document");
     }

@@ -10,13 +10,14 @@
 //! produce typed [`AskAnswer`]s; bytes never appear here (the daemon
 //! chooses the keystrokes that carry an answer).
 
+use amux_ui::claude::QuestionFact;
 use amux_ui::claude::answer::{
     AskAnswer, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
 };
-use amux_ui::claude::{Ask, AskKind, QuestionFact, ToolInvocation};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 
+use crate::chat::claude_shared::{SharedAsk, SharedAskKind};
 use crate::composer::{self, Composer};
 
 /// Panel state for one ask (keyed by `ask_id`: a new head gets a fresh
@@ -60,34 +61,10 @@ pub(crate) enum AskKeyOutcome {
     NotHandled,
 }
 
-/// Is this ask the plan-review permission variant?
-pub(crate) fn is_plan(ask: &Ask) -> bool {
-    matches!(
-        &ask.kind,
-        AskKind::Permission {
-            invocation: ToolInvocation::Plan { .. },
-            ..
-        }
-    )
-}
-
-/// Whether the ask carries anything the reader can show (`f`'s liveness:
-/// hints never advertise dead keys).
-pub(crate) fn has_readable(ask: &Ask) -> bool {
-    ask.document.is_some()
-        || matches!(
-            &ask.kind,
-            AskKind::Permission {
-                invocation: ToolInvocation::Plan { plan: Some(_), .. },
-                ..
-            }
-        )
-}
-
 impl AskUi {
-    pub fn for_ask(ask: &Ask) -> Self {
+    pub fn for_ask(ask: &SharedAsk<'_>) -> Self {
         let stage = match &ask.kind {
-            AskKind::Question { questions } => AskStage::Question(QuestionUi::new(questions)),
+            SharedAskKind::Question { questions } => AskStage::Question(QuestionUi::new(questions)),
             _ => AskStage::Menu { cursor: 0 },
         };
         Self {
@@ -149,9 +126,14 @@ impl AskUi {
     /// cursor here (false inside the plan reader, where they scroll the
     /// plan). Esc and Ctrl+X never reach this — the chat handler owns
     /// them.
-    pub fn handle_key(&mut self, ask: &Ask, key: &KeyEvent, menu_up_down: bool) -> AskKeyOutcome {
+    pub fn handle_key(
+        &mut self,
+        ask: &SharedAsk<'_>,
+        key: &KeyEvent,
+        menu_up_down: bool,
+    ) -> AskKeyOutcome {
         if let AskStage::Question(form) = &mut self.stage {
-            let AskKind::Question { questions } = &ask.kind else {
+            let SharedAskKind::Question { questions } = &ask.kind else {
                 return AskKeyOutcome::NotHandled;
             };
             return form.handle_key(questions, key);
@@ -186,7 +168,7 @@ impl AskUi {
             return AskKeyOutcome::NotHandled;
         }
 
-        let plan = is_plan(ask);
+        let plan = ask.is_plan();
         let AskStage::Menu { cursor } = &mut self.stage else {
             return AskKeyOutcome::NotHandled;
         };
@@ -228,7 +210,7 @@ impl AskUi {
                 _ => AskKeyOutcome::Handled,
             },
             KeyCode::Char('f') => {
-                if has_readable(ask) {
+                if ask.has_readable() {
                     AskKeyOutcome::OpenReader
                 } else {
                     AskKeyOutcome::Handled

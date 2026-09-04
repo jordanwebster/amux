@@ -6,6 +6,7 @@ pub(crate) mod attach;
 pub(crate) mod attachments;
 pub(crate) mod blocks;
 pub(crate) mod claude;
+pub(crate) mod claude_shared;
 mod codex;
 pub mod diff;
 pub(crate) mod frame;
@@ -1523,9 +1524,11 @@ mod tests {
         let AgentChatView::Claude(view) = &mut chat.inner else {
             panic!("a Claude chat");
         };
-        view.review = Some(Box::new(crate::chat::claude::draft::ReviewDraft::opened(
-            crate::review::fixture::sample_review(),
-        )));
+        view.review = Some(Box::new(
+            crate::chat::claude_shared::draft::ReviewDraft::opened(
+                crate::review::fixture::sample_review(),
+            ),
+        ));
 
         let wheel = |kind| MouseEvent {
             kind,

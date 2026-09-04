@@ -28,7 +28,7 @@ use std::iter::Peekable;
 use chrono::{DateTime, TimeDelta, Utc};
 pub use facts::{
     AcceptedPlan, AskDocument, DiffDocument, DiffMagnitude, QuestionFact, QuestionOption,
-    ToolInvocation,
+    SuggestionDestination, SuggestionFact, SuggestionKind, ToolInvocation,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -591,48 +591,6 @@ pub enum AskKind {
     },
     /// `AskUserQuestion` (C4 facts).
     Question { questions: Vec<QuestionFact> },
-}
-
-/// One `permission_suggestions` entry, extracted tolerantly (unknown
-/// suggestion kinds keep their tag and render generically).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SuggestionFact {
-    pub kind: Option<SuggestionKind>,
-    pub destination: Option<SuggestionDestination>,
-    /// Directories for directory-grant suggestions.
-    pub directories: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SuggestionKind {
-    AddDirectories,
-    Unknown(String),
-}
-
-impl SuggestionKind {
-    fn from_wire(kind: &str) -> Self {
-        match kind {
-            "addDirectories" => Self::AddDirectories,
-            unknown => Self::Unknown(unknown.to_string()),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SuggestionDestination {
-    Session,
-    Unknown(String),
-}
-
-impl SuggestionDestination {
-    fn from_wire(destination: &str) -> Self {
-        match destination {
-            "session" => Self::Session,
-            unknown => Self::Unknown(unknown.to_string()),
-        }
-    }
 }
 
 /// Why an ask needs the user — the phase's needs-you discriminator.

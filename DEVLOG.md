@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Gave both Claude chats one set of ask surfaces.** The ask
+panels, the panel stage machine, the fullscreen reader, the review draft and
+Claude's document chrome now live in one presentation module beside the
+provider facts they read. A chat hands them a borrowed view of its own pending
+ask — the tool invocation, the questions, the suggestions, the ask-time
+document, whether an answer is in flight and, when its transport cannot carry
+one, why — so nothing in the panels or the reader knows how the ask arrived or
+how the answer will be encoded. Claude's permission suggestion facts moved into
+the shared facts module for the same reason. The PTY chat consumes the result
+unchanged: every chat, agent-to-agent and review golden is byte-identical.
+
 2026-09-04 — **Shared Claude's provider facts between chat layers.** Claude
 tool invocations, question and plan facts, ask-time documents, and inbound
 agent-message envelope parsing now live in one provider-specific facts module.

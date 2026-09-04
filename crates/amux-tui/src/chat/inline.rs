@@ -21,8 +21,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
 
-use crate::chat::claude::ask_ui::{AskKeyOutcome, AskUi};
-use crate::chat::claude::panel;
+use crate::chat::claude::shared_ask;
+use crate::chat::claude_shared::ask_ui::{AskKeyOutcome, AskUi};
+use crate::chat::claude_shared::panel;
 use crate::chat::codex::render::{ApprovalView, approval_panel};
 use crate::composer::Composer;
 use crate::render::{Theme, push_span};
@@ -119,9 +120,9 @@ impl InlineAsk {
     /// and answering it with nothing is the right outcome.
     pub(crate) fn open(model: &Model, child: AgentId) -> Option<Self> {
         let ui = match model.agent(child)?.structured_protocol()? {
-            StructuredProtocol::Claude => {
-                Ui::Claude(AskUi::for_ask(model.claude(child)?.ask_head()?))
-            }
+            StructuredProtocol::Claude => Ui::Claude(AskUi::for_ask(&shared_ask(
+                model.claude(child)?.ask_head()?,
+            ))),
             StructuredProtocol::Codex => {
                 model.codex(child)?.ask_head()?;
                 Ui::Codex { cursor: 0 }
@@ -158,7 +159,7 @@ pub(crate) fn reconcile(model: &Model, parent: AgentId, slot: &mut Option<Inline
     match &mut inline.ui {
         Ui::Claude(ui) => match model.claude(child).and_then(|layer| layer.ask_head()) {
             Some(ask) if ask.id == ui.ask_id => {}
-            Some(ask) => *ui = AskUi::for_ask(ask),
+            Some(ask) => *ui = AskUi::for_ask(&shared_ask(ask)),
             None => *slot = None,
         },
         Ui::Codex { cursor } => match model.codex(child).and_then(|layer| layer.ask_head()) {
@@ -196,8 +197,9 @@ pub(crate) fn panel_lines(
                 .claude(child)
                 .map(|layer| layer.ask_count())
                 .unwrap_or(1);
+            let shared = shared_ask(ask);
             let mut parts = panel::ask_panel(
-                ask,
+                &shared,
                 count,
                 Some(ui),
                 None,
@@ -209,7 +211,7 @@ pub(crate) fn panel_lines(
             if !parts.hints.is_empty() {
                 parts.hints.push_str(" · esc back");
             }
-            crate::chat::claude::ask_panel_lines(ask, parts, theme, width)
+            panel::paint(&shared, parts, theme, width)
         }
         Ui::Codex { cursor } => {
             let Some(ask) = model.codex(child).and_then(|layer| layer.ask_head()) else {
@@ -288,7 +290,7 @@ pub(crate) fn handle_key(model: &Model, inline: &mut InlineAsk, key: &KeyEvent) 
             {
                 return InlineOutcome::NotHandled;
             }
-            match ui.handle_key(ask, key, true) {
+            match ui.handle_key(&shared_ask(ask), key, true) {
                 AskKeyOutcome::Answer(answer) => {
                     InlineOutcome::Dispatch(answer_command(child, ask.id, answer))
                 }
