@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-04 — **Kept the attachment guide's review syntax executable.** The
+canonical review element now includes the `name="review"` attribute emitted by
+real composer exports and explains that an empty name may be omitted. A focused
+test reconstructs the documented review and requires its complete element to
+equal the formatter output, while separately proving the omitted-name form
+round-trips as an empty display name.
+
 2026-09-04 — **Proved working-tree reviews stay frozen.** A deterministic
 boundary test now opens the review page while the agent is working over a
 patch read from a real temporary Git checkout, changes the file again after

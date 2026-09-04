@@ -54,7 +54,7 @@ Pasted text and reviews carry a body:
 ```
 
 ```text
-<amux-attachment kind="review" diff="sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210" base="working-tree" head="4f2a9c1" comments="1">blobs: [["src/lib.rs","a1b2c3"]]
+<amux-attachment kind="review" diff="sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210" base="working-tree" head="4f2a9c1" name="review" comments="1">blobs: [["src/lib.rs","a1b2c3"]]
 ## src/lib.rs @@ old:12..new:13
 &gt; -old call
 &gt; +new call
@@ -71,7 +71,10 @@ canonical spelling that the parser round-trips.
 ### Review body and identity
 
 A review freezes the patch when the page opens. The opening element names the
-Diff artifact, base, reviewed `head`, optional `merge-base`, and comment count.
+Diff artifact, base, reviewed `head`, optional `merge-base`, optional display
+`name`, and comment count. The formatter emits `name` when it is non-empty;
+the composer uses `name="review"`. The parser accepts an omitted `name` as an
+empty display name.
 For a working-tree review, the first body line records the available new-side
 Git blob hashes for changed paths. That identity says exactly what was reviewed
 even if the tree changes later.
