@@ -72,9 +72,19 @@ pub struct SessionSetup {
     pub prompt: String,
     pub options: QueryOptions,
     answer_permission: bool,
+    question_answer: Option<String>,
+    plan_reviews: VecDeque<PlanReview>,
     hook_log: Option<Arc<std::sync::Mutex<Vec<String>>>>,
     elicitation_content: Option<serde_json::Value>,
+    dialog_result: Option<serde_json::Value>,
     defer_prompt: bool,
+}
+
+#[derive(Clone)]
+pub(crate) enum PlanReview {
+    ApproveAuto,
+    ApproveManual,
+    RequestChanges(String),
 }
 
 impl SessionSetup {
@@ -84,8 +94,11 @@ impl SessionSetup {
             prompt: prompt.into(),
             options: QueryOptions::new(model),
             answer_permission: false,
+            question_answer: None,
+            plan_reviews: VecDeque::new(),
             hook_log: None,
             elicitation_content: None,
+            dialog_result: None,
             defer_prompt: false,
         }
     }
@@ -106,12 +119,24 @@ impl SessionSetup {
         self.answer_permission = true;
     }
 
+    pub(crate) fn answer_question(&mut self, answer: impl Into<String>) {
+        self.question_answer = Some(answer.into());
+    }
+
+    pub(crate) fn review_plans(&mut self, reviews: impl IntoIterator<Item = PlanReview>) {
+        self.plan_reviews = reviews.into_iter().collect();
+    }
+
     pub(crate) fn answer_hooks(&mut self, log: Option<Arc<std::sync::Mutex<Vec<String>>>>) {
         self.hook_log = Some(log.unwrap_or_default());
     }
 
     pub(crate) fn accept_elicitation(&mut self, content: serde_json::Value) {
         self.elicitation_content = Some(content);
+    }
+
+    pub(crate) fn complete_dialog(&mut self, result: serde_json::Value) {
+        self.dialog_result = Some(result);
     }
 }
 
@@ -216,8 +241,13 @@ impl Sessions {
             sessions: self.clone(),
             pending: Vec::new(),
             answer_permission: setup.answer_permission,
+            question_answer: setup.question_answer,
+            plan_reviews: setup.plan_reviews,
+            permission_requests: Vec::new(),
             hook_log: setup.hook_log,
             elicitation_content: setup.elicitation_content,
+            dialog_result: setup.dialog_result,
+            dialog_requests: Vec::new(),
             exit: None,
         })
     }
@@ -235,8 +265,13 @@ pub struct SpecSession {
     /// to has not been given yet.
     pending: Vec<Message>,
     answer_permission: bool,
+    question_answer: Option<String>,
+    plan_reviews: VecDeque<PlanReview>,
+    permission_requests: Vec<(String, serde_json::Value)>,
     hook_log: Option<Arc<std::sync::Mutex<Vec<String>>>>,
     elicitation_content: Option<serde_json::Value>,
+    dialog_result: Option<serde_json::Value>,
+    dialog_requests: Vec<crate::sdk::UserDialogRequest>,
     exit: Option<ProcessExit>,
 }
 
@@ -345,6 +380,17 @@ impl SpecSession {
         self.control().interrupt().await.map(|_| ())
     }
 
+    pub(crate) fn permission_request_count(&self, tool_name: &str) -> usize {
+        self.permission_requests
+            .iter()
+            .filter(|(seen, _)| seen == tool_name)
+            .count()
+    }
+
+    pub(crate) fn dialog_requests(&self) -> &[crate::sdk::UserDialogRequest] {
+        &self.dialog_requests
+    }
+
     /// Read forward until the session has produced a message of this shape,
     /// keeping what was read for whoever takes it.
     ///
@@ -356,6 +402,17 @@ impl SpecSession {
         let wanted = kind.to_owned();
         self.advance_until(move |message| message.kind() == wanted)
             .await;
+    }
+
+    pub(crate) async fn advance_to_permission_request(&mut self, tool_name: &str, count: usize) {
+        while self.permission_request_count(tool_name) < count {
+            let Some(message) = self.next_message().await else {
+                panic!(
+                    "the session ended before reaching permission request {count} for {tool_name}"
+                );
+            };
+            self.pending.push(message);
+        }
     }
 
     /// Read the stream to the end of the turn in flight.
@@ -411,9 +468,49 @@ impl SpecSession {
                     input,
                     suggestions: _,
                     blocked_path: _,
-                    tool_name: _,
+                    tool_name,
                 } => {
-                    let result = if self.answer_permission {
+                    self.permission_requests
+                        .push((tool_name.clone(), input.clone()));
+                    let result = if tool_name == "AskUserQuestion" && self.question_answer.is_some()
+                    {
+                        crate::sdk::PermissionResult::Allow {
+                            updated_input: Some(question_input_with_answer(
+                                input,
+                                self.question_answer
+                                    .as_deref()
+                                    .expect("question answer checked"),
+                            )),
+                            updated_permissions: None,
+                            tool_use_id: None,
+                        }
+                    } else if tool_name == "ExitPlanMode" && !self.plan_reviews.is_empty() {
+                        match self.plan_reviews.pop_front().expect("plan review checked") {
+                            PlanReview::ApproveAuto => crate::sdk::PermissionResult::Allow {
+                                updated_input: Some(input),
+                                updated_permissions: Some(vec![
+                                    crate::sdk::PermissionUpdate::SetMode {
+                                        mode: PermissionMode::AcceptEdits,
+                                        destination:
+                                            crate::sdk::PermissionUpdateDestination::Session,
+                                    },
+                                ]),
+                                tool_use_id: None,
+                            },
+                            PlanReview::ApproveManual => crate::sdk::PermissionResult::Allow {
+                                updated_input: Some(input),
+                                updated_permissions: None,
+                                tool_use_id: None,
+                            },
+                            PlanReview::RequestChanges(message) => {
+                                crate::sdk::PermissionResult::Deny {
+                                    message,
+                                    interrupt: Some(false),
+                                    tool_use_id: None,
+                                }
+                            }
+                        }
+                    } else if self.answer_permission {
                         crate::sdk::PermissionResult::Allow {
                             updated_input: Some(input),
                             updated_permissions: None,
@@ -457,14 +554,19 @@ impl SpecSession {
                         .await
                         .expect("the elicitation is answered through Control");
                 }
-                SdkEvent::UserDialog { id, request: _ } => {
+                SdkEvent::UserDialog { id, request } => {
+                    self.dialog_requests.push(request);
+                    let result = match self.dialog_result.clone() {
+                        Some(result) => crate::sdk::UserDialogResult::Completed {
+                            result,
+                            extensions: Default::default(),
+                        },
+                        None => crate::sdk::UserDialogResult::Cancelled {
+                            extensions: Default::default(),
+                        },
+                    };
                     self.control()
-                        .answer_user_dialog(
-                            id,
-                            crate::sdk::UserDialogResult::Cancelled {
-                                extensions: Default::default(),
-                            },
-                        )
+                        .answer_user_dialog(id, result)
                         .await
                         .expect("the dialog request is answered through Control");
                 }
@@ -491,6 +593,24 @@ impl SpecSession {
             }),
         }
     }
+}
+
+fn question_input_with_answer(mut input: serde_json::Value, answer: &str) -> serde_json::Value {
+    let answers = input
+        .get("questions")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|question| question.get("question").and_then(serde_json::Value::as_str))
+        .map(|question| {
+            (
+                question.to_owned(),
+                serde_json::Value::String(answer.to_owned()),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    input["answers"] = serde_json::Value::Object(answers);
+    input
 }
 
 fn allow_hook() -> crate::sdk::HookOutput {
@@ -774,8 +894,11 @@ static DEFINITIONS: &[&SpecDef] = &[
     &control::SESSION_MAINTENANCE,
     &control::CONNECTED_MCP_SERVERS,
     &tools::PERMISSION_CALLBACK,
+    &tools::QUESTION_ASKED,
+    &tools::PLAN_REVIEWED,
     &tools::IN_PROCESS_MCP,
-    &tools::ELICITED,
+    &tools::ELICITATION_ACCEPTED,
+    &tools::DIALOG_REQUESTED,
     &tools::HOOK_LIFECYCLE,
     &configured::CONFIGURED_TURN,
     &configured::EVERY_HOOK_EVENT,
@@ -808,8 +931,11 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("control/session_maintenance", "session_maintenance"),
     entry("control/connected_mcp_servers", "connected_mcp_servers"),
     entry("tools/permission_callback", "permission_callback"),
+    entry("tools/question_asked", "question_asked"),
+    entry("tools/plan_reviewed", "plan_reviewed"),
     entry("tools/in_process_mcp", "in_process_mcp"),
-    entry("tools/elicited", "elicited"),
+    entry("tools/elicitation_accepted", "elicitation_accepted"),
+    entry("tools/dialog_requested", "dialog_requested"),
     entry("tools/hook_lifecycle", "hook_lifecycle"),
     entry("options/configured_turn", "configured_turn"),
     entry("options/every_hook_event", "every_hook_event"),

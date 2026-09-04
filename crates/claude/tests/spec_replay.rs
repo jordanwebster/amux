@@ -80,7 +80,7 @@ async fn replay_pty(entry: &replay_support::SpecEntry) {
 
 #[tokio::test]
 async fn elicited() {
-    replay("tools/elicited").await;
+    replay("tools/elicitation_accepted").await;
 }
 
 #[tokio::test]

@@ -2455,10 +2455,9 @@ mod tests {
 /// the draft survives. Sibling of `tests` so the check filter names it.
 #[cfg(test)]
 mod attachments {
-    use crate::composer::TokenAttachment;
-
     use super::tests::{VIEWPORT, chat_with_draft, ctrl, edit_ask_model, idle_model, press, t};
     use super::*;
+    use crate::composer::TokenAttachment;
 
     fn long_paste(lines: usize) -> String {
         (1..=lines)

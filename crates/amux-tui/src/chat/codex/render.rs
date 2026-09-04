@@ -1217,24 +1217,24 @@ fn prompt_body(prompt: &PromptEntry) -> String {
 
 fn non_text_part(part: &PromptPart) -> Option<String> {
     Some(match part {
-            PromptPart::Text { .. } => return None,
-            PromptPart::Image { url } => format!(
-                "[image{}]",
-                url.as_deref()
-                    .map(|url| format!(": {url}"))
-                    .unwrap_or_default()
-            ),
-            PromptPart::LocalImage { path } => format!(
-                "[local image{}]",
-                path.as_deref()
-                    .map(|path| format!(": {path}"))
-                    .unwrap_or_default()
-            ),
-            PromptPart::Other { item_type, raw } => format!(
-                "[{}: {}]",
-                item_type.as_deref().unwrap_or("input"),
-                json_text(raw)
-            ),
+        PromptPart::Text { .. } => return None,
+        PromptPart::Image { url } => format!(
+            "[image{}]",
+            url.as_deref()
+                .map(|url| format!(": {url}"))
+                .unwrap_or_default()
+        ),
+        PromptPart::LocalImage { path } => format!(
+            "[local image{}]",
+            path.as_deref()
+                .map(|path| format!(": {path}"))
+                .unwrap_or_default()
+        ),
+        PromptPart::Other { item_type, raw } => format!(
+            "[{}: {}]",
+            item_type.as_deref().unwrap_or("input"),
+            json_text(raw)
+        ),
     })
 }
 

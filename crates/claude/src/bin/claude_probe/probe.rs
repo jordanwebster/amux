@@ -20,9 +20,6 @@ pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("__pty-hook") {
         return forward_pty_hook();
     }
-    if std::env::var_os("CLAUDE_CAPTURE_PROXY").is_some() {
-        return run_capture_proxy().await;
-    }
     if std::env::var_os("CLAUDE_SPEC_MCP_SERVER").is_some()
         || std::env::current_exe()?
             .file_stem()
@@ -30,6 +27,9 @@ pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         run_spec_mcp_server();
         return Ok(());
+    }
+    if std::env::var_os("CLAUDE_CAPTURE_PROXY").is_some() {
+        return run_capture_proxy().await;
     }
     if let (Some(entry), Some(out)) = (
         std::env::var_os("CLAUDE_PROBE_CAPTURE_ENTRY"),
