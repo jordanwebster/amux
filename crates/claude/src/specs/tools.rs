@@ -153,6 +153,8 @@ async fn plan_reviewed(session: &mut SpecSession) {
         "the requested changes reached the plan tool result: {:?}",
         revision.tool_results()
     );
+    session.advance_to("system.thinking_tokens").await;
+    let _ = session.take();
 }
 
 fn permission_setup() -> SessionSetup {
@@ -429,6 +431,9 @@ fn dialog_setup() -> SessionSetup {
          human-to-human transmission. Do not use tools.",
     );
     setup.options.fallback_model = Some(HAIKU.to_owned());
+    setup.options.settings = Some(crate::sdk::SettingsConfig::Inline(serde_json::json!({
+        "switchModelsOnFlag": false,
+    })));
     setup
         .options
         .supported_dialog_kinds

@@ -1022,9 +1022,17 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
                 options.cli_path = Some(binary.clone());
                 options.cwd = Some(cwd.clone());
                 options.env = environment.clone();
-                options.settings = Some(crate::sdk::SettingsConfig::Inline(
-                    serde_json::json!({"sandbox": {"enabled": false}}),
-                ));
+                let sandbox = serde_json::json!({"enabled": false});
+                if let Some(crate::sdk::SettingsConfig::Inline(
+                    serde_json::Value::Object(settings),
+                )) = &mut options.settings
+                {
+                    settings.insert("sandbox".to_owned(), sandbox);
+                } else {
+                    options.settings = Some(crate::sdk::SettingsConfig::Inline(
+                        serde_json::json!({"sandbox": sandbox}),
+                    ));
+                }
             }),
             None,
         ),
