@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::{RwLock, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::protocol::{ProtocolError, protocol_error_from_status_details, protocol_status};
 use crate::routing::{
     Host, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken, LinkConnectorTokenRefresher,
-    spawn_connector_to_channel_with_auth_and_establishment,
+    spawn_connector_to_channel_with_auth_establishment_and_shutdown,
 };
 use crate::subscription::SubscriptionReporter;
 use crate::transport::tls_channel;
@@ -38,13 +38,74 @@ const CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 /// purchase on the phone from looking broken while the desktop catches up.
 const SUBSCRIPTION_RECHECK_INTERVAL: Duration = Duration::from_secs(5);
 
+pub(crate) struct CloudConnector {
+    stop_tx: watch::Sender<bool>,
+    task: JoinHandle<()>,
+}
+
+impl CloudConnector {
+    pub(crate) fn request_stop(&self) {
+        let _ = self.stop_tx.send(true);
+    }
+
+    pub(crate) async fn stop(self) {
+        self.request_stop();
+        let _ = self.task.await;
+    }
+
+    pub(crate) fn into_task(self) -> JoinHandle<()> {
+        self.task
+    }
+
+    #[cfg(testnet)]
+    pub(crate) fn testnet_bearer(
+        connector_ctx: LinkConnectorCtx,
+        channel: tonic::transport::Channel,
+        token: String,
+    ) -> Self {
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let connector_task =
+            crate::routing::spawn_connector_to_channel_with_bearer_token_and_shutdown(
+                connector_ctx,
+                channel,
+                token,
+                stop_rx,
+            );
+        let task = tokio::spawn(async move {
+            let _ = connector_task.await;
+        });
+        Self { stop_tx, task }
+    }
+
+    #[cfg(testnet)]
+    pub(crate) fn testnet_with_auth(
+        connector_ctx: LinkConnectorCtx,
+        channel: tonic::transport::Channel,
+        auth: LinkConnectorAuth,
+    ) -> Self {
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let (connector_task, _established_rx) =
+            spawn_connector_to_channel_with_auth_establishment_and_shutdown(
+                connector_ctx,
+                channel,
+                auth,
+                stop_rx,
+            );
+        let task = tokio::spawn(async move {
+            let _ = connector_task.await;
+        });
+        Self { stop_tx, task }
+    }
+}
+
 pub(crate) fn establish_cloud_connection(
     config: Config,
     state: Arc<RwLock<ServerState>>,
     connector_ctx: LinkConnectorCtx,
-) -> JoinHandle<()> {
+) -> CloudConnector {
+    let (stop_tx, mut stop_rx) = watch::channel(false);
     let cloud_span = tracing::info_span!("cloud", url = %config.cloud_url);
-    tokio::spawn(
+    let task = tokio::spawn(
         async move {
             if !setup::cloud_enabled(&config) {
                 report_subscription_required(&state, false).await;
@@ -55,11 +116,15 @@ pub(crate) fn establish_cloud_connection(
             let mut backoff = INITIAL_BACKOFF;
 
             loop {
+                if *stop_rx.borrow() {
+                    return;
+                }
                 tracing::info!("attempting cloud routing connection");
                 match run_cloud_connection(
                     &config,
                     state.clone(),
                     connector_ctx.clone(),
+                    stop_rx.clone(),
                 )
                 .await
                 {
@@ -84,7 +149,9 @@ pub(crate) fn establish_cloud_connection(
                             retry_delay = ?SUBSCRIPTION_RECHECK_INTERVAL,
                             "waiting to re-check cloud subscription"
                         );
-                        tokio::time::sleep(SUBSCRIPTION_RECHECK_INTERVAL).await;
+                        if sleep_or_stop(SUBSCRIPTION_RECHECK_INTERVAL, &mut stop_rx).await {
+                            return;
+                        }
                         continue;
                     }
                     Err(CloudConnectionError::Retriable { msg, reset_backoff }) => {
@@ -102,12 +169,15 @@ pub(crate) fn establish_cloud_connection(
 
                 let retry_delay = jittered_backoff(backoff);
                 tracing::info!(base_backoff = ?backoff, retry_delay = ?retry_delay, "reconnecting to cloud");
-                tokio::time::sleep(retry_delay).await;
+                if sleep_or_stop(retry_delay, &mut stop_rx).await {
+                    return;
+                }
                 backoff = next_backoff(backoff);
             }
         }
         .instrument(cloud_span),
-    )
+    );
+    CloudConnector { stop_tx, task }
 }
 
 /// Error type for cloud connection attempts
@@ -141,6 +211,7 @@ async fn run_cloud_connection(
     config: &Config,
     state: Arc<RwLock<ServerState>>,
     connector_ctx: LinkConnectorCtx,
+    stop_rx: watch::Receiver<bool>,
 ) -> std::result::Result<(), CloudConnectionError> {
     let credentials = {
         let state = state.read().await;
@@ -164,7 +235,8 @@ async fn run_cloud_connection(
         }
     };
 
-    run_cloud_connection_with_details(config, state, connector_ctx, credentials, details).await
+    run_cloud_connection_with_details(config, state, connector_ctx, credentials, details, stop_rx)
+        .await
 }
 
 async fn run_cloud_connection_with_details(
@@ -173,6 +245,7 @@ async fn run_cloud_connection_with_details(
     connector_ctx: LinkConnectorCtx,
     credentials: Arc<dyn CredentialProvider>,
     details: CloudRoutingConnectionDetails,
+    stop_rx: watch::Receiver<bool>,
 ) -> std::result::Result<(), CloudConnectionError> {
     tracing::info!(host = %details.host, port = details.port, "connecting to cloud routing");
     let channel = cloud_routing_channel(details.host.clone(), details.port).map_err(|error| {
@@ -194,11 +267,13 @@ async fn run_cloud_connection_with_details(
             current_port: details.port,
         }),
     );
-    let (connector_task, established_rx) = spawn_connector_to_channel_with_auth_and_establishment(
-        connector_ctx,
-        channel,
-        connector_auth,
-    );
+    let (connector_task, established_rx) =
+        spawn_connector_to_channel_with_auth_establishment_and_shutdown(
+            connector_ctx,
+            channel,
+            connector_auth,
+            stop_rx,
+        );
     let _abort_connector_on_drop = AbortTaskOnDrop(connector_task.abort_handle());
     await_cloud_establishment(
         &state,
@@ -220,6 +295,16 @@ async fn run_cloud_connection_with_details(
         Err(status) => {
             Err(cloud_connection_error_from_status(&state, status, connected_at.elapsed()).await)
         }
+    }
+}
+
+async fn sleep_or_stop(duration: Duration, stop_rx: &mut watch::Receiver<bool>) -> bool {
+    if *stop_rx.borrow() {
+        return true;
+    }
+    tokio::select! {
+        _ = tokio::time::sleep(duration) => false,
+        changed = stop_rx.changed() => changed.is_ok() && *stop_rx.borrow(),
     }
 }
 

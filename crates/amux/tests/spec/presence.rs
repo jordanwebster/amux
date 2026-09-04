@@ -32,6 +32,32 @@ async fn cloud_attached_daemons_see_each_other_come_online_and_go_offline() {
     laptop.cannot_see(&desktop).await;
 }
 
+/// Stopping a cloud connector is a complete teardown operation: it returns
+/// only after both ends removed the established link and its derived
+/// presence. The testnet connector owns no duplicate socket that can make
+/// this pass by force-closing the transport.
+#[tokio::test]
+async fn connector_teardown_makes_the_relay_and_paired_peer_see_the_daemon_offline() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("laptop")
+        .cloud_only()
+        .daemon("phone")
+        .cloud_only()
+        .paired("laptop", "phone", Via::Cloud)
+        .start()
+        .await;
+    let [laptop, phone] = net.daemons(["laptop", "phone"]);
+    let routed_stream = laptop.open_event_stream_to(&phone).await;
+
+    phone.stop_cloud().await;
+
+    net.cloud_relay_sees_offline(&phone).await;
+    laptop.sees_offline(&phone).await;
+    laptop.cannot_call(&phone).await;
+    routed_stream.expect_disconnect().await;
+}
+
 /// A cloud-visible untrusted host is a pairing candidate, not a trusted
 /// transport target. Discovering it must not open a normal device-mTLS
 /// tunnel before pairing has established trust.

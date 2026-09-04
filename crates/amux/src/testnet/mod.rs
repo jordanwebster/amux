@@ -30,11 +30,11 @@
 //!   [`assertions::eventually`] under one default timeout; on expiry it
 //!   panics with a dump of the declared topology, every daemon's host table,
 //!   and the failing daemon's routes. Tests contain no retry loops.
-//! - **Restart = process exit.** `Daemon::stop`/`restart` drop the runtime
-//!   *and* sever OS-level duplicates of every socket it held (accepted and
-//!   dialed), because detached connection tasks would otherwise keep a dead
-//!   incarnation "online". Identity, trust, and the TCP address persist in
-//!   the daemon's data dir across restarts.
+//! - **Restart = complete teardown.** `Daemon::stop`/`restart` await the cloud
+//!   connector's cleanup, then sever direct sockets whose detached dispatcher
+//!   tasks model process-owned connections. Aborting an established connector
+//!   task skips its asynchronous link cleanup and must not be used as stop.
+//!   Identity, trust, and the TCP address persist across restarts.
 //! - **Sever = real outage.** `sever_direct`/`cloud_offline` cut sockets (or
 //!   close links) hard and return only once the affected daemons have
 //!   observed the loss, so follow-up assertions start from a settled net.
@@ -246,6 +246,25 @@ impl TestNet {
                 target.name()
             );
         }
+    }
+
+    /// Waits until the relay has removed `target` from its authenticated
+    /// tenant's live links.
+    pub async fn cloud_relay_sees_offline(&self, target: &Daemon) {
+        let cloud = self.cloud();
+        let user_id = target
+            .inner
+            .cloud
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not cloud-attached", target.name()))
+            .user_id;
+        let assertion = format!("cloud relay observes '{}' going offline", target.name());
+        eventually(
+            &assertion,
+            async || !cloud.has_link_to(user_id, target.host_id()).await,
+            target.failure_dump(),
+        )
+        .await;
     }
 
     fn cloud(&self) -> &CloudRelay {
@@ -515,7 +534,6 @@ impl TestNetBuilder {
                 }),
                 runtime: Mutex::new(None),
                 tracked_tcp: Default::default(),
-                tracked_cloud_tcp: Default::default(),
             });
             let runtime = start_daemon_runtime(&inner, prep.listener).await;
             *inner.runtime.lock().await = Some(runtime);

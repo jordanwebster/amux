@@ -18,6 +18,6 @@ pub(crate) use reachability::ReachabilityLinkConnector;
 #[cfg(testnet)]
 pub(crate) use startup::start_user_services_with_artifact_clock;
 pub(crate) use startup::{
-    CloudLinkService, DeviceRuntimeSecurity, StartedUserServices, establish_cloud_connection,
-    start_user_services,
+    CloudConnector, CloudLinkService, DeviceRuntimeSecurity, StartedUserServices,
+    establish_cloud_connection, start_user_services,
 };

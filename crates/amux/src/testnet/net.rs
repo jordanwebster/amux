@@ -198,6 +198,17 @@ impl CloudRelay {
         Ok(())
     }
 
+    pub(crate) async fn has_link_to(&self, user_id: Uuid, host: HostId) -> bool {
+        let service = {
+            let guard = self.server.lock().await;
+            guard.as_ref().map(|running| running.service.clone())
+        };
+        match service {
+            Some(service) => service.user_has_link_to(user_id, host).await,
+            None => false,
+        }
+    }
+
     /// Takes the relay down hard: stops accepting and severs every accepted
     /// socket, so daemons observe a genuine outage (links fail, routes drop).
     pub(crate) async fn go_offline(&self) {

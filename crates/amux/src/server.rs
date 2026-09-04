@@ -691,11 +691,9 @@ async fn spawn_local_background_tasks(
     let mut tasks = Vec::new();
     if crate::setup::cloud_enabled(&config) {
         let connector_ctx = started_services.link_connector_ctx();
-        tasks.push(establish_cloud_connection(
-            config.clone(),
-            state.clone(),
-            connector_ctx,
-        ));
+        tasks.push(
+            establish_cloud_connection(config.clone(), state.clone(), connector_ctx).into_task(),
+        );
     }
     tasks.push(crate::agents::spawn_artifact_sweeper(
         started_services.artifact_owners.clone(),

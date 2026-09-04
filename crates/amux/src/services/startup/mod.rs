@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, UNIX_EPOCH};
 
-pub(crate) use cloud::establish_cloud_connection;
+pub(crate) use cloud::{CloudConnector, establish_cloud_connection};
 use futures_util::{Stream, StreamExt, stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
@@ -25,7 +25,6 @@ use tower::Service;
 use uuid::Uuid;
 
 use crate::agents::ArtifactOwners;
-use crate::audit;
 use crate::connection::ConnectionManager;
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
@@ -52,6 +51,7 @@ use crate::transport::{bind_unix_listener, unix_incoming};
 use crate::trust::{SharedTrustStore, TrustStore};
 use crate::tunnel::{TunnelPool, TunnelTransport};
 use crate::user_state::ServerState;
+use crate::{HostId, audit};
 
 const DEVICE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOUD_TLS_HANDSHAKE_CONCURRENCY: usize = 128;
@@ -212,6 +212,25 @@ impl CloudLinkService {
             .await
             .get(&user_id)
             .map(|services| services.connections.clone())
+    }
+
+    #[cfg(testnet)]
+    pub(crate) async fn user_has_link_to(&self, user_id: Uuid, host_id: HostId) -> bool {
+        let tunnels = self
+            .inner
+            .users
+            .read()
+            .await
+            .get(&user_id)
+            .map(|services| services.tunnels.clone());
+        match tunnels {
+            Some(tunnels) => tunnels
+                .link_registry()
+                .link_to_peer(host_id)
+                .await
+                .is_some(),
+            None => false,
+        }
     }
 
     pub(crate) async fn send_link_close_to_all(&self, reason: wire::pb::LinkCloseReason) {
