@@ -13,7 +13,9 @@ refresh flows with userinfo, while a feature-independent relay and dedicated
 embedding recipe keep no-local-agents integration tests isolated from the
 workspace build. Discarding a connector's stop handle preserves cloud retry
 and subscription backoff, while an explicit stop still interrupts either
-wait immediately.
+wait immediately. Stop also cancels credential and connection-detail
+preparation, so a stalled cloud API request cannot block profile teardown;
+an established routing connector still shuts down through link cleanup.
 
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by

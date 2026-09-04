@@ -211,8 +211,26 @@ async fn run_cloud_connection(
     config: &Config,
     state: Arc<RwLock<ServerState>>,
     connector_ctx: LinkConnectorCtx,
-    stop_rx: watch::Receiver<bool>,
+    mut stop_rx: watch::Receiver<bool>,
 ) -> std::result::Result<(), CloudConnectionError> {
+    let prepared = tokio::select! {
+        biased;
+        _ = wait_for_stop(&mut stop_rx) => return Ok(()),
+        prepared = prepare_cloud_connection(config, &state) => prepared,
+    };
+    let (credentials, details) = prepared?;
+
+    run_cloud_connection_with_details(config, state, connector_ctx, credentials, details, stop_rx)
+        .await
+}
+
+async fn prepare_cloud_connection(
+    config: &Config,
+    state: &Arc<RwLock<ServerState>>,
+) -> std::result::Result<
+    (Arc<dyn CredentialProvider>, CloudRoutingConnectionDetails),
+    CloudConnectionError,
+> {
     let credentials = {
         let state = state.read().await;
         state.credentials.clone().ok_or_else(|| {
@@ -224,7 +242,7 @@ async fn run_cloud_connection(
 
     let details = match fetch_routing_connection_details(config, credentials.as_ref()).await {
         Ok(details) => {
-            report_subscription_required(&state, false).await;
+            report_subscription_required(state, false).await;
             details
         }
         Err(error) => {
@@ -235,8 +253,7 @@ async fn run_cloud_connection(
         }
     };
 
-    run_cloud_connection_with_details(config, state, connector_ctx, credentials, details, stop_rx)
-        .await
+    Ok((credentials, details))
 }
 
 async fn run_cloud_connection_with_details(
@@ -305,19 +322,25 @@ async fn sleep_or_stop(duration: Duration, stop_rx: &mut watch::Receiver<bool>) 
 
     let sleep = tokio::time::sleep(duration);
     tokio::pin!(sleep);
+    tokio::select! {
+        biased;
+        _ = wait_for_stop(stop_rx) => true,
+        _ = &mut sleep => false,
+    }
+}
+
+async fn wait_for_stop(stop_rx: &mut watch::Receiver<bool>) {
     loop {
-        tokio::select! {
-            _ = &mut sleep => return false,
-            changed = stop_rx.changed() => match changed {
-                Ok(()) if *stop_rx.borrow() => return true,
-                Ok(()) => {}
-                Err(_) => {
-                    // Losing the stop handle means this task can no longer be
-                    // stopped cooperatively; it does not waive the backoff.
-                    sleep.await;
-                    return false;
-                }
-            },
+        if *stop_rx.borrow() {
+            return;
+        }
+        match stop_rx.changed().await {
+            Ok(()) => {}
+            Err(_) => {
+                // Losing the stop handle means this task can no longer be
+                // stopped cooperatively; it is not itself a stop request.
+                std::future::pending::<()>().await;
+            }
         }
     }
 }
@@ -504,6 +527,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    use tokio::io::AsyncReadExt;
     use tokio::sync::{RwLock, mpsc, oneshot};
     use uuid::Uuid;
 
@@ -511,13 +535,16 @@ mod tests {
         ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
         SUBSCRIPTION_RECHECK_INTERVAL, await_cloud_establishment,
         cloud_connection_error_from_fetch, cloud_connection_error_from_status,
-        cloud_token_refresh_status, jittered_backoff_with_samples, next_backoff,
-        payment_required_from_status, report_subscription_required, report_update_status,
-        should_reset_backoff_after_connection, sleep_or_stop,
+        cloud_token_refresh_status, establish_cloud_connection, jittered_backoff_with_samples,
+        next_backoff, payment_required_from_status, report_subscription_required,
+        report_update_status, should_reset_backoff_after_connection, sleep_or_stop,
     };
+    use crate::auth::{AccessToken, AuthError, CredentialProvider};
     use crate::config::Config;
     use crate::protocol::{ProtocolError, protocol_status};
+    use crate::routing::{Capabilities, Host, LinkConnectorCtx, RoutingCore};
     use crate::subscription::SubscriptionReporter;
+    use crate::tunnel::TunnelPool;
     use crate::update::{UpdateReporter, UpdateStatus};
     use crate::user_state::ServerState;
 
@@ -535,6 +562,20 @@ mod tests {
     #[derive(Default)]
     struct CapturingSubscriptionReporter {
         required: Mutex<Vec<bool>>,
+    }
+
+    struct StaticCredentials;
+
+    #[async_trait::async_trait]
+    impl CredentialProvider for StaticCredentials {
+        async fn access_token(&self) -> Result<AccessToken, AuthError> {
+            Ok(AccessToken {
+                bearer: "test-token".to_string(),
+                expires_at: None,
+            })
+        }
+
+        fn invalidate(&self, _token: &AccessToken) {}
     }
 
     impl SubscriptionReporter for CapturingSubscriptionReporter {
@@ -763,6 +804,62 @@ mod tests {
 
         stop_tx.send(true).unwrap();
         assert!(wait.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn connector_stop_during_connect_cancels_a_hanging_details_request() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (request_started_tx, request_started_rx) = oneshot::channel();
+        let server_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let read = stream.read(&mut request).await.unwrap();
+            assert!(read > 0);
+            let _ = request_started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+
+        let config = Config {
+            cloud_url: format!("http://{address}"),
+            enable_cloud_mode: Some(true),
+            ..Config::default()
+        };
+        let host_id = Uuid::new_v4();
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let state = Arc::new(RwLock::new(ServerState::new(
+            config.clone(),
+            host_id,
+            shutdown_tx,
+            Some(Arc::new(StaticCredentials)),
+            None,
+        )));
+        let routing = Arc::new(RoutingCore::new());
+        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
+        let tunnels = Arc::new(TunnelPool::new(host_id, routing.clone(), incoming_tx));
+        let connector_ctx = LinkConnectorCtx::new(
+            Host {
+                id: host_id,
+                name: "local".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                capabilities: Capabilities::default(),
+            },
+            routing,
+            tunnels,
+        );
+        let connector = establish_cloud_connection(config, state, connector_ctx);
+
+        tokio::time::timeout(Duration::from_secs(1), request_started_rx)
+            .await
+            .expect("cloud connect-details request did not start")
+            .expect("hanging server stopped before receiving the request");
+
+        tokio::time::timeout(Duration::from_secs(1), connector.stop())
+            .await
+            .expect("connector stop waited for the hanging connect-details request");
+        server_task.abort();
     }
 
     #[test]
