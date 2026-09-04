@@ -91,8 +91,12 @@ pub type ReportExtrasProvider = Arc<dyn Fn() -> ReportExtras + Send + Sync>;
 /// See [`RuntimeOptions::msg_tap`].
 pub type MsgTap = Box<dyn FnMut(&Msg) + Send>;
 
-/// Opens one verified local artifact path with the platform viewer.
-pub type AttachmentOpener = Arc<dyn Fn(&Path) -> io::Result<()> + Send + Sync>;
+/// Opens one verified local artifact with the platform viewer.
+///
+/// The metadata travels with the content-addressed cache path because the path
+/// itself deliberately has no extension. Platform launchers may need the kind
+/// to choose a viewer that can identify those bytes.
+pub type AttachmentOpener = Arc<dyn Fn(&ArtifactMeta, &Path) -> io::Result<()> + Send + Sync>;
 
 /// Future returned by an attachment transport operation.
 pub type AttachmentClientFuture<'a, T> =
@@ -527,8 +531,8 @@ impl Runtime {
                     let outcome = match (client, cache) {
                         (Some(client), Ok(cache)) => {
                             match fetch_through_cache(&cache, &client, agent, &id).await {
-                                Ok(_) => match cache.path_of(&id) {
-                                    Ok(path) => match opener(&path) {
+                                Ok((meta, _)) => match cache.path_of(&id) {
+                                    Ok(path) => match opener(&meta, &path) {
                                         Ok(()) => OpOutcome::AttachmentOpened { id },
                                         Err(error) => OpOutcome::Error {
                                             error: OpError::general(format!(
@@ -958,9 +962,24 @@ fn map_store_error(error: StoreError, name: Option<&str>) -> OpError {
     }
 }
 
-fn open_with_platform_viewer(path: &Path) -> io::Result<()> {
+fn open_with_platform_viewer(meta: &ArtifactMeta, path: &Path) -> io::Result<()> {
+    platform_open_command(meta, path)?.spawn()?;
+    Ok(())
+}
+
+fn platform_open_command(meta: &ArtifactMeta, path: &Path) -> io::Result<std::process::Command> {
     #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        // Content-addressed blobs intentionally have no filename extension,
+        // so LaunchServices classifies even valid PNG bytes as public.data.
+        // Preview identifies every image format accepted by the composer from
+        // the bytes themselves once it is selected explicitly.
+        if meta.kind == ArtifactKind::Image {
+            command.args(["-a", "Preview"]);
+        }
+        command
+    };
     #[cfg(target_os = "linux")]
     let mut command = std::process::Command::new("xdg-open");
     #[cfg(target_os = "windows")]
@@ -976,8 +995,8 @@ fn open_with_platform_viewer(path: &Path) -> io::Result<()> {
     ));
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     {
-        command.arg(path).spawn()?;
-        Ok(())
+        command.arg(path);
+        Ok(command)
     }
 }
 
@@ -1520,6 +1539,28 @@ fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_opens_extensionless_images_with_preview() {
+        let meta = ArtifactMeta {
+            id: amux_artifacts::id_of(b"png"),
+            kind: ArtifactKind::Image,
+            name: "clipboard.png".to_string(),
+            mime: "image/png".to_string(),
+            size: 3,
+            created_at: Utc::now(),
+            pinned_at: None,
+        };
+        let command = platform_open_command(&meta, Path::new("/cache/blobs/digest"))
+            .expect("macOS has an attachment opener");
+
+        assert_eq!(command.get_program(), "open");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["-a", "Preview", "/cache/blobs/digest"]
+        );
+    }
 
     #[test]
     fn payment_required_maps_to_subscription_state_only() {

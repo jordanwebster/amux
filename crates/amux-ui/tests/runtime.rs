@@ -302,7 +302,8 @@ async fn attachments_open_uses_one_persistent_cache_and_refetches_tampering() {
     let opened = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
     let opener = {
         let opened = opened.clone();
-        Arc::new(move |path: &Path| {
+        Arc::new(move |meta: &amux_artifacts::ArtifactMeta, path: &Path| {
+            assert_eq!(meta.name, "cached.txt");
             opened.lock().unwrap().push(path.to_path_buf());
             Ok(())
         }) as amux_ui::AttachmentOpener

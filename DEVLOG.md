@@ -14,12 +14,16 @@ documentation; reproducible commands cover the boundary tests, rendered
 states, and approved live scenarios.
 
 2026-09-04 — **Captured attachment QA evidence.** The same-host tmux
-captures show pasted text and a clipboard image surviving in one draft, the
-sent image block, Claude's concrete description without a permission request,
-and opening the bytes in Preview. Fresh managed Claude PTY and Codex
-`attach_tool` runs passed and preserved their structured rows, exact mentions,
-owner blobs, and pins. The live harnesses do not emit a second remote TUI
-viewer, so that remaining proof gap is recorded in the QA report.
+captures now come from amux's 120×40 structured chat: they show the atomic
+Pasted and Image tokens, the exact image prompt and sent feed block, Claude
+reading the materialised owner path and describing concrete diagram defects
+without a permission request, and the focused image opening in Preview through
+the chat's leader-o chord. That last check exposed macOS classifying the
+extensionless cache blob as generic data, so the platform opener now carries
+artifact metadata and explicitly selects Preview for images. Fresh managed
+Claude PTY and Codex `attach_tool` runs passed and preserved their structured
+rows, exact mentions, owner blobs, and pins. Their remote-viewer half remains
+to be captured separately.
 
 2026-09-04 — **Captured a review across three hosts and a restart.** An
 opt-in live harness now isolates three real daemons, pairs the agent host to
