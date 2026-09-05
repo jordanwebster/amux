@@ -437,6 +437,30 @@ const PARITY: &[SetMember] = &[
         "question-claude-sdk.png",
         ThemeSpec::Dark,
     ),
+    // Collapsed exploration is the newest shared shape, so the walk
+    // compares both chats closed and both chats open: a fold that reads
+    // differently on either side is the kind of drift this set exists
+    // to catch. Codex has no counterpart — it never folds a run.
+    member(
+        "exploration-collapsed",
+        "exploration-claude.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-exploration",
+        "exploration-claude-sdk.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "exploration-expanded",
+        "exploration-open-claude.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-exploration-expanded",
+        "exploration-open-claude-sdk.png",
+        ThemeSpec::Dark,
+    ),
 ];
 
 const fn member(state: &'static str, file: &'static str, theme: ThemeSpec) -> SetMember {
@@ -650,8 +674,8 @@ mod tests {
     }
 
     #[test]
-    fn the_gallery_and_collapse_sets_name_states_that_exist() {
-        for set in ["gallery", "collapse"] {
+    fn the_gallery_collapse_and_parity_sets_name_states_that_exist() {
+        for set in ["gallery", "collapse", "parity"] {
             for member in set_members(set).unwrap() {
                 super::parse_state(member.state).unwrap_or_else(|error| panic!("{set}: {error:?}"));
             }

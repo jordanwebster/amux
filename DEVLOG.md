@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The side-by-side capture set compares collapsed exploration
+too.**
+The set a person walks to judge whether the three chats read as one design
+had no capture of a folded exploration run, because until this week only the
+terminal chat could fold one. It now renders both Claude chats closed and
+both open, so a fold that reads differently on either side shows up in the
+same directory listing as every other paired surface.
+
 2026-09-05 — **An interrupted turn no longer prints the provider's own
 diagnostic.**
 Alongside sentences a person can read, the session files error strings
