@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Live fleet captures verify Claude labels and chat-only entry.**
+The configuration harness now opens an unfiltered 120×40 fleet while its
+default and configured Claude agents coexist, selects the configured agent,
+and captures the fleet and help overlay in plain and styled terminal frames.
+It checks identical Claude kind columns, chat-only help, absent backend
+vocabulary and complete captures, and refuses reused evidence directories.
+Validation: the live harness passes against the ordinary Claude login;
+shell syntax and 28 capture validation cases pass, including rejection of
+missing frames, backend words, wrong selection and raw-attach help.
+
 2026-09-05 — **The guides describe the shipped Claude SDK chat and its limits.**
 The client, chat, provider-boundary and family guides now cover the three native
 chats, creation defaults, shared entry policy, SDK controls and user-owned hooks.
