@@ -659,7 +659,9 @@ fn review_type(fixture: &mut Fixture, text: &str) {
 /// and the answer stamps the moment, so the overlay's footer states the
 /// age a person would read instead of an anonymous snapshot.
 fn settle_context_request(fixture: &mut Fixture) {
-    let op = OpId(uuid::Uuid::from_u128(0x0c07_0e70_0000_4000_8000_0000_0000_0001));
+    let op = OpId(uuid::Uuid::from_u128(
+        0x0c07_0e70_0000_4000_8000_0000_0000_0001,
+    ));
     let command = Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::RequestContextBreakdown {
         agent: agent_id(StructuredProtocol::ClaudeSdk),
     });

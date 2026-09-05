@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Give the rest of the stream-JSON tests a deadline that
+survives a busy machine.**
+The same failure that hit the launch tests was still latent elsewhere: a
+handful of waits gave a spawned helper or a session task one or two seconds
+to produce its first output. Those waits only ever proved that something
+finishes at all, never that it finishes quickly, so each is now a named
+thirty-second budget that only a genuine hang can trip. Two of them also
+spun on `yield_now` while waiting for a subprocess to fill a channel, which
+competed with that subprocess for the core it needed; they sleep a
+millisecond between checks instead. Twelve copies of the affected suite run
+concurrently take up to six seconds each where one alone takes half a second
+— the margin the old budgets did not have.
+
 2026-09-05 — **Stop the stream-JSON launch tests from failing on a busy
 machine.**
 Three tests start a real stand-in `claude` binary and then wait a couple of

@@ -668,9 +668,8 @@ fn sdk_chat_context_overlay_lists_the_breakdown() {
 /// capture would show an empty overlay to whoever reads it.
 #[test]
 fn sdk_chat_context_named_state_shows_the_answered_breakdown() {
-    let fixture = amux_tui::fixtures::fixture(
-        amux_tui::fixtures::NamedState::ClaudeSdkContextBreakdown,
-    );
+    let fixture =
+        amux_tui::fixtures::fixture(amux_tui::fixtures::NamedState::ClaudeSdkContextBreakdown);
     let backend = TestBackend::new(WIDTH, HEIGHT);
     let mut terminal = Terminal::new(backend).expect("terminal");
     let context = FrameContext {
@@ -704,10 +703,7 @@ fn sdk_chat_context_named_state_shows_the_answered_breakdown() {
         text.contains("fetched just now"),
         "with how old the snapshot is: {text}"
     );
-    assert!(
-        text.contains("c refresh"),
-        "and how to ask again: {text}"
-    );
+    assert!(text.contains("c refresh"), "and how to ask again: {text}");
     assert!(
         !text.contains("waiting for the session"),
         "and never the wait it already finished: {text}"

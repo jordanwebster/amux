@@ -583,6 +583,12 @@ mod tests {
         "\n"
     );
 
+    /// These tests assert that a wait finishes at all, not that it finishes
+    /// quickly. A machine building other crates in parallel can starve a
+    /// spawned helper or a reader task for seconds, so the budget is generous
+    /// enough that only a genuine hang trips it.
+    const TEST_DEADLINE: Duration = Duration::from_secs(30);
+
     fn options() -> QueryOptions {
         let mut options = QueryOptions::new("haiku");
         options.session_id = Some("00000000-0000-0000-0000-000000000001".to_owned());
@@ -701,27 +707,30 @@ mod tests {
             options(),
             BufReader::new(sdk_stdout),
             sdk_stdin,
-            Duration::from_secs(1),
+            TEST_DEADLINE,
         )
         .await
         .unwrap();
         let query = warm.into_query();
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(TEST_DEADLINE, async {
             while query.output_rx.len() < query.output_rx.max_capacity() {
-                tokio::task::yield_now().await;
+                // Sleeping rather than spinning: the writer this waits on may
+                // be a subprocess, and a busy loop would compete with it for
+                // the core it needs to fill the channel.
+                tokio::time::sleep(Duration::from_millis(1)).await;
             }
         })
         .await
         .expect("reader did not fill the bounded output channel");
 
         let crate::sdk::Session { events, control } = crate::sdk::session::from_query(query);
-        let exit = tokio::time::timeout(Duration::from_secs(1), control.close())
+        let exit = tokio::time::timeout(TEST_DEADLINE, control.close())
             .await
             .expect("close parked behind the full output channel");
         assert_eq!(exit.termination, Termination::Closed);
         assert!(exit.success);
         drop(events);
-        tokio::time::timeout(Duration::from_secs(1), server)
+        tokio::time::timeout(TEST_DEADLINE, server)
             .await
             .unwrap()
             .unwrap();
@@ -745,20 +754,23 @@ mod tests {
         let session_id = query_session_id(&process_options);
         let process = crate::sdk::process::spawn_query(&session_id, &process_options).unwrap();
         process_options.session_id = Some(session_id);
-        let warm = Query::warm_from_process(process_options, process, Duration::from_secs(1))
+        let warm = Query::warm_from_process(process_options, process, TEST_DEADLINE)
             .await
             .unwrap();
         let query = warm.into_query();
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(TEST_DEADLINE, async {
             while query.output_rx.len() < query.output_rx.max_capacity() {
-                tokio::task::yield_now().await;
+                // Sleeping rather than spinning: the writer this waits on may
+                // be a subprocess, and a busy loop would compete with it for
+                // the core it needs to fill the channel.
+                tokio::time::sleep(Duration::from_millis(1)).await;
             }
         })
         .await
         .expect("reader did not fill the bounded output channel");
 
         let crate::sdk::Session { events, control } = crate::sdk::session::from_query(query);
-        let exit = tokio::time::timeout(Duration::from_secs(1), control.close())
+        let exit = tokio::time::timeout(TEST_DEADLINE, control.close())
             .await
             .expect("close parked behind the full process output channel");
         assert_eq!(exit.termination, Termination::Closed);
