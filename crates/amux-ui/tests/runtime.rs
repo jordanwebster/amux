@@ -66,7 +66,7 @@ fn test_config(root: &Path) -> Config {
         state_path: root.join("state.yaml"),
         socket_path: root.join("amux.sock"),
         data_dir: root.join("data"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     }
@@ -147,7 +147,7 @@ async fn runtime_reflects_daemon_state_in_the_model() {
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };

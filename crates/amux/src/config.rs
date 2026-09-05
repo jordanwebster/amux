@@ -320,7 +320,7 @@ impl InstallationConfig {
             minimum_client_versions: self.minimum_client_versions.clone(),
             ..Config::default()
         }
-        .validate(false)
+        .validate()
     }
 
     pub(crate) fn file_path(&self) -> PathBuf {
@@ -527,11 +527,6 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reports_dir: Option<PathBuf>,
 
-    /// Whether the user has opted into cloud mode. `None` = not yet asked (init
-    /// will prompt); `Some(true/false)` = explicit user choice.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_cloud_mode: Option<bool>,
-
     /// Whether to prevent idle system sleep while the server is running. `None`
     /// = not yet asked (init will prompt); `Some(true/false)` = explicit user
     /// choice.
@@ -566,7 +561,6 @@ impl Default for Config {
             state_path: default_state_path(),
             data_dir: default_data_dir(),
             reports_dir: None,
-            enable_cloud_mode: None,
             prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
             keybinds: Keybinds::default(),
@@ -600,8 +594,7 @@ impl Config {
     }
 
     /// Validate config. Call early to surface errors before any work begins.
-    /// When `is_cloud` is true, also validates cloud-server requirements.
-    pub fn validate(&self, is_cloud: bool) -> std::result::Result<(), ConfigError> {
+    pub fn validate(&self) -> std::result::Result<(), ConfigError> {
         // Leader key must be ctrl+<a-z>
         let ch = self.keybinds.leader.char;
         if !ch.is_ascii_lowercase() {
@@ -617,13 +610,6 @@ impl Config {
             return Err(ConfigError::Invalid(format!(
                 "host_name must be at most {MAX_HOST_NAME_BYTES} bytes"
             )));
-        }
-
-        // Cloud servers must have TCP configured.
-        if is_cloud && self.tcp_port.is_none() {
-            return Err(ConfigError::Invalid(
-                "cloud mode requires tcp_port to be set".into(),
-            ));
         }
 
         // Release builds must use HTTPS for cloud URLs to protect tokens in transit
@@ -914,7 +900,6 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.tcp_port, None);
         assert_eq!(config.prevent_idle_sleep, None);
-        assert_eq!(config.enable_cloud_mode, None);
     }
 
     #[test]
@@ -936,14 +921,9 @@ mod tests {
     }
 
     #[test]
-    fn enable_cloud_mode_yaml_roundtrip() {
-        let yaml = "enable_cloud_mode: false\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.enable_cloud_mode, Some(false));
-
-        let serialized = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
-        assert_eq!(parsed.enable_cloud_mode, Some(false));
+    fn config_split_rejects_retired_cloud_mode() {
+        let error = serde_yaml::from_str::<Config>("enable_cloud_mode: false\n").unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]
@@ -955,30 +935,23 @@ mod tests {
     #[test]
     fn validate_default_config_ok() {
         let config = Config::default();
-        assert!(config.validate(false).is_ok());
+        assert!(config.validate().is_ok());
     }
 
     #[test]
-    fn validate_cloud_requires_tcp_port() {
-        let config = Config::default();
-        let err = config.validate(true).unwrap_err();
-        assert!(err.to_string().contains("tcp_port"));
-    }
-
-    #[test]
-    fn validate_cloud_ok_with_tcp_port() {
+    fn validate_with_tcp_port() {
         let config = Config {
             tcp_port: Some(9001),
             ..Config::default()
         };
-        assert!(config.validate(true).is_ok());
+        assert!(config.validate().is_ok());
     }
 
     #[test]
     fn validate_leader_key_bad_char() {
         let mut config = Config::default();
         config.keybinds.leader = LeaderKey { char: b'1' };
-        let err = config.validate(false).unwrap_err();
+        let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("leader key"));
     }
 
@@ -988,7 +961,7 @@ mod tests {
             minimum_client_versions: HashMap::from([("cli".to_string(), "0.2.0".to_string())]),
             ..Config::default()
         };
-        assert!(config.validate(false).is_ok());
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -997,7 +970,7 @@ mod tests {
             host_name: String::new(),
             ..Config::default()
         };
-        let err = config.validate(false).unwrap_err();
+        let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("host_name"));
     }
 
@@ -1007,7 +980,7 @@ mod tests {
             host_name: "a".repeat(MAX_HOST_NAME_BYTES),
             ..Config::default()
         };
-        assert!(config.validate(false).is_ok());
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -1016,7 +989,7 @@ mod tests {
             host_name: "a".repeat(MAX_HOST_NAME_BYTES + 1),
             ..Config::default()
         };
-        let err = config.validate(false).unwrap_err();
+        let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("host_name"));
     }
 
@@ -1026,7 +999,7 @@ mod tests {
             minimum_client_versions: HashMap::from([("cli".to_string(), "v0.2.0".to_string())]),
             ..Config::default()
         };
-        let err = config.validate(false).unwrap_err();
+        let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("minimum_client_versions"));
         assert!(err.to_string().contains("cli"));
     }

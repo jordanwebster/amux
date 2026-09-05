@@ -100,7 +100,6 @@ write_config() {
     printf "socket_path: '%s'\n" "$socket_path"
     printf "state_path: '%s'\n" "$state_path"
     printf "data_dir: '%s'\n" "$data_dir"
-    printf 'enable_cloud_mode: false\n'
     printf 'prevent_idle_sleep: false\n'
     printf 'ui:\n'
     printf '  default_open_mode: raw\n'

@@ -12,12 +12,12 @@ config:
 config:
   name: server_a
   host_name: host-a
-  enable_cloud_mode: true
+  cloud_account: true
 
 config:
   name: server_b
   host_name: host-b
-  enable_cloud_mode: true
+  cloud_account: true
 
 directory:
   name: dir_a

@@ -1233,7 +1233,7 @@ mod attach {
         let config = Config {
             state_path: dir.join("state.yaml"),
             socket_path: dir.join("amux.sock"),
-            enable_cloud_mode: Some(false),
+
             prevent_idle_sleep: Some(false),
             ..Config::default()
         };

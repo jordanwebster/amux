@@ -295,23 +295,33 @@ impl Server {
             )
         };
 
-        // Validate server-specific config (cloud relay mode requires TCP).
+        if is_cloud_server && tcp_port.is_none() {
+            return Err(ConfigError::Invalid("cloud relay requires tcp_port".into()).into());
+        }
+
+        // Validate shared settings before creating runtime services.
         {
             let state = self.state.read().await;
-            state.config.validate(is_cloud_server)?;
+            state.config.validate()?;
         }
 
         let _sleep_inhibitor = crate::sleep_inhibitor::SleepInhibitor::new(prevent_idle_sleep);
 
         if !is_cloud_server {
-            let (config, credentials, update_reporter, subscription_reporter, cloud_enabled) = {
+            let (
+                config,
+                credentials,
+                update_reporter,
+                subscription_reporter,
+                has_cloud_credentials,
+            ) = {
                 let state = self.state.read().await;
                 (
                     state.config.clone(),
                     state.credentials.clone(),
                     state.update_reporter.clone(),
                     state.subscription_reporter.clone(),
-                    crate::setup::cloud_enabled(&state.config),
+                    state.credentials.is_some(),
                 )
             };
             let options = ProfileRuntimeOptions::from_legacy_config(
@@ -325,7 +335,7 @@ impl Server {
             let mut runtime = start_with_security(options, security)
                 .await
                 .map_err(|error| ServerError::State(error.to_string()))?;
-            if cloud_enabled {
+            if has_cloud_credentials {
                 runtime
                     .start_cloud()
                     .await
@@ -502,8 +512,8 @@ impl EmbeddedBuilder {
                     .to_string(),
             )));
         }
-        config.validate(as_cloud_relay)?;
-        let cloud_enabled = crate::setup::cloud_enabled(&config);
+        config.validate()?;
+        let has_cloud_credentials = credentials.is_some();
         let options = ProfileRuntimeOptions::from_legacy_config(
             config,
             credentials,
@@ -514,7 +524,7 @@ impl EmbeddedBuilder {
         let runtime = crate::profile::runtime::start(options)
             .await
             .map_err(|error| ServerError::State(error.to_string()))?;
-        if cloud_enabled {
+        if has_cloud_credentials {
             runtime
                 .start_cloud()
                 .await
@@ -598,14 +608,6 @@ impl ServerBuilder {
         if self.as_cloud_relay && self.credentials.is_some() {
             return Err(ConfigError::Invalid(
                 "credentials() and as_cloud_relay() are mutually exclusive".to_string(),
-            ));
-        }
-        if !self.as_cloud_relay
-            && crate::setup::cloud_enabled(&config)
-            && self.credentials.is_none()
-        {
-            return Err(ConfigError::Invalid(
-                "credentials provider is required when cloud mode is enabled".to_string(),
             ));
         }
         Ok((

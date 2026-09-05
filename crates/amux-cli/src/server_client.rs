@@ -60,7 +60,7 @@ pub async fn start_server(config: &Config, options: StartOptions) -> Result<()> 
         return Ok(());
     }
 
-    config.validate(options.mode.is_cloud())?;
+    config.validate()?;
 
     match options.style {
         StartStyle::Foreground => {
@@ -77,16 +77,14 @@ pub async fn start_server(config: &Config, options: StartOptions) -> Result<()> 
 
 pub(crate) async fn run_server_foreground(config: Config, cloud: bool) -> Result<()> {
     let state_reporter = Arc::new(MarkerFileReporter::from_state_path(&config.state_path));
-    if !amux::setup::cloud_enabled(&config) {
-        state_reporter.clear_subscription_required();
-    }
     let credentials = if cloud {
         None
     } else {
-        Some(Arc::new(DeviceFlowProvider::new(
-            auth_file_path(&config.state_path),
-            config.cloud_url.clone(),
-        )) as Arc<dyn CredentialProvider>)
+        let provider =
+            DeviceFlowProvider::new(auth_file_path(&config.state_path), config.cloud_url.clone());
+        provider
+            .is_authenticated()
+            .then(|| Arc::new(provider) as Arc<dyn CredentialProvider>)
     };
     let builder = Server::builder()
         .config(config)
@@ -94,7 +92,8 @@ pub(crate) async fn run_server_foreground(config: Config, cloud: bool) -> Result
         .subscription_reporter(state_reporter);
     match credentials {
         Some(credentials) => builder.credentials(credentials).run().await?,
-        None => builder.as_cloud_relay().run().await?,
+        None if cloud => builder.as_cloud_relay().run().await?,
+        None => builder.run().await?,
     }
     Ok(())
 }

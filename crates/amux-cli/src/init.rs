@@ -11,13 +11,10 @@ use std::io::{self, Write};
 use amux::setup::SetupError;
 use amux::{Config, setup};
 
-use crate::auth::{DeviceFlowError, DeviceFlowProvider, auth_file_path, clear_refresh_token};
-
 #[derive(Debug)]
 pub enum InitError {
     Io(io::Error),
     Setup(SetupError),
-    Auth(DeviceFlowError),
 }
 
 impl std::fmt::Display for InitError {
@@ -25,7 +22,6 @@ impl std::fmt::Display for InitError {
         match self {
             InitError::Io(e) => write!(f, "IO error: {}", e),
             InitError::Setup(e) => write!(f, "Setup error: {}", e),
-            InitError::Auth(e) => write!(f, "Authentication error: {}", e),
         }
     }
 }
@@ -35,7 +31,6 @@ impl std::error::Error for InitError {
         match self {
             InitError::Io(e) => Some(e),
             InitError::Setup(e) => Some(e),
-            InitError::Auth(e) => Some(e),
         }
     }
 }
@@ -49,12 +44,6 @@ impl From<io::Error> for InitError {
 impl From<SetupError> for InitError {
     fn from(e: SetupError) -> Self {
         InitError::Setup(e)
-    }
-}
-
-impl From<DeviceFlowError> for InitError {
-    fn from(e: DeviceFlowError) -> Self {
-        InitError::Auth(e)
     }
 }
 
@@ -81,40 +70,19 @@ impl InitContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InitStep {
     EnsureDeviceIdentity,
-    PromptCloudMode,
-    Authenticate,
     PromptIdleSleep,
     Done,
 }
 
-/// Pure-ish: map (config, has_refresh_token) → the next step init needs to
-/// perform. The whole state-machine graph lives in one function.
-///
-/// `has_refresh_token` is sourced from disk by the caller so this function
-/// itself stays testable without IO.
-fn next_step(
-    config: &Config,
-    has_refresh_token: bool,
-    identity_ready: bool,
-    _ctx: &InitContext,
-) -> InitStep {
+/// Choose the next local setup step. Cloud credentials are managed by login.
+fn next_step(config: &Config, identity_ready: bool, _ctx: &InitContext) -> InitStep {
     if !identity_ready {
         return InitStep::EnsureDeviceIdentity;
-    }
-    if config.enable_cloud_mode.is_none() {
-        return InitStep::PromptCloudMode;
-    }
-    if config.enable_cloud_mode == Some(true) && !has_refresh_token {
-        return InitStep::Authenticate;
     }
     if setup::prevent_idle_sleep_supported() && config.prevent_idle_sleep.is_none() {
         return InitStep::PromptIdleSleep;
     }
     InitStep::Done
-}
-
-fn has_refresh_token(config: &Config) -> bool {
-    cloud_auth_provider(config).is_authenticated()
 }
 
 /// True iff at least one init step would run given the current state.
@@ -123,12 +91,7 @@ pub fn needs_init(config: &Config) -> bool {
 }
 
 fn needs_init_inner(config: &Config, identity_ready: bool) -> bool {
-    next_step(
-        config,
-        has_refresh_token(config),
-        identity_ready,
-        &InitContext::implicit(),
-    ) != InitStep::Done
+    next_step(config, identity_ready, &InitContext::implicit()) != InitStep::Done
 }
 
 /// Drive the init state machine to completion.
@@ -136,66 +99,17 @@ pub async fn run_init(config: &mut Config, ctx: InitContext, reset: bool) -> Res
     tracing::debug!(explicit = ctx.explicit, reset, "running init");
 
     if reset {
-        setup::clear_enable_cloud_mode(config)?;
         setup::clear_prevent_idle_sleep(config)?;
-        clear_refresh_token(&auth_file_path(&config.state_path)).map_err(|e| {
-            InitError::Setup(SetupError::State(format!(
-                "failed to clear cloud authentication: {e}"
-            )))
-        })?;
-        println!("State cleared.");
+        println!("Setup preferences reset.");
     }
 
     loop {
-        match next_step(
-            config,
-            has_refresh_token(config),
-            setup::device_identity_ready(config),
-            &ctx,
-        ) {
+        match next_step(config, setup::device_identity_ready(config), &ctx) {
             InitStep::EnsureDeviceIdentity => setup::ensure_device_identity(config)?,
-            InitStep::PromptCloudMode => prompt_cloud_mode(config)?,
-            InitStep::Authenticate => authenticate(config).await?,
             InitStep::PromptIdleSleep => prompt_idle_sleep(config)?,
             InitStep::Done => return Ok(()),
         }
     }
-}
-
-fn prompt_cloud_mode(config: &mut Config) -> Result<(), InitError> {
-    println!();
-    println!("amux can connect your local machine to the cloud, allowing you to");
-    println!("access your agents from anywhere (mobile, web, other machines).");
-    println!();
-    println!("Do you want to enable cloud mode?");
-    println!("  1. Yes (recommended)");
-    println!("  2. No (local only)");
-    print!("\nChoice [1]: ");
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let choice = input.trim();
-    let enabled = choice.is_empty() || choice == "1";
-
-    setup::set_enable_cloud_mode(config, enabled)?;
-
-    if !enabled {
-        println!("\nCloud mode disabled. You can run 'amux init' anytime to reconfigure.");
-    }
-    Ok(())
-}
-
-async fn authenticate(config: &mut Config) -> Result<(), InitError> {
-    println!("\nStarting authentication...");
-    cloud_auth_provider(config).run_device_flow().await?;
-    println!("\nAuthentication successful!");
-    println!("Your local amux server will now connect to the cloud automatically.");
-    Ok(())
-}
-
-fn cloud_auth_provider(config: &Config) -> DeviceFlowProvider {
-    DeviceFlowProvider::new(auth_file_path(&config.state_path), config.cloud_url.clone())
 }
 
 fn prompt_idle_sleep(config: &mut Config) -> Result<(), InitError> {
@@ -257,73 +171,34 @@ mod tests {
     }
 
     #[test]
-    fn next_step_fresh_config_wants_cloud_mode_prompt() {
-        let config = Config::default();
-        assert_eq!(
-            next_step(&config, false, true, &InitContext::implicit()),
-            InitStep::PromptCloudMode
-        );
-    }
-
-    #[test]
     fn next_step_missing_identity_wants_device_identity() {
         let config = Config::default();
         assert_eq!(
-            next_step(&config, false, false, &InitContext::implicit()),
+            next_step(&config, false, &InitContext::implicit()),
             InitStep::EnsureDeviceIdentity
         );
     }
 
     #[test]
-    fn next_step_cloud_on_no_token_wants_authenticate() {
-        let config = Config {
-            enable_cloud_mode: Some(true),
-            prevent_idle_sleep: Some(false),
-            ..Config::default()
-        };
-        assert_eq!(
-            next_step(&config, false, true, &InitContext::implicit()),
-            InitStep::Authenticate
-        );
-    }
-
-    #[test]
-    fn next_step_cloud_off_wants_idle_sleep_if_unset_and_supported() {
+    fn next_step_wants_idle_sleep_if_unset_and_supported() {
         if !setup::prevent_idle_sleep_supported() {
             return;
         }
-        let config = Config {
-            enable_cloud_mode: Some(false),
-            ..Config::default()
-        };
+        let config = Config::default();
         assert_eq!(
-            next_step(&config, false, true, &InitContext::implicit()),
+            next_step(&config, true, &InitContext::implicit()),
             InitStep::PromptIdleSleep
         );
     }
 
     #[test]
-    fn next_step_all_set_is_done() {
+    fn config_split_init_without_credentials_needs_no_authentication() {
         let config = Config {
-            enable_cloud_mode: Some(false),
             prevent_idle_sleep: Some(false),
             ..Config::default()
         };
         assert_eq!(
-            next_step(&config, false, true, &InitContext::implicit()),
-            InitStep::Done
-        );
-    }
-
-    #[test]
-    fn next_step_authenticated_skips_authenticate_step() {
-        let config = Config {
-            enable_cloud_mode: Some(true),
-            prevent_idle_sleep: Some(false),
-            ..Config::default()
-        };
-        assert_eq!(
-            next_step(&config, true, true, &InitContext::implicit()),
+            next_step(&config, true, &InitContext::implicit()),
             InitStep::Done
         );
     }
@@ -332,8 +207,8 @@ mod tests {
     fn next_step_explicit_flag_does_not_affect_todays_steps() {
         let config = Config::default();
         assert_eq!(
-            next_step(&config, false, true, &InitContext::implicit()),
-            next_step(&config, false, true, &InitContext::explicit())
+            next_step(&config, true, &InitContext::implicit()),
+            next_step(&config, true, &InitContext::explicit())
         );
     }
 
@@ -341,7 +216,6 @@ mod tests {
     fn needs_init_false_when_everything_set() {
         let dir = tempdir().unwrap();
         let mut config = test_config(&dir);
-        setup::set_enable_cloud_mode(&mut config, false).unwrap();
         if setup::prevent_idle_sleep_supported() {
             setup::set_prevent_idle_sleep(&mut config, false).unwrap();
         }
@@ -349,17 +223,9 @@ mod tests {
     }
 
     #[test]
-    fn needs_init_true_when_cloud_mode_unset() {
-        let dir = tempdir().unwrap();
-        let config = test_config(&dir);
-        assert!(needs_init_inner(&config, true));
-    }
-
-    #[test]
     fn needs_init_true_when_identity_is_missing() {
         let dir = tempdir().unwrap();
         let mut config = test_config(&dir);
-        setup::set_enable_cloud_mode(&mut config, false).unwrap();
         if setup::prevent_idle_sleep_supported() {
             setup::set_prevent_idle_sleep(&mut config, false).unwrap();
         }

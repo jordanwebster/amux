@@ -679,7 +679,7 @@ impl Inner {
                 },
                 shared: self.settings.clone(),
                 credentials,
-                enable_cloud_mode: Some(record.binding.is_some()),
+
                 listeners: self.listeners,
                 #[cfg(testnet)]
                 fixtures: self

@@ -69,7 +69,7 @@ impl Scratch {
             socket_path: root.join("sock/amux.sock"),
             state_path: root.join("state/state.yaml"),
             data_dir: root.join("data/amux"),
-            enable_cloud_mode: Some(false),
+
             prevent_idle_sleep: Some(false),
             ..Config::default()
         };

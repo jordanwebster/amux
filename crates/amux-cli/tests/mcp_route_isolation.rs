@@ -40,7 +40,7 @@ impl Route {
             socket_path: root.join("socket/amux.sock"),
             state_path: root.join("state/state.yaml"),
             data_dir: root.join("data"),
-            enable_cloud_mode: Some(false),
+
             prevent_idle_sleep: Some(false),
             path: Some(config_path.clone()),
             ..Config::default()

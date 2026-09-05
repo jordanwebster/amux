@@ -1296,13 +1296,12 @@ impl wire::client_service_server::ClientService for ClientService {
                 "demo pairing requires PIN mode",
             ));
         }
-        let (name, tcp_port, cloud_url, cloud_enabled) = {
+        let (name, tcp_port, cloud_url) = {
             let state = self.server_state.read().await;
             (
                 state.config.host_name.clone(),
                 state.config.tcp_port,
                 state.config.cloud_url.clone(),
-                crate::setup::cloud_enabled(&state.config),
             )
         };
         if name.len() > MAX_PAIRING_NAME_BYTES {
@@ -1313,11 +1312,6 @@ impl wire::client_service_server::ClientService for ClientService {
         if request.require_lan_direct && tcp_port.is_none() {
             return Err(tonic::Status::failed_precondition(
                 "set `tcp_port` in your config, or use cloud / SSH pairing",
-            ));
-        }
-        if mode == wire::start_pairing_request::Mode::Qr && !cloud_enabled {
-            return Err(tonic::Status::failed_precondition(
-                "QR pairing requires cloud mode",
             ));
         }
         let (method, ttl, secret) = if let Some(demo) = request.demo {
@@ -5648,7 +5642,6 @@ mod tests {
         .unwrap();
         assert!(!service.pair_mode.is_active());
 
-        service.server_state.write().await.config.enable_cloud_mode = Some(true);
         let mut qr_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Qr as i32,
             require_lan_direct: false,
@@ -5672,7 +5665,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_start_pairing_validates_runtime_config_before_arming() {
+    async fn tonic_start_pairing_validates_lan_and_name_before_arming() {
         let data_dir = TempDir::new().unwrap();
         let local = DeviceIdentity::for_test(Uuid::from_u128(1));
         let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
@@ -5681,7 +5674,7 @@ mod tests {
 
         let mut qr_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Qr as i32,
-            require_lan_direct: false,
+            require_lan_direct: true,
             demo: None,
         });
         qr_request.extensions_mut().insert(BoxedGrpcConnectInfo {
@@ -5693,6 +5686,7 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert!(error.message().contains("tcp_port"));
         assert!(!service.pair_mode.is_active());
 
         let mut lan_request = tonic::Request::new(wire::StartPairingRequest {

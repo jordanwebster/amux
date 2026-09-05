@@ -19,7 +19,7 @@ pub struct TestConfig {
     #[serde(default)]
     pub socket_path: Option<String>,
     #[serde(default)]
-    pub enable_cloud_mode: Option<bool>,
+    pub cloud_account: Option<bool>,
     #[serde(default)]
     pub cloud_url: Option<String>,
     #[serde(default)]

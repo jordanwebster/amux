@@ -11,6 +11,7 @@ use tokio::task::JoinHandle;
 use tracing::Instrument;
 use uuid::Uuid;
 
+use crate::audit;
 use crate::auth::CredentialProvider;
 use crate::auth::cloud::{
     CloudError, CloudRoutingConnectionDetails, fetch_routing_connection_details,
@@ -24,7 +25,6 @@ use crate::routing::{
 };
 use crate::transport::tls_channel;
 use crate::user_state::ServerState;
-use crate::{audit, setup};
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
@@ -170,11 +170,6 @@ pub(crate) fn establish_cloud_connection(
     let cloud_span = tracing::info_span!("cloud", url = %config.cloud_url);
     let task = tokio::spawn(
         async move {
-            if !setup::cloud_enabled(&config) {
-                status.report(Observed::Local);
-                tracing::info!("cloud mode not enabled");
-                return;
-            }
 
             let mut backoff = INITIAL_BACKOFF;
 
@@ -208,10 +203,6 @@ pub(crate) fn establish_cloud_connection(
                         tracing::warn!(
                             "cloud subscription required — manage at amux.sh/account; local agents remain available"
                         );
-                        if !setup::cloud_enabled(&config) {
-                            tracing::info!("cloud mode disabled, stopping reconnection");
-                            return;
-                        }
                         tracing::info!(
                             retry_delay = ?SUBSCRIPTION_RECHECK_INTERVAL,
                             "waiting to re-check cloud subscription"
@@ -233,10 +224,6 @@ pub(crate) fn establish_cloud_connection(
                     return;
                 }
                 status.report(Observed::Retrying);
-                if !setup::cloud_enabled(&config) {
-                    tracing::info!("cloud mode disabled, stopping reconnection");
-                    return;
-                }
 
                 let retry_delay = jittered_backoff(backoff);
                 tracing::info!(base_backoff = ?backoff, retry_delay = ?retry_delay, "reconnecting to cloud");
@@ -273,10 +260,6 @@ fn cloud_connection_error_from_fetch(
             )
         }
         CloudError::PaymentRequired => CloudConnectionError::SubscriptionRequired,
-        CloudError::CloudDisabled => {
-            status.report(Observed::Local);
-            CloudConnectionError::NonRetriable("Cloud mode disabled".to_string())
-        }
         error @ CloudError::Rejected(_) => {
             status.report(Observed::AuthenticationRequired);
             CloudConnectionError::NonRetriable(error.to_string())
@@ -543,7 +526,6 @@ fn cloud_token_refresh_status(error: CloudError) -> tonic::Status {
         }
         CloudError::PaymentRequired => protocol_status(ProtocolError::PaymentRequired),
         CloudError::Rejected(message) => tonic::Status::permission_denied(message),
-        CloudError::CloudDisabled => tonic::Status::failed_precondition("cloud disabled"),
         CloudError::Connection(message) => tonic::Status::unavailable(message),
     }
 }
@@ -881,7 +863,7 @@ mod tests {
 
         let config = Config {
             cloud_url: format!("http://{address}"),
-            enable_cloud_mode: Some(true),
+
             ..Config::default()
         };
         let host_id = Uuid::new_v4();

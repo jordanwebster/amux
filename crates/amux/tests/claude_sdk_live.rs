@@ -133,7 +133,7 @@ fn main() -> anyhow::Result<()> {
                 host_name: "claude-sdk-live".into(),
                 socket_path: root.join("sock/amux.sock"),
                 state_path: root.join("state/state.yaml"),
-                enable_cloud_mode: Some(false),
+
                 prevent_idle_sleep: Some(false),
                 ..Config::default()
             };

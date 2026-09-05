@@ -328,7 +328,7 @@ fn allocate_local_port() -> Result<u16, String> {
 fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFixture>, String> {
     let needs_cloud = configs
         .iter()
-        .any(|config| config.cloud_relay || config.enable_cloud_mode == Some(true));
+        .any(|config| config.cloud_relay || config.cloud_account == Some(true));
     if !needs_cloud {
         return Ok(None);
     }
@@ -351,11 +351,11 @@ fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFix
         }
         Some(port) => port,
     };
-    relay.enable_cloud_mode.get_or_insert(true);
+    relay.cloud_account.get_or_insert(true);
 
     let fixture = CloudFixture::start(routing_host, routing_port)?;
     for config in configs {
-        if config.cloud_relay || config.enable_cloud_mode == Some(true) {
+        if config.cloud_relay || config.cloud_account == Some(true) {
             config.cloud_url = Some(fixture.url.clone());
         }
     }
@@ -628,14 +628,13 @@ impl Executor {
             // `C:\Users` produce invalid `\U` escapes. Single-quoted YAML
             // strings are literal (no escape processing).
             //
-            // `enable_cloud_mode: false` and `prevent_idle_sleep: false` keep
-            // `amux init` from prompting during test runs.
+            // Local init has no authentication step. Skip its sleep prompt in tests.
             let host_name = cfg
                 .host_name
                 .clone()
                 .unwrap_or_else(|| test_case.name.clone());
-            let enable_cloud_mode = cfg.enable_cloud_mode.unwrap_or(false);
-            if enable_cloud_mode && !cfg.cloud_relay {
+            let cloud_account = cfg.cloud_account.unwrap_or(false);
+            if cloud_account && !cfg.cloud_relay {
                 std::fs::write(
                     state_dir.join("auth.yaml"),
                     format!("refresh_token: '{}'\n", E2E_REFRESH_TOKEN),
@@ -643,10 +642,9 @@ impl Executor {
                 .map_err(|e| format!("Failed to write auth file: {}", e))?;
             }
             let mut yaml_content = format!(
-                "host_name: '{}'\nsocket_path: '{}'\nenable_cloud_mode: {}\nprevent_idle_sleep: false\nstate_path: '{}'\n",
+                "host_name: '{}'\nsocket_path: '{}'\nprevent_idle_sleep: false\nstate_path: '{}'\n",
                 host_name,
                 socket_path.display(),
-                enable_cloud_mode,
                 state_path.display()
             );
             if let Some(tcp_port) = tcp_port {
@@ -675,7 +673,7 @@ impl Executor {
                 ),
             ]);
             if let Some(fixture) = &cloud_fixture
-                && (cfg.cloud_relay || enable_cloud_mode)
+                && (cfg.cloud_relay || cloud_account)
             {
                 env.insert(
                     "AMUX_CLOUD_TLS_CA".to_string(),
@@ -971,7 +969,7 @@ impl Executor {
                 name: "local".to_string(),
                 host_name: None,
                 socket_path: None,
-                enable_cloud_mode: None,
+                cloud_account: None,
                 cloud_url: None,
                 tcp_port: None,
                 cloud_relay: false,

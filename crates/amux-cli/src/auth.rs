@@ -13,10 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration as StdDuration, SystemTime};
 
-use amux::{
-    AccessToken, AuthError, CredentialProvider, OAuthError, refresh_access_token,
-    run_device_flow as run_oauth_device_flow,
-};
+use amux::{AccessToken, AuthError, CredentialProvider, OAuthError, refresh_access_token};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
@@ -39,13 +36,6 @@ impl DeviceFlowProvider {
             cached_access_token: Mutex::new(None),
             refresh_lock: AsyncMutex::new(()),
         }
-    }
-
-    /// Run device flow interactively and persist the resulting refresh token.
-    pub async fn run_device_flow(&self) -> Result<(), DeviceFlowError> {
-        let refresh_token = run_oauth_device_flow(&self.cloud_url).await?;
-        set_refresh_token(&self.auth_path, Some(refresh_token))?;
-        Ok(())
     }
 
     /// True if a refresh token is on disk.
@@ -131,14 +121,6 @@ fn auth_error_from_oauth(error: OAuthError) -> AuthError {
 }
 
 #[derive(Debug, Error)]
-pub enum DeviceFlowError {
-    #[error(transparent)]
-    OAuth(#[from] OAuthError),
-    #[error(transparent)]
-    State(#[from] AuthStateError),
-}
-
-#[derive(Debug, Error)]
 pub enum AuthStateError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -158,10 +140,6 @@ pub(crate) fn auth_file_path(state_path: &Path) -> PathBuf {
         .parent()
         .unwrap_or(Path::new("."))
         .join("auth.yaml")
-}
-
-pub(crate) fn clear_refresh_token(auth_path: &Path) -> Result<(), AuthStateError> {
-    set_refresh_token(auth_path, None)
 }
 
 fn load_refresh_token(path: &Path) -> Result<Option<String>, AuthStateError> {
@@ -235,7 +213,7 @@ mod tests {
         let yaml = fs::read_to_string(&path).unwrap();
         assert!(yaml.contains("refresh_token"));
 
-        clear_refresh_token(&path).unwrap();
+        set_refresh_token(&path, None).unwrap();
 
         assert_eq!(load_refresh_token(&path).unwrap(), None);
     }

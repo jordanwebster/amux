@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use amux::{AgentType, Config, PairingSecret, PairingStart, setup};
+use amux::{AgentType, Config, PairingSecret, PairingStart};
 #[cfg(debug_assertions)]
 use amux_cli::debug_cmd::{self, DebugCommands};
 use anyhow::{Context, Result, anyhow};
@@ -30,7 +30,6 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
 
-use crate::server_client::ServerMode;
 use crate::update::MarkerFileReporter;
 
 const QR_PAIRING_DEEP_LINK_PREFIX: &str = "amux://pair?payload=";
@@ -122,9 +121,9 @@ enum Commands {
         command: ServerCommands,
     },
 
-    /// Initialize amux (cloud mode, authentication)
+    /// Initialize local device preferences
     Init {
-        /// Clear existing state and re-initialize
+        /// Reset local setup preferences
         #[arg(long)]
         reset: bool,
     },
@@ -378,7 +377,7 @@ async fn main() -> Result<ExitCode> {
         }
         let config = load_config(cli.config)?;
         config
-            .validate(false)
+            .validate()
             .map_err(|e| anyhow!("invalid config: {e}"))?;
         ui::run(config).await?;
         return Ok(ExitCode::SUCCESS);
@@ -388,7 +387,7 @@ async fn main() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let config = load_validated_config(&command, cli.config)?;
+    let config = load_validated_config(cli.config)?;
 
     run_command(command, config).await
 }
@@ -418,27 +417,18 @@ async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
         .map(normalize_config_path)
         .transpose()?;
     config
-        .validate(*cloud)
+        .validate()
         .map_err(|e| anyhow!("invalid config: {e}"))?;
     server_client::run_server_foreground(config, *cloud).await?;
     Ok(true)
 }
 
-fn load_validated_config(command: &Commands, path: Option<PathBuf>) -> Result<Config> {
+fn load_validated_config(path: Option<PathBuf>) -> Result<Config> {
     let config = load_config(path)?;
     config
-        .validate(command_server_mode(command).is_cloud())
+        .validate()
         .map_err(|e| anyhow!("invalid config: {e}"))?;
     Ok(config)
-}
-
-fn command_server_mode(command: &Commands) -> ServerMode {
-    match command {
-        Commands::Server {
-            command: ServerCommands::Start { cloud: true, .. },
-        } => ServerMode::Cloud,
-        _ => ServerMode::Local,
-    }
 }
 
 async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> {
@@ -1167,13 +1157,8 @@ fn init_tracing() -> WorkerGuard {
 }
 
 /// Show a blocking warning if the cloud server requires a newer version.
-/// Only shown when cloud mode is enabled and the user hasn't dismissed this version.
+/// Only shown when the user has not dismissed this version.
 fn check_update_required(config: &Config) {
-    // Only relevant if cloud mode is enabled
-    if !setup::cloud_enabled(config) {
-        return;
-    }
-
     let reporter = MarkerFileReporter::from_state_path(&config.state_path);
     let current = env!("CARGO_PKG_VERSION");
     let minimum_version = match reporter.read_active_update_required(current) {

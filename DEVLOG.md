@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Remove the cloud-mode preference.**
+Cloud attachment is controlled by profile intent and credentials, with no
+`enable_cloud_mode` field in config, setup or runtime options. Standalone runtime
+builders attach when supplied credentials; installations retain their independent
+bind, pause, logout and resume rules. Local init now handles identity and sleep
+preferences without starting authentication or deleting credentials on reset.
+Preparing a pairing QR no longer depends on a preference flag; connecting still
+requires a reachable cloud peer. Relay TCP requirements are checked by relay
+startup instead of shared config validation. Test fixtures and worktree config
+stop writing the removed key; focused tests cover its rejection, credential-free
+local operation and relay validation.
+
 2026-09-05 — **Separate installation preferences from profile storage.**
 InstallationConfig and ProfileConfig now have strict, separate YAML shapes;
 load_profile_config resolves both files, UUID identity and paths relative to each

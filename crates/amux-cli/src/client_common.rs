@@ -60,7 +60,7 @@ async fn spawn_daemon_and_connect(
     executable: &Path,
     cloud: bool,
 ) -> Result<Client> {
-    config.validate(cloud)?;
+    config.validate()?;
 
     tracing::info!(cloud, "starting server");
 

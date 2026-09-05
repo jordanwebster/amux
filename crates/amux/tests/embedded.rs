@@ -37,7 +37,7 @@ async fn embedded_server_opens_client_service_client() {
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
@@ -60,7 +60,7 @@ async fn daemon_open_uses_local_client_service() {
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
@@ -105,7 +105,7 @@ async fn embedded_server_does_not_poll_for_updates() {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
         cloud_url,
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
@@ -142,7 +142,7 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
@@ -188,7 +188,7 @@ async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
     let config = Config {
         state_path: state_path.clone(),
         socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
@@ -264,26 +264,32 @@ async fn spawn_manifest_server(version: &'static str) -> (String, tokio::task::J
 }
 
 #[tokio::test]
-async fn embedded_server_requires_credentials_when_cloud_enabled() {
+async fn config_split_embedded_without_credentials_stays_local() {
     let dir = tempdir().unwrap();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
-        socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(true),
+        data_dir: dir.path().to_owned(),
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
+    let client = Server::builder()
+        .config(config)
+        .embedded()
+        .open()
+        .await
+        .unwrap();
+    assert!(client.list_agents().await.unwrap().is_empty());
+}
 
-    let result = Server::builder().config(config).embedded().open().await;
-    let Err(error) = result else {
-        panic!("embedded cloud-enabled server opened without credentials");
-    };
-
-    assert!(
-        error
-            .to_string()
-            .contains("credentials provider is required")
-    );
+#[tokio::test]
+async fn config_split_relay_still_requires_a_tcp_listener() {
+    let error = Server::builder()
+        .config(Config::default())
+        .as_cloud_relay()
+        .run()
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("cloud relay requires tcp_port"));
 }
 
 #[tokio::test]
@@ -370,12 +376,12 @@ async fn server_builder_rejects_credentials_before_cloud_relay() {
 }
 
 #[tokio::test]
-async fn daemon_open_does_not_require_credentials_when_cloud_enabled() {
+async fn daemon_open_does_not_require_credentials() {
     let dir = tempdir().unwrap();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("missing.sock"),
-        enable_cloud_mode: Some(true),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };

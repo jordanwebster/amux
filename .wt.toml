@@ -17,7 +17,6 @@ host_name: {{name_short()}}
 socket_path: {{root()}}/.wt/amux/amux.sock
 state_path: {{root()}}/.wt/amux/state/state.yaml
 data_dir: {{root()}}/.wt/amux/data
-enable_cloud_mode: false
 prevent_idle_sleep: false
 """
 

@@ -223,7 +223,7 @@ mod tests {
                 state_path: temp.path().join("state.yaml"),
                 data_dir: temp.path().join("data"),
                 socket_path: temp.path().join("amux.sock"),
-                enable_cloud_mode: Some(false),
+
                 prevent_idle_sleep: Some(false),
                 ..Config::default()
             };

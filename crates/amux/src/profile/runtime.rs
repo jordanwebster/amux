@@ -80,7 +80,7 @@ pub(crate) struct ProfileRuntimeOptions {
     pub(crate) config: RuntimeConfig,
     pub(crate) shared: Arc<InstallationSettings>,
     pub(crate) credentials: Option<Arc<dyn CredentialProvider>>,
-    pub(crate) enable_cloud_mode: Option<bool>,
+
     pub(crate) listeners: Listeners,
     #[cfg(testnet)]
     pub(crate) fixtures: RuntimeFixtures,
@@ -120,7 +120,7 @@ impl ProfileRuntimeOptions {
             config: profile,
             shared: Arc::new(shared),
             credentials,
-            enable_cloud_mode: config.enable_cloud_mode,
+
             listeners,
             #[cfg(testnet)]
             fixtures: RuntimeFixtures::default(),
@@ -136,7 +136,7 @@ impl ProfileRuntimeOptions {
             state_path: self.paths.state_path.clone(),
             data_dir: self.paths.data_dir.clone(),
             reports_dir: Some(self.paths.reports_dir.clone()),
-            enable_cloud_mode: self.enable_cloud_mode,
+
             prevent_idle_sleep: self.shared.prevent_idle_sleep,
             minimum_client_versions: self.shared.minimum_client_versions.clone(),
             keybinds: self.shared.keybinds.clone(),
@@ -260,7 +260,7 @@ async fn build(
     #[cfg(testnet)]
     let mut options = options;
     let service_config = options.service_config();
-    service_config.validate(false)?;
+    service_config.validate()?;
 
     let mut bound = BoundListeners::bind(&options).await?;
     let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
@@ -398,7 +398,7 @@ impl ProfileRuntime {
     ) {
         let mut state = self.state.write().await;
         state.config.cloud_url = cloud_url;
-        state.config.enable_cloud_mode = Some(true);
+
         state.credentials = credentials;
     }
 
@@ -741,7 +741,7 @@ mod tests {
                 subscription_reporter: None,
             }),
             credentials: None,
-            enable_cloud_mode: Some(false),
+
             listeners,
             #[cfg(testnet)]
             fixtures: RuntimeFixtures::default(),
@@ -832,7 +832,7 @@ mod tests {
             let mut options = options(root.path(), Listeners::InProcessOnly);
             options.config.cloud_url = format!("http://{}", listener.local_addr().unwrap());
             options.credentials = Some(Arc::new(StaticCredentials));
-            options.enable_cloud_mode = Some(true);
+
             let server = tokio::spawn(async move {
                 loop {
                     let (mut stream, _) = listener.accept().await.unwrap();
@@ -914,7 +914,7 @@ mod tests {
         let root = tempdir().unwrap();
         let mut options = options(root.path(), Listeners::InProcessOnly);
         options.fixtures.cloud = Some((channel, CloudFixtureAuth::Bearer("runtime-token".into())));
-        options.enable_cloud_mode = Some(true);
+
         let runtime = start(options).await.unwrap();
         let host_id = runtime.state.read().await.host_id();
         let wait_for_relay_detach = || async {
@@ -997,7 +997,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn profile_runtime_daemon_preserves_disabled_cloud_mode_with_credentials() {
+    async fn config_split_daemon_without_credentials_serves_locally() {
         tokio::time::timeout(Duration::from_secs(5), async {
             let root = tempdir().unwrap();
             let config = options(root.path(), Listeners::Sockets).service_config();
@@ -1005,7 +1005,6 @@ mod tests {
             let server = tokio::spawn(async move {
                 crate::server::Server::builder()
                     .config(server_config)
-                    .credentials(Arc::new(StaticCredentials))
                     .run()
                     .await
                     .unwrap();
@@ -1028,39 +1027,17 @@ mod tests {
                 .await
                 .unwrap();
             let debug: serde_json::Value = serde_json::from_str(&dump).unwrap();
-            assert_eq!(debug["use_cloud_mode"], false);
-            assert_eq!(debug["config"]["enable_cloud_mode"], false);
-            let error = client.start_qr_pairing().await.unwrap_err();
-            assert!(error.to_string().contains("QR pairing requires cloud mode"));
+            assert_eq!(debug["has_cloud_credentials"], false);
+            assert!(debug["config"].get("enable_cloud_mode").is_none());
+            client.start_qr_pairing().await.unwrap();
             println!(
-                "Daemon with credentials and cloud mode disabled:\n{dump}\nQR pairing: {error}"
+                "Credential-free daemon serves local calls and can prepare a pairing QR:\n{dump}"
             );
             client.shutdown().await.unwrap();
             server.await.unwrap();
         })
         .await
-        .expect("daemon cloud-mode test timed out");
-    }
-
-    #[test]
-    fn profile_runtime_service_config_preserves_cloud_mode_with_credentials() {
-        let root = tempdir().unwrap();
-        for enable_cloud_mode in [None, Some(false), Some(true)] {
-            let mut config = options(root.path(), Listeners::InProcessOnly).service_config();
-            config.enable_cloud_mode = enable_cloud_mode;
-            let options = ProfileRuntimeOptions::from_legacy_config(
-                config,
-                Some(Arc::new(StaticCredentials)),
-                None,
-                None,
-                Listeners::InProcessOnly,
-            );
-            assert_eq!(options.enable_cloud_mode, enable_cloud_mode);
-            assert_eq!(
-                options.service_config().enable_cloud_mode,
-                enable_cloud_mode
-            );
-        }
+        .expect("local daemon test timed out");
     }
 
     #[tokio::test]

@@ -306,7 +306,7 @@ impl Scratch {
         std::fs::write(
             root.join("config/amux/config.yaml"),
             format!(
-                "host_name: capture\nsocket_path: {}\nstate_path: {}\nenable_cloud_mode: false\nprevent_idle_sleep: false\n",
+                "host_name: capture\nsocket_path: {}\nstate_path: {}\nprevent_idle_sleep: false\n",
                 socket.display(),
                 root.join("state/state.yaml").display(),
             ),
