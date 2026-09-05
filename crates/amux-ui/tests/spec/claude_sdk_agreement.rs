@@ -83,6 +83,43 @@ fn recorded(name: &str) -> Vec<Value> {
         .collect()
 }
 
+fn exited_family(newer: &str) -> Vec<Msg> {
+    let mut msgs = sequence(vec![ready(), asks()[0].clone()]);
+    msgs.push(agent_up(&an_agent("lead", "nova")));
+    for name in [AGENT, "pty-agreement"] {
+        let mut child = an_agent(name, "nova");
+        if name == AGENT {
+            child.kind = amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Sdk,
+            };
+        }
+        child.parent = Some(amux_ui::AgentParent {
+            agent_id: agent_id("lead"),
+            host_id: host_id("nova"),
+        });
+        msgs.push(agent_up(&child));
+    }
+    msgs.extend([
+        stream("pty-agreement", StreamMsg::Opened { truncated: false }),
+        stream("pty-agreement", StreamMsg::ReplayComplete),
+        batch(
+            "pty-agreement",
+            10,
+            chat_rows_through("question_single", ChatAnchor::PermissionRequest(0)),
+        ),
+        batch(newer, 100, vec![json!({"type":"unrecognized"})]),
+    ]);
+    for name in [AGENT, "pty-agreement"] {
+        msgs.push(stream(
+            name,
+            StreamMsg::Closed {
+                reason: StreamCloseReason::AgentExited { exit_code: Some(7) },
+            },
+        ));
+    }
+    msgs
+}
+
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     let mut values: Vec<_> = ["permission", "elicitation", "streamed", "interrupted"]
         .into_iter()
@@ -185,6 +222,8 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     reopened.push(batch(AGENT, 100, vec![ready(), asks()[0].clone()]));
     reopened.push(stream(AGENT, StreamMsg::ReplayComplete));
     values.push(("exited session history replay", reopened));
+    values.push(("exited family newer sdk", exited_family(AGENT)));
+    values.push(("exited family newer pty", exited_family("pty-agreement")));
     values
 }
 
@@ -216,9 +255,11 @@ fn all_public_projections_and_cached_attention_agree_after_every_msg() {
                 SdkPhase::Unavailable | SdkPhase::Unknown | SdkPhase::Replaying => {
                     assert_eq!(attention, Attention::Unknown)
                 }
-                SdkPhase::Idle | SdkPhase::Interrupted => assert_eq!(attention, Attention::Idle),
+                SdkPhase::Idle | SdkPhase::Interrupted | SdkPhase::Exited => {
+                    assert_eq!(attention, Attention::Idle)
+                }
                 SdkPhase::Working => assert_eq!(attention, Attention::Working),
-                SdkPhase::Finished | SdkPhase::Errored | SdkPhase::Exited => {
+                SdkPhase::Finished | SdkPhase::Errored => {
                     assert_eq!(attention, Attention::NeedsYou { why: Why::Finished })
                 }
                 SdkPhase::NeedsYou { why, .. } => assert_eq!(
@@ -254,6 +295,44 @@ fn all_public_projections_and_cached_attention_agree_after_every_msg() {
             }
         }
         capture(&model, name);
+    }
+}
+
+#[test]
+fn exited_claude_backends_share_badge_rank_and_clear_family_needs() {
+    for newer in [AGENT, "pty-agreement"] {
+        let mut msgs = exited_family(newer);
+        let exits = msgs.split_off(msgs.len() - 2);
+        let mut model = fold(msgs);
+        assert_eq!(model.family_needs(agent_id("lead")).len(), 2);
+        for exit in exits {
+            update(&mut model, exit);
+            assert!(model.check_invariants().is_empty());
+        }
+        let sdk = model.agent(agent_id(AGENT)).unwrap();
+        let pty = model.agent(agent_id("pty-agreement")).unwrap();
+        assert_eq!(model.effective_attention(sdk), Attention::Idle);
+        assert_eq!(model.effective_attention(pty), Attention::Idle);
+        assert_eq!(model.status_label_for(sdk), "exited(7)");
+        assert_eq!(model.status_label_for(sdk), model.status_label_for(pty));
+        assert_eq!(
+            claude_sdk::send_gate(&model, sdk.agent.id),
+            SendGate::Exited
+        );
+        assert_eq!(
+            amux_ui::claude::send_gate(&model, pty.agent.id),
+            amux_ui::claude::SendGate::Exited
+        );
+        let family = model.family_of(agent_id("lead"));
+        assert_eq!(family.len(), 2);
+        assert!(family[0].card.last_activity > family[1].card.last_activity);
+        assert_eq!(
+            family[0].card.agent.id,
+            agent_id(newer),
+            "equal attention_rank lets recency decide for either backend"
+        );
+        assert!(model.family_needs(agent_id("lead")).is_empty());
+        capture(&model, &format!("exited-family-newer-{newer}"));
     }
 }
 
@@ -436,7 +515,15 @@ fn capture(model: &Model, name: &str) {
         let path = std::path::PathBuf::from(directory);
         std::fs::create_dir_all(&path).unwrap();
         let (phase, attention, gate) = projections(model);
-        let value = json!({"phase":phase,"attention":attention,"send_gate":gate,"cached_attention":model.agent(agent_id(AGENT)).map(|c|c.attention),"asks":claude_sdk_layer(model,AGENT).asks().collect::<Vec<_>>()});
+        let family: Vec<_> = model.family_of(agent_id("lead")).into_iter().map(|member| {
+            json!({"name":member.card.display_name(),"attention":model.effective_attention(member.card),"status":model.status_label_for(member.card),"last_activity":member.card.last_activity})
+        }).collect();
+        let needs: Vec<_> = model
+            .family_needs(agent_id("lead"))
+            .into_iter()
+            .map(|need| need.card.display_name())
+            .collect();
+        let value = json!({"phase":phase,"attention":attention,"send_gate":gate,"cached_attention":model.agent(agent_id(AGENT)).map(|c|c.attention),"asks":claude_sdk_layer(model,AGENT).asks().collect::<Vec<_>>(),"family_in_rank_order":family,"family_needs":needs});
         std::fs::write(
             path.join(format!("{}.json", name.replace(' ', "-"))),
             serde_json::to_string_pretty(&value).unwrap(),
@@ -483,17 +570,13 @@ fn replay_gates_retained_asks_and_exit_resolves_them() {
     assert_eq!(claude_sdk_layer(&model, AGENT).ask_count(), 0);
     assert_eq!(
         projections(&model),
-        (
-            SdkPhase::Exited,
-            Attention::NeedsYou { why: Why::Finished },
-            SendGate::Exited
-        )
+        (SdkPhase::Exited, Attention::Idle, SendGate::Exited)
     );
 }
 
 #[test]
-fn invariant_detects_kernel_exit_disagreeing_with_an_idle_cached_card() {
-    let model = fold(sequence(vec![ready()]));
+fn invariant_detects_kernel_exit_disagreeing_with_a_working_cached_card() {
+    let model = fold(sequence(vec![ready(), prompt()]));
     let mut checkpoint = serde_json::to_value(model).unwrap();
     let card = checkpoint["agents"]
         .as_object_mut()

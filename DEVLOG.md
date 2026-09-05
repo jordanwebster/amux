@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Give exited Claude agents equal fleet attention.**
+An exited SDK session now reports idle attention, matching Claude PTY while
+keeping chat input closed. Agreement specs check the same status and badge
+attention for both, recency ordering with either backend newer, and removal
+of both children's asks from their parent's family needs after exit. The
+projection invariant still detects an exited card retaining working attention.
+
 2026-09-05 — **Replay Claude SDK conversations and agent messages in specs.**
 Recorded streaming, tool-use and interrupted sessions now exercise typed
 client commands, accepted prompt echoes and readiness for another prompt.

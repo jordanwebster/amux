@@ -104,11 +104,13 @@ impl SdkCondition {
             SdkConditionState::Unavailable
             | SdkConditionState::Replaying
             | SdkConditionState::Unknown => Attention::Unknown,
-            SdkConditionState::Idle | SdkConditionState::Interrupted => Attention::Idle,
+            SdkConditionState::Idle
+            | SdkConditionState::Interrupted
+            | SdkConditionState::Exited => Attention::Idle,
             SdkConditionState::Working => Attention::Working,
-            SdkConditionState::Finished
-            | SdkConditionState::Errored
-            | SdkConditionState::Exited => Attention::NeedsYou { why: Why::Finished },
+            SdkConditionState::Finished | SdkConditionState::Errored => {
+                Attention::NeedsYou { why: Why::Finished }
+            }
             SdkConditionState::AskPending { why, .. } => Attention::NeedsYou {
                 why: match why {
                     AskWhy::Permission | AskWhy::Plan => Why::Permission,
@@ -289,7 +291,7 @@ pub(crate) fn check_projection_invariant(model: &Model, agent: AgentId, out: &mu
         SdkPhase::Unavailable => (Attention::Unknown, SendGate::Unavailable),
         SdkPhase::Unknown => (Attention::Unknown, SendGate::Unknown),
         SdkPhase::Replaying => (Attention::Unknown, SendGate::Replaying),
-        SdkPhase::Exited => (Attention::NeedsYou { why: Why::Finished }, SendGate::Exited),
+        SdkPhase::Exited => (Attention::Idle, SendGate::Exited),
         SdkPhase::Idle | SdkPhase::Interrupted => (Attention::Idle, SendGate::Ready),
         SdkPhase::Working => (Attention::Working, SendGate::Working),
         SdkPhase::Finished | SdkPhase::Errored => {
