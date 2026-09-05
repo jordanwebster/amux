@@ -114,7 +114,10 @@ mod tests {
         let entries = vec![entry("personal", 1), entry("work", 2)];
         let socket = entries[1].socket.clone();
         let state = SwitcherState::open(entries, Some(&socket));
-        assert_eq!(state.selected().map(|entry| entry.label.as_str()), Some("work"));
+        assert_eq!(
+            state.selected().map(|entry| entry.label.as_str()),
+            Some("work")
+        );
     }
 
     #[test]

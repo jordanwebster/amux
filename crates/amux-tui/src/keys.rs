@@ -354,7 +354,6 @@ mod tests {
         KeyEvent::new(KeyCode::Char(view.leader), KeyModifiers::CONTROL)
     }
 
-
     fn plain(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }

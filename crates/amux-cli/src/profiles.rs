@@ -200,10 +200,7 @@ pub fn remember_selection(config: &Config) -> Result<()> {
         .context("selected profile config is missing")?;
     let resolved = amux::load_profile_config(&std::fs::canonicalize(path)?)?;
     let installation = crate::front_door::configuration(Some(path))?;
-    remember(
-        &last_used(&installation),
-        &resolved.profile_id.to_string(),
-    )
+    remember(&last_used(&installation), &resolved.profile_id.to_string())
 }
 
 pub fn confirm(message: &str) -> Result<bool> {

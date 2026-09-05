@@ -462,7 +462,9 @@ pub enum ShellEffect {
     Dispatch(Command),
     NoteAttached(AgentId),
     WriteClipboard(String),
-    Create { host: Option<HostId> },
+    Create {
+        host: Option<HostId>,
+    },
     /// Read the installation's profile list and hand it back as
     /// [`TraceEvent::ProfilesListed`].
     ListProfiles,
@@ -591,9 +593,10 @@ impl Chrome {
                 vec![ShellEffect::NoteAttached(*agent)]
             }
             TraceEvent::ProfilesListed { entries, current } => {
-                self.view.mode = crate::view::Mode::Switcher(
-                    crate::switcher::SwitcherState::open(entries.clone(), current.as_deref()),
-                );
+                self.view.mode = crate::view::Mode::Switcher(crate::switcher::SwitcherState::open(
+                    entries.clone(),
+                    current.as_deref(),
+                ));
                 self.dirty = true;
                 Vec::new()
             }

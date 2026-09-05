@@ -286,10 +286,7 @@ impl MsgSink {
     /// Bounded lossless send: the producer waits, never drops. `Err` means
     /// the Runtime is gone.
     async fn send(&self, msg: Msg) -> Result<(), ()> {
-        self.tx
-            .send((self.generation, msg))
-            .await
-            .map_err(|_| ())
+        self.tx.send((self.generation, msg)).await.map_err(|_| ())
     }
 }
 
@@ -462,7 +459,10 @@ impl Runtime {
         if let Some(kind) = LateResult::of(msg) {
             self.discarded_late.insert(kind);
         }
-        tracing::debug!(?msg, "dropping a result from a profile the runtime has left");
+        tracing::debug!(
+            ?msg,
+            "dropping a result from a profile the runtime has left"
+        );
     }
 
     fn start_on_channel(
@@ -1463,7 +1463,8 @@ async fn connection_task(
                         message: failure.message,
                     }
                 };
-                if tx.send( Msg::Server(ServerMsg::Disconnected { reason }))
+                if tx
+                    .send(Msg::Server(ServerMsg::Disconnected { reason }))
                     .await
                     .is_err()
                 {
@@ -1489,7 +1490,8 @@ async fn connection_task(
             // The Msg channel closed: the Runtime is gone.
             return;
         };
-        if tx.send( Msg::Server(ServerMsg::Disconnected { reason }))
+        if tx
+            .send(Msg::Server(ServerMsg::Disconnected { reason }))
             .await
             .is_err()
         {
@@ -1518,7 +1520,8 @@ async fn pump_inventory(
         Err(error) => return Some(disconnect_reason(&error)),
     };
 
-    if tx.send( Msg::Server(ServerMsg::Connected { local_host_id }))
+    if tx
+        .send(Msg::Server(ServerMsg::Connected { local_host_id }))
         .await
         .is_err()
     {
@@ -1526,11 +1529,10 @@ async fn pump_inventory(
     }
     let mut subscription_required = subscription_status_provider.map(|provider| provider());
     if let Some(required) = subscription_required
-        && tx.send(
-            Msg::Server(ServerMsg::CloudSubscriptionStatus { required }),
-        )
-        .await
-        .is_err()
+        && tx
+            .send(Msg::Server(ServerMsg::CloudSubscriptionStatus { required }))
+            .await
+            .is_err()
     {
         return None;
     }
@@ -1568,7 +1570,7 @@ async fn pump_inventory(
                 ServerMsg::CloudSubscriptionStatus { required }
             },
         };
-        if tx.send( Msg::Server(event)).await.is_err() {
+        if tx.send(Msg::Server(event)).await.is_err() {
             return None;
         }
     }
@@ -1591,13 +1593,12 @@ async fn stream_task(
     tx: MsgSink,
 ) {
     if let Some(reason) = pump_structured_stream(client, agent, protocol, tail, &tx).await {
-        let _ = tx.send(
-            Msg::Stream {
+        let _ = tx
+            .send(Msg::Stream {
                 agent,
                 event: StreamMsg::Closed { reason },
-            },
-        )
-        .await;
+            })
+            .await;
     }
 }
 
@@ -1683,12 +1684,10 @@ async fn pump_structured_stream(
             }
             Some(Ok(SubscribeSessionEvent::ReplayComplete { .. })) => {
                 flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
-                tx.send(
-                    Msg::Stream {
-                        agent,
-                        event: StreamMsg::ReplayComplete,
-                    },
-                )
+                tx.send(Msg::Stream {
+                    agent,
+                    event: StreamMsg::ReplayComplete,
+                })
                 .await
                 .ok()?;
             }
@@ -1715,12 +1714,10 @@ async fn flush_stream_batch(
 ) -> Option<()> {
     if !*sent_opened {
         let truncated = batch.first().is_some_and(|entry| entry.seq > 1);
-        tx.send(
-            Msg::Stream {
-                agent,
-                event: StreamMsg::Opened { truncated },
-            },
-        )
+        tx.send(Msg::Stream {
+            agent,
+            event: StreamMsg::Opened { truncated },
+        })
         .await
         .ok()?;
         *sent_opened = true;
@@ -1729,15 +1726,13 @@ async fn flush_stream_batch(
         return Some(());
     }
     let entries = std::mem::take(batch);
-    tx.send(
-        Msg::Stream {
-            agent,
-            event: StreamMsg::Batch {
-                at: Utc::now(),
-                entries,
-            },
+    tx.send(Msg::Stream {
+        agent,
+        event: StreamMsg::Batch {
+            at: Utc::now(),
+            entries,
         },
-    )
+    })
     .await
     .ok()?;
     Some(())

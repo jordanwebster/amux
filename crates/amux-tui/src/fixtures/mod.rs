@@ -1018,7 +1018,11 @@ fn switched_fleet_fixture() -> Fixture {
             ),
         }),
         Msg::Server(ServerMsg::AgentUpserted {
-            agent: work_agent(StructuredProtocol::Codex, AgentId::from_u128(22), "audit-deps"),
+            agent: work_agent(
+                StructuredProtocol::Codex,
+                AgentId::from_u128(22),
+                "audit-deps",
+            ),
         }),
         Msg::Server(ServerMsg::HostsSynchronized),
         Msg::Server(ServerMsg::AgentsSynchronized),

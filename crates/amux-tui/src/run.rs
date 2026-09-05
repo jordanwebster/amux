@@ -34,6 +34,9 @@ pub enum AttachReturn {
     Exit,
 }
 
+/// Builds the runtime options one selected profile is bound with.
+pub type ProfileRuntimeOptions = Box<dyn Fn(&ProfileEntry) -> Result<RuntimeOptions> + Send + Sync>;
+
 /// How the fleet reaches the installation's other accounts.
 ///
 /// The front door is dialled when the switcher opens, not at startup: a
@@ -42,10 +45,6 @@ pub enum AttachReturn {
 /// answer. `options` is asked for a fresh set of runtime options per
 /// selection, because a profile's reports, artifact cache and device
 /// identity are its own.
-/// Builds the runtime options one selected profile is bound with.
-pub type ProfileRuntimeOptions =
-    Box<dyn Fn(&ProfileEntry) -> Result<RuntimeOptions> + Send + Sync>;
-
 pub struct ProfileSwitching {
     /// The installation's administration socket.
     pub front_door: std::path::PathBuf,

@@ -656,9 +656,11 @@ async fn switcher_rejects_late_results() {
         agent: work_agent.id,
         id: work_artifact.id.clone(),
     });
-    wait_for(&mut runtime, "the work account's attachment", move |model| {
-        model.finished_op(work_open).is_some()
-    })
+    wait_for(
+        &mut runtime,
+        "the work account's attachment",
+        move |model| model.finished_op(work_open).is_some(),
+    )
     .await;
     let cached = opened.lock().unwrap().last().cloned().unwrap();
     assert!(
@@ -704,10 +706,12 @@ impl ProfileBindings {
             artifact_cache: Some(profile_root.join("cache")),
             artifact_cache_bound: 1024 * 1024,
             subscription_status_provider: Some(Arc::new(move || subscription_required)),
-            attachment_opener: Arc::new(move |_meta: &amux_artifacts::ArtifactMeta, path: &Path| {
-                opened.lock().unwrap().push(path.to_path_buf());
-                Ok(())
-            }),
+            attachment_opener: Arc::new(
+                move |_meta: &amux_artifacts::ArtifactMeta, path: &Path| {
+                    opened.lock().unwrap().push(path.to_path_buf());
+                    Ok(())
+                },
+            ),
             ..RuntimeOptions::default()
         }
     }
