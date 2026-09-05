@@ -200,6 +200,7 @@ impl ClaudeSdkBackend {
             cli_path: Some(self.command.clone().into()),
             cwd: Some(self.working_dir.clone()),
             env: Some(scrubbed_environment()),
+            include_partial_messages: true,
             ..QueryOptions::default()
         };
 
@@ -1020,7 +1021,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn sdk_launch_settings_leave_user_hooks_to_claude() {
+    async fn claude_sdk_launch_settings_stream_and_leave_user_hooks_to_claude() {
         let directory = tempfile::tempdir().unwrap();
         let cli = directory.path().join("capture-claude-argv.sh");
         let argv = directory.path().join("argv.txt");
@@ -1048,6 +1049,7 @@ mod tests {
         backend.command = cli.to_string_lossy().into_owned();
         let mut options = backend.query_options().unwrap();
 
+        assert!(options.include_partial_messages);
         assert!(options.setting_sources.is_empty());
         assert!(options.hook_subscriptions.is_empty());
         let Some(SettingsConfig::Inline(settings)) = options.settings.as_ref() else {
@@ -1062,6 +1064,7 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(2), claude::sdk::spawn(options)).await;
         let launched = std::fs::read_to_string(&argv).expect("capture Claude launch arguments");
         let launched = launched.lines().collect::<Vec<_>>();
+        assert!(launched.contains(&"--include-partial-messages"));
         assert!(!launched.contains(&"--setting-sources"));
         let settings_index = launched
             .iter()

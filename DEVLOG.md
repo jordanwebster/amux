@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Enabled streaming in managed Claude SDK sessions.** Launches
+now request partial messages, with a captured-argv test proving the flag
+reaches Claude. Recorded streaming, subagent activity, compaction, clearing,
+and turn-limit sessions now replay through the daemon into frozen client row
+fixtures. Stream events are checked against the original inbound JSON, and
+the codec preserves explicit null stop fields in opening stream messages.
+The subagent fixture retains completion notifications after the first result.
+
 2026-09-04 — **Gave both Claude chats one set of ask surfaces.** The ask
 panels, the panel stage machine, the fullscreen reader, the review draft and
 Claude's document chrome now live in one presentation module beside the

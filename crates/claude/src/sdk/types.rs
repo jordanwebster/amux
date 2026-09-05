@@ -284,13 +284,31 @@ pub struct ApiMessage {
     pub role: Role,
     pub content: Vec<ContentBlock>,
     pub model: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop_reason: Option<StopReason>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop_sequence: Option<String>,
+    /// Outer None means absent; Some(None) preserves an explicit null at stream start.
+    #[serde(
+        default,
+        deserialize_with = "present_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stop_reason: Option<Option<StopReason>>,
+    /// Distinguishes an omitted field from an explicit null on the wire.
+    #[serde(
+        default,
+        deserialize_with = "present_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stop_sequence: Option<Option<String>>,
     pub usage: Usage,
     #[serde(flatten)]
     pub extensions: Extensions,
+}
+
+fn present_nullable<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
 }
 
 // ── MessageParam ────────────────────────────────────────────────────
