@@ -41,6 +41,7 @@ const CLAUDE_SDK_DERIVATIONS: &[(&str, &str)] = &[
     ("compacted", "commands/compacted"),
     ("cleared", "commands/cleared"),
     ("max_turns", "results/max_turns"),
+    ("elicitation_accepted", "tools/elicitation_accepted"),
 ];
 const CLAUDE_PTY_DERIVATIONS: &[(&str, &str)] = &[
     ("prompt", "pong"),
@@ -581,6 +582,48 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
                     )
                     .await?;
             }
+            first.wait_for_type("result").await?;
+            harnesses.push(first);
+        }
+        "elicitation_accepted" => {
+            let permission = first
+                .wait_for_type("amux.claude_sdk.permission_required")
+                .await?;
+            first
+                .send(
+                    b"permission-allow",
+                    ClaudeSdkV1Input::PermissionDecision {
+                        request_id: permission["request_id"]
+                            .as_str()
+                            .context("permission has no request id")?
+                            .to_string(),
+                        decision: PermissionResult::Allow {
+                            updated_input: Some(permission["input"].clone()),
+                            updated_permissions: None,
+                            tool_use_id: None,
+                        },
+                    },
+                )
+                .await?;
+            let request = first
+                .wait_for_type("amux.claude_sdk.elicitation_required")
+                .await?;
+            let request_id = request["request_id"]
+                .as_str()
+                .context("elicitation has no request id")?
+                .to_string();
+            first
+                .send(
+                    b"elicitation-accept",
+                    ClaudeSdkV1Input::ElicitationDecision {
+                        request_id,
+                        result: claude::sdk::ElicitationResult::Accept {
+                            content: Some(json!({"confirmed": "PELICAN"})),
+                            extensions: Default::default(),
+                        },
+                    },
+                )
+                .await?;
             first.wait_for_type("result").await?;
             harnesses.push(first);
         }

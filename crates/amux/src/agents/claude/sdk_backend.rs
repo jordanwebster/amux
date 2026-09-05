@@ -35,11 +35,92 @@ use crate::suspend::SuspendedAgent;
 
 const STRUCTURED_LOG_RETENTION: usize = 8192;
 
+#[derive(Clone, Copy)]
+enum RequestKind {
+    Permission,
+    Elicitation,
+    Dialog,
+}
+
+impl RequestKind {
+    const ALL: [Self; 3] = [Self::Permission, Self::Elicitation, Self::Dialog];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Permission => "permission",
+            Self::Elicitation => "elicitation",
+            Self::Dialog => "dialog",
+        }
+    }
+
+    fn resolution(self, request_id: String, decision: &str) -> ClaudeSdkSynthesized {
+        let decision = decision.to_string();
+        match self {
+            Self::Permission => ClaudeSdkSynthesized::PermissionResolved {
+                request_id,
+                decision,
+            },
+            Self::Elicitation => ClaudeSdkSynthesized::ElicitationResolved {
+                request_id,
+                decision,
+            },
+            Self::Dialog => ClaudeSdkSynthesized::DialogResolved {
+                request_id,
+                decision,
+            },
+        }
+    }
+}
+
+#[derive(Default)]
+struct PendingRequests {
+    permissions: HashSet<String>,
+    elicitations: HashSet<String>,
+    dialogs: HashSet<String>,
+}
+
+impl PendingRequests {
+    fn ids(&mut self, kind: RequestKind) -> &mut HashSet<String> {
+        match kind {
+            RequestKind::Permission => &mut self.permissions,
+            RequestKind::Elicitation => &mut self.elicitations,
+            RequestKind::Dialog => &mut self.dialogs,
+        }
+    }
+
+    fn drain(&mut self) -> Vec<(RequestKind, String)> {
+        RequestKind::ALL
+            .into_iter()
+            .flat_map(|kind| {
+                let mut ids = self.ids(kind).drain().collect::<Vec<_>>();
+                ids.sort();
+                ids.into_iter().map(move |id| (kind, id))
+            })
+            .collect()
+    }
+
+    fn obligations(&self) -> Vec<ObligationDebug> {
+        [
+            (RequestKind::Permission, &self.permissions),
+            (RequestKind::Elicitation, &self.elicitations),
+            (RequestKind::Dialog, &self.dialogs),
+        ]
+        .into_iter()
+        .flat_map(|(kind, ids)| {
+            ids.iter().map(move |id| ObligationDebug {
+                kind: kind.name().to_string(),
+                id: Some(id.clone()),
+            })
+        })
+        .collect()
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Runtime {
     pub(super) control: Option<Control>,
     pub(super) session_id: Option<Uuid>,
-    pub(super) pending_permissions: HashSet<String>,
+    pending: PendingRequests,
     pub(super) inflight_inputs: usize,
     pub(super) ready: bool,
     pub(super) exited: bool,
@@ -425,7 +506,8 @@ async fn ingest_session(
                 runtime
                     .lock()
                     .expect("Claude SDK runtime poisoned")
-                    .pending_permissions
+                    .pending
+                    .permissions
                     .insert(id.clone());
                 write_synthesized(
                     &log,
@@ -456,44 +538,39 @@ async fn ingest_session(
                 }
             }
             Ok(SdkEvent::Elicitation { id, request }) => {
-                log.write(control_request_row(
-                    &id,
-                    "elicitation",
-                    serde_json::to_value(request)
-                        .expect("Claude elicitation requests serialize as JSON"),
-                ))
+                runtime
+                    .lock()
+                    .expect("Claude SDK runtime poisoned")
+                    .pending
+                    .elicitations
+                    .insert(id.clone());
+                write_synthesized(
+                    &log,
+                    ClaudeSdkSynthesized::ElicitationRequired {
+                        request_id: id,
+                        server: Some(request.server_name),
+                        message: request.message,
+                        schema: request.requested_schema.unwrap_or(Value::Null),
+                    },
+                )
                 .await;
-                if let Err(error) = control
-                    .answer_elicitation(
-                        id,
-                        ElicitationResult::Decline {
-                            extensions: Default::default(),
-                        },
-                    )
-                    .await
-                {
-                    tracing::warn!(%agent_id, %error, "failed to decline Claude SDK elicitation");
-                }
             }
             Ok(SdkEvent::UserDialog { id, request }) => {
-                log.write(control_request_row(
-                    &id,
-                    "request_user_dialog",
-                    serde_json::to_value(request)
-                        .expect("Claude user-dialog requests serialize as JSON"),
-                ))
+                runtime
+                    .lock()
+                    .expect("Claude SDK runtime poisoned")
+                    .pending
+                    .dialogs
+                    .insert(id.clone());
+                write_synthesized(
+                    &log,
+                    ClaudeSdkSynthesized::DialogRequired {
+                        request_id: id,
+                        dialog_kind: request.dialog_kind,
+                        payload: request.payload,
+                    },
+                )
                 .await;
-                if let Err(error) = control
-                    .answer_user_dialog(
-                        id,
-                        UserDialogResult::Cancelled {
-                            extensions: Default::default(),
-                        },
-                    )
-                    .await
-                {
-                    tracing::warn!(%agent_id, %error, "failed to cancel Claude SDK user dialog");
-                }
             }
             Ok(SdkEvent::Exited(_)) => break,
             Err(error) => {
@@ -508,10 +585,10 @@ async fn ingest_session(
         let mut state = runtime.lock().expect("Claude SDK runtime poisoned");
         state.control = None;
         state.exited = true;
-        state.pending_permissions.drain().collect::<Vec<_>>()
+        state.pending.drain()
     };
-    for request_id in pending {
-        write_permission_resolution(&log, request_id, "session_exited").await;
+    for (kind, request_id) in pending {
+        write_synthesized(&log, kind.resolution(request_id, "session_exited")).await;
     }
     log.close().await;
 }
@@ -573,21 +650,6 @@ async fn write_synthesized(log: &StructuredLogSource, row: ClaudeSdkSynthesized)
         .await;
 }
 
-async fn write_permission_resolution(
-    log: &StructuredLogSource,
-    request_id: String,
-    decision: &str,
-) {
-    write_synthesized(
-        log,
-        ClaudeSdkSynthesized::PermissionResolved {
-            request_id,
-            decision: decision.to_string(),
-        },
-    )
-    .await;
-}
-
 struct ClaudeSdkInputTarget {
     runtime: Arc<Mutex<Runtime>>,
     input_done: Arc<Notify>,
@@ -639,31 +701,69 @@ impl ClaudeSdkInputTarget {
                 decision,
             } => {
                 let decision_name = permission_decision_name(&decision);
-                let removed = self
-                    .runtime
-                    .lock()
-                    .expect("Claude SDK runtime poisoned")
-                    .pending_permissions
-                    .remove(&request_id);
-                if !removed {
-                    return Err(anyhow!("unknown or already-resolved permission request id"));
-                }
+                self.take_pending(RequestKind::Permission, &request_id)?;
                 let result = control
                     .answer_permission(request_id.clone(), decision)
                     .await;
-                write_permission_resolution(
-                    &self.log,
-                    request_id,
-                    if result.is_ok() {
-                        decision_name
-                    } else {
-                        "response_failed"
-                    },
-                )
-                .await;
-                result?;
+                self.resolve(RequestKind::Permission, request_id, decision_name, result)
+                    .await?;
+            }
+            ClaudeSdkV1Input::ElicitationDecision { request_id, result } => {
+                let decision = match &result {
+                    ElicitationResult::Accept { .. } => "accept",
+                    ElicitationResult::Decline { .. } => "decline",
+                    ElicitationResult::Cancel { .. } => "cancel",
+                };
+                self.take_pending(RequestKind::Elicitation, &request_id)?;
+                let result = control.answer_elicitation(request_id.clone(), result).await;
+                self.resolve(RequestKind::Elicitation, request_id, decision, result)
+                    .await?;
+            }
+            ClaudeSdkV1Input::DialogDecision { request_id, result } => {
+                let decision = match &result {
+                    UserDialogResult::Completed { .. } => "completed",
+                    UserDialogResult::Cancelled { .. } => "cancelled",
+                };
+                self.take_pending(RequestKind::Dialog, &request_id)?;
+                let result = control.answer_user_dialog(request_id.clone(), result).await;
+                self.resolve(RequestKind::Dialog, request_id, decision, result)
+                    .await?;
             }
         }
+        Ok(())
+    }
+
+    fn take_pending(&self, kind: RequestKind, request_id: &str) -> Result<()> {
+        let mut state = self.runtime.lock().expect("Claude SDK runtime poisoned");
+        if !state.pending.ids(kind).remove(request_id) {
+            return Err(anyhow!(
+                "unknown or already-resolved {} request id",
+                kind.name()
+            ));
+        }
+        Ok(())
+    }
+
+    async fn resolve(
+        &self,
+        kind: RequestKind,
+        request_id: String,
+        decision: &str,
+        result: std::result::Result<(), claude::sdk::Error>,
+    ) -> Result<()> {
+        write_synthesized(
+            &self.log,
+            kind.resolution(
+                request_id,
+                if result.is_ok() {
+                    decision
+                } else {
+                    "response_failed"
+                },
+            ),
+        )
+        .await;
+        result?;
         Ok(())
     }
 
@@ -775,11 +875,10 @@ impl AgentBackend for ClaudeSdkBackend {
             .runtime
             .lock()
             .expect("Claude SDK runtime poisoned")
-            .pending_permissions
-            .drain()
-            .collect::<Vec<_>>();
-        for request_id in pending {
-            write_permission_resolution(&self.log, request_id, "session_stopped").await;
+            .pending
+            .drain();
+        for (kind, request_id) in pending {
+            write_synthesized(&self.log, kind.resolution(request_id, "session_stopped")).await;
         }
         self.log.close().await;
     }
@@ -857,17 +956,13 @@ impl AgentBackend for ClaudeSdkBackend {
     }
 
     async fn debug_json(&self, verbose: bool) -> serde_json::Result<Value> {
-        let (active, ready, exited, pending_permissions) = {
+        let (active, ready, exited, obligations) = {
             let runtime = self.runtime.lock().expect("Claude SDK runtime poisoned");
             (
                 runtime.control.is_some(),
                 runtime.ready,
                 runtime.exited,
-                runtime
-                    .pending_permissions
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>(),
+                runtime.pending.obligations(),
             )
         };
         let output = self.log.debug_snapshot().await;
@@ -878,13 +973,6 @@ impl AgentBackend for ClaudeSdkBackend {
         } else {
             BackendState::Starting
         };
-        let obligations = pending_permissions
-            .into_iter()
-            .map(|id| ObligationDebug {
-                kind: "permission".to_string(),
-                id: Some(id),
-            })
-            .collect();
         let session =
             SessionDebug::new(Some(&output), output.subscriber_count, backend, obligations);
         let mut value = serde_json::to_value(DebugView::new(self, verbose))?;
@@ -908,7 +996,9 @@ impl Serialize for DebugView<'_, ClaudeSdkBackend> {
         if let Some(session_id) = runtime.session_id {
             map.serialize_entry("session_id", &session_id)?;
         }
-        map.serialize_entry("pending_permissions", &runtime.pending_permissions.len())?;
+        map.serialize_entry("pending_permissions", &runtime.pending.permissions.len())?;
+        map.serialize_entry("pending_elicitations", &runtime.pending.elicitations.len())?;
+        map.serialize_entry("pending_dialogs", &runtime.pending.dialogs.len())?;
         map.serialize_entry("active", &runtime.control.is_some())?;
         map.serialize_entry("exited", &runtime.exited)?;
         let _ = self.verbose;
@@ -1176,6 +1266,7 @@ mod tests {
                         "subtype": "elicitation",
                         "mcp_server_name": "forms",
                         "message": "Pick one",
+                        "requested_schema": {"type": "object", "properties": {"choice": {"type": "string"}}},
                         "future_field": "retained"
                     }
                 }),
@@ -1183,7 +1274,10 @@ mod tests {
             .await;
             let elicitation = read_json_line(&mut stdin).await;
             assert_eq!(elicitation["response"]["request_id"], "elicitation-1");
-            assert_eq!(elicitation["response"]["response"]["action"], "decline");
+            assert_eq!(
+                elicitation["response"]["response"],
+                json!({"action": "accept", "content": {"choice": "a"}})
+            );
 
             write_json_line(
                 &mut stdout,
@@ -1192,8 +1286,8 @@ mod tests {
                     "request_id": "dialog-1",
                     "request": {
                         "subtype": "request_user_dialog",
-                        "dialog_kind": "confirm",
-                        "payload": {"title": "Continue?"},
+                        "dialog_kind": "Future.Kind/v2",
+                        "payload": {"title": "Continue?", "nested": [null, {"values": [1, true]}]},
                         "tool_use_id": "tool-1",
                         "future_field": "retained"
                     }
@@ -1202,7 +1296,10 @@ mod tests {
             .await;
             let dialog = read_json_line(&mut stdin).await;
             assert_eq!(dialog["response"]["request_id"], "dialog-1");
-            assert_eq!(dialog["response"]["response"]["behavior"], "cancelled");
+            assert_eq!(
+                dialog["response"]["response"],
+                json!({"behavior": "completed", "result": {"confirmed": true}})
+            );
 
             let interrupt = read_json_line(&mut stdin).await;
             let interrupt_id = interrupt["request_id"].as_str().unwrap();
@@ -1236,7 +1333,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ingests_rows_answers_obligations_and_forwards_input() {
+    async fn claude_sdk_ingests_rows_answers_obligations_and_forwards_input() {
         let directory = tempfile::tempdir().unwrap();
         let transcript_dir = directory.path().join("transcripts");
         let transcript_path = transcript_dir.join("session.jsonl");
@@ -1275,7 +1372,8 @@ mod tests {
             .expect("SDK backend row timed out")
         {
             let permission = output.payload["type"] == "amux.claude_sdk.permission_required";
-            let dialog = output.payload["request_id"] == "dialog-1";
+            let elicitation = output.payload["type"] == "amux.claude_sdk.elicitation_required";
+            let dialog = output.payload["type"] == "amux.claude_sdk.dialog_required";
             outputs.push(output);
             if permission {
                 input
@@ -1289,6 +1387,53 @@ mod tests {
                                 tool_use_id: Some("tool-1".to_string()),
                             },
                         },
+                    })
+                    .await
+                    .unwrap();
+            }
+            if elicitation || dialog {
+                let answer = if elicitation {
+                    ClaudeSdkV1Input::ElicitationDecision {
+                        request_id: "elicitation-1".into(),
+                        result: ElicitationResult::Accept {
+                            content: Some(json!({"choice": "a"})),
+                            extensions: Default::default(),
+                        },
+                    }
+                } else {
+                    ClaudeSdkV1Input::DialogDecision {
+                        request_id: "dialog-1".into(),
+                        result: UserDialogResult::Completed {
+                            result: json!({"confirmed": true}),
+                            extensions: Default::default(),
+                        },
+                    }
+                };
+                let debug = backend.debug_json(true).await.unwrap();
+                assert!(
+                    debug["session"]["obligations"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|ask| {
+                            ask["kind"] == if elicitation { "elicitation" } else { "dialog" }
+                        })
+                );
+                input
+                    .send(StructuredInputEvent::ClaudeSdk {
+                        input_id: if elicitation {
+                            b"elicitation-answer".to_vec()
+                        } else {
+                            b"dialog-answer".to_vec()
+                        },
+                        input: answer.clone(),
+                    })
+                    .await
+                    .unwrap();
+                input
+                    .send(StructuredInputEvent::ClaudeSdk {
+                        input_id: b"duplicate".to_vec(),
+                        input: answer,
                     })
                     .await
                     .unwrap();
@@ -1340,12 +1485,18 @@ mod tests {
                 && row.payload["request"]["input"]["transcript_path"] == transcript_path_string
         }));
         assert!(outputs.iter().any(|row| {
-            row.payload["request_id"] == "elicitation-1"
-                && row.payload["request"]["future_field"] == "retained"
+            row.payload
+                == json!({
+                    "type": "amux.claude_sdk.elicitation_required", "request_id": "elicitation-1",
+                    "server": "forms", "message": "Pick one",
+                    "schema": {"type": "object", "properties": {"choice": {"type": "string"}}}
+                })
         }));
         assert!(outputs.iter().any(|row| {
-            row.payload["request_id"] == "dialog-1"
-                && row.payload["request"]["future_field"] == "retained"
+            row.payload == json!({
+                "type": "amux.claude_sdk.dialog_required", "request_id": "dialog-1",
+                "dialog_kind": "Future.Kind/v2", "payload": {"title": "Continue?", "nested": [null, {"values": [1, true]}]}
+            })
         }));
         assert!(outputs.iter().any(|row| {
             row.payload["type"] == "amux.claude_sdk.input_result"
@@ -1357,20 +1508,235 @@ mod tests {
                 && row.payload["input_id"] == json!(b"interrupt-1")
                 && row.payload["outcome"] == "ok"
         }));
+        for (kind, decision) in [("elicitation", "accept"), ("dialog", "completed")] {
+            let resolved = outputs
+                .iter()
+                .position(|row| {
+                    row.payload["type"] == format!("amux.claude_sdk.{kind}_resolved")
+                        && row.payload["decision"] == decision
+                })
+                .unwrap();
+            let acknowledged = outputs
+                .iter()
+                .position(|row| {
+                    row.payload["input_id"] == json!(format!("{kind}-answer").as_bytes())
+                })
+                .unwrap();
+            assert!(resolved < acknowledged);
+            assert!(
+                outputs
+                    .iter()
+                    .any(|row| row.payload["input_id"] == json!(b"duplicate")
+                        && row.payload["outcome"]
+                            == format!("unknown or already-resolved {kind} request id"))
+            );
+        }
         assert!(
             backend
                 .runtime
                 .lock()
                 .unwrap()
-                .pending_permissions
+                .pending
+                .obligations()
                 .is_empty()
         );
+        assert!(
+            backend
+                .runtime
+                .lock()
+                .unwrap()
+                .pending
+                .permissions
+                .is_empty()
+        );
+        if let Some(directory) = std::env::var_os("CLAUDE_SDK_ASK_EVIDENCE") {
+            std::fs::create_dir_all(&directory).unwrap();
+            let bytes = outputs
+                .iter()
+                .map(|row| format!("{}\n", serde_json::to_string(&row.payload).unwrap()))
+                .collect::<String>();
+            std::fs::write(
+                PathBuf::from(directory).join("synthesized-elicitation-dialog-answers.rows.jsonl"),
+                bytes,
+            )
+            .unwrap();
+        }
         #[cfg(unix)]
         std::fs::set_permissions(&transcript_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(
             std::fs::read(transcript_path).unwrap(),
             b"must not be opened"
         );
+    }
+
+    #[tokio::test]
+    async fn claude_sdk_asks_remain_pending_until_answer_or_session_exit() {
+        let (sdk_stdin, server_stdin) = duplex(32 * 1024);
+        let (server_stdout, sdk_stdout) = duplex(32 * 1024);
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut stdin = BufReader::new(server_stdin);
+            let mut stdout = server_stdout;
+            let init = read_json_line(&mut stdin).await;
+            write_json_line(&mut stdout, json!({
+                "type": "control_response", "response": {
+                    "subtype": "success", "request_id": init["request_id"],
+                    "response": {"commands": [], "agents": [], "output_style": "default", "available_output_styles": [], "models": [], "account": {}}
+                }
+            })).await;
+            for (request_id, request) in [
+                (
+                    "permission",
+                    json!({"subtype": "can_use_tool", "tool_name": "Bash", "input": {}, "permission_suggestions": [], "tool_use_id": "tool-1"}),
+                ),
+                (
+                    "elicitation",
+                    json!({"subtype": "elicitation", "mcp_server_name": "forms", "message": "Pick one"}),
+                ),
+                (
+                    "dialog",
+                    json!({"subtype": "request_user_dialog", "dialog_kind": "unknown", "payload": {}}),
+                ),
+            ] {
+                write_json_line(&mut stdout, json!({"type": "control_request", "request_id": request_id, "request": request})).await;
+            }
+            tokio::select! {
+                biased;
+                reply = read_json_line(&mut stdin) => panic!("asks must not be auto-answered or accept an unknown id: {reply}"),
+                _ = exit_rx => {},
+            }
+        });
+        let session_id = Uuid::new_v4();
+        let session = claude::sdk::from_io(
+            BufReader::new(sdk_stdout),
+            sdk_stdin,
+            QueryOptions {
+                session_id: Some(session_id.to_string()),
+                ..QueryOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+        let mut backend = ClaudeSdkBackend::with_session(record(session_id), session);
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let ingest = backend.start(&event_tx).unwrap();
+        let Plane::Structured { log, input } = backend.plane(Protocol::ClaudeSdkV1).unwrap() else {
+            panic!("structured plane")
+        };
+        let mut rows = log.subscribe().await.unwrap();
+        let mut outputs = Vec::new();
+        while outputs
+            .last()
+            .is_none_or(|row: &Value| row["type"] != "amux.claude_sdk.dialog_required")
+        {
+            outputs.push(
+                tokio::time::timeout(Duration::from_secs(2), rows.read())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .payload,
+            );
+        }
+        assert_eq!(
+            backend.runtime.lock().unwrap().pending.obligations().len(),
+            3
+        );
+        // A valid id from a different ask kind is still unknown to this input.
+        for (kind, answer) in [
+            (
+                "permission",
+                ClaudeSdkV1Input::PermissionDecision {
+                    request_id: "elicitation".into(),
+                    decision: PermissionResult::Deny {
+                        message: "no".into(),
+                        interrupt: None,
+                        tool_use_id: None,
+                    },
+                },
+            ),
+            (
+                "elicitation",
+                ClaudeSdkV1Input::ElicitationDecision {
+                    request_id: "dialog".into(),
+                    result: ElicitationResult::Cancel {
+                        extensions: Default::default(),
+                    },
+                },
+            ),
+            (
+                "dialog",
+                ClaudeSdkV1Input::DialogDecision {
+                    request_id: "permission".into(),
+                    result: UserDialogResult::Cancelled {
+                        extensions: Default::default(),
+                    },
+                },
+            ),
+        ] {
+            input
+                .send(StructuredInputEvent::ClaudeSdk {
+                    input_id: kind.as_bytes().to_vec(),
+                    input: answer,
+                })
+                .await
+                .unwrap();
+            let row = tokio::time::timeout(Duration::from_secs(2), rows.read())
+                .await
+                .unwrap()
+                .unwrap()
+                .payload;
+            assert_eq!(
+                row,
+                json!({"type": "amux.claude_sdk.input_result", "input_id": kind.as_bytes(), "outcome": format!("unknown or already-resolved {kind} request id")})
+            );
+            outputs.push(row);
+        }
+        assert_eq!(
+            backend.runtime.lock().unwrap().pending.obligations().len(),
+            3
+        );
+        exit_tx.send(()).unwrap();
+        for kind in ["permission", "elicitation", "dialog"] {
+            let row = tokio::time::timeout(Duration::from_secs(2), rows.read())
+                .await
+                .unwrap()
+                .unwrap()
+                .payload;
+            assert_eq!(
+                row,
+                json!({"type": format!("amux.claude_sdk.{kind}_resolved"), "request_id": kind, "decision": "session_exited"})
+            );
+            outputs.push(row);
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), rows.read())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            backend
+                .runtime
+                .lock()
+                .unwrap()
+                .pending
+                .obligations()
+                .is_empty()
+        );
+        ingest.await.unwrap();
+        server.await.unwrap();
+        if let Some(directory) = std::env::var_os("CLAUDE_SDK_ASK_EVIDENCE") {
+            std::fs::create_dir_all(&directory).unwrap();
+            let bytes = outputs
+                .iter()
+                .map(|row| format!("{}\n", serde_json::to_string(row).unwrap()))
+                .collect::<String>();
+            std::fs::write(
+                PathBuf::from(directory).join("pending-asks-session-exit.rows.jsonl"),
+                bytes,
+            )
+            .unwrap();
+        }
     }
 
     #[test]

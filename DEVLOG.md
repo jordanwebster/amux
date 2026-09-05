@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Made Claude SDK elicitation and dialog asks answerable.**
+The daemon now publishes typed pending asks and waits for a client decision.
+The protobuf inputs preserve provider result payloads, including extensions;
+resolved rows precede input acknowledgements, unknown or repeated answers
+return an error, and session exit resolves every remaining ask. Debug reports
+include all three transport ask kinds. Strict replay of the accepted MCP
+elicitation now produces a frozen client row fixture. Synthetic stream-JSON
+dialog tests preserve unknown dialog kinds and opaque payloads without
+claiming a recorded provider dialog.
+
 2026-09-05 — **Enabled streaming in managed Claude SDK sessions.** Launches
 now request partial messages, with a captured-argv test proving the flag
 reaches Claude. Recorded streaming, subagent activity, compaction, clearing,

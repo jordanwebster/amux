@@ -134,6 +134,8 @@ message ClaudeSdkV1Input {
     ClaudeSdkPrompt prompt = 10;
     ClaudeSdkInterrupt interrupt = 11;
     ClaudeSdkPermissionDecision permission_decision = 12;
+    ClaudeSdkElicitationDecision elicitation_decision = 13;
+    ClaudeSdkDialogDecision dialog_decision = 14;
   }
 }
 
@@ -142,6 +144,18 @@ message ClaudeSdkPrompt {
 }
 
 message ClaudeSdkInterrupt {}
+
+message ClaudeSdkElicitationDecision {
+  string request_id = 1;
+  // Provider ElicitationResult JSON, including optional extension fields.
+  bytes result_json = 2;
+}
+
+message ClaudeSdkDialogDecision {
+  string request_id = 1;
+  // Provider UserDialogResult JSON; the completed result payload is opaque.
+  bytes result_json = 2;
+}
 
 message ClaudeSdkPermissionDecision {
   string request_id = 1;

@@ -196,7 +196,7 @@ pub struct ClaudeSdkV1Output {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkV1Input {
-    #[prost(oneof = "claude_sdk_v1_input::Input", tags = "10, 11, 12")]
+    #[prost(oneof = "claude_sdk_v1_input::Input", tags = "10, 11, 12, 13, 14")]
     pub input: ::core::option::Option<claude_sdk_v1_input::Input>,
 }
 /// Nested message and enum types in `ClaudeSdkV1Input`.
@@ -209,6 +209,10 @@ pub mod claude_sdk_v1_input {
         Interrupt(super::ClaudeSdkInterrupt),
         #[prost(message, tag = "12")]
         PermissionDecision(super::ClaudeSdkPermissionDecision),
+        #[prost(message, tag = "13")]
+        ElicitationDecision(super::ClaudeSdkElicitationDecision),
+        #[prost(message, tag = "14")]
+        DialogDecision(super::ClaudeSdkDialogDecision),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -218,6 +222,22 @@ pub struct ClaudeSdkPrompt {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkInterrupt {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkElicitationDecision {
+    #[prost(string, tag = "1")]
+    pub request_id: ::prost::alloc::string::String,
+    /// Provider ElicitationResult JSON, including optional extension fields.
+    #[prost(bytes = "vec", tag = "2")]
+    pub result_json: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkDialogDecision {
+    #[prost(string, tag = "1")]
+    pub request_id: ::prost::alloc::string::String,
+    /// Provider UserDialogResult JSON; the completed result payload is opaque.
+    #[prost(bytes = "vec", tag = "2")]
+    pub result_json: ::prost::alloc::vec::Vec<u8>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkPermissionDecision {
     #[prost(string, tag = "1")]
