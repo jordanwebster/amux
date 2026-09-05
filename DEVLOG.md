@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A live comparison verifies user Stop hooks in Claude and amux.**
+The hook harness isolates settings while retaining the ordinary secure-store
+login and clears inherited Claude session identity for the direct launch.
+It creates the amux agent through the TUI, waits for the composer, and sends
+the prompt there. Captures retain the direct reply, both hook markers, the
+agent inventory and chat frames. The harness refuses stale evidence, retains
+the direct marker immediately and keeps daemon diagnostics. Validation:
+Claude Code 2.1.261 fires the configured Stop hook in both launches; shell
+syntax, the workspace build and lint pass.
+
 2026-09-05 — **Standalone MCP spawn addresses its prompt by agent ID.**
 Without a parent agent, the spawn tool sends the initial prompt after creating
 the session. It now keeps the returned UUID as a typed agent identifier;
