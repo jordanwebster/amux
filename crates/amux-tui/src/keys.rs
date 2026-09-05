@@ -533,6 +533,43 @@ mod tests {
         }
     }
 
+    /// The fleet knows nothing about Codex's native screen: a local Codex
+    /// agent keeps both ways in and Enter opens whichever the setting
+    /// picked. `amux attach` deliberately differs (it has no second key to
+    /// offer); the command line's half of this pair is pinned by
+    /// `entry_policy_attach_leads_with_the_codex_screen_on_this_machine`
+    /// in `amux-cli`, and `docs/CHAT.md` names the difference.
+    #[test]
+    fn entry_policy_a_local_codex_agent_keeps_the_configured_default() {
+        let model = entry_model_with_kind(false, true, amux_ui::AgentKind::Codex);
+        for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+            let mut view = ViewState {
+                default_open_mode,
+                ..ViewState::default()
+            };
+            assert_eq!(
+                entry_modes(selected_card(&model), &model, default_open_mode),
+                crate::view::EntryModes::Both {
+                    default: default_open_mode
+                }
+            );
+            let (primary, secondary) = match default_open_mode {
+                OpenMode::RawAttach => {
+                    (UiAction::Attach(agent_id()), UiAction::OpenChat(agent_id()))
+                }
+                OpenMode::Chat => (UiAction::OpenChat(agent_id()), UiAction::Attach(agent_id())),
+            };
+            assert_eq!(
+                handle_key(&mut view, &model, enter(), 10, t(0)),
+                Some(primary)
+            );
+            assert_eq!(
+                handle_key(&mut view, &model, o_key(), 10, t(0)),
+                Some(secondary)
+            );
+        }
+    }
+
     /// A read-only viewer and a session with no terminal behind it have
     /// one way in. No entry key may hand either of them to raw attach.
     #[test]

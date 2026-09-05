@@ -97,9 +97,18 @@ already holds, while raw attach pipes a terminal across the network, so
 the safe half of the pair leads and the other-mode key still reaches raw
 attach for anyone who wants it. `amux attach` applies the same rule.
 
-Every affordance — the fleet's Enter, Ctrl+Enter and `o`, the status-line
-hint, the `?` overlay rows and `amux attach` — derives from that one
-answer per agent, so a key, its hint and its help row can never disagree.
+Every affordance in the fleet — Enter, Ctrl+Enter and `o`, the status-line
+hint and the `?` overlay rows — derives from that one answer per agent, so a
+key, its hint and its help row can never disagree.
+
+`amux attach` reads the same answer with one deliberate exception: a Codex
+agent on this machine opens its chat there, where the fleet's Enter still
+honours the configured default and raw attaches under the shipped one. Codex
+ships its own structured screen, and the command line has no second key to
+offer — no Ctrl+Enter, no `o` — so on the command line the richer surface
+leads, and the fleet keeps raw attach one keystroke away for anyone who wants
+it. Every other agent attaches exactly as the fleet would open it, remoteness
+included.
 
 There is no in-session mode
 switching in V1: the mode is chosen at open, with no toggle inside a

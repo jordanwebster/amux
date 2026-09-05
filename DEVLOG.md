@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The command line's one departure from the fleet's entry
+rule is written down and pinned.**
+Every way into an agent reads one answer per agent — except that `amux
+attach` opens a Codex agent's own structured screen even on this machine,
+where the fleet's Enter still raw attaches under the shipped default. That
+is deliberate: Codex ships its own screen, and the command line has no
+second key to spend, so it spends its only one on the richer surface. The
+chat document claimed no such difference existed; it now names it and says
+why. Two tests, one on each side, hold the pair in place so the prose and
+the code cannot drift apart again.
+
 2026-09-05 — **A Claude session driven over stream-JSON takes both halves
 of an agent-to-agent conversation.**
 Its chat now has frozen frames for the whole exchange: a message from

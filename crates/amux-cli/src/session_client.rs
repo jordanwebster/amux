@@ -211,10 +211,13 @@ fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
 }
 
 /// The command line's half of the one entry policy the fleet keys use:
-/// a session with no terminal behind it has nothing to pass through,
-/// Codex's own screen is its primary surface, and an agent on another
-/// machine opens the chat rather than piping a terminal across the
-/// network. Everything else raw attaches.
+/// a session with no terminal behind it has nothing to pass through, and
+/// an agent on another machine opens the chat rather than piping a
+/// terminal across the network. Everything else raw attaches, except a
+/// Codex agent: its own structured screen is its primary surface, and
+/// the command line — unlike the fleet, which offers Ctrl+Enter and `o`
+/// beside Enter — has only one key to spend, so it spends it on the
+/// richer surface. `docs/CHAT.md` records that difference.
 fn attach_opens_chat(kind: &amux::AgentKind, local: bool) -> bool {
     !local || matches!(kind, amux::AgentKind::Codex) || !kind.exposes(amux::Protocol::TerminalV1)
 }
@@ -1092,8 +1095,26 @@ mod attach {
         assert!(super::agent_type_exposes_terminal(&pty_type));
         assert!(!super::attach_opens_chat(&pty_kind, true));
 
-        assert!(super::attach_opens_chat(&amux::AgentKind::Codex, true));
         assert!(!super::attach_opens_chat(&amux::AgentKind::TestAgent, true));
+    }
+
+    /// The one place the command line parts company with the fleet: a
+    /// Codex agent on this machine opens its own structured screen here,
+    /// while the fleet's Enter still raw attaches under the shipped
+    /// default. `amux attach` has no second key to offer, so the richer
+    /// surface leads; the fleet's half is pinned by
+    /// `entry_policy_a_local_codex_agent_keeps_the_configured_default` in
+    /// `amux-tui`, and `docs/CHAT.md` names the difference and why.
+    #[test]
+    fn entry_policy_attach_leads_with_the_codex_screen_on_this_machine() {
+        assert!(super::attach_opens_chat(&amux::AgentKind::Codex, true));
+        assert!(super::attach_opens_chat(&amux::AgentKind::Codex, false));
+        assert!(!super::attach_opens_chat(
+            &amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
+            true
+        ));
     }
 
     /// `amux attach` follows the fleet's rule for a remote agent too: the
