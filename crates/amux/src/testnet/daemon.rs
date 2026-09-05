@@ -954,7 +954,7 @@ impl Daemon {
 
     /// Opens a fresh local-admin client to this daemon's `ClientService`,
     /// exactly what a local CLI gets over the Unix socket.
-    pub(crate) async fn admin_client(&self) -> Client {
+    pub async fn admin_client(&self) -> Client {
         let guard = self.inner.runtime.lock().await;
         let runtime = guard
             .as_ref()

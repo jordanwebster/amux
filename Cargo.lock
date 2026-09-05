@@ -1036,6 +1036,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "futures-util",
  "glob",
  "jsonwebtoken",
  "portable-pty",

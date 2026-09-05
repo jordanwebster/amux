@@ -44,6 +44,7 @@
 
 mod assertions;
 mod daemon;
+mod latency;
 mod net;
 mod pairing;
 mod session;
@@ -101,6 +102,56 @@ impl TestNet {
     /// Loopback endpoint for clients outside the harness process.
     pub fn relay_addr(&self) -> SocketAddr {
         self.cloud().addr
+    }
+
+    /// Delay each inbound relay TCP chunk, including on already-open sockets.
+    /// Direct device links and local admin calls remain unaffected.
+    pub fn set_relay_latency(&self, millis: u64) {
+        self.cloud().set_latency(millis);
+    }
+
+    /// Restart a daemon and wait for its previously reachable peers to return.
+    pub async fn restart_daemon(&self, daemon: &Daemon) {
+        let mut peers = Vec::new();
+        for peer in &self.inner.daemons {
+            if peer.host_id() != daemon.host_id()
+                && peer
+                    .host_table()
+                    .await
+                    .iter()
+                    .any(|h| h.id == daemon.host_id() && h.online)
+            {
+                peers.push(peer.clone());
+            }
+        }
+        daemon.restart().await;
+        if self.cloud().is_online().await {
+            eventually(
+                "restarted daemon attaches to the relay",
+                async || daemon.has_direct_route_to(self.cloud().host_id).await,
+                daemon.failure_dump(),
+            )
+            .await;
+        }
+        for peer in peers {
+            peer.sees(daemon).await;
+            daemon.sees(&peer).await;
+            if peer
+                .admin_client()
+                .await
+                .get_peer(daemon.host_id())
+                .await
+                .is_ok()
+                && daemon
+                    .admin_client()
+                    .await
+                    .get_peer(peer.host_id())
+                    .await
+                    .is_ok()
+            {
+                peer.can_call(daemon).await;
+            }
+        }
     }
 
     /// Registers a cloud user, including users with no daemon yet.
@@ -166,6 +217,9 @@ impl TestNet {
     /// cloud-attached daemon.
     pub async fn cloud_online(&self) {
         let cloud = self.cloud();
+        if cloud.is_online().await {
+            return;
+        }
         cloud.go_online().await;
         for daemon in self.cloud_attached_daemons() {
             daemon.reconnect_cloud().await;
@@ -208,6 +262,23 @@ impl TestNet {
     /// Brings the direct link between two already-paired daemons (back) up
     /// from the `DirectTcp` reachability stored at pairing time.
     pub async fn establish_direct(&self, a: &Daemon, b: &Daemon) {
+        self.try_establish_direct(a, b)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    /// Establish a direct link, returning an error for missing reachability or trust.
+    pub async fn try_establish_direct(&self, a: &Daemon, b: &Daemon) -> anyhow::Result<()> {
+        for (from, to) in [(a, b), (b, a)] {
+            let parts = from
+                .try_parts()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("daemon is stopped"))?;
+            anyhow::ensure!(
+                parts.trust.read().unwrap().entry(to.host_id()).is_some(),
+                "daemons are not mutually paired"
+            );
+        }
         let mut attempt = None;
         if let Some(reachability) = a.direct_tcp_reachability_to(b.host_id()).await {
             attempt = Some((a, b, reachability));
@@ -215,7 +286,7 @@ impl TestNet {
             attempt = Some((b, a, reachability));
         }
         let Some((from, to, reachability)) = attempt else {
-            panic!(
+            anyhow::bail!(
                 "establish_direct('{}', '{}'): neither trust store holds a DirectTcp \
                  reachability; pair them Via::Tcp first",
                 a.name(),
@@ -239,6 +310,7 @@ impl TestNet {
             )
             .await;
         }
+        Ok(())
     }
 
     /// Asserts the cloud relay cannot complete a routed call into `target`,

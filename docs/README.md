@@ -38,4 +38,6 @@ subject; when two overlap, the owner named here wins.
   `timeout 600 cargo test --workspace --test spec`.
 - `CI.md` — native iOS verification recipes, pinned runner and commit-specific
   CI status.
+- `TESTNET.md` — isolated relay and daemon topologies, readiness and the
+  runner's loopback control protocol.
 - `../DEVLOG.md` — recent work history and decisions.

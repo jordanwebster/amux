@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Control network outages, restart and pairing from the runner.**
+The loopback JSON protocol now drives relay outages, direct-link changes,
+daemon restart, revocation, PIN pairing with expiry and QR pairing. Replies
+follow settled operations; invalid requests return errors. Relay latency
+delays actual TCP bytes on existing and future sockets, and connection counts
+come from live daemon diagnostics. Repeated CloudOnline requests preserve
+existing links. A TCP control test observes every verb through independent
+clients, including real pairing, revoked access and delayed routed calls;
+a clock-controlled transport test checks byte preservation and EOF.
+
 2026-09-05 — **Serve an isolated test network from the command line.**
 `wt run testnet -- serve --topology FILE` starts the declared relay users,
 paired hosts and idle Claude PTY sessions, then prints one readiness JSON line

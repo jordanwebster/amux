@@ -3,11 +3,13 @@
 use std::collections::HashSet;
 use std::io::Write;
 use std::net::SocketAddr;
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use amux::testnet::{TestNet, Via};
+use amux::testnet::{Daemon, TestNet, Via};
 use anyhow::{Context, Result, bail, ensure};
+use futures_util::FutureExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -94,12 +96,22 @@ pub struct AgentIdentity {
     pub agent_id: Uuid,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Control {
+    CloudOffline,
+    CloudOnline,
+    SeverDirect { a: String, b: String },
+    EstablishDirect { a: String, b: String },
+    RestartDaemon { name: String },
+    Unpair { daemon: String, peer: String },
+    StartPinPairing { daemon: String, ttl_secs: u64 },
+    StartQrPairing { daemon: String },
+    Latency { millis: u64 },
+    Connections { daemon: String },
     Shutdown,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Reply {
     Ack {
         pin: Option<String>,
@@ -300,6 +312,82 @@ struct Request {
     flushed: oneshot::Receiver<()>,
 }
 
+async fn apply(net: &TestNet, names: &HashSet<String>, control: Control) -> Result<Reply> {
+    let daemon = |name: &str| -> Result<Daemon> {
+        ensure!(names.contains(name), "unknown daemon: {name}");
+        Ok(net.daemon(name))
+    };
+    let pair = |a: &str, b: &str| -> Result<(Daemon, Daemon)> {
+        ensure!(a != b, "a host cannot be its own peer");
+        Ok((daemon(a)?, daemon(b)?))
+    };
+    let mut reply = Reply::ack();
+    match control {
+        Control::CloudOffline => net.cloud_offline().await,
+        Control::CloudOnline => net.cloud_online().await,
+        Control::SeverDirect { a, b } => {
+            let (a, b) = pair(&a, &b)?;
+            net.sever_direct(&a, &b).await;
+        }
+        Control::EstablishDirect { a, b } => {
+            let (a, b) = pair(&a, &b)?;
+            net.try_establish_direct(&a, &b).await?;
+        }
+        Control::RestartDaemon { name } => net.restart_daemon(&daemon(&name)?).await,
+        Control::Unpair { daemon, peer } => {
+            let (daemon, peer) = pair(&daemon, &peer)?;
+            daemon
+                .admin_client()
+                .await
+                .unpair(peer.host_id(), "testnet control revocation")
+                .await?;
+            daemon.does_not_trust(&peer).await;
+        }
+        Control::StartPinPairing {
+            daemon: name,
+            ttl_secs,
+        } => {
+            ensure!(ttl_secs <= 3600, "pairing TTL must not exceed one hour");
+            let pin = daemon(&name)?
+                .try_start_pairing_with_ttl(Duration::from_secs(ttl_secs))
+                .await?;
+            if let Reply::Ack { pin: output, .. } = &mut reply {
+                *output = Some(pin.to_string());
+            }
+        }
+        Control::StartQrPairing { daemon: name } => {
+            let mut start = daemon(&name)?
+                .admin_client()
+                .await
+                .start_qr_pairing()
+                .await?;
+            start.cloud_url = format!("http://{}", net.relay_addr());
+            let amux::PairingSecret::QrSecret(secret) = &start.secret else {
+                bail!("QR pairing returned a PIN");
+            };
+            if let Reply::Ack { qr, .. } = &mut reply {
+                *qr = Some(amux::encode_qr_pairing_payload(&start, secret)?);
+            }
+        }
+        Control::Latency { millis } => {
+            ensure!(millis <= 1000, "relay latency must not exceed 1000 ms");
+            net.set_relay_latency(millis);
+        }
+        Control::Connections { daemon: name } => {
+            let dump = daemon(&name)?.debug_dump(false).await;
+            let count = dump["links"]
+                .as_array()
+                .context("daemon diagnostics omitted links")?
+                .len();
+            if let Reply::Ack { connections, .. } = &mut reply {
+                *connections = Some(count.try_into()?);
+            }
+        }
+        Control::Shutdown => unreachable!("shutdown is handled by the server loop"),
+    }
+    Ok(reply)
+}
+
 async fn connection(stream: TcpStream, requests: mpsc::Sender<Request>) -> Result<()> {
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
@@ -335,15 +423,6 @@ async fn connection(stream: TcpStream, requests: mpsc::Sender<Request>) -> Resul
 }
 
 async fn serve(topology: Topology) -> Result<()> {
-    #[cfg(unix)]
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let termination = async {
-        #[cfg(unix)]
-        terminate.recv().await;
-        #[cfg(not(unix))]
-        std::future::pending::<()>().await;
-    };
-    tokio::pin!(termination);
     let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
     let (net, readiness) = tokio::time::timeout(
         Duration::from_secs(30),
@@ -353,6 +432,24 @@ async fn serve(topology: Topology) -> Result<()> {
     .context("topology did not become ready within 30 seconds")?;
     println!("{}", serde_json::to_string(&readiness)?);
     std::io::stdout().flush()?;
+    serve_net(
+        net,
+        listener,
+        topology.daemons.into_iter().map(|d| d.name).collect(),
+    )
+    .await
+}
+
+async fn serve_net(net: TestNet, listener: TcpListener, names: HashSet<String>) -> Result<()> {
+    #[cfg(unix)]
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let termination = async {
+        #[cfg(unix)]
+        terminate.recv().await;
+        #[cfg(not(unix))]
+        std::future::pending::<()>().await;
+    };
+    tokio::pin!(termination);
     let (send, mut receive) = mpsc::channel::<Request>(32);
     let mut connections = JoinSet::new();
     let outcome: Result<Option<Request>> = loop {
@@ -368,6 +465,20 @@ async fn serve(topology: Topology) -> Result<()> {
             }
             Some(request) = receive.recv() => match request.control {
                 Control::Shutdown => break Ok(Some(request)),
+                control => {
+                    // TestNet's assertion verbs panic with topology diagnostics.
+                    // Preserve those diagnostics as a control failure for the caller.
+                    let operation = AssertUnwindSafe(apply(&net, &names, control)).catch_unwind();
+                    let reply = match tokio::time::timeout(Duration::from_secs(30), operation).await {
+                        Ok(Ok(Ok(reply))) => reply,
+                        Ok(Ok(Err(error))) => Reply::Error { message: error.to_string() },
+                        Ok(Err(error)) => Reply::Error { message: error.downcast_ref::<String>().cloned()
+                            .or_else(|| error.downcast_ref::<&str>().map(|s| s.to_string()))
+                            .unwrap_or_else(|| "network assertion failed".into()) },
+                        Err(_) => Reply::Error { message: "network did not settle within 30 seconds".into() },
+                    };
+                    let _ = request.reply.send(reply);
+                }
             }
         }
     };
@@ -404,6 +515,168 @@ pub fn run(command: Command) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ControlClient(BufReader<TcpStream>);
+
+    impl ControlClient {
+        async fn connect(address: SocketAddr) -> Self {
+            Self(BufReader::new(TcpStream::connect(address).await.unwrap()))
+        }
+
+        async fn request(&mut self, control: serde_json::Value) -> serde_json::Value {
+            let mut bytes = serde_json::to_vec(&control).unwrap();
+            bytes.push(b'\n');
+            self.0.get_mut().write_all(&bytes).await.unwrap();
+            let mut line = String::new();
+            tokio::time::timeout(Duration::from_secs(35), self.0.read_line(&mut line))
+                .await
+                .unwrap()
+                .unwrap();
+            let reply = serde_json::from_str(&line).unwrap();
+            eprintln!("control {control} => {reply}");
+            reply
+        }
+
+        async fn ack(&mut self, control: serde_json::Value) -> serde_json::Value {
+            let reply = self.request(control).await;
+            assert!(reply.get("Ack").is_some(), "{reply}");
+            reply["Ack"].clone()
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn testnet_control_every_network_verb_is_observed_by_another_client() {
+        use serde_json::json;
+        let net = TestNet::builder()
+            .cloud()
+            .daemon("a")
+            .daemon("b")
+            .daemon("c")
+            .paired("a", "b", Via::Tcp)
+            .start()
+            .await;
+        let [a, b, c] = net.daemons(["a", "b", "c"]);
+        let identity = a.identity_on_disk();
+        let relay = net.relay_addr();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = serve_net(net, listener, ["a", "b", "c"].map(String::from).into());
+        let exercise = async {
+            let mut control = ControlClient::connect(address).await;
+            let mut second = ControlClient::connect(address).await;
+            let observer = b.admin_client().await;
+            async fn count(client: &mut ControlClient, name: &str) -> u64 {
+                client.ack(json!({"Connections":{"daemon":name}})).await["connections"]
+                    .as_u64()
+                    .unwrap()
+            }
+            assert_eq!(count(&mut second, "b").await, 2);
+            control.ack(json!("CloudOffline")).await;
+            assert_eq!(count(&mut second, "b").await, 1);
+            assert!(TcpStream::connect(relay).await.is_err());
+            assert!(
+                observer
+                    .list_hosts()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|h| h.id == a.host_id() && h.online)
+            );
+            assert!(b.lists_agents_on(&a).await.is_ok());
+
+            control.ack(json!("CloudOnline")).await;
+            assert_eq!(count(&mut second, "b").await, 2);
+            // A repeated online command must not create a second relay connection.
+            control.ack(json!("CloudOnline")).await;
+            assert_eq!(count(&mut second, "b").await, 2);
+            control.ack(json!({"SeverDirect":{"a":"a","b":"b"}})).await;
+            assert_eq!(count(&mut second, "b").await, 1);
+            assert!(b.lists_agents_on(&a).await.is_ok());
+
+            control.ack(json!({"Latency":{"millis":100}})).await;
+            let start = tokio::time::Instant::now();
+            assert!(b.lists_agents_on(&a).await.is_ok());
+            assert!(
+                start.elapsed() >= Duration::from_millis(100),
+                "real routed call must traverse delayed relay bytes"
+            );
+            eprintln!(
+                "routed call with 100 ms relay latency: {:?}",
+                start.elapsed()
+            );
+            control.ack(json!({"Latency":{"millis":0}})).await;
+            assert!(b.lists_agents_on(&a).await.is_ok());
+            control
+                .ack(json!({"EstablishDirect":{"a":"a","b":"b"}}))
+                .await;
+            assert_eq!(count(&mut second, "b").await, 2);
+            let stream = b.open_event_stream_to(&a).await;
+            control.ack(json!({"RestartDaemon":{"name":"a"}})).await;
+            stream.expect_disconnect().await;
+            assert_eq!(a.identity_on_disk(), identity);
+            assert_eq!(count(&mut second, "a").await, 2);
+            assert!(b.lists_agents_on(&a).await.is_ok());
+
+            control
+                .ack(json!({"Unpair":{"daemon":"a","peer":"b"}}))
+                .await;
+            assert!(a.admin_client().await.get_peer(b.host_id()).await.is_err());
+            assert!(b.lists_agents_on(&a).await.is_err());
+            let pin = control
+                .ack(json!({"StartPinPairing":{"daemon":"b","ttl_secs":1}}))
+                .await["pin"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(pin.len(), 6);
+            assert!(observer.pairing_is_active().await.unwrap());
+            assert!(
+                control
+                    .request(json!({"StartPinPairing":{"daemon":"b","ttl_secs":30}}))
+                    .await
+                    .get("Error")
+                    .is_some()
+            );
+            b.pair_mode_ends().await;
+            assert!(c.pair(&b).with_pin(&pin).await.is_err());
+            let pin = control
+                .ack(json!({"StartPinPairing":{"daemon":"b","ttl_secs":30}}))
+                .await["pin"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            c.pair(&b).with_pin(&pin).await.unwrap();
+            assert!(!observer.pairing_is_active().await.unwrap());
+            c.can_call(&b).await;
+
+            let qr = control.ack(json!({"StartQrPairing":{"daemon":"a"}})).await["qr"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let qr =
+                amux::parse_qr_pairing_payload_for_cloud(&qr, &format!("http://{relay}")).unwrap();
+            assert_eq!(qr.host_id, a.host_id());
+            c.admin_client()
+                .await
+                .pair_qr_cloud_peer(qr.host_id, qr.secret)
+                .await
+                .unwrap();
+            c.can_call(&a).await;
+
+            for invalid in [
+                json!({"Connections":{"daemon":"missing"}}),
+                json!({"SeverDirect":{"a":"a","b":"a"}}),
+                json!({"EstablishDirect":{"a":"a","b":"b"}}),
+                json!({"StartPinPairing":{"daemon":"b","ttl_secs":0}}),
+                json!({"Latency":{"millis":1001}}),
+            ] {
+                assert!(control.request(invalid).await.get("Error").is_some());
+            }
+            control.ack(json!("Shutdown")).await;
+        };
+        let (result, ()) = tokio::join!(server, exercise);
+        result.unwrap();
+    }
 
     #[tokio::test]
     async fn testnet_serve_starts_real_pairings_agents_and_user_credentials() {

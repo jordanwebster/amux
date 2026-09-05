@@ -106,6 +106,14 @@ impl Daemon {
     /// directly on the daemon's `PairMode` with a short TTL. Everything else
     /// (the PIN attempt, status, expiry purge) runs the production code.
     pub async fn start_pairing_with_ttl(&self, ttl: Duration) -> Pin {
+        self.try_start_pairing_with_ttl(ttl)
+            .await
+            .unwrap_or_else(|error| panic!("'{}' failed to start pair-mode: {error}", self.name()))
+    }
+
+    /// Fallible TTL override for externally controlled test networks.
+    pub async fn try_start_pairing_with_ttl(&self, ttl: Duration) -> anyhow::Result<Pin> {
+        anyhow::ensure!(!ttl.is_zero(), "pairing TTL must be positive");
         let pin = format!("{:06}", uuid::Uuid::new_v4().as_u128() % 1_000_000);
         let guard = self.inner.runtime.lock().await;
         let runtime = guard
@@ -114,9 +122,8 @@ impl Daemon {
         runtime
             .services
             .pair_mode
-            .start_pin_for_duration(pin.clone(), ttl)
-            .unwrap_or_else(|error| panic!("'{}' failed to start pair-mode: {error}", self.name()));
-        Pin(pin)
+            .start_pin_for_duration(pin.clone(), ttl)?;
+        Ok(Pin(pin))
     }
 
     /// Responder: cancels pair-mode via the local-admin `CancelPairing` RPC.

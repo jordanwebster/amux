@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use futures_util::{Stream, stream};
@@ -20,6 +21,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::assertions::POLL_INTERVAL;
+use super::latency::Delayed;
 use crate::HostId;
 use crate::config::Config;
 use crate::connection::ConnectionManager;
@@ -60,6 +62,7 @@ pub(crate) struct CloudRelay {
     /// builder `cloud_user` label → that user's `(user_id, token)`.
     user_labels: std::sync::Mutex<HashMap<String, (Uuid, String)>>,
     server: Mutex<Option<RunningCloud>>,
+    latency_millis: Arc<AtomicU64>,
 }
 
 struct RunningCloud {
@@ -120,6 +123,7 @@ impl CloudRelay {
             tokens,
             user_labels: std::sync::Mutex::new(HashMap::new()),
             server: Mutex::new(None),
+            latency_millis: Arc::default(),
         };
         relay.serve(listener).await;
         relay
@@ -135,7 +139,11 @@ impl CloudRelay {
             }),
         );
         let connections: TrackedConnections = Arc::default();
-        let task = service.serve_on_incoming(tracked_tcp_incoming(listener, connections.clone()));
+        let task = service.serve_on_incoming(tracked_tcp_incoming(
+            listener,
+            connections.clone(),
+            self.latency_millis.clone(),
+        ));
         *self.server.lock().await = Some(RunningCloud {
             service,
             task,
@@ -218,6 +226,10 @@ impl CloudRelay {
     pub(crate) async fn is_online(&self) -> bool {
         self.server.lock().await.is_some()
     }
+
+    pub(crate) fn set_latency(&self, millis: u64) {
+        self.latency_millis.store(millis, Ordering::SeqCst);
+    }
 }
 
 /// Accepts TCP connections like the production relay, but keeps an OS-level
@@ -225,17 +237,22 @@ impl CloudRelay {
 fn tracked_tcp_incoming(
     listener: TcpListener,
     connections: TrackedConnections,
-) -> impl Stream<Item = std::io::Result<TcpServerTransport<TcpStream>>> + Send + 'static {
-    stream::unfold((listener, connections), |(listener, connections)| async {
-        let item = accept_tracked(&listener, &connections).await;
-        Some((item, (listener, connections)))
-    })
+    latency: Arc<AtomicU64>,
+) -> impl Stream<Item = std::io::Result<TcpServerTransport<Delayed<TcpStream>>>> + Send + 'static {
+    stream::unfold(
+        (listener, connections, latency),
+        |(listener, connections, latency)| async {
+            let item = accept_tracked(&listener, &connections, latency.clone()).await;
+            Some((item, (listener, connections, latency)))
+        },
+    )
 }
 
 async fn accept_tracked(
     listener: &TcpListener,
     connections: &TrackedConnections,
-) -> std::io::Result<TcpServerTransport<TcpStream>> {
+    latency: Arc<AtomicU64>,
+) -> std::io::Result<TcpServerTransport<Delayed<TcpStream>>> {
     let (stream, _addr) = listener.accept().await?;
     if let Err(error) = stream.set_nodelay(true) {
         tracing::warn!(error = %error, "failed to set TCP_NODELAY");
@@ -247,7 +264,10 @@ async fn accept_tracked(
             .expect("testnet cloud connection registry poisoned")
             .push(duplicate);
     }
-    Ok(TcpServerTransport::new(TcpStream::from_std(std_stream)?))
+    Ok(TcpServerTransport::new(Delayed::new(
+        TcpStream::from_std(std_stream)?,
+        latency,
+    )))
 }
 
 /// Binds `addr`, retrying briefly: right after a relay or daemon shutdown the
