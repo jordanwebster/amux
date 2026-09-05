@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Retain attachment pins in host-side input observations.**
+Accepted Claude PTY inputs now carry their validated artifact IDs through to
+the scripted provider. Observations retain each input's pin order, including
+deferred prompts, without inheriting pins from earlier messages or stored
+drafts. The relay journey sends single- and multiple-attachment prompts through
+the UI runtime and verifies the exact control-socket observations, followed by
+a plain prompt with no pins.
+
 2026-09-05 — **Keep recorded Codex hosting within its supported platforms.**
 The replay registration APIs now share the Unix boundary of the daemon's
 Codex backend. Windows builds no longer reference that unavailable backend;

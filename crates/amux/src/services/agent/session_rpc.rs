@@ -603,6 +603,7 @@ async fn send_claude_pty_to_target(
         .send(StructuredInputEvent::ClaudePty {
             client_seq: input.expected_seq,
             intent: input.intent.clone(),
+            pins: pins.to_vec(),
         })
         .await
 }

@@ -75,7 +75,11 @@ impl ClaudePtyBackendHarness {
     pub async fn send(&self, intent: crate::claude_io::Intent) -> Result<()> {
         let client_seq = self.backend.current_seq_for_derived_rows().await;
         self.input
-            .send(StructuredInputEvent::ClaudePty { client_seq, intent })
+            .send(StructuredInputEvent::ClaudePty {
+                client_seq,
+                intent,
+                pins: Vec::new(),
+            })
             .await
             .map_err(anyhow::Error::from)
     }

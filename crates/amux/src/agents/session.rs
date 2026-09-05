@@ -133,6 +133,7 @@ pub(crate) enum StructuredInputEvent {
     ClaudePty {
         client_seq: u64,
         intent: super::claude::io::Intent,
+        pins: Vec<amux_artifacts::ArtifactId>,
     },
     ClaudeSdk {
         input_id: Vec<u8>,

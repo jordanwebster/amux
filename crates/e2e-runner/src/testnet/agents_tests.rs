@@ -1,4 +1,5 @@
 use amux::claude_io::{AskAnswer, PermissionAnswer};
+use amux_ui::attachments::DraftAttachment;
 use amux_ui::claude::{ClaudeCommand, FeedEntryKind};
 use amux_ui::{Command as UiCommand, Model, Runtime, RuntimeOptions};
 use serde_json::json;
@@ -174,7 +175,7 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
                 .any(|e| matches!(e.kind, FeedEntryKind::Turn(_)))
         })
         .await;
-        let expected = json!([
+        let mut expected = json!([
             {"seq":1,"intent":"prompt","text":"Please check the workspace","ask_id":null,"answer":null,"pins":[]},
             {"seq":2,"intent":"answer","text":null,"ask_id":ask.session_ask_id,"answer":{"answer":"permission","permission":"allow_once"},"pins":[]}
         ]);
@@ -184,6 +185,78 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
                 .await["observed"],
             expected
         );
+        let unused = client
+            .put_artifact(
+                agent.into(),
+                amux::ArtifactKind::File,
+                "unused.txt",
+                "text/plain",
+                b"This stored draft is never attached".to_vec(),
+            )
+            .await
+            .unwrap();
+        let mut drafts = ["first", "second"].map(|name| {
+            DraftAttachment::from_bytes(
+                amux::ArtifactKind::File,
+                format!("{name}.txt"),
+                "text/plain",
+                name.as_bytes().to_vec(),
+            )
+        });
+        drafts.sort_by(|a, b| b.id.cmp(&a.id));
+        for (index, attachments) in [vec![drafts[0].clone()], drafts.to_vec(), vec![]]
+            .into_iter()
+            .enumerate()
+        {
+            let text = format!("Attachment observation prompt {index}");
+            let pins: Vec<_> = attachments
+                .iter()
+                .map(|draft| draft.id.to_string())
+                .collect();
+            succeeded(
+                &mut runtime,
+                UiCommand::SendPromptWithAttachments {
+                    agent,
+                    text: text.clone(),
+                    attachments,
+                },
+            )
+            .await;
+            wait_for(&mut runtime, "attachment prompt turn end", |model| {
+                model
+                    .claude(agent)
+                    .unwrap()
+                    .entries()
+                    .filter(|entry| matches!(entry.kind, FeedEntryKind::Turn(_)))
+                    .count()
+                    == index + 2
+            })
+            .await;
+            expected.as_array_mut().unwrap().push(json!({
+                "seq": index + 3, "intent": "prompt", "text": text,
+                "ask_id": null, "answer": null, "pins": pins,
+            }));
+            let observed = control
+                .ack(json!({"AgentObserve":{"agent":"helper"}}))
+                .await;
+            eprintln!(
+                "attachment input observation {}",
+                serde_json::to_string(&observed).unwrap()
+            );
+            assert_eq!(observed["observed"], expected);
+            assert!(
+                observed["observed"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|input| {
+                        !input["pins"]
+                            .as_array()
+                            .unwrap()
+                            .contains(&json!(unused.id))
+                    })
+            );
+        }
         control
             .ack(json!({"AgentSpawnChild":{"agent":"helper","child":"child"}}))
             .await;

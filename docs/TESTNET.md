@@ -137,8 +137,11 @@ Scripts use externally tagged JSON variants. For example:
 }
 ```
 
-`Provider::feed` records decoded inputs in arrival order and selects the first
-matching reaction at or after the cursor, consuming through that reaction.
+`Provider::feed` accepts a decoded input and its validated attachment IDs,
+records the input in arrival order and selects the first matching reaction at
+or after the cursor, consuming through that reaction. Each observation's `pins`
+contains only that input's IDs in their received order; a plain prompt has an
+empty list even when earlier prompts carried attachments.
 Triggers are `AnyPrompt`, `PromptContains`, `Command`, `Answer`, `Interrupt`
 and `Any`. Command triggers match the first slash-command word of a prompt;
 answer triggers distinguish permission, question and plan responses. The

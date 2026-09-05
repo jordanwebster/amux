@@ -64,9 +64,15 @@ fn triggers_and_script_round_trip() {
         assert_eq!(script, serde_json::from_str(&serialized).unwrap());
         let mut engine = Engine::new(script);
         engine.pending_ask = Some((AskId("ask".into()), AskKindMatch::Permission));
-        assert_eq!(engine.feed(input).unwrap(), vec![markdown("matched")]);
+        assert_eq!(
+            engine.feed(input, vec![]).unwrap(),
+            vec![markdown("matched")]
+        );
         assert_eq!(engine.cursor, 2);
-        assert_eq!(engine.feed(Intent::Interrupt), Err(ScriptError::Exhausted));
+        assert_eq!(
+            engine.feed(Intent::Interrupt, vec![]),
+            Err(ScriptError::Exhausted)
+        );
     }
     let command = Trigger::Command {
         name: "compact".into(),
@@ -86,12 +92,12 @@ fn unknown_answers_are_observed_and_do_not_consume_a_reaction() {
         answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
     };
     assert_eq!(
-        engine.feed(answer.clone()),
+        engine.feed(answer.clone(), vec![]),
         Err(ScriptError::UnknownAsk(AskId("missing".into())))
     );
     engine.pending_ask = Some((AskId("known".into()), AskKindMatch::Permission));
     assert_eq!(
-        engine.feed(answer),
+        engine.feed(answer, vec![]),
         Err(ScriptError::UnknownAsk(AskId("missing".into())))
     );
     assert_eq!(engine.cursor, 0);
@@ -192,7 +198,7 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
     );
     let (session, provider) = session(script).await.unwrap();
     let capture = tokio::spawn(collect(session.events));
-    provider.feed(prompt("start")).unwrap();
+    provider.feed(prompt("start"), vec![]).unwrap();
     let events = capture.await.unwrap();
     let rows = transcript(&events);
     assert!(rows.contains(&raw));
@@ -306,10 +312,18 @@ async fn queued_prompts_are_observed_before_end_turn_and_play_once_in_order() {
     .await
     .unwrap();
     let capture = tokio::spawn(collect(session.events));
-    provider.feed(prompt("first")).unwrap();
+    provider.feed(prompt("first"), vec![]).unwrap();
     provider.play(vec![]).await.unwrap();
-    provider.feed(prompt("second")).unwrap();
-    provider.feed(prompt("third")).unwrap();
+    let pins = vec![
+        amux_artifacts::id_of(b"second attachment"),
+        amux_artifacts::id_of(b"first attachment"),
+    ];
+    provider.feed(prompt("second"), pins.clone()).unwrap();
+    provider.feed(prompt("third"), vec![]).unwrap();
+    let expected_pins: Vec<_> = pins.iter().map(ToString::to_string).collect();
+    assert_eq!(provider.observed()[1].pins, expected_pins);
+    assert!(provider.observed()[0].pins.is_empty());
+    assert!(provider.observed()[2].pins.is_empty());
     assert_eq!(
         provider
             .observed()
@@ -349,6 +363,7 @@ async fn queued_prompts_are_observed_before_end_turn_and_play_once_in_order() {
         3,
         "dequeue must not observe twice"
     );
+    assert_eq!(provider.observed()[1].pins, expected_pins);
 }
 
 #[tokio::test]
@@ -401,7 +416,7 @@ async fn asks_have_real_semantic_ids_and_answers_select_the_matching_reaction() 
         ]))
         .await
         .unwrap();
-        provider.feed(prompt("ask me")).unwrap();
+        provider.feed(prompt("ask me"), vec![]).unwrap();
         // The empty control batch settles both the transcript-derived ask and its hook.
         provider.play(vec![]).await.unwrap();
         let facts = session.control.pending_asks();
@@ -444,7 +459,7 @@ async fn asks_have_real_semantic_ids_and_answers_select_the_matching_reaction() 
             "the semantic answer must write to the PTY"
         );
         assert!(session.control.pending_asks().is_empty());
-        provider.feed(input).unwrap();
+        provider.feed(input, vec![]).unwrap();
         let events = collect(session.events).await;
         assert!(
             transcript(&events)

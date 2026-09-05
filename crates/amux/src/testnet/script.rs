@@ -190,7 +190,11 @@ impl Engine {
     }
 
     /// Record arrival before validation, including refused answers and deferred prompts.
-    pub fn feed(&mut self, input: Intent) -> Result<Vec<Step>, ScriptError> {
+    pub fn feed(
+        &mut self,
+        input: Intent,
+        pins: Vec<crate::ArtifactId>,
+    ) -> Result<Vec<Step>, ScriptError> {
         let value = serde_json::to_value(&input).expect("Intent serializes");
         self.observed.push(ObservedInput {
             seq: self.observed.len() as u64 + 1,
@@ -198,7 +202,7 @@ impl Engine {
             text: value["text"].as_str().map(str::to_owned),
             ask_id: value["ask_id"].as_str().map(str::to_owned),
             answer: value.get("answer").cloned(),
-            pins: Vec::new(),
+            pins: pins.into_iter().map(|id| id.to_string()).collect(),
         });
         if let Some(error) = &self.failure {
             return Err(error.clone());
@@ -310,10 +314,10 @@ impl Drop for ProviderInner {
 
 impl Provider {
     /// The daemon calls this after decoding and accepting structured input.
-    pub fn feed(&self, input: Intent) -> Result<(), ScriptError> {
+    pub fn feed(&self, input: Intent, pins: Vec<crate::ArtifactId>) -> Result<(), ScriptError> {
         let mut engine = self.0.engine.lock().unwrap();
         let deferred = engine.running && matches!(input, Intent::Prompt { .. });
-        let steps = engine.feed(input.clone())?;
+        let steps = engine.feed(input.clone(), pins)?;
         if !deferred {
             self.0
                 .tx

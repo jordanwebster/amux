@@ -834,7 +834,12 @@ struct ClaudeInputTarget {
 #[async_trait]
 impl StructuredInput for ClaudeInputTarget {
     async fn send(&self, input: StructuredInputEvent) -> std::result::Result<(), ProtocolError> {
-        let StructuredInputEvent::ClaudePty { client_seq, intent } = input else {
+        let StructuredInputEvent::ClaudePty {
+            client_seq,
+            intent,
+            pins: _pins,
+        } = input
+        else {
             return Err(ProtocolError::InvalidArgument {
                 message: "Claude PTY input target received another protocol's input".to_string(),
             });
@@ -869,7 +874,7 @@ impl StructuredInput for ClaudeInputTarget {
         #[cfg(testnet)]
         if let Some((script, intent)) = scripted {
             script
-                .feed(intent)
+                .feed(intent, _pins)
                 .map_err(|error| ProtocolError::ServerError {
                     message: error.to_string(),
                 })?;
@@ -1349,6 +1354,7 @@ mod tests {
                 intent: pty_io::Intent::Prompt {
                     text: "hello".to_string(),
                 },
+                pins: Vec::new(),
             })
             .await
             .unwrap();
