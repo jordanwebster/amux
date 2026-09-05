@@ -437,6 +437,21 @@ mod remediation_tests {
     }
 
     #[cfg(unix)]
+    #[tokio::test]
+    async fn connect_reports_a_child_that_exits_before_initialize() {
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            Codex::connect(CodexConfig {
+                codex_path: Some("/usr/bin/false".into()),
+                ..CodexConfig::default()
+            }),
+        )
+        .await
+        .expect("startup did not report the child's exit");
+        assert!(matches!(result, Err(Error::TransportClosed)));
+    }
+
+    #[cfg(unix)]
     async fn assert_subprocess_waiter_awaited(initialize_error: bool) {
         let temp = tempfile::tempdir().unwrap();
         let marker_path = temp.path().join("stopped");
@@ -467,7 +482,8 @@ trap '
 printf 'ready\n'
 IFS= read -r request
 printf '%s\n' "$RESPONSE"
-while :; do sleep 1; done
+# Some shells defer traps while an external command is running.
+while :; do sleep 0.01; done
 "#;
         let mut command = tokio::process::Command::new("/bin/sh");
         command
@@ -493,20 +509,22 @@ while :; do sleep 1; done
                 result.unwrap().close().await;
             }
         });
-        tokio::time::timeout(Duration::from_secs(5), async {
+        // Observe and release the child before the production two-second
+        // TERM grace expires, so a stalled fixture fails at this boundary.
+        tokio::time::timeout(Duration::from_secs(1), async {
             while std::fs::read_to_string(&marker_path).unwrap_or_default() != "stopping" {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
+            // The child is held inside its TERM handler until the test releases
+            // it. A close that only sends a signal must not count as completion.
+            assert!(
+                !shutdown.is_finished(),
+                "shutdown returned before the child exited"
+            );
+            std::fs::write(release_path, b"exit").unwrap();
         })
         .await
-        .expect("child did not receive shutdown");
-        // The child is held inside its TERM handler until the test releases
-        // it. A close that only sends a signal must not count as completion.
-        assert!(
-            !shutdown.is_finished(),
-            "shutdown returned before the child exited"
-        );
-        std::fs::write(release_path, b"exit").unwrap();
+        .expect("fixture did not observe TERM and release the child within its one-second budget");
         tokio::time::timeout(Duration::from_secs(5), shutdown)
             .await
             .expect("shutdown did not reap the released child")

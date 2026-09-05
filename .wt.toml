@@ -29,6 +29,7 @@ run = "cargo build --workspace --all-targets"
 
 [task.test]
 run = 'scripts/workspace-test.sh "$@"'
+needs = ["test-recipes"]
 
 [task.test-recipes]
 run = "timeout 30 python3 scripts/tests/workspace_test.py"

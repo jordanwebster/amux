@@ -1387,6 +1387,40 @@ mod tests {
         (session, server)
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn subprocess_startup_failure_closes_the_backend_log() {
+        let directory = tempfile::tempdir().unwrap();
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: None,
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            working_dir: directory.path().to_path_buf(),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        };
+        let mut backend = ClaudeSdkBackend::new(&req, mcp_launch_route_for_tests(Uuid::new_v4()));
+        backend.command = "/usr/bin/false".to_owned();
+        let mut rows = backend.log.subscribe().await.unwrap();
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let ingest = backend.start(&event_tx).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), ingest)
+            .await
+            .expect("backend did not finish after its child exited during startup")
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), rows.read())
+                .await
+                .expect("startup failure left the backend log open")
+                .is_none()
+        );
+    }
+
     #[tokio::test]
     async fn new_backend_carries_agent_identity_into_provider_session() {
         let directory = tempfile::tempdir().unwrap();
@@ -1424,9 +1458,13 @@ mod tests {
         assert_eq!(ready.payload["type"], "amux.claude_sdk.ready");
         assert_eq!(ready.payload["session_id"], agent_id.to_string());
 
-        backend.stop(StopPolicy::Interrupt).await;
-        let _ = ingest.await;
-        server.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            backend.stop(StopPolicy::Interrupt).await;
+            ingest.await.unwrap();
+            server.await.unwrap();
+        })
+        .await
+        .expect("backend did not close its session and fixture transport");
     }
 
     #[tokio::test]
@@ -1541,8 +1579,12 @@ mod tests {
         assert_eq!(ready.payload["session_id"], restored_session_id.to_string());
         assert_eq!(ready.payload["resumed"], true);
 
-        resumed.stop(StopPolicy::Interrupt).await;
-        let _ = ingest.await;
-        server.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            resumed.stop(StopPolicy::Interrupt).await;
+            ingest.await.unwrap();
+            server.await.unwrap();
+        })
+        .await
+        .expect("resumed backend did not close its session and fixture transport");
     }
 }

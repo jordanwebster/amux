@@ -27,6 +27,7 @@ keeps `--workspace`; selecting a package with `-p` can change feature
 unification and compile a second dependency graph.
 
 Run `wt run test-recipes` to check argument forwarding without compiling.
+These checks also run automatically before `wt test`.
 
 ## Choose the boundary the assertion needs
 

@@ -788,9 +788,13 @@ read eof
             let mut stdout = server_stdout;
             let _init = read_json_line(&mut stdin).await;
             stdout.write_all(INIT_RESPONSE.as_bytes()).await.unwrap();
-            let first = read_json_line(&mut stdin).await;
-            let second = read_json_line(&mut stdin).await;
-            [first, second]
+            let mut frames = Vec::<serde_json::Value>::new();
+            let mut line = String::new();
+            while stdin.read_line(&mut line).await.unwrap() != 0 {
+                frames.push(serde_json::from_str(&line).unwrap());
+                line.clear();
+            }
+            frames
         });
         let session = crate::sdk::from_io(BufReader::new(sdk_stdout), sdk_stdin, fork_options)
             .await
@@ -814,15 +818,17 @@ read eof
                 .any(|pair| pair == ["--session-id", target.as_str()])
         );
 
+        let exit = tokio::time::timeout(Duration::from_secs(1), control.close())
+            .await
+            .expect("fork session did not close its transport");
+        assert!(exit.success);
         let frames = tokio::time::timeout(Duration::from_secs(1), server)
             .await
-            .unwrap()
+            .expect("fork fixture did not receive EOF")
             .unwrap();
         assert_eq!(frames.len(), 2);
         assert!(frames.iter().all(|frame| frame["session_id"] == target));
 
-        let exit = control.close().await;
-        assert!(exit.success);
         drop(events);
     }
 
