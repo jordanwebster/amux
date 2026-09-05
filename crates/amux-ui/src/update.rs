@@ -8,7 +8,7 @@
 use crate::effect::{DumpReason, Effect, InputPayload};
 use crate::model::{
     AgentCard, AgentLayer, AgentPhase, Attention, Connection, FINISHED_OPS_RETAINED, FinishedOp,
-    HostState, Model, PendingOp, StreamPhase, StreamState, StructuredProtocol,
+    HostState, Model, PendingOp, StreamPhase, StreamState,
 };
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
 
@@ -69,14 +69,7 @@ fn ensure_stream(
     if card.agent.readonly && wanted == StreamWanted::InventoryPolicy {
         return None;
     }
-    let protocol = match AgentLayer::from_kind(&card.agent.kind)? {
-        AgentLayer::Claude(_) => StructuredProtocol::Claude,
-        AgentLayer::Codex(_) => StructuredProtocol::Codex,
-        // The SDK driver's rows have no client-side fold yet. Holding a
-        // stream open for a layer that observes nothing would buy nothing
-        // but bandwidth, so the subscription waits for the fold.
-        AgentLayer::ClaudeSdk(_) => return None,
-    };
+    let protocol = AgentLayer::from_kind(&card.agent.kind)?.protocol();
     let reopen = match model.streams.get(&agent_id) {
         None => true,
         Some(state) => match &state.phase {
@@ -411,7 +404,11 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
                     .attachments_mut()
                     .insert_diff(id.clone(), patch.clone());
             }
-            AgentLayer::ClaudeSdk(_) => {}
+            AgentLayer::ClaudeSdk(layer) => {
+                layer
+                    .attachments_mut()
+                    .insert_diff(id.clone(), patch.clone());
+            }
         });
     }
     // Entity payloads riding on the outcome resolve the op only —

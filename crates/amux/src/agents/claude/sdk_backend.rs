@@ -1228,8 +1228,14 @@ mod tests {
             "AMUX_ARGV_CAPTURE".to_string(),
             argv.to_string_lossy().into_owned(),
         );
-        let _ = tokio::time::timeout(Duration::from_secs(2), claude::sdk::spawn(options)).await;
-        let launched = std::fs::read_to_string(&argv).expect("capture Claude launch arguments");
+        let launched_session =
+            tokio::time::timeout(Duration::from_secs(2), claude::sdk::spawn(options)).await;
+        let launched = std::fs::read_to_string(&argv).unwrap_or_else(|error| {
+            panic!(
+                "capture Claude launch arguments: {error}; spawn result: {:?}",
+                launched_session.map(|result| result.map(|_| ()))
+            )
+        });
         let launched = launched.lines().collect::<Vec<_>>();
         assert!(launched.contains(&"--include-partial-messages"));
         assert!(!launched.contains(&"--setting-sources"));

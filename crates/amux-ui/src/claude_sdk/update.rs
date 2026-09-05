@@ -100,7 +100,7 @@ pub(crate) fn update_command(
         ClaudeSdkCommand::CyclePermissionMode { .. } => {
             let mode = match model
                 .claude_sdk(agent)
-                .and_then(|l| l.permission_mode.as_deref())
+                .and_then(|l| l.session.permission_mode.as_deref())
             {
                 Some("default") => "acceptEdits",
                 Some("acceptEdits") => "plan",
@@ -236,12 +236,6 @@ impl ClaudeSdkLayer {
             }
         }
         match row["type"].as_str().unwrap_or("") {
-            "amux.claude_sdk.session_facts" => {
-                self.permission_mode = row["permission_mode"].as_str().map(str::to_owned)
-            }
-            "system" if row["subtype"] == "init" => {
-                self.permission_mode = row["permissionMode"].as_str().map(str::to_owned)
-            }
             "amux.claude_sdk.input_result" => {
                 let Some(input) = &self.in_flight else {
                     return;

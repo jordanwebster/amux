@@ -93,6 +93,7 @@ fn blob_path(root: &Path, agent: amux::AgentId, id: &amux::ArtifactId) -> PathBu
 
 #[derive(Default)]
 struct AttachmentStub {
+    requests: Mutex<Vec<amux::SendInputRequest>>,
     calls: Mutex<Vec<String>>,
 }
 
@@ -131,6 +132,7 @@ impl AttachmentClient for AttachmentStub {
                 .lock()
                 .unwrap()
                 .push(format!("send:{}", request.pin.join(",")));
+            self.requests.lock().unwrap().push(request);
             Ok(())
         })
     }
@@ -454,4 +456,46 @@ async fn attachments_fetch_and_diff_preserve_typed_runtime_outcomes() {
         }
     ));
     client.delete_agent(agent.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn claude_sdk_attachment_runtime_encodes_prompt_and_preserves_pins() {
+    let stub = AttachmentStub::default();
+    let draft = DraftAttachment::from_bytes(
+        ArtifactKind::Image,
+        "shot.png",
+        "image/png",
+        b"image".to_vec(),
+    );
+    let agent = Uuid::from_u128(1);
+    let op = OpId(Uuid::from_u128(2));
+    let outcome = execute_put_then_send(
+        &stub,
+        op,
+        agent,
+        vec![draft.clone()],
+        InputPayload::ClaudeSdk {
+            payload: amux_ui::claude_sdk::ClaudeSdkInput::Prompt {
+                text: "look".into(),
+            },
+        },
+        vec![draft.id.clone()],
+    )
+    .await;
+    assert_eq!(outcome, OpOutcome::InputSent);
+    assert_eq!(
+        *stub.calls.lock().unwrap(),
+        vec!["put:shot.png".to_string(), format!("send:{}", draft.id)]
+    );
+    let requests = stub.requests.lock().unwrap();
+    let request = &requests[0];
+    assert_eq!(requests.len(), 1);
+    assert_eq!(request.agent, AgentIdentifier::Id(agent));
+    assert_eq!(request.input_id, op.0.as_bytes());
+    assert_eq!(request.io_protocol, "claude_sdk_v1");
+    assert_eq!(
+        request.payload.as_ref(),
+        &[82, 6, 10, 4, b'l', b'o', b'o', b'k']
+    );
+    assert_eq!(request.pin, vec![draft.id.to_string()]);
 }

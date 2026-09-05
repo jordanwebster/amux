@@ -5,6 +5,7 @@
 //! `amux.attachments` row is also synthesized here. Both are a closed enum so
 //! additions require a protocol change and a frozen-shape test.
 
+pub use claude::sdk::init::ContextUsage;
 use prost::Message as ProstMessage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

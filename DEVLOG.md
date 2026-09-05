@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Connect Claude SDK chats to streams, session facts and attachments.**
+Local SDK agents now subscribe eagerly for fleet attention; remote and read-only
+agents subscribe when opened. The runtime requests bounded SDK replay and decodes
+its rows instead of rejecting the protocol. Attachment metadata and fetched
+review patches reach the SDK layer, and prompt uploads preserve their artifact
+pins through the native input. Typed model, mode, MCP, slash-command and context
+facts live beside the feed. Specs cover subscription retries, family needs,
+attachment dispatch and checkpoint replay; runtime tests pin the wire boundary.
+
 2026-09-05 — **Send typed Claude SDK commands and keep pending answers honest.**
 Prompts, all five answer kinds, interruption, permission-mode cycling, model
 selection and deliberate context requests now reduce to SDK-native input

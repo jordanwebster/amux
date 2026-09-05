@@ -6,6 +6,7 @@ mod asks;
 mod condition;
 mod fold;
 mod input;
+mod session;
 pub(crate) mod update;
 
 use std::collections::VecDeque;
@@ -22,6 +23,7 @@ pub use input::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use session::{ContextMeter, ContextMeterSource, ContextUsage, McpServerFact, SessionFacts};
 pub use update::{InFlightInput, InputFailure, PromptEcho};
 
 use crate::AgentMessageKind;
@@ -241,10 +243,28 @@ pub struct ClaudeSdkLayer {
     in_flight: Option<InFlightInput>,
     echo: Option<PromptEcho>,
     last_input_failure: Option<InputFailure>,
-    permission_mode: Option<String>,
+    session: SessionFacts,
+    context_breakdown: Option<Box<ContextUsage>>,
+    attachments: crate::attachments::AttachmentIndex,
 }
 
 impl ClaudeSdkLayer {
+    pub fn session(&self) -> &SessionFacts {
+        &self.session
+    }
+
+    pub fn context_breakdown(&self) -> Option<&ContextUsage> {
+        self.context_breakdown.as_deref()
+    }
+
+    pub fn attachments(&self) -> &crate::attachments::AttachmentIndex {
+        &self.attachments
+    }
+
+    pub(crate) fn attachments_mut(&mut self) -> &mut crate::attachments::AttachmentIndex {
+        &mut self.attachments
+    }
+
     pub fn asks(&self) -> impl Iterator<Item = &Ask> {
         self.asks.iter()
     }
@@ -303,6 +323,8 @@ impl ClaudeSdkLayer {
     }
 
     pub(crate) fn observe(&mut self, seq: u64, _at: DateTime<Utc>, row: &Value) {
+        session::observe(self, row);
+        self.attachments.observe_row(row);
         self.observe_input(row);
         condition::observe(self, row);
         asks::observe(self, row);

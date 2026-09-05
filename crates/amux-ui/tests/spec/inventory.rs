@@ -99,11 +99,10 @@ fn known_agents_open_streams_with_typed_protocols() {
     }
 }
 
-/// The SDK placeholder is a typed layer but has no fold. Inventory and a
-/// deliberate user open both remain stream-free, so opening the placeholder
-/// cannot accidentally request either terminal_v1 or claude_sdk_v1.
+/// Local inventory opens the SDK stream once. Opening the chat reuses that
+/// subscription and never requests a terminal protocol.
 #[test]
-fn sdk_placeholder_opens_no_stream() {
+fn claude_sdk_inventory_opens_one_stream_shared_with_user_attach() {
     let mut sdk = an_agent("sdk-agent", "nova");
     sdk.kind = amux::AgentKind::Claude {
         driver: amux::ClaudeDriver::Sdk,
@@ -123,11 +122,13 @@ fn sdk_placeholder_opens_no_stream() {
             .structured_protocol(),
         Some(StructuredProtocol::ClaudeSdk)
     );
-    assert!(
-        !effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::OpenStream { .. })),
-        "the unsupported SDK placeholder must not request a session stream"
+    assert_eq!(
+        effects,
+        vec![Effect::OpenStream {
+            agent: agent_id("sdk-agent"),
+            protocol: StructuredProtocol::ClaudeSdk,
+            tail: amux_ui::REPLAY_TAIL,
+        }]
     );
 }
 

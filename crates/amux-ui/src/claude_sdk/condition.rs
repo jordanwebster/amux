@@ -221,7 +221,6 @@ pub(super) fn observe(layer: &mut ClaudeSdkLayer, row: &Value) {
             layer.interrupted = false;
             layer.asks.clear();
             layer.clear_inputs("session reset");
-            layer.permission_mode = None;
         }
         "amux.claude_sdk.gap" => {
             layer.gap = true;

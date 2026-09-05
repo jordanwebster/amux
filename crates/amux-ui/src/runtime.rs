@@ -18,7 +18,7 @@ use std::time::Duration;
 use amux::{
     AgentId, AgentIdentifier, ArtifactId, ArtifactKind, ArtifactRef, Client, ClientError,
     CreateAgentRequest, HostId, ProtocolError, SendInputRequest, SessionCloseReason,
-    SubscribeSessionEvent, SubscribeSessionRequest, claude_io, codex_io,
+    SubscribeSessionEvent, SubscribeSessionRequest, claude_io, claude_sdk_io, codex_io,
 };
 use amux_artifacts::{ArtifactMeta, Cache, FetchError, StoreError, SystemClock};
 use chrono::{DateTime, Utc};
@@ -1380,31 +1380,7 @@ async fn pump_structured_stream(
             message: NOT_CONNECTED_ERROR.to_string(),
         });
     };
-    let args = match protocol {
-        StructuredProtocol::Claude => {
-            claude_io::encode_pty_transcript_v1_args(claude_io::ClaudePtyTranscriptV1Args {
-                terminal_size: None,
-                replay_query: Some(claude_io::ClaudePtyTranscriptV1ReplayQuery::Tail {
-                    count: tail,
-                }),
-            })
-        }
-        StructuredProtocol::Codex => codex_io::encode_codex_sdk_v1_args(codex_io::CodexSdkV1Args {
-            replay_query: Some(codex_io::CodexSdkV1ReplayQuery::Tail { count: tail }),
-        }),
-        // The subscription policy never opens this protocol, because no
-        // layer here folds it. Reaching this arm means the policy changed
-        // without the fold: say which protocol is missing rather than
-        // subscribing with arguments nobody can read.
-        StructuredProtocol::ClaudeSdk => {
-            return Some(StreamCloseReason::InternalError {
-                detail: format!(
-                    "{} has no client-side fold in this build",
-                    protocol.as_str()
-                ),
-            });
-        }
-    };
+    let args = structured_stream_args(protocol, tail);
     let mut session = match client
         .subscribe_session(SubscribeSessionRequest {
             agent: AgentIdentifier::Id(agent),
@@ -1508,6 +1484,27 @@ async fn flush_stream_batch(
     Some(())
 }
 
+fn structured_stream_args(protocol: StructuredProtocol, tail: u64) -> Option<Vec<u8>> {
+    match protocol {
+        StructuredProtocol::Claude => {
+            claude_io::encode_pty_transcript_v1_args(claude_io::ClaudePtyTranscriptV1Args {
+                terminal_size: None,
+                replay_query: Some(claude_io::ClaudePtyTranscriptV1ReplayQuery::Tail {
+                    count: tail,
+                }),
+            })
+        }
+        StructuredProtocol::Codex => codex_io::encode_codex_sdk_v1_args(codex_io::CodexSdkV1Args {
+            replay_query: Some(codex_io::CodexSdkV1ReplayQuery::Tail { count: tail }),
+        }),
+        StructuredProtocol::ClaudeSdk => {
+            claude_sdk_io::encode_claude_sdk_v1_args(claude_sdk_io::ClaudeSdkV1Args {
+                replay_query: Some(claude_sdk_io::ClaudeSdkV1ReplayQuery::Tail { count: tail }),
+            })
+        }
+    }
+}
+
 fn decode_structured_entry(
     protocol: StructuredProtocol,
     payload: &[u8],
@@ -1515,11 +1512,19 @@ fn decode_structured_entry(
     let output = match protocol {
         StructuredProtocol::Claude => claude_io::decode_pty_transcript_v1_output(payload),
         StructuredProtocol::ClaudeSdk => {
-            return Err(StreamCloseReason::InternalError {
-                detail: format!(
-                    "{} has no client-side fold in this build",
-                    protocol.as_str()
-                ),
+            let output = claude_sdk_io::decode_claude_sdk_v1_output(payload).map_err(|error| {
+                StreamCloseReason::InternalError {
+                    detail: error.to_string(),
+                }
+            })?;
+            let payload = serde_json::from_slice(&output.payload).map_err(|error| {
+                StreamCloseReason::InternalError {
+                    detail: format!("structured entry {} is not JSON: {error}", output.seq_id),
+                }
+            })?;
+            return Ok(StreamEntry {
+                seq: output.seq_id,
+                payload,
             });
         }
         StructuredProtocol::Codex => {
@@ -1579,6 +1584,29 @@ fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_sdk_stream_wire_preserves_tail_sequence_and_json() {
+        assert_eq!(
+            structured_stream_args(StructuredProtocol::ClaudeSdk, 1000),
+            Some(vec![10, 3, 16, 232, 7])
+        );
+        let row = br#"{"type":"amux.claude_sdk.ready","session_id":"s","resumed":false}"#;
+        let mut wire = vec![8, 7, 18, row.len() as u8];
+        wire.extend_from_slice(row);
+        assert_eq!(
+            decode_structured_entry(StructuredProtocol::ClaudeSdk, &wire).unwrap(),
+            StreamEntry {
+                seq: 7,
+                payload: serde_json::from_slice(row).unwrap()
+            }
+        );
+        assert!(
+            matches!(decode_structured_entry(StructuredProtocol::ClaudeSdk, &[8, 7, 18, 1, b'{']),
+            Err(StreamCloseReason::InternalError { detail }) if detail.contains("entry 7 is not JSON"))
+        );
+        assert!(decode_structured_entry(StructuredProtocol::ClaudeSdk, &[255]).is_err());
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
