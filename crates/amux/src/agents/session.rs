@@ -167,18 +167,11 @@ pub(crate) enum Plane {
     },
 }
 
-/// Effective configuration provenance frozen when the daemon starts.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum McpConfigSource {
-    File(PathBuf),
-    TrueDefault,
-}
-
 /// Immutable daemon-owned route used by every managed agent session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct McpLaunchRoute {
     executable: PathBuf,
-    config_source: McpConfigSource,
+    config_path: Option<PathBuf>,
     socket_path: PathBuf,
     host_id: Uuid,
 }
@@ -199,13 +192,9 @@ impl McpLaunchRoute {
         socket_path: PathBuf,
         host_id: Uuid,
     ) -> io::Result<Self> {
-        let config_source = match config_path {
-            Some(path) => McpConfigSource::File(path),
-            None => McpConfigSource::TrueDefault,
-        };
         let route = Self {
             executable,
-            config_source,
+            config_path,
             socket_path,
             host_id,
         };
@@ -216,7 +205,7 @@ impl McpLaunchRoute {
     pub(crate) fn validate(&self) -> io::Result<()> {
         validate_route_path(&self.executable, "amux executable", true)?;
         validate_route_path(&self.socket_path, "daemon socket", false)?;
-        if let McpConfigSource::File(path) = &self.config_source {
+        if let Some(path) = &self.config_path {
             validate_route_path(path, "amux config", true)?;
         }
         Ok(())
@@ -226,11 +215,13 @@ impl McpLaunchRoute {
         &self.executable
     }
 
-    pub(crate) fn config_path(&self) -> Option<&Path> {
-        match &self.config_source {
-            McpConfigSource::File(path) => Some(path),
-            McpConfigSource::TrueDefault => None,
-        }
+    pub(crate) fn config_path(&self) -> io::Result<&Path> {
+        self.config_path.as_deref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "managed MCP launch requires a profile config file",
+            )
+        })
     }
 
     pub(crate) fn socket_path(&self) -> &Path {
@@ -239,11 +230,6 @@ impl McpLaunchRoute {
 
     pub(crate) fn host_id(&self) -> Uuid {
         self.host_id
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_true_default(&self) -> bool {
-        matches!(self.config_source, McpConfigSource::TrueDefault)
     }
 }
 
@@ -271,9 +257,11 @@ fn validate_route_path(path: &Path, label: &str, must_be_file: bool) -> io::Resu
 
 #[cfg(test)]
 pub(crate) fn mcp_launch_route_for_tests(host_id: Uuid) -> McpLaunchRoute {
+    static CONFIG: std::sync::OnceLock<tempfile::NamedTempFile> = std::sync::OnceLock::new();
+    let config = CONFIG.get_or_init(|| tempfile::NamedTempFile::new().unwrap());
     McpLaunchRoute::new(
         std::env::current_exe().expect("test executable path"),
-        None,
+        Some(config.path().to_path_buf()),
         std::env::temp_dir().join(format!("amux-test-{host_id}.sock")),
         host_id,
     )
@@ -604,10 +592,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(route.executable(), executable);
-        assert_eq!(route.config_path(), Some(config.as_path()));
+        assert_eq!(route.config_path().unwrap(), config.as_path());
         assert_eq!(route.socket_path(), socket);
         assert_eq!(route.host_id(), host_id);
-        assert!(!route.is_true_default());
 
         std::fs::write(&executable, b"replacement executable bytes").unwrap();
         route
@@ -638,10 +625,15 @@ mod tests {
     }
 
     #[test]
-    fn managed_mcp_route_tags_the_true_default_config_explicitly() {
-        let route = mcp_launch_route_for_tests(Uuid::from_u128(51));
-        assert!(route.is_true_default());
-        assert_eq!(route.config_path(), None);
+    fn managed_mcp_route_without_profile_config_cannot_launch() {
+        let route = McpLaunchRoute::new(
+            std::env::current_exe().unwrap(),
+            None,
+            std::env::temp_dir().join("amux.sock"),
+            Uuid::from_u128(51),
+        )
+        .unwrap();
+        assert!(route.config_path().is_err());
     }
 
     #[cfg(unix)]

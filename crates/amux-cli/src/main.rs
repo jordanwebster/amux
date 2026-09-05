@@ -410,6 +410,12 @@ async fn main() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     };
 
+    if matches!(command, Commands::Hooks { .. }) && std::env::var_os("CLAUDE_HOOK_SOCKET").is_some()
+    {
+        hooks::handle_claude_hook(None);
+        return Ok(ExitCode::SUCCESS);
+    }
+
     if handle_server_start_from_stdin(&command).await? {
         return Ok(ExitCode::SUCCESS);
     }
@@ -511,7 +517,18 @@ async fn main() -> Result<ExitCode> {
         }
         _ => {}
     }
-    let config = if matches!(command, Commands::Hooks { .. } | Commands::Mcp { .. })
+    let config = if matches!(command, Commands::Mcp { .. }) {
+        let path = cli
+            .config
+            .as_deref()
+            .context("MCP requires AMUX_CONFIG or --config pointing at a profile config")?;
+        if cli.profile.is_some() {
+            return Err(anyhow!(
+                "MCP uses its profile config; --profile cannot override the launch route"
+            ));
+        }
+        profiles::load(path)?
+    } else if matches!(command, Commands::Hooks { .. })
         && cli.config.is_some()
         && cli.profile.is_none()
     {
@@ -804,7 +821,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         },
         Commands::Hooks { provider } => match provider {
             HooksProvider::Claude => {
-                hooks::handle_claude_hook(&config);
+                hooks::handle_claude_hook(Some(&config));
             }
         },
         Commands::Mcp { provider } => match provider {

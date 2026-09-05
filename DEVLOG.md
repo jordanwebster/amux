@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Pin managed MCP and hooks to their launching profile.**
+Claude and Codex MCP launches require an explicit profile configuration and
+carry that path alongside the exact socket. MCP connects directly to that
+socket without reading or updating the CLI's last-used selection. Managed
+Claude hooks forward to their session socket before loading configuration,
+so unrelated or missing ambient config cannot redirect or block delivery.
+The real CLI regression runs two profiles per installation with matching
+agent IDs, a conflicting ambient configuration and last-used selection, and
+checks isolated status changes, hook payloads and fail-closed launch errors.
+
 2026-09-05 — **Exercise account profiles through the real CLI and public API.**
 The e2e identity fixture auto-approves Alice and Bob through device authorization,
 requires profile and email scopes, rotates single-use refresh tokens, and
