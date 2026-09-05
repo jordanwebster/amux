@@ -1354,37 +1354,61 @@ fn sdk_streaming_rows() -> Vec<Value> {
     ]
 }
 
-/// Two subagents: one back with what it found, one still out.
+/// Two subagents: one back with what it found, one still out. Both the
+/// tool that started a subagent and the subagent's own block are on
+/// screen, the way a real session shows them.
 fn sdk_task_rows() -> Vec<Value> {
+    let started = [
+        (
+            "toolu_sweep",
+            "task_sweep",
+            "Sweep the retry tests",
+            "explore",
+        ),
+        (
+            "toolu_bench",
+            "task_bench",
+            "Time the backoff loop",
+            "general-purpose",
+        ),
+    ];
     let mut rows = vec![
         sdk_ready(),
         sdk_facts(Some(27_906)),
         sdk_prompt(20, "Find every test that still pins the old retry cap."),
         sdk_assistant(
             21,
-            json!([{
-                "type": "tool_use",
-                "id": "toolu_sweep",
-                "name": "Task",
-                "input": {"description": "Sweep the retry tests", "subagent_type": "explore"},
-            }]),
+            Value::Array(
+                started
+                    .iter()
+                    .map(|(tool_use_id, _, description, subagent)| {
+                        json!({
+                            "type": "tool_use",
+                            "id": tool_use_id,
+                            "name": "Task",
+                            "input": {"description": description, "subagent_type": subagent},
+                        })
+                    })
+                    .collect(),
+            ),
         ),
+        json!({
+            "type": "user",
+            "uuid": "dddddddd-1111-4000-8000-000000000022",
+            "sessionId": SDK_SESSION,
+            "parent_tool_use_id": null,
+            "message": {"role": "user", "content": started
+                .iter()
+                .map(|(tool_use_id, _, _, _)| json!({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": "Agent launched.",
+                }))
+                .collect::<Vec<_>>()},
+        }),
         sdk_facts(Some(27_906)),
     ];
-    for (task_id, description, subagent, finish) in [
-        (
-            "task_sweep",
-            "Sweep the retry tests",
-            "explore",
-            Some(("completed", "Four tests pin the old cap; two are in sync/.")),
-        ),
-        (
-            "task_bench",
-            "Time the backoff loop",
-            "general-purpose",
-            None,
-        ),
-    ] {
+    for (tool_use_id, task_id, description, subagent) in started {
         rows.push(json!({
             "type": "system",
             "subtype": "task_started",
@@ -1392,20 +1416,18 @@ fn sdk_task_rows() -> Vec<Value> {
             "task_id": task_id,
             "description": description,
             "subagent_type": subagent,
-            "tool_use_id": "toolu_sweep",
+            "tool_use_id": tool_use_id,
         }));
-        if let Some((status, summary)) = finish {
-            rows.push(json!({
-                "type": "system",
-                "subtype": "task_notification",
-                "sessionId": SDK_SESSION,
-                "task_id": task_id,
-                "status": status,
-                "summary": summary,
-                "usage": {"total_tokens": 1_440, "tool_uses": 6, "duration_ms": 2_375},
-            }));
-        }
     }
+    rows.push(json!({
+        "type": "system",
+        "subtype": "task_notification",
+        "sessionId": SDK_SESSION,
+        "task_id": "task_sweep",
+        "status": "completed",
+        "summary": "Four tests pin the old cap; two are in sync/.",
+        "usage": {"total_tokens": 1_440, "tool_uses": 6, "duration_ms": 2_375},
+    }));
     rows
 }
 
