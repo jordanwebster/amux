@@ -569,6 +569,8 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::claude_sdk_agreement::sequences());
     sequences.extend(crate::claude_sdk_write::sequences());
     sequences.extend(crate::claude_sdk_runtime::sequences());
+    sequences.extend(crate::a2a_claude_sdk_inbound::sequences());
+    sequences.extend(crate::claude_sdk_converse::sequences());
     sequences.extend(crate::codex_asks::sequences());
     sequences.extend(crate::codex_write::sequences());
     sequences.extend(crate::codex_agreement::sequences());

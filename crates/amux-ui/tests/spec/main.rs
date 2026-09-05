@@ -79,3 +79,7 @@ mod claude_sdk_agreement; // Claude session classification and public projection
 mod claude_sdk_write; // Typed SDK commands and authoritative write reconciliation
 
 mod claude_sdk_runtime; // Subscription, attachments and session facts
+
+mod a2a_claude_sdk_inbound; // SDK agent-message carriers and outbound send
+
+mod claude_sdk_converse; // Recorded conversations from prompt through work and interruption

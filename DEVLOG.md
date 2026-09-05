@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Replay Claude SDK conversations and agent messages in specs.**
+Recorded streaming, tool-use and interrupted sessions now exercise typed
+client commands, accepted prompt echoes and readiness for another prompt.
+Each message passes the same differential replay and invariant checks as the
+whole spec suite. Agent-message specs retain sender, delivery, completion and
+empty-exit facts; the outbound MCP capture gains the SDK envelope identity it
+omitted and verifies the unchanged send call paired with its result. Offline
+state captures preserve these boundaries without claiming live screen coverage.
+
 2026-09-05 — **Retain accepted Claude SDK prompts for every chat reader.**
 Successful prompt writes now publish an identifiable user row before replies
 and retain it for reconnect replay. UUID inputs reconcile the sender's echo;

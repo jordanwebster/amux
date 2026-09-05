@@ -31,38 +31,42 @@ fn differential_fold_matches_live_state_after_every_msg() {
     let sequences = all_sequences();
     assert!(!sequences.is_empty(), "chapters must register sequences");
     for (name, msgs) in sequences {
-        let mut live = Model::default();
-        let mut recording: Vec<String> = Vec::new();
-        for (index, msg) in msgs.into_iter().enumerate() {
-            recording
-                .push(serde_json::to_string(&msg).unwrap_or_else(|error| {
-                    panic!("{name}[{index}] failed to serialize: {error}")
-                }));
-            update(&mut live, msg);
+        assert_differential_sequence(name, msgs);
+    }
+}
 
-            let mut folded = Model::default();
-            for (line_index, line) in recording.iter().enumerate() {
-                let recorded: Msg = serde_json::from_str(line).unwrap_or_else(|error| {
-                    panic!("{name}[{line_index}] failed to deserialize: {error}")
-                });
-                update(&mut folded, recorded);
-            }
-            assert_eq!(folded, live, "{name}: fold != live after Msg {index}");
-            assert_eq!(
-                serde_json::to_value(&folded).unwrap(),
-                serde_json::to_value(&live).unwrap(),
-                "{name}: serialized fold != live after Msg {index}"
-            );
+pub(crate) fn assert_differential_sequence(name: &str, msgs: Vec<Msg>) {
+    let mut live = Model::default();
+    let mut recording: Vec<String> = Vec::new();
+    for (index, msg) in msgs.into_iter().enumerate() {
+        recording.push(
+            serde_json::to_string(&msg)
+                .unwrap_or_else(|error| panic!("{name}[{index}] failed to serialize: {error}")),
+        );
+        update(&mut live, msg);
 
-            // No public fold sequence may ever leave the Model structurally
-            // incoherent — the same check the shell enforces at the fold
-            // seam (panic in debug, report-once-per-kind in release).
-            let violations = live.check_invariants();
-            assert!(
-                violations.is_empty(),
-                "{name}: invariants violated after Msg {index}: {violations:?}"
-            );
+        let mut folded = Model::default();
+        for (line_index, line) in recording.iter().enumerate() {
+            let recorded: Msg = serde_json::from_str(line).unwrap_or_else(|error| {
+                panic!("{name}[{line_index}] failed to deserialize: {error}")
+            });
+            update(&mut folded, recorded);
         }
+        assert_eq!(folded, live, "{name}: fold != live after Msg {index}");
+        assert_eq!(
+            serde_json::to_value(&folded).unwrap(),
+            serde_json::to_value(&live).unwrap(),
+            "{name}: serialized fold != live after Msg {index}"
+        );
+
+        // No public fold sequence may ever leave the Model structurally
+        // incoherent — the same check the shell enforces at the fold
+        // seam (panic in debug, report-once-per-kind in release).
+        let violations = live.check_invariants();
+        assert!(
+            violations.is_empty(),
+            "{name}: invariants violated after Msg {index}: {violations:?}"
+        );
     }
 }
 
