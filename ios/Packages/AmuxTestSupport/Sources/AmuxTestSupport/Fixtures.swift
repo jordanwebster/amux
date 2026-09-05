@@ -155,9 +155,10 @@ public enum Fixtures {
         ) { bundle in
             States.open(bundle)
         },
-        Fixture(id: "first-run", screen: .firstRun, cloud: .firstRun),
-        Fixture(id: "sign-in", screen: .signIn, cloud: .firstRun),
-        Fixture(id: "first-run-paid", screen: .firstRunPaid, cloud: .unsubscribed),
+        Fixture(id: "first-run", screen: .firstRun, cloud: .firstRun, accounts: []),
+        Fixture(id: "sign-in", screen: .signIn, cloud: .firstRun, accounts: []),
+        Fixture(id: "first-run-paid", screen: .firstRunPaid, cloud: .unsubscribed,
+                accounts: [Fixture.unsubscribed]),
         Fixture(id: "paywall", screen: .paywall, cloud: .unsubscribed),
 
         // 7 · When it goes wrong

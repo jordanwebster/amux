@@ -43,6 +43,11 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     public var lastActivity: Date { card.lastActivity }
     public var hostId: HostId { card.agent.hostId }
     public var workingDirectory: String { card.agent.workingDir }
+    /// What the agent says it is doing, in its own words. Absent when it has
+    /// not said.
+    public var headline: String? { card.agent.workingOn?.text }
+    public var outcome: TurnOutcome? { card.outcome }
+    public var why: Why? { card.attention.why }
 
     public init(card: AgentCard, unread: Bool, confirmed: Bool) {
         self.card = card
@@ -58,6 +63,19 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     /// How long this agent has been waiting on you.
     public func waiting(at now: Date) -> TimeInterval {
         now.timeIntervalSince(card.lastActivity)
+    }
+
+    /// How long ago it last did anything, in the shortest true unit: "14s",
+    /// "2m", "5h", "2d". One unit only — a row is scanned, not read, and
+    /// "2d 3h" is two numbers where one would do.
+    public func age(at now: Date) -> String {
+        let seconds = max(0, now.timeIntervalSince(card.lastActivity))
+        switch seconds {
+        case ..<60: return "\(Int(seconds))s"
+        case ..<3600: return "\(Int(seconds / 60))m"
+        case ..<86_400: return "\(Int(seconds / 3600))h"
+        default: return "\(Int(seconds / 86_400))d"
+        }
     }
 }
 

@@ -97,6 +97,11 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
     public var attention: Attention
     public var phase: AgentPhase
     public var lastActivity: Date
+    /// What this agent's last finished turn changed, when the provider
+    /// counted it. Absent means the counts are not known, never that nothing
+    /// changed, so a row states the outcome without arithmetic rather than
+    /// claiming a zero.
+    public var outcome: TurnOutcome?
 
     public var id: AgentId { agent.id }
 
@@ -106,14 +111,47 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
         case attention
         case phase
         case lastActivity = "last_activity"
+        case outcome
     }
 
-    public init(agent: Agent, displayName: String, attention: Attention, phase: AgentPhase, lastActivity: Date) {
+    public init(
+        agent: Agent, displayName: String, attention: Attention, phase: AgentPhase,
+        lastActivity: Date, outcome: TurnOutcome? = nil
+    ) {
         self.agent = agent
         self.displayName = displayName
         self.attention = attention
         self.phase = phase
         self.lastActivity = lastActivity
+        self.outcome = outcome
+    }
+}
+
+/// What one finished turn changed, as the provider counted it.
+///
+/// A finished turn is stated in words on the row rather than drawn as a tick,
+/// and the words are only worth reading if they carry the numbers.
+public struct TurnOutcome: Codable, Sendable, Equatable {
+    public var files: Int
+    public var insertions: Int
+    public var deletions: Int
+    /// Anything else the provider said about the turn in one short phrase,
+    /// such as "3 tests added".
+    public var note: String?
+
+    public init(files: Int, insertions: Int, deletions: Int, note: String? = nil) {
+        self.files = files
+        self.insertions = insertions
+        self.deletions = deletions
+        self.note = note
+    }
+
+    /// "4 files · +118 −40 · 3 tests added". The minus is a true minus sign,
+    /// not a hyphen: it sits beside a plus and has to read as its opposite.
+    public var arithmetic: String {
+        var parts = ["\(files) file\(files == 1 ? "" : "s")", "+\(insertions) \u{2212}\(deletions)"]
+        if let note { parts.append(note) }
+        return parts.joined(separator: " · ")
     }
 }
 

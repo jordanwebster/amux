@@ -88,30 +88,24 @@ private struct AgentsTab: View {
     let actions: @MainActor (ShellAction) -> Void
 
     var body: some View {
-        FleetPlaceholder(router: router, stores: stores)
-            .navigationTitle(title)
-            .toolbarTitleMenu {
-                ForEach(accounts.accounts) { entry in
-                    Button {
-                        actions(.selectAccount(entry.id))
-                    } label: {
-                        Label(entry.account.email, systemImage: entry.id == accounts.selected
-                            ? "checkmark" : "person")
-                    }
-                    .accessibilityIdentifier("titleMenu.account.\(entry.account.email)")
-                }
-                Button("Add Account") { actions(.addAccount) }
-                    .accessibilityIdentifier("titleMenu.addAccount")
+        AgentsHome(model: stores.fleet, accounts: accounts) { action in
+            switch action {
+            case .open(let agent):
+                stores.fleet.opened(agent)
+                router.open(.conversation(agent))
+            case .newAgent: router.open(.newAgent)
+            case .openExceptions: router.select(.hosts)
+            case .switchAccount(let id): actions(.selectAccount(id))
+            case .addAccount: actions(.addAccount)
+            case .signIn: actions(.signIn)
+            case .subscribe: actions(.subscribe)
+            // The one place the list is allowed to regroup. Data arriving
+            // never reorders what a thumb is already travelling towards.
+            case .refresh: stores.fleet.refreshOrder(now: Date())
             }
-    }
-
-    /// The account whose fleet this is, when there is more than one to be
-    /// confused about; the tab's own name when there is not.
-    private var title: String {
-        guard accounts.accounts.count > 1, let selected = accounts.selectedAccount else {
-            return Tab.agents.title
         }
-        return selected.account.displayName ?? selected.account.email
+        // The screen draws its own header, so the bar would be a second one.
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 

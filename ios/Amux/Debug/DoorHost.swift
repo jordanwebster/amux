@@ -26,6 +26,10 @@ final class DoorHost {
     private(set) var design: Design = .app
     private(set) var typeSize: DynamicTypeSize = .large
     private(set) var stores = StoreBundle(account: AccountId("door"), now: Scenario.now)
+    /// The accounts a driven screen believes this phone has. Whether anything
+    /// is reachable at all is an account fact, not a fleet fact, so the two
+    /// gated home states need this as much as they need empty stores.
+    private(set) var accounts = AccountRegistry()
 
     /// What the screen on show has named, in the order it draws it. SwiftUI
     /// builds its accessibility tree only for an attached accessibility
@@ -114,6 +118,10 @@ final class DoorHost {
         // A fresh bundle every time: a screen opened after another one must
         // not inherit the conversation the last one left behind.
         stores = StoreBundle(account: AccountId("door"), now: Scenario.now)
+        accounts = AccountRegistry()
+        for entry in fixture.accounts {
+            accounts.add(entry.account, entitlement: entry.entitlement)
+        }
         fixture.apply(stores)
         cloud.scripted = fixture.cloud
         cloud.reset()

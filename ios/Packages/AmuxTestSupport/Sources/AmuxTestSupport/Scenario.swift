@@ -66,9 +66,12 @@ public enum Scenario {
         kind: AgentKind,
         attention: Attention,
         minutesAgo: Double,
-        phase: AgentPhase = .running
+        phase: AgentPhase = .running,
+        headline: String? = nil,
+        outcome: TurnOutcome? = nil
     ) -> AgentCard {
-        AgentCard(
+        let activity = now.addingTimeInterval(-60 * minutesAgo)
+        return AgentCard(
             agent: Agent(
                 id: agentId(slug),
                 hostId: host,
@@ -76,11 +79,13 @@ public enum Scenario {
                 command: kind == .codex ? "codex" : "claude",
                 workingDir: directory,
                 kind: kind,
-                createdAt: now.addingTimeInterval(-86_400 * 3)),
+                createdAt: now.addingTimeInterval(-86_400 * 3),
+                workingOn: headline.map { WorkingOn(text: $0, updatedAt: activity) }),
             displayName: slug,
             attention: attention,
             phase: phase,
-            lastActivity: now.addingTimeInterval(-60 * minutesAgo))
+            lastActivity: activity,
+            outcome: outcome)
     }
 
     private static let claude = AgentKind.claude(driver: .pty)
@@ -91,35 +96,72 @@ public enum Scenario {
     /// Agents waiting on a person are rarer than they used to be.
     public static let agents: [AgentCard] = [
         card("refactor-auth", host: studio, directory: "~/src/amux", kind: claude,
-             attention: .needsYou(why: .permission), minutesAgo: 2),
+             attention: .needsYou(why: .permission), minutesAgo: 2,
+             headline: "Wants to run a command"),
         card("spec-suite", host: mini, directory: "~/src/amux", kind: codex,
-             attention: .working, minutesAgo: 0),
+             attention: .working, minutesAgo: 14.0 / 60,
+             headline: "Running the spec suite · 47 of 126"),
         card("docs-pass", host: studio, directory: "~/src/amux-docs", kind: claude,
-             attention: .needsYou(why: .question), minutesAgo: 6),
+             attention: .needsYou(why: .question), minutesAgo: 6,
+             headline: "Which crate should own the redaction table?"),
         card("ios-bridge", host: studio, directory: "~/src/amux-core-bridge", kind: codex,
-             attention: .working, minutesAgo: 3),
+             attention: .working, minutesAgo: 3,
+             headline: "Editing bridge/src/session.rs"),
         card("relay-cleanup", host: mini, directory: "~/src/amux", kind: claude,
-             attention: .needsYou(why: .finished), minutesAgo: 14),
+             attention: .needsYou(why: .finished), minutesAgo: 14,
+             headline: "Collapsed the pairing errors onto one string",
+             outcome: TurnOutcome(files: 4, insertions: 118, deletions: 40,
+                                  note: "3 tests added")),
         card("pairing-copy", host: studio, directory: "~/src/amux", kind: claude,
-             attention: .needsYou(why: .finished), minutesAgo: 300),
+             attention: .needsYou(why: .finished), minutesAgo: 300,
+             headline: "Rewrote the pairing failure copy",
+             outcome: TurnOutcome(files: 2, insertions: 36, deletions: 9)),
         // The case that makes an ordering argue with itself: it ended a turn
         // two days ago and nobody has read it.
         card("flake-hunt", host: mini, directory: "~/src/amux", kind: codex,
-             attention: .needsYou(why: .finished), minutesAgo: 2880),
+             attention: .needsYou(why: .finished), minutesAgo: 2880,
+             headline: "Tracked the flake down to a shared temp dir",
+             outcome: TurnOutcome(files: 1, insertions: 21, deletions: 6)),
         card("changelog", host: studio, directory: "~/src/amux", kind: claude,
-             attention: .needsYou(why: .finished), minutesAgo: 540),
+             attention: .needsYou(why: .finished), minutesAgo: 540,
+             headline: "Drafted the 0.4 changelog",
+             outcome: TurnOutcome(files: 1, insertions: 64, deletions: 2)),
+        // Its host is unreachable, so the phone shows the last thing it heard
+        // and says the state is unknown rather than guessing at it.
         card("legacy-port", host: air, directory: "~/src/legacy", kind: claude,
-             attention: .unknown, minutesAgo: 1500),
+             attention: .unknown, minutesAgo: 1500,
+             headline: "Porting the legacy transport"),
         card("old-migration", host: mini, directory: "~/src/amux", kind: codex,
-             attention: .idle, minutesAgo: 7200),
+             attention: .idle, minutesAgo: 7200,
+             headline: "Waiting on you since Monday"),
     ]
 
-    /// The same fleet on a morning with nothing blocked and nothing unread.
-    public static let settledAgents: [AgentCard] = agents.map { card in
-        var settled = card
-        if case .needsYou = card.attention { settled.attention = .working }
-        return settled
-    }
+    /// The same morning, later: everything that was blocked has been answered
+    /// and every finished turn has been read.
+    ///
+    /// Answered agents are gone rather than converted — an agent whose
+    /// permission you granted goes on working under its own name, and there
+    /// is no state in which ten agents are all mid-command at once. What is
+    /// left is two running, one that has gone quiet, and two nobody has
+    /// touched in over a day.
+    public static let settledAgents: [AgentCard] = [
+        card("spec-suite", host: mini, directory: "~/src/amux", kind: codex,
+             attention: .working, minutesAgo: 14.0 / 60,
+             headline: "Running the spec suite · 47 of 126"),
+        card("ios-bridge", host: studio, directory: "~/src/amux-core-bridge", kind: codex,
+             attention: .working, minutesAgo: 3,
+             headline: "Editing bridge/src/session.rs"),
+        card("changelog", host: studio, directory: "~/src/amux", kind: claude,
+             attention: .idle, minutesAgo: 540,
+             headline: "Drafted the 0.4 changelog",
+             outcome: TurnOutcome(files: 1, insertions: 64, deletions: 2)),
+        card("legacy-port", host: air, directory: "~/src/legacy", kind: claude,
+             attention: .unknown, minutesAgo: 1500,
+             headline: "Porting the legacy transport"),
+        card("old-migration", host: mini, directory: "~/src/amux", kind: codex,
+             attention: .idle, minutesAgo: 7200,
+             headline: "Waiting on you since Monday"),
+    ]
 
     /// The agent whose conversation every talking screen opens.
     public static let focus = agentId("refactor-auth")

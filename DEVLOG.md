@@ -4,6 +4,36 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The Agents home draws the fleet.** The phone opens onto a list
+of agents rather than a placeholder. A row is a name, what the agent says it is
+doing, where it runs and how long ago it last did anything, with three marks
+and no more: the accent only on an agent that has stopped and cannot continue,
+an achromatic ring on one that is working, a hollow dashed ring where the host
+is unreachable and the state genuinely is not known. Idle draws nothing and a
+finished turn draws nothing either — it says "Finished · 4 files · +118 −40" on
+the row, which is more precise than a tick and readable without having learnt a
+vocabulary first. Ordering, the day-old fold and the subtitle come from the
+shared store: everything that needs you pinned longest-waiting first, the rest
+by recency, anything quiet for a day folded into a line that names what is in
+it, and one line above the list only when a machine is actually unreachable.
+The list regroups when the screen appears or is pulled, never when data
+arrives, so a sync cannot move a row out from under a thumb.
+
+An empty home is the same screen with the reason said out loud and one thing to
+do: Sign In when nobody is signed in, Subscribe when somebody is but the relay
+will not carry them. It is not a splash — an empty list teaches that this is a
+client for machines you own, where a splash would teach that it is a service
+you subscribe to.
+
+The fleet card now carries what a finished turn changed, because "Finished" on
+its own is a word without a fact behind it. Nothing populates it yet: the only
+provider that counts files and lines is the Claude SDK driver, whose result
+rows this checkout does not fold into the shared model. Absent means the counts
+are unknown rather than zero, so a row states the outcome and stops. Baselines
+for the home, the quiet home and both gated states are captured in light and
+dark; `ios/Goldens/BASELINE.md` records every way they depart from the design's
+own captures and why.
+
 2026-09-05 — **The app has a shell.** The phone app is now three tabs — Agents,
 Hosts and You — each with its own navigation stack, an account menu hanging off
 the Agents title, and routing for the `amux://` links the CLI prints and the

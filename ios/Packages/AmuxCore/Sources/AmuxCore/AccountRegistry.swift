@@ -20,6 +20,14 @@ public struct AccountEntry: Sendable, Equatable, Identifiable {
     }
 }
 
+/// Why a fleet may be empty before anything has even been asked for.
+public enum FleetGate: Sendable, Equatable {
+    /// Signed in and subscribed: an empty fleet means no paired hosts.
+    case ready
+    case signedOut
+    case unsubscribed
+}
+
 /// The accounts this phone knows, and which one is on screen.
 ///
 /// Every remote fact is tagged with the account it answers for. A result that
@@ -41,6 +49,19 @@ public final class AccountRegistry {
 
     public var selectedAccount: AccountEntry? {
         accounts.first { $0.id == selected }
+    }
+
+    /// Whether this phone can reach anything at all.
+    ///
+    /// Both gates are the same screen with one word changed, because the state
+    /// they describe is the same: every host is reached through the relay, the
+    /// relay is what an account is, and the subscription is what the relay
+    /// accepts. Without either, nothing is reachable and the fleet is empty
+    /// for a reason worth saying.
+    public var gate: FleetGate {
+        guard let entry = selectedAccount, entry.signedIn else { return .signedOut }
+        if case .active = entry.entitlement { return .ready }
+        return .unsubscribed
     }
 
     public func add(_ account: SignedInAccount, entitlement: Entitlement = .none) {

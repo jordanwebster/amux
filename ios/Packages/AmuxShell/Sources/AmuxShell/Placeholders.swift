@@ -7,44 +7,8 @@ import SwiftUI
 // page is stood up here as the plainest thing that reads the right store and
 // emits the right action. They are not the design: a screen replaces the one
 // named for it as it lands, and nothing else about the shell changes when it
-// does. Nothing here is a golden's subject; captures open a screen by name.
-
-/// The Agents tab until the home screen lands.
-struct FleetPlaceholder: View {
-    @Environment(\.design) private var design
-    let router: Router
-    let stores: StoreBundle
-
-    var body: some View {
-        List {
-            Section {
-                ForEach(stores.fleet.rows) { row in
-                    Button {
-                        router.open(.conversation(row.id))
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.name)
-                                .designFont(.identifier, design)
-                                .foregroundStyle(design.ink.color)
-                            Text(row.workingDirectory)
-                                .designFont(.caption, design)
-                                .foregroundStyle(design.inkMuted.color)
-                        }
-                    }
-                    .identified("fleet.row.\(row.id)", label: row.name, value: row.workingDirectory)
-                }
-            } header: {
-                Text(stores.fleet.subtitle)
-                    .identified("fleet.subtitle", value: stores.fleet.subtitle)
-            } footer: {
-                if let exceptions = stores.fleet.exceptions {
-                    Text(exceptions).identified("fleet.exceptions", value: exceptions)
-                }
-            }
-        }
-        .identified("fleet")
-    }
-}
+// does — the Agents tab has already been replaced this way. Nothing here is a
+// golden's subject; captures open a screen by name.
 
 /// The Hosts tab until the hosts screen lands.
 struct HostsPlaceholder: View {

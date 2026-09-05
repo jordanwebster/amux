@@ -12,6 +12,10 @@ public struct Fixture: Identifiable, Sendable {
     public let screen: Screen
     /// What the cloud answers while this state is on screen.
     public let cloud: ScriptedCloudState
+    /// The accounts this phone knows in this state. Most states are one
+    /// signed-in, subscribed account; the two gated states are the ones that
+    /// are not, and they are the reason this is stated rather than assumed.
+    public let accounts: [AccountEntry]
     /// The type size to render at, in the door's own words. Absent means the
     /// device's own setting.
     public let typeSize: String?
@@ -23,13 +27,23 @@ public struct Fixture: Identifiable, Sendable {
         id: String,
         screen: Screen,
         cloud: ScriptedCloudState = ScriptedCloudState(),
+        accounts: [AccountEntry] = [Fixture.subscribed],
         typeSize: String? = nil,
         apply: @escaping @Sendable @MainActor (StoreBundle) -> Void = { _ in }
     ) {
         self.id = id
         self.screen = screen
         self.cloud = cloud
+        self.accounts = accounts
         self.typeSize = typeSize
         self.apply = apply
     }
+
+    /// The account every state assumes unless it is about not having one.
+    public static let subscribed = AccountEntry(
+        account: ScriptedCloudState.ada,
+        entitlement: .active(source: .web, renews: nil))
+
+    /// Signed in, nothing bought.
+    public static let unsubscribed = AccountEntry(account: ScriptedCloudState.ada)
 }

@@ -14,6 +14,7 @@ enum DoorScreens {
     static func isBuilt(_ screen: Screen) -> Bool {
         switch screen {
         case .probe: true
+        case .home, .homeQuiet, .firstRun, .firstRunPaid: true
         default: false
         }
     }
@@ -23,6 +24,10 @@ enum DoorScreens {
     static func view(for screen: Screen, host: DoorHost) -> some View {
         switch screen {
         case .probe: ProbeScreen()
+        // The gated states are the same screen: what is empty and why is an
+        // account fact the screen already reads, not a screen of its own.
+        case .home, .homeQuiet, .firstRun, .firstRunPaid:
+            AgentsHome(model: host.stores.fleet, accounts: host.accounts) { _ in }
         default: EmptyView()
         }
     }

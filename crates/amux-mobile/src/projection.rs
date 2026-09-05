@@ -19,6 +19,28 @@ pub struct AgentCardDto {
     pub attention: Attention,
     pub phase: AgentPhase,
     pub last_activity: DateTime<Utc>,
+    /// What the agent's last finished turn changed. A finished turn is
+    /// reported to a reader in words rather than as a tick, and the words are
+    /// only worth reading if they carry the numbers.
+    ///
+    /// Nothing populates it yet: the only provider that reports these counts
+    /// is the Claude SDK driver, whose result rows are not folded into the
+    /// shared model in this checkout. Absent means "not known", never "no
+    /// changes", so a reader states the outcome without arithmetic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<TurnOutcome>,
+}
+
+/// What one finished turn changed, as the provider counted it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TurnOutcome {
+    pub files: u32,
+    pub insertions: u64,
+    pub deletions: u64,
+    /// Anything else the provider said about the turn in one short phrase,
+    /// such as "3 tests added".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Native row vocabularies stay distinct even where their fields coincide.
@@ -345,6 +367,7 @@ impl Projection {
                     attention: model.effective_attention(card),
                     phase: card.phase.clone(),
                     last_activity: card.last_activity,
+                    outcome: None,
                 })
                 .collect(),
             hosts: model
