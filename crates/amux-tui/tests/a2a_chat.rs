@@ -1931,3 +1931,262 @@ fn a2a_inline_answer_session_child() {
         HEIGHT,
     );
 }
+
+// --- a session's half of the conversation ---------------------------------
+
+/// The envelope row the daemon writes into a session's own log. Same
+/// envelope as every other carrier delivers; the session states it as a
+/// typed row rather than pasting it into a prompt.
+fn session_message_row(id: u32, kind: &str, from: &str, text: &str) -> Value {
+    json!({
+        "type": "amux.claude_sdk.message",
+        "delivery": "stream",
+        "envelope": {
+            "id": format!("00000000-0000-4000-8000-0000{id:08}"),
+            "context": null,
+            "from": {
+                "type": "agent",
+                "agent_id": "00000000-0000-0000-0000-0000000000b0",
+                "host_id": HERE,
+                "name": from,
+                "kind": "claude",
+            },
+            "to": {
+                "agent_id": "00000000-0000-0000-0000-0000000000b1",
+                "host_id": HERE,
+            },
+            "kind": kind,
+            "text": text,
+        },
+    })
+}
+
+/// The session's outbound send: the MCP call it made and the result it
+/// got back, in the session's own row vocabulary.
+fn session_send_rows(to: &str, text: &str) -> Vec<Value> {
+    vec![
+        json!({
+            "type": "assistant",
+            "uuid": "eeeeeeee-1111-4000-8000-000000000021",
+            "sessionId": "8a09557f-e719-4329-8b4c-9ef4e3eeeaa1",
+            "parent_tool_use_id": null,
+            "message": {
+                "id": "msg_session_send",
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_session_send",
+                    "name": "mcp__amux__send",
+                    "input": {"to": to, "text": text},
+                }],
+            },
+        }),
+        json!({
+            "type": "user",
+            "uuid": "dddddddd-1111-4000-8000-000000000022",
+            "sessionId": "8a09557f-e719-4329-8b4c-9ef4e3eeeaa1",
+            "parent_tool_use_id": null,
+            "message": {
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_session_send",
+                    "content": "{\"id\":\"00000000-0000-4000-8000-0000000000a3\"}",
+                    "is_error": false,
+                }],
+            },
+        }),
+    ]
+}
+
+/// The row that closes a session's turn — the moment its completion
+/// envelope goes out to whoever started it.
+fn session_result_row() -> Value {
+    json!({
+        "type": "result",
+        "uuid": "ffffffff-1111-4000-8000-000000000031",
+        "sessionId": "8a09557f-e719-4329-8b4c-9ef4e3eeeaa1",
+        "subtype": "success",
+        "is_error": false,
+        "stop_reason": "end_turn",
+        "num_turns": 1,
+        "duration_ms": 4_100,
+    })
+}
+
+/// A stream-JSON session leading a family, holding the whole
+/// conversation: a message from one child, a completion from another, an
+/// exit notice from a third, and its own send going back out.
+fn session_conversation_model() -> Model {
+    let mut msgs = vec![
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host_id()),
+        }),
+        Msg::Server(ServerMsg::HostUpserted { host: a_host() }),
+        Msg::Server(ServerMsg::AgentUpserted {
+            agent: a_session_agent(SESSION_LEAD, None),
+        }),
+        agent_up(&an_agent(
+            RUNNER,
+            "claude",
+            CLAUDE_PROTOCOL,
+            Some(SESSION_LEAD),
+        )),
+        Msg::Server(ServerMsg::HostsSynchronized),
+        Msg::Server(ServerMsg::AgentsSynchronized),
+    ];
+    msgs.extend(opened(SESSION_LEAD));
+    let mut rows = vec![
+        session_ready(),
+        session_message_row(1, "message", RUNNER, "the suite is green on the retry path"),
+        session_message_row(2, "completed", SCRIBE, REPORT),
+        session_message_row(3, "exited", "flake-hunter", ""),
+    ];
+    rows.extend(session_send_rows(
+        RUNNER,
+        "\n  \nrerun with --nocapture\nthen report",
+    ));
+    msgs.push(batch(SESSION_LEAD, NOW - 10, rows));
+    fold(msgs)
+}
+
+/// Every kind reads in a session's chat exactly as it reads in the other
+/// two: an inbound message whole, a completion closed over what is behind
+/// it, an exit as a bare notice, and the send as its target and summary.
+#[test]
+fn a2a_message_rows_in_a_session_chat_read_like_the_others() {
+    let model = session_conversation_model();
+    let frame = frame_of(&model, &chat_on(&model, SESSION_LEAD));
+    assert!(
+        frame.contains("← test-runner") && frame.contains("the suite is green on the retry path"),
+        "an inbound message arrives whole:\n{frame}"
+    );
+    assert!(
+        frame.contains("✔ ") && frame.contains("migrated 14 call sites"),
+        "a completion wears the finished mark:\n{frame}"
+    );
+    assert!(
+        !frame.contains("through a macro") && frame.contains("⌄ 2 more lines · C-a m"),
+        "the rest is behind the fold, and the chord says so:\n{frame}"
+    );
+    let notice = frame
+        .lines()
+        .find(|line| line.contains("· flake-hunter"))
+        .unwrap_or_else(|| panic!("the exit row:\n{frame}"));
+    assert!(!notice.contains('⌄'), "nothing to open: {notice}");
+    assert!(
+        frame.contains("→ test-runner · rerun with --nocapture"),
+        "the send names who it went to and what left:\n{frame}"
+    );
+    assert!(
+        !frame.contains("\"to\":"),
+        "a send is talk, not a JSON argument dump:\n{frame}"
+    );
+}
+
+/// The chord opens the completion here too, and offers to close it again.
+#[test]
+fn a2a_message_rows_open_a_completion_in_a_session_chat() {
+    let model = session_conversation_model();
+    let frame = frame_of(&model, &opened_reports(&model, SESSION_LEAD));
+    assert!(
+        frame.contains("through a macro"),
+        "the whole report:\n{frame}"
+    );
+    assert!(frame.contains("⌃ close · C-a m"), "{frame}");
+}
+
+#[test]
+fn a2a_message_rows_in_a_session_chat() {
+    let model = session_conversation_model();
+    assert_surface(
+        "a2a_message_rows_session",
+        &model,
+        &chat_on(&model, SESSION_LEAD),
+        HEIGHT,
+    );
+}
+
+#[test]
+fn a2a_message_rows_opened_in_a_session_chat() {
+    let model = session_conversation_model();
+    assert_surface(
+        "a2a_message_rows_session_open",
+        &model,
+        &opened_reports(&model, SESSION_LEAD),
+        HEIGHT,
+    );
+}
+
+/// A session child's completion reaches a parent that is not one: the
+/// parent renders the finished report over its own carrier, and the
+/// family row still stands for the child that sent it. What the child was
+/// driven by is not something the parent's chat can see, and this is the
+/// test that says so out loud.
+#[test]
+fn a2a_message_rows_carry_a_session_childs_completion_to_another_parent() {
+    for parent in [LEAD, RUNNER] {
+        let mut msgs = vec![
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(host_id()),
+            }),
+            Msg::Server(ServerMsg::HostUpserted { host: a_host() }),
+        ];
+        // The Codex parent is the same fixture agent the family tests use.
+        msgs.push(match parent {
+            RUNNER => agent_up(&an_agent(RUNNER, "codex", CODEX_PROTOCOL, None)),
+            name => agent_up(&an_agent(name, "claude", CLAUDE_PROTOCOL, None)),
+        });
+        msgs.push(Msg::Server(ServerMsg::AgentUpserted {
+            agent: a_session_agent(SESSION_CHILD, Some(parent)),
+        }));
+        msgs.extend([
+            Msg::Server(ServerMsg::HostsSynchronized),
+            Msg::Server(ServerMsg::AgentsSynchronized),
+        ]);
+        msgs.extend(opened(parent));
+        msgs.push(match parent {
+            RUNNER => batch(
+                parent,
+                NOW - 10,
+                vec![
+                    codex_ready(),
+                    codex_message_row("completed", SESSION_CHILD, REPORT),
+                ],
+            ),
+            name => batch(
+                name,
+                NOW - 10,
+                vec![
+                    claude_ready(),
+                    claude_message_row(30, "completed", SESSION_CHILD, REPORT),
+                ],
+            ),
+        });
+        msgs.extend(opened(SESSION_CHILD));
+        msgs.push(batch(
+            SESSION_CHILD,
+            NOW - 20,
+            vec![session_ready(), session_result_row()],
+        ));
+        let model = fold(msgs);
+        let frame = frame_of(&model, &chat_on(&model, parent));
+        assert!(
+            frame.contains("✔ ") && frame.contains("migrated 14 call sites"),
+            "{parent} shows the finished report:\n{frame}"
+        );
+        assert!(
+            frame.contains(SESSION_CHILD),
+            "and names the child that sent it:\n{frame}"
+        );
+        assert_eq!(
+            model
+                .family_of(agent_id(parent))
+                .iter()
+                .map(|member| member.card.display_name())
+                .collect::<Vec<_>>(),
+            vec![SESSION_CHILD.to_string()],
+            "the child is still family to {parent}"
+        );
+    }
+}

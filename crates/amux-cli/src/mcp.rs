@@ -632,6 +632,9 @@ mod attach_tests {
         send_calls: AtomicUsize,
         create_calls: AtomicUsize,
         standalone_spawn_shape: Mutex<Option<(Option<AgentParent>, Option<String>)>>,
+        /// What the last create asked for. A spawned child's kind is the
+        /// only place the driver decision becomes visible.
+        created_type: Mutex<Option<amux::AgentType>>,
         attach_calls: Mutex<Vec<AttachCall>>,
     }
 
@@ -656,6 +659,7 @@ mod attach_tests {
                 send_calls: AtomicUsize::new(0),
                 create_calls: AtomicUsize::new(0),
                 standalone_spawn_shape: Mutex::new(None),
+                created_type: Mutex::new(None),
                 attach_calls: Mutex::new(Vec::new()),
             }
         }
@@ -684,6 +688,7 @@ mod attach_tests {
             self.create_calls.fetch_add(1, Ordering::SeqCst);
             *self.standalone_spawn_shape.lock().unwrap() =
                 Some((request.parent, request.initial_prompt));
+            *self.created_type.lock().unwrap() = Some(request.agent_type);
             Ok(test_agent(
                 request.agent_id,
                 Uuid::from_u128(302),
@@ -732,14 +737,26 @@ mod attach_tests {
         daemon: Arc<FakeDaemon>,
         fail_first: usize,
         connects: AtomicUsize,
+        /// The driver this connector's configuration resolves to, as the
+        /// real one reads it from the config file.
+        driver: amux::ClaudeDriver,
     }
 
     impl FakeConnector {
         fn new(daemon: Arc<FakeDaemon>, fail_first: usize) -> Self {
+            Self::driven(
+                daemon,
+                fail_first,
+                amux::resolve_claude_driver(None, &Config::default()),
+            )
+        }
+
+        fn driven(daemon: Arc<FakeDaemon>, fail_first: usize, driver: amux::ClaudeDriver) -> Self {
             Self {
                 daemon,
                 fail_first,
                 connects: AtomicUsize::new(0),
+                driver,
             }
         }
     }
@@ -754,10 +771,79 @@ mod attach_tests {
                 Ok(self.daemon.clone())
             }
         }
+
+        fn claude_driver(&self) -> amux::ClaudeDriver {
+            self.driver
+        }
     }
 
     fn test_agent(id: Uuid, host_id: Uuid, name: &str) -> Agent {
         agent_with_kind(id, host_id, name, amux::AgentKind::TestAgent)
+    }
+
+    /// The spawn tool asks the same question `amux new` and the TUI ask:
+    /// which driver does a new Claude agent get. The configured answer is
+    /// the child's kind, and the shipped default is the other one — a
+    /// spawned child must never be an exception to the setting.
+    #[tokio::test]
+    async fn a2a_mcp_spawn_gives_a_claude_child_the_configured_driver() {
+        for driver in [amux::ClaudeDriver::Sdk, amux::ClaudeDriver::Pty] {
+            let daemon = Arc::new(FakeDaemon::new(Vec::new()));
+            let backend = ClientBackend {
+                connector: Arc::new(FakeConnector::driven(daemon.clone(), 0, driver)),
+                identity: None,
+            };
+
+            backend
+                .call(ToolRequest::Spawn {
+                    kind: SpawnKind::Claude,
+                    prompt: "inspect the lifecycle".to_string(),
+                    name: Some("probe".to_string()),
+                    cwd: Some(PathBuf::from("/work")),
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(
+                daemon.created_type.lock().unwrap().clone(),
+                Some(amux::AgentType::Claude { driver }),
+                "a spawned Claude child follows the resolved driver"
+            );
+        }
+    }
+
+    /// A spawned Codex child is unaffected by the Claude setting: the
+    /// question does not apply to it, and answering it anyway would be a
+    /// silent second meaning for one config key.
+    #[tokio::test]
+    async fn a2a_mcp_spawn_leaves_a_codex_child_alone() {
+        let daemon = Arc::new(FakeDaemon::new(Vec::new()));
+        let backend = ClientBackend {
+            connector: Arc::new(FakeConnector::driven(
+                daemon.clone(),
+                0,
+                amux::ClaudeDriver::Sdk,
+            )),
+            identity: None,
+        };
+
+        backend
+            .call(ToolRequest::Spawn {
+                kind: SpawnKind::Codex,
+                prompt: "hunt the flake".to_string(),
+                name: None,
+                cwd: Some(PathBuf::from("/work")),
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            matches!(
+                daemon.created_type.lock().unwrap().as_ref(),
+                Some(amux::AgentType::Codex { .. })
+            ),
+            "the Claude setting has nothing to say about a Codex child"
+        );
     }
 
     #[test]

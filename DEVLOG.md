@@ -4,6 +4,28 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A Claude session driven over stream-JSON takes both halves
+of an agent-to-agent conversation.**
+Its chat now has frozen frames for the whole exchange: a message from
+another agent arriving whole, a child's completion closed over the two
+lines behind its first, an exit as a bare notice with nothing to open, and
+its own outgoing send as the recipient and a one-line summary rather than
+a dump of the tool's arguments. The chord that opens every completion in a
+chat works here too. Each row is asserted to read the way the other two
+chats' rows read, because the shape is decided once for all of them.
+
+A completion from such a session also reaches a parent that is not one:
+both an ordinary Claude parent and a Codex parent render the finished
+report over their own carrier and keep the sender as family. What a child
+is driven by is not something a parent's chat can see, and there is now a
+test that says so rather than an assumption that it does not matter.
+
+Spawning follows the same setting every other creation path follows: the
+spawn tool gives a new Claude child the driver the configuration resolves
+to, and a spawned Codex child is untouched by it. The setting had a test
+that the resolver reads the config; it now has one that a spawned child
+actually gets that answer.
+
 2026-09-05 — **The fleet cannot tell one kind of Claude session from the
 other, and there are now frames and specs that say so.**
 Two Claude agents stopped on the same permission request at the same
