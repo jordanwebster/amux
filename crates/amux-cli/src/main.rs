@@ -420,6 +420,16 @@ async fn main() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    #[cfg(debug_assertions)]
+    if let Commands::Debug {
+        command: DebugCommands::Report { command },
+    } = &command
+        && let Some(output) = debug_cmd::replay_from_path(command)?
+    {
+        print!("{}", output.text);
+        return Ok(output.exit_code);
+    }
+
     if let Commands::Login { name } = command {
         if cli.config.is_none() && !amux::InstallationConfig::default_path().exists() {
             init::initialize(None, false).await?;

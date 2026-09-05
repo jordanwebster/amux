@@ -96,6 +96,158 @@ fn write(path: &Path, value: &impl serde::Serialize) {
     std::fs::write(path, serde_yaml::to_string(value).unwrap()).unwrap();
 }
 
+#[cfg(debug_assertions)]
+mod saved_report_replay {
+    use super::*;
+
+    fn copy_report(parent: &Path) -> PathBuf {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../amux-tui/tests/reports/chat_agent_activity");
+        let report = parent.join("saved-report");
+        std::fs::create_dir_all(&report).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), report.join(entry.file_name())).unwrap();
+        }
+        report
+    }
+
+    async fn replay(mut command: Command, requested: &Path, report: &Path) {
+        command
+            .args(["debug", "report", "replay"])
+            .arg(requested)
+            .arg("--frame");
+        println!("$ {command:?}");
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            tokio::process::Command::from(command)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("saved replay must not wait for an installation socket")
+        .unwrap();
+        let text = String::from_utf8(output.stdout).unwrap();
+        println!("{text}{}", String::from_utf8_lossy(&output.stderr));
+        assert!(output.status.success(), "{}", output.status);
+        assert!(text.starts_with("Reproduces\nDiffering cells: none\nBounding rectangle: none\n"));
+        let (_, frame) = text.split_once("Frame at event ").unwrap();
+        let (_, frame) = frame.split_once(":\n").unwrap();
+        assert_eq!(
+            frame,
+            std::fs::read_to_string(report.join("frame.txt")).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn saved_report_replay_without_installation_configuration() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let report = copy_report(&root);
+        let config_home = root.join("no-config");
+        let runtime = root.join("no-runtime");
+        for requested in [&report, Path::new("saved-report")] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_amux"));
+            command
+                .current_dir(&root)
+                .env_remove("AMUX_CONFIG")
+                .env("XDG_CONFIG_HOME", &config_home)
+                .env("XDG_DATA_HOME", root.join("no-data"))
+                .env("XDG_RUNTIME_DIR", &runtime)
+                .env("TMPDIR", &runtime)
+                .env("AMUX_LOG", root.join("replay.log"));
+            replay(command, requested, &report).await;
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_amux"));
+        command
+            .env("AMUX_CONFIG", root.join("missing-profile.yaml"))
+            .env("AMUX_LOG", root.join("replay.log"))
+            .args(["--profile", "unavailable-account"]);
+        replay(command, &report, &report).await;
+        assert!(!config_home.exists());
+        assert!(!runtime.exists());
+        assert!(!root.join("no-data").exists());
+        println!("Absolute and relative saved reports replay without installation configuration.");
+    }
+
+    #[tokio::test]
+    async fn saved_report_replay_leaves_a_stopped_installation_stopped() {
+        let fixture = Fixture::new();
+        let report = copy_report(&fixture.installation.root);
+        fixture.run(&["server", "start"]);
+        fixture.run(&["server", "stop"]);
+        assert!(!fixture.installation.front_door_socket.exists());
+        replay(fixture.command(&[]), &report, &report).await;
+        assert!(!fixture.installation.front_door_socket.exists());
+        let profile = amux::load_profile_config(&fixture.profile).unwrap().profile;
+        assert!(!profile.socket_path.exists());
+        let output = fixture.command(&["profiles"]).output().unwrap();
+        assert!(!output.status.success(), "replay must not start the daemon");
+        println!(
+            "Installation and profile sockets remain absent; profiles confirms no server running."
+        );
+    }
+
+    #[tokio::test]
+    async fn saved_report_replay_does_not_contact_the_installation_socket() {
+        let fixture = Fixture::new();
+        let report = copy_report(&fixture.installation.root);
+        let listener =
+            std::os::unix::net::UnixListener::bind(&fixture.installation.front_door_socket)
+                .unwrap();
+        listener.set_nonblocking(true).unwrap();
+        replay(fixture.command(&[]), &report, &report).await;
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        drop(listener);
+        std::fs::remove_file(&fixture.installation.front_door_socket).unwrap();
+        println!("Listening installation socket receives no connection during replay.");
+    }
+
+    #[tokio::test]
+    async fn saved_report_replay_by_name_uses_the_selected_profile() {
+        let fixture = Fixture::new();
+        fixture.run(&["server", "start"]);
+        let created = fixture.run(&["profile", "create", "work"]);
+        let created = String::from_utf8(created.stdout).unwrap();
+        let id = ProfileId(created.split_whitespace().next().unwrap().parse().unwrap());
+        let paths = ProfilePaths::for_id(&fixture.installation.root, id).unwrap();
+        let report = copy_report(&paths.data_dir.join("reports"));
+        replay(
+            fixture.command(&["--profile", "work"]),
+            Path::new("saved-report"),
+            &report,
+        )
+        .await;
+        let output = fixture
+            .command(&[
+                "--profile",
+                "personal",
+                "debug",
+                "report",
+                "replay",
+                "saved-report",
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let personal = ProfilePaths::for_id(&fixture.installation.root, fixture.id).unwrap();
+        let expected = format!(
+            "report {} has no captured frame",
+            personal.reports_dir.join("saved-report").display()
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(&expected),
+            "{output:?}"
+        );
+        println!(
+            "Bare report names resolve under the selected profile; Personal cannot find Work's report."
+        );
+    }
+}
+
 #[test]
 fn config_split_cli_boots_probes_stops_and_restarts_an_installation() {
     let fixture = Fixture::new();

@@ -7873,3 +7873,11 @@ profile switcher, Personal fleet and Work fleet now have committed amux-shot
 PNGs, a SHA-256 manifest and regeneration instructions under
 `docs/screenshots/profiles`. Fresh production renders match the existing
 captures byte for byte; the two fleets show disjoint agent lists.
+
+2026-09-05 — **Replay saved reports without starting an installation.**
+An explicit report path now reaches the replay engine before profile discovery,
+so a saved bundle works without installation configuration and leaves a stopped
+daemon stopped. Bare report names still use the selected profile's reports
+directory. CLI regressions compare the replayed frame with the saved frame,
+cover absent configuration and stopped installations, and verify that a
+listening installation socket receives no connection during explicit replay.

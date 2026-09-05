@@ -111,7 +111,9 @@ snapshot of every account in the installation.
 
 ## Replay before changing code
 
-Replay the final frame through the current build:
+Replay the final frame through the current build. An absolute report path (or
+a relative directory containing `report.json`) works without installation
+configuration, even with the daemon stopped:
 
 ```console
 $ amux debug report replay /path/to/report
