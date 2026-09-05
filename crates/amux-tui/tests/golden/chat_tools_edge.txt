@@ -2,39 +2,39 @@
                                                                                                                         
 ▎   apply the plan                                                                                                      
                                                                                                                         
-  ✎ Write plans/x.md · +20                                                                                              
-                                                                                                                        
-  ✗ Bash rm -rf /tmp/scratch                                                                                            
-    └ denied (user-rejected)                                                                                            
-                                                                                                                        
-  ✗ Bash cargo test                                                                                                     
-    └ error[E0308]: mismatched types …                                                                                  
-                                                                                                                        
-  ? Which stores should the migration cover? → trust store, recorder dumps                                              
-                                                                                                                        
-  ✔ plan approved                                                                                                       
-    step 1: do the thing                                                                                                
-    step 2: do the thing                                                                                                
-    step 3: do the thing                                                                                                
-    step 4: do the thing                                                                                                
-    step 5: do the thing                                                                                                
-    step 6: do the thing                                                                                                
-    ⌄ 3 more lines · ctrl+t to read                                                                                     
-                                                                                                                        
-  ✔ Task audit the trust store                                                                                          
-    └ done · 34s · 12 tools                                                                                             
-                                                                                                                        
-  ✔ Task long refactor (background)                                                                                     
-    └ launched in background                                                                                            
-                                                                                                                        
-  ✔ earlier tool                                                                                                        
-    └ late output from evicted history                                                                                  
+│ ✎ Write plans/x.md · +20                                                                                              
+│ ✗ Bash rm -rf /tmp/scratch                                                                                            
+│   └ denied (user-rejected)                                                                                            
+│ ✗ Bash cargo test                                                                                                     
+│   └ error[E0308]: mismatched types …                                                                                  
+│ ? Which stores should the migration cover? → trust store, recorder dumps                                              
+│ ✔ plan approved                                                                                                       
+│   step 1: do the thing                                                                                                
+│   step 2: do the thing                                                                                                
+│   step 3: do the thing                                                                                                
+│   step 4: do the thing                                                                                                
+│   step 5: do the thing                                                                                                
+│   step 6: do the thing                                                                                                
+│   ⌄ 3 more lines · ctrl+t to read                                                                                     
+│ ✔ Task audit the trust store                                                                                          
+│   └ done · 34s · 12 tools                                                                                             
+│ ✔ Task long refactor (background)                                                                                     
+│   └ launched in background                                                                                            
+│ ✔ earlier tool                                                                                                        
+│   └ late output from evicted history                                                                                  
                                                                                                                         
   ─ turn · 1m 0s ───────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
                                                                                                                         
                                                                                                                         
                                                                                                                         
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     enter send · ctrl+j newline · C-a r review diff · ? help                                           mode acceptEdits 

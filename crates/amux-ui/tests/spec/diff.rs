@@ -40,12 +40,11 @@ fn structured_hunks_classify_and_advance_independent_coordinates() {
     assert_eq!(
         document.rows(),
         vec![
-            row(None, None, RowKind::Meta, "@@ -10,3 +20,3 @@"),
             row(Some(10), Some(20), RowKind::Context, " shared\ttext"),
             row(Some(11), None, RowKind::Removed, "-old"),
             row(None, Some(21), RowKind::Added, "+new"),
             row(Some(12), Some(22), RowKind::Context, " tail"),
-            row(None, None, RowKind::Meta, "@@ -40,1 +70,1 @@"),
+            row(None, None, RowKind::Boundary, ""),
             row(Some(40), None, RowKind::Removed, "-gone"),
             row(None, Some(70), RowKind::Added, "+arrived"),
         ]
@@ -80,7 +79,7 @@ fn a_numberless_document_states_no_position_anywhere() {
     );
     assert_eq!(
         rows.iter().map(|row| row.text.as_str()).collect::<Vec<_>>(),
-        vec![" old", "+new", "@@", "-gone"],
+        vec![" old", "+new", "", "-gone"],
         "only the real boundary between hunks receives a bare marker"
     );
 }
@@ -95,12 +94,11 @@ fn a_patch_preserves_headers_and_parses_several_hunks() {
     assert_eq!(
         document.rows(),
         vec![
-            row(None, None, RowKind::Meta, "@@ -3,2 +8,3 @@ section"),
             row(Some(3), Some(8), RowKind::Context, " same"),
             row(Some(4), None, RowKind::Removed, "-old"),
             row(None, Some(9), RowKind::Added, "+new\tvalue"),
             row(None, Some(10), RowKind::Added, "+extra"),
-            row(None, None, RowKind::Meta, "@@ -20 +30 @@"),
+            row(None, None, RowKind::Boundary, ""),
             row(Some(20), None, RowKind::Removed, "-last"),
             row(None, Some(30), RowKind::Added, "+next"),
         ]
@@ -129,7 +127,6 @@ fn a_complete_hunk_survives_an_unknown_trailer() {
     assert_eq!(
         document.rows(),
         vec![
-            row(None, None, RowKind::Meta, "@@ -1 +1 @@"),
             row(Some(1), None, RowKind::Removed, "-old"),
             row(None, Some(1), RowKind::Added, "+new"),
         ]
@@ -160,7 +157,6 @@ fn an_incomplete_hunk_retains_its_observed_prefix_and_states_the_cut() {
     assert_eq!(
         document.rows(),
         vec![
-            row(None, None, RowKind::Meta, "@@ -1,2 +1,2 @@"),
             row(Some(1), None, RowKind::Removed, "-old"),
             row(None, Some(1), RowKind::Added, "+new"),
         ]
@@ -176,7 +172,6 @@ fn a_truncated_tail_hunk_parses_as_far_as_the_head_reaches() {
         assert_eq!(
             document.rows(),
             vec![
-                row(None, None, RowKind::Meta, "@@ -10,3 +20,4 @@"),
                 row(Some(10), Some(20), RowKind::Context, " kept"),
                 row(Some(11), None, RowKind::Removed, "-old"),
                 row(None, Some(21), RowKind::Added, "+new"),

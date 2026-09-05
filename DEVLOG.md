@@ -4,6 +4,34 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The TUI's new look, ported without the harness that found it.**
+A design pass on a separate branch rendered every screen to PNG, compared
+palettes and layouts, and settled a look. This branch carries only what the
+running program needs to draw it. Colour: `Theme::from_terminal` derives a
+whole palette from a terminal's reported ground, text colour and sixteen
+slots — surfaces are the ground moved toward the text, de-emphasis is the
+text pulled back toward the ground, accents are the terminal's own hues with
+the same contrast repair imported schemes get — and a `Token` can be
+borrowed, resolving to the terminal's default so a translucent ground stays
+translucent. Conversation: consecutive tool calls stack with no blank row and
+a hairline down the mark column ties the run together; the composer carries a
+row of air above and below its text while the person's message stays tight;
+the working row is a block with air above it. Diffs: `@@` headers are gone —
+`RowKind::Meta` split into a blank `Boundary` between hunks and a `Note` for
+`\ No newline at end of file` — one number column with the side the sign
+says, a spine between numbers and code that holds under a wrapped line,
+tints that run to the edge, and no surface of their own on context rows or
+the gutter, so outside a panel they sit on the bare page. Panels run to the
+left edge, keep a row of air above their key hints, and a mark written into a
+surface's first cell keeps that surface's background. The review page draws
+one full-width header band per file and a row of air between files. Goldens
+re-recorded (144 files); the five assertions that encoded the old gutter and
+geometry now encode the new ones. Independent review caught the sixteen-colour
+path judging a derived palette by the conventional ANSI values: the contrast
+repair now measures faces by what the terminal said each slot paints as, and
+a token that is one of those slots keeps it — swapping slots changes what a
+colour means, and the terminal's red is red everywhere else in the session.
+
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by
 real composer exports and explains that an empty name may be omitted. A focused

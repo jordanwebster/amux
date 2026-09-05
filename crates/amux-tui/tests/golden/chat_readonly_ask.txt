@@ -26,13 +26,13 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
     the agent is asking permission — Edit testnet/harness.rs (+1)                                                       
                                                                                                                         
-      fn teardown() {                                                                                                   
-     +    drain();                                                                                                      
-          kill();                                                                                                       
-      }                                                                                                                 
+     fn teardown() {                                                                                                    
+    +    drain();                                                                                                       
+         kill();                                                                                                        
+     }                                                                                                                  
+                                                                                                                        
     waiting for a writable client · f read document                                                                     
                                                                                                                         
   ⊘ read-only — you are observing this session                                                                          

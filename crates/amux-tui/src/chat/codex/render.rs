@@ -26,7 +26,9 @@ use crate::chat::blocks::{
     paint_compaction_rule, paint_composer_block, paint_error, paint_header, paint_mcp_startup,
     paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
-use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
+use crate::chat::frame::{
+    BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
+};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph};
 use crate::markdown;
@@ -733,9 +735,11 @@ fn feed_blocks(
                 .get_or_paint(
                     BlockKey(entry.id),
                     entry,
-                    width,
-                    theme,
-                    chat.reports_open,
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: chat.reports_open,
+                    },
                     || entry_block(entry, theme, width, reports),
                 )
                 .clone(),
@@ -746,9 +750,16 @@ fn feed_blocks(
             let key = attachment_key(entry.id, index);
             blocks.push(
                 cache
-                    .get_or_paint(key, attachment, width, theme, false, || {
-                        paint_attachment(key, attachment, theme, width)
-                    })
+                    .get_or_paint(
+                        key,
+                        attachment,
+                        PaintInputs {
+                            width,
+                            theme,
+                            expanded: false,
+                        },
+                        || paint_attachment(key, attachment, theme, width),
+                    )
                     .clone(),
             );
         }
@@ -1217,24 +1228,24 @@ fn prompt_body(prompt: &PromptEntry) -> String {
 
 fn non_text_part(part: &PromptPart) -> Option<String> {
     Some(match part {
-            PromptPart::Text { .. } => return None,
-            PromptPart::Image { url } => format!(
-                "[image{}]",
-                url.as_deref()
-                    .map(|url| format!(": {url}"))
-                    .unwrap_or_default()
-            ),
-            PromptPart::LocalImage { path } => format!(
-                "[local image{}]",
-                path.as_deref()
-                    .map(|path| format!(": {path}"))
-                    .unwrap_or_default()
-            ),
-            PromptPart::Other { item_type, raw } => format!(
-                "[{}: {}]",
-                item_type.as_deref().unwrap_or("input"),
-                json_text(raw)
-            ),
+        PromptPart::Text { .. } => return None,
+        PromptPart::Image { url } => format!(
+            "[image{}]",
+            url.as_deref()
+                .map(|url| format!(": {url}"))
+                .unwrap_or_default()
+        ),
+        PromptPart::LocalImage { path } => format!(
+            "[local image{}]",
+            path.as_deref()
+                .map(|path| format!(": {path}"))
+                .unwrap_or_default()
+        ),
+        PromptPart::Other { item_type, raw } => format!(
+            "[{}: {}]",
+            item_type.as_deref().unwrap_or("input"),
+            json_text(raw)
+        ),
     })
 }
 

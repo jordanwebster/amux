@@ -46,19 +46,12 @@ impl Document {
         let mut rows = Vec::new();
 
         for (index, hunk) in self.hunks.iter().enumerate() {
-            if numbered {
-                let header = hunk.header.clone().unwrap_or_else(|| {
-                    let (old_count, new_count) = hunk_counts(&hunk.lines);
-                    format!(
-                        "@@ -{},{} +{},{} @@",
-                        hunk.old_start, old_count, hunk.new_start, new_count
-                    )
-                });
-                rows.push(RowFact::meta(header));
-            } else if index > 0 {
-                // The boundary between hunks is known even when their file
-                // positions are not. A bare marker states only that boundary.
-                rows.push(RowFact::meta("@@"));
+            // Only *between* hunks. A boundary before the first one
+            // separates a hunk from the file header above it, which is not
+            // a discontinuity — and it is the row a reader's cursor lands
+            // on when they open a file.
+            if index > 0 {
+                rows.push(RowFact::boundary());
             }
 
             let mut old = hunk.old_start;
@@ -81,7 +74,7 @@ impl Document {
                         old = old.saturating_add(1);
                         row
                     }
-                    _ => (RowKind::Meta, None, None),
+                    _ => (RowKind::Note, None, None),
                 };
                 rows.push(RowFact {
                     old: old_row.filter(|_| numbered),
@@ -109,7 +102,13 @@ impl Document {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RowKind {
-    Meta,
+    /// The boundary between two hunks. It carries no content of its own —
+    /// what it says, that the next line is not the one after the last, the
+    /// row numbers on either side of it already say.
+    Boundary,
+    /// A line inside a hunk that is not content: `\ No newline at end of
+    /// file`. It is a fact about the patch and has to be shown.
+    Note,
     Context,
     Added,
     Removed,
@@ -125,12 +124,15 @@ pub struct RowFact {
 }
 
 impl RowFact {
-    fn meta(text: impl Into<String>) -> Self {
+    /// The break between two hunks. It carries no text: what a reader needs
+    /// from it is that there is a gap, and the row numbers on either side
+    /// say how big.
+    fn boundary() -> Self {
         Self {
             old: None,
             new: None,
-            kind: RowKind::Meta,
-            text: text.into(),
+            kind: RowKind::Boundary,
+            text: String::new(),
         }
     }
 }
@@ -254,23 +256,6 @@ impl PendingHunk {
             lines: self.lines,
         }
     }
-}
-
-fn hunk_counts(lines: &[String]) -> (usize, usize) {
-    let mut old = 0;
-    let mut new = 0;
-    for line in lines {
-        match line.as_bytes().first() {
-            Some(b' ') => {
-                old += 1;
-                new += 1;
-            }
-            Some(b'-') => old += 1,
-            Some(b'+') => new += 1,
-            _ => {}
-        }
-    }
-    (old, new)
 }
 
 fn hunk_ranges(header: &str) -> Option<Ranges> {

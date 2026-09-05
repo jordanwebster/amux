@@ -26,7 +26,9 @@ use crate::chat::blocks::{
     paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude::{View, ask_ui, panel, reader};
-use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
+use crate::chat::frame::{
+    BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
+};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{
     FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph, subagent_marker,
@@ -538,9 +540,11 @@ fn feed_blocks(
                         .get_or_paint(
                             BlockKey(entry.id),
                             entry,
-                            width,
-                            theme,
-                            chat.reports_open,
+                            PaintInputs {
+                                width,
+                                theme,
+                                expanded: chat.reports_open,
+                            },
                             || entry_block(entry, theme, width, plan_hint, reports),
                         )
                         .clone(),
@@ -591,22 +595,33 @@ fn feed_blocks(
                 );
                 blocks.push(
                     cache
-                        .get_or_paint(BlockKey(key.0), &content, width, theme, expanded, || {
-                            let painted: Vec<PaintedBlock> = member_entries
-                                .iter()
-                                .map(|entry| entry_block(entry, theme, width, plan_hint, reports))
-                                .collect();
-                            paint_exploration_run(
-                                BlockKey(key.0),
-                                key,
-                                &summary,
-                                &painted,
-                                expanded,
-                                &hint,
-                                theme,
+                        .get_or_paint(
+                            BlockKey(key.0),
+                            &content,
+                            PaintInputs {
                                 width,
-                            )
-                        })
+                                theme,
+                                expanded,
+                            },
+                            || {
+                                let painted: Vec<PaintedBlock> = member_entries
+                                    .iter()
+                                    .map(|entry| {
+                                        entry_block(entry, theme, width, plan_hint, reports)
+                                    })
+                                    .collect();
+                                paint_exploration_run(
+                                    BlockKey(key.0),
+                                    key,
+                                    &summary,
+                                    &painted,
+                                    expanded,
+                                    &hint,
+                                    theme,
+                                    width,
+                                )
+                            },
+                        )
                         .clone(),
                 );
             }
@@ -621,9 +636,16 @@ fn feed_blocks(
         let content = layer.attachments().segments(&echo.text);
         blocks.push(
             cache
-                .get_or_paint(key, echo, width, theme, false, || {
-                    paint_user_prompt(key, &prose(&content), true, theme, width)
-                })
+                .get_or_paint(
+                    key,
+                    echo,
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: false,
+                    },
+                    || paint_user_prompt(key, &prose(&content), true, theme, width),
+                )
                 .clone(),
         );
         push_attachment_blocks(
@@ -666,9 +688,16 @@ fn push_attachment_blocks(
         let key = attachment_key(owner, index);
         blocks.push(
             cache
-                .get_or_paint(key, attachment, width, theme, false, || {
-                    paint_attachment(key, attachment, theme, width)
-                })
+                .get_or_paint(
+                    key,
+                    attachment,
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: false,
+                    },
+                    || paint_attachment(key, attachment, theme, width),
+                )
                 .clone(),
         );
     }

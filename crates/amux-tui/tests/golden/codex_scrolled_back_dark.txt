@@ -1,8 +1,6 @@
   codex-retry · codex @ mbp                                                                                 chat · idle 
   model=gpt-5.4 · approval=on-request · sandbox=workspace-write                                                         
                                                                                                                         
-    └ cwd /work/amux                                                                                                    
-    └ stdout: 1 passed                                                                                                  
                                                                                                                         
 ▎   Investigate retry case 984.                                                                                         
                                                                                                                         
@@ -35,6 +33,8 @@
   ✔ $ cargo test retry_case_995 · done · exit 0                                                                         
   ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest                                                 
                                                                                                                         
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     C-a k/j focus · C-a y copy                                                                                          

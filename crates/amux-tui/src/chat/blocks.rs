@@ -26,7 +26,7 @@ use ratatui::text::{Line, Span};
 use serde::{Deserialize, Serialize};
 
 use super::attach::human_size;
-use super::frame::{BlockKey, PaintedBlock};
+use super::frame::{BlockKey, BlockKind, PaintedBlock};
 use crate::markdown;
 use crate::render::{
     INVARIANT_WARNING, Theme, clip_to_width, line_len, pad_to, push_span, str_width,
@@ -54,12 +54,32 @@ pub(crate) const TEXT_COL: usize = 4;
 /// `└` continuation text under a tool line.
 pub(crate) const CONT_COL: usize = 6;
 
-/// The bar a user surface wears in the mark column.
+/// The bar a filled surface wears in the mark column: a quarter of a cell
+/// wide, drawn full height, so a stack of them is one unbroken rule.
 const BAR: &str = "\u{258e}";
+
+/// A message someone sent gets no padding at all.
+///
+/// Both alternatives were tried and rejected on the screen: a row on each
+/// side turns a one-line message into a three-row slab that dominates a feed
+/// full of them, and a row on one side reads as a block that lost its
+/// bottom. A tint that hugs its words is the tightest of the three and the
+/// only one that looks deliberate.
+const MESSAGE_PAD: (usize, usize) = (0, 0);
+
+/// The same, for the composer — which is a place to work rather than a thing
+/// to skim past, and earns the room on both sides.
+const COMPOSER_PAD: (usize, usize) = (1, 1);
 
 /// Cells available to text at `TEXT_COL`, inside a one-cell right margin.
 fn text_width(width: usize) -> usize {
     width.saturating_sub(TEXT_COL + 1).max(1)
+}
+
+/// Cells available to speech starting at `col`, inside the same one-cell
+/// right margin every row keeps.
+fn speech_width(width: usize, col: usize) -> usize {
+    width.saturating_sub(col + 1).max(1)
 }
 
 /// Cells available to continuation text at `CONT_COL`.
@@ -87,9 +107,10 @@ fn copy_text(lines: &[Line<'_>]) -> String {
         .to_string()
 }
 
-fn block(key: BlockKey, lines: Vec<Line<'static>>) -> PaintedBlock {
+fn block(key: BlockKey, kind: BlockKind, lines: Vec<Line<'static>>) -> PaintedBlock {
     PaintedBlock {
         key,
+        kind,
         copy_text: copy_text(&lines),
         lines,
         run: None,
@@ -205,27 +226,17 @@ pub(crate) fn paint_user_prompt(
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
+    let col = TEXT_COL;
     let surface = theme.user_surface();
-    let mut rows = markdown::plain_rows(markdown_source, text_width(width), surface);
+    let mut rows = markdown::plain_rows(markdown_source, speech_width(width, col), surface);
     if sending {
         match rows.last_mut() {
             Some(last) => last.push(Span::styled(" · sending…", surface.patch(theme.muted()))),
             None => rows.push(vec![Span::styled("sending…", surface.patch(theme.muted()))]),
         }
     }
-    let lines = rows
-        .into_iter()
-        .map(|spans| {
-            let mut line = Line::default();
-            line.spans.push(Span::styled(BAR, theme.accent_bar()));
-            line.spans
-                .push(Span::styled(" ".repeat(TEXT_COL - 1), surface));
-            line.spans.extend(spans);
-            fill(&mut line, width, surface);
-            line
-        })
-        .collect();
-    block(key, lines)
+    let lines = padded_surface(rows, Some(col), MESSAGE_PAD, surface, theme, width);
+    block(key, BlockKind::Speech, lines)
 }
 
 /// The sticky diagnostic the chat writes over its header gap when the
@@ -249,6 +260,36 @@ pub(crate) fn invariant_warning_row(width: usize, theme: Theme) -> Line<'static>
     line
 }
 
+/// A filled block: the caller's rows, wearing the accent bar, with
+/// [`SURFACE_PAD`] blank tinted rows above and below.
+fn padded_surface(
+    rows: Vec<Vec<Span<'static>>>,
+    bar_col: Option<usize>,
+    pad: (usize, usize),
+    surface: Style,
+    theme: Theme,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let row = |spans: Vec<Span<'static>>| {
+        let mut line = Line::default();
+        // The bar runs the whole height, padding included, or the block
+        // reads as two surfaces stacked rather than one.
+        if let Some(col) = bar_col.filter(|col| *col > 0) {
+            line.spans.push(Span::styled(BAR, theme.accent_bar()));
+            line.spans.push(Span::styled(" ".repeat(col - 1), surface));
+        }
+        line.spans.extend(spans);
+        fill(&mut line, width, surface);
+        line
+    };
+    let (above, below) = pad;
+    let mut lines = Vec::with_capacity(rows.len() + above + below);
+    lines.extend((0..above).map(|_| row(Vec::new())));
+    lines.extend(rows.into_iter().map(row));
+    lines.extend((0..below).map(|_| row(Vec::new())));
+    lines
+}
+
 /// Pad a surface row to the frame width so its tint reaches the edge.
 fn fill(line: &mut Line<'static>, width: usize, surface: Style) {
     let used = line_len(line);
@@ -267,16 +308,17 @@ pub(crate) fn paint_assistant(
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
-    let lines = markdown::markdown_rows(markdown_source, text_width(width), theme)
+    let col = TEXT_COL;
+    let lines = markdown::markdown_rows(markdown_source, speech_width(width, col), theme)
         .into_iter()
         .map(|spans| {
             let mut line = Line::default();
-            pad_to(&mut line, TEXT_COL);
+            pad_to(&mut line, col);
             line.spans.extend(spans);
             line
         })
         .collect();
-    block(key, lines)
+    block(key, BlockKind::Speech, lines)
 }
 
 /// The thinking marker: one muted row, no surface. A thought is a fact
@@ -301,7 +343,7 @@ pub(crate) fn paint_thinking(
     if let Some(detail) = detail {
         lines.extend(continuation_rows(detail, theme, width));
     }
-    block(key, lines)
+    block(key, BlockKind::Activity, lines)
 }
 
 /// A tool one-liner: outcome glyph, what it did, and the dim `└` line
@@ -322,7 +364,7 @@ pub(crate) fn paint_tool_line(
     if let Some(detail) = detail {
         lines.extend(continuation_rows(detail, theme, width));
     }
-    block(key, lines)
+    block(key, BlockKind::Activity, lines)
 }
 
 /// A run of reads and searches, folded to one row. Expanded, the row
@@ -375,6 +417,7 @@ pub(crate) fn paint_exploration_run(
     let _ = width;
     PaintedBlock {
         key,
+        kind: BlockKind::Activity,
         copy_text: copy_text(&lines),
         lines,
         run: Some(run),
@@ -411,7 +454,7 @@ pub(crate) fn paint_file_change(
         format!(" · {}", magnitude(added, removed)),
         theme.muted(),
     ));
-    block(key, vec![line])
+    block(key, BlockKind::Activity, vec![line])
 }
 
 /// `+12 −3`, dropping a half that is zero. The minus is a real minus
@@ -459,7 +502,7 @@ pub(crate) fn paint_attachment(
         line.spans
             .push(Span::styled(format!(" \u{b7} {detail}"), theme.muted()));
     }
-    block(key, vec![line])
+    block(key, BlockKind::Activity, vec![line])
 }
 
 /// The kind, in one cell. An attachment row has no other space for its
@@ -506,7 +549,7 @@ pub(crate) fn paint_ask_fact(
         markdown::plain_rows(fact, text_width(width), theme.text()),
         theme,
     );
-    block(key, lines)
+    block(key, BlockKind::Activity, lines)
 }
 
 /// A plan, shown down to its first rows with the chord that opens the
@@ -539,7 +582,7 @@ pub(crate) fn paint_plan(
     let mut hint = Line::default();
     push_span(&mut hint, TEXT_COL, format!("⌄ {tail}"), theme.muted());
     lines.push(hint);
-    block(key, lines)
+    block(key, BlockKind::Speech, lines)
 }
 
 /// A subagent starting, reporting or finishing: one plain row.
@@ -555,7 +598,7 @@ pub(crate) fn paint_subagent(
         markdown::plain_rows(text, text_width(width), theme.text()),
         theme,
     );
-    block(key, lines)
+    block(key, BlockKind::Activity, lines)
 }
 
 /// A message from another agent: who sent it, what it said, and the one
@@ -577,7 +620,7 @@ pub(crate) fn paint_agent_message(
         push_span(&mut line, TEXT_COL, affordance.to_string(), theme.muted());
         lines.push(line);
     }
-    block(key, lines)
+    block(key, BlockKind::Speech, lines)
 }
 
 /// The rule that closes a turn.
@@ -587,7 +630,7 @@ pub(crate) fn paint_turn_rule(
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
-    block(key, vec![rule_row(label, theme, width)])
+    block(key, BlockKind::Divider, vec![rule_row(label, theme, width)])
 }
 
 /// The rule that marks where the transcript was compacted.
@@ -597,7 +640,7 @@ pub(crate) fn paint_compaction_rule(
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
-    block(key, vec![rule_row(label, theme, width)])
+    block(key, BlockKind::Divider, vec![rule_row(label, theme, width)])
 }
 
 /// Something went wrong. The accent is on the glyph alone: a red wall of
@@ -616,7 +659,11 @@ pub(crate) fn paint_error(
             None => rows.push(vec![Span::styled("retrying", theme.muted())]),
         }
     }
-    block(key, glyph_rows(("✗", theme.error()), rows, theme))
+    block(
+        key,
+        BlockKind::Activity,
+        glyph_rows(("✗", theme.error()), rows, theme),
+    )
 }
 
 /// Codex's MCP startup report, exactly as its adapter formatted it.
@@ -627,7 +674,7 @@ pub(crate) fn paint_mcp_startup(
     width: usize,
 ) -> PaintedBlock {
     let _ = (theme, width);
-    block(key, rows)
+    block(key, BlockKind::Activity, rows)
 }
 
 /// A row this build does not know how to draw. It says so rather than
@@ -648,7 +695,7 @@ pub(crate) fn paint_unrecognized(
     if let Some(detail) = detail {
         lines.extend(continuation_rows(detail, theme, width));
     }
-    block(key, lines)
+    block(key, BlockKind::Activity, lines)
 }
 
 // --- the bottom block -------------------------------------------------------
@@ -673,51 +720,50 @@ pub(crate) fn paint_composer_block(
     } else {
         rows
     };
-    let mut lines = Vec::with_capacity(rows.len());
-    for (index, row) in rows.iter().enumerate() {
-        let mut line = Line::default();
-        line.spans.push(Span::styled(BAR, theme.accent_bar()));
-        line.spans
-            .push(Span::styled(" ".repeat(TEXT_COL - 1), surface));
-        if index == 0
-            && row.is_empty()
-            && let Some(placeholder) = placeholder
-        {
-            line.spans.push(Span::styled(
-                placeholder.to_string(),
-                surface.patch(theme.muted()),
-            ));
-        }
-        let caret = cursor.filter(|(caret_row, _)| *caret_row == index);
-        match caret {
-            Some((_, column)) => {
-                let head = clip_to_width(row, column);
-                let tail = &row[head.len()..];
-                if !head.is_empty() {
-                    line.spans.push(Span::styled(head.to_string(), surface));
+    let spans: Vec<Vec<Span<'static>>> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            if index == 0
+                && row.is_empty()
+                && let Some(placeholder) = placeholder
+            {
+                spans.push(Span::styled(
+                    placeholder.to_string(),
+                    surface.patch(theme.muted()),
+                ));
+            }
+            match cursor.filter(|(caret_row, _)| *caret_row == index) {
+                Some((_, column)) => {
+                    let head = clip_to_width(row, column);
+                    let tail = &row[head.len()..];
+                    if !head.is_empty() {
+                        spans.push(Span::styled(head.to_string(), surface));
+                    }
+                    spans.push(Span::styled("▌", surface));
+                    if !tail.is_empty() {
+                        spans.push(Span::styled(tail.to_string(), surface));
+                    }
                 }
-                line.spans.push(Span::styled("▌", surface));
-                if !tail.is_empty() {
-                    line.spans.push(Span::styled(tail.to_string(), surface));
+                None => {
+                    if !row.is_empty() {
+                        spans.push(Span::styled(row.clone(), surface));
+                    }
                 }
             }
-            None => {
-                if !row.is_empty() {
-                    line.spans.push(Span::styled(row.clone(), surface));
-                }
-            }
-        }
-        fill(&mut line, width, surface);
-        lines.push(line);
-    }
-    lines
+            spans
+        })
+        .collect();
+    padded_surface(spans, Some(TEXT_COL), COMPOSER_PAD, surface, theme, width)
 }
 
 // --- the two panelled surfaces ----------------------------------------------
 
-/// The column a panel's tint starts at. The mark column stays on the
-/// background so a focused panel still shows its bar against something.
-const PANEL_COL: usize = 1;
+/// The column a panel's tint starts at. A panel runs to the left edge like
+/// every other filled surface; a focused panel's bar is drawn onto it, the
+/// way the user surface carries its own bar.
+const PANEL_COL: usize = 0;
 
 /// Put a panel's tint under rows another layer formatted. The spans keep
 /// their own colours; the surface only supplies what they left unsaid.
@@ -769,6 +815,9 @@ pub(crate) fn paint_ask_panel(
         lines.extend(actions.into_iter().map(|line| tinted(line, surface, width)));
     }
     if !hints.is_empty() {
+        // The keys sit a row below the answers, as the page's own hint row
+        // sits a row below the composer.
+        lines.push(panel_gap(surface, width));
         // Hints wrap rather than clip: a hint cut in half at the right
         // edge names a key the reader cannot finish reading, which is
         // worse than the row it costs.
@@ -778,7 +827,7 @@ pub(crate) fn paint_ask_panel(
                 .map(|spans| tinted(Line::from(spans), surface, width)),
         );
     }
-    block(key, lines)
+    block(key, BlockKind::Panel, lines)
 }
 
 /// Put already-painted unified-diff rows under a titled panel surface.
@@ -796,7 +845,7 @@ pub(crate) fn paint_unified_diff(
         width,
     )];
     lines.extend(body.into_iter().map(|line| tinted(line, surface, width)));
-    block(key, lines)
+    block(key, BlockKind::Panel, lines)
 }
 
 /// The cells a panel's own rows may fill: everything right of the column
@@ -1048,13 +1097,17 @@ mod tests {
     fn the_composer_caret_sits_after_wide_graphemes() {
         let theme = Theme::default();
         let lines = paint_composer_block(vec!["繁体字".to_string()], Some((0, 6)), None, theme, 20);
-        let text: String = lines[0]
+        // The draft is inside the surface, not the first row of it.
+        let text: String = lines[COMPOSER_PAD.0]
             .spans
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
         assert!(text.starts_with("\u{258e}   繁体字▌"), "{text:?}");
-        assert_eq!(line_len(&lines[0]), 20);
+        for line in &lines {
+            assert_eq!(line_len(line), 20, "every row of the surface is filled");
+        }
+        assert_eq!(lines.len(), 1 + COMPOSER_PAD.0 + COMPOSER_PAD.1);
     }
 
     #[test]
@@ -1062,7 +1115,7 @@ mod tests {
         let theme = Theme::default();
         let lines =
             paint_composer_block(Vec::new(), Some((0, 0)), Some("Type a message"), theme, 40);
-        let text: String = lines[0]
+        let text: String = lines[COMPOSER_PAD.0]
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -1140,7 +1193,7 @@ mod tests {
             DiffRow {
                 old: None,
                 new: None,
-                kind: DiffRowKind::Meta,
+                kind: DiffRowKind::Note,
                 text: "@@ -1,3 +1,4 @@".to_string(),
             },
             DiffRow {
@@ -1203,7 +1256,11 @@ mod tests {
         for line in &painted.lines {
             assert_eq!(line_len(line), 60);
         }
-        assert!(painted.copy_text.contains("2 +    sleep(backoff());"));
+        assert!(
+            painted
+                .copy_text
+                .contains("2 \u{2502} +    sleep(backoff());")
+        );
     }
 
     #[test]

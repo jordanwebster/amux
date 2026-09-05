@@ -104,7 +104,10 @@ mod tests {
     #[test]
     fn new_file_blocks_share_the_diff_painter_and_screen_budget() {
         let content = "use std::time::Duration;\n\npub struct RetryPolicy;";
-        let panel = text_of(&new_file_preview(content, 60, Theme::default(), 2));
+        let panel: Vec<String> = text_of(&new_file_preview(content, 60, Theme::default(), 2))
+            .into_iter()
+            .map(|row| row.trim_end().to_string())
+            .collect();
         assert_eq!(
             panel,
             vec![
@@ -112,12 +115,15 @@ mod tests {
                 "    ⋮  +2 more lines · f full document",
             ]
         );
-        let reader = text_of(&new_file_rows(content, 60, Theme::default(), true));
+        let reader: Vec<String> = text_of(&new_file_rows(content, 60, Theme::default(), true))
+            .into_iter()
+            .map(|row| row.trim_end().to_string())
+            .collect();
         assert_eq!(
             reader,
             vec![
                 "   1  + use std::time::Duration;",
-                "   2  + ",
+                "   2  +",
                 "   3  + pub struct RetryPolicy;",
             ]
         );

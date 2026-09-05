@@ -28,15 +28,43 @@ pub enum ColorPreference {
 pub struct Token {
     pub rgb: (u8, u8, u8),
     pub ansi: Color,
+    /// Whether this colour is the terminal's own, in which case amux names
+    /// it rather than painting it.
+    ///
+    /// The two are not the same even when the bytes match. A terminal whose
+    /// ground is translucent, blurred, or an image reports a solid colour
+    /// for it; painting that colour back is an opaque rectangle over the
+    /// person's wallpaper, while leaving the cell reset shows the wallpaper.
+    /// The same holds for body text under a terminal that recolours it.
+    #[serde(default)]
+    pub inherited: bool,
 }
 
 impl Token {
     const fn new(rgb: (u8, u8, u8), ansi: Color) -> Self {
-        Self { rgb, ansi }
+        Self {
+            rgb,
+            ansi,
+            inherited: false,
+        }
+    }
+
+    /// A colour amux does not choose: the terminal's, named by leaving the
+    /// cell at its default. `rgb` still carries what that default is, so
+    /// contrast arithmetic over the rest of the palette stays honest.
+    const fn borrowed(rgb: (u8, u8, u8)) -> Self {
+        Self {
+            rgb,
+            ansi: Color::Reset,
+            inherited: true,
+        }
     }
 
     /// Resolve this token without making painters branch on terminal support.
     pub fn resolve(self, mode: ColorMode) -> Color {
+        if self.inherited {
+            return Color::Reset;
+        }
         match mode {
             ColorMode::TrueColor => Color::Rgb(self.rgb.0, self.rgb.1, self.rgb.2),
             ColorMode::Ansi => self.ansi,
@@ -68,11 +96,137 @@ pub struct Tokens {
     pub gutter: Token,
 }
 
+/// What the terminal itself is painting with.
+///
+/// A terminal will answer three questions about the scheme it is running:
+/// its ground, its text colour, and the sixteen colours its palette defines.
+/// That is the whole of what a program can learn about a scheme it did not
+/// choose, and this type is that answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalColors {
+    pub background: (u8, u8, u8),
+    pub foreground: (u8, u8, u8),
+    /// Slots 0-15 in the usual order: black, red, green, yellow, blue,
+    /// magenta, cyan, white, then the eight bright ones.
+    pub ansi: [(u8, u8, u8); 16],
+}
+
+/// The accents a palette has to source from somewhere, whichever end it
+/// sources them from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Semantic {
+    Ok,
+    Warn,
+    Error,
+    Accent,
+    Code,
+    Focus,
+}
+
+impl Semantic {
+    /// The plain and bright ANSI slots carrying this meaning.
+    const fn slots(self) -> (usize, usize) {
+        match self {
+            Self::Error => (1, 9),
+            Self::Ok => (2, 10),
+            Self::Warn => (3, 11),
+            Self::Accent => (4, 12),
+            Self::Focus => (5, 13),
+            Self::Code => (6, 14),
+        }
+    }
+}
+
+impl TerminalColors {
+    /// Whether words are being drawn light-on-dark.
+    ///
+    /// Asked of the ground rather than of a setting, because the ground is
+    /// the thing every derived colour is measured from.
+    pub fn is_dark(&self) -> bool {
+        luminance(self.background) < 0.18
+    }
+
+    /// The colour this scheme means by a semantic accent.
+    ///
+    /// Each meaning lives in two slots, plain and bright, and schemes
+    /// disagree about what the bright half is for: most put brighter
+    /// versions of the same hues there, but Solarized spends it on greys, so
+    /// taking the bright slot on a hunch yields a grey where green was
+    /// wanted. Prefer whichever of the pair still carries a hue, and decide
+    /// between two hued candidates by which one reads better on this ground.
+    fn hue(&self, semantic: Semantic) -> Token {
+        /// The saturation below which a slot has stopped being a colour and
+        /// is just a step on the scheme's grey ramp.
+        const COLOURED: f64 = 0.2;
+
+        let weigh = |slot: usize| {
+            let rgb = self.ansi[slot];
+            let (_, saturation, _) = to_hsl(rgb);
+            (saturation, contrast(rgb, self.background), slot)
+        };
+        let (plain, bright) = semantic.slots();
+        let (plain, bright) = (weigh(plain), weigh(bright));
+        let chosen = match (plain.0 >= COLOURED, bright.0 >= COLOURED) {
+            (true, false) => plain,
+            (false, true) => bright,
+            _ if bright.1 > plain.1 => bright,
+            _ => plain,
+        };
+        Token::new(self.ansi[chosen.2], slot_face(chosen.2))
+    }
+}
+
+/// The 16-colour face for a palette slot, so a derived colour degrades to
+/// the slot it actually came from rather than to whichever conventional
+/// face its RGB happens to sit nearest.
+const fn slot_face(slot: usize) -> Color {
+    match slot {
+        0 => Color::Black,
+        1 => Color::Red,
+        2 => Color::Green,
+        3 => Color::Yellow,
+        4 => Color::Blue,
+        5 => Color::Magenta,
+        6 => Color::Cyan,
+        7 => Color::Gray,
+        8 => Color::DarkGray,
+        9 => Color::LightRed,
+        10 => Color::LightGreen,
+        11 => Color::LightYellow,
+        12 => Color::LightBlue,
+        13 => Color::LightMagenta,
+        14 => Color::LightCyan,
+        _ => Color::White,
+    }
+}
+
+const WHITE: (u8, u8, u8) = (255, 255, 255);
+const BLACK: (u8, u8, u8) = (0, 0, 0);
+
+/// Move `from` a fraction of the way toward `toward`.
+fn mix(from: (u8, u8, u8), toward: (u8, u8, u8), amount: f64) -> (u8, u8, u8) {
+    let step = |from: u8, toward: u8| {
+        (f64::from(from) * (1.0 - amount) + f64::from(toward) * amount).round() as u8
+    };
+    (
+        step(from.0, toward.0),
+        step(from.1, toward.1),
+        step(from.2, toward.2),
+    )
+}
+
+/// A colour amux worked out for itself rather than borrowed.
+fn computed(rgb: (u8, u8, u8)) -> Token {
+    Token::new(rgb, nearest_ansi(rgb))
+}
+
 /// The provenance of a resolved palette.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ThemeName {
     Dark,
     Light,
+    /// A palette derived from what the terminal reported about itself.
+    Adopted,
     Imported,
 }
 
@@ -188,6 +342,92 @@ impl Theme {
         }
     }
 
+    /// A whole palette derived from what the terminal reported about itself.
+    ///
+    /// This is the answer to "can amux belong to your terminal *and* still
+    /// draw a readable diff". A terminal will tell a program its ground, its
+    /// text colour and the sixteen colours its scheme defines; what it will
+    /// not give you is a surface one step off the ground, or that ground
+    /// nudged toward green. Those are not missing colours, though — they are
+    /// missing *relationships*, and once the ground is a known value they are
+    /// arithmetic. So the ground and the body text stay the terminal's own,
+    /// untouched and unpainted, and everything amux needs beyond them is
+    /// computed from that pair and repaired until it reads.
+    ///
+    /// The repair is the same pass an imported scheme goes through, for the
+    /// same reason: neither a base16 file nor a person's terminal was chosen
+    /// with amux's screens in mind, and a scheme whose text sits a few steps
+    /// off its ground would otherwise leave the composer and the status line
+    /// unreadable. Only HSL lightness moves, so the scheme's hues survive.
+    ///
+    /// The accents and the diff tints are the terminal's own, so amux
+    /// agrees with everything else in the person's session about what red
+    /// means. Keeping amux's own hues on a borrowed ground was considered
+    /// and rejected: a colour is a shared vocabulary inside one terminal,
+    /// and a program that opts out of it teaches a second one.
+    pub fn from_terminal(terminal: TerminalColors, mode: ColorMode) -> Self {
+        let bg = terminal.background;
+        let fg = terminal.foreground;
+        let dark = terminal.is_dark();
+
+        // Surfaces are the ground moved toward the text, which lightens a
+        // dark terminal and darkens a light one without either case being
+        // special. `user_surface` is meant to be seen as a block; `panel`
+        // only has to separate.
+        let surface = |amount: f64| computed(mix(bg, fg, amount));
+        // De-emphasis is the reverse: the text pulled back toward the ground
+        // far enough to recede and no further.
+        let recede = |amount: f64| computed(mix(fg, bg, amount));
+
+        let hue = |semantic: Semantic| terminal.hue(semantic);
+
+        let tokens = Tokens {
+            background: Token::borrowed(bg),
+            text: Token::borrowed(fg),
+            diff_context: Token::borrowed(fg),
+            emphasis: computed(mix(fg, if dark { WHITE } else { BLACK }, 0.4)),
+            muted: recede(0.42),
+            diff_meta: recede(0.52),
+            gutter: recede(0.58),
+            // Enough to read as a block and no more. The person's own
+            // message is the one thing on the screen they do not need to
+            // find, so its surface states where it is rather than shouting.
+            user_surface: surface(0.10),
+            panel: surface(0.055),
+            // Both tints start as the same plain surface and are tinted by
+            // the repair pass with this palette's own success and error
+            // hues, so a hunk is green-on-your-green and red-on-your-red
+            // rather than a colour amux picked for you.
+            diff_added_bg: surface(0.055),
+            diff_removed_bg: surface(0.055),
+            ok: hue(Semantic::Ok),
+            diff_added_fg: hue(Semantic::Ok),
+            warn: hue(Semantic::Warn),
+            error: hue(Semantic::Error),
+            diff_removed_fg: hue(Semantic::Error),
+            accent: hue(Semantic::Accent),
+            code: hue(Semantic::Code),
+            focus: hue(Semantic::Focus),
+        };
+
+        let mut tokens = tokens;
+        // Nothing here was authored by hand, so every mechanical choice is
+        // open to repair. The three borrowed tokens are protected by being
+        // borrowed rather than by being named here: repair leaves the
+        // terminal's own colours alone.
+        make_readable(
+            &mut tokens,
+            &BTreeSet::new(),
+            &Faces::of_terminal(&terminal),
+        );
+
+        Self {
+            tokens,
+            mode,
+            name: ThemeName::Adopted,
+        }
+    }
+
     fn color(self, token: Token) -> Color {
         token.resolve(self.mode)
     }
@@ -255,7 +495,23 @@ impl Theme {
         self.text().bg(self.color(self.tokens.panel))
     }
 
-    /// The bar at the left edge of a user surface.
+    /// A header band: a filled strip across the page that names what is
+    /// under it. Loud enough to break a long document into parts, quiet
+    /// enough that the parts are still what a reader looks at.
+    pub(crate) fn panel_header(self) -> Style {
+        Style::default()
+            .fg(self.color(self.tokens.text))
+            .bg(self.color(self.tokens.panel))
+    }
+
+    /// Secondary words inside a header band.
+    pub(crate) fn panel_header_muted(self) -> Style {
+        Style::default()
+            .fg(self.color(self.tokens.muted))
+            .bg(self.color(self.tokens.panel))
+    }
+
+    /// The accent column down the left edge of a filled surface.
     pub(crate) fn accent_bar(self) -> Style {
         Style::default()
             .fg(self.color(self.tokens.accent))
@@ -311,25 +567,23 @@ impl Theme {
             .bg(self.color(self.tokens.diff_removed_bg))
     }
 
-    /// Unchanged diff content on the panel surface.
+    /// Unchanged diff content. It carries no surface of its own: on a
+    /// panel it takes the panel's, and on the bare page a tint that stopped
+    /// where the text stopped would read as a sticker behind each line.
     pub(crate) fn diff_context(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.diff_context))
-            .bg(self.color(self.tokens.panel))
+        Style::default().fg(self.color(self.tokens.diff_context))
     }
 
-    /// Diff metadata on the panel surface.
+    /// Diff metadata, on whatever surface the row already has.
     pub(crate) fn diff_meta(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.diff_meta))
-            .bg(self.color(self.tokens.panel))
+        Style::default().fg(self.color(self.tokens.diff_meta))
     }
 
-    /// The numbered diff gutter on the panel surface.
+    /// The numbered diff gutter and the rules that run beside it. No
+    /// surface, so a gutter beside tinted rows is a margin of the page,
+    /// not a second column of a different colour.
     pub(crate) fn gutter(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.gutter))
-            .bg(self.color(self.tokens.panel))
+        Style::default().fg(self.color(self.tokens.gutter))
     }
 
     /// Convert a rendered cell style into its semantic style-map class.
@@ -506,7 +760,7 @@ pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, Theme
         authored.insert(name.clone());
     }
 
-    make_readable(&mut tokens, &authored);
+    make_readable(&mut tokens, &authored, &Faces::CONVENTIONAL);
 
     Ok(Theme {
         tokens,
@@ -543,17 +797,17 @@ const SEPARATION: f64 = 1.25;
 ///
 /// Tokens named directly under `tokens:` are the user's own word and are
 /// taken literally; only the mechanical base mapping is repaired.
-fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>) {
+fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>, faces: &Faces) {
     // base16 has no diff colours, so the mapping falls back to `base01` for
     // both tints and a hunk reads as one undifferentiated slab. Tint that
     // surface with the scheme's own success and error hues instead, and give
     // each tint the saturated terminal face its hue rounds to so a diff still
     // reads as a diff in sixteen colours.
     if !authored.contains("diff_added_bg") {
-        tokens.diff_added_bg = tinted(tokens.diff_added_bg, tokens.ok);
+        tokens.diff_added_bg = tinted(tokens.diff_added_bg, tokens.ok, faces);
     }
     if !authored.contains("diff_removed_bg") {
-        tokens.diff_removed_bg = tinted(tokens.diff_removed_bg, tokens.error);
+        tokens.diff_removed_bg = tinted(tokens.diff_removed_bg, tokens.error, faces);
     }
 
     // A scheme's block surfaces are shades of its background, and rounding
@@ -579,42 +833,60 @@ fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>) {
         tokens.diff_removed_bg,
     ];
 
-    let lift = |token: &mut Token, name: &str, on: &[Token], floor: f64| {
+    // `on_ground` says the surfaces are the ground and its shades; anything
+    // else a foreground is measured against is a tint that already wears a
+    // hue of its own.
+    let lift = |token: &mut Token, name: &str, on: &[Token], floor: f64, on_ground: bool| {
         if authored.contains(name) {
             return;
         }
         let against: Vec<(Token, f64)> = on.iter().map(|surface| (*surface, floor)).collect();
-        *token = readable_token(*token, &against);
+        *token = readable_token(*token, &against, faces, on_ground);
     };
 
-    lift(&mut tokens.text, "text", &surfaces, READABLE_BODY);
+    lift(&mut tokens.text, "text", &surfaces, READABLE_BODY, true);
     lift(
         &mut tokens.diff_context,
         "diff_context",
         &hunk,
         READABLE_BODY,
+        false,
     );
-    lift(&mut tokens.muted, "muted", &surfaces, READABLE_LABEL);
-    lift(&mut tokens.accent, "accent", &surfaces, READABLE_LABEL);
-    lift(&mut tokens.focus, "focus", &surfaces, READABLE_LABEL);
-    lift(&mut tokens.code, "code", &surfaces, READABLE_LABEL);
-    lift(&mut tokens.ok, "ok", &surfaces, READABLE_LABEL);
-    lift(&mut tokens.warn, "warn", &surfaces, READABLE_LABEL);
-    lift(&mut tokens.error, "error", &surfaces, READABLE_LABEL);
+    lift(&mut tokens.muted, "muted", &surfaces, READABLE_LABEL, true);
+    lift(
+        &mut tokens.accent,
+        "accent",
+        &surfaces,
+        READABLE_LABEL,
+        true,
+    );
+    lift(&mut tokens.focus, "focus", &surfaces, READABLE_LABEL, true);
+    lift(&mut tokens.code, "code", &surfaces, READABLE_LABEL, true);
+    lift(&mut tokens.ok, "ok", &surfaces, READABLE_LABEL, true);
+    lift(&mut tokens.warn, "warn", &surfaces, READABLE_LABEL, true);
+    lift(&mut tokens.error, "error", &surfaces, READABLE_LABEL, true);
     lift(
         &mut tokens.diff_added_fg,
         "diff_added_fg",
         &added,
         READABLE_LABEL,
+        false,
     );
     lift(
         &mut tokens.diff_removed_fg,
         "diff_removed_fg",
         &removed,
         READABLE_LABEL,
+        false,
     );
-    lift(&mut tokens.gutter, "gutter", &surfaces, READABLE_TRIM);
-    lift(&mut tokens.diff_meta, "diff_meta", &hunk, READABLE_TRIM);
+    lift(&mut tokens.gutter, "gutter", &surfaces, READABLE_TRIM, true);
+    lift(
+        &mut tokens.diff_meta,
+        "diff_meta",
+        &hunk,
+        READABLE_TRIM,
+        false,
+    );
 
     // Emphasis is only emphasis if it out-reads the body it interrupts, and
     // lifting two flat greys to the same floor would land them on the same
@@ -626,7 +898,7 @@ fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>) {
             (tokens.panel, READABLE_BODY),
             (tokens.text, SEPARATION),
         ];
-        tokens.emphasis = readable_token(tokens.emphasis, &against);
+        tokens.emphasis = readable_token(tokens.emphasis, &against, faces, true);
     }
 }
 
@@ -635,7 +907,7 @@ fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>) {
 /// meant to be seen, so it keeps a face of its own even when the mix is
 /// pale: the nearest face by identity, which is the tint's hue at whichever
 /// end of the ramp the mix landed on.
-fn tinted(surface: Token, hue: Token) -> Token {
+fn tinted(surface: Token, hue: Token, faces: &Faces) -> Token {
     const MIX: f64 = 0.22;
     let blend = |surface: u8, hue: u8| {
         (f64::from(surface) * (1.0 - MIX) + f64::from(hue) * MIX).round() as u8
@@ -645,7 +917,8 @@ fn tinted(surface: Token, hue: Token) -> Token {
         blend(surface.rgb.1, hue.rgb.1),
         blend(surface.rgb.2, hue.rgb.2),
     );
-    let ansi = ANSI_FACES
+    let ansi = faces
+        .0
         .into_iter()
         .min_by(|left, right| {
             face_identity(rgb, left.1)
@@ -654,7 +927,13 @@ fn tinted(surface: Token, hue: Token) -> Token {
         })
         .map(|(face, _)| face)
         .expect("ANSI palette is non-empty");
-    Token { rgb, ansi }
+    Token {
+        rgb,
+        ansi,
+        // A tint is paint by definition: it is the one thing on the screen
+        // that is deliberately not the ground it sits on.
+        inherited: false,
+    }
 }
 
 /// Whether one surface is close enough to the background to read as the same
@@ -665,12 +944,33 @@ fn shade_of(surface: Token, background: Token) -> bool {
 }
 
 /// Lift one token until it clears every floor it was given, in both colour
-/// modes.
-fn readable_token(token: Token, against: &[(Token, f64)]) -> Token {
+/// modes. `on_ground` says the surfaces are the ground and its shades rather
+/// than a tint.
+fn readable_token(token: Token, against: &[(Token, f64)], faces: &Faces, on_ground: bool) -> Token {
+    if token.inherited {
+        return token;
+    }
     let rgb = lift_lightness(token.rgb, against);
+    // A token that *is* one of this palette's slots keeps that slot in
+    // sixteen colours. Repair moves lightness, and in sixteen colours there
+    // is no lightness to move — only a swap to a different slot, which
+    // changes what the colour means. On this terminal red means what its
+    // red slot paints, in `git diff` and everywhere else in the session,
+    // and a person whose scheme has a dim red chose that; amux swapping it
+    // for yellow would be the one program in the session disagreeing.
+    //
+    // That holds on the ground. On a tint — removed text on the removed
+    // tint — the surface already wears the hue, and the same slot laid over
+    // it is red on red; there the face that reads best wins.
+    let is_slot = token.ansi != Color::Reset && faces.rgb_of_face(token.ansi) == token.rgb;
     Token {
         rgb,
-        ansi: readable_face(rgb, against),
+        ansi: if is_slot && on_ground {
+            token.ansi
+        } else {
+            readable_face(rgb, against, faces)
+        },
+        inherited: false,
     }
 }
 
@@ -679,7 +979,7 @@ fn readable_token(token: Token, against: &[(Token, f64)]) -> Token {
 fn margin(
     candidate: (u8, u8, u8),
     against: &[(Token, f64)],
-    surface: fn(Token) -> (u8, u8, u8),
+    surface: impl Fn(Token) -> (u8, u8, u8),
 ) -> f64 {
     against
         .iter()
@@ -725,9 +1025,9 @@ fn lift_lightness(rgb: (u8, u8, u8), against: &[(Token, f64)]) -> (u8, u8, u8) {
 /// than a veto, since in this mode the terminal owns the colours it actually
 /// paints and the floor is measured against conventional values; a face may
 /// win by a small shortfall if it keeps the hue, never by a large one.
-fn readable_face(rgb: (u8, u8, u8), against: &[(Token, f64)]) -> Color {
+fn readable_face(rgb: (u8, u8, u8), against: &[(Token, f64)], faces: &Faces) -> Color {
     const SHORTFALL: f64 = 4.0;
-    let reach = |candidate: (u8, u8, u8)| margin(candidate, against, |token| ansi_rgb(token.ansi));
+    let reach = |candidate: (u8, u8, u8)| margin(candidate, against, |token| faces.rgb(token));
 
     // Against a coloured surface — a diff tint — the surface already says what
     // the row is, and a second hue laid over it only clashes. Take the face
@@ -735,9 +1035,10 @@ fn readable_face(rgb: (u8, u8, u8), against: &[(Token, f64)]) -> Color {
     // palettes do with their own tints.
     if against
         .iter()
-        .any(|(surface, _)| chromatic(ansi_rgb(surface.ansi)))
+        .any(|(surface, _)| chromatic(faces.rgb(*surface)))
     {
-        return ANSI_FACES
+        return faces
+            .0
             .into_iter()
             .max_by(|left, right| {
                 reach(left.1)
@@ -756,7 +1057,8 @@ fn readable_face(rgb: (u8, u8, u8), against: &[(Token, f64)]) -> Color {
     let cost = |candidate: (u8, u8, u8)| {
         face_identity(rgb, candidate) + (1.0 - reach(candidate)).max(0.0) * SHORTFALL
     };
-    ANSI_FACES
+    faces
+        .0
         .into_iter()
         .min_by(|left, right| {
             cost(left.1)
@@ -805,7 +1107,7 @@ pub(crate) fn luminance(rgb: (u8, u8, u8)) -> f64 {
 }
 
 /// The WCAG 2 contrast ratio between two colours, from 1.0 to 21.0.
-pub(crate) fn contrast(left: (u8, u8, u8), right: (u8, u8, u8)) -> f64 {
+pub fn contrast(left: (u8, u8, u8), right: (u8, u8, u8)) -> f64 {
     let (left, right) = (luminance(left), luminance(right));
     let (lighter, darker) = if left > right {
         (left, right)
@@ -934,12 +1236,51 @@ const ANSI_FACES: [(Color, (u8, u8, u8)); 16] = [
 ];
 
 /// The conventional RGB value of one terminal face.
+#[cfg(test)]
 fn ansi_rgb(face: Color) -> (u8, u8, u8) {
-    ANSI_FACES
-        .into_iter()
-        .find(|(candidate, _)| *candidate == face)
-        .map(|(_, rgb)| rgb)
-        .unwrap_or((0, 0, 0))
+    Faces::CONVENTIONAL.rgb_of_face(face)
+}
+
+/// What the sixteen faces actually paint as, for reasoning about contrast
+/// in the mode where the terminal owns the colours.
+///
+/// An imported scheme has only the conventional values to go on. A palette
+/// derived from a terminal knows exactly what each slot paints as, because
+/// the terminal said so — measuring it against the conventional values would
+/// judge Solarized's yellow-green `Green` as if it were pure green, and pick
+/// a face for its ground that the ground is nothing like.
+#[derive(Clone, Copy)]
+struct Faces([(Color, (u8, u8, u8)); 16]);
+
+impl Faces {
+    const CONVENTIONAL: Self = Self(ANSI_FACES);
+
+    /// The faces as one terminal reported them.
+    fn of_terminal(terminal: &TerminalColors) -> Self {
+        let mut faces = ANSI_FACES;
+        for (slot, face) in faces.iter_mut().enumerate() {
+            *face = (slot_face(slot), terminal.ansi[slot]);
+        }
+        Self(faces)
+    }
+
+    fn rgb_of_face(&self, face: Color) -> (u8, u8, u8) {
+        self.0
+            .iter()
+            .find(|(candidate, _)| *candidate == face)
+            .map(|(_, rgb)| *rgb)
+            .unwrap_or((0, 0, 0))
+    }
+
+    /// What a token paints as in sixteen colours. A borrowed token is left
+    /// at the terminal's default, which is the colour it reported.
+    fn rgb(&self, token: Token) -> (u8, u8, u8) {
+        if token.inherited || token.ansi == Color::Reset {
+            token.rgb
+        } else {
+            self.rgb_of_face(token.ansi)
+        }
+    }
 }
 
 /// Choose the nearest named 16-colour terminal face by squared RGB distance.
@@ -1049,9 +1390,9 @@ mod tests {
         assert_eq!(theme.classify(theme.focus_bar()), 'F');
         assert_eq!(theme.classify(theme.diff_added()), '+');
         assert_eq!(theme.classify(theme.diff_removed()), '-');
-        assert_eq!(theme.classify(theme.diff_context()), 'P');
-        assert_eq!(theme.classify(theme.diff_meta()), 'P');
-        assert_eq!(theme.classify(theme.gutter()), 'P');
+        assert_eq!(theme.classify(theme.diff_context()), '.');
+        assert_eq!(theme.classify(theme.diff_meta()), 'M');
+        assert_eq!(theme.classify(theme.gutter()), 'G');
     }
 
     #[test]
@@ -1530,8 +1871,224 @@ mod tests {
         (lighter + 0.05) / (darker + 0.05)
     }
 
+    fn rgb(hex: u32) -> (u8, u8, u8) {
+        ((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
+    }
+
+    /// Two schemes a terminal might report, chosen because they disagree
+    /// about everything a derivation has to cope with: one is dark with a
+    /// conventional bright half, the other is light and spends its bright
+    /// half on greys.
+    fn terminal_schemes() -> Vec<(&'static str, TerminalColors)> {
+        let one_dark = TerminalColors {
+            background: rgb(0x282c34),
+            foreground: rgb(0xabb2bf),
+            ansi: [
+                0x282c34, 0xe06c75, 0x98c379, 0xe5c07b, 0x61afef, 0xc678dd, 0x56b6c2, 0xabb2bf,
+                0x5c6370, 0xe06c75, 0x98c379, 0xe5c07b, 0x61afef, 0xc678dd, 0x56b6c2, 0xffffff,
+            ]
+            .map(rgb),
+        };
+        let solarized_light = TerminalColors {
+            background: rgb(0xfdf6e3),
+            foreground: rgb(0x657b83),
+            ansi: [
+                0x073642, 0xdc322f, 0x859900, 0xb58900, 0x268bd2, 0xd33682, 0x2aa198, 0xeee8d5,
+                0x002b36, 0xcb4b16, 0x586e75, 0x657b83, 0x839496, 0x6c71c4, 0x93a1a1, 0xfdf6e3,
+            ]
+            .map(rgb),
+        };
+        vec![("one dark", one_dark), ("solarized light", solarized_light)]
+    }
+
+    /// Every palette amux can end up drawing with: the two it ships and
+    /// one derived from each terminal scheme above.
+    fn every_palette() -> Vec<Theme> {
+        let mut palettes = vec![
+            Theme::dark(ColorMode::TrueColor),
+            Theme::light(ColorMode::TrueColor),
+        ];
+        palettes.extend(
+            terminal_schemes()
+                .into_iter()
+                .map(|(_, terminal)| Theme::from_terminal(terminal, ColorMode::TrueColor)),
+        );
+        palettes
+    }
+
+    /// A palette derived from a terminal leaves the ground and the text as
+    /// the terminal's own — named, not painted — and takes its accents from
+    /// the terminal's slots, so amux's green is the terminal's green.
+    #[test]
+    fn a_terminal_palette_borrows_its_ground_and_text_and_takes_its_own_hues() {
+        for (name, terminal) in terminal_schemes() {
+            let theme = Theme::from_terminal(terminal, ColorMode::TrueColor);
+            assert_eq!(theme.name, ThemeName::Adopted);
+            for token in [theme.tokens.background, theme.tokens.text] {
+                assert_eq!(
+                    token.resolve(ColorMode::TrueColor),
+                    Color::Reset,
+                    "{name}: a borrowed colour is painted rather than left to the terminal"
+                );
+            }
+            assert_eq!(theme.tokens.background.rgb, terminal.background);
+            assert_eq!(theme.tokens.text.rgb, terminal.foreground);
+
+            // Repair may move an accent's lightness, never its hue.
+            let hue_of = |rgb: (u8, u8, u8)| to_hsl(rgb).0;
+            let same_hue = |token: Token, slots: [usize; 2]| {
+                slots.iter().any(|slot| {
+                    let delta = (hue_of(token.rgb) - hue_of(terminal.ansi[*slot])).abs();
+                    delta.min(360.0 - delta) < 5.0
+                })
+            };
+            assert!(
+                same_hue(theme.tokens.ok, [2, 10]),
+                "{name}: ok is not the terminal's green"
+            );
+            assert!(
+                same_hue(theme.tokens.error, [1, 9]),
+                "{name}: error is not the terminal's red"
+            );
+            assert!(
+                same_hue(theme.tokens.accent, [4, 12]),
+                "{name}: accent is not the terminal's blue"
+            );
+
+            // The surfaces are steps off the ground, in the direction of the
+            // text, so a light terminal gets darker surfaces and a dark one
+            // lighter.
+            let step = |surface: (u8, u8, u8)| luminance(surface) - luminance(terminal.background);
+            for surface in [theme.tokens.user_surface.rgb, theme.tokens.panel.rgb] {
+                assert!(
+                    (step(surface) > 0.0) == terminal.is_dark(),
+                    "{name}: a surface stepped away from the text"
+                );
+            }
+        }
+    }
+
+    /// In sixteen colours a derived palette can only name the terminal's
+    /// slots, so an accent keeps the slot it came from and every derived
+    /// face is measured against what the terminal said that slot paints as,
+    /// not against the conventional value it would have on some other
+    /// terminal.
+    #[test]
+    fn a_terminal_palette_in_sixteen_colours_names_the_terminals_own_slots() {
+        for (name, terminal) in terminal_schemes() {
+            let theme = Theme::from_terminal(terminal, ColorMode::Ansi);
+            let faces = Faces::of_terminal(&terminal);
+            for (token, slots, what) in [
+                (theme.tokens.ok, [2usize, 10], "ok"),
+                (theme.tokens.error, [1, 9], "error"),
+                (theme.tokens.accent, [4, 12], "accent"),
+            ] {
+                let face = token.resolve(ColorMode::Ansi);
+                assert!(
+                    slots.iter().any(|slot| slot_face(*slot) == face),
+                    "{name}: {what} resolved to {face:?}, not the terminal's own slot"
+                );
+            }
+            for (token, what, floor) in [
+                (theme.tokens.emphasis, "emphasis", READABLE_LABEL),
+                (theme.tokens.muted, "muted", READABLE_TRIM),
+                (theme.tokens.gutter, "gutter", READABLE_TRIM),
+            ] {
+                let ratio = contrast(faces.rgb(token), terminal.background);
+                assert!(
+                    ratio >= floor,
+                    "{name}: {what} paints as {:?} on the ground, only {ratio:.2}:1",
+                    token.resolve(ColorMode::Ansi)
+                );
+            }
+            // On a tint the slot rule gives way: removed text on the removed
+            // tint takes whichever of the sixteen faces reads best there,
+            // rather than the terminal's red on the terminal's red.
+            for (text, tint, what) in [
+                (
+                    theme.tokens.diff_removed_fg,
+                    theme.tokens.diff_removed_bg,
+                    "removed",
+                ),
+                (
+                    theme.tokens.diff_added_fg,
+                    theme.tokens.diff_added_bg,
+                    "added",
+                ),
+            ] {
+                let chosen = contrast(faces.rgb(text), faces.rgb(tint));
+                let best = faces
+                    .0
+                    .iter()
+                    .map(|(_, rgb)| contrast(*rgb, faces.rgb(tint)))
+                    .fold(0.0, f64::max);
+                assert!(
+                    chosen >= best - 1e-9,
+                    "{name}: {what} text paints as {:?} on its tint at {chosen:.2}:1; {best:.2}:1 was available",
+                    text.resolve(ColorMode::Ansi)
+                );
+            }
+        }
+    }
+
+    /// A derived palette leaves the ground and the text as the terminal
+    /// chose them, so what it owes a reader is everything it computed: each
+    /// derived foreground clears the repair floor on every surface it can
+    /// land on.
+    #[test]
+    fn a_terminal_palette_repairs_what_it_derived() {
+        for (name, terminal) in terminal_schemes() {
+            let tokens = Theme::from_terminal(terminal, ColorMode::TrueColor).tokens;
+            let surfaces = [tokens.background, tokens.user_surface, tokens.panel];
+            let hunk = [
+                tokens.panel,
+                tokens.background,
+                tokens.diff_added_bg,
+                tokens.diff_removed_bg,
+            ];
+            let check = |token: Token, what: &str, on: &[Token], floor: f64| {
+                for surface in on {
+                    let ratio = contrast(token.rgb, surface.rgb);
+                    assert!(
+                        ratio >= floor,
+                        "{name}: {what} on {:?} is only {ratio:.1}:1, floor {floor}",
+                        surface.rgb
+                    );
+                }
+            };
+            check(tokens.emphasis, "emphasis", &surfaces, READABLE_BODY);
+            for (token, what) in [
+                (tokens.muted, "muted"),
+                (tokens.accent, "accent"),
+                (tokens.focus, "focus"),
+                (tokens.code, "code"),
+                (tokens.ok, "ok"),
+                (tokens.warn, "warn"),
+                (tokens.error, "error"),
+            ] {
+                check(token, what, &surfaces, READABLE_LABEL);
+            }
+            check(
+                tokens.diff_added_fg,
+                "added text",
+                &[tokens.diff_added_bg],
+                READABLE_LABEL,
+            );
+            check(
+                tokens.diff_removed_fg,
+                "removed text",
+                &[tokens.diff_removed_bg],
+                READABLE_LABEL,
+            );
+            check(tokens.gutter, "gutter", &surfaces, READABLE_TRIM);
+            check(tokens.diff_meta, "diff notes", &hunk, READABLE_TRIM);
+        }
+    }
+
     /// Body text has to be readable on every surface it can land on, in
-    /// both palettes — 4.5:1 is the WCAG AA threshold for ordinary text.
+    /// both shipped palettes — 4.5:1 is the WCAG AA threshold for ordinary
+    /// text. A derived palette's text is the terminal's own and is not
+    /// amux's to hold to a floor.
     #[test]
     fn palettes_keep_text_readable_on_every_surface() {
         for theme in [
@@ -1574,10 +2131,7 @@ mod tests {
     /// other at a glance.
     #[test]
     fn palettes_separate_the_diff_tints_from_the_panel() {
-        for theme in [
-            Theme::dark(ColorMode::TrueColor),
-            Theme::light(ColorMode::TrueColor),
-        ] {
+        for theme in every_palette() {
             let panel = theme.tokens.panel.rgb;
             let added = theme.tokens.diff_added_bg.rgb;
             let removed = theme.tokens.diff_removed_bg.rgb;

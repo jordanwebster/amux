@@ -6,20 +6,15 @@
                                                                                                                         
     The cap belongs in RetryConfig.                                                                                     
                                                                                                                         
-  ⌄ 2 reads · 1 search · sync/config.rs, sync/client.rs · C-a o expand                                                  
-                                                                                                                        
-  ✔ Bash cargo check -p amux-sync                                                                                       
-    └ Finished in 4.10s                                                                                                 
-                                                                                                                        
-  ✎ Edit sync/config.rs · +2 −1                                                                                         
-                                                                                                                        
-  ? Cap → 6 attempts                                                                                                    
-                                                                                                                        
-  ✔ plan approved                                                                                                       
-    Cap the backoff at six attempts, then thread the cap through SyncOptions.                                           
-    ⌄ ctrl+t to read                                                                                                    
-                                                                                                                        
-  ✔ Subagent finished: trust store audited                                                                              
+│ ⌄ 2 reads · 1 search · sync/config.rs, sync/client.rs · C-a o expand                                                  
+│ ✔ Bash cargo check -p amux-sync                                                                                       
+│   └ Finished in 4.10s                                                                                                 
+│ ✎ Edit sync/config.rs · +2 −1                                                                                         
+│ ? Cap → 6 attempts                                                                                                    
+│ ✔ plan approved                                                                                                       
+│   Cap the backoff at six attempts, then thread the cap through SyncOptions.                                           
+│   ⌄ ctrl+t to read                                                                                                    
+│ ✔ Subagent finished: trust store audited                                                                              
                                                                                                                         
   ← codex-retry                                                                                                         
     Backoff cap looks right to me.                                                                                      
@@ -29,12 +24,17 @@
   ─ turn · 1m 2s ───────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
                                                                                                                         
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
     permission — Edit sync/config.rs (+1 -1)                                                                            
                                                                                                                         
-     -    pub max_attempts: u8,                                                                                         
-     +    pub max_attempts: u16,                                                                                        
+    -    pub max_attempts: u8,                                                                                          
+    +    pub max_attempts: u16,                                                                                         
                                                                                                                         
     › 1. Allow once                                                                                                     
       2. Always allow access to /work/amux from this project                                                            
       3. Deny — tell the agent why (optional)                                                                           
+                                                                                                                        
 marked 0:  move hjkl/arrows · drag or space to start a box · enter finish                                               

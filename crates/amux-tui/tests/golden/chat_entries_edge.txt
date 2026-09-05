@@ -2,21 +2,17 @@
                                                                                                                         
 ▎   try the migration                                                                                                   
                                                                                                                         
-  ~ thought for 3s · redacted                                                                                           
-                                                                                                                        
-  ✗ interrupted                                                                                                         
+│ ~ thought for 3s · redacted                                                                                           
+│ ✗ interrupted                                                                                                         
                                                                                                                         
   ─ turn · ~6s ─────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
-  ~ thought                                                                                                             
-                                                                                                                        
-  ✗ api error (server_error)                                                                                            
-    API error — upstream 529                                                                                            
-                                                                                                                        
-  ⚠ unrecognized row                                                                                                    
-    └ progress                                                                                                          
-                                                                                                                        
-  ✔ Background task finished: tests are green                                                                           
+│ ~ thought                                                                                                             
+│ ✗ api error (server_error)                                                                                            
+│   API error — upstream 529                                                                                            
+│ ⚠ unrecognized row                                                                                                    
+│   └ progress                                                                                                          
+│ ✔ Background task finished: tests are green                                                                           
                                                                                                                         
   ─ compacted (manual) · 31.6k → 1.8k tok ──────────────────────────────────────────────────────────────────────────────
                                                                                                                         
@@ -35,6 +31,10 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
+                                                                                                                        
+                                                                                                                        
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     enter send · ctrl+j newline · C-a r review diff · ? help                                               mode default 

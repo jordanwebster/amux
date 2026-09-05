@@ -5,12 +5,10 @@
     I added exponential backoff to Client::reconnect — 6 attempts,                                                      
     jitter capped at 500 ms. SyncOptions grew a RetryConfig.                                                            
                                                                                                                         
-  ⌄ 1 read · 1 search · sync/client.rs · C-a o expand                                                                   
-                                                                                                                        
-  ✎ Edit sync/client.rs · +18 −4                                                                                        
-                                                                                                                        
-  ✔ Bash cargo test -p amux-sync                                                                                        
-    └ 34 passed, 0 failed (2.1s)                                                                                        
+│ ⌄ 1 read · 1 search · sync/client.rs · C-a o expand                                                                   
+│ ✎ Edit sync/client.rs · +18 −4                                                                                        
+│ ✔ Bash cargo test -p amux-sync                                                                                        
+│   └ 34 passed, 0 failed (2.1s)                                                                                        
                                                                                                                         
   ─ turn · 1m 42s ──────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
@@ -33,8 +31,10 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
+▎                                                                                                                       
 ▎   first line of the draft                                                                                             
 ▎   second line                                                                                                         
 ▎   third line▌                                                                                                         
+▎                                                                                                                       
                                                                                                                         
     enter send · ctrl+j newline · C-a r review diff                                                        mode default 

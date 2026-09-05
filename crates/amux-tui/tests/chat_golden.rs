@@ -2148,7 +2148,9 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
                     // The chat is full-screen now: instead of a border
                     // surviving at the last row, every row of every size
                     // is filled edge to edge and none of them opens with
-                    // chrome.
+                    // chrome. A reader's rule and the hairline chaining
+                    // consecutive actions may start a row; a corner or a
+                    // junction is what a frame around the page would be.
                     let lines: Vec<&str> = rendered.lines().collect();
                     assert_eq!(lines.len(), height as usize);
                     for (row, line) in lines.iter().enumerate() {
@@ -2159,7 +2161,7 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
                         );
                         let first = line.chars().next().expect("a filled row");
                         assert!(
-                            !"┌┐└┘├┤┬┴┼│".contains(first),
+                            !"┌┐└┘├┤┬┴┼".contains(first),
                             "row {row} opens with chrome at {width}x{height}: {line:?}"
                         );
                     }
@@ -2614,6 +2616,9 @@ fn review_comment_box_styles_light() {
 fn review_threads_view() -> amux_tui::ReviewView {
     let mut view = amux_tui::review::fixture::sample_review_with_comments();
     view.set_viewport(GOLDEN_VIEWPORT.0, GOLDEN_VIEWPORT.1);
+    // The same two keys the `review-threads` screenshot state presses, so
+    // the golden and the screenshot cannot land on different rows.
+    review_press(&mut view, 'g');
     review_press(&mut view, 'n');
     view
 }

@@ -6,10 +6,9 @@
                                                                                                                         
     The cap belongs in RetryConfig; I'll thread it through SyncOptions.                                                 
                                                                                                                         
-  ✔ Read sync/config.rs                                                                                                 
-                                                                                                                        
-  ▸ Bash cargo check -p amux-sync                                                                                       
-    └ running                                                                                                           
+│ ✔ Read sync/config.rs                                                                                                 
+│ ▸ Bash cargo check -p amux-sync                                                                                       
+│   └ running                                                                                                           
                                                                                                                         
 ▎   follow-up question 0                                                                                                
                                                                                                                         
@@ -30,11 +29,12 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
-                                                                                                                        
   ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest                                                 
+                                                                                                                        
   ◓ working · 9s · ctrl+x interrupt                                                                                     
                                                                                                                         
+▎                                                                                                                       
 ▎   draft preserved while reading▌                                                                                      
+▎                                                                                                                       
                                                                                                                         
     C-a k/j focus · C-a y copy                                                                             mode default 
