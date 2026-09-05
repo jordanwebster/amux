@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The daemon makes its data directory before asking the
+filesystem to resolve it.** Canonicalizing `data_dir`, added so managed
+Claude sees a stable artifact root, assumed the directory already existed —
+true on a machine that has run amux before, false on a fresh one. Every
+test that builds the PTY host from the default config failed on CI with
+`NotFound`, and a first run on a new machine would have failed the same
+way; `AgentDeps::new` now creates the directory before canonicalizing it.
+Alongside: only the macOS attachment viewer reads the artifact kind, so the
+other platforms discard `meta` explicitly rather than trip `-D warnings`,
+and three files that had drifted from rustfmt were reformatted.
+
 2026-09-05 — **Attachments stay with the message that carried them.** A
 sent message's attachment rows were painted as machinery: a blank row below
 the person's words, then rows on the bare ground chained to whatever tool

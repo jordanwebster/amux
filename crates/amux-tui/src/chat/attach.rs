@@ -151,7 +151,10 @@ mod tests {
     fn image_extensions_map_to_media_types_a_model_accepts() {
         for (extension, mime) in IMAGE_EXTENSIONS {
             assert!(
-                matches!(*mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp"),
+                matches!(
+                    *mime,
+                    "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+                ),
                 "{extension} claims {mime}, which no image block accepts"
             );
         }
