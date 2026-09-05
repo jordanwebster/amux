@@ -4,6 +4,24 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **amux asks the terminal what colours it is using.** The
+derived palette needs three facts a terminal will report about itself, and
+until now nothing asked. `query_terminal_colors` sends OSC 11, 10 and 4 for
+the ground, the text and the sixteen slots, reads the answers off stdin in
+raw mode before the chrome takes the terminal, and gives a silent terminal a
+quarter of a second. The queries end with a primary-device-attributes request,
+which every terminal answers and answers last, so the read stops on that
+reply rather than on a clock and nothing is left in the input for the key
+reader to take as typing; a slot the terminal stays quiet about takes xterm's colour,
+while a silent ground or text means no palette is derived. `ui.theme`
+gained `terminal`, now the default, which derives from those answers and
+falls back to the shipped dark palette when there are none. The reply
+parser copes with replies split across reads, either OSC terminator, one to
+four hex digits per channel, and keystrokes mixed into the stream. Not yet
+exercised against a live terminal from this session — the parser and the
+fallback are unit-tested, and the whole path wants a person to start
+`amux` in their own terminal and see their own ground.
+
 2026-09-05 — **The TUI's new look, ported without the harness that found it.**
 A design pass on a separate branch rendered every screen to PNG, compared
 palettes and layouts, and settled a look. This branch carries only what the
