@@ -88,8 +88,14 @@ impl GoldenManifest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GoldenVerdict {
     Same,
-    Different { pixels: u64, first: (u32, u32) },
-    SizeMismatch { expected: (u32, u32), actual: (u32, u32) },
+    Different {
+        pixels: u64,
+        first: (u32, u32),
+    },
+    SizeMismatch {
+        expected: (u32, u32),
+        actual: (u32, u32),
+    },
     /// Nothing to compare against: the screen has never been locked.
     MissingBaseline,
     /// The app could not show it. An unimplemented screen answers here rather
@@ -271,10 +277,7 @@ pub fn diff(
         if apart > tolerance {
             differing += 1;
             if first.is_none() {
-                first = Some((
-                    index as u32 % taken.width,
-                    index as u32 / taken.width,
-                ));
+                first = Some((index as u32 % taken.width, index as u32 / taken.width));
             }
             marked.pixels[at] = 255;
             marked.pixels[at + 1] = 32;
@@ -547,7 +550,11 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut failed = Vec::new();
     for outcome in &outcomes {
-        let mark = if outcome.verdict.passed() { "ok" } else { "FAILED" };
+        let mark = if outcome.verdict.passed() {
+            "ok"
+        } else {
+            "FAILED"
+        };
         println!(
             "{mark} {}.{}: {}",
             outcome.id, outcome.appearance, outcome.verdict
