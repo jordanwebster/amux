@@ -24,6 +24,10 @@ public enum DoorRequest: Sendable, Equatable {
     case bridge
     case appearance(Appearance)
     case dynamicType(String)
+    /// Move one named colour token, or put it back when nothing is named.
+    /// The one thing a driver can ask for that makes the app draw something
+    /// its baseline does not show.
+    case perturb(token: String?)
     /// Wait until the screen has stopped changing. A capture that does not
     /// wait for this photographs a frame mid-animation.
     case settle
@@ -170,6 +174,8 @@ extension DoorRequest: Codable {
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
         case "dynamicType":
             self = .dynamicType(try fields.decode(String.self, forKey: .size))
+        case "perturb":
+            self = .perturb(token: try fields.decodeIfPresent(String.self, forKey: .token))
         case "settle": self = .settle
         case "query": self = .query
         case "capture":
@@ -213,6 +219,9 @@ extension DoorRequest: Codable {
         case .dynamicType(let size):
             try fields.encode("dynamicType", forKey: .kind)
             try fields.encode(size, forKey: .size)
+        case .perturb(let token):
+            try fields.encode("perturb", forKey: .kind)
+            try fields.encodeIfPresent(token, forKey: .token)
         case .settle:
             try fields.encode("settle", forKey: .kind)
         case .query:

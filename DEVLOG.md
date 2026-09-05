@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Showing the golden check fail.** `wt run ios-goldens-perturb`
+asks the app to draw the probe screen with one colour token replaced by a
+magenta the design never uses, captures and compares it exactly as an ordinary
+golden run does, and fails unless every capture came back different with a
+difference image beside it. A suite nobody has ever seen fail proves nothing:
+the captures could be of the wrong window, the comparison could be reading the
+baseline twice, the tolerance could be swallowing everything. Moving the accent
+changes about sixteen hundred pixels of the probe, in both appearances, and the
+check now says so out loud. The perturbed captures are written to their own
+directory so a screen that is wrong on purpose never sits where somebody is
+looking for the last real failure.
+
 2026-09-05 — **Reconciliation is judged at each latency.** The measurement
 definitions hold the fleet's arrival to one second whether there is no network
 in front of it or a hundred milliseconds of one, and the suite measures both.

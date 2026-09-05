@@ -26,6 +26,8 @@ final class DoorTests: XCTestCase {
             .bridge,
             .appearance(.dark),
             .dynamicType("accessibility3"),
+            .perturb(token: "accent"),
+            .perturb(token: nil),
             .settle,
             .query,
             .capture(path: "/tmp/home.png"),
@@ -55,6 +57,10 @@ final class DoorTests: XCTestCase {
         XCTAssertEqual(try wire(.settle)["kind"] as? String, "settle")
         XCTAssertEqual(try wire(.awaitReconciled(seconds: 90))["seconds"] as? Double, 90)
         XCTAssertEqual(try wire(.bridge)["kind"] as? String, "bridge")
+        XCTAssertEqual(try wire(.perturb(token: "accent"))["token"] as? String, "accent")
+        // Nothing named puts the design back, and is sent as an absent field
+        // rather than a null, like every other request the door takes.
+        XCTAssertNil(try wire(.perturb(token: nil))["token"])
     }
 
     func testAnUnknownRequestIsRefused() {

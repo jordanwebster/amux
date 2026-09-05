@@ -79,6 +79,12 @@ needs = ["ios-build", "build"]
 run = 'timeout 2400 python3 -B scripts/ios-goldens.py "$@"'
 needs = ["ios-build"]
 
+# Move one design token and require the golden run to fail with a difference
+# image. What proves the golden check would notice a change.
+[task.ios-goldens-perturb]
+run = 'timeout 1200 python3 -B scripts/ios-goldens-perturb.py "$@"'
+needs = ["ios-build"]
+
 # Pair every reference screen's baseline with the design's preserved capture.
 # A report and never a gate: a difference from the design is a conversation.
 [task.ios-goldens-reference]

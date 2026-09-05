@@ -47,6 +47,7 @@ struct DrivenRoot<Content: View>: View {
                 content
             }
         }
+        .environment(\.design, host.design)
         .environment(\.colorScheme, host.appearance.colorScheme)
         .dynamicTypeSize(host.typeSize)
         .onPreferenceChange(IdentifiedElements.self) { declared in

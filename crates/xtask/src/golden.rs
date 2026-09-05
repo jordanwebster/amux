@@ -370,6 +370,9 @@ pub fn run(
     update: bool,
     tolerance: u8,
     max_differing_pixels: u64,
+    // A colour token to move before anything is drawn. Only the perturbation
+    // check passes one, and it requires every comparison to fail.
+    perturb: Option<&str>,
 ) -> Result<Vec<GoldenOutcome>, GoldenError> {
     let wanted: Vec<&GoldenScreen> = if ids.is_empty() {
         manifest.screens.iter().collect()
@@ -400,6 +403,10 @@ pub fn run(
         // Which screen each request belongs to, so a refusal is attributed to
         // the screen it was about rather than to whatever came next.
         let mut about: Vec<String> = Vec::new();
+        if let Some(token) = perturb {
+            requests.push(json!({"kind": "perturb", "token": token}));
+            about.push(String::new());
+        }
         for screen in &screens {
             requests.push(json!({
                 "kind": "open", "screen": screen.screen, "fixture": screen.fixture
@@ -480,6 +487,11 @@ pub fn run(
 const MANIFEST: &str = "ios/Goldens/manifest.json";
 const BASELINES: &str = "ios/Goldens";
 const OUT: &str = "target/ios/goldens";
+const PERTURBED_OUT: &str = "target/ios/goldens/perturbed";
+/// The screen the perturbation check is run on, and the token it moves. The
+/// probe draws every colour token the design has, so any of them would show.
+const PERTURBED_SCREEN: &str = "probe";
+const PERTURBED_TOKEN: &str = "accent";
 /// A capture of the same screen on the same simulator can differ by a value or
 /// two where a gradient is dithered; anything a person could see differs by
 /// much more than this, in far more than a handful of pixels.
@@ -490,12 +502,14 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<String> = std::env::args().skip(2).collect();
     match arguments.first().map(String::as_str) {
         Some("run") => run_command(&arguments[1..]),
+        Some("perturb") => perturb_command(&arguments[1..]),
         Some("diff") => diff_command(&arguments[1..]),
         Some("reference") => reference_command(&arguments[1..]),
         _ => {
             eprintln!(
                 "usage: xtask golden <run [--simulator NAME] [--bundle-id ID] [--install APP] \
-                 [--update] [IDS...]|diff --expected PNG --actual PNG --out DIR|\
+                 [--update] [IDS...]|perturb [--simulator NAME] [--bundle-id ID] \
+                 [--token NAME] [IDS...]|diff --expected PNG --actual PNG --out DIR|\
                  reference --captures DIR [--out DIR]>"
             );
             std::process::exit(2);
@@ -546,6 +560,7 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         update,
         TOLERANCE,
         MAX_DIFFERING_PIXELS,
+        None,
     )?;
 
     let mut failed = Vec::new();
@@ -572,6 +587,91 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if !failed.is_empty() {
         return Err(format!("goldens failed: {}", failed.join(", ")).into());
     }
+    Ok(())
+}
+
+/// Moves one design token and requires every comparison to notice.
+///
+/// A golden suite that has never been seen to fail proves nothing: the
+/// captures could be of the wrong window, the comparison could be reading the
+/// baseline twice, the tolerance could be swallowing everything. So one
+/// colour token is replaced with a magenta the design never uses, the same
+/// screens are captured the same way, and this command fails unless every one
+/// of them came back different with a difference image beside it.
+fn perturb_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let simulator = value(arguments, "--simulator").unwrap_or_else(|| "amux-golden".into());
+    let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.Amux".into());
+    let token = value(arguments, "--token").unwrap_or_else(|| PERTURBED_TOKEN.into());
+    let mut ids: Vec<String> = Vec::new();
+    let mut skip_next = false;
+    for argument in arguments {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if argument.starts_with("--") {
+            skip_next = ["--simulator", "--bundle-id", "--token"].contains(&argument.as_str());
+            continue;
+        }
+        ids.push(argument.clone());
+    }
+    if ids.is_empty() {
+        ids.push(PERTURBED_SCREEN.into());
+    }
+
+    let manifest = GoldenManifest::read(Path::new(MANIFEST))?;
+    // Its own directory: this run's captures are wrong on purpose, and
+    // leaving them where an ordinary run writes its triplets would put a
+    // magenta screen in front of whoever looks at the last real failure.
+    let out = Path::new(PERTURBED_OUT);
+    let outcomes = run(
+        &manifest,
+        &ids,
+        &simulator,
+        &bundle_id,
+        Path::new(BASELINES),
+        out,
+        false,
+        TOLERANCE,
+        MAX_DIFFERING_PIXELS,
+        Some(&token),
+    )?;
+
+    let mut unnoticed = Vec::new();
+    for outcome in &outcomes {
+        let image = out
+            .join(format!("{}.{}", outcome.id, outcome.appearance))
+            .join("diff.png");
+        let noticed = matches!(outcome.verdict, GoldenVerdict::Different { .. }) && image.is_file();
+        println!(
+            "{} {}.{}: {}",
+            if noticed { "caught" } else { "MISSED" },
+            outcome.id,
+            outcome.appearance,
+            outcome.verdict
+        );
+        if noticed {
+            println!("  {}", image.display());
+        } else {
+            unnoticed.push(format!("{}.{}", outcome.id, outcome.appearance));
+        }
+    }
+    if outcomes.is_empty() {
+        return Err("the perturbation check captured nothing".into());
+    }
+    if !unnoticed.is_empty() {
+        return Err(format!(
+            "the `{token}` token was moved and the golden run did not fail on {}",
+            unnoticed.join(", ")
+        )
+        .into());
+    }
+    println!(
+        "{} captures, all different with the `{token}` token moved; \
+         difference images under {}",
+        outcomes.len(),
+        out.display()
+    );
     Ok(())
 }
 

@@ -30,6 +30,27 @@ public struct Design: Sendable, Equatable {
     public let type: Typography
     public let surfaces: Surfaces
 
+    public init(
+        name: String, ground: Ramp, raised: Ramp, sunken: Ramp, hairline: Ramp, ink: Ramp,
+        inkMuted: Ramp, inkFaint: Ramp, accent: Ramp, onAccent: Ramp, faces: Faces,
+        metrics: Metrics, type: Typography, surfaces: Surfaces
+    ) {
+        self.name = name
+        self.ground = ground
+        self.raised = raised
+        self.sunken = sunken
+        self.hairline = hairline
+        self.ink = ink
+        self.inkMuted = inkMuted
+        self.inkFaint = inkFaint
+        self.accent = accent
+        self.onAccent = onAccent
+        self.faces = faces
+        self.metrics = metrics
+        self.type = type
+        self.surfaces = surfaces
+    }
+
     public struct Metrics: Sendable, Equatable {
         public let cardRadius: CGFloat
         public let controlRadius: CGFloat

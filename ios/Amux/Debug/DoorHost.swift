@@ -21,6 +21,9 @@ final class DoorHost {
     /// running as itself.
     private(set) var screen: Screen?
     private(set) var appearance: Appearance = .light
+    /// The design every driven screen is drawn with. The app's own, unless a
+    /// driver has asked for one token to be moved.
+    private(set) var design: Design = .app
     private(set) var typeSize: DynamicTypeSize = .large
     private(set) var stores = StoreBundle(account: AccountId("door"), now: Scenario.now)
 
@@ -55,6 +58,16 @@ final class DoorHost {
         case .bridge: return .bridge(bridgeState())
         case .appearance(let appearance):
             self.appearance = appearance
+            return .ack
+        case .perturb(let token):
+            guard let token else {
+                design = .app
+                return .ack
+            }
+            guard let moved = Perturbation.design(.app, moving: token) else {
+                return .error("the design has no colour token named \(token)")
+            }
+            design = moved
             return .ack
         case .dynamicType(let name):
             guard let size = DynamicTypeSize(doorName: name) else {
