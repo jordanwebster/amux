@@ -2,4 +2,5 @@
 mod binding;
 mod isolation;
 mod lifecycle;
+mod surfaces;
 mod update;

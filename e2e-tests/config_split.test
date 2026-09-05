@@ -15,12 +15,15 @@ terminal:
 
 @T1
 > amux init
+> amux server stop
+Server shutting down.
+
 > amux server start
 Server started.
 
 > amux profiles
 Profiles:
-  cd45a091-bfc8-505c-984c-25c3df220ee6  local    ready
+  cd45a091-bfc8-505c-984c-25c3df220ee6  local    unbound / local
 
 > amux list
 No agents running.

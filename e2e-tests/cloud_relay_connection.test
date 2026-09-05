@@ -56,6 +56,9 @@ hello from cloud A
 echo: hello from cloud A
 
 @Tb
+> amux server stop
+Server shutting down.
+
 > amux server start
 Server started.
 

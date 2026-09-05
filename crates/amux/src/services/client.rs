@@ -13,7 +13,7 @@ use std::time::Duration;
 pub use admin::ProfileAdmin;
 use chrono::Utc;
 use futures_util::{Stream, StreamExt, stream};
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{RwLock, mpsc};
 use tonic::transport::Channel;
 use uuid::Uuid;
 
@@ -43,7 +43,7 @@ use crate::services::pairing::{
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
 use crate::tunnel::TunnelPoolError;
-use crate::user_state::{ServerState, ShutdownRequest};
+use crate::user_state::ServerState;
 use crate::{AgentParent, HostId, audit, envelope};
 
 type TonicResult<T> = Result<tonic::Response<T>, tonic::Status>;
@@ -1224,46 +1224,6 @@ impl wire::client_service_server::ClientService for ClientService {
         Ok(tonic::Response::new(wire::DebugResponse { dump }))
     }
 
-    async fn shutdown(
-        &self,
-        request: tonic::Request<wire::ShutdownRequest>,
-    ) -> TonicResult<wire::ShutdownResponse> {
-        let caller = audit_caller(&request);
-        audit::client_service_disruptive_call("ClientService.Shutdown", &caller, None);
-        self.request_shutdown().await.map_err(protocol_status)?;
-        Ok(tonic::Response::new(wire::ShutdownResponse {}))
-    }
-
-    async fn suspend(
-        &self,
-        request: tonic::Request<wire::SuspendRequest>,
-    ) -> TonicResult<wire::SuspendResponse> {
-        let caller = audit_caller(&request);
-        let reason = suspend_reason_from_wire(request.into_inner().reason)?;
-        audit::client_service_disruptive_call("ClientService.Suspend", &caller, None);
-        let suspended_count = self
-            .request_suspend(reason)
-            .await
-            .map_err(protocol_status)?;
-        Ok(tonic::Response::new(wire::SuspendResponse {
-            suspended_count,
-        }))
-    }
-
-    async fn resume(
-        &self,
-        request: tonic::Request<wire::ResumeRequest>,
-    ) -> TonicResult<wire::ResumeResponse> {
-        let caller = audit_caller(&request);
-        audit::client_service_disruptive_call("ClientService.Resume", &caller, None);
-        let (resumed_count, failed_count) =
-            self.resume_local_agents().await.map_err(protocol_status)?;
-        Ok(tonic::Response::new(wire::ResumeResponse {
-            resumed_count,
-            failed_count,
-        }))
-    }
-
     async fn handle_hook(
         &self,
         request: tonic::Request<wire::HandleHookRequest>,
@@ -1882,58 +1842,6 @@ impl ClientService {
         .await
     }
 
-    async fn request_shutdown(&self) -> Result<(), ProtocolError> {
-        let shutdown_tx = { self.server_state.read().await.shutdown_tx() };
-        let (reply, rx) = oneshot::channel();
-        shutdown_tx
-            .send(ShutdownRequest::Shutdown { reply })
-            .await
-            .map_err(|_| ProtocolError::ServerError {
-                message: "shutdown channel is closed".to_string(),
-            })?;
-        rx.await.map_err(|_| ProtocolError::ServerError {
-            message: "shutdown response channel is closed".to_string(),
-        })?
-    }
-
-    async fn request_suspend(&self, reason: ShutdownReason) -> Result<u64, ProtocolError> {
-        let shutdown_tx = { self.server_state.read().await.shutdown_tx() };
-        let (reply, rx) = oneshot::channel();
-        shutdown_tx
-            .send(ShutdownRequest::Suspend { reason, reply })
-            .await
-            .map_err(|_| ProtocolError::ServerError {
-                message: "shutdown channel is closed".to_string(),
-            })?;
-        rx.await.map_err(|_| ProtocolError::ServerError {
-            message: "suspend response channel is closed".to_string(),
-        })?
-    }
-
-    async fn resume_local_agents(&self) -> Result<(u64, u64), ProtocolError> {
-        let _operation = self.pairing_trust.trust_commit_lock.read().await;
-        self.pairing_trust.trust_commit_lock.check()?;
-        let (state_path, is_cloud_server) = {
-            let state = self.server_state.read().await;
-            (state.state_path(), state.is_cloud_server())
-        };
-        if is_cloud_server {
-            return Err(ProtocolError::FailedPrecondition {
-                message: "cloud relays do not host local agents".to_string(),
-            });
-        }
-        match self.local_agents.host() {
-            Some(host) => {
-                drop(_operation);
-                host.resume(state_path, &self.pairing_trust.trust_commit_lock)
-                    .await
-            }
-            None => Err(ProtocolError::FailedPrecondition {
-                message: "local agent support is disabled".to_string(),
-            }),
-        }
-    }
-
     async fn handle_local_hook(
         &self,
         agent_id: Uuid,
@@ -2428,18 +2336,6 @@ fn debug_format_from_wire(format: i32) -> Result<DebugFormat, tonic::Status> {
     }
 }
 
-fn suspend_reason_from_wire(reason: i32) -> Result<ShutdownReason, tonic::Status> {
-    match wire::SuspendReason::try_from(reason).map_err(|_| {
-        tonic::Status::invalid_argument(format!("invalid SuspendRequest reason: {reason}"))
-    })? {
-        wire::SuspendReason::Unspecified => Err(tonic::Status::invalid_argument(
-            "SuspendRequest.reason is required",
-        )),
-        wire::SuspendReason::User => Ok(ShutdownReason::Suspending),
-        wire::SuspendReason::Update => Ok(ShutdownReason::Updating),
-    }
-}
-
 /// Demo sessions are a standing shared secret; bound how long one can live.
 const DEMO_PAIR_MODE_MAX_TTL: std::time::Duration = std::time::Duration::from_secs(90 * 86_400);
 
@@ -2604,7 +2500,7 @@ mod tests {
     use crate::services::agent::{LocalAgentHost, PtyAgentHost, spawn_agent_tonic_server};
     use crate::trust::{TrustEntry, TrustStore};
     use crate::tunnel::TunnelPool;
-    use crate::user_state::{ServerState, ShutdownRequest};
+    use crate::user_state::ServerState;
 
     fn host(id: u128, supported_agent_types: Vec<SupportedAgentType>) -> Host {
         Host {
@@ -2813,11 +2709,10 @@ mod tests {
         let host_id = Uuid::from_u128(1);
         let host = PtyAgentHost::new(host_id);
         let agent_service = AgentServiceCtx::new(Some(host.clone()), host_id, false);
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
+
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
             host_id,
-            shutdown_tx,
             None,
             None,
         )));
@@ -2825,24 +2720,6 @@ mod tests {
         (
             client_service_from_parts(agent_service, server_state, routing, tunnels),
             host,
-        )
-    }
-
-    fn client_service_with_admin_shutdown_rx() -> (ClientService, mpsc::Receiver<ShutdownRequest>) {
-        let host_id = Uuid::from_u128(1);
-        let agent_service = AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false);
-        let (shutdown_tx, shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
-        let server_state = Arc::new(RwLock::new(ServerState::new(
-            Config::default(),
-            host_id,
-            shutdown_tx,
-            None,
-            None,
-        )));
-        let (routing, tunnels) = test_routing_and_tunnels(host_id);
-        (
-            client_service_from_parts(agent_service, server_state, routing, tunnels),
-            shutdown_rx,
         )
     }
 
@@ -2856,11 +2733,10 @@ mod tests {
         tunnels: Arc<TunnelPool>,
     ) -> ClientService {
         let host_id = agent_service.host_id();
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
+
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
             host_id,
-            shutdown_tx,
             None,
             None,
         )));
@@ -2900,11 +2776,10 @@ mod tests {
             local_identity.host_id,
             false,
         );
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
+
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
             local_identity.host_id,
-            shutdown_tx,
             None,
             None,
         )));
@@ -5625,11 +5500,10 @@ mod tests {
 
         let agent_service =
             AgentServiceCtx::new(Some(PtyAgentHost::new(local.host_id)), local.host_id, false);
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
+
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
             local.host_id,
-            shutdown_tx,
             None,
             None,
         )));
@@ -5894,60 +5768,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_client_service_handles_server_lifecycle_methods() {
-        let (service, mut shutdown_rx) = client_service_with_admin_shutdown_rx();
-
-        let shutdown_task = tokio::spawn(async move {
-            <ClientService as wire::client_service_server::ClientService>::shutdown(
-                &service,
-                tonic::Request::new(wire::ShutdownRequest {}),
-            )
-            .await
-            .unwrap()
-            .into_inner()
-        });
-        let Some(ShutdownRequest::Shutdown { reply }) = shutdown_rx.recv().await else {
-            panic!("expected shutdown request");
-        };
-        reply.send(Ok(())).unwrap();
-        shutdown_task.await.unwrap();
-
-        let (service, mut shutdown_rx) = client_service_with_admin_shutdown_rx();
-        let suspend_task = tokio::spawn(async move {
-            <ClientService as wire::client_service_server::ClientService>::suspend(
-                &service,
-                tonic::Request::new(wire::SuspendRequest {
-                    reason: wire::SuspendReason::User as i32,
-                }),
-            )
-            .await
-            .unwrap()
-            .into_inner()
-        });
-        let Some(ShutdownRequest::Suspend { reason, reply }) = shutdown_rx.recv().await else {
-            panic!("expected suspend request");
-        };
-        assert_eq!(reason, ShutdownReason::Suspending);
-        reply.send(Ok(4)).unwrap();
-        let response = suspend_task.await.unwrap();
-        assert_eq!(response.suspended_count, 4);
-
-        let (service, _shutdown_rx) = client_service_with_admin_shutdown_rx();
-        let missing_reason =
-            <ClientService as wire::client_service_server::ClientService>::suspend(
-                &service,
-                tonic::Request::new(wire::SuspendRequest {
-                    reason: wire::SuspendReason::Unspecified as i32,
-                }),
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(missing_reason.code(), tonic::Code::InvalidArgument);
-        assert!(missing_reason.message().contains("reason is required"));
-    }
-
-    #[tokio::test]
-    async fn tonic_client_service_resume_keeps_failed_suspended_agents_on_disk() {
+    async fn local_host_resume_keeps_failed_suspended_agents_on_disk() {
         let temp = TempDir::new().unwrap();
         let state_path = temp.path().join("state.yaml");
         let config = Config {
@@ -5957,14 +5778,8 @@ mod tests {
 
         let host_id = Uuid::from_u128(1);
         let agent_service = AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false);
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
-        let server_state = Arc::new(RwLock::new(ServerState::new(
-            config,
-            host_id,
-            shutdown_tx,
-            None,
-            None,
-        )));
+
+        let server_state = Arc::new(RwLock::new(ServerState::new(config, host_id, None, None)));
         let (routing, tunnels) = test_routing_and_tunnels(host_id);
         let service = client_service_from_parts(agent_service, server_state, routing, tunnels);
         let suspended = crate::suspend::SuspendedAgent::TestAgent {
@@ -5985,16 +5800,18 @@ mod tests {
         )
         .unwrap();
 
-        let response = <ClientService as wire::client_service_server::ClientService>::resume(
-            &service,
-            tonic::Request::new(wire::ResumeRequest {}),
-        )
-        .await
-        .unwrap()
-        .into_inner();
-
-        assert_eq!(response.resumed_count, 0);
-        assert_eq!(response.failed_count, 1);
+        let (resumed_count, failed_count) = service
+            .local_agents
+            .host()
+            .unwrap()
+            .resume(
+                state_path.clone(),
+                &crate::installation::OperationGate::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed_count, 0);
+        assert_eq!(failed_count, 1);
         assert_eq!(
             crate::suspend::load_suspended(&state_path)
                 .unwrap()

@@ -64,8 +64,7 @@ pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
     AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, HostEventStream,
-    PairingSecret, PairingStart, PeerEntry, PeerReachability, ResumeSummary, SessionStream,
-    SuspendSummary,
+    PairingSecret, PairingStart, PeerEntry, PeerReachability, SessionStream,
 };
 pub use config::{
     ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey, OpenMode,

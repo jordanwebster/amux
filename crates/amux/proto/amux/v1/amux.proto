@@ -858,9 +858,6 @@ service ClientService {
   rpc Diff(ClientDiffRequest) returns (DiffResponse);
 
   rpc Debug(DebugRequest) returns (DebugResponse);
-  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
-  rpc Suspend(SuspendRequest) returns (SuspendResponse);
-  rpc Resume(ResumeRequest) returns (ResumeResponse);
 
   rpc HandleHook(HandleHookRequest) returns (HandleHookResponse);
 }
@@ -1076,11 +1073,7 @@ message DebugResponse {
   string dump = 1;
 }
 
-message ShutdownRequest {}
 message ShutdownResponse {}
-message SuspendRequest {
-  SuspendReason reason = 1;
-}
 
 enum SuspendReason {
   SUSPEND_REASON_UNSPECIFIED = 0;
@@ -1088,14 +1081,6 @@ enum SuspendReason {
   SUSPEND_REASON_UPDATE = 2;
 }
 
-message SuspendResponse {
-  uint64 suspended_count = 1;
-}
-message ResumeRequest {}
-message ResumeResponse {
-  uint64 resumed_count = 1;
-  uint64 failed_count = 2;
-}
 message StartPairingRequest {
   enum Mode {
     MODE_UNSPECIFIED = 0;

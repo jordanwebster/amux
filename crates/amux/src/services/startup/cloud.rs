@@ -867,11 +867,10 @@ mod tests {
             ..Config::default()
         };
         let host_id = Uuid::new_v4();
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+
         let state = Arc::new(RwLock::new(ServerState::new(
             config.clone(),
             host_id,
-            shutdown_tx,
             Some(Arc::new(StaticCredentials)),
             None,
         )));

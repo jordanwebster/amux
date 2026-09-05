@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Reserve lifecycle administration for installation owners.**
+Shutdown, suspend and resume leave ClientService and its generated clients.
+Profile sockets and paired tunnels expose no lifecycle or trust administration;
+wire probes require UNIMPLEMENTED and then verify pairing state, trust,
+inventory and a live terminal session survive. Independent front-door callers
+can select separate profiles without retargeting either client. Shutdown and
+suspend fixtures now use owned installations or front-door administration,
+including live provider fixtures with isolated split configuration. The unused
+service-to-server lifecycle channel is removed; standalone server runners wait
+for a process interrupt and embedded guards retain their owned teardown.
+CLI startup tests first stop the installation that init starts, and the
+suspension test verifies its agent returns after resume.
+
 2026-09-05 — **Move trust administration off profile connections.**
 The profile ClientService no longer serves pairing windows, peer inspection,
 pairing commits or revocation. Generated clients and descriptors drop those

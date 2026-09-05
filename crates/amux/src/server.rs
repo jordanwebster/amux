@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{RwLock, oneshot};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -25,13 +25,12 @@ use crate::identity;
 use crate::profile::runtime::{
     Listeners, ProfileRuntime, ProfileRuntimeOptions, start_with_security,
 };
-use crate::protocol::{ProtocolError, wire};
-use crate::services::{CloudLinkService, DeviceRuntimeSecurity, LocalAgentHost};
+use crate::protocol::wire;
+use crate::services::{CloudLinkService, DeviceRuntimeSecurity};
 use crate::subscription::SubscriptionReporter;
 use crate::transport::{TransportError, create_tls_acceptor};
-use crate::tunnel::TunnelPool;
 use crate::update::{UpdateReporter, UpdateStatus};
-use crate::user_state::{ServerState, ShutdownRequest};
+use crate::user_state::ServerState;
 
 /// Maximum time allowed for a TLS handshake to complete.
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -47,32 +46,6 @@ type BuilderParts = (
     Option<Arc<dyn UpdateReporter>>,
     Option<Arc<dyn SubscriptionReporter>>,
 );
-
-enum PendingShutdownReply {
-    Shutdown {
-        reply: oneshot::Sender<std::result::Result<(), ProtocolError>>,
-    },
-    Suspend {
-        reply: oneshot::Sender<std::result::Result<u64, ProtocolError>>,
-        suspended_count: u64,
-    },
-}
-
-impl PendingShutdownReply {
-    fn send_success(self) {
-        match self {
-            Self::Shutdown { reply } => {
-                let _ = reply.send(Ok(()));
-            }
-            Self::Suspend {
-                reply,
-                suspended_count,
-            } => {
-                let _ = reply.send(Ok(suspended_count));
-            }
-        }
-    }
-}
 
 /// Reason for server shutdown notification.
 pub(crate) const SHUTDOWN_REASON_METADATA_KEY: &str = "amux-shutdown-reason";
@@ -148,7 +121,6 @@ pub enum ServerError {
 
 pub struct Server {
     state: Arc<RwLock<ServerState>>,
-    shutdown_rx: Option<mpsc::Receiver<ShutdownRequest>>,
     mode: ServerMode,
 }
 
@@ -254,16 +226,14 @@ impl Server {
                 },
             )
         };
-        let (shutdown_tx, shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
+
         Ok(Self {
             state: Arc::new(RwLock::new(ServerState::new(
                 config,
                 host_id,
-                shutdown_tx,
                 credentials,
                 update_reporter,
             ))),
-            shutdown_rx: Some(shutdown_rx),
             mode,
         })
     }
@@ -332,7 +302,7 @@ impl Server {
                 Listeners::Sockets,
             );
             let security = self.take_device_runtime_security();
-            let mut runtime = start_with_security(options, security)
+            let runtime = start_with_security(options, security)
                 .await
                 .map_err(|error| ServerError::State(error.to_string()))?;
             if has_cloud_credentials {
@@ -342,40 +312,8 @@ impl Server {
                     .map_err(|error| ServerError::State(error.to_string()))?;
             }
 
-            let mut shutdown_rx = runtime.take_shutdown_receiver();
-            let (reason, pending_reply) = loop {
-                let Some(req) = shutdown_rx.recv().await else {
-                    tracing::warn!("shutdown request channel closed before shutdown");
-                    return Ok(());
-                };
-                match req {
-                    ShutdownRequest::Shutdown { reply } => {
-                        break (
-                            ShutdownReason::UserRequested,
-                            PendingShutdownReply::Shutdown { reply },
-                        );
-                    }
-                    ShutdownRequest::Suspend { reason, reply } => {
-                        match runtime.prepare_suspend().await {
-                            Ok(suspended_count) => {
-                                break (
-                                    reason,
-                                    PendingShutdownReply::Suspend {
-                                        reply,
-                                        suspended_count,
-                                    },
-                                );
-                            }
-                            Err(error) => {
-                                let _ = reply.send(Err(error));
-                            }
-                        }
-                    }
-                }
-            };
-            runtime.quiesce(reason).await;
-            pending_reply.send_success();
-            runtime.finish_stop().await;
+            tokio::signal::ctrl_c().await?;
+            runtime.stop(ShutdownReason::UserRequested).await;
             tracing::info!("server exiting");
             return Ok(());
         }
@@ -426,26 +364,12 @@ impl Server {
         let cloud_routing_task =
             cloud_routing.serve_on_tls_tcp_listener(listener, tls_acceptor, TLS_HANDSHAKE_TIMEOUT);
 
-        let mut shutdown_rx = self.shutdown_rx.take().expect("run() called twice");
-        let state_path = {
-            let state = self.state.read().await;
-            state.config.state_path.clone()
-        };
-
-        let pending_shutdown_reply = loop {
-            let Some(req) = shutdown_rx.recv().await else {
-                tracing::warn!("shutdown request channel closed before shutdown");
-                return Ok(());
-            };
-            if let Some(reply) =
-                process_shutdown_request(req, None, &state_path, None, Some(&cloud_routing)).await
-            {
-                break reply;
-            }
-        };
-
-        pending_shutdown_reply.send_success();
-
+        tokio::signal::ctrl_c().await?;
+        cloud_routing
+            .send_link_close_to_all(link_close_reason_for_shutdown(
+                ShutdownReason::UserRequested,
+            ))
+            .await;
         tokio::time::sleep(SERVER_LINK_CLOSE_FLUSH_TIMEOUT).await;
         cloud_routing_task.abort();
         tracing::info!("server exiting");
@@ -534,49 +458,13 @@ impl EmbeddedBuilder {
     }
 }
 
-pub(crate) fn spawn_embedded_runtime(mut runtime: ProfileRuntime) -> Client {
+pub(crate) fn spawn_embedded_runtime(runtime: ProfileRuntime) -> Client {
     let client = runtime.client();
-    let mut shutdown_rx = runtime.take_shutdown_receiver();
-    let (stop_tx, mut stop_rx) = oneshot::channel();
+    let (stop_tx, stop_rx) = oneshot::channel();
     let task = tokio::spawn(async move {
-        loop {
-            let req = tokio::select! {
-                _ = &mut stop_rx => {
-                    runtime.stop(ShutdownReason::UserRequested).await;
-                    return;
-                }
-                req = shutdown_rx.recv() => {
-                    let Some(req) = req else {
-                        runtime.stop(ShutdownReason::UserRequested).await;
-                        return;
-                    };
-                    req
-                }
-            };
-            match req {
-                ShutdownRequest::Shutdown { reply } => {
-                    runtime.quiesce(ShutdownReason::UserRequested).await;
-                    let _ = reply.send(Ok(()));
-                    runtime.finish_stop().await;
-                    return;
-                }
-                ShutdownRequest::Suspend { reason, reply } => {
-                    match runtime.prepare_suspend().await {
-                        Ok(suspended_count) => {
-                            runtime.quiesce(reason).await;
-                            let _ = reply.send(Ok(suspended_count));
-                            runtime.finish_stop().await;
-                            return;
-                        }
-                        Err(error) => {
-                            let _ = reply.send(Err(error));
-                        }
-                    }
-                }
-            }
-        }
+        let _ = stop_rx.await;
+        runtime.stop(ShutdownReason::UserRequested).await;
     });
-
     let guard = Arc::new(EmbeddedServerGuard::new(stop_tx, task));
     client.with_guard(guard)
 }
@@ -645,72 +533,6 @@ pub(crate) fn spawn_periodic_update_check(
             tokio::time::sleep(interval).await;
         }
     }))
-}
-
-async fn process_shutdown_request(
-    req: ShutdownRequest,
-    host: Option<&Arc<dyn LocalAgentHost>>,
-    state_path: &Path,
-    tunnels: Option<&TunnelPool>,
-    cloud_routing: Option<&CloudLinkService>,
-) -> Option<PendingShutdownReply> {
-    match req {
-        ShutdownRequest::Shutdown { reply } => {
-            if let Some(host) = host {
-                host.notify_shutdown(ShutdownReason::UserRequested).await;
-                host.stop_all().await;
-            }
-            notify_routing_peers(tunnels, cloud_routing, ShutdownReason::UserRequested).await;
-            Some(PendingShutdownReply::Shutdown { reply })
-        }
-        ShutdownRequest::Suspend { reason, reply } => {
-            // No local host (embedded client or cloud relay): nothing to
-            // suspend; just tell routing peers we're going away.
-            let Some(host) = host else {
-                notify_routing_peers(tunnels, cloud_routing, reason).await;
-                return Some(PendingShutdownReply::Suspend {
-                    reply,
-                    suspended_count: 0,
-                });
-            };
-
-            // prepare_suspend owns the save and folds prepare/save failures
-            // into Err; bail before notifying or committing on failure.
-            let suspended_count = match host.prepare_suspend(state_path.to_path_buf()).await {
-                Ok(count) => count,
-                Err(error) => {
-                    let _ = reply.send(Err(error));
-                    return None;
-                }
-            };
-            host.notify_shutdown(reason).await;
-            notify_routing_peers(tunnels, cloud_routing, reason).await;
-            host.commit_suspend().await;
-            Some(PendingShutdownReply::Suspend {
-                reply,
-                suspended_count,
-            })
-        }
-    }
-}
-
-async fn notify_routing_peers(
-    tunnels: Option<&TunnelPool>,
-    cloud_routing: Option<&CloudLinkService>,
-    reason: ShutdownReason,
-) {
-    let link_close_reason = link_close_reason_for_shutdown(reason);
-    if let Some(tunnels) = tunnels {
-        tunnels
-            .link_registry()
-            .send_link_close_to_all(link_close_reason)
-            .await;
-    }
-    if let Some(cloud_routing) = cloud_routing {
-        cloud_routing
-            .send_link_close_to_all(link_close_reason)
-            .await;
-    }
 }
 
 fn link_close_reason_for_shutdown(reason: ShutdownReason) -> wire::pb::LinkCloseReason {

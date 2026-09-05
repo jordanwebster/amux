@@ -5,6 +5,7 @@ use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 
 use amux::installation::{InstallationRoot, ProfileId, ProfileLabel, ProfilePaths, Registry};
@@ -12,7 +13,6 @@ use amux::{
     AgentType, Client, Config, CreateAgentRequest, InstallationConfig, ProfileConfig, Server,
 };
 use serde_json::{Value, json};
-use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 struct Route {
@@ -21,7 +21,8 @@ struct Route {
     config_path: PathBuf,
     config: Config,
     client: Client,
-    server: JoinHandle<()>,
+    installation: Arc<amux::installation::Installation>,
+    front_door: amux::installation::FrontDoorListener,
     agent_id: Uuid,
     host_id: Uuid,
 }
@@ -45,6 +46,7 @@ impl Route {
         let config_path = paths.config_path.unwrap();
         let installation_path = root.join("installation.yaml");
         let installation = InstallationConfig {
+            path: Some(installation_path.clone()),
             root: root.clone(),
             front_door_socket: root.join("amux.sock"),
             host_name: name.to_string(),
@@ -76,10 +78,15 @@ impl Route {
         };
         std::fs::write(&config_path, serde_yaml::to_string(&profile).unwrap()).unwrap();
 
-        let server_config = config.clone();
-        let server = tokio::spawn(async move {
-            Server::builder().config(server_config).run().await.unwrap();
-        });
+        let front_path = installation.front_door_socket.clone();
+        let owner = Arc::new(
+            amux::installation::Installation::from_config(installation)
+                .await
+                .unwrap(),
+        );
+        let front_door = amux::installation::FrontDoor::new(owner.clone(), Some(front_path))
+            .listen()
+            .unwrap();
         let client = wait_for_client(&config).await;
         let host_id = client
             .list_hosts()
@@ -113,7 +120,8 @@ impl Route {
             config_path,
             config,
             client,
-            server,
+            installation: owner,
+            front_door,
             agent_id,
             host_id,
         }
@@ -157,11 +165,12 @@ impl Route {
     }
 
     async fn shutdown(self) {
-        self.client.shutdown().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), self.server)
-            .await
-            .expect("daemon shutdown timed out")
-            .unwrap();
+        self.front_door.stop().await;
+        Arc::try_unwrap(self.installation)
+            .ok()
+            .expect("front door released its owner")
+            .shutdown(amux::ShutdownReason::UserRequested)
+            .await;
     }
 }
 
@@ -217,7 +226,7 @@ fn run_rejected_route(executable: &Path, config: &Path, socket: &Path) -> Output
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn generated_absolute_mcp_routes_are_isolated_and_fail_closed() {
+async fn mcp_route_isolation_uses_absolute_routes_and_fails_closed() {
     let temporary = tempfile::Builder::new()
         .prefix("mcp")
         .tempdir_in("/tmp")

@@ -42,7 +42,7 @@ impl Scratch {
     pub fn create(out: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(&out)?;
         let temp = tempfile::Builder::new()
-            .prefix("amux-codex-capture-")
+            .prefix("ac-")
             .tempdir_in("/tmp")
             .context("create Codex live scratch directory")?;
         let root = temp
@@ -64,17 +64,7 @@ impl Scratch {
 
         let codex_home = root.join("codex-home");
         seed_codex_auth(&codex_home)?;
-        let config = Config {
-            host_name: "codex-capture".into(),
-            socket_path: root.join("sock/amux.sock"),
-            state_path: root.join("state/state.yaml"),
-            data_dir: root.join("data/amux"),
-
-            prevent_idle_sleep: Some(false),
-            ..Config::default()
-        };
-        let config_path = root.join("config/amux.yaml");
-        std::fs::write(&config_path, serde_yaml::to_string(&config)?)?;
+        let (config, config_path) = crate::live_installation::configure(&root, "codex-capture")?;
         let project = root.join("project");
         let project_key = serde_json::to_string(&project.display().to_string())?;
         std::fs::write(
@@ -186,6 +176,7 @@ impl Harness {
     }
 
     pub async fn stop_for_suspend(&mut self) -> Result<()> {
+        crate::live_installation::shutdown(&self.scratch.root).await?;
         let mut daemon = self.daemon.take().expect("daemon is running");
         daemon.wait_for_exit().await
     }
@@ -203,7 +194,7 @@ impl Harness {
             kill_capture_app_server(&self.scratch).ok();
             return Ok(());
         };
-        let _ = daemon.client.shutdown().await;
+        crate::live_installation::shutdown(&self.scratch.root).await?;
         let wait = daemon.wait_for_exit().await;
         kill_capture_app_server(&self.scratch).ok();
         wait

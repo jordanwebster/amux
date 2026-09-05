@@ -85,12 +85,9 @@ async fn a_long_lived_session_survives_unrelated_routing_churn() {
     session.expect_output("after-rejoin").await;
 }
 
-/// A paired peer has full runtime authority: the laptop invokes the desktop's
-/// `Shutdown` over the route — a disruptive op no local-admin gate blocks for
-/// a trusted peer — and the desktop goes down, unreachable and offline to the
-/// laptop afterwards.
+/// Paired peers can drive sessions while lifecycle administration stays with the owner.
 #[tokio::test]
-async fn a_paired_peer_can_shut_the_daemon_down() {
+async fn a_paired_peer_cannot_shut_down_or_suspend_the_daemon() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
@@ -98,48 +95,9 @@ async fn a_paired_peer_can_shut_the_daemon_down() {
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
-
-    laptop.can_call(&desktop).await;
-
-    desktop.shutdown_via(&laptop).await;
-}
-
-/// A paired peer can use agent calls, but trust administration is absent
-/// from its gRPC service. The installation owner still administers trust.
-#[tokio::test]
-async fn trust_administration_is_absent_from_profile_sockets_and_peer_tunnels() {
-    let net = TestNet::builder()
-        .installation("desktop")
-        .persistent()
-        .profile("work")
-        .daemon("laptop")
-        .paired("laptop", "desktop/work", Via::Tcp)
-        .start()
-        .await;
-    let desktop = net.installation("desktop").profile("work");
-    let laptop = net.daemon("laptop");
-
-    desktop.start_pairing().await;
-    let agent = desktop.spawn_echo_agent("worker").await;
-    laptop.can_call(&desktop).await;
-    desktop.rejects_remote_trust_admin_from(&laptop).await;
-    desktop
-        .rejects_trust_admin_on_socket(desktop.paths().socket_path)
-        .await;
-    desktop.pair_mode_active().await;
-    desktop.trusts(&laptop).await;
-    desktop.allows_owner_trust_admin().await;
-    assert!(
-        desktop
-            .socket_client()
-            .await
-            .list_agents()
-            .await
-            .unwrap()
-            .iter()
-            .any(|row| row.id == agent.id)
-    );
+    desktop.spawn_echo_agent("worker").await;
     let mut session = laptop.attach(&desktop, "worker").await;
-    session.send("still-serving").await;
-    session.expect_output("still-serving").await;
+    desktop.rejects_remote_admin_from(&laptop).await;
+    session.send("still-running").await;
+    session.expect_output("still-running").await;
 }

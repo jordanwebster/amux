@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 use chrono::{DateTime, TimeDelta, Utc};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 use tonic::transport::{Channel, Endpoint};
 
 use super::NetInner;
@@ -92,7 +91,6 @@ fn sever_registry(registry: &TrackedTcpConnections) {
 
 pub(crate) struct DaemonRuntime {
     profile: Option<ProfileRuntime>,
-    shutdown_task: Option<JoinHandle<()>>,
 }
 
 impl std::ops::Deref for DaemonRuntime {
@@ -141,9 +139,6 @@ fn cloud_channel(addr: SocketAddr) -> Channel {
 
 impl Drop for DaemonRuntime {
     fn drop(&mut self) {
-        if let Some(task) = &self.shutdown_task {
-            task.abort();
-        }
         if let Some(profile) = self.profile.take() {
             tokio::spawn(profile.stop(ShutdownReason::UserRequested));
         }
@@ -210,57 +205,12 @@ pub(crate) async fn start_daemon_runtime(
             )
         }),
     };
-    let mut profile = runtime::start(options)
+    let profile = runtime::start(options)
         .await
         .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
-    let shutdown_task = Some(spawn_shutdown_handler(
-        Arc::downgrade(inner),
-        profile.take_shutdown_receiver(),
-    ));
     DaemonRuntime {
         profile: Some(profile),
-        shutdown_task,
     }
-}
-
-/// Drives the daemon's `ClientService.Shutdown`/`Suspend` requests: when a
-/// paired peer invokes one over the route, the handler replies success and
-/// stops the production runtime, so
-/// the network observes it going down — the in-process stand-in for a process
-/// exit. Suspend is treated like Shutdown for the purposes of the network
-/// observable (it parks agents and ends the server in production too).
-fn spawn_shutdown_handler(
-    inner: Weak<DaemonInner>,
-    mut shutdown_rx: tokio::sync::mpsc::Receiver<crate::user_state::ShutdownRequest>,
-) -> JoinHandle<()> {
-    use crate::user_state::ShutdownRequest;
-    tokio::spawn(async move {
-        // One disruptive request is enough to take the daemon down; ignore any
-        // further requests (the handler is aborted with the runtime anyway).
-        let Some(request) = shutdown_rx.recv().await else {
-            return;
-        };
-        match request {
-            ShutdownRequest::Shutdown { reply } => {
-                let _ = reply.send(Ok(()));
-            }
-            ShutdownRequest::Suspend { reply, .. } => {
-                let _ = reply.send(Ok(0));
-            }
-        }
-        let Some(inner) = inner.upgrade() else {
-            return;
-        };
-        // Stop off this task: setting the runtime to `None` drops the runtime
-        // (which aborts this very handler), so the teardown must run detached
-        // or it would cancel itself mid-flight.
-        tokio::spawn(async move {
-            let runtime = inner.runtime.lock().await.take();
-            if let Some(runtime) = runtime {
-                runtime.stop().await;
-            }
-        });
-    })
 }
 
 /// Waits (bounded by [`RESTART_DIRECT_LINK_GRACE`]) for every peer with a

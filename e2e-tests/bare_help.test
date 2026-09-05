@@ -23,6 +23,9 @@ Commands:
   list      List running agent sessions, folding child agents into their parent
   keymap    Manage Claude PTY keymaps
   profiles  List profiles through the installation front door
+  login     Connect a cloud account, optionally to an explicit profile
+  logout    Forget a profile's credential, preserving its device and local agents
+  profile   Manage profiles in this installation (select with --profile)
   server    Manage the amux server lifecycle
   init      Initialize local device preferences
   pair      Pair this device with another amux daemon
@@ -33,6 +36,7 @@ Commands:
   help      Print this message or the help of the given subcommand(s)
 
 Options:
-      --config <CONFIG>  Path to a profile config file (YAML). Also read from `AMUX_CONFIG`, so managed Claude hooks and daemons spawned by a wrapper find the same instance without adding a config flag to their command [env: AMUX_CONFIG=]
-  -h, --help             Print help
-  -V, --version          Print version
+      --config <CONFIG>    Path to a profile config file (YAML). Also read from `AMUX_CONFIG`, so managed Claude hooks and daemons spawned by a wrapper find the same instance without adding a config flag to their command [env: AMUX_CONFIG=]
+      --profile <PROFILE>  Select a profile by label or UUID
+  -h, --help               Print help
+  -V, --version            Print version

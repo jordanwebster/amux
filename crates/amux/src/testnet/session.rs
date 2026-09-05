@@ -47,7 +47,7 @@ impl Daemon {
     }
 
     /// Spawns a local echo (test) agent named `name` through this daemon's
-    /// local-admin `ClientService`, exactly as the CLI would. The agent
+    /// profile `ClientService`, exactly as the CLI would. The agent
     /// echoes session input back as output. Returns once the agent is in the
     /// daemon's own inventory.
     pub async fn spawn_echo_agent(&self, name: &str) -> Agent {
@@ -1021,39 +1021,20 @@ impl Daemon {
         }
     }
 
-    /// Runtime authority: `peer` (a paired remote) drives this daemon's
-    /// `ClientService.Shutdown` over the route — a disruptive op reserved for
-    /// fully-trusted callers, unlike the local-admin RPCs of [`Daemon`]'s
-    /// pairing surface. The routed call is honored (not permission-denied),
-    /// and the daemon goes down: this waits until `peer` can no longer see or
-    /// reach it.
-    ///
-    /// The shutdown tears down the very link the call rode, so the RPC itself
-    /// may surface a transport error; the observable contract is the daemon
-    /// going offline, which this asserts.
-    pub async fn shutdown_via(&self, peer: &Daemon) {
-        let client = peer.routed_admin_client_to(self).await;
-        // The reply races the socket teardown the shutdown triggers, so a
-        // transport error here is expected and not a failure.
-        let _ = client.shutdown().await;
-        peer.cannot_call(self).await;
-        peer.cannot_see(self).await;
-    }
-
-    /// Pairing and trust administration are absent from a peer's ClientService.
-    pub async fn rejects_remote_trust_admin_from(&self, peer: &Daemon) {
+    /// Lifecycle, pairing and trust administration are absent from a peer's ClientService.
+    pub async fn rejects_remote_admin_from(&self, peer: &Daemon) {
         let parts = peer.try_parts().await.expect("peer is running");
         let channel = parts
             .connections
             .channel_to(self.host_id())
             .await
             .expect("peer route");
-        assert_trust_admin_absent(channel, "peer tunnel").await;
+        assert_admin_absent(channel, "peer tunnel").await;
         peer.can_call(self).await;
     }
 
-    /// The same trust methods are absent from the plain profile socket.
-    pub async fn rejects_trust_admin_on_socket(&self, socket_path: std::path::PathBuf) {
+    /// The same administration methods are absent from the plain profile socket.
+    pub async fn rejects_admin_on_socket(&self, socket_path: std::path::PathBuf) {
         let config = crate::Config {
             socket_path,
             ..Default::default()
@@ -1061,7 +1042,7 @@ impl Daemon {
         let channel = crate::client::connect_existing_client_service(&config)
             .await
             .expect("profile socket");
-        assert_trust_admin_absent(channel, "profile socket").await;
+        assert_admin_absent(channel, "profile socket").await;
     }
 
     /// The installation owner can inspect trust in process.
@@ -1313,9 +1294,22 @@ impl EchoSession {
     }
 }
 
-async fn assert_trust_admin_absent(channel: tonic::transport::Channel, boundary: &str) {
-    for service in ["ClientService", "ProfileService"] {
+async fn assert_admin_absent(channel: tonic::transport::Channel, boundary: &str) {
+    for service in ["ClientService", "ProfileService", "InstallationService"] {
         for method in [
+            "Shutdown",
+            "Suspend",
+            "Resume",
+            "SuspendAll",
+            "ResumeAll",
+            "CreateProfile",
+            "BindProfile",
+            "LogoutProfile",
+            "PauseProfile",
+            "ResumeProfile",
+            "RenameProfile",
+            "DeleteProfile",
+            "ListPairingCandidates",
             "StartPairing",
             "GetPairingStatus",
             "CancelPairing",

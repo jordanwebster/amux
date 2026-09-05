@@ -247,12 +247,15 @@ mod tests {
             println!("Runtime started: update-required=99.0.0, update-dismissed=99.0.0, subscription-required absent");
 
             reporter.report_subscription_required(true);
-            client.shutdown().await.unwrap();
+            drop(client);
+            while reporter.subscription_required() {
+                tokio::task::yield_now().await;
+            }
 
             assert_eq!(reporter.read_update_required().as_deref(), Some("99.0.0"));
             assert!(reporter.is_update_dismissed("99.0.0"));
             assert!(!reporter.subscription_required());
-            println!("Shutdown acknowledged: update-required=99.0.0, update-dismissed=99.0.0, subscription-required absent");
+            println!("Embedded owner stopped: update-required=99.0.0, update-dismissed=99.0.0, subscription-required absent");
         })
         .await
         .expect("runtime marker test timed out");

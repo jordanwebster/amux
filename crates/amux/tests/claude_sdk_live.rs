@@ -16,6 +16,11 @@
 //! disabled for the live child process.
 
 #[cfg(unix)]
+#[allow(dead_code)]
+#[path = "support/live_installation.rs"]
+mod live_installation;
+
+#[cfg(unix)]
 mod claude_sdk_live {
     pub mod args;
 }
@@ -118,7 +123,7 @@ fn main() -> anyhow::Result<()> {
         fn create(out: PathBuf) -> Result<Self> {
             std::fs::create_dir_all(&out)?;
             let temp = tempfile::Builder::new()
-                .prefix("amux-claude-sdk-live-")
+                .prefix("as-")
                 .tempdir_in("/tmp")
                 .context("create Claude SDK live scratch directory")?;
             let root = temp
@@ -129,16 +134,8 @@ fn main() -> anyhow::Result<()> {
                 std::fs::create_dir_all(root.join(dir))?;
             }
             std::fs::set_permissions(root.join("sock"), std::fs::Permissions::from_mode(0o700))?;
-            let config = Config {
-                host_name: "claude-sdk-live".into(),
-                socket_path: root.join("sock/amux.sock"),
-                state_path: root.join("state/state.yaml"),
-
-                prevent_idle_sleep: Some(false),
-                ..Config::default()
-            };
-            let config_path = root.join("config/amux.yaml");
-            std::fs::write(&config_path, serde_yaml::to_string(&config)?)?;
+            let (config, config_path) =
+                crate::live_installation::configure(&root, "claude-sdk-live")?;
             let project = root.join("project");
             std::fs::write(
                 project.join("README.md"),
@@ -206,6 +203,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         async fn stop_for_suspend(&mut self) -> Result<()> {
+            crate::live_installation::shutdown(&self.scratch.root).await?;
             let mut daemon = self.daemon.take().expect("daemon is running");
             daemon.wait_for_exit().await
         }
@@ -222,7 +220,7 @@ fn main() -> anyhow::Result<()> {
             let Some(mut daemon) = self.daemon.take() else {
                 return Ok(());
             };
-            let _ = daemon.client.shutdown().await;
+            crate::live_installation::shutdown(&self.scratch.root).await?;
             daemon.wait_for_exit().await
         }
 
@@ -664,17 +662,17 @@ fn main() -> anyhow::Result<()> {
 
         capture.drain_idle().await?;
         let mut all_rows = capture.into_rows();
-        let summary = harness.client().suspend().await?;
-        if summary.suspended_count != 1 {
+        let suspended_count = crate::live_installation::suspend(&harness.scratch.root).await?;
+        if suspended_count != 1 {
             bail!(
                 "expected exactly the Claude SDK agent to suspend, got {}",
-                summary.suspended_count
+                suspended_count
             );
         }
         harness.stop_for_suspend().await?;
         harness.restart().await?;
-        let resume = harness.client().resume().await?;
-        if resume.resumed_count != 1 || resume.failed_count != 0 {
+        let resume = crate::live_installation::resume(&harness.scratch.root).await?;
+        if resume.0 != 1 || resume.1 != 0 {
             bail!("resume summary was not 1/0: {resume:?}");
         }
 

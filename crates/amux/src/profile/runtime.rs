@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, RwLock, mpsc, watch};
+use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 
 use super::status::{Observed, RuntimeStatus};
@@ -16,7 +16,7 @@ use crate::auth::CredentialProvider;
 use crate::client::Client;
 use crate::config::{Config, ConfigError, Keybinds, UiSettings};
 use crate::identity;
-use crate::protocol::{ProtocolError, wire};
+use crate::protocol::wire;
 use crate::server::ShutdownReason;
 use crate::services::{
     CloudConnector, DeviceRuntimeSecurity, LocalAgentHost, StartedUserServices,
@@ -25,7 +25,7 @@ use crate::services::{
 use crate::subscription::SubscriptionReporter;
 use crate::transport::InProcessConnection;
 use crate::update::UpdateReporter;
-use crate::user_state::{ServerState, ShutdownRequest, new_local_agent_host};
+use crate::user_state::{ServerState, new_local_agent_host};
 
 const LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
 
@@ -167,7 +167,6 @@ pub(crate) struct ProfileRuntime {
     pub(crate) host_id: crate::HostId,
     paths: ProfilePaths,
     state: Arc<RwLock<ServerState>>,
-    shutdown_rx: Option<mpsc::Receiver<ShutdownRequest>>,
     pub(crate) agent_host: Option<Arc<dyn LocalAgentHost>>,
     pub(crate) services: StartedUserServices,
     #[cfg(testnet)]
@@ -184,7 +183,6 @@ pub(crate) struct ProfileRuntime {
     background_tasks: Vec<JoinHandle<()>>,
     cloud_connector: Mutex<Option<CloudConnector>>,
     status: RuntimeStatus,
-    prepared_suspend: bool,
     #[cfg(unix)]
     unix_accept_task: Option<JoinHandle<()>>,
     #[cfg(unix)]
@@ -263,12 +261,11 @@ async fn build(
     service_config.validate()?;
 
     let mut bound = BoundListeners::bind(&options).await?;
-    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+
     let host_id = security.host_id();
     let state = Arc::new(RwLock::new(ServerState::new(
         service_config.clone(),
         host_id,
-        shutdown_tx,
         options.credentials.clone(),
         options.shared.update_reporter.clone(),
     )));
@@ -356,7 +353,6 @@ async fn build(
         host_id,
         paths: options.paths,
         state,
-        shutdown_rx: Some(shutdown_rx),
         agent_host,
         services,
         #[cfg(testnet)]
@@ -373,7 +369,6 @@ async fn build(
         background_tasks,
         cloud_connector: Mutex::new(None),
         status,
-        prepared_suspend: false,
         #[cfg(unix)]
         unix_accept_task,
         #[cfg(unix)]
@@ -531,11 +526,7 @@ impl ProfileRuntime {
             .send_link_close_to_all(link_close_reason(reason))
             .await;
         if let Some(host) = &self.agent_host {
-            if self.prepared_suspend {
-                host.commit_suspend().await;
-            } else {
-                host.stop_all().await;
-            }
+            host.stop_all().await;
         }
     }
 
@@ -563,22 +554,6 @@ impl ProfileRuntime {
         tokio::task::yield_now().await;
         stop_tasks(std::mem::take(&mut self.background_tasks)).await;
         self.services.stop_tasks().await;
-    }
-
-    pub(crate) fn take_shutdown_receiver(&mut self) -> mpsc::Receiver<ShutdownRequest> {
-        self.shutdown_rx
-            .take()
-            .expect("profile runtime shutdown receiver taken twice")
-    }
-
-    pub(crate) async fn prepare_suspend(&mut self) -> Result<u64, ProtocolError> {
-        let Some(host) = &self.agent_host else {
-            self.prepared_suspend = true;
-            return Ok(0);
-        };
-        let count = host.prepare_suspend(self.paths.state_path.clone()).await?;
-        self.prepared_suspend = true;
-        Ok(count)
     }
 
     #[cfg(test)]
@@ -715,6 +690,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::ProtocolError;
 
     fn options(root: &std::path::Path, listeners: Listeners) -> ProfileRuntimeOptions {
         let data_dir = root.join("profile-data");
@@ -893,11 +869,10 @@ mod tests {
             user: uuid::Uuid::new_v4(),
             rejection: std::sync::Mutex::new(None),
         });
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+
         let state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
             uuid::Uuid::new_v4(),
-            shutdown_tx,
             None,
             None,
         )));
@@ -1029,60 +1004,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn profile_runtime_daemon_shutdown_reply_releases_socket() {
-        assert_daemon_reply_releases_socket(false).await;
-    }
-
-    #[tokio::test]
-    async fn profile_runtime_daemon_suspend_reply_releases_socket() {
-        assert_daemon_reply_releases_socket(true).await;
-    }
-
-    async fn assert_daemon_reply_releases_socket(suspend: bool) {
+    async fn profile_runtime_owned_stop_releases_socket() {
         tokio::time::timeout(Duration::from_secs(5), async {
             let root = tempdir().unwrap();
-            let config = options(root.path(), Listeners::Sockets).service_config();
-            let socket_path = config.socket_path.clone();
-            let server_config = config.clone();
-            let server = tokio::spawn(async move {
-                crate::server::Server::builder()
-                    .config(server_config)
-                    .run()
-                    .await
-                    .unwrap();
-            });
-            let channel = loop {
-                match crate::client::connect_existing_client_service(&config).await {
-                    Ok(channel) => break channel,
-                    Err(_) => {
-                        assert!(
-                            !server.is_finished(),
-                            "daemon exited before serving clients"
-                        );
-                        tokio::task::yield_now().await;
-                    }
-                }
-            };
+            let opts = options(root.path(), Listeners::Sockets);
+            let config = opts.service_config();
+            let runtime = start(opts).await.unwrap();
+            let channel = crate::client::connect_existing_client_service(&config)
+                .await
+                .unwrap();
             let client = Client::from_client_service_channel(channel, None);
-            if suspend {
-                client.suspend().await.unwrap();
-            } else {
-                client.shutdown().await.unwrap();
-            }
-
-            assert!(UnixStream::connect(&socket_path).is_err());
-            assert!(!socket_path.exists());
-            let replacement = crate::transport::bind_unix_listener(&socket_path).unwrap();
-            println!(
-                "{} reply received: reconnect fails and a fresh socket bind succeeds",
-                if suspend { "Suspend" } else { "Shutdown" }
-            );
-            server.await.unwrap();
-            UnixStream::connect(&socket_path).unwrap();
+            client.list_agents().await.unwrap();
+            runtime.stop(ShutdownReason::UserRequested).await;
+            assert!(client.list_agents().await.is_err());
+            assert!(UnixStream::connect(&config.socket_path).is_err());
+            assert!(!config.socket_path.exists());
+            let replacement = crate::transport::bind_unix_listener(&config.socket_path).unwrap();
+            UnixStream::connect(&config.socket_path).unwrap();
+            println!("Owned stop completed: client closed and a fresh socket bind succeeds");
             drop(replacement);
         })
         .await
-        .expect("daemon shutdown timed out");
+        .expect("owned stop timed out");
     }
 
     #[tokio::test]

@@ -1,6 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use amux::installation::{
+    CredentialSource, Installation, InstallationOptions, InstallationRoot, InstallationSettings,
+    Listeners, OperationId, ProfilePaths, SuspendReason,
+};
 use amux::{
     AccessToken, AuthError, Config, CredentialProvider, Server, UpdateReporter, UpdateStatus,
 };
@@ -56,7 +60,7 @@ async fn embedded_server_opens_client_service_client() {
 #[cfg(unix)]
 #[tokio::test]
 async fn daemon_open_uses_local_client_service() {
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
@@ -64,11 +68,11 @@ async fn daemon_open_uses_local_client_service() {
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
-    let server_config = config.clone();
-    let server_task = tokio::spawn(async move {
-        Server::builder().config(server_config).run().await.unwrap();
-    });
-
+    let (installation, _) = owned_installation(&config, Listeners::Sockets).await;
+    let config = Config {
+        socket_path: installation.profiles()[0].socket_path.clone().unwrap(),
+        ..config
+    };
     let client = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             match Server::builder()
@@ -87,8 +91,10 @@ async fn daemon_open_uses_local_client_service() {
 
     assert!(!client.owns_embedded_server());
     assert!(client.list_agents().await.unwrap().is_empty());
-    client.shutdown().await.unwrap();
-    server_task.await.unwrap();
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
+    expect_client_closed(&client).await;
 }
 
 #[tokio::test]
@@ -138,7 +144,7 @@ async fn embedded_server_does_not_poll_for_updates() {
     ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
 )]
 async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
@@ -147,12 +153,8 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
         ..Config::default()
     };
 
-    let client = Server::builder()
-        .config(config)
-        .embedded()
-        .open()
-        .await
-        .unwrap();
+    let (installation, id) = owned_installation(&config, Listeners::InProcessOnly).await;
+    let client = installation.client(id).unwrap();
 
     let agent_id = Uuid::new_v4();
     client
@@ -172,7 +174,9 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
         .await
         .unwrap();
 
-    client.shutdown().await.unwrap();
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
     expect_client_closed(&client).await;
 }
 
@@ -183,7 +187,7 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
     ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
 )]
 async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let state_path = dir.path().join("state.yaml");
     let config = Config {
         state_path: state_path.clone(),
@@ -193,12 +197,8 @@ async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
         ..Config::default()
     };
 
-    let client = Server::builder()
-        .config(config)
-        .embedded()
-        .open()
-        .await
-        .unwrap();
+    let (installation, id) = owned_installation(&config, Listeners::InProcessOnly).await;
+    let client = installation.client(id).unwrap();
 
     let agent_id = Uuid::new_v4();
     client
@@ -218,10 +218,17 @@ async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
         .await
         .unwrap();
 
-    let summary = client.suspend().await.unwrap();
-    assert_eq!(summary.suspended_count, 1);
+    let summary = installation
+        .suspend_all(OperationId::new(), SuspendReason::User)
+        .await
+        .unwrap();
+    assert_eq!(summary.profiles[0].agent_ids.len(), 1);
+    let paths = ProfilePaths::for_id(installation.root(), id).unwrap();
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
     expect_client_closed(&client).await;
-    let suspended_path = state_path.with_file_name("suspended.yaml");
+    let suspended_path = paths.state_path.with_file_name("suspended.yaml");
     assert!(
         std::fs::read_to_string(suspended_path)
             .unwrap_or_default()
@@ -397,4 +404,44 @@ async fn daemon_open_does_not_require_credentials() {
             .contains("credentials provider is required"),
         "daemon client attach should not validate server credential providers"
     );
+}
+
+async fn owned_installation(
+    config: &Config,
+    listeners: Listeners,
+) -> (Installation, amux::installation::ProfileId) {
+    let installation = Installation::open(InstallationOptions {
+        root: InstallationRoot::OnDisk(config.state_path.parent().unwrap().join("installation")),
+        settings: InstallationSettings {
+            host_name: config.host_name.clone(),
+            prevent_idle_sleep: Some(false),
+            keybinds: config.keybinds.clone(),
+            ui: config.ui.clone(),
+            keymaps_dir: config.state_path.parent().unwrap().join("keymaps"),
+            minimum_client_versions: Default::default(),
+            update_reporter: None,
+            subscription_reporter: None,
+        },
+        listeners,
+        credentials: CredentialSource::HostProvided(Arc::new(|_| Arc::new(TestCredentials))),
+        identity_http: reqwest::Client::new(),
+    })
+    .await
+    .unwrap();
+    let profile = installation.create(OperationId::new(), None).await.unwrap();
+    (installation, profile.record.id)
+}
+
+fn short_tempdir() -> tempfile::TempDir {
+    #[cfg(unix)]
+    {
+        tempfile::Builder::new()
+            .prefix("ae-")
+            .tempdir_in("/tmp")
+            .unwrap()
+    }
+    #[cfg(not(unix))]
+    {
+        tempdir().unwrap()
+    }
 }

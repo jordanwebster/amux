@@ -978,22 +978,14 @@ mod tests {
     use crate::routing::{Capabilities, Host, Route, SupportedAgentType};
     use crate::transport::in_process_incoming;
     use crate::trust::{Reachability, TrustEntry};
-    use crate::user_state::ShutdownRequest;
     use crate::{HostId, SessionCloseReason, SubscribeSessionEvent};
 
     fn test_state(host_id: Uuid) -> Arc<RwLock<ServerState>> {
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         let config = Config {
             host_name: "local".to_string(),
             ..Config::default()
         };
-        Arc::new(RwLock::new(ServerState::new(
-            config,
-            host_id,
-            shutdown_tx,
-            None,
-            None,
-        )))
+        Arc::new(RwLock::new(ServerState::new(config, host_id, None, None)))
     }
 
     async fn test_started_services() -> StartedUserServices {

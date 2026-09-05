@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 #[cfg(feature = "local-agents")]
@@ -8,24 +7,11 @@ use crate::agents::McpLaunchRoute;
 use crate::auth::CredentialProvider;
 use crate::auth::jwt::JwtValidator;
 use crate::config::Config;
-use crate::protocol::ProtocolError;
-use crate::server::ShutdownReason;
 use crate::services::LocalAgentHost;
 #[cfg(feature = "local-agents")]
 use crate::services::PtyAgentHost;
 use crate::subscription::SubscriptionReporter;
 use crate::update::UpdateReporter;
-
-/// Request from a service handler to shut down or suspend the server.
-pub(crate) enum ShutdownRequest {
-    Shutdown {
-        reply: oneshot::Sender<Result<(), ProtocolError>>,
-    },
-    Suspend {
-        reason: ShutdownReason,
-        reply: oneshot::Sender<Result<u64, ProtocolError>>,
-    },
-}
 
 pub(crate) struct ServerState {
     pub(crate) config: Config,
@@ -36,7 +22,6 @@ pub(crate) struct ServerState {
     pub(crate) is_cloud_server: bool,
     pub(crate) jwt_validator: Option<Arc<JwtValidator>>,
     pub(crate) local_agent_host: Option<Arc<dyn LocalAgentHost>>,
-    pub(crate) shutdown_tx: mpsc::Sender<ShutdownRequest>,
 }
 
 #[cfg(feature = "local-agents")]
@@ -70,7 +55,6 @@ impl ServerState {
     pub(crate) fn new(
         config: Config,
         host_id: Uuid,
-        shutdown_tx: mpsc::Sender<ShutdownRequest>,
         credentials: Option<Arc<dyn CredentialProvider>>,
         update_reporter: Option<Arc<dyn UpdateReporter>>,
     ) -> Self {
@@ -85,7 +69,6 @@ impl ServerState {
             // Device startup injects the host after entering an async runtime;
             // cloud relays and service-level tests intentionally keep `None`.
             local_agent_host: None,
-            shutdown_tx,
         }
     }
 
@@ -113,13 +96,6 @@ impl ServerState {
         self.is_cloud_server
     }
 
-    pub(crate) fn state_path(&self) -> std::path::PathBuf {
-        self.config.state_path.clone()
-    }
-
-    pub(crate) fn shutdown_tx(&self) -> mpsc::Sender<ShutdownRequest> {
-        self.shutdown_tx.clone()
-    }
     pub(crate) fn local_agent_host(&self) -> Option<Arc<dyn LocalAgentHost>> {
         self.local_agent_host.clone()
     }

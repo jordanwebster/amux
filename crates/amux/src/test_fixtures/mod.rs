@@ -14,14 +14,14 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{RwLock, oneshot};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::config::Config;
 use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
 use crate::services::CloudLinkService;
-use crate::user_state::{ServerState, ShutdownRequest};
+use crate::user_state::ServerState;
 
 #[derive(Clone, Debug)]
 pub struct TestAccount {
@@ -488,11 +488,10 @@ impl TestRelay {
             .expect("bind test relay");
         let addr = listener.local_addr().expect("test relay address");
         let authenticator = Arc::new(RelayAuthenticator::default());
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
+
         let state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
             Uuid::new_v4(),
-            shutdown_tx,
             None,
             None,
         )));

@@ -81,21 +81,10 @@ pub enum ClientError {
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SuspendSummary {
-    pub suspended_count: u64,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeleteAgentSummary {
     pub removed_children: Vec<Agent>,
     pub unreachable_children: Vec<Agent>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ResumeSummary {
-    pub resumed_count: u64,
-    pub failed_count: u64,
 }
 
 pub struct SubscribeSessionClient {
@@ -791,63 +780,6 @@ impl Client {
         Ok(AgentEventStream {
             inner: ClientServiceResponseStream { stream: response },
             done: false,
-        })
-    }
-
-    pub async fn shutdown(&self) -> Result<(), ClientError> {
-        self.ensure_open()?;
-        self.inner
-            .lock()
-            .await
-            .shutdown(wire::ShutdownRequest {})
-            .await
-            .map_err(status_to_client_error)?;
-        self.closed.store(true, Ordering::SeqCst);
-        Ok(())
-    }
-
-    pub async fn suspend(&self) -> Result<SuspendSummary, ClientError> {
-        self.suspend_with_reason(wire::SuspendReason::User).await
-    }
-
-    pub async fn suspend_for_update(&self) -> Result<SuspendSummary, ClientError> {
-        self.suspend_with_reason(wire::SuspendReason::Update).await
-    }
-
-    async fn suspend_with_reason(
-        &self,
-        reason: wire::SuspendReason,
-    ) -> Result<SuspendSummary, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .suspend(wire::SuspendRequest {
-                reason: reason as i32,
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        self.closed.store(true, Ordering::SeqCst);
-        Ok(SuspendSummary {
-            suspended_count: response.suspended_count,
-        })
-    }
-
-    pub async fn resume(&self) -> Result<ResumeSummary, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .resume(wire::ResumeRequest {})
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        Ok(ResumeSummary {
-            resumed_count: response.resumed_count,
-            failed_count: response.failed_count,
         })
     }
 
