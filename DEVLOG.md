@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Observe intermediate CI runs and wait for repairs to turn green.**
+The ci-observe recipe checks the branch and clean tree before pushing, then
+records the exact commit's CI state as JSON. Pending runs allow intermediate
+work to continue unless the previous push failed; then observation waits for
+the current commit to succeed or reports its failure or deadline with both run
+records. Missing runs fail after a bounded settle window. Optional JSONL output
+retains observations for later inspection. The blocking ci-gate script is
+unchanged; shared run/job evaluation and CLI tests with stubbed Git and GitHub
+retain its strict final-commit checks without any test contacting a remote.
+
 2026-09-05 — **Document shared session controls and trust APIs.**
 Chat and UI documentation now describe provider model and effort choices,
 typed command drafts, confirmed Claude task lists and queue projections, with

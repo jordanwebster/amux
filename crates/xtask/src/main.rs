@@ -7,9 +7,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match std::env::args().nth(1).as_deref() {
         Some("codegen") => codegen(),
         Some("ci-status") => ci::main(),
+        Some("ci-observe") => ci::observe_main(),
         Some("ios-verify") => ios_verify::run(),
         _ => {
-            eprintln!("usage: xtask <codegen|ci-status [--wait SECS]|ios-verify>");
+            eprintln!(
+                "usage: xtask <codegen|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|ios-verify>"
+            );
             std::process::exit(2);
         }
     }

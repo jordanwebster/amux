@@ -60,6 +60,9 @@ run = 'timeout 3300 cargo run -q -p xtask -- ci-status "$@"'
 [task.ci-gate]
 run = "scripts/ci-gate.sh"
 
+[task.ci-observe]
+run = 'scripts/ci-observe.sh "$@"'
+
 # Regenerates the committed protobuf code (crates/amux/src/protocol/generated)
 # after a proto change. Not a build step: the output is committed, and CI
 # fails when it goes stale.
