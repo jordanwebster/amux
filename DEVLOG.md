@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **One rule decides how you get into an agent, and every key,
+hint and help row now reads it.**
+Which ways into an agent exist was decided in four places that could
+disagree: the fleet's entry keys, the status-line hint, the `?` overlay,
+and `amux attach`. Now a single policy answers it per agent, from the
+agent's kind, its read-only flag and whether it lives on this machine.
+
+Two rules come out of it. A session with no terminal behind it — a
+read-only viewer, or a Claude session driven over a structured protocol —
+has no raw mode at all, so no entry key can hand it to attach, the `o` and
+Ctrl+Enter rows disappear from its help, and its hint reads `enter chat`
+and nothing else. An agent on another machine keeps both ways in but
+defaults to the chat: the chat travels over the connection the fleet
+already holds, while raw attach pipes a terminal across the network, so
+the safe half of the pair leads and `o` still reaches the other one.
+`amux attach` follows the same rule for a remote agent as the fleet does.
+
+The status line now names the ways into the selected row before the rest
+of its hints, dropping them first when the terminal is too narrow to hold
+everything — the fleet goldens are regenerated for that line.
+
 2026-09-05 — **Say which order an elicitation form is in, and stop the
 Claude chat from copying its feed every frame.**
 An MCP server's form is drawn one field per property, and the reference

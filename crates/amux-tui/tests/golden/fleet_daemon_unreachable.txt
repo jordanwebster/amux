@@ -36,5 +36,5 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│ ✗ disconnected         n new  r rename  d delete  q quit  ? help                                                     │
+│ ✗ disconnected         enter raw attach  o chat  n new  r rename  d delete  q quit  ? help                           │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

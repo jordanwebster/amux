@@ -210,8 +210,13 @@ fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
     }
 }
 
-fn attach_opens_chat(kind: &amux::AgentKind) -> bool {
-    matches!(kind, amux::AgentKind::Codex) || !kind.exposes(amux::Protocol::TerminalV1)
+/// The command line's half of the one entry policy the fleet keys use:
+/// a session with no terminal behind it has nothing to pass through,
+/// Codex's own screen is its primary surface, and an agent on another
+/// machine opens the chat rather than piping a terminal across the
+/// network. Everything else raw attaches.
+fn attach_opens_chat(kind: &amux::AgentKind, local: bool) -> bool {
+    !local || matches!(kind, amux::AgentKind::Codex) || !kind.exposes(amux::Protocol::TerminalV1)
 }
 
 /// Attach to an existing agent
@@ -229,11 +234,11 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 
     tracing::info!(agent = %agent.id, "attaching");
 
-    // Codex's primary attach surface is its native structured screen. A kind
-    // without terminal_v1 also opens its structured layer; for Claude/SDK
-    // that is the unsupported placeholder. Kinds that do expose a terminal
-    // keep raw attach here.
-    if attach_opens_chat(&agent.kind) {
+    // Unknown locality reads as local, the way the fleet's entry policy
+    // reads it: the stored identity is missing only before this machine
+    // has one, when every agent it can see is its own.
+    let local = amux::setup::local_host_id(config).is_none_or(|local| local == agent.host_id);
+    if attach_opens_chat(&agent.kind, local) {
         return crate::ui::run_for_agent(config.clone(), agent.id, None).await;
     }
 
@@ -1068,7 +1073,7 @@ mod attach {
     }
 
     #[test]
-    fn sdk_creation_and_existing_attach_open_chat_without_a_terminal() {
+    fn entry_policy_a_session_without_a_terminal_is_created_and_attached_as_chat() {
         let sdk_type = AgentType::Claude {
             driver: amux::ClaudeDriver::Sdk,
         };
@@ -1076,7 +1081,7 @@ mod attach {
             driver: amux::ClaudeDriver::Sdk,
         };
         assert!(!super::agent_type_exposes_terminal(&sdk_type));
-        assert!(super::attach_opens_chat(&sdk_kind));
+        assert!(super::attach_opens_chat(&sdk_kind, true));
 
         let pty_type = AgentType::Claude {
             driver: amux::ClaudeDriver::Pty,
@@ -1085,10 +1090,32 @@ mod attach {
             driver: amux::ClaudeDriver::Pty,
         };
         assert!(super::agent_type_exposes_terminal(&pty_type));
-        assert!(!super::attach_opens_chat(&pty_kind));
+        assert!(!super::attach_opens_chat(&pty_kind, true));
 
-        assert!(super::attach_opens_chat(&amux::AgentKind::Codex));
-        assert!(!super::attach_opens_chat(&amux::AgentKind::TestAgent));
+        assert!(super::attach_opens_chat(&amux::AgentKind::Codex, true));
+        assert!(!super::attach_opens_chat(&amux::AgentKind::TestAgent, true));
+    }
+
+    /// `amux attach` follows the fleet's rule for a remote agent too: the
+    /// chat travels over the connection the daemon already has, so a
+    /// terminal-capable agent on another machine still opens the chat.
+    #[test]
+    fn entry_policy_attach_opens_chat_for_every_agent_on_another_machine() {
+        for kind in [
+            amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
+            amux::AgentKind::TestAgent,
+        ] {
+            assert!(
+                !super::attach_opens_chat(&kind, true),
+                "{kind:?} raw attaches on this machine"
+            );
+            assert!(
+                super::attach_opens_chat(&kind, false),
+                "{kind:?} opens the chat from another machine"
+            );
+        }
     }
 
     #[test]

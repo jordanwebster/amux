@@ -729,6 +729,15 @@ impl Model {
         self.local_host_id
     }
 
+    /// Whether an agent owned by `host` lives on the machine this client
+    /// runs on. `None` until the connection has told us which host that
+    /// is: unknown locality is a real state, and callers that must choose
+    /// an entry mode treat it as "assume local" rather than guessing
+    /// remote and hiding the terminal an agent may well have.
+    pub fn is_local(&self, host: HostId) -> Option<bool> {
+        self.local_host_id.map(|local| local == host)
+    }
+
     pub fn hosts(&self) -> impl Iterator<Item = &HostState> {
         self.hosts.values()
     }

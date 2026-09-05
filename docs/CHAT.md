@@ -86,7 +86,22 @@ startup, and the guaranteed plain-key fallback is `o` in the fleet
 the running terminal.
 
 Read-only agents open in chat only; raw attach is absent for them — not
-disabled-with-an-error, absent (A3). There is no in-session mode
+disabled-with-an-error, absent (A3). So is any agent with no terminal
+behind it: a Claude session driven over stream-JSON has no bytes to pass
+through, so every entry key opens its chat and neither its hint nor its
+`?` overlay names raw attach.
+
+An agent on another machine keeps both modes but defaults to the chat
+whatever the setting says: the chat travels over the connection the fleet
+already holds, while raw attach pipes a terminal across the network, so
+the safe half of the pair leads and the other-mode key still reaches raw
+attach for anyone who wants it. `amux attach` applies the same rule.
+
+Every affordance — the fleet's Enter, Ctrl+Enter and `o`, the status-line
+hint, the `?` overlay rows and `amux attach` — derives from that one
+answer per agent, so a key, its hint and its help row can never disagree.
+
+There is no in-session mode
 switching in V1: the mode is chosen at open, with no toggle inside a
 chat or an attach (A4). The protocol allows concurrent raw and
 structured subscriptions (proved by `claude_pty_live`'s
