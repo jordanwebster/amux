@@ -1,0 +1,6 @@
+{
+  "users": ["alice", "bob"],
+  "daemons": [{"name":"host","user":"alice","repository_roots":["."]}],
+  "paired": [],
+  "agents": [{"name":"helper","daemon":"host","working_dir":".","provider":{"Claude":{"script":"scripted-agent.json"}}}]
+}

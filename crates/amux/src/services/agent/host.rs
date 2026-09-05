@@ -124,6 +124,35 @@ impl PtyAgentHost {
     }
 
     #[cfg(testnet)]
+    pub(crate) async fn register_scripted_provider(
+        &self,
+        request: CreateAgentRequest,
+        script: crate::testnet::script::Script,
+    ) -> Result<(Agent, crate::testnet::script::Provider), ProtocolError> {
+        let error = |error: String| ProtocolError::ServerError { message: error };
+        let (session, provider) = crate::testnet::script::session(script)
+            .await
+            .map_err(|e| error(e.to_string()))?;
+        let mut state = self.state.write().await;
+        let session: AgentSession = Box::new(
+            ClaudeSession::with_script(
+                &request,
+                &state.deps,
+                session,
+                provider.clone(),
+                &self.event_tx,
+            )
+            .map_err(|e| error(e.to_string()))?,
+        );
+        let agent = session.to_agent(self.host_id).into();
+        let announce = state
+            .register_local_agent_context(self.host_id, request.agent_id, session)
+            .map_err(error)?;
+        state.local_agent_events.emit(announce);
+        Ok((agent, provider))
+    }
+
+    #[cfg(testnet)]
     pub(crate) async fn end_scripted_session(&self, agent_id: Uuid) {
         self.event_tx
             .send(SessionEvent::Ended { agent_id })

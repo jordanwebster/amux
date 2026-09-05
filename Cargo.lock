@@ -1033,6 +1033,7 @@ name = "e2e-runner"
 version = "0.1.0"
 dependencies = [
  "amux",
+ "amux-ui",
  "anyhow",
  "chrono",
  "clap",

@@ -43,6 +43,8 @@
 //! API.
 
 mod assertions;
+mod client;
+pub use client::connect_user;
 mod daemon;
 mod latency;
 mod net;

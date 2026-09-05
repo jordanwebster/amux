@@ -684,7 +684,14 @@ impl Player {
             self.duration_ms = 0;
             self.hook("UserPromptSubmit", json!({"prompt":text}))
                 .await?;
-            self.message("user", json!(text)).await?;
+            let row = self.row(
+                "user",
+                json!({
+                    "origin":{"kind":"human"}, "promptSource":"typed",
+                    "message":{"role":"user","content":text},
+                }),
+            );
+            self.rows(vec![row]).await?;
         }
         for step in &work.steps {
             match step {

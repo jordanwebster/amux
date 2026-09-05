@@ -1,12 +1,13 @@
 //! A loopback process boundary around the same TestNet used by the Rust specs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use amux::testnet::script::{ObservedInput, Provider, Script, ScriptAsk, Step};
 use amux::testnet::{Daemon, TestNet, Via};
 use anyhow::{Context, Result, bail, ensure};
 use futures_util::FutureExt;
@@ -34,6 +35,8 @@ pub struct Topology {
     pub daemons: Vec<DaemonDecl>,
     pub paired: Vec<(String, String, PairVia)>,
     pub agents: Vec<AgentDecl>,
+    #[serde(skip)]
+    scripts: HashMap<String, Script>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,14 +103,56 @@ pub struct AgentIdentity {
 pub enum Control {
     CloudOffline,
     CloudOnline,
-    SeverDirect { a: String, b: String },
-    EstablishDirect { a: String, b: String },
-    RestartDaemon { name: String },
-    Unpair { daemon: String, peer: String },
-    StartPinPairing { daemon: String, ttl_secs: u64 },
-    StartQrPairing { daemon: String },
-    Latency { millis: u64 },
-    Connections { daemon: String },
+    SeverDirect {
+        a: String,
+        b: String,
+    },
+    EstablishDirect {
+        a: String,
+        b: String,
+    },
+    RestartDaemon {
+        name: String,
+    },
+    Unpair {
+        daemon: String,
+        peer: String,
+    },
+    StartPinPairing {
+        daemon: String,
+        ttl_secs: u64,
+    },
+    StartQrPairing {
+        daemon: String,
+    },
+    Latency {
+        millis: u64,
+    },
+    AgentEmit {
+        agent: String,
+        rows: Vec<serde_json::Value>,
+    },
+    AgentRaiseAsk {
+        agent: String,
+        ask: ScriptAsk,
+    },
+    AgentEndTurn {
+        agent: String,
+    },
+    AgentExit {
+        agent: String,
+        code: i32,
+    },
+    AgentSpawnChild {
+        agent: String,
+        child: String,
+    },
+    AgentObserve {
+        agent: String,
+    },
+    Connections {
+        daemon: String,
+    },
     Shutdown,
 }
 
@@ -116,7 +161,7 @@ pub enum Reply {
     Ack {
         pin: Option<String>,
         qr: Option<String>,
-        observed: Vec<serde_json::Value>,
+        observed: Vec<ObservedInput>,
         connections: Option<u32>,
     },
     Error {
@@ -203,17 +248,12 @@ impl Topology {
             match &mut agent.provider {
                 ScriptedProvider::Claude { script } => {
                     *script = base.join(&*script);
-                    let value: serde_json::Value = serde_json::from_slice(
+                    let script: Script = serde_json::from_slice(
                         &std::fs::read(&*script)
                             .with_context(|| format!("read script {}", script.display()))?,
-                    )?;
-                    ensure!(
-                        value
-                            .get("reactions")
-                            .and_then(|v| v.as_array())
-                            .is_some_and(|v| v.is_empty()),
-                        "script reaction playback is not installed yet"
-                    );
+                    )
+                    .context("parse Claude script")?;
+                    topology.scripts.insert(agent.name.clone(), script);
                 }
                 ScriptedProvider::Codex { recording } => bail!(
                     "Codex recording playback is not installed yet: {}",
@@ -243,7 +283,15 @@ fn resolve_directory(base: &Path, path: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-async fn start(topology: &Topology, control: SocketAddr) -> (TestNet, Readiness) {
+struct ScriptedAgent {
+    daemon: String,
+    agent: amux::Agent,
+    provider: Provider,
+}
+
+type Agents = HashMap<String, ScriptedAgent>;
+
+async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Readiness, Agents)> {
     let mut builder = TestNet::builder().cloud();
     for daemon in &topology.daemons {
         builder = builder.daemon(&daemon.name).cloud_user(&daemon.user);
@@ -285,16 +333,30 @@ async fn start(topology: &Topology, control: SocketAddr) -> (TestNet, Readiness)
         })
         .collect();
     let mut agents = Vec::new();
+    let mut scripted = HashMap::new();
     for decl in &topology.agents {
-        let agent = net
+        let (agent, provider) = net
             .daemon(&decl.daemon)
-            .register_scripted_claude_agent(Uuid::new_v4(), &decl.name, &decl.working_dir)
-            .await;
+            .spawn_scripted_agent(
+                &decl.name,
+                &decl.working_dir,
+                topology.scripts[&decl.name].clone(),
+                None,
+            )
+            .await?;
         agents.push(AgentIdentity {
             name: decl.name.clone(),
             daemon: decl.daemon.clone(),
             agent_id: agent.id,
         });
+        scripted.insert(
+            decl.name.clone(),
+            ScriptedAgent {
+                daemon: decl.daemon.clone(),
+                agent,
+                provider,
+            },
+        );
     }
     let readiness = Readiness {
         relay: net.relay_addr(),
@@ -303,7 +365,7 @@ async fn start(topology: &Topology, control: SocketAddr) -> (TestNet, Readiness)
         daemons,
         agents,
     };
-    (net, readiness)
+    Ok((net, readiness, scripted))
 }
 
 struct Request {
@@ -312,7 +374,12 @@ struct Request {
     flushed: oneshot::Receiver<()>,
 }
 
-async fn apply(net: &TestNet, names: &HashSet<String>, control: Control) -> Result<Reply> {
+async fn apply(
+    net: &TestNet,
+    names: &HashSet<String>,
+    agents: &mut Agents,
+    control: Control,
+) -> Result<Reply> {
     let daemon = |name: &str| -> Result<Daemon> {
         ensure!(names.contains(name), "unknown daemon: {name}");
         Ok(net.daemon(name))
@@ -320,6 +387,11 @@ async fn apply(net: &TestNet, names: &HashSet<String>, control: Control) -> Resu
     let pair = |a: &str, b: &str| -> Result<(Daemon, Daemon)> {
         ensure!(a != b, "a host cannot be its own peer");
         Ok((daemon(a)?, daemon(b)?))
+    };
+    let scripted = |name: &str| -> Result<&ScriptedAgent> {
+        agents
+            .get(name)
+            .with_context(|| format!("unknown or stopped scripted agent: {name}"))
     };
     let mut reply = Reply::ack();
     match control {
@@ -333,7 +405,10 @@ async fn apply(net: &TestNet, names: &HashSet<String>, control: Control) -> Resu
             let (a, b) = pair(&a, &b)?;
             net.try_establish_direct(&a, &b).await?;
         }
-        Control::RestartDaemon { name } => net.restart_daemon(&daemon(&name)?).await,
+        Control::RestartDaemon { name } => {
+            net.restart_daemon(&daemon(&name)?).await;
+            agents.retain(|_, agent| agent.daemon != name);
+        }
         Control::Unpair { daemon, peer } => {
             let (daemon, peer) = pair(&daemon, &peer)?;
             daemon
@@ -372,6 +447,64 @@ async fn apply(net: &TestNet, names: &HashSet<String>, control: Control) -> Resu
         Control::Latency { millis } => {
             ensure!(millis <= 1000, "relay latency must not exceed 1000 ms");
             net.set_relay_latency(millis);
+        }
+        Control::AgentEmit { agent, rows } => {
+            scripted(&agent)?
+                .provider
+                .play(vec![Step::Rows { jsonl: rows }])
+                .await?;
+        }
+        Control::AgentRaiseAsk { agent, ask } => {
+            scripted(&agent)?
+                .provider
+                .play(vec![Step::Ask(ask)])
+                .await?;
+        }
+        Control::AgentEndTurn { agent } => {
+            scripted(&agent)?.provider.play(vec![Step::EndTurn]).await?;
+        }
+        Control::AgentExit { agent, code } => {
+            ensure!(code >= 0, "exit code must be nonnegative");
+            scripted(&agent)?
+                .provider
+                .play(vec![Step::Exit { code }])
+                .await?;
+        }
+        Control::AgentObserve { agent } => {
+            if let Reply::Ack { observed, .. } = &mut reply {
+                *observed = scripted(&agent)?.provider.observed();
+            }
+        }
+        Control::AgentSpawnChild { agent, child } => {
+            ensure!(
+                valid_name(&child) && !agents.contains_key(&child),
+                "invalid or duplicate child: {child}"
+            );
+            let parent = scripted(&agent)?;
+            ensure!(
+                parent.provider.error().is_none(),
+                "parent provider has stopped"
+            );
+            let host = daemon(&parent.daemon)?;
+            let (agent, provider) = host
+                .spawn_scripted_agent(
+                    &child,
+                    &parent.agent.working_dir,
+                    Script::default(),
+                    Some(amux::AgentParent {
+                        agent_id: parent.agent.id,
+                        host_id: parent.agent.host_id,
+                    }),
+                )
+                .await?;
+            agents.insert(
+                child,
+                ScriptedAgent {
+                    daemon: parent.daemon.clone(),
+                    agent,
+                    provider,
+                },
+            );
         }
         Control::Connections { daemon: name } => {
             let dump = daemon(&name)?.debug_dump(false).await;
@@ -424,23 +557,29 @@ async fn connection(stream: TcpStream, requests: mpsc::Sender<Request>) -> Resul
 
 async fn serve(topology: Topology) -> Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
-    let (net, readiness) = tokio::time::timeout(
+    let (net, readiness, agents) = tokio::time::timeout(
         Duration::from_secs(30),
         start(&topology, listener.local_addr()?),
     )
     .await
-    .context("topology did not become ready within 30 seconds")?;
+    .context("topology did not become ready within 30 seconds")??;
     println!("{}", serde_json::to_string(&readiness)?);
     std::io::stdout().flush()?;
     serve_net(
         net,
         listener,
         topology.daemons.into_iter().map(|d| d.name).collect(),
+        agents,
     )
     .await
 }
 
-async fn serve_net(net: TestNet, listener: TcpListener, names: HashSet<String>) -> Result<()> {
+async fn serve_net(
+    net: TestNet,
+    listener: TcpListener,
+    names: HashSet<String>,
+    mut agents: Agents,
+) -> Result<()> {
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let termination = async {
@@ -468,7 +607,7 @@ async fn serve_net(net: TestNet, listener: TcpListener, names: HashSet<String>) 
                 control => {
                     // TestNet's assertion verbs panic with topology diagnostics.
                     // Preserve those diagnostics as a control failure for the caller.
-                    let operation = AssertUnwindSafe(apply(&net, &names, control)).catch_unwind();
+                    let operation = AssertUnwindSafe(apply(&net, &names, &mut agents, control)).catch_unwind();
                     let reply = match tokio::time::timeout(Duration::from_secs(30), operation).await {
                         Ok(Ok(Ok(reply))) => reply,
                         Ok(Ok(Err(error))) => Reply::Error { message: error.to_string() },
@@ -484,6 +623,7 @@ async fn serve_net(net: TestNet, listener: TcpListener, names: HashSet<String>) 
     };
     drop(listener);
     net.shutdown().await;
+    drop(agents);
     let outcome = match outcome {
         Ok(Some(request)) => {
             let _ = request.reply.send(Reply::ack());
@@ -513,17 +653,20 @@ pub fn run(command: Command) -> Result<()> {
 }
 
 #[cfg(test)]
+mod agents_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    struct ControlClient(BufReader<TcpStream>);
+    pub(super) struct ControlClient(BufReader<TcpStream>);
 
     impl ControlClient {
-        async fn connect(address: SocketAddr) -> Self {
+        pub(super) async fn connect(address: SocketAddr) -> Self {
             Self(BufReader::new(TcpStream::connect(address).await.unwrap()))
         }
 
-        async fn request(&mut self, control: serde_json::Value) -> serde_json::Value {
+        pub(super) async fn request(&mut self, control: serde_json::Value) -> serde_json::Value {
             let mut bytes = serde_json::to_vec(&control).unwrap();
             bytes.push(b'\n');
             self.0.get_mut().write_all(&bytes).await.unwrap();
@@ -537,7 +680,7 @@ mod tests {
             reply
         }
 
-        async fn ack(&mut self, control: serde_json::Value) -> serde_json::Value {
+        pub(super) async fn ack(&mut self, control: serde_json::Value) -> serde_json::Value {
             let reply = self.request(control).await;
             assert!(reply.get("Ack").is_some(), "{reply}");
             reply["Ack"].clone()
@@ -560,7 +703,12 @@ mod tests {
         let relay = net.relay_addr();
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let address = listener.local_addr().unwrap();
-        let server = serve_net(net, listener, ["a", "b", "c"].map(String::from).into());
+        let server = serve_net(
+            net,
+            listener,
+            ["a", "b", "c"].map(String::from).into(),
+            HashMap::new(),
+        );
         let exercise = async {
             let mut control = ControlClient::connect(address).await;
             let mut second = ControlClient::connect(address).await;
@@ -683,7 +831,9 @@ mod tests {
         let path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e-tests/topologies/two-hosts.json");
         let topology = Topology::load(&path).unwrap();
-        let (net, ready) = start(&topology, "127.0.0.1:1".parse().unwrap()).await;
+        let (net, ready, _agents) = start(&topology, "127.0.0.1:1".parse().unwrap())
+            .await
+            .unwrap();
         let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
         laptop.trusts(&desktop).await;
         desktop.trusts(&laptop).await;

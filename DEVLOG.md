@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Drive scripted agents through the relay and runner controls.**
+Topologies now load Claude reaction scripts and register their live providers
+in the daemon. The control socket emits rows, raises asks, ends turns, exits,
+creates child sessions with real parent relationships and returns exact
+host-side input observations. A client-only testnet connection uses normal
+embedded routing and device pairing with a supplied relay token. The UI runtime
+journey pairs over the relay, reconciles a prompt, renders scripted rows,
+answers permission and sees exactly those two inputs; a stale-sequence write
+never reaches the provider. Child asks, account isolation, invalid controls,
+exit and restart cleanup are covered. Shutdown explicitly stops live sessions,
+with a regression proving provider ownership ends while the executor stays
+alive. Scripted prompt rows now declare human
+origin so the unchanged UI reducer can reconcile optimistic sends.
+
 2026-09-05 — **Play scripted Claude sessions through real provider sources.**
 The testnet script format now covers prompt, command, answer and interrupt
 reactions, every transcript step, semantic asks and controlled process exit.

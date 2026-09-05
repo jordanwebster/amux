@@ -30,7 +30,7 @@ use crate::routing::{
     spawn_connector_to_channel_with_bearer_token,
 };
 use crate::services::{
-    ClientService, DeviceRuntimeSecurity, PtyAgentHost, StartedUserServices,
+    ClientService, DeviceRuntimeSecurity, LocalAgentHost, PtyAgentHost, StartedUserServices,
     start_user_services_with_artifact_clock,
 };
 use crate::trust::{Reachability, SharedTrustStore, TrustStore};
@@ -177,7 +177,7 @@ impl DaemonRuntime {
 // request stream open, so neither the relay nor any peer ever observes the
 // link going down. Severing the socket gives the relay the same EOF a dead
 // process would.
-fn tracked_cloud_channel(addr: SocketAddr, tracked: TrackedTcpConnections) -> Channel {
+pub(super) fn tracked_cloud_channel(addr: SocketAddr, tracked: TrackedTcpConnections) -> Channel {
     Endpoint::from_shared(format!("http://{addr}"))
         .expect("testnet cloud endpoint URI")
         .connect_with_connector_lazy(tower::service_fn(move |_uri: Uri| {
@@ -812,8 +812,13 @@ impl Daemon {
     /// `wait_until_peers_see_us_down` would deadlock the failure dump,
     /// which queries this daemon's host table through the same lock.
     pub async fn stop(&self) {
-        *self.inner.runtime.lock().await = None;
+        let runtime = self.inner.runtime.lock().await.take();
         self.inner.sever_tracked_tcp();
+        if let Some(runtime) = runtime {
+            // Live provider ingestion sends back into the session event loop.
+            // Stop sessions explicitly to release that loop's ownership of them.
+            runtime.agent_host.stop_all().await;
+        }
         self.wait_until_peers_see_us_down().await;
     }
 

@@ -485,3 +485,34 @@ async fn dropping_provider_closes_the_session_and_removes_its_transcript() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn testnet_agents_shutdown_releases_the_backend_provider_while_executor_lives() {
+    let net = crate::testnet::TestNet::builder()
+        .daemon("host")
+        .start()
+        .await;
+    let (_, provider) = net
+        .daemon("host")
+        .spawn_scripted_agent("helper", std::env::temp_dir(), Script::default(), None)
+        .await
+        .unwrap();
+    provider
+        .play(vec![markdown("ingestion is live")])
+        .await
+        .unwrap();
+    let weak = Arc::downgrade(&provider.0);
+    drop(provider);
+    assert!(
+        weak.upgrade().is_some(),
+        "the backend owns the live provider"
+    );
+    net.shutdown().await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while weak.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("daemon shutdown releases provider ownership without stopping the executor");
+}

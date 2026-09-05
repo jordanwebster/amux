@@ -103,6 +103,41 @@ impl Daemon {
             .unwrap_or_else(|error| panic!("register scripted Claude agent '{name}': {error}"))
     }
 
+    /// Registers a live scripted provider in the daemon's normal session inventory.
+    pub async fn spawn_scripted_agent(
+        &self,
+        name: &str,
+        working_dir: impl AsRef<Path>,
+        script: super::script::Script,
+        parent: Option<AgentParent>,
+    ) -> Result<(Agent, super::script::Provider), ProtocolError> {
+        let parts = self
+            .try_parts()
+            .await
+            .ok_or_else(|| ProtocolError::ServerError {
+                message: format!("daemon '{}' is not running", self.name()),
+            })?;
+        parts
+            .agent_host
+            .register_scripted_provider(
+                CreateAgentRequest {
+                    agent_id: Uuid::new_v4(),
+                    host_id: None,
+                    name: Some(name.into()),
+                    agent_type: AgentType::Claude {
+                        driver: crate::ClaudeDriver::Pty,
+                    },
+                    working_dir: working_dir.as_ref().to_owned(),
+                    terminal_size: None,
+                    args: Vec::new(),
+                    parent,
+                    initial_prompt: None,
+                },
+                script,
+            )
+            .await
+    }
+
     /// Stores bytes on `owner` for `agent`, routing through this daemon.
     pub async fn put_artifact_on(
         &self,

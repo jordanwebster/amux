@@ -70,6 +70,8 @@ pub(crate) struct ClaudePtyBackend {
     injected: Option<Session>,
     started: bool,
     ingest_abort: Option<AbortHandle>,
+    #[cfg(testnet)]
+    script: Option<crate::testnet::script::Provider>,
 }
 
 impl ClaudePtyBackend {
@@ -115,6 +117,8 @@ impl ClaudePtyBackend {
             injected: None,
             started: false,
             ingest_abort: None,
+            #[cfg(testnet)]
+            script: None,
         }
     }
 
@@ -180,6 +184,8 @@ impl ClaudePtyBackend {
             injected: Some(session),
             started: false,
             ingest_abort: None,
+            #[cfg(testnet)]
+            script: None,
         }
     }
 
@@ -256,6 +262,29 @@ impl ClaudePtyBackend {
             launch_route,
             user_keymap_dir,
         )
+    }
+
+    #[cfg(testnet)]
+    pub(crate) fn with_script(
+        req: &CreateAgentRequest,
+        deps: &AgentDeps,
+        session: Session,
+        provider: crate::testnet::script::Provider,
+        event_tx: &mpsc::Sender<SessionEvent>,
+    ) -> Result<Self> {
+        let mut backend = Self::new(
+            req,
+            deps.runtime_dir.clone(),
+            deps.claude_version_cache.clone(),
+            deps.mcp_launch_route.clone(),
+            deps.claude_user_keymap_dir.clone(),
+        );
+        backend.script = Some(provider);
+        backend.artifact_root = deps.artifact_root(req.agent_id);
+        let handle = backend.activate(session, event_tx)?;
+        backend.ingest_abort = Some(handle.abort_handle());
+        backend.started = true;
+        Ok(backend)
     }
 
     #[cfg(any(debug_assertions, test))]
@@ -543,6 +572,8 @@ impl ClaudePtyBackend {
             readonly: self.readonly,
             runtime: self.runtime.clone(),
             log: self.log.clone(),
+            #[cfg(testnet)]
+            script: self.script.clone(),
         }
     }
 
@@ -793,6 +824,8 @@ impl AgentBackend for ClaudePtyBackend {
 }
 
 struct ClaudeInputTarget {
+    #[cfg(testnet)]
+    script: Option<crate::testnet::script::Provider>,
     readonly: bool,
     runtime: Arc<Mutex<Runtime>>,
     log: StructuredLogSource,
@@ -827,11 +860,21 @@ impl StructuredInput for ClaudeInputTarget {
             .ok_or_else(|| ProtocolError::ServerError {
                 message: "structured input requires an active PTY".to_string(),
             })?;
+        #[cfg(testnet)]
+        let scripted = self.script.as_ref().map(|script| (script, intent.clone()));
         control
             .send(provider_intent(intent))
             .await
-            .map(|_| ())
-            .map_err(input_protocol_error)
+            .map_err(input_protocol_error)?;
+        #[cfg(testnet)]
+        if let Some((script, intent)) = scripted {
+            script
+                .feed(intent)
+                .map_err(|error| ProtocolError::ServerError {
+                    message: error.to_string(),
+                })?;
+        }
+        Ok(())
     }
 }
 

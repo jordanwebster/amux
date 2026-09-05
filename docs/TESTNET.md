@@ -109,5 +109,35 @@ and ends playback. Asynchronous playback errors are available from
 
 Run `timeout 900 wt test -- testnet_script -- --nocapture` to see the parsed
 transcript and hook capture along with checks for asks, deferred prompts,
-turn boundaries and cleanup. Runner control-socket integration is separate
-from this session-level API.
+turn boundaries and cleanup.
+
+Use `e2e-tests/topologies/scripted-agents.json` for a runnable scripted topology.
+Claude script paths, working directories and repository roots resolve relative
+to the topology file. Scripts are parsed before any network resources start.
+Codex recording playback is not available yet.
+
+| Request | Effect |
+| --- | --- |
+| `{"AgentEmit":{"agent":"helper","rows":[{"type":"custom","value":1}]}}` | Append provider JSONL rows and wait for parser ingestion. |
+| `{"AgentRaiseAsk":{"agent":"helper","ask":{"Plan":{"markdown":"Review this plan."}}}}` | Raise a semantic ask through provider rows and hooks. |
+| `{"AgentEndTurn":{"agent":"helper"}}` | Close the current scripted turn once. |
+| `{"AgentExit":{"agent":"helper","code":0}}` | End the provider session with a nonnegative exit code. |
+| `{"AgentSpawnChild":{"agent":"helper","child":"reviewer"}}` | Create a separate Claude session on the same daemon, inheriting the directory and recording the parent relationship. Its empty script is driven by controls. |
+| `{"AgentObserve":{"agent":"helper"}}` | Return all decoded inputs accepted by the daemon and delivered to this provider, in arrival order. Controls do not count as inputs. |
+
+Observations contain `seq`, `intent`, `text`, `ask_id`, `answer` and `pins`.
+The current PTY intent seam has no attachment pins; that field is empty.
+The daemon checks the stream sequence and the real provider control validates
+input before script delivery. Observations remain readable after provider
+exit. Restart removes handles for the stopped daemon's scripted agents.
+
+`amux::testnet::connect_user(relay, token)` opens a client-only embedded runtime
+with the normal routing and client services against the loopback relay. It
+supplies the test token directly in place of production token exchange. The
+client has an isolated device identity and must pair with the host, even when
+both use the same account. Use `StartQrPairing` and the client's QR pairing API;
+after the agent appears, `Runtime::note_attached` opens its structured stream.
+Run `timeout 900 wt test -- testnet_agents -- --nocapture` to see the control
+requests, exact host observations and projected transcript from a production
+`amux_ui::Runtime` using that connection. The test also checks account isolation,
+child asks, invalid controls, exit and restart cleanup.
