@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Standalone MCP spawn addresses its prompt by agent ID.**
+Without a parent agent, the spawn tool sends the initial prompt after creating
+the session. It now keeps the returned UUID as a typed agent identifier;
+converting it to an owned string had selected a name lookup and reported
+“No agent found” while leaving the new session idle. The regression checks
+the destination ID, prompt and human sender at the daemon boundary.
+
 2026-09-05 — **A captured Claude chat now replays offline through the client.**
 The committed fixture retains all 572 rows of a live TUI conversation, with
 provenance and consistently redacted temporary paths, including streamed tool

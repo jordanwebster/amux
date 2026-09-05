@@ -341,12 +341,12 @@ fn caller_parent(
 
 fn send_request(
     caller: Option<Uuid>,
-    to: String,
+    to: AgentIdentifier,
     text: String,
     context: Option<Uuid>,
 ) -> SendMessageRequest {
     SendMessageRequest {
-        to: AgentIdentifier::from(to),
+        to,
         text,
         context,
         from_agent_id: caller,
@@ -397,7 +397,7 @@ impl ToolBackend for ClientBackend {
             ToolRequest::Agents => self.list_agents(client.as_ref()).await,
             ToolRequest::Send { to, text, context } => {
                 let id = client
-                    .send_message(send_request(caller, to, text, context))
+                    .send_message(send_request(caller, to.into(), text, context))
                     .await?;
                 Ok(json!({ "id": id }))
             }
@@ -460,7 +460,12 @@ impl ToolBackend for ClientBackend {
                 });
                 if caller.is_none()
                     && let Err(error) = client
-                        .send_message(send_request(None, agent.id.to_string(), prompt, None))
+                        .send_message(send_request(
+                            None,
+                            AgentIdentifier::Id(agent.id),
+                            prompt,
+                            None,
+                        ))
                         .await
                 {
                     result["initial_prompt_delivery"] = json!({
@@ -630,6 +635,7 @@ mod attach_tests {
         hosts: Vec<amux::HostEntry>,
         fail_send: AtomicBool,
         send_calls: AtomicUsize,
+        last_send: Mutex<Option<SendMessageRequest>>,
         create_calls: AtomicUsize,
         standalone_spawn_shape: Mutex<Option<(Option<AgentParent>, Option<String>)>>,
         /// What the last create asked for. A spawned child's kind is the
@@ -657,6 +663,7 @@ mod attach_tests {
                 hosts,
                 fail_send: AtomicBool::new(false),
                 send_calls: AtomicUsize::new(0),
+                last_send: Mutex::new(None),
                 create_calls: AtomicUsize::new(0),
                 standalone_spawn_shape: Mutex::new(None),
                 created_type: Mutex::new(None),
@@ -675,8 +682,9 @@ mod attach_tests {
             Ok(self.hosts.clone())
         }
 
-        async fn send_message(&self, _request: SendMessageRequest) -> Result<Uuid> {
+        async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid> {
             self.send_calls.fetch_add(1, Ordering::SeqCst);
+            *self.last_send.lock().unwrap() = Some(request);
             if self.fail_send.load(Ordering::SeqCst) {
                 Err(anyhow!("response lost after mutation"))
             } else {
@@ -1128,7 +1136,7 @@ mod attach_tests {
 
         let send = send_request(
             Some(caller),
-            "reviewer".to_string(),
+            "reviewer".into(),
             "please inspect".to_string(),
             Some(context),
         );
@@ -1286,6 +1294,14 @@ mod attach_tests {
             *daemon.standalone_spawn_shape.lock().unwrap(),
             Some((None, None))
         );
+        let sent = daemon.last_send.lock().unwrap();
+        let sent = sent.as_ref().unwrap();
+        assert_eq!(
+            sent.to,
+            AgentIdentifier::Id(Uuid::parse_str(result["id"].as_str().unwrap()).unwrap())
+        );
+        assert_eq!(sent.text, "inspect this");
+        assert_eq!(sent.from_agent_id, None);
     }
 
     #[tokio::test]
