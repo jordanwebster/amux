@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Exercise account profiles through the real CLI and public API.**
+The e2e identity fixture auto-approves Alice and Bob through device authorization,
+requires profile and email scopes, rotates single-use refresh tokens, and
+serves account-specific userinfo and relay claims. Fixture setup logs in through
+the CLI instead of seeding credentials. An independent proto-generated tonic
+client discovers profile sockets at the front door and lists isolated fleets.
+New transcripts cover login labels, lifecycle and deletion confirmation, two
+simultaneous profile sessions, agent process death on server stop, and a fresh
+layout rendered from the worktree template and generator. The runner captures
+actual commands and output and verifies interactive command exit codes.
+
 2026-09-05 — **Reserve lifecycle administration for installation owners.**
 Shutdown, suspend and resume leave ClientService and its generated clients.
 Profile sockets and paired tunnels expose no lifecycle or trust administration;

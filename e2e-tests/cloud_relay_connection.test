@@ -12,12 +12,12 @@ config:
 config:
   name: server_a
   host_name: host-a
-  cloud_account: true
+  cloud_account: alice
 
 config:
   name: server_b
   host_name: host-b
-  cloud_account: true
+  cloud_account: alice
 
 directory:
   name: dir_a

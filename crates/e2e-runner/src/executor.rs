@@ -1,13 +1,13 @@
 use crate::parser::{Directory, RetryPolicy, Terminal, TestCase, TestConfig, TestStep};
 
 type PreparedEnvironment = (Vec<Directory>, Vec<TestConfig>, Vec<Terminal>);
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -29,8 +29,8 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     let mut index = 0;
     while index < command.args.len() {
         match command.args[index].as_str() {
-            "--config" => index += 2,
-            arg if arg.starts_with("--config=") => index += 1,
+            "--config" | "--profile" => index += 2,
+            arg if arg.starts_with("--config=") || arg.starts_with("--profile=") => index += 1,
             _ => break,
         }
     }
@@ -40,7 +40,14 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     };
 
     match subcommand {
-        "list" | "ls" | "profiles" | "init" => true,
+        "client" | "list" | "ls" | "profiles" | "init" | "login" | "logout" => true,
+        "profile" => {
+            command
+                .args
+                .get(index + 1)
+                .is_none_or(|arg| arg != "delete")
+                || command.args.iter().any(|arg| arg == "--yes")
+        }
         "server" => match command.args.get(index + 1).map(String::as_str) {
             Some("stop" | "suspend" | "resume") => true,
             Some("start") => !command.args[index + 2..]
@@ -175,6 +182,8 @@ pub struct ExecutorConfig {
     pub test_agent_binary: PathBuf,
     /// Timeout for read operations
     pub timeout: Duration,
+    /// Optional directory for command/output transcripts captured at the CLI boundary.
+    pub transcript_dir: Option<PathBuf>,
 }
 
 impl Default for ExecutorConfig {
@@ -182,7 +191,8 @@ impl Default for ExecutorConfig {
         Self {
             amux_binary: PathBuf::from("target/debug/amux"),
             test_agent_binary: PathBuf::from("target/debug/test-agent"),
-            timeout: Duration::from_millis(200),
+            timeout: Duration::from_secs(2),
+            transcript_dir: std::env::var_os("E2E_TRANSCRIPT_DIR").map(PathBuf::from),
         }
     }
 }
@@ -200,8 +210,7 @@ struct VariableContext {
 }
 
 const E2E_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
-const E2E_REFRESH_TOKEN: &str = "e2e-refresh";
-const E2E_ACCESS_TOKEN: &str = "e2e-access";
+
 const E2E_JWT_KID: &str = "e2e-key";
 const E2E_JWT_PRIVATE_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
 MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDa10VP9rc+oAG3
@@ -303,6 +312,7 @@ e+JjcThHZj+6Byi+a909uj8Ql6adrYeAa+tODJRSICJYHjhGHMGT/3cqsjmEKwkW
 
 struct CloudFixture {
     url: String,
+    identity: Arc<Mutex<IdentityState>>,
     routing_tls_ca: PathBuf,
     routing_tls_cert: PathBuf,
     routing_tls_key: PathBuf,
@@ -343,7 +353,7 @@ fn allocate_local_port() -> Result<u16, String> {
 fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFixture>, String> {
     let needs_cloud = configs
         .iter()
-        .any(|config| config.cloud_relay || config.cloud_account == Some(true));
+        .any(|config| config.cloud_relay || config.cloud_account.is_some());
     if !needs_cloud {
         return Ok(None);
     }
@@ -358,6 +368,7 @@ fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFix
         .host_name
         .clone()
         .unwrap_or_else(|| relay.name.clone());
+    relay.host_name = Some(routing_host.clone());
     let routing_port = match relay.tcp_port {
         Some(0) | None => {
             let port = allocate_local_port()?;
@@ -366,19 +377,16 @@ fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFix
         }
         Some(port) => port,
     };
-    relay.cloud_account.get_or_insert(true);
-
-    let fixture = CloudFixture::start(routing_host, routing_port)?;
+    let accounts = relay.accounts.clone();
+    let fixture = CloudFixture::start(routing_host, routing_port, &accounts)?;
     for config in configs {
-        if config.cloud_relay || config.cloud_account == Some(true) {
-            config.cloud_url = Some(fixture.url.clone());
-        }
+        config.cloud_url = Some(fixture.url.clone());
     }
     Ok(Some(fixture))
 }
 
 impl CloudFixture {
-    fn start(routing_host: String, routing_port: u16) -> Result<Self, String> {
+    fn start(routing_host: String, routing_port: u16, accounts: &[String]) -> Result<Self, String> {
         let tls_dir =
             TempDir::new().map_err(|error| format!("failed to create cloud TLS dir: {error}"))?;
         let routing_tls_ca = tls_dir.path().join("cloud-routing-ca.pem");
@@ -400,13 +408,20 @@ impl CloudFixture {
             .set_nonblocking(true)
             .map_err(|error| format!("failed to configure fake cloud API: {error}"))?;
 
+        let identity = Arc::new(Mutex::new(IdentityState::new(accounts)?));
+        let thread_identity = identity.clone();
         let running = Arc::new(AtomicBool::new(true));
         let thread_running = running.clone();
         let thread_host = routing_host.clone();
         let thread = thread::spawn(move || {
             while thread_running.load(Ordering::SeqCst) {
                 match listener.accept() {
-                    Ok((stream, _)) => handle_cloud_request(stream, &thread_host, routing_port),
+                    Ok((stream, _)) => handle_cloud_request(
+                        stream,
+                        &thread_host,
+                        routing_port,
+                        &mut thread_identity.lock().unwrap(),
+                    ),
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(10));
                     }
@@ -417,6 +432,7 @@ impl CloudFixture {
 
         Ok(Self {
             url: format!("http://{addr}"),
+            identity,
             routing_tls_ca,
             routing_tls_cert,
             routing_tls_key,
@@ -427,64 +443,196 @@ impl CloudFixture {
     }
 }
 
-fn handle_cloud_request(mut stream: TcpStream, routing_host: &str, routing_port: u16) {
-    let mut request = [0_u8; 4096];
-    let bytes_read = stream.read(&mut request).unwrap_or(0);
-    let request = String::from_utf8_lossy(&request[..bytes_read]);
-    let path = request
+#[derive(Clone, Copy)]
+struct FixtureAccount {
+    sub: &'static str,
+    display: &'static str,
+    email: &'static str,
+}
+
+fn fixture_account(name: &str) -> Result<FixtureAccount, String> {
+    match name {
+        "alice" => Ok(FixtureAccount {
+            sub: E2E_USER_ID,
+            display: "Alice Example",
+            email: "alice@example.test",
+        }),
+        "bob" => Ok(FixtureAccount {
+            sub: "22222222-2222-4222-8222-222222222222",
+            display: "Bob Example",
+            email: "bob@example.test",
+        }),
+        _ => Err(format!("Unknown fixture account {name:?}")),
+    }
+}
+
+struct IdentityState {
+    accounts: VecDeque<FixtureAccount>,
+    fallback: FixtureAccount,
+    devices: HashMap<String, FixtureAccount>,
+    refresh: HashMap<String, FixtureAccount>,
+    access: HashMap<String, FixtureAccount>,
+}
+
+impl IdentityState {
+    fn new(accounts: &[String]) -> Result<Self, String> {
+        let accounts = accounts
+            .iter()
+            .map(|name| fixture_account(name))
+            .collect::<Result<VecDeque<_>, _>>()?;
+        Ok(Self {
+            fallback: accounts
+                .back()
+                .copied()
+                .unwrap_or(fixture_account("alice")?),
+            accounts,
+            devices: HashMap::new(),
+            refresh: HashMap::new(),
+            access: HashMap::new(),
+        })
+    }
+
+    fn tokens(&mut self, account: FixtureAccount) -> serde_json::Value {
+        let refresh = uuid::Uuid::new_v4().to_string();
+        let access = uuid::Uuid::new_v4().to_string();
+        self.refresh.insert(refresh.clone(), account);
+        self.access.insert(access.clone(), account);
+        serde_json::json!({"access_token": access, "refresh_token": refresh, "token_type": "Bearer", "expires_in": 3600})
+    }
+
+    fn respond(
+        &mut self,
+        path: &str,
+        form: &HashMap<String, String>,
+        bearer: Option<&str>,
+        routing_host: &str,
+        routing_port: u16,
+    ) -> (&'static str, serde_json::Value) {
+        match path {
+            "/connect/deviceauthorization" => {
+                let scopes = form
+                    .get("scope")
+                    .map(String::as_str)
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .collect::<Vec<_>>();
+                if !["openid", "profile", "email", "offline_access", "api"]
+                    .iter()
+                    .all(|scope| scopes.contains(scope))
+                {
+                    return (
+                        "400 Bad Request",
+                        serde_json::json!({"error": "invalid_scope"}),
+                    );
+                }
+                let account = self.accounts.pop_front().unwrap_or(self.fallback);
+                let device = uuid::Uuid::new_v4().to_string();
+                self.devices.insert(device.clone(), account);
+                (
+                    "200 OK",
+                    serde_json::json!({"device_code": device, "user_code": "E2E-APPROVED", "verification_uri": "https://identity.example.test/activate", "expires_in": 600, "interval": 1}),
+                )
+            }
+            "/connect/token" => {
+                let account = match form.get("grant_type").map(String::as_str) {
+                    Some("urn:ietf:params:oauth:grant-type:device_code") => form
+                        .get("device_code")
+                        .and_then(|code| self.devices.remove(code)),
+                    Some("refresh_token") => form
+                        .get("refresh_token")
+                        .and_then(|token| self.refresh.remove(token)),
+                    _ => None,
+                };
+                match account {
+                    Some(account) => ("200 OK", self.tokens(account)),
+                    None => (
+                        "400 Bad Request",
+                        serde_json::json!({"error": "invalid_grant"}),
+                    ),
+                }
+            }
+            "/connect/userinfo" | "/api/connect" => {
+                let Some(account) = bearer.and_then(|token| self.access.get(token)) else {
+                    return (
+                        "401 Unauthorized",
+                        serde_json::json!({"error": "invalid_token"}),
+                    );
+                };
+                if path == "/connect/userinfo" {
+                    (
+                        "200 OK",
+                        serde_json::json!({"sub": account.sub, "name": account.display, "email": account.email}),
+                    )
+                } else {
+                    (
+                        "200 OK",
+                        serde_json::json!({"host": "localhost", "port": routing_port, "token": routing_token(routing_host, routing_port, account.sub), "expires_at": (Utc::now() + ChronoDuration::hours(1)).to_rfc3339()}),
+                    )
+                }
+            }
+            "/.well-known/openid-configuration/jwks" => (
+                "200 OK",
+                serde_json::json!({"keys": [{"kid": E2E_JWT_KID, "kty": "RSA", "alg": "RS256", "use": "sig", "n": E2E_JWK_N, "e": E2E_JWK_E}]}),
+            ),
+            _ => ("404 Not Found", serde_json::json!({})),
+        }
+    }
+}
+
+fn handle_cloud_request(
+    mut stream: TcpStream,
+    routing_host: &str,
+    routing_port: u16,
+    identity: &mut IdentityState,
+) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let mut request = Vec::new();
+    let (headers_end, content_length) = loop {
+        let mut chunk = [0_u8; 4096];
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => request.extend_from_slice(&chunk[..n]),
+        }
+        if request.len() > 65536 {
+            return;
+        }
+        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&request[..end]);
+            let length = headers
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if length > 65536 {
+                return;
+            }
+            break (end + 4, length);
+        }
+    };
+    while request.len() < headers_end + content_length {
+        let mut chunk = [0_u8; 4096];
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => request.extend_from_slice(&chunk[..n]),
+        }
+    }
+    let headers = String::from_utf8_lossy(&request[..headers_end]);
+    let path = headers
         .lines()
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .unwrap_or("/");
-
-    let (status, body) = match path {
-        "/connect/token" => (
-            "200 OK",
-            serde_json::json!({
-                "access_token": E2E_ACCESS_TOKEN,
-                "token_type": "Bearer",
-                "expires_in": 3600,
-                "refresh_token": E2E_REFRESH_TOKEN,
-            })
-            .to_string(),
-        ),
-        "/connect/userinfo" => (
-            "200 OK",
-            serde_json::json!({
-                "sub": E2E_USER_ID, "name": "Test Account", "email": "account@example.test",
-            })
-            .to_string(),
-        ),
-        "/api/connect" => {
-            let token = routing_token(routing_host, routing_port);
-            (
-                "200 OK",
-                serde_json::json!({
-                    "host": "localhost",
-                    "port": routing_port,
-                    "token": token,
-                    "expires_at": (Utc::now() + ChronoDuration::hours(1)).to_rfc3339(),
-                })
-                .to_string(),
-            )
-        }
-        "/.well-known/openid-configuration/jwks" => (
-            "200 OK",
-            serde_json::json!({
-                "keys": [{
-                    "kid": E2E_JWT_KID,
-                    "kty": "RSA",
-                    "alg": "RS256",
-                    "use": "sig",
-                    "n": E2E_JWK_N,
-                    "e": E2E_JWK_E,
-                }]
-            })
-            .to_string(),
-        ),
-        _ => ("404 Not Found", "{}".to_string()),
-    };
-
+    let bearer = headers
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+        .and_then(|(_, value)| value.trim().strip_prefix("Bearer "));
+    let form = url::form_urlencoded::parse(&request[headers_end..headers_end + content_length])
+        .into_owned()
+        .collect();
+    let (status, body) = identity.respond(path, &form, bearer, routing_host, routing_port);
+    let body = body.to_string();
     let response = format!(
         "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len()
@@ -492,11 +640,11 @@ fn handle_cloud_request(mut stream: TcpStream, routing_host: &str, routing_port:
     let _ = stream.write_all(response.as_bytes());
 }
 
-fn routing_token(routing_host: &str, routing_port: u16) -> String {
+fn routing_token(routing_host: &str, routing_port: u16, subject: &str) -> String {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(E2E_JWT_KID.to_string());
     let claims = RoutingClaims {
-        sub: E2E_USER_ID,
+        sub: subject,
         client_id: "e2e",
         host: routing_host,
         port: routing_port,
@@ -636,7 +784,12 @@ impl Executor {
                 None => None,
             };
 
-            let root = temp_dir.path().join(format!("c{index}"));
+            let checkout = temp_dir.path().join(format!("c{index}"));
+            let root = if cfg.worktree {
+                checkout.join(".wt/amux")
+            } else {
+                checkout.clone()
+            };
             std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
             let root = root.canonicalize().map_err(|e| e.to_string())?;
             let id = uuid::Uuid::new_v5(
@@ -650,7 +803,9 @@ impl Executor {
             } else {
                 profile_dir.join("state")
             };
-            std::fs::create_dir_all(&state_dir).map_err(|e| e.to_string())?;
+            if cfg.cloud_relay {
+                std::fs::create_dir_all(&state_dir).map_err(|e| e.to_string())?;
+            }
             let state_path = state_dir.join("state.yaml");
             let data_home = root.join("data_home");
             let xdg_state_home = root.join("xdg_state_home");
@@ -659,7 +814,6 @@ impl Executor {
                 .host_name
                 .clone()
                 .unwrap_or_else(|| test_case.name.clone());
-            let cloud_account = cfg.cloud_account.unwrap_or(false);
             let cloud_url = cfg.cloud_url.as_deref().unwrap_or("https://amux.sh");
             let (config_file_path, socket_path) = if cfg.cloud_relay {
                 let path = root.join("relay.yaml");
@@ -674,8 +828,11 @@ impl Executor {
                 (path, socket_path)
             } else {
                 let installation_path = root.join("installation.yaml");
-                let profile_path = profile_dir.join("config.yaml");
-                let socket = root.join("profiles").join(format!("{id}.sock"));
+                let profile_names = if cfg.profiles.is_empty() {
+                    vec![cfg.name.clone()]
+                } else {
+                    cfg.profiles.clone()
+                };
                 write_fixture_yaml(
                     &installation_path,
                     &serde_json::json!({
@@ -684,38 +841,114 @@ impl Executor {
                         "keymaps_dir": root.join("keymaps"),
                     }),
                 )?;
-                write_fixture_yaml(
-                    &profile_path,
-                    &serde_json::json!({
-                        "installation_config": installation_path, "socket_path": socket,
-                        "state_path": state_path, "data_dir": profile_dir.join("data"),
-                        "cloud_url": cloud_url, "tcp_port": tcp_port,
-                    }),
-                )?;
-                let binding = cloud_account.then(|| serde_json::json!({
-                    "account": {"service": cloud_url.trim_end_matches('/'), "subject": E2E_USER_ID},
-                    "bound_at": "2026-01-01T00:00:00Z",
-                }));
-                let version = uuid::Uuid::new_v4().to_string();
-                let mut registry = serde_json::json!({"profiles": [{
-                    "id": id, "label": {"account_name": null, "email": null, "override_name": cfg.name},
-                    "binding": binding, "paused": false, "revision": 1,
-                }]});
-                if cloud_account {
-                    registry["credentials"] = serde_json::json!({id.clone(): version.clone()});
+                let (profile_path, socket) = if cfg.worktree {
+                    // Use the actual worktree template and generator so this fixture catches
+                    // changes in either half of the developer layout.
+                    let source = std::fs::read_to_string(crate::workspace_root().join(".wt.toml"))
+                        .map_err(|e| e.to_string())?;
+                    let wt: toml::Value = toml::from_str(&source).map_err(|e| e.to_string())?;
+                    let template = wt["files"][".wt/amux/installation.yaml"]["content"]
+                        .as_str()
+                        .ok_or("missing worktree installation template")?;
+                    std::fs::write(
+                        &installation_path,
+                        template
+                            .replace("{{root()}}", &checkout.to_string_lossy())
+                            .replace("{{name_short()}}", &cfg.name),
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let generated = Command::new("python3")
+                        .arg(crate::workspace_root().join("scripts/worktree-profile.py"))
+                        .arg(&root)
+                        .arg(&cfg.name)
+                        .output()
+                        .map_err(|e| e.to_string())?;
+                    if !generated.status.success() {
+                        return Err(String::from_utf8_lossy(&generated.stderr).into_owned());
+                    }
+                    let path = PathBuf::from(String::from_utf8_lossy(&generated.stdout).trim());
+                    let profile_id = path
+                        .parent()
+                        .and_then(Path::file_name)
+                        .ok_or("missing generated profile id")?
+                        .to_string_lossy()
+                        .to_string();
+                    var_ctx
+                        .captures
+                        .insert(format!("{}.id", cfg.name), profile_id.clone());
+                    (
+                        root.join("profile.yaml"),
+                        root.join("profiles").join(format!("{profile_id}.sock")),
+                    )
+                } else {
+                    let mut records = Vec::new();
+                    let mut first = None;
+                    for (profile_index, name) in profile_names.iter().enumerate() {
+                        let profile_id = if profile_index == 0 {
+                            id.clone()
+                        } else {
+                            uuid::Uuid::new_v5(
+                                &uuid::Uuid::NAMESPACE_URL,
+                                format!("amux-e2e:{}:{}:{name}", test_case.name, cfg.name)
+                                    .as_bytes(),
+                            )
+                            .to_string()
+                        };
+                        let dir = root.join("profiles").join(&profile_id);
+                        std::fs::create_dir_all(dir.join("state")).map_err(|e| e.to_string())?;
+                        let path = dir.join("config.yaml");
+                        let socket = root.join("profiles").join(format!("{profile_id}.sock"));
+                        write_fixture_yaml(
+                            &path,
+                            &serde_json::json!({
+                                "installation_config": installation_path, "socket_path": socket,
+                                "state_path": dir.join("state/state.yaml"), "data_dir": dir.join("data"),
+                                "cloud_url": cloud_url, "tcp_port": if profile_index == 0 { tcp_port } else { None },
+                            }),
+                        )?;
+                        records.push(serde_json::json!({"id": profile_id, "label": {"override_name": name}, "binding": null, "paused": false, "revision": 1}));
+                        var_ctx
+                            .captures
+                            .insert(format!("{}.{name}.id", cfg.name), profile_id.clone());
+                        var_ctx.captures.insert(
+                            format!("{}.{name}.socket_path", cfg.name),
+                            socket.display().to_string(),
+                        );
+                        if first.is_none() {
+                            var_ctx
+                                .captures
+                                .insert(format!("{}.id", cfg.name), profile_id);
+                            first = Some((path, socket));
+                        }
+                    }
                     write_fixture_yaml(
-                        &profile_dir.join("credentials.yaml"),
-                        &serde_json::json!({
-                            "versions": {version: {"binding": binding, "refresh_token": E2E_REFRESH_TOKEN}},
-                        }),
+                        &root.join("registry.yaml"),
+                        &serde_json::json!({"profiles": records}),
                     )?;
-                }
-                write_fixture_yaml(&root.join("registry.yaml"), &registry)?;
+                    first.ok_or("at least one profile required")?
+                };
+                var_ctx.captures.insert(
+                    format!("{}.front_door", cfg.name),
+                    root.join("amux.sock").display().to_string(),
+                );
                 (profile_path, socket)
             };
 
+            let config_home = root.join("config_home");
+            if !cfg.cloud_relay {
+                std::fs::create_dir_all(config_home.join("amux")).map_err(|e| e.to_string())?;
+                std::fs::copy(
+                    root.join("installation.yaml"),
+                    config_home.join("amux/config.yaml"),
+                )
+                .map_err(|e| e.to_string())?;
+            }
             config_paths.insert(cfg.name.clone(), config_file_path);
             let mut env = HashMap::from([
+                (
+                    "XDG_CONFIG_HOME".to_string(),
+                    config_home.display().to_string(),
+                ),
                 (
                     "XDG_DATA_HOME".to_string(),
                     data_home.to_string_lossy().to_string(),
@@ -729,9 +962,7 @@ impl Executor {
                     log_path.to_string_lossy().to_string(),
                 ),
             ]);
-            if let Some(fixture) = &cloud_fixture
-                && (cfg.cloud_relay || cloud_account)
-            {
+            if let Some(fixture) = &cloud_fixture {
                 env.insert(
                     "AMUX_CLOUD_TLS_CA".to_string(),
                     fixture.routing_tls_ca.to_string_lossy().to_string(),
@@ -754,10 +985,17 @@ impl Executor {
             }
         }
 
-        self.initialize_device_configs(&configs, &config_paths, &config_envs)?;
+        let mut transcript = String::new();
+        let initialized = self.initialize_device_configs(
+            &configs,
+            &config_paths,
+            &config_envs,
+            cloud_fixture.as_ref(),
+            &mut transcript,
+        );
 
         // Map terminal names to their config and cwd
-        let terminal_configs: HashMap<String, (String, PathBuf)> = terminals
+        let terminal_configs: HashMap<String, (String, PathBuf, bool)> = terminals
             .iter()
             .map(|t| {
                 let config_name = t.config.clone().unwrap_or_else(|| configs[0].name.clone());
@@ -776,25 +1014,30 @@ impl Executor {
                                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                             })
                     });
-                (t.name.clone(), (config_name, cwd))
+                (t.name.clone(), (config_name, cwd, t.installation))
             })
             .collect();
 
         // Execute test steps, then clean up servers regardless of result
-        let result = self
-            .execute_steps(
-                &test_case.steps,
-                &terminal_configs,
-                &config_paths,
-                &config_envs,
-                &mut var_ctx,
-            )
+        let result = initialized
+            .and_then(|()| {
+                self.execute_steps(
+                    &test_case.steps,
+                    &terminal_configs,
+                    &config_paths,
+                    &config_envs,
+                    &mut var_ctx,
+                    &mut transcript,
+                )
+            })
             .map_err(|error| append_config_logs(error, &config_envs));
 
         // Cleanup: shut down background servers spawned during the test.
-        for config_path in config_paths.values() {
+        for cfg in configs.iter().filter(|cfg| !cfg.cloud_relay) {
             let _ = Command::new(&self.config.amux_binary)
-                .args(["--config", &config_path.to_string_lossy(), "server", "stop"])
+                .args(["server", "stop"])
+                .env_remove("AMUX_CONFIG")
+                .envs(&config_envs[&cfg.name])
                 .output();
         }
         #[cfg(unix)]
@@ -802,6 +1045,18 @@ impl Executor {
             let _ = std::fs::remove_file(socket_path);
         }
 
+        if let Some(directory) = &self.config.transcript_dir {
+            std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+            transcript.push_str(&format!(
+                "\nResult: {}\n",
+                if result.is_ok() { "PASS" } else { "FAIL" }
+            ));
+            std::fs::write(
+                directory.join(format!("{}.txt", test_case.name)),
+                transcript,
+            )
+            .map_err(|e| e.to_string())?;
+        }
         result
     }
 
@@ -810,6 +1065,8 @@ impl Executor {
         configs: &[TestConfig],
         config_paths: &HashMap<String, PathBuf>,
         config_envs: &HashMap<String, HashMap<String, String>>,
+        fixture: Option<&CloudFixture>,
+        transcript: &mut String,
     ) -> Result<(), String> {
         for cfg in configs.iter().filter(|cfg| !cfg.cloud_relay) {
             let config_path = config_paths
@@ -818,20 +1075,31 @@ impl Executor {
             let env = config_envs
                 .get(&cfg.name)
                 .ok_or_else(|| format!("Missing env for config: {}", cfg.name))?;
-            let output = Command::new(&self.config.amux_binary)
-                .arg("--config")
-                .arg(config_path)
-                .arg("init")
-                .env_remove("AMUX_CONFIG")
-                .envs(env)
-                .output()
-                .map_err(|e| format!("Failed to initialize config {}: {}", cfg.name, e))?;
-            if !output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!(
-                    "Failed to initialize config {}:\n{}{}",
-                    cfg.name, stdout, stderr
+            let mut commands = vec![vec!["init".to_string()]];
+            if let Some(account) = &cfg.cloud_account {
+                fixture
+                    .ok_or("login requires cloud fixture")?
+                    .identity
+                    .lock()
+                    .unwrap()
+                    .accounts
+                    .push_front(fixture_account(account)?);
+                commands.push(vec!["login".to_string()]);
+            }
+            for args in commands {
+                let command = ResolvedCommand {
+                    program: self.config.amux_binary.display().to_string(),
+                    args: [
+                        vec!["--config".into(), config_path.display().to_string()],
+                        args.clone(),
+                    ]
+                    .concat(),
+                };
+                let output = run_oneshot_command(&command, &crate::workspace_root(), env)?;
+                transcript.push_str(&format!(
+                    "[setup {}] amux {}\n{output}",
+                    cfg.name,
+                    args.join(" ")
                 ));
             }
         }
@@ -841,10 +1109,11 @@ impl Executor {
     fn execute_steps(
         &self,
         steps: &[TestStep],
-        terminal_configs: &HashMap<String, (String, PathBuf)>,
+        terminal_configs: &HashMap<String, (String, PathBuf, bool)>,
         config_paths: &HashMap<String, PathBuf>,
         config_envs: &HashMap<String, HashMap<String, String>>,
         var_ctx: &mut VariableContext,
+        transcript: &mut String,
     ) -> Result<(), String> {
         let mut active_terminals: HashMap<String, TestTerminal> = HashMap::new();
         let mut oneshot_outputs: HashMap<String, String> = HashMap::new();
@@ -857,7 +1126,60 @@ impl Executor {
 
         for step in steps {
             match step {
+                TestStep::ProcessExited(pid) => {
+                    let pid: i32 = var_ctx
+                        .substitute(pid)
+                        .parse()
+                        .map_err(|_| "invalid captured process id")?;
+                    if pid <= 1 {
+                        return Err("refusing invalid process id".into());
+                    }
+                    #[cfg(unix)]
+                    {
+                        let start = Instant::now();
+                        loop {
+                            // SAFETY: signal 0 only probes whether this process exists.
+                            if unsafe { libc::kill(pid, 0) } == -1 {
+                                let error = std::io::Error::last_os_error();
+                                if error.raw_os_error() == Some(libc::ESRCH) {
+                                    break;
+                                }
+                                return Err(format!("Cannot probe process {pid}: {error}"));
+                            }
+                            if start.elapsed() > Duration::from_secs(5) {
+                                return Err(format!("Agent process {pid} is still alive"));
+                            }
+                            thread::sleep(Duration::from_millis(20));
+                        }
+                        transcript.push_str(&format!("[agent process {pid} exited]\n"));
+                    }
+                    #[cfg(not(unix))]
+                    return Err(format!(
+                        "Process probe unsupported for {pid} on this platform"
+                    ));
+                }
+                TestStep::ExpectContains(expected) => {
+                    let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
+                    let output = oneshot_outputs
+                        .get(term_name)
+                        .ok_or("@@contains requires a completed one-shot command")?;
+                    let expected = var_ctx.substitute(expected);
+                    if !output.contains(&expected) {
+                        return Err(format!("Expected {expected:?} in output:\n{output}"));
+                    }
+                }
+                TestStep::Exit(code) => {
+                    let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
+                    let mut terminal = active_terminals
+                        .remove(term_name)
+                        .ok_or("@@exit requires a PTY command")?;
+                    terminal
+                        .wait_exit(*code, Duration::from_secs(5))
+                        .map_err(|e| e.to_string())?;
+                    transcript.push_str(&format!("[exit {code}]\n"));
+                }
                 TestStep::SwitchTerminal(name) => {
+                    transcript.push_str(&format!("\n@{name}\n"));
                     current_terminal = Some(name.clone());
                 }
                 TestStep::Sleep(ms) => {
@@ -891,6 +1213,9 @@ impl Executor {
                             .map_err(|e| format!("Failed to capture output: {}", e))?
                     };
 
+                    if active_terminals.contains_key(term_name) {
+                        transcript.push_str(&format!("{actual}\n"));
+                    }
                     if !actual.starts_with(&prefix_substituted) {
                         return Err(format!(
                             "Capture mismatch in terminal {}:\n  Expected prefix: {:?}\n  Actual:          {:?}",
@@ -907,7 +1232,7 @@ impl Executor {
                 }
                 TestStep::Input(input) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
-                    let (config_name, cwd) = terminal_configs
+                    let (config_name, cwd, installation) = terminal_configs
                         .get(term_name)
                         .ok_or(format!("Unknown terminal: {}", term_name))?;
                     let config_path = config_paths
@@ -918,15 +1243,22 @@ impl Executor {
                         .ok_or(format!("Missing env for config: {}", config_name))?;
 
                     let input_substituted = var_ctx.substitute(input);
-                    let is_amux_command =
-                        input_substituted == "amux" || input_substituted.starts_with("amux ");
+                    transcript.push_str(&format!("\n[{term_name}] > {input_substituted}\n"));
+                    let is_amux_command = input_substituted == "amux"
+                        || input_substituted.starts_with("amux ")
+                        || input_substituted.starts_with("e2e-runner client ");
 
                     if is_amux_command && !active_terminals.contains_key(term_name) {
-                        let transformed =
-                            self.transform_command(&input_substituted, config_path)?;
+                        oneshot_outputs.remove(term_name);
+                        last_oneshot_commands.remove(term_name);
+                        let transformed = self.transform_command(
+                            &input_substituted,
+                            (!installation).then_some(config_path.as_path()),
+                        )?;
 
                         if is_oneshot_amux_command(&transformed) {
                             let combined = run_oneshot_command(&transformed, cwd, env)?;
+                            transcript.push_str(&combined);
                             last_oneshot_commands
                                 .insert(term_name.clone(), (transformed, cwd.clone(), env.clone()));
                             oneshot_outputs.insert(term_name.clone(), combined);
@@ -990,6 +1322,12 @@ impl Executor {
                             .map_err(|e| format!("Failed to read output: {}", e))?
                     };
 
+                    if active_terminals.contains_key(term_name) {
+                        transcript.push_str(&actual);
+                    } else if retry_policy.is_some() && !transcript.ends_with(&actual) {
+                        transcript.push_str("[retry result]\n");
+                        transcript.push_str(&actual);
+                    }
                     if actual != expected_with_newline {
                         return Err(format!(
                             "Output mismatch in terminal {}:\n  Expected: {:?}\n  Actual:   {:?}",
@@ -1028,6 +1366,9 @@ impl Executor {
                 host_name: None,
                 socket_path: None,
                 cloud_account: None,
+                accounts: Vec::new(),
+                profiles: Vec::new(),
+                worktree: false,
                 cloud_url: None,
                 tcp_port: None,
                 cloud_relay: false,
@@ -1049,7 +1390,7 @@ impl Executor {
     fn transform_command(
         &self,
         input: &str,
-        config_path: &Path,
+        config_path: Option<&Path>,
     ) -> Result<ResolvedCommand, String> {
         let mut parts =
             shell_words::split(input).map_err(|e| format!("Failed to parse command: {}", e))?;
@@ -1057,10 +1398,18 @@ impl Executor {
             return Err("Command cannot be empty".to_string());
         }
 
+        if parts[0] == "e2e-runner" {
+            parts[0] = std::env::current_exe()
+                .map_err(|e| e.to_string())?
+                .display()
+                .to_string();
+        }
         if parts[0] == "amux" {
             parts[0] = self.config.amux_binary.display().to_string();
-            parts.insert(1, "--config".to_string());
-            parts.insert(2, config_path.display().to_string());
+            if let Some(config_path) = config_path {
+                parts.insert(1, "--config".to_string());
+                parts.insert(2, config_path.display().to_string());
+            }
         }
 
         for part in &mut parts {
@@ -1073,5 +1422,96 @@ impl Executor {
             program: parts.remove(0),
             args: parts,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_identity_device_flow_rotates_single_use_tokens_and_separates_accounts() {
+        let mut state = IdentityState::new(&["alice".into(), "bob".into()]).unwrap();
+        fn call(
+            state: &mut IdentityState,
+            path: &str,
+            form: HashMap<String, String>,
+            bearer: Option<&str>,
+        ) -> (&'static str, serde_json::Value) {
+            state.respond(path, &form, bearer, "relay", 1234)
+        }
+        assert_eq!(
+            call(
+                &mut state,
+                "/connect/deviceauthorization",
+                HashMap::new(),
+                None
+            )
+            .0,
+            "400 Bad Request"
+        );
+        for name in ["alice", "bob"] {
+            let (status, device) = call(
+                &mut state,
+                "/connect/deviceauthorization",
+                HashMap::from([(
+                    "scope".into(),
+                    "openid profile email offline_access api".into(),
+                )]),
+                None,
+            );
+            assert_eq!(status, "200 OK");
+            let grant = HashMap::from([
+                (
+                    "grant_type".into(),
+                    "urn:ietf:params:oauth:grant-type:device_code".into(),
+                ),
+                (
+                    "device_code".into(),
+                    device["device_code"].as_str().unwrap().into(),
+                ),
+            ]);
+            let (status, tokens) = call(&mut state, "/connect/token", grant.clone(), None);
+            assert_eq!(status, "200 OK");
+            assert_eq!(
+                call(&mut state, "/connect/token", grant, None).1["error"],
+                "invalid_grant"
+            );
+            let grant = HashMap::from([
+                ("grant_type".into(), "refresh_token".into()),
+                (
+                    "refresh_token".into(),
+                    tokens["refresh_token"].as_str().unwrap().into(),
+                ),
+            ]);
+            let (status, rotated) = call(&mut state, "/connect/token", grant.clone(), None);
+            assert_eq!(status, "200 OK");
+            assert_ne!(tokens["refresh_token"], rotated["refresh_token"]);
+            assert_eq!(
+                call(&mut state, "/connect/token", grant, None).1["error"],
+                "invalid_grant"
+            );
+            let (status, info) = call(
+                &mut state,
+                "/connect/userinfo",
+                HashMap::new(),
+                rotated["access_token"].as_str(),
+            );
+            assert_eq!(status, "200 OK");
+            let account = fixture_account(name).unwrap();
+            assert_eq!(info["sub"], account.sub);
+            assert_eq!(info["name"], account.display);
+            assert_eq!(info["email"], account.email);
+        }
+        assert_eq!(
+            call(
+                &mut state,
+                "/connect/userinfo",
+                HashMap::new(),
+                Some("invalid")
+            )
+            .0,
+            "401 Unauthorized"
+        );
     }
 }

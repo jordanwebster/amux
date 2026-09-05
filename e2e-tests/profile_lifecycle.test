@@ -1,0 +1,83 @@
+# test: profile_lifecycle
+# description: Create, rename, pause, resume, logout and confirm deletion through the CLI
+
+## Environment
+
+config:
+  name: relay
+  cloud_relay: true
+  tcp_port: 0
+  accounts: [alice]
+
+config:
+  name: local
+
+terminal:
+  name: relay
+  config: relay
+
+terminal:
+  name: T1
+  config: local
+
+terminal:
+  name: Admin
+  config: local
+  installation: true
+
+## Test
+
+@relay
+> amux server start --cloud --foreground
+@@sleep 500
+
+@T1
+> amux login
+@@contains alice@example.test  bound /
+
+> amux profiles
+@@retry 8000 100
+Profiles:
+  $local.id  local  alice@example.test  bound / connected
+
+> amux profile create scratch
+@@contains scratch    unbound / local
+
+> amux --profile scratch profile delete --yes
+@@contains Deleted scratch (
+
+> amux --profile local profile rename Personal
+@@contains $local.id  Personal  alice@example.test  bound /
+
+> amux --profile Personal profile pause
+$local.id  Personal  alice@example.test  paused / local
+
+> amux --profile Personal profile resume
+@@contains $local.id  Personal  alice@example.test  bound /
+
+> amux profiles
+@@retry 8000 100
+Profiles:
+  $local.id  Personal  alice@example.test  bound / connected
+
+> amux --profile Personal logout
+$local.id  Personal  alice@example.test  logged_out / local
+
+> amux --profile Personal profile delete
+> n
+Delete Personal ($local.id) and destroy its keys, trust, agents and credentials? [y/N]: Deletion cancelled.
+@@exit
+
+> amux profiles
+Profiles:
+  $local.id  Personal  alice@example.test  logged_out / local
+
+> amux --profile Personal profile delete
+> y
+Delete Personal ($local.id) and destroy its keys, trust, agents and credentials? [y/N]: Deleted Personal ($local.id).
+@@exit
+
+@Admin
+> amux profiles
+Profiles:
+  No profiles. Run `amux profile create` or `amux login`.

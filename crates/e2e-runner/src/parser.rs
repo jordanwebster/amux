@@ -19,7 +19,16 @@ pub struct TestConfig {
     #[serde(default)]
     pub socket_path: Option<String>,
     #[serde(default)]
-    pub cloud_account: Option<bool>,
+    pub cloud_account: Option<String>,
+    /// Ordered auto-approved identities for successive device logins.
+    #[serde(default)]
+    pub accounts: Vec<String>,
+    /// Unbound profiles belonging to this installation.
+    #[serde(default)]
+    pub profiles: Vec<String>,
+    /// Generate the layout from the checked-in worktree template and script.
+    #[serde(default)]
+    pub worktree: bool,
     #[serde(default)]
     pub cloud_url: Option<String>,
     #[serde(default)]
@@ -36,6 +45,9 @@ pub struct Terminal {
     pub config: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Resolve through XDG_CONFIG_HOME without injecting a profile path.
+    #[serde(default)]
+    pub installation: bool,
 }
 
 /// A single step in a test
@@ -47,6 +59,12 @@ pub enum TestStep {
     Input(String),
     /// Expect output (may be multiple lines, joined with \n)
     ExpectOutput(String),
+    /// Assert a stable substring in a completed command with variable status or ids.
+    ExpectContains(String),
+    /// Wait for a PTY command to exit successfully and release the terminal.
+    Exit(u32),
+    /// Require a captured agent process to disappear from the OS.
+    ProcessExited(String),
     /// Capture one output line suffix after a required prefix into a variable.
     CaptureOutput { name: String, prefix: String },
     /// Sleep for a given number of milliseconds
@@ -289,6 +307,30 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     if !pending_output_lines.is_empty() {
                         pending_output_lines.push(String::new());
                     }
+                    continue;
+                }
+
+                if let Some(rest) = trimmed.strip_prefix("@@process-exited ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    steps.push(TestStep::ProcessExited(rest.to_string()));
+                    continue;
+                }
+                if let Some(rest) = trimmed.strip_prefix("@@contains ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    steps.push(TestStep::ExpectContains(rest.to_string()));
+                    continue;
+                }
+                if let Some(rest) = trimmed.strip_prefix("@@exit") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    let code = if rest.trim().is_empty() {
+                        0
+                    } else {
+                        rest.trim().parse().map_err(|_| ParseError {
+                            line: line_num,
+                            message: "Invalid exit code".into(),
+                        })?
+                    };
+                    steps.push(TestStep::Exit(code));
                     continue;
                 }
 
