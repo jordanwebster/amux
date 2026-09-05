@@ -4,7 +4,7 @@
       "id": "home-coldstart",
       "stage": 5,
       "topology": "e2e-tests/topologies/two-hosts.json",
-      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every row shimmering, and a real connection to a real host confirms it without moving what is on screen."
+      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every row shimmering and nothing spinning, and a real connection to two real hosts confirms it. Today that confirmation leaves the list empty: pairing from the phone is not built, so neither machine vouches for anything this phone remembered. That a row goes solid when its own host answers, without the list moving, is proven where it happens — in the shared library's cache tests and the fleet store's — and becomes a claim about the screen here once a paired phone can be driven through this journey."
     },
     {
       "id": "home",

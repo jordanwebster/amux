@@ -281,7 +281,7 @@ def named(state: dict, identifier: str) -> dict | None:
 
 
 def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
-    """A launch draws what this phone remembers, and a connection confirms it.
+    """A launch draws what this phone remembers, and a connection answers for it.
 
     The remembered fleet is written to disk in the shared library's own format
     before the app is launched, exactly as the previous run would have left it.
@@ -383,6 +383,14 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
     placed = [row["identifier"] for row in remembered_rows]
     journey.expect(surviving == [row for row in placed if row in surviving],
                    f"the sync moved the list: it was {placed} and is now {surviving}")
+    # Pinned rather than assumed: with this phone unpaired the confirmation
+    # empties the list, so the three assertions above hold over nothing. The
+    # day a row survives its machine's answer, this fails and says so, and the
+    # journey's claim gets rewritten around what it can then show.
+    journey.expect(not surviving,
+                   f"rows survived the confirmation: {surviving}. Either pairing from the "
+                   f"phone now exists and what this journey claims is out of date, or the "
+                   f"fleet kept rows no machine vouched for")
     reconciled = next((mark for mark in last_marks if mark["signpost"] == "reconciled"), None)
     connected_at = next((mark for mark in last_marks
                          if mark["signpost"] == "streamConnected"), None)

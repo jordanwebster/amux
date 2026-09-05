@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **A journey says only what its run showed.** The cold-start
+journey claimed a real connection confirmed the remembered fleet "without
+moving what is on screen". It does not: pairing from the phone is not built, so
+both machines disown everything the phone remembered and the confirmation
+leaves an empty list — which made the assertions after it true about nothing.
+The claim now states that, and the run asserts the empty list on purpose, so
+the day a row survives its machine's answer the journey fails and says the
+claim is out of date rather than passing over a list that has changed meaning.
+
 2026-09-06 — **The screens' own rules are a check now.** `ios/Tools/feature-lint.sh`
 has refused UIKit outside a registered leaf, a platform conditional and a
 spinner since the screens package was written, but nothing ran it, so all three
