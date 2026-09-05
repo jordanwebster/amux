@@ -7803,3 +7803,13 @@ reports whether the body actually moved. Learning the screen size split in two
 for this: keys go on using the setter that pulls the body back to the cursor,
 while the wheel only resizes, because following the cursor there would have
 undone each notch before the next one arrived.
+
+2026-09-05 — **A panic after switching accounts reports the account on
+screen.** The process-global panic-report slot held the recorder and report
+directory of whichever runtime installed it, so once the shell rebound to
+another profile a panic still filed its bundle under the account the person had
+left, with a recorder that had stopped seeing anything. Switching now carries
+the slot across when the retiring runtime was the one that installed it —
+matched by recorder identity, so a host that keeps its own panic hook does not
+acquire one by switching — and clears it when the new selection has nowhere to
+write rather than leaving the retired directory registered.

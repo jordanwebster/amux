@@ -399,6 +399,11 @@ impl Runtime {
     /// put an owned one. The retired selection is dropped — and its tasks
     /// aborted — as soon as the new one has taken the Msg channel over.
     pub fn switch_in_place(&mut self, entry: &ProfileEntry, options: RuntimeOptions) {
+        // A panic after the switch must report the profile the user is
+        // actually looking at, so the panic-report slot follows the selection
+        // — but only when it was this runtime's to begin with. A process that
+        // never installed one keeps none.
+        let owns_panic_report = self.owns_panic_report();
         let (closed_tx, closed_rx) = mpsc::channel(1);
         drop(closed_tx);
         let msg_rx = std::mem::replace(&mut self.msg_rx, closed_rx);
@@ -430,6 +435,13 @@ impl Runtime {
         let next = Self::start_on_channel(connector, options, msg_tx, msg_rx, generation);
         // Dropping the retired runtime releases its client and caches.
         drop(std::mem::replace(self, next));
+        // The retired recorder and report directory are gone; leaving them
+        // registered would file the next panic against the profile the shell
+        // has left. A new selection with nowhere to write clears the slot
+        // rather than keeping the stale one.
+        if owns_panic_report {
+            *lock_panic_report() = self.panic_report_context();
+        }
     }
 
     /// The generation this runtime folds. Results stamped with any other are
@@ -630,16 +642,29 @@ impl Runtime {
     /// slot read by [`write_panic_report`]. Call once after start; a Runtime
     /// without a report directory registers nothing.
     pub fn install_panic_report(&self) {
-        let Some(report_dir) = self.report_dir.clone() else {
+        let Some(context) = self.panic_report_context() else {
             return;
         };
-        *lock_panic_report() = Some(PanicReportContext {
+        *lock_panic_report() = Some(context);
+    }
+
+    /// What the panic hook would need to report on this Runtime's behalf, or
+    /// None for a Runtime with nowhere to write a report.
+    fn panic_report_context(&self) -> Option<PanicReportContext> {
+        Some(PanicReportContext {
             recorder: self.recorder.clone(),
-            report_dir,
+            report_dir: self.report_dir.clone()?,
             log_path: self.log_path.clone(),
             git_sha: self.git_sha,
             report_extras: self.report_extras.clone(),
-        });
+        })
+    }
+
+    /// True when the process-global panic-report slot is this Runtime's own.
+    fn owns_panic_report(&self) -> bool {
+        lock_panic_report()
+            .as_ref()
+            .is_some_and(|context| Arc::ptr_eq(&context.recorder, &self.recorder))
     }
 
     fn process(&mut self, msg: Msg) {
@@ -2240,11 +2265,101 @@ mod tests {
         );
     }
 
+    /// The panic-report slot is process-global, so the tests that install
+    /// into it take turns. Poison-tolerant: a failing test leaves the slot
+    /// behind, not the rest of the suite blocked.
+    static PANIC_REPORT_TESTS: StdMutex<()> = StdMutex::new(());
+
+    fn panic_report_test_turn() -> std::sync::MutexGuard<'static, ()> {
+        PANIC_REPORT_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn a_profile_entry(label: &str, socket: PathBuf) -> ProfileEntry {
+        ProfileEntry {
+            id: ProfileId(Uuid::from_u128(91)),
+            label: label.to_string(),
+            email: None,
+            status: "ready".to_string(),
+            socket,
+        }
+    }
+
+    /// A panic after a switch belongs to the profile the shell moved to: the
+    /// slot the hook reads carries the new selection's report directory and
+    /// its recorder, never the retired ones.
+    #[tokio::test]
+    async fn switching_reregisters_the_panic_report_for_the_new_profile() {
+        let _turn = panic_report_test_turn();
+        *lock_panic_report() = None;
+        let retired_dir = tempfile::tempdir().expect("tempdir");
+        let selected_dir = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(retired_dir.path().to_path_buf());
+        let retired_recorder = runtime.recorder.clone();
+        runtime.install_panic_report();
+
+        let selected_log = selected_dir.path().join("amux.log");
+        std::fs::write(&selected_log, "selected profile log\n").expect("write test log");
+        runtime.switch_in_place(
+            &a_profile_entry("Work", selected_dir.path().join("work.sock")),
+            RuntimeOptions {
+                report_dir: Some(selected_dir.path().to_path_buf()),
+                log_path: Some(selected_log.clone()),
+                ..RuntimeOptions::default()
+            },
+        );
+
+        let context = lock_panic_report()
+            .clone()
+            .expect("the switch leaves a panic-report context installed");
+        assert_eq!(
+            context.report_dir,
+            selected_dir.path(),
+            "a panic reports into the selected profile's report directory"
+        );
+        assert_eq!(context.log_path.as_deref(), Some(selected_log.as_path()));
+        assert!(
+            Arc::ptr_eq(&context.recorder, &runtime.recorder),
+            "the panic hook snapshots the new runtime's recorder"
+        );
+        assert!(
+            !Arc::ptr_eq(&context.recorder, &retired_recorder),
+            "the retired profile's recorder is no longer what a panic would report"
+        );
+        *lock_panic_report() = None;
+    }
+
+    /// A shell that never installed a panic-report context — an embedding
+    /// host with its own hook — does not acquire one by switching.
+    #[tokio::test]
+    async fn switching_installs_no_panic_report_for_a_shell_that_had_none() {
+        let _turn = panic_report_test_turn();
+        *lock_panic_report() = None;
+        let retired_dir = tempfile::tempdir().expect("tempdir");
+        let selected_dir = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(retired_dir.path().to_path_buf());
+
+        runtime.switch_in_place(
+            &a_profile_entry("Work", selected_dir.path().join("work.sock")),
+            RuntimeOptions {
+                report_dir: Some(selected_dir.path().to_path_buf()),
+                ..RuntimeOptions::default()
+            },
+        );
+
+        assert!(
+            lock_panic_report().is_none(),
+            "switching profiles does not install a panic hook context the shell never asked for"
+        );
+    }
+
     /// The panic hook's report path, exercised WITHOUT panicking: install,
     /// call `write_panic_report`, and the report directory holds a bundle whose
     /// header carries the panic reason.
     #[test]
     fn write_panic_report_writes_a_report_after_install() {
+        let _turn = panic_report_test_turn();
         let dir = tempfile::tempdir().expect("tempdir");
         let mut runtime = a_runtime(dir.path().to_path_buf());
         runtime.observe_now(DateTime::from_timestamp(1_754_697_600, 0).expect("valid time"));
