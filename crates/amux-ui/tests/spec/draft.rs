@@ -11,9 +11,7 @@
 
 use amux_artifacts::id_of;
 use amux_ui::attachments::{Mention, MentionKind};
-use amux_ui::{
-    ArtifactKind, Command, DraftAttachment, Effect, Msg, OpId, format_mention,
-};
+use amux_ui::{ArtifactKind, Command, DraftAttachment, Effect, Msg, OpId, format_mention};
 use serde_json::json;
 
 use crate::harness::*;
@@ -132,11 +130,7 @@ fn draft_send_pins_exactly_its_own_attachments() {
     );
     let (_, effects) = fold_with_effects(seq([
         chat_base(AGENT),
-        vec![send(
-            op(21),
-            both,
-            vec![image.clone(), logfile.clone()],
-        )],
+        vec![send(op(21), both, vec![image.clone(), logfile.clone()])],
     ]));
     let (_, pin) = put_then_send(&effects);
     assert_eq!(pin, &vec![image.id.clone(), logfile.id.clone()]);

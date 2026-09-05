@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, nativeapp]
   pull_request:
     branches: [main]
 
@@ -153,21 +153,40 @@ jobs:
         run: cargo clippy -p amux --no-default-features -- -D warnings
 
   ios:
-    name: iOS target check
-    runs-on: macos-latest
-    timeout-minutes: 20
+    name: ios
+    runs-on: macos-26
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version | grep -Fx 'Xcode 26.6'
+      - name: Assert simulator runtime and device type
+        run: |
+          xcrun simctl list runtimes --json | jq -e '.runtimes[] | select(.identifier == "com.apple.CoreSimulator.SimRuntime.iOS-26-5" and .isAvailable == true)'
+          xcrun simctl list devicetypes --json | jq -e '.devicetypes[] | select(.identifier == "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro")'
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+          components: clippy
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
       - uses: Swatinem/rust-cache@v2
-      # Cross-check the lib for the targets the React Native app builds
-      # (device + both simulator arches). This exercises the `target_os = "ios"`
-      # paths that host builds never compile, and confirms `portable-pty` stays
-      # out of the embedded build.
-      - name: Check amux for iOS device + simulator targets
+      - name: Install build tools
         run: |
-          cargo check -p amux --no-default-features --target aarch64-apple-ios
-          cargo check -p amux --no-default-features --target aarch64-apple-ios-sim
-          cargo check -p amux --no-default-features --target x86_64-apple-ios
+          brew install coreutils xcodegen
+          case "$(uname -m)" in
+            arm64) archive=wt-aarch64-apple-darwin ;;
+            x86_64) archive=wt-x86_64-apple-darwin ;;
+            *) exit 1 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/wt-bin"
+          cd "$RUNNER_TEMP/wt-bin"
+          curl --fail --location --retry 3 --max-time 120 -O "https://github.com/jordanwebster/wt/releases/download/v0.3.0/$archive.tar.gz"
+          curl --fail --location --retry 3 --max-time 120 -O "https://github.com/jordanwebster/wt/releases/download/v0.3.0/$archive.sha256"
+          shasum -a 256 -c "$archive.sha256"
+          tar -xzf "$archive.tar.gz"
+          echo "$RUNNER_TEMP/wt-bin" >> "$GITHUB_PATH"
+      - name: Register checkout with wt
+        run: timeout 60 wt register . --label amux
+      - name: Run iOS verification
+        run: timeout 9000 wt run ios-verify

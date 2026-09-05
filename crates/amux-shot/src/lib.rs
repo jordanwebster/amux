@@ -1308,8 +1308,9 @@ mod tests {
 mod script_tests {
     use std::process::Command as ProcessCommand;
 
+    use amux_tui::UiAction;
+    use amux_tui::chat::handle_chat_key;
     use amux_tui::fixtures::{apply_step, deliver_diff_response};
-    use amux_tui::{UiAction, chat::handle_chat_key};
     use amux_ui::{ArtifactKind, ArtifactRef, BaseIdentity, Command, DiffFile, DiffResponse};
     use tempfile::tempdir;
 

@@ -4928,7 +4928,12 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "protoc-bin-vendored",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
  "tonic-prost-build",
 ]
 

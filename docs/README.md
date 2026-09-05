@@ -36,4 +36,6 @@ subject; when two overlap, the owner named here wins.
 - `../crates/amux/tests/spec/` — the executable spec. The suite reads as
   documentation and locks the protocol's guarantees; run it with
   `timeout 600 cargo test --workspace --test spec`.
+- `CI.md` — native iOS verification recipes, pinned runner and commit-specific
+  CI status.
 - `../DEVLOG.md` — recent work history and decisions.

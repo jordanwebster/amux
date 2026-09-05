@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Gate native iOS work on the pushed commit.** The macOS iOS job
+pins Xcode 26.6 and checks the iOS 26.5 runtime and iPhone 17 Pro device type.
+It installs a verified wt release and XcodeGen, then runs the bounded iOS
+verification recipe on pushes to nativeapp. Verification includes the Rust
+checks immediately and adds available native recipes in build order. The CI
+gate pushes only a clean nativeapp checkout; its status command reports typed
+failures and requires the exact remote commit, a successful workflow and an
+executed iOS verification step. Unit tests cover stale heads, missing/running/
+failed/skipped jobs and verification lists with no Rust checks. Command-level
+tests check JSON output and stop-on-failure behavior. Existing formatting drift
+is corrected so the unchanged format job can pass on this branch.
+
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by
 real composer exports and explains that an empty name may be omitted. A focused

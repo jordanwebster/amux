@@ -1,10 +1,15 @@
 use std::path::Path;
 
+mod ci;
+mod ios_verify;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match std::env::args().nth(1).as_deref() {
         Some("codegen") => codegen(),
+        Some("ci-status") => ci::main(),
+        Some("ios-verify") => ios_verify::run(),
         _ => {
-            eprintln!("usage: cargo run -p xtask -- codegen");
+            eprintln!("usage: xtask <codegen|ci-status [--wait SECS]|ios-verify>");
             std::process::exit(2);
         }
     }

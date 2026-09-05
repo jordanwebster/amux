@@ -45,7 +45,16 @@ run = 'scripts/spec-test.sh "$@"'
 # The iOS library builds without `local-agents`. The check always names the
 # target so it never produces a host variant of the workspace.
 [task.mobile-check]
-run = "cargo check -p amux --no-default-features --target aarch64-apple-ios"
+run = "timeout 900 sh -c 'cargo check -p amux --no-default-features --target aarch64-apple-ios && cargo check -p amux --no-default-features --target aarch64-apple-ios-sim'"
+
+[task.ios-verify]
+run = "scripts/ios-verify.sh"
+
+[task.ci-status]
+run = 'timeout 3300 cargo run -q -p xtask -- ci-status "$@"'
+
+[task.ci-gate]
+run = "scripts/ci-gate.sh"
 
 [task.protobuf]
 run = "cargo run -p xtask -- codegen"
