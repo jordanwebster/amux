@@ -405,7 +405,7 @@ admission, because a parity list that hides unbuilt work is worth nothing.
 | Partly-arrived reply | Better: the terminal transcript burst-writes whole messages, so it can only show liveness; the SDK streams the text and the block carries a caret. |
 | Thinking marker | Adopted, and stated rather than inferred: an open thinking block reads `~ thinking`, a closed one `~ thought`, and a redacted one says so. |
 | Tool one-liner with its target and its outcome | Adopted, including a failed tool and the head of what it printed. |
-| File change with its magnitude and a patch preview | **Absent, and buildable.** The terminal chat paints a landed edit as `✎ Edit src/lib.rs · +9 -2` with a preview of the patch; the SDK chat paints it as an ordinary tool line. The patch arrives — `tool_use_result` carries `structuredPatch` — so this is unbuilt work, not a missing fact. |
+| File change with its magnitude and a patch preview | Adopted. A landed edit paints as `✎ Edit src/lib.rs · +2 −1` with the patch under it, from the `structuredPatch` the tool result carries. Both chats read that sidecar through the shared facts module. |
 | Collapsed exploration run | **Absent, and buildable.** Consecutive reads and searches collapse to one summary in the terminal chat. The SDK reports each tool by name, so the grouping the terminal layer computes is equally computable here; it has not been written. |
 | Subagent line | Better: a subagent is a task with a lifecycle, so the SDK chat states what each one was asked to do, whether it is running, and what it last used. |
 | Agent-to-agent message and family banners | Adopted unchanged — the kernel gives both chats the message. |
@@ -432,7 +432,7 @@ admission, because a parity list that hides unbuilt work is worth nothing.
 | Help overlay and the shared keybinding tiers | Adopted unchanged. |
 | Raw attach | Absent, permanently: the process has no terminal UI to attach to. This chat is the only way in, which is why every request reaches the screen. |
 
-Three rows above say "buildable". They are the only capabilities in this
+Two rows above say "buildable". They are the only capabilities in this
 inventory that the SDK could express today and does not, and each is
 tracked as work rather than excused as a gap.
 

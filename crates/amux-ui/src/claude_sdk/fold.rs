@@ -503,6 +503,7 @@ fn tool_result(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value, block: &Value)
         text,
         is_error: block["is_error"] == true,
         details,
+        edit: crate::claude::facts::landed_edit(&row["tool_use_result"]),
     };
     if let Some(entry) = layer.entries.iter_mut().rev().find(|entry| {
         matches!(&entry.kind, FeedEntryKind::Tool(t) if t.tool_use_id == tool_id)

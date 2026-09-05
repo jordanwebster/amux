@@ -20,8 +20,8 @@ use ratatui::text::{Line, Span};
 use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
 use crate::chat::blocks::{
     self, paint_agent_message, paint_assistant, paint_attachment, paint_compaction_rule,
-    paint_composer_block, paint_header, paint_plan, paint_thinking, paint_tool_line,
-    paint_turn_rule, paint_unrecognized, paint_user_prompt,
+    paint_composer_block, paint_file_change, paint_header, paint_plan, paint_thinking,
+    paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude_sdk::{View, is_open, reader_context, shared_ask};
 use crate::chat::claude_shared::{armed_quit_line, panel, reader};
@@ -29,7 +29,9 @@ use crate::chat::frame::{
     BlockKey, CacheView, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock,
 };
 use crate::chat::viewport::FeedViewport;
-use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
+use crate::chat::{
+    FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph, subagent_marker,
+};
 use crate::render::{FrameContext, Theme, line_len, push_span};
 
 /// One 1 Hz Tick drives the spinner; the frame index derives from the
@@ -38,6 +40,10 @@ const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
 /// The plan entry's feed preview length.
 const PLAN_PREVIEW_LINES: usize = 6;
+
+/// Screen rows a landed edit's patch preview may take before it is cut;
+/// the reader is where a whole patch belongs.
+const DIFF_PREVIEW_BUDGET: usize = 8;
 
 /// Synthetic keys for the block no entry owns. The optimistic echo counts
 /// down from the top of the space so it can never collide with an entry
@@ -981,6 +987,43 @@ fn tool_block(
     width: usize,
     plan_hint: bool,
 ) -> PaintedBlock {
+    // A landed edit is a file change, not a tool outcome: it says what
+    // moved and by how much, on its own row, never folded away.
+    if let Some(edit) = tool
+        .result
+        .as_ref()
+        .filter(|result| !result.is_error)
+        .and_then(|result| result.edit.as_ref())
+    {
+        let mut block = paint_file_change(
+            key,
+            &tool.name,
+            &edit.file_path,
+            edit.added,
+            edit.removed,
+            theme,
+            width,
+        );
+        let rows = edit.document.rows();
+        if !rows.is_empty() {
+            let painted =
+                diff_painter::paint_rows(&rows, theme, blocks::panel_body_width(width), 0, true);
+            let (body, screen_cut) = painted.into_screen_head(DIFF_PREVIEW_BUDGET);
+            let title = if edit.document.truncated || screen_cut {
+                format!("{} · patch preview", edit.file_path)
+            } else {
+                edit.file_path.clone()
+            };
+            let tail = blocks::paint_unified_diff(key, &title, body, theme, width);
+            block.lines.extend(tail.lines);
+            if !tail.copy_text.is_empty() {
+                block.copy_text.push('\n');
+                block.copy_text.push_str(&tail.copy_text);
+            }
+        }
+        return block;
+    }
+
     let (glyph, glyph_style) = match (&tool.result, tool.finality) {
         (Some(result), _) if result.is_error => ("✗", theme.error()),
         (Some(_), _) => ("✔", theme.ok()),

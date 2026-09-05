@@ -120,6 +120,10 @@ pub struct ToolResult {
     pub text: String,
     pub is_error: bool,
     pub details: Option<Value>,
+    /// Set when the result is an Edit's or a Write's: which file moved,
+    /// by how much, and the patch. Read from the same provider JSON the
+    /// terminal chat reads.
+    pub edit: Option<crate::claude::facts::LandedEdit>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

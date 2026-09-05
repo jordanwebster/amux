@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A landed edit reads as a file change in the stream-JSON
+Claude chat too, not as another tool line.**
+`✎ Edit src/lib.rs · +2 −1` with the patch hanging under it, the same block
+the terminal chat has always painted. Nothing had to be computed: the tool
+result carries the structured patch, and both chats now read it through the
+one module that holds Claude's own tool vocabulary — the sidecar extraction,
+the change counts and the bounded patch head moved there from the terminal
+fold, along with the tests that bound them. The two carriers spell the
+sidecar key differently, so each fold hands over the value it found and
+nothing else differs.
+
 2026-09-05 — **The Claude chat design record now carries an inventory of
 every terminal-chat capability and what the stream-JSON chat does with it.**
 Most rows say adopted, several say better — a partly-arrived reply, a

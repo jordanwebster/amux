@@ -219,6 +219,67 @@ fn approved_plan() -> Model {
     fold(msgs)
 }
 
+/// A finished session whose turn landed one edit. Synthetic, because the
+/// recorded corpus has no Edit that reached a result.
+fn landed_edit() -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded("text").into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
+    msgs.push(batch(
+        900,
+        vec![
+            json!({
+                "type": "assistant",
+                "parent_tool_use_id": null,
+                "message": {
+                    "id": "msg_edit",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_edit",
+                        "name": "Edit",
+                        "input": {
+                            "file_path": "src/lib.rs",
+                            "old_string": "mod store;",
+                            "new_string": "mod attachments;"
+                        }
+                    }]
+                }
+            }),
+            json!({
+                "type": "user",
+                "parent_tool_use_id": null,
+                "tool_use_result": {
+                    "filePath": "src/lib.rs",
+                    "structuredPatch": [{
+                        "oldStart": 4,
+                        "oldLines": 3,
+                        "newStart": 4,
+                        "newLines": 4,
+                        "lines": [
+                            " mod diff;",
+                            "-mod store;",
+                            "+mod attachments;",
+                            "+mod reader;",
+                            " mod view;"
+                        ]
+                    }]
+                },
+                "message": {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_edit",
+                        "content": "The file src/lib.rs has been updated."
+                    }]
+                }
+            }),
+        ],
+    ));
+    fold(msgs)
+}
+
 /// The recorded session with a Codex child stopped on an approval, so the
 /// family banner reaches a parent whose own rows this chat folds.
 fn asking_child() -> Model {
@@ -417,6 +478,22 @@ fn sdk_chat_paints_a_streaming_reply() {
 }
 
 /// Tools and the subagents they start each get their own row.
+/// A landed edit is a file change, not a tool outcome: it states what
+/// moved and by how much, and hangs the patch the session sent back
+/// under it.
+#[test]
+fn sdk_chat_paints_a_landed_edit_as_a_file_change() {
+    let text = assert_surface("sdk_chat_file_change", &landed_edit());
+    assert!(
+        text.contains("Edit src/lib.rs") && text.contains("+2 \u{2212}1"),
+        "the file change states the path and the magnitude: {text}"
+    );
+    assert!(
+        text.contains("+mod attachments;") && text.contains("-mod store;"),
+        "and the patch preview shows the rows that moved: {text}"
+    );
+}
+
 #[test]
 fn sdk_chat_paints_tools_and_tasks() {
     let model = session("tasks");
