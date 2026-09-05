@@ -1,5 +1,6 @@
 //! Native client bridge over the shared protocol and UI runtime.
 
+pub mod projection;
 mod runtime;
 
 use std::collections::HashMap;
@@ -11,8 +12,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
 use amux::{AccessToken, AuthError, CredentialProvider, RelayConnection};
+use amux_ui::{AgentId, Command, OpError, OpId, OpOutcome};
+use projection::{Cadence, Event, OpOutcomeDto, Projection, SubscriptionOutcome};
 use runtime::{MobileRuntime, StartConfig, TokenSource};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
@@ -33,8 +37,11 @@ struct Callback {
     context: usize,
 }
 impl Callback {
-    fn send(&self, events: Value) {
-        if let Ok(bytes) = CString::new(events.to_string()) {
+    fn send(&self, events: &[Event]) {
+        if let Some(bytes) = serde_json::to_string(events)
+            .ok()
+            .and_then(|s| CString::new(s).ok())
+        {
             // The caller keeps its context alive until stop has joined this worker.
             unsafe { (self.function)(bytes.as_ptr(), self.context as *mut c_void) };
         }
@@ -43,6 +50,11 @@ impl Callback {
 
 enum Control {
     Stop,
+    FrameInterval(Duration),
+    Dispatch {
+        op: OpId,
+        command: Result<CommandDto, String>,
+    },
     TokenReply {
         request_id: u64,
         reply: Result<AccessToken, AuthError>,
@@ -124,10 +136,10 @@ pub unsafe extern "C" fn amux_mobile_start(
                 match result {
                     Ok(Ok(())) => {}
                     Ok(Err(reason)) => callback
-                        .send(json!([{"Connection": {"state":"disconnected", "reason":reason}}])),
-                    Err(_) => {
-                        callback.send(json!([{"Invariant": {"detail":"mobile worker panicked"}}]))
-                    }
+                        .send(&[Event::connection(&RelayConnection::Disconnected { reason })]),
+                    Err(_) => callback.send(&[Event::Invariant {
+                        detail: "mobile worker panicked".into(),
+                    }]),
                 }
             })
             .ok()?;
@@ -157,6 +169,83 @@ pub unsafe extern "C" fn amux_mobile_stop(handle: *mut Handle) {
         let _ = handle.commands.send(Control::Stop);
         if let Some(worker) = handle.worker.take() {
             let _ = worker.join();
+        }
+    }));
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+enum CommandDto {
+    Subscription(SubscriptionCommand),
+    Shared(Command),
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+enum SubscriptionCommand {
+    Subscribe { agent: AgentId },
+    Unsubscribe { agent: AgentId },
+}
+
+/// Enqueues a shared UI command or {"command":"subscribe","agent":"UUID"}
+/// (also "unsubscribe"). Returns an owned operation UUID string; free it with
+/// amux_mobile_free. Invalid JSON produces an asynchronous OpResult error.
+/// NULL means the handle, string pointer, or worker is unavailable.
+///
+/// # Safety
+/// handle must be live and command_json readable and NUL-terminated for this
+/// call. Neither pointer may race stop. The input bytes are copied before return.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_dispatch(
+    handle: *mut Handle,
+    command_json: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { handle.as_ref() }?;
+        let json = unsafe { read_string(command_json) }?;
+        let command = serde_json::from_str(json).map_err(|e| format!("invalid command: {e}"));
+        let op = OpId(uuid::Uuid::new_v4());
+        let result = CString::new(op.0.to_string()).ok()?;
+        handle
+            .commands
+            .send(Control::Dispatch { op, command })
+            .ok()?;
+        Some(result.into_raw())
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
+/// Updates callback cadence to the display's requested interval in nanoseconds.
+/// Zero or intervals above one second are ignored. Changes take effect relative
+/// to the last callback, including when a batch is already pending.
+///
+/// # Safety
+/// handle must be live for this call and may not race stop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_set_frame_interval(handle: *mut Handle, interval_ns: u64) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if (1..=1_000_000_000).contains(&interval_ns)
+            && let Some(handle) = unsafe { handle.as_ref() }
+        {
+            let _ = handle
+                .commands
+                .send(Control::FrameInterval(Duration::from_nanos(interval_ns)));
+        }
+    }));
+}
+
+/// Releases a string returned by this library. NULL is accepted.
+///
+/// # Safety
+/// The pointer must be an owned string returned by this library, freed once,
+/// and not the borrowed version or callback string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_free(string: *mut c_char) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if !string.is_null() {
+            drop(unsafe { CString::from_raw(string) });
         }
     }));
 }
@@ -235,54 +324,76 @@ async fn run(
     });
     let mut runtime = MobileRuntime::open(&config, credentials).await?;
     let mut pending: HashMap<u64, oneshot::Sender<Result<AccessToken, AuthError>>> = HashMap::new();
-    let mut last_fleet = Value::Null;
+    let mut projection = Projection::default();
+    let mut cadence = Cadence::new(Duration::from_nanos(config.frame_interval_ns));
     let mut last_connection = RelayConnection::Connecting;
-    callback.send(json!([{"Connection":{"state":"connecting", "reason":null}}]));
+    let mut events = vec![Event::connection(&last_connection)];
+    let mut dirty = true;
     loop {
-        let mut events = Vec::new();
         tokio::select! {
+            // Service a due frame before draining another high-rate input.
+            biased;
             control = commands.recv() => match control {
                 None | Some(Control::Stop) => break,
+                Some(Control::FrameInterval(interval)) => cadence.set_interval(interval),
+                Some(Control::Dispatch { op, command }) => {
+                    match command {
+                        Ok(CommandDto::Shared(command)) => runtime.ui.dispatch_with_id(op, command),
+                        Ok(CommandDto::Subscription(command)) => {
+                            let outcome = match command {
+                                SubscriptionCommand::Subscribe { agent } => {
+                                    projection.subscribe(agent);
+                                    runtime.ui.note_attached(agent);
+                                    SubscriptionOutcome::Subscribed { agent }
+                                }
+                                SubscriptionCommand::Unsubscribe { agent } => {
+                                    projection.unsubscribe(agent);
+                                    SubscriptionOutcome::Unsubscribed { agent }
+                                }
+                            };
+                            events.push(Event::OpResult { op, outcome: OpOutcomeDto::Subscription(outcome) });
+                        }
+                        Err(message) => events.push(Event::OpResult { op, outcome: OpOutcomeDto::Shared(Box::new(OpOutcome::Error {
+                            error: OpError::general(message),
+                        })) }),
+                    }
+                    dirty = true;
+                }
                 Some(Control::TokenReply { request_id, reply }) => {
                     if let Some(waiter) = pending.remove(&request_id) { let _ = waiter.send(reply); }
                 }
             },
+            _ = tokio::time::sleep_until(cadence.deadline()), if dirty || !events.is_empty() => {
+                // Observe relay state once for the whole batch. Connection must
+                // precede the Fleet whose reconciliation it qualifies.
+                let connection = runtime.relay.borrow_and_update().clone();
+                if connection != last_connection {
+                    events.push(Event::connection(&connection));
+                    last_connection = connection.clone();
+                }
+                projection.collect(runtime.ui.model(), &connection, &mut events);
+                if !events.is_empty() {
+                    callback.send(&events);
+                    cadence.emitted();
+                    events.clear();
+                }
+                dirty = false;
+            },
             Some(request) = token_requests.recv() => {
                 pending.retain(|_, sender| !sender.is_closed());
                 pending.insert(request.id, request.reply);
-                events.push(json!({"TokenRequest":{"request_id":request.id}}));
+                events.push(Event::TokenRequest { request_id: request.id });
             },
             changed = runtime.relay.changed() => {
                 if changed.is_err() { return Err("relay monitor closed".into()); }
-
+                dirty = true;
             },
-            active = runtime.ui.next() => { if !active { break; } },
+            active = runtime.ui.next_message() => {
+                if !active { break; }
+                dirty = true;
+            },
         }
-        // Observe relay state once for the whole batch, regardless of which
-        // input woke us. Its Connection event must precede the Fleet it qualifies.
-        let connection = runtime.relay.borrow_and_update().clone();
-        if connection != last_connection {
-            let (state, reason) = match &connection {
-                RelayConnection::Connecting => ("connecting", None),
-                RelayConnection::Connected => ("connected", None),
-                RelayConnection::Disconnected { reason } => ("disconnected", Some(reason)),
-            };
-            events.push(json!({"Connection":{"state":state, "reason":reason}}));
-            last_connection = connection.clone();
-        }
-        let model = runtime.ui.model();
-        let fleet = json!({"Fleet": {
-            "epoch":model.epoch(), "agents":model.agents().collect::<Vec<_>>(),
-            "hosts":model.hosts().collect::<Vec<_>>(),
-            "reconciled":model.is_synchronized() && connection == RelayConnection::Connected,
-        }});
-        if fleet != last_fleet {
-            last_fleet = fleet.clone();
-            events.push(fleet);
-        }
-        if !events.is_empty() {
-            callback.send(Value::Array(events));
-        }
+        projection.outcomes(runtime.ui.model(), &mut events);
     }
     drop(pending);
     // Dropping the executor after this future cancels and drains all owned

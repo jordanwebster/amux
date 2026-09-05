@@ -272,9 +272,14 @@ impl Runtime {
     /// Dispatch a command; the outcome returns as state (a finished op).
     pub fn dispatch(&mut self, command: Command) -> OpId {
         let op = OpId(Uuid::new_v4());
+        self.dispatch_with_id(op, command);
+        op
+    }
+
+    /// Dispatch with an ID already allocated by a foreign-language caller.
+    pub fn dispatch_with_id(&mut self, op: OpId, command: Command) {
         self.process(Msg::Tick { now: Utc::now() });
         self.process(Msg::Command { op, command });
-        op
     }
 
     /// Feed observed time for time-dependent display.
@@ -291,11 +296,20 @@ impl Runtime {
     /// Await the next Msg, then fold everything already pending (up to a
     /// frame budget). Returns false when the shell has shut down.
     pub async fn next(&mut self) -> bool {
+        if !self.next_message().await {
+            return false;
+        }
+        self.drain();
+        true
+    }
+
+    /// Fold one input so embedders can observe every resolved operation before
+    /// bounded outcome retention evicts it. Callers own their batching cadence.
+    pub async fn next_message(&mut self) -> bool {
         let Some(msg) = self.msg_rx.recv().await else {
             return false;
         };
         self.process(msg);
-        self.drain();
         true
     }
 

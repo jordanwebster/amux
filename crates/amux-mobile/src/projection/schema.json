@@ -1,0 +1,380 @@
+[
+  {
+    "Connection": {
+      "state": "connecting",
+      "reason": null
+    }
+  },
+  {
+    "Fleet": {
+      "epoch": 1,
+      "agents": [
+        {
+          "agent": {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "host_id": "00000000-0000-0000-0000-000000000002",
+            "name": "Fix login",
+            "command": "provider",
+            "working_dir": "/work",
+            "kind": {
+              "kind": "claude",
+              "driver": "pty"
+            },
+            "readonly": false,
+            "args": [],
+            "created_at": "2023-11-14T22:13:20Z"
+          },
+          "display_name": "Fix login",
+          "attention": {
+            "attention": "idle"
+          },
+          "phase": {
+            "phase": "running"
+          },
+          "last_activity": "2023-11-14T22:13:20Z"
+        }
+      ],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null
+          },
+          "epoch": 1
+        }
+      ],
+      "reconciled": true
+    }
+  },
+  {
+    "Session": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "gate": {
+        "layer": "claude_pty",
+        "value": "ready"
+      },
+      "phase": {
+        "layer": "claude_pty",
+        "value": {
+          "phase": "idle",
+          "tag": "inferred"
+        }
+      },
+      "stream": {
+        "stream_phase": "live"
+      },
+      "asks": [],
+      "facts": {
+        "layer": "claude_pty",
+        "session": {
+          "permission_mode": null,
+          "ai_title": null,
+          "agent_name": null
+        },
+        "accepted_plans": [],
+        "echoes": []
+      },
+      "family": []
+    }
+  },
+  {
+    "Feed": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "base": 0,
+      "append": [
+        {
+          "layer": "claude_pty",
+          "row": {
+            "id": 0,
+            "seq": 1,
+            "kind": {
+              "entry": "message",
+              "message_id": "message-0",
+              "segments": [
+                "Hello"
+              ],
+              "content": [
+                {
+                  "segment": "prose",
+                  "value": "Hello"
+                }
+              ],
+              "finality": {
+                "finality": "final",
+                "stop_reason": "end_turn"
+              }
+            }
+          }
+        }
+      ],
+      "replace": [],
+      "evicted": 0
+    }
+  },
+  {
+    "TokenRequest": {
+      "request_id": 7
+    }
+  },
+  {
+    "OpResult": {
+      "op": "00000000-0000-0000-0000-000000000003",
+      "outcome": {
+        "outcome": "input_sent"
+      }
+    }
+  },
+  {
+    "OpResult": {
+      "op": "00000000-0000-0000-0000-000000000004",
+      "outcome": {
+        "outcome": "error",
+        "error": {
+          "error": "general",
+          "message": "send refused",
+          "auth_required": false,
+          "subscription_required": false
+        }
+      }
+    }
+  },
+  {
+    "Diff": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "document": {
+        "numbering": "absolute",
+        "hunks": [
+          {
+            "old_start": 1,
+            "new_start": 1,
+            "header": "@@ -1 +1 @@",
+            "lines": [
+              "-old",
+              "+new"
+            ]
+          }
+        ],
+        "truncated": false
+      }
+    }
+  },
+  {
+    "Feed": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "base": 1,
+      "append": [],
+      "replace": [
+        [
+          0,
+          {
+            "layer": "claude_pty",
+            "row": {
+              "id": 0,
+              "seq": 1,
+              "kind": {
+                "entry": "message",
+                "message_id": "message-0",
+                "segments": [
+                  "Hello",
+                  "Updated"
+                ],
+                "content": [
+                  {
+                    "segment": "prose",
+                    "value": "Hello\n\nUpdated"
+                  }
+                ],
+                "finality": {
+                  "finality": "final",
+                  "stop_reason": "end_turn"
+                }
+              }
+            }
+          }
+        ]
+      ],
+      "evicted": 0
+    }
+  },
+  {
+    "Fleet": {
+      "epoch": 1,
+      "agents": [
+        {
+          "agent": {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "host_id": "00000000-0000-0000-0000-000000000002",
+            "name": "Fix login",
+            "command": "provider",
+            "working_dir": "/work",
+            "kind": {
+              "kind": "codex"
+            },
+            "readonly": false,
+            "args": [],
+            "created_at": "2023-11-14T22:13:20Z"
+          },
+          "display_name": "Fix login",
+          "attention": {
+            "attention": "idle"
+          },
+          "phase": {
+            "phase": "running"
+          },
+          "last_activity": "2023-11-14T22:13:20Z"
+        }
+      ],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null
+          },
+          "epoch": 1
+        }
+      ],
+      "reconciled": true
+    }
+  },
+  {
+    "Session": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "gate": {
+        "layer": "codex",
+        "value": "ready"
+      },
+      "phase": {
+        "layer": "codex",
+        "value": {
+          "phase": "idle"
+        }
+      },
+      "stream": {
+        "stream_phase": "live"
+      },
+      "asks": [],
+      "facts": {
+        "layer": "codex",
+        "active_turn_id": null
+      },
+      "family": []
+    }
+  },
+  {
+    "Feed": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "base": 0,
+      "append": [
+        {
+          "layer": "codex",
+          "row": {
+            "id": 0,
+            "seq": 2,
+            "kind": {
+              "entry": "message",
+              "item_id": "m",
+              "text": "Hello",
+              "content": [
+                {
+                  "segment": "prose",
+                  "value": "Hello"
+                }
+              ],
+              "phase": "final_answer",
+              "finality": "open"
+            }
+          }
+        }
+      ],
+      "replace": [],
+      "evicted": 0
+    }
+  },
+  {
+    "Fleet": {
+      "epoch": 1,
+      "agents": [
+        {
+          "agent": {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "host_id": "00000000-0000-0000-0000-000000000002",
+            "name": "Fix login",
+            "command": "provider",
+            "working_dir": "/work",
+            "kind": {
+              "kind": "claude",
+              "driver": "sdk"
+            },
+            "readonly": false,
+            "args": [],
+            "created_at": "2023-11-14T22:13:20Z"
+          },
+          "display_name": "Fix login",
+          "attention": {
+            "attention": "unknown"
+          },
+          "phase": {
+            "phase": "running"
+          },
+          "last_activity": "2023-11-14T22:13:20Z"
+        }
+      ],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null
+          },
+          "epoch": 1
+        }
+      ],
+      "reconciled": true
+    }
+  },
+  {
+    "Session": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "gate": {
+        "layer": "unavailable"
+      },
+      "phase": {
+        "layer": "unavailable"
+      },
+      "stream": {
+        "stream_phase": "live"
+      },
+      "asks": [],
+      "facts": {
+        "layer": "claude_sdk",
+        "supported": false
+      },
+      "family": []
+    }
+  },
+  {
+    "Connection": {
+      "state": "disconnected",
+      "reason": "relay unavailable"
+    }
+  },
+  {
+    "Invariant": {
+      "detail": "example diagnostic"
+    }
+  }
+]

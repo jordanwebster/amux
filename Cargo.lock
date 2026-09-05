@@ -129,10 +129,12 @@ dependencies = [
  "amux-ui",
  "async-trait",
  "cbindgen",
+ "chrono",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

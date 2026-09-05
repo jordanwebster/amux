@@ -7,6 +7,7 @@ use super::*;
 struct Events {
     sender: mpsc::UnboundedSender<Value>,
     captured: Mutex<Vec<Value>>,
+    batches: Mutex<Vec<(std::time::Instant, Value)>>,
 }
 struct Running<'a> {
     handle: *mut Handle,
@@ -23,6 +24,11 @@ unsafe extern "C" fn capture(bytes: *const c_char, context: *mut c_void) {
     let context = unsafe { &*context.cast::<Events>() };
     let events: Vec<Value> =
         serde_json::from_str(unsafe { CStr::from_ptr(bytes) }.to_str().unwrap()).unwrap();
+    context
+        .batches
+        .lock()
+        .unwrap()
+        .push((std::time::Instant::now(), json!(events)));
     for event in events {
         context.captured.lock().unwrap().push(event.clone());
         let _ = context.sender.send(event);
@@ -136,6 +142,7 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
     let events = Events {
         sender,
         captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
     };
     let mut callback_config = static_config;
     callback_config["relay"]["token"] = json!("Callback");
@@ -226,6 +233,7 @@ fn mobile_lifecycle_rejects_invalid_endpoints_and_config() {
     let events = Events {
         sender,
         captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
     };
     for url in [
         "http://192.0.2.1:1234",
@@ -265,6 +273,7 @@ async fn mobile_lifecycle_stop_cancels_unanswered_token_and_bad_reply() {
     let events = Events {
         sender,
         captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
     };
     let config = config(root.path(), "http://127.0.0.1:9".into(), json!("Callback"));
     let running = Running {
@@ -314,4 +323,76 @@ async fn mobile_lifecycle_stop_cancels_unanswered_token_and_bad_reply() {
     let stopped = std::time::Instant::now();
     drop(running);
     assert!(stopped.elapsed() < Duration::from_secs(2));
+}
+
+#[tokio::test]
+async fn mobile_projection_c_callback_batches_and_command_errors() {
+    let root = tempfile::tempdir().unwrap();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let mut config = config(root.path(), "http://127.0.0.1:9".into(), json!("Callback"));
+    config["frame_interval_ns"] = json!(50_000_000);
+    let running = Running {
+        handle: start(&config, &events),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    let mut ids = std::collections::BTreeSet::new();
+    for index in 0..150 {
+        let command = if index % 2 == 0 {
+            "{unknown".to_owned()
+        } else {
+            serde_json::to_string(&Command::Claude(amux_ui::ClaudeCommand::SendPrompt {
+                agent: uuid::Uuid::from_u128(1),
+                text: "refused".into(),
+            }))
+            .unwrap()
+        };
+        let invalid = CString::new(command).unwrap();
+        let id = unsafe { amux_mobile_dispatch(running.handle, invalid.as_ptr()) };
+        assert!(!id.is_null());
+        ids.insert(unsafe { CStr::from_ptr(id) }.to_str().unwrap().to_owned());
+        unsafe {
+            amux_mobile_free(id);
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    let subscribe =
+        CString::new(r#"{"command":"subscribe","agent":"00000000-0000-0000-0000-000000000001"}"#)
+            .unwrap();
+    let id = unsafe { amux_mobile_dispatch(running.handle, subscribe.as_ptr()) };
+    unsafe {
+        amux_mobile_free(id);
+    }
+    let mut received = std::collections::BTreeSet::new();
+    let mut session = false;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while received.len() < 150 || !session {
+            let event = receive.recv().await.unwrap();
+            assert!(event.get("Invariant").is_none(), "{event}");
+            if event["OpResult"]["outcome"]["outcome"] == "error" {
+                assert!(received.insert(event["OpResult"]["op"].as_str().unwrap().to_owned()));
+            }
+            session |= event.get("Session").is_some();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(received, ids);
+    drop(running);
+    let batches = events.batches.lock().unwrap();
+    assert!(batches.len() < 30, "commands were not coalesced");
+    assert!(
+        batches
+            .windows(2)
+            .all(|p| p[1].0.duration_since(p[0].0) >= Duration::from_millis(50))
+    );
+    println!(
+        "mobile projection C callback: 150 distinct errors, Session, {} batches at requested 50ms interval",
+        batches.len()
+    );
 }

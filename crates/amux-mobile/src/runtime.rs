@@ -16,6 +16,8 @@ pub struct StartConfig {
     pub device_name: String,
     pub relay: RelayConfig,
     pub log_path: PathBuf,
+    #[serde(default = "default_frame_interval_ns")]
+    pub frame_interval_ns: u64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -38,6 +40,10 @@ pub enum TokenSource {
     Callback,
 }
 
+fn default_frame_interval_ns() -> u64 {
+    16_666_667
+}
+
 impl StartConfig {
     fn server_config(&self) -> amux::Config {
         amux::Config {
@@ -52,6 +58,9 @@ impl StartConfig {
     }
 
     pub fn endpoint(&self) -> Result<RelayEndpoint, String> {
+        if self.frame_interval_ns == 0 || self.frame_interval_ns > 1_000_000_000 {
+            return Err("frame_interval_ns must be between 1 and 1000000000".into());
+        }
         if !self.data_dir.is_absolute()
             || !self.cache_dir.is_absolute()
             || !self.log_path.is_absolute()

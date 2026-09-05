@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Stream typed native projections in display-paced batches.**
+The mobile callback separates fleet metadata, session state and feed deltas,
+keeping Claude PTY and Codex row vocabularies intact and the unimplemented
+shared SDK layer explicitly unsupported. Subscribers apply absolute append
+positions, indexed replacements and prefix eviction. Source identity, row
+provenance and retained bounds prevent reused native IDs from leaving stale rows. The app can supply and
+change its display interval, including 120 Hz, with no idle frame timer or
+catch-up bursts. Shared commands cross the C ABI with owned operation IDs;
+malformed input returns an operation error, and every folded result is observed
+before reducer retention can discard it. Tests pin JSON, reconstruct feed
+state through eviction and replay, exercise C callbacks and measure the
+1,000-row/50-per-second delta contract under virtual time.
+
 2026-09-05 — **Package the Rust bridge as a Swift-importable XCFramework.**
 `wt run ios-rust` assembles the exact mobile-profile device and simulator
 archives with their generated headers and Clang module maps. A Swift consumer
