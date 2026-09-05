@@ -372,6 +372,7 @@ impl Profile {
         .await;
     }
 
+    #[cfg(unix)]
     pub async fn socket_client(&self) -> crate::Client {
         let config = crate::config::Config {
             socket_path: self.paths().socket_path,

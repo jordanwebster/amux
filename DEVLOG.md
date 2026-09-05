@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Repair CI after the account-profile merge.** The E2E job now
+runs its already-built binaries explicitly, avoiding a second build through
+`wt`, which is not installed on GitHub runners. Socket test helpers and the
+specs that require Unix IPC are gated to Unix; installation fixtures use a
+portable temporary root. Desktop configuration and file-credential tests follow
+the `local-agents` feature, while in-process front-door and host-credential tests
+remain available in embedded builds. `wt run client-test` reproduces CI's
+no-default-features library suite in the existing isolated embedded target.
+
 2026-09-05 — **Retire three sharp edges left by the profiles work.**
 `default_cache_dir` is gone: with profile paths landed it had no product caller,
 and an exported default was how the artifact cache root drifted away from

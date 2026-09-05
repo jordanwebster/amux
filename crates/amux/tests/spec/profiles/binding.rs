@@ -180,6 +180,7 @@ async fn a_swapped_subject_on_refresh_cannot_reconnect_a_profile_into_another_ac
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn logout_wins_over_a_refresh_whose_rotated_token_is_waiting_for_userinfo() {
     let net = bound_devices().await;

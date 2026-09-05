@@ -1034,6 +1034,7 @@ impl Daemon {
     }
 
     /// The same administration methods are absent from the plain profile socket.
+    #[cfg(unix)]
     pub async fn rejects_admin_on_socket(&self, socket_path: std::path::PathBuf) {
         let config = crate::Config {
             socket_path,

@@ -99,6 +99,7 @@ async fn concurrent_pairing_windows_share_no_secrets_limits_or_commits() {
 }
 
 /// A second supervisor cannot acquire a live installation's root.
+#[cfg(unix)]
 #[tokio::test]
 async fn two_supervisors_cannot_share_a_root_or_steal_its_serving_socket() {
     let net = TestNet::builder()
@@ -123,6 +124,7 @@ async fn two_supervisors_cannot_share_a_root_or_steal_its_serving_socket() {
 }
 
 /// Startup failures are directory entries, not installation-wide outages.
+#[cfg(unix)]
 #[tokio::test]
 async fn one_profile_failing_to_start_leaves_the_directory_and_other_profiles_serving() {
     let net = TestNet::builder()

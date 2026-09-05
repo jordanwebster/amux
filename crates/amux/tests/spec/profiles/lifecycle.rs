@@ -28,6 +28,7 @@ async fn devices() -> TestNet {
         .await
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn logout_keeps_local_agents_artifacts_identity_and_trust() {
     let net = devices().await;
@@ -78,6 +79,7 @@ async fn logout_keeps_local_agents_artifacts_identity_and_trust() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn pause_closes_only_cloud_sessions_and_repeated_resume_keeps_one_link() {
     let net = devices().await;
@@ -137,6 +139,7 @@ async fn pause_closes_only_cloud_sessions_and_repeated_resume_keeps_one_link() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn authentication_subscription_and_version_failures_do_not_disconnect_another_profile() {
     let net = devices().await;
@@ -270,6 +273,7 @@ async fn a_watcher_observes_lifecycle_and_connector_changes_in_order_including_d
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn delete_closes_every_transport_and_late_service_work_cannot_recreate_the_device() {
     let checkout = tempfile::tempdir().unwrap();

@@ -1,8 +1,10 @@
 use super::*;
-use crate::installation::{
-    FrontDoor, Installation, InstallationError, InstallationRoot, OperationId, ProfileId,
-    ProfileLabel, ProfilePaths, Registry,
-};
+#[cfg(all(unix, feature = "local-agents"))]
+use crate::installation::{FrontDoor, OperationId};
+#[cfg(feature = "local-agents")]
+use crate::installation::{Installation, InstallationError};
+use crate::installation::{InstallationRoot, ProfileId, ProfileLabel, ProfilePaths, Registry};
+#[cfg(all(unix, feature = "local-agents"))]
 use crate::server::ShutdownReason;
 
 struct Fixture {
@@ -15,11 +17,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        // Keep Unix socket paths short even on macOS, whose temp root is long.
-        let temp = tempfile::Builder::new()
-            .prefix("cfg")
-            .tempdir_in("/tmp")
-            .unwrap();
+        let temp = crate::test_fixtures::short_installation_root();
         let root = std::fs::canonicalize(temp.path()).unwrap();
         let installation = InstallationConfig {
             root: root.clone(),
@@ -151,6 +149,7 @@ fn config_split_rejects_unknown_fields_and_missing_installation() {
     );
 }
 
+#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn config_split_path_disagreement_fails_before_any_runtime_starts() {
     for field in [
@@ -185,7 +184,7 @@ async fn config_split_path_disagreement_fails_before_any_runtime_starts() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "local-agents"))]
 #[tokio::test]
 async fn config_split_boots_from_temp_root_and_discovers_profile_over_grpc() {
     use std::sync::Arc;
@@ -273,7 +272,7 @@ async fn config_split_boots_from_temp_root_and_discovers_profile_over_grpc() {
     reopened.shutdown(ShutdownReason::UserRequested).await;
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "local-agents"))]
 #[tokio::test]
 async fn config_split_daemon_owner_flushes_shutdown_and_releases_all_sockets() {
     use crate::installation::{FrontDoorClient, rpc};

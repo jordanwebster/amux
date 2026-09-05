@@ -1,8 +1,8 @@
 //! Updating an installation restores exactly the sessions that were running.
 
-use amux::installation::{
-    AgentResumeStatus, FrontDoor, FrontDoorClient, OperationId, SuspendReason, rpc,
-};
+use amux::installation::{AgentResumeStatus, OperationId, SuspendReason};
+#[cfg(unix)]
+use amux::installation::{FrontDoor, FrontDoorClient, rpc};
 use amux::testnet::{InstallationHandle, TestNet};
 
 async fn devices() -> TestNet {
@@ -15,6 +15,7 @@ async fn devices() -> TestNet {
         .await
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn suspend_and_concurrent_resume_preserve_previously_parked_agents() {
     let net = devices().await;
@@ -155,6 +156,7 @@ async fn preparation_failure_leaves_every_agent_alive_and_reopens_admission() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn creation_during_preparation_is_rejected_before_storage_and_lifecycle_waits() {
     use amux::{AgentType, CreateAgentRequest};
@@ -225,6 +227,7 @@ async fn creation_during_preparation_is_rejected_before_storage_and_lifecycle_wa
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn restart_recovers_interrupted_replacement_without_automatically_resuming() {
     let net = devices().await;
@@ -378,6 +381,7 @@ async fn restart_during_incomplete_resume_restores_even_consumed_profile_records
     );
 }
 
+#[cfg(unix)]
 async fn assert_failed_resume_releases_installation(
     laptop: &InstallationHandle,
     failed_id: uuid::Uuid,
@@ -483,6 +487,7 @@ async fn assert_failed_resume_releases_installation(
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn failed_agent_resume_releases_every_profile_before_and_after_restart() {
     use std::os::unix::fs::PermissionsExt;
@@ -523,6 +528,7 @@ async fn failed_agent_resume_releases_every_profile_before_and_after_restart() {
     assert_failed_resume_releases_installation(&laptop, failed.id).await;
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn unavailable_host_parks_consumed_records_and_releases_other_profiles() {
     let net = devices().await;

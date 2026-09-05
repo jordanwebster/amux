@@ -1,13 +1,10 @@
 use super::*;
 use crate::installation::ProfilePaths;
+#[cfg(all(unix, feature = "local-agents"))]
 use crate::installation::paths::validate_socket_path;
 
 fn root() -> tempfile::TempDir {
-    // macOS's default temp directory consumes most of sockaddr_un before a UUID.
-    tempfile::Builder::new()
-        .prefix("ar-")
-        .tempdir_in("/tmp")
-        .unwrap()
+    crate::test_fixtures::short_installation_root()
 }
 
 fn open(path: &Path) -> Registry {

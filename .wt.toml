@@ -56,6 +56,10 @@ needs = ["build"]
 [task.mobile-check]
 run = "cargo check -p amux --no-default-features --target aarch64-apple-ios"
 
+# Match CI's embedded library suite without unifying desktop features.
+[task.client-test]
+run = 'CARGO_TARGET_DIR=target/embed timeout 900 cargo test -p amux --no-default-features --lib "$@"'
+
 [task.embed-test]
 run = "AMUX_EMBED_TEST=1 CARGO_TARGET_DIR=target/embed cargo test -p amux --no-default-features --test embedding -- --nocapture"
 

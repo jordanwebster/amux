@@ -92,7 +92,7 @@ fn accept(
 #[tokio::test]
 async fn staged_not_committed_preserves_accepted_credentials_across_reopen() {
     let identity = identity().await;
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let path = root.path().join("credentials.yaml");
     let binding = binding(&identity, "alice");
     let store =
@@ -168,7 +168,7 @@ async fn rotated_refresh_is_serialized_and_checked_against_binding() {
 async fn clear_invalidates_stages_and_in_flight_refresh_without_recreating_files() {
     let identity = identity().await;
     let binding = binding(&identity, "alice");
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let path = root.path().join("credentials.yaml");
     let store = Arc::new(
         ProfileCredentialStore::open(Some(path.clone()), reqwest::Client::new(), None, None)
@@ -221,11 +221,19 @@ async fn cancelled_refresh_caller_does_not_burn_rotation() {
     store.access_token().await.unwrap();
 }
 
+#[cfg(feature = "local-agents")]
 fn options(root: InstallationRoot) -> InstallationOptions {
+    options_with_credentials(root, CredentialSource::ProfileFiles)
+}
+
+fn options_with_credentials(
+    root: InstallationRoot,
+    credentials: CredentialSource,
+) -> InstallationOptions {
     InstallationOptions {
         root,
         listeners: Listeners::InProcessOnly,
-        credentials: CredentialSource::ProfileFiles,
+        credentials,
         identity_http: reqwest::Client::new(),
         settings: InstallationSettings {
             host_name: "binding-test".into(),
@@ -239,6 +247,7 @@ fn options(root: InstallationRoot) -> InstallationOptions {
         },
     }
 }
+#[cfg(feature = "local-agents")]
 fn request(identity: &IdentityServer, sub: &str, target: BindTarget) -> BindRequest {
     BindRequest {
         target,
@@ -247,16 +256,18 @@ fn request(identity: &IdentityServer, sub: &str, target: BindTarget) -> BindRequ
         adopt_non_pristine: false,
     }
 }
+#[cfg(feature = "local-agents")]
 async fn create(installation: &Installation) -> crate::installation::ProfileStatus {
     let status = installation.create(OperationId::new(), None).await.unwrap();
     assert!(status.available, "{status:?}");
     status
 }
 
+#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn explicit_target_never_substitutes_and_refusals_keep_credential_and_label() {
     let identity = identity().await;
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
         .await
         .unwrap();
@@ -312,6 +323,7 @@ async fn explicit_target_never_substitutes_and_refusals_keep_credential_and_labe
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
+#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn by_account_chooses_sole_pristine_then_bound_and_concurrent_logins_share_one_profile() {
     let identity = identity().await;
@@ -348,10 +360,11 @@ async fn by_account_chooses_sole_pristine_then_bound_and_concurrent_logins_share
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
+#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn logout_reserves_account_across_restart_and_relogin_preserves_device() {
     let identity = identity().await;
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
         .await
         .unwrap();
@@ -395,6 +408,7 @@ async fn logout_reserves_account_across_restart_and_relogin_preserves_device() {
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
+#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn logout_and_delete_cancel_pending_login_before_it_can_commit_or_connect() {
     for delete in [false, true] {
@@ -450,10 +464,11 @@ async fn logout_and_delete_cancel_pending_login_before_it_can_commit_or_connect(
     );
 }
 
+#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn adoption_confirmation_reuses_staged_rotation_and_rechecks_local_state() {
     let identity = identity().await;
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let installation = Arc::new(
         Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
             .await
@@ -534,7 +549,7 @@ async fn host_credentials_are_subject_checked_and_logout_stays_logged_out_on_reo
         store.access_token().await,
         Err(AuthError::AccountMismatch)
     ));
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let id = ProfileId::new();
     {
         let mut registry =
@@ -545,10 +560,11 @@ async fn host_credentials_are_subject_checked_and_logout_stays_logged_out_on_reo
         registry.replace(record).unwrap();
     }
     let make_options = || {
-        let mut options = options(InstallationRoot::OnDisk(root.path().into()));
         let wrong = wrong.clone();
-        options.credentials = CredentialSource::HostProvided(Arc::new(move |_| wrong.clone()));
-        options
+        options_with_credentials(
+            InstallationRoot::OnDisk(root.path().into()),
+            CredentialSource::HostProvided(Arc::new(move |_| wrong.clone())),
+        )
     };
     let installation = Installation::open(make_options()).await.unwrap();
     installation.logout(OperationId::new(), id).await.unwrap();
@@ -558,10 +574,11 @@ async fn host_credentials_are_subject_checked_and_logout_stays_logged_out_on_reo
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
+#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn registry_write_failure_does_not_activate_staged_login() {
     let identity = identity().await;
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
         .await
         .unwrap();
@@ -599,11 +616,12 @@ async fn registry_write_failure_does_not_activate_staged_login() {
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
+#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn suspended_agents_require_explicit_adoption_confirmation() {
     use crate::suspend::{SuspendedAgent, SuspendedLocalAgentNameSource, SuspendedServerState};
     let identity = identity().await;
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
         .await
         .unwrap();

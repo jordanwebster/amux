@@ -23,13 +23,13 @@ use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
 use crate::services::CloudLinkService;
 use crate::user_state::ServerState;
 
-/// A caller-owned on-disk root for desktop tests that allocate profile sockets.
+/// A caller-owned on-disk root for tests that allocate installation sockets.
 /// macOS's default TMPDIR leaves too little room for UUID socket names; tests
 /// choose a short path explicitly instead of changing installation allocation.
 pub fn short_installation_root() -> tempfile::TempDir {
-    #[cfg(all(unix, feature = "local-agents"))]
+    #[cfg(unix)]
     let parent = std::path::PathBuf::from("/tmp");
-    #[cfg(not(all(unix, feature = "local-agents")))]
+    #[cfg(not(unix))]
     let parent = std::env::temp_dir();
     tempfile::Builder::new()
         .prefix("ai")
