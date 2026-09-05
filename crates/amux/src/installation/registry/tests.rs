@@ -40,6 +40,29 @@ fn root_lock_is_exclusive_and_released_on_drop() {
 
 #[cfg(unix)]
 #[test]
+fn root_lock_release_does_not_wait_for_inherited_descriptors() {
+    let root = root();
+    let registry = open(root.path());
+    // A forked child retains the same open-file description until exec, even
+    // with close-on-exec set. A duplicate reproduces that lifetime without fork.
+    let inherited = registry.root.as_ref().unwrap().lock.try_clone().unwrap();
+    assert!(matches!(
+        Registry::open(InstallationRoot::OnDisk(root.path().to_owned())),
+        Err(InstallationError::RootBusy(_))
+    ));
+    drop(registry);
+    let reopened = open(root.path());
+    drop(inherited);
+    assert!(matches!(
+        Registry::open(InstallationRoot::OnDisk(root.path().to_owned())),
+        Err(InstallationError::RootBusy(_))
+    ));
+    drop(reopened);
+    open(root.path());
+}
+
+#[cfg(unix)]
+#[test]
 fn root_alias_cannot_bypass_lock_and_lock_symlinks_are_refused() {
     use std::os::unix::fs::symlink;
     let temporary = root();

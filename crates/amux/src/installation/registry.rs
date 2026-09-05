@@ -69,7 +69,7 @@ pub enum InstallationRoot {
 #[derive(Debug)]
 struct LockedRoot {
     path: PathBuf,
-    _lock: File,
+    lock: File,
 }
 
 impl LockedRoot {
@@ -125,7 +125,15 @@ impl LockedRoot {
             }
             Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
         }
-        Ok(Self { path, _lock: lock })
+        Ok(Self { path, lock })
+    }
+}
+
+impl Drop for LockedRoot {
+    fn drop(&mut self) {
+        // Closing alone leaves the lock held by descriptors inherited by a
+        // concurrently forked child until exec. Ownership ends with this guard.
+        let _ = self.lock.unlock();
     }
 }
 

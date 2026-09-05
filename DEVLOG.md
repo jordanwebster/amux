@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Release installation ownership when the registry closes.**
+The root lock now unlocks explicitly before its file closes. A concurrently
+forked child can retain the same open-file description until exec, so closing
+the parent's descriptor alone could leave a rejected installation temporarily
+busy. A deterministic regression retains a duplicate descriptor, reopens the
+root immediately after dropping its owner, and checks that closing the stale
+duplicate cannot unlock the replacement owner. The existing root-exclusivity
+and configuration-rejection assertions remain intact.
+
 2026-09-05 — **Keep ephemeral installation files inside the platform temp directory.**
 The test-only `InstallationRoot::Ephemeral` replaces the misleading `InMemory`
 name: its registry is unpersisted, while profile files live beneath
