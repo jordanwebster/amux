@@ -11,7 +11,8 @@ use amux_ui::Model;
 use amux_ui::attachments::Segment;
 use amux_ui::claude::ToolInvocation;
 use amux_ui::claude_sdk::{
-    BoundaryEntry, FeedEntry, FeedEntryKind, Finality, SdkPhase, TaskEntry, TaskState, ToolEntry,
+    BoundaryEntry, ContextMeter, FeedEntry, FeedEntryKind, Finality, McpServerFact, SdkPhase,
+    TaskEntry, TaskState, ToolEntry,
 };
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -68,9 +69,10 @@ pub(crate) fn claude_sdk_frame_parts(
 
     let overlay = if chat.help {
         Some(crate::chat::claude_shared::help_overlay(
-            crate::bindings::chat_sections(
+            crate::bindings::claude_sdk_chat_sections(
                 &effective(chat),
                 crate::chat::family_keys(model, chat.agent),
+                crate::chat::claude_sdk::keys::allows_context_breakdown(model, chat.agent),
             ),
             chat.quit_guard.is_armed(),
             theme,
@@ -81,6 +83,8 @@ pub(crate) fn claude_sdk_frame_parts(
         Some(draft.view.frame(theme, ctx.viewport.0, ctx.viewport.1))
     } else if chat.reader.is_some() {
         reader_context(model, chat).and_then(|ctx| reader::reader_frame(&ctx, theme, width, height))
+    } else if chat.context_open {
+        Some(context_overlay(model, chat, ctx, width, height))
     } else {
         None
     };
@@ -91,7 +95,10 @@ pub(crate) fn claude_sdk_frame_parts(
 
     ChatFrameParts {
         header: header_row(model, chat, theme, phase, width, readonly),
-        banner,
+        // One row above the feed carries either the family banner or the
+        // MCP status. A child waiting on a person outranks a server that
+        // did not come up: the banner is about somebody being blocked.
+        banner: banner.or_else(|| mcp_status_line(model, chat, theme)),
         feed: FeedBlocks {
             blocks: if loading {
                 Vec::new()
@@ -103,7 +110,7 @@ pub(crate) fn claude_sdk_frame_parts(
                 .is_some_and(|layer| layer.history_truncated()),
             loading,
         },
-        activity: working.then(|| working_row(chat, ctx, readonly)),
+        activity: activity_row(model, chat, ctx, readonly, working),
         bottom: bottom_block(model, chat, theme, width, height, paused),
         overlay,
     }
@@ -197,28 +204,235 @@ fn phase_word(phase: SdkPhase, theme: Theme) -> (String, Style) {
     }
 }
 
-/// `◐ working · ctrl+x interrupt`. Read-only chats show the same liveness
-/// without the interrupt hint — interrupt is a write affordance, absent
-/// rather than disabled.
-fn working_row(chat: &View, ctx: &FrameContext, readonly: bool) -> Line<'static> {
+/// The row between the feed and the composer: what the session is doing,
+/// how much of its context it has spent, how many subagents are still
+/// out, and the key that stops it.
+///
+/// The meter is a passive fact — it is whatever the last turn's own usage
+/// reported — so it is stated whenever this session has a layer at all,
+/// and states `unknown` rather than a guess before any usage has arrived.
+fn activity_row(
+    model: &Model,
+    chat: &View,
+    ctx: &FrameContext,
+    readonly: bool,
+    working: bool,
+) -> Option<Line<'static>> {
+    let layer = model.claude_sdk(chat.agent)?;
     let theme = ctx.theme;
-    let frame = ctx.now.timestamp().rem_euclid(SPINNER.len() as i64) as usize;
     let mut line = Line::default();
-    push_span(
-        &mut line,
-        blocks::GLYPH_COL,
-        format!("{} working", SPINNER[frame]),
-        theme.text(),
-    );
+    if working {
+        let frame = ctx.now.timestamp().rem_euclid(SPINNER.len() as i64) as usize;
+        push_span(
+            &mut line,
+            blocks::GLYPH_COL,
+            format!("{} working", SPINNER[frame]),
+            theme.text(),
+        );
+    } else {
+        push_span(&mut line, blocks::TEXT_COL, "", theme.muted());
+    }
+
+    let mut facts = vec![meter_text(layer.session().context.as_ref())];
+    let running = layer
+        .tasks()
+        .filter(|task| matches!(task.state, TaskState::Running))
+        .count();
+    if running > 0 {
+        facts.push(format!(
+            "{running} task{} running",
+            if running == 1 { "" } else { "s" }
+        ));
+    }
     // A docked child ask owns Ctrl+X while it is on screen — it
     // interrupts the agent whose ask that is — so this line stops
     // claiming it: a hint that does something else than it says is worse
     // than no hint.
-    if !readonly && chat.inline_ask.is_none() {
-        line.spans
-            .push(Span::styled(" · ctrl+x interrupt", theme.muted()));
+    if working && !readonly && chat.inline_ask.is_none() {
+        facts.push("ctrl+x interrupt".to_string());
     }
-    line
+    let joined = facts.join(" · ");
+    if working {
+        line.spans
+            .push(Span::styled(format!(" · {joined}"), theme.muted()));
+    } else {
+        line.spans.push(Span::styled(joined, theme.muted()));
+    }
+    Some(line)
+}
+
+/// `ctx 34.1k/200.0k`, `ctx 34.1k` when no row has stated the window, and
+/// `ctx unknown` before any usage has arrived or after a reset.
+fn meter_text(meter: Option<&ContextMeter>) -> String {
+    match meter {
+        None => "ctx unknown".to_string(),
+        Some(meter) => match meter.window_tokens {
+            Some(window) if window > 0 => format!(
+                "ctx {}/{}",
+                fmt_tokens(meter.used_tokens),
+                fmt_tokens(window)
+            ),
+            _ => format!("ctx {}", fmt_tokens(meter.used_tokens)),
+        },
+    }
+}
+
+/// One compact line when an MCP server is not ready, and nothing at all
+/// when every one of them is — the ordinary case is silence.
+fn mcp_status_line(model: &Model, chat: &View, theme: Theme) -> Option<Line<'static>> {
+    let servers = &model.claude_sdk(chat.agent)?.session().mcp_servers;
+    let unready: Vec<&McpServerFact> = servers
+        .iter()
+        .filter(|server| !server.status.eq_ignore_ascii_case("connected"))
+        .collect();
+    if servers.is_empty() || unready.is_empty() {
+        return None;
+    }
+    let ready = servers.len() - unready.len();
+    let mut text = format!("mcp · {ready} ready");
+    // Servers are grouped by the state they reported, and each group
+    // names who is in it: a count alone leaves a person guessing which
+    // tools they have lost.
+    let mut states: Vec<&str> = unready
+        .iter()
+        .map(|server| server.status.as_str())
+        .collect();
+    states.sort_unstable();
+    states.dedup();
+    for state in states {
+        let named: Vec<&str> = unready
+            .iter()
+            .filter(|server| server.status == state)
+            .map(|server| server.name.as_str())
+            .collect();
+        text.push_str(&format!(
+            " · {} {state} ({})",
+            named.len(),
+            named.join(", ")
+        ));
+    }
+    let mut line = Line::default();
+    push_span(&mut line, blocks::GLYPH_COL, "⚠", theme.warn());
+    push_span(&mut line, blocks::TEXT_COL, text, theme.muted());
+    Some(line)
+}
+
+// --- the context breakdown overlay ------------------------------------------
+
+/// The per-category accounting behind the meter, over the whole frame.
+///
+/// It is a snapshot: fetching costs the session a round trip, so nothing
+/// refetches on a timer and the overlay says how old what it shows is.
+fn context_overlay(
+    model: &Model,
+    chat: &View,
+    ctx: &FrameContext,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let theme = ctx.theme;
+    let layer = model.claude_sdk(chat.agent);
+    let usage = layer.and_then(|layer| layer.context_breakdown());
+
+    let title = match usage {
+        Some(usage) => format!(
+            "context · {} of {} tokens",
+            fmt_thousands(usage.total_tokens),
+            fmt_thousands(usage.max_tokens)
+        ),
+        None => "context".to_string(),
+    };
+
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    match usage {
+        None => {
+            push_row(
+                &mut rows,
+                blocks::TEXT_COL,
+                "waiting for the session to report where its context went",
+                theme.muted(),
+            );
+        }
+        Some(usage) => {
+            let widest = usage
+                .categories
+                .iter()
+                .map(|category| crate::render::str_width(&category.name))
+                .max()
+                .unwrap_or(0);
+            for category in &usage.categories {
+                let mut line = Line::default();
+                push_span(
+                    &mut line,
+                    blocks::TEXT_COL,
+                    category.name.clone(),
+                    theme.text(),
+                );
+                push_span(
+                    &mut line,
+                    blocks::TEXT_COL + widest + 3,
+                    fmt_thousands(category.tokens),
+                    theme.muted(),
+                );
+                rows.push(line);
+            }
+            if usage.categories.is_empty() {
+                push_row(
+                    &mut rows,
+                    blocks::TEXT_COL,
+                    "the session reported no categories",
+                    theme.muted(),
+                );
+            }
+        }
+    }
+
+    let body_h = height.saturating_sub(5).max(1);
+    rows.truncate(body_h);
+    while rows.len() < body_h {
+        rows.push(Line::default());
+    }
+
+    let footer = if chat.quit_guard.is_armed() {
+        armed_quit_line(theme)
+    } else {
+        let mut line = Line::default();
+        push_span(
+            &mut line,
+            blocks::TEXT_COL,
+            format!(
+                "{} · {} c refresh",
+                chat.context_age(ctx.now),
+                effective(chat).leader_label
+            ),
+            theme.muted(),
+        );
+        line
+    };
+
+    let mut title_line = Line::default();
+    push_span(&mut title_line, blocks::GLYPH_COL, title, theme.emphasis());
+    crate::render::push_right(
+        &mut title_line,
+        "esc close".to_string(),
+        width,
+        theme.muted(),
+    );
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
+    lines.push(title_line);
+    lines.push(Line::default());
+    lines.push(reader::rule_line(width, theme));
+    lines.extend(rows);
+    lines.push(reader::rule_line(width, theme));
+    lines.push(footer);
+    lines.truncate(height);
+    lines
+}
+
+fn push_row(rows: &mut Vec<Line<'static>>, col: usize, text: &str, style: Style) {
+    let mut line = Line::default();
+    push_span(&mut line, col, text.to_string(), style);
+    rows.push(line);
 }
 
 // --- the bottom block -------------------------------------------------------
@@ -650,6 +864,12 @@ fn entry_block(
             if let Some(ms) = turn.duration_ms {
                 label.push_str(&format!(" · {}", fmt_secs(ms / 1000)));
             }
+            // What the turn cost, when the session priced it. It rides
+            // the rule that closes the turn because that is the moment
+            // the number is final.
+            if let Some(cost) = turn.total_cost_usd {
+                label.push_str(&format!(" · {}", fmt_cost(cost)));
+            }
             paint_turn_rule(key, &label, theme, width)
         }
         FeedEntryKind::Compaction(compaction) => {
@@ -857,13 +1077,38 @@ fn task_block(key: BlockKey, task: &TaskEntry, theme: Theme, width: usize) -> Pa
     if let Some(kind) = &task.subagent_type {
         label.push_str(&format!(" · {kind}"));
     }
-    let detail = match (&task.summary, &task.last_tool, &task.state) {
-        (Some(summary), _, _) if !summary.trim().is_empty() => Some(first_line(summary)),
-        (_, Some(tool), TaskState::Running) => Some(format!("running · {tool}")),
-        (_, _, TaskState::Running) => Some("running".to_string()),
-        (_, _, TaskState::Unknown(state)) => Some(state.clone()),
-        _ => None,
-    };
+    // What a person wants from a subagent differs by whether it is still
+    // out: a running one is read for where it has got to, a finished one
+    // for what it came back with and what it cost.
+    let mut parts: Vec<String> = Vec::new();
+    match &task.state {
+        TaskState::Running => {
+            parts.push("running".to_string());
+            if let Some(tool) = &task.last_tool {
+                parts.push(tool.clone());
+            }
+        }
+        TaskState::Completed => parts.push("done".to_string()),
+        TaskState::Failed => parts.push("failed".to_string()),
+        TaskState::Stopped => parts.push("stopped".to_string()),
+        TaskState::Unknown(state) => parts.push(state.clone()),
+    }
+    if !matches!(task.state, TaskState::Running)
+        && let Some(usage) = &task.usage
+    {
+        if let Some(tools) = usage.tool_uses {
+            parts.push(format!("{tools} tool{}", if tools == 1 { "" } else { "s" }));
+        }
+        if let Some(ms) = usage.duration_ms {
+            parts.push(fmt_secs(ms / 1000));
+        }
+    }
+    if let Some(summary) = &task.summary
+        && !summary.trim().is_empty()
+    {
+        parts.push(first_line(summary));
+    }
+    let detail = (!parts.is_empty()).then(|| parts.join(" · "));
     paint_tool_line(key, (glyph, style), &label, detail.as_deref(), theme, width)
 }
 
@@ -885,6 +1130,30 @@ fn fmt_secs(total: u64) -> String {
         format!("{}m {}s", total / 60, total % 60)
     } else {
         format!("{total}s")
+    }
+}
+
+/// `34,102` — the overlay's own accounting, where a person is comparing
+/// categories and the rounding the feed uses would hide the differences.
+fn fmt_thousands(count: u64) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// `$0.0213` / `$1.24` — cents matter under a dollar and stop mattering
+/// above one.
+fn fmt_cost(usd: f64) -> String {
+    if usd >= 1.0 {
+        format!("${usd:.2}")
+    } else {
+        format!("${usd:.4}")
     }
 }
 

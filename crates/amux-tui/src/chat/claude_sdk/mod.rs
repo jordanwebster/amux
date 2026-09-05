@@ -24,6 +24,7 @@ use amux_ui::claude_sdk::{
     SdkPhase, SendGate,
 };
 use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
+use chrono::{DateTime, Utc};
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 pub(crate) use render::claude_sdk_frame_parts;
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,14 @@ struct PendingAnswer {
 /// exists until the op finishes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct PendingDiff {
+    op: OpId,
+}
+
+/// A dispatched context-breakdown request. The answer arrives as a row
+/// like any other, but the op is what says WHEN it was asked for, and the
+/// overlay states the age of what it shows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PendingBreakdown {
     op: OpId,
 }
 
@@ -188,6 +197,12 @@ pub struct View {
     /// token together. Boxed so a chat with no review stays small.
     pub(crate) review: Option<Box<ReviewDraft>>,
     pending_diff: Option<PendingDiff>,
+    /// The context breakdown is on screen, over the whole frame.
+    pub(crate) context_open: bool,
+    pending_breakdown: Option<PendingBreakdown>,
+    /// When the breakdown on screen was fetched. `None` when it arrived
+    /// from somebody else's request and this client never asked.
+    context_fetched: Option<DateTime<Utc>>,
 }
 
 impl View {
@@ -211,6 +226,28 @@ impl View {
             inline_ask: None,
             review: None,
             pending_diff: None,
+            context_open: false,
+            pending_breakdown: None,
+            context_fetched: None,
+        }
+    }
+
+    /// How old what the overlay shows is, in the words its footer uses.
+    pub(crate) fn context_age(&self, now: DateTime<Utc>) -> String {
+        if self.pending_breakdown.is_some() {
+            return "fetching…".to_string();
+        }
+        let Some(fetched) = self.context_fetched else {
+            // The numbers came from somebody else's request, or from a
+            // client that has since been reopened: the overlay can say
+            // what it shows is a snapshot, but not how old.
+            return "a snapshot".to_string();
+        };
+        let seconds = (now - fetched).num_seconds().max(0);
+        match seconds {
+            0..=9 => "fetched just now".to_string(),
+            10..=59 => format!("fetched {seconds}s ago"),
+            _ => format!("fetched {}m ago", seconds / 60),
         }
     }
 
@@ -237,7 +274,7 @@ impl View {
     }
 
     pub(crate) fn overlay_open(&self) -> bool {
-        self.help || self.reader.is_some() || self.review_open()
+        self.help || self.reader.is_some() || self.review_open() || self.context_open
     }
 
     /// Read-only chats render write affordances as absent, not disabled.
@@ -297,6 +334,11 @@ impl View {
             }) if *agent == self.agent => {
                 self.pending_answer = Some(PendingAnswer { op, ask: *ask });
             }
+            Command::ClaudeSdk(
+                amux_ui::claude_sdk::ClaudeSdkCommand::RequestContextBreakdown { agent },
+            ) if *agent == self.agent => {
+                self.pending_breakdown = Some(PendingBreakdown { op });
+            }
             Command::RequestDiff { agent, .. } if *agent == self.agent => {
                 self.pending_diff = Some(PendingDiff { op });
             }
@@ -328,6 +370,7 @@ impl View {
             self.pending_send = None;
         }
         self.reconcile_answer(model);
+        self.reconcile_breakdown(model);
         self.reconcile_diff(model);
         self.sync_ask(model);
         crate::chat::inline::reconcile(model, self.agent, &mut self.inline_ask);
@@ -359,6 +402,25 @@ impl View {
                     self.reader = None;
                 }
             }
+        }
+    }
+
+    /// The requested breakdown settled: stamp when it was fetched, or
+    /// state why nothing came back. The overlay stays open either way —
+    /// closing it would hide the answer it was opened for.
+    fn reconcile_breakdown(&mut self, model: &Model) {
+        let Some(pending) = self.pending_breakdown.clone() else {
+            return;
+        };
+        let Some(finished) = model.finished_op(pending.op) else {
+            return;
+        };
+        self.pending_breakdown = None;
+        match &finished.outcome {
+            OpOutcome::Error { error } => self.send_failure = Some(error.message()),
+            // The clock is the Model's: a frame renders against the same
+            // instant, so the stated age never disagrees with it.
+            _ => self.context_fetched = model.now(),
         }
     }
 

@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Show what a Claude SDK session is spending and delegating.**
+The row under the feed now carries the passive context meter — used tokens
+against the window the session reported, `unknown` before any usage has
+arrived — beside the count of subagents still out. A leader chord asks the
+session where its context went and opens the answer over the frame, category
+by category, saying how old the snapshot is; it costs one round trip and
+refetches only when asked again. A subagent's block reads for what a person
+wants from it: where a running one has got to, and what a finished one came
+back with and cost. An MCP server that is not ready is stated once above the
+feed, naming who is in which state, and a session whose servers are all
+connected says nothing. The rule that closes a turn now prices it. Every
+surface is drawn from sessions the daemon really recorded, including a real
+unauthenticated MCP server and a real context breakdown.
+
 2026-09-05 — **Answer every kind of Claude SDK ask from the chat.**
 A session driven over stream-JSON now docks whatever it is waiting on where
 the composer sits, in the numbered-list idiom both Claude chats already use:

@@ -73,6 +73,9 @@ fn recorded(name: &str) -> Vec<Value> {
             include_str!("../../amux/tests/fixtures/rows/claude-sdk/subagent_task.rows.jsonl")
         }
         "messaged" => include_str!("../../amux/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
+        "introspection" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/introspection.rows.jsonl")
+        }
         other => panic!("unknown recording {other}"),
     };
     raw.lines()
@@ -264,6 +267,27 @@ fn asking_child() -> Model {
     fold(msgs)
 }
 
+/// The same recording stopped while a subagent is still out — the frame a
+/// person watching the work would be looking at.
+fn mid_task() -> Model {
+    let mut msgs = base();
+    let mut model = fold(msgs.clone());
+    for (index, row) in recorded("tasks").into_iter().enumerate() {
+        let msg = batch(index as u64, vec![row]);
+        msgs.push(msg.clone());
+        update(&mut model, msg);
+        let running = model
+            .claude_sdk(agent_id())
+            .expect("the session layer")
+            .tasks()
+            .any(|task| matches!(task.state, amux_ui::claude_sdk::TaskState::Running));
+        if running {
+            return fold(msgs);
+        }
+    }
+    panic!("the recording never started a subagent");
+}
+
 fn open_chat(model: &Model) -> ChatView {
     let mut chat = ChatView::open(model, agent_id(), 'a', false).expect("the session opens a chat");
     chat.reconcile(model);
@@ -330,12 +354,17 @@ fn assert_golden(name: &str, rendered: &str) {
 }
 
 fn assert_surface(name: &str, model: &Model) -> String {
+    assert_surface_with(name, model, open_chat)
+}
+
+/// The same, for a screen a person had to press something to reach.
+fn assert_surface_with(name: &str, model: &Model, chat: impl Fn(&Model) -> ChatView) -> String {
     let mut dark = String::new();
     for (theme_name, theme) in [
         ("dark", Theme::default()),
         ("light", Theme::light(ColorMode::TrueColor)),
     ] {
-        let buffer = render_buffer(model, open_chat(model), theme, (WIDTH, HEIGHT));
+        let buffer = render_buffer(model, chat(model), theme, (WIDTH, HEIGHT));
         let text = buffer_text(&buffer);
         let rendered = format!(
             "--- text ---\n{text}--- styles ---\n{}",
@@ -537,5 +566,170 @@ fn sdk_chat_ctrl_t_opens_the_accepted_plan() {
     assert!(
         text.contains("ship it") && text.contains("read the rows"),
         "the reader shows the plan: {text}"
+    );
+}
+
+/// The row under the feed carries the passive context meter and how many
+/// subagents are still out.
+#[test]
+fn sdk_chat_activity_line_states_the_context_and_open_tasks() {
+    let text = buffer_text(&render_buffer(
+        &session("text"),
+        open_chat(&session("text")),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("ctx 27.9k/200.0k"),
+        "the meter states what the last turn actually saw, against the window: {text}"
+    );
+
+    let model = mid_task();
+    let running = buffer_text(&render_buffer(
+        &model,
+        open_chat(&model),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        running.contains("1 task running"),
+        "and how many subagents are still out: {running}"
+    );
+
+    // A session that has not reported usage says so rather than guessing.
+    let fresh = fold(base());
+    let quiet = buffer_text(&render_buffer(
+        &fresh,
+        open_chat(&fresh),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        quiet.contains("ctx unknown"),
+        "an unreported meter is unknown, not zero: {quiet}"
+    );
+}
+
+/// `<leader> c` asks the session where its context went and opens the
+/// answer over the frame.
+#[test]
+fn sdk_chat_context_overlay_lists_the_breakdown() {
+    let model = session("introspection");
+    let mut chat = open_chat(&model);
+    assert!(key(&mut chat, &model, ctrl('a')).is_none(), "leader pends");
+    assert_eq!(
+        key(&mut chat, &model, KeyEvent::from(KeyCode::Char('c'))),
+        Some(UiAction::Dispatch(Command::ClaudeSdk(
+            ClaudeSdkCommand::RequestContextBreakdown { agent: agent_id() }
+        ))),
+        "the chord costs one round trip, and only when asked"
+    );
+    let text = buffer_text(&render_buffer(
+        &model,
+        chat.clone(),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("context · 23,394 of 200,000 tokens"),
+        "the overlay states the total against the window: {text}"
+    );
+    assert!(
+        text.contains("System prompt") && text.contains("Messages"),
+        "and every category the session reported: {text}"
+    );
+    assert!(text.contains("esc close"), "with the way out: {text}");
+
+    assert!(
+        key(&mut chat, &model, KeyEvent::from(KeyCode::Esc)).is_none(),
+        "esc closes it"
+    );
+    let closed = buffer_text(&render_buffer(
+        &model,
+        chat,
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        !closed.contains("System prompt"),
+        "and the chat is back: {closed}"
+    );
+    assert_surface_with("sdk_chat_context", &model, |model| {
+        let mut chat = open_chat(model);
+        let _ = key(&mut chat, model, ctrl('a'));
+        let _ = key(&mut chat, model, KeyEvent::from(KeyCode::Char('c')));
+        chat
+    });
+}
+
+/// A subagent's block says what it was asked to do, what it came back
+/// with, and what it cost.
+#[test]
+fn sdk_chat_task_block_states_what_the_subagent_did() {
+    let model = session("tasks");
+    let text = buffer_text(&render_buffer(
+        &model,
+        open_chat(&model),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("done ·"),
+        "a finished task reads as finished: {text}"
+    );
+    let running = mid_task();
+    let watching = buffer_text(&render_buffer(
+        &running,
+        open_chat(&running),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        watching.contains("running"),
+        "and one still out reads as running: {watching}"
+    );
+}
+
+/// An MCP server that is not ready is stated once, above the feed; a
+/// session whose servers are all connected says nothing.
+#[test]
+fn sdk_chat_mcp_status_line_names_what_is_not_ready() {
+    let model = session("text");
+    let text = buffer_text(&render_buffer(
+        &model,
+        open_chat(&model),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("mcp · ") && text.contains("needs-auth"),
+        "the line names the state and who is in it: {text}"
+    );
+    let fresh = fold(base());
+    let quiet = buffer_text(&render_buffer(
+        &fresh,
+        open_chat(&fresh),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        !quiet.contains("mcp · "),
+        "a session with no servers to report says nothing: {quiet}"
+    );
+}
+
+/// The rule that closes a turn carries what the turn cost.
+#[test]
+fn sdk_chat_turn_rule_states_the_cost() {
+    let model = session("text");
+    let text = buffer_text(&render_buffer(
+        &model,
+        open_chat(&model),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("$0.0225"),
+        "the turn rule prices the turn the session priced: {text}"
     );
 }

@@ -55,6 +55,10 @@ pub(crate) fn handle_chat_key(
                 None
             }
             KeyCode::Char('r') if !chat.read_only(model) => open_review(chat),
+            // `<leader> c`: what the context is spent on. Fetching costs
+            // the session a round trip, so it happens when a person asks
+            // and again only when they ask again.
+            KeyCode::Char('c') => request_context_breakdown(chat, model),
             _ => None,
         };
     }
@@ -99,6 +103,16 @@ pub(crate) fn handle_chat_key(
 
     if chat.review_open() {
         return review_key(chat, model, key, viewport);
+    }
+
+    // The breakdown overlay covers the frame: esc closes it, the leader
+    // chords above still compose over it, and nothing else leaks into the
+    // draft behind it.
+    if chat.context_open {
+        if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
+            chat.context_open = false;
+        }
+        return None;
     }
 
     // A pending ask owns the surface, so the panel has to exist before a
@@ -196,6 +210,11 @@ pub(crate) fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
     chat.ask_failure = None;
     chat.quit_guard.disarm();
     chat.reconcile(model);
+    // Every surface that covers the composer drops the paste rather than
+    // writing into a draft the person cannot see.
+    if chat.help || chat.context_open || chat.review_open() || chat.read_only(model) {
+        return;
+    }
     // An open answer field takes the paste as one line; the draft behind
     // a docked panel is not what the person is typing into.
     if chat.reader.is_some() {
@@ -249,6 +268,7 @@ pub(crate) fn attach_clipboard(chat: &mut View, model: &Model, content: Clipboar
     if chat.help
         || chat.reader.is_some()
         || chat.review_open()
+        || chat.context_open
         || chat.read_only(model)
         || chat.ask_ui.is_some()
         || chat.inline_ask.is_some()
@@ -256,6 +276,29 @@ pub(crate) fn attach_clipboard(chat: &mut View, model: &Model, content: Clipboar
         return;
     }
     chat.send_failure = crate::chat::attach::attach_clipboard(&mut chat.composer, content);
+}
+
+/// `<leader> c`: ask the session where its context went and put the
+/// answer on screen. Pressing it again while the overlay is open is a
+/// refresh, which is another round trip and so another request.
+fn request_context_breakdown(chat: &mut View, model: &Model) -> Option<UiAction> {
+    if !allows_context_breakdown(model, chat.agent) {
+        return None;
+    }
+    chat.context_open = true;
+    Some(UiAction::Dispatch(Command::ClaudeSdk(
+        ClaudeSdkCommand::RequestContextBreakdown { agent: chat.agent },
+    )))
+}
+
+/// Whether the breakdown request would reach the session at all — a
+/// session that cannot take a control call has nothing to answer with,
+/// and a hint must not name a dead key.
+pub(crate) fn allows_context_breakdown(model: &Model, agent: AgentId) -> bool {
+    matches!(
+        amux_ui::claude_sdk::send_gate(model, agent),
+        SendGate::Ready | SendGate::Working | SendGate::NeedsYou
+    )
 }
 
 /// Whether the mode-cycle chord would reach the session at all. The
@@ -616,7 +659,7 @@ fn focused_field<'v>(
     chat: &'v mut View,
     model: &Model,
 ) -> Option<&'v mut crate::composer::Composer> {
-    if chat.help || chat.review_open() || chat.read_only(model) {
+    if chat.help || chat.review_open() || chat.context_open || chat.read_only(model) {
         return None;
     }
     if chat.reader.is_some() {

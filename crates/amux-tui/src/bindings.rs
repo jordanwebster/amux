@@ -353,6 +353,26 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
     ]
 }
 
+/// Claude SDK chat bindings: the shared Claude chat rows plus the one
+/// key only a session driven over stream-JSON has. The breakdown costs a
+/// round trip to the provider, so the row appears only where the session
+/// could answer it — a hint never names a dead key.
+pub fn claude_sdk_chat_sections(
+    eff: &Effective,
+    family: FamilyKeys,
+    context_breakdown: bool,
+) -> Vec<Section> {
+    let mut sections = chat_sections(eff, family);
+    if context_breakdown && let Some(chat) = sections.first_mut() {
+        chat.bindings.push(row(
+            format!("{} c", eff.leader_label),
+            "context breakdown (again refreshes)",
+            Tier::Plain,
+        ));
+    }
+    sections
+}
+
 /// Codex chat bindings. Chrome, composer, and pager conventions are shared;
 /// approval and steering rows name Codex-native actions instead of borrowing
 /// Claude's question/plan vocabulary.
