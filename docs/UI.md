@@ -3,9 +3,8 @@
 Status: normative, with full native layers for Claude PTY (`docs/CHAT.md`)
 and Codex (`docs/CODEX.md`), and a third native layer for Claude driven over
 its stream-JSON interface, whose surfaces are specified in
-`docs/CLAUDE_SDK.md` and which is a placeholder in this build until that
-layer lands — revised after external review (see git history; review findings
-in the 2026-08 devlog entries).
+`docs/CLAUDE_SDK.md` — revised after external review (see git history; review
+findings in the 2026-08 devlog entries).
 This document owns the client side of amux: the `amux-ui` state library,
 its renderers (the TUI first, desktop and mobile clients later), and the
 rules that keep per-agent knowledge in the right place. Companions:
@@ -158,11 +157,9 @@ The registry as built: `AgentLayer` is an exhaustive enum over
 `AgentLayer::from_kind` exhaustively selects among them. `ClaudeSdkLayer` is
 a separate fold over SDK rows: typed streaming blocks, tools, tasks, turn
 results and boundaries. Feed entries and streaming cursors are bounded; payload
-clipping is distinguished from unavailable earlier history. Its attention,
-composer and runtime subscription remain unimplemented, so the TUI still
-renders “this chat is unsupported in this build.” Opening it does not subscribe
-to a PTY or silently reuse the Claude PTY fold. Exhaustive `match` is the
-mechanism —
+clipping is distinguished from unavailable earlier history. Its chat is a
+native screen of its own: opening it does not subscribe to a PTY or silently
+reuse the Claude PTY fold. Exhaustive `match` is the mechanism —
 adding a layer is a compile error at every site that must decide something,
 which is the point. `Model`'s fields are `pub(crate)`, so a renderer
 structurally cannot reach past the projections to raw layer state.
@@ -334,8 +331,7 @@ asymmetry rule above. The transcript layer infers working, streaming and turn
 ends from a burst-written file; the stream-JSON session states them as facts,
 and a shared fold would have to force one onto the other. `docs/CLAUDE_SDK.md`
 owns that layer's surfaces and records, per surface, which of them the other
-two chats adopt and which backend capability they lack. In this build the SDK
-client layer is still the unsupported placeholder described above.
+two chats adopt and which capability the other transports lack.
 On Windows the chrome must build and run (crossterm); byte passthrough is
 untested pending e2e-driver support there, and the structured chat path is the
 guaranteed Windows client direction.

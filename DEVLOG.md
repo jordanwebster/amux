@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Give a Claude session over stream-JSON its own chat screen.**
+The placeholder that named a protocol it could not read is gone; a Claude
+session driven over stream-JSON now opens a real chat inside the shared frame.
+The header carries the model and the permission mode the session reported; the
+feed paints prompts, replies still arriving, thinking, tools, subagent tasks,
+turn rules, compaction, boundaries and messages from other agents through the
+shared block vocabulary. Enter sends, Ctrl+X interrupts, Shift+Tab cycles the
+permission mode, Ctrl+V attaches, Ctrl+T reopens accepted plans and the leader
+review chord freezes a diff. Accepted plans are derived from the feed's own
+tool rows rather than kept a second time beside them, so the reader takes its
+plan list borrowed or owned. The `?` overlay moved into the shared Claude
+module, which both chats now build from one binding table. Goldens over five
+recorded sessions lock the frames in both themes.
+
 2026-09-05 — **Give exited Claude agents equal fleet attention.**
 An exited SDK session now reports idle attention, matching Claude PTY while
 keeping chat input closed. Agreement specs check the same status and badge

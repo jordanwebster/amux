@@ -93,7 +93,7 @@ pub(crate) fn reader_context<'m>(model: &'m Model, chat: &'m View) -> Option<Rea
         ask: layer.ask_head().map(shared_ask),
         ask_ui: chat.ask_ui.as_ref(),
         can_answer: amux_ui::claude::allows_answer(model, chat.agent),
-        accepted_plans: layer.accepted_plans(),
+        accepted_plans: std::borrow::Cow::Borrowed(layer.accepted_plans()),
         attachments: layer.attachments(),
         quit_guard_armed: chat.quit_guard.is_armed(),
     })

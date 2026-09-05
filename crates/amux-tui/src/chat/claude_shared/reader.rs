@@ -6,6 +6,8 @@
 //! reaches it from ask panels and read-only fact panels; Ctrl+T reopens
 //! accepted plans, ←/→ stepping between them when several exist (B6).
 
+use std::borrow::Cow;
+
 use amux_ui::attachments::AttachmentIndex;
 use amux_ui::claude::{AcceptedPlan, AskDocument, DiffDocument};
 use amux_ui::review::{ReviewComment, ReviewHeader};
@@ -29,8 +31,10 @@ pub(crate) struct ReaderContext<'m> {
     pub ask_ui: Option<&'m AskUi>,
     /// This client may answer at all (a read-only observer may not).
     pub can_answer: bool,
-    /// Accepted plans, oldest first — what Ctrl+T steps through.
-    pub accepted_plans: &'m [AcceptedPlan],
+    /// Accepted plans, oldest first — what Ctrl+T steps through. Borrowed
+    /// when the layer keeps them as a list and owned when the chat derives
+    /// them from its feed, so neither transport pays for the other's shape.
+    pub accepted_plans: Cow<'m, [AcceptedPlan]>,
     /// The layer's artifact index: a sent review's diff resolves here.
     pub attachments: &'m AttachmentIndex,
     pub quit_guard_armed: bool,
@@ -161,7 +165,7 @@ fn resolve<'m>(ctx: &'m ReaderContext<'m>) -> Option<Resolved<'m>> {
             plans_nav: None,
         }),
         ReaderSource::Plans { index } => {
-            let plans = ctx.accepted_plans;
+            let plans = ctx.accepted_plans.as_ref();
             if plans.is_empty() {
                 return None;
             }

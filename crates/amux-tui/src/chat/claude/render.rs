@@ -32,7 +32,7 @@ use crate::chat::viewport::FeedViewport;
 use crate::chat::{
     FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph, subagent_marker,
 };
-use crate::render::{FrameContext, Theme, line_len, push_span, str_width};
+use crate::render::{FrameContext, Theme, line_len, push_span};
 
 /// One 1 Hz Tick drives the spinner and the elapsed text together (D5);
 /// the frame index derives from elapsed seconds — no renderer state.
@@ -81,7 +81,16 @@ pub(crate) fn claude_frame_parts(
     // frame while open (any key closes the overlay; the reader falls back
     // to the chat when its source no longer resolves).
     let overlay = if chat.help {
-        Some(help_overlay(model, chat, theme, width, height))
+        Some(crate::chat::claude_shared::help_overlay(
+            crate::bindings::chat_sections(
+                &effective(chat),
+                crate::chat::family_keys(model, chat.agent),
+            ),
+            chat.quit_guard.is_armed(),
+            theme,
+            width,
+            height,
+        ))
     } else if let Some(draft) = chat.review.as_ref().filter(|draft| draft.open) {
         Some(draft.view.frame(theme, ctx.viewport.0, ctx.viewport.1))
     } else if chat.reader.is_some() {
@@ -1011,102 +1020,6 @@ fn tool_continuation(tool: &ToolEntry) -> Option<String> {
 
 // --- the overlays -----------------------------------------------------------
 
-/// The `?` overlay: the chat's full effective key list with tier
-/// annotations, from the one binding table (`crate::bindings`) — kitty
-/// rows appear only when probed, ext rows are marked terminal-dependent.
-/// Fullscreen like the reader; any key closes. On short viewports the
-/// tail gives way and a `⋮` row states the cut honestly.
-fn help_overlay(
-    model: &Model,
-    chat: &View,
-    theme: Theme,
-    width: usize,
-    height: usize,
-) -> Vec<Line<'static>> {
-    let sections = crate::bindings::chat_sections(
-        &crate::bindings::Effective::new(chat.kitty, chat.leader),
-        crate::chat::family_keys(model, chat.agent),
-    );
-    // One aligned action column across every section.
-    let key_col = blocks::TEXT_COL
-        + 2
-        + sections
-            .iter()
-            .flat_map(|section| &section.bindings)
-            .map(|binding| str_width(&binding.keys))
-            .max()
-            .unwrap_or(0)
-        + 3;
-
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    for (index, section) in sections.iter().enumerate() {
-        if index > 0 {
-            rows.push(Line::default());
-        }
-        let mut title = Line::default();
-        push_span(&mut title, blocks::GLYPH_COL, section.title, theme.muted());
-        rows.push(title);
-        for binding in &section.bindings {
-            let mut line = Line::default();
-            push_span(
-                &mut line,
-                blocks::TEXT_COL + 2,
-                binding.keys.clone(),
-                theme.text(),
-            );
-            push_span(&mut line, key_col, binding.action.clone(), theme.muted());
-            if let Some(mark) = crate::render::tier_mark(binding.tier) {
-                line.spans
-                    .push(Span::styled(format!(" · {mark}"), theme.muted()));
-            }
-            rows.push(line);
-        }
-    }
-
-    // Fixed chrome is five rows: the title, the gap under it, two rules
-    // and the hint. The body consumes every remaining viewport row.
-    let body_h = height.saturating_sub(5).max(1);
-    if rows.len() > body_h {
-        rows.truncate(body_h.saturating_sub(1));
-        let mut more = Line::default();
-        push_span(
-            &mut more,
-            blocks::GLYPH_COL,
-            "⋮ more — a taller terminal shows the full list",
-            theme.muted(),
-        );
-        rows.push(more);
-    }
-    while rows.len() < body_h {
-        rows.push(Line::default());
-    }
-
-    let mut title = Line::default();
-    push_span(&mut title, blocks::GLYPH_COL, "keys", theme.emphasis());
-    let hint = if chat.quit_guard.is_armed() {
-        armed_quit_line(theme)
-    } else {
-        let mut line = Line::default();
-        push_span(
-            &mut line,
-            blocks::TEXT_COL,
-            "any key to close",
-            theme.muted(),
-        );
-        line
-    };
-
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
-    lines.push(title);
-    lines.push(Line::default());
-    lines.push(reader::rule_line(width, theme));
-    lines.extend(rows);
-    lines.push(reader::rule_line(width, theme));
-    lines.push(hint);
-    lines.truncate(height);
-    lines
-}
-
 // --- formatting -------------------------------------------------------------
 
 /// `24s`, `1m 42s`, `1h 2m` — durations floor to whole units.
@@ -1147,7 +1060,17 @@ mod tests {
             .map(|section| 1 + section.bindings.len())
             .sum::<usize>()
             + sections.len().saturating_sub(1);
-        let lines = help_overlay(&model, &chat, Theme::default(), 120, body_rows + 5);
+        let _ = &model;
+        let lines = crate::chat::claude_shared::help_overlay(
+            crate::bindings::chat_sections(
+                &crate::bindings::Effective::new(chat.kitty, chat.leader),
+                crate::bindings::FamilyKeys::default(),
+            ),
+            chat.quit_guard.is_armed(),
+            Theme::default(),
+            120,
+            body_rows + 5,
+        );
         let rendered: Vec<String> = lines
             .iter()
             .map(|line| {

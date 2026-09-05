@@ -1,21 +1,30 @@
-//! The chat of a Claude agent driven through the SDK. This build folds no
-//! `claude_sdk_v1` rows, so the frame it owes a person is a placeholder that
-//! names the gap — locked here in both themes, and proven inert to input.
+//! The chat of a Claude session driven over stream-JSON, drawn from rows
+//! the daemon really recorded: what the session said while it was still
+//! saying it, what it ran, what its subagents did, and what the person
+//! can do about any of it.
 
 use amux_tui::view::{UiAction, ViewState};
 use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
+use amux_ui::claude_sdk::{ClaudeSdkCommand, FeedEntryKind, Finality};
 use amux_ui::{
-    Agent, AgentId, HostEntry, HostId, Model, Msg, ServerMsg, StreamEntry, StreamMsg, update,
+    Agent, AgentId, Command, HostEntry, HostId, Model, Msg, ServerMsg, StreamEntry, StreamMsg,
+    update,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 const NOW: &str = "2026-08-12T09:12:30Z";
 const WIDTH: u16 = 120;
 const HEIGHT: u16 = 40;
+
+/// The model and permission mode the recorded sessions ran under. Both
+/// belong on screen, so both are asserted by name rather than by shape.
+const RECORDED_MODEL: &str = "claude-haiku-4-5-20251001";
+const RECORDED_MODE: &str = "default";
 
 fn at(value: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(value)
@@ -53,6 +62,24 @@ fn an_sdk_agent() -> Agent {
     }
 }
 
+/// The recorded rows of one session, exactly as the daemon wrote them.
+fn recorded(name: &str) -> Vec<Value> {
+    let raw = match name {
+        "text" => include_str!("../../amux/tests/fixtures/rows/claude-sdk/text_turn.rows.jsonl"),
+        "streamed" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/streamed_turn.rows.jsonl")
+        }
+        "tasks" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/subagent_task.rows.jsonl")
+        }
+        "messaged" => include_str!("../../amux/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
+        other => panic!("unknown recording {other}"),
+    };
+    raw.lines()
+        .map(|line| serde_json::from_str(line).expect("recorded row"))
+        .collect()
+}
+
 fn base() -> Vec<Msg> {
     let host = HostEntry {
         id: host_id(),
@@ -73,7 +100,32 @@ fn base() -> Vec<Msg> {
         }),
         Msg::Server(ServerMsg::HostsSynchronized),
         Msg::Server(ServerMsg::AgentsSynchronized),
+        Msg::Stream {
+            agent: agent_id(),
+            event: StreamMsg::Opened { truncated: false },
+        },
+        Msg::Stream {
+            agent: agent_id(),
+            event: StreamMsg::ReplayComplete,
+        },
     ]
+}
+
+fn batch(seq: u64, rows: Vec<Value>) -> Msg {
+    Msg::Stream {
+        agent: agent_id(),
+        event: StreamMsg::Batch {
+            at: at("2026-08-12T09:12:00Z"),
+            entries: rows
+                .into_iter()
+                .enumerate()
+                .map(|(offset, payload)| StreamEntry {
+                    seq: seq + offset as u64,
+                    payload,
+                })
+                .collect(),
+        },
+    }
 }
 
 fn fold(msgs: Vec<Msg>) -> Model {
@@ -86,15 +138,91 @@ fn fold(msgs: Vec<Msg>) -> Model {
     model
 }
 
-/// The SDK agent alone: the only frame this build can honestly draw.
-fn model() -> Model {
-    fold(base())
+/// A whole recorded session, folded row by row exactly as it arrived.
+fn session(name: &str) -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded(name).into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
+    fold(msgs)
 }
 
-/// The same agent with a Codex child stopped on an approval, so the family
-/// banner still reaches a parent whose own rows nobody folds.
-fn model_with_asking_child() -> Model {
+/// The same recording stopped at the first frame that has a reply
+/// half-written: the session is still speaking and the feed has to show
+/// that without pretending the block is finished.
+fn mid_reply() -> Model {
     let mut msgs = base();
+    let mut model = fold(msgs.clone());
+    for (index, row) in recorded("streamed").into_iter().enumerate() {
+        let msg = batch(index as u64, vec![row]);
+        msgs.push(msg.clone());
+        update(&mut model, msg);
+        let streaming = model
+            .claude_sdk(agent_id())
+            .expect("the session layer")
+            .entries()
+            .any(|entry| match &entry.kind {
+                FeedEntryKind::Message(message) => {
+                    !message.text.is_empty() && message.finality == Finality::Streaming
+                }
+                _ => false,
+            });
+        if streaming {
+            return fold(msgs);
+        }
+    }
+    panic!("the recording never streamed a reply");
+}
+
+/// A finished session with one plan it put up and got through, so the
+/// chord that reopens plans has something to reopen. Synthetic, because
+/// no recording in the corpus proposes a plan.
+fn approved_plan() -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded("text").into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
+    msgs.push(batch(
+        900,
+        vec![
+            json!({
+                "type": "assistant",
+                "parent_tool_use_id": null,
+                "message": {
+                    "id": "msg_plan",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_plan",
+                        "name": "ExitPlanMode",
+                        "input": {"plan": "# ship it\n\n- read the rows\n- draw the rows"}
+                    }]
+                }
+            }),
+            json!({
+                "type": "user",
+                "parent_tool_use_id": null,
+                "message": {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_plan",
+                        "content": "approved"
+                    }]
+                }
+            }),
+        ],
+    ));
+    fold(msgs)
+}
+
+/// The recorded session with a Codex child stopped on an approval, so the
+/// family banner reaches a parent whose own rows this chat folds.
+fn asking_child() -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded("text").into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
     let mut child = an_sdk_agent();
     child.id = child_id();
     child.name = Some("flake-hunter".to_string());
@@ -118,11 +246,11 @@ fn model_with_asking_child() -> Model {
         event: StreamMsg::Batch {
             at: at("2026-08-12T09:12:00Z"),
             entries: vec![
-                serde_json::json!({"type":"amux.codex_ready"}),
-                serde_json::json!({"type":"turn/started","turn":{"id":"t1","status":"inProgress"}}),
-                serde_json::json!({"type":"item/started","item":{"id":"exec-1","type":"commandExecution","command":"cargo test","cwd":"/work","status":"inProgress"}}),
-                serde_json::json!({"type":"item/commandExecution/requestApproval","itemId":"exec-1","command":"cargo test","cwd":"/work","reason":"run tests?"}),
-                serde_json::json!({"type":"amux.codex_approval_required","request_id":7,"availableDecisions":["accept","cancel"]}),
+                json!({"type":"amux.codex_ready"}),
+                json!({"type":"turn/started","turn":{"id":"t1","status":"inProgress"}}),
+                json!({"type":"item/started","item":{"id":"exec-1","type":"commandExecution","command":"cargo test","cwd":"/work","status":"inProgress"}}),
+                json!({"type":"item/commandExecution/requestApproval","itemId":"exec-1","command":"cargo test","cwd":"/work","reason":"run tests?"}),
+                json!({"type":"amux.codex_approval_required","request_id":7,"availableDecisions":["accept","cancel"]}),
             ]
             .into_iter()
             .enumerate()
@@ -137,8 +265,7 @@ fn model_with_asking_child() -> Model {
 }
 
 fn open_chat(model: &Model) -> ChatView {
-    let mut chat = ChatView::open(model, agent_id(), 'a', false)
-        .expect("an SDK-driven Claude opens its placeholder chat");
+    let mut chat = ChatView::open(model, agent_id(), 'a', false).expect("the session opens a chat");
     chat.reconcile(model);
     chat
 }
@@ -222,29 +349,77 @@ fn assert_surface(name: &str, model: &Model) -> String {
     dark
 }
 
-/// The placeholder itself: it names the agent, its driver, and the protocol
-/// this build cannot read, and it offers the keys that leave.
+fn key(chat: &mut ChatView, model: &Model, key: KeyEvent) -> Option<UiAction> {
+    amux_tui::chat::handle_chat_key(chat, model, key, (WIDTH, HEIGHT), at(NOW))
+}
+
+fn ctrl(code: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(code), KeyModifiers::CONTROL)
+}
+
+/// The whole conversation: what was asked, what came back, and the rule
+/// that closed the turn — with the model and the permission mode stated
+/// where a person can see them before the next thing they type.
 #[test]
-fn sdk_chat_renders_the_unsupported_placeholder() {
-    let text = assert_surface("sdk_chat_placeholder", &model());
+fn sdk_chat_paints_a_finished_turn() {
+    let text = assert_surface("sdk_chat_turn", &session("text"));
     assert!(
-        text.contains("unsupported"),
-        "the frame must say so in words: {text}"
+        text.contains(RECORDED_MODEL) && text.contains(RECORDED_MODE),
+        "the header states what this session runs on and under: {text}"
     );
     assert!(
-        text.contains("claude_sdk_v1"),
-        "and name the protocol: {text}"
+        text.contains("turn ·"),
+        "the turn closes with a rule: {text}"
     );
 }
 
-/// A child's ask still reaches this parent: the family banner is chrome,
-/// not a fact folded from the parent's own stream.
+/// A reply still arriving reads as unfinished, not as a short answer.
+#[test]
+fn sdk_chat_paints_a_streaming_reply() {
+    let text = assert_surface("sdk_chat_streaming", &mid_reply());
+    assert!(
+        text.contains('▌'),
+        "an open block carries the caret that says more is coming: {text}"
+    );
+    assert!(
+        text.contains("working"),
+        "and the session reads as working: {text}"
+    );
+}
+
+/// Tools and the subagents they start each get their own row.
+#[test]
+fn sdk_chat_paints_tools_and_tasks() {
+    let model = session("tasks");
+    let text = assert_surface("sdk_chat_tools", &model);
+    let layer = model.claude_sdk(agent_id()).expect("the session layer");
+    let task = layer
+        .tasks()
+        .next()
+        .expect("the recording started a subagent");
+    assert!(
+        text.contains(&format!("task {}", task.description)),
+        "the subagent's work is named: {text}"
+    );
+}
+
+/// A message from another agent is drawn the way every chat draws one.
+#[test]
+fn sdk_chat_paints_an_agent_message() {
+    let text = assert_surface("sdk_chat_agent_message", &session("messaged"));
+    assert!(
+        text.contains('←'),
+        "an inbound message wears its direction: {text}"
+    );
+}
+
+/// A child's ask still reaches this parent.
 #[test]
 fn sdk_chat_still_shows_a_child_ask_banner() {
-    let text = assert_surface("sdk_chat_placeholder_family", &model_with_asking_child());
+    let text = assert_surface("sdk_chat_family", &asking_child());
     assert!(
         text.contains("flake-hunter needs permission"),
-        "the child's banner must survive an unfolded parent: {text}"
+        "the child's banner reaches the parent: {text}"
     );
 }
 
@@ -252,52 +427,115 @@ fn sdk_chat_still_shows_a_child_ask_banner() {
 /// below the frame's minimum.
 #[test]
 fn sdk_chat_renders_at_every_viewport() {
-    let model = model();
+    let model = session("tasks");
     for size in [(20, 6), (24, 10), (40, 12), (80, 24), (200, 60)] {
         let _ = render_buffer(&model, open_chat(&model), Theme::default(), size);
     }
 }
 
-/// Typing goes nowhere: the chat has no input to accept, so the composer
-/// stays empty and no command is dispatched.
+/// Enter sends what was typed, and the draft leaves with it.
 #[test]
-fn sdk_chat_accepts_no_composer_input() {
-    let model = model();
+fn sdk_chat_enter_sends_the_draft() {
+    let model = session("text");
     let mut chat = open_chat(&model);
-    for key in [
-        KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
-        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-    ] {
-        let action =
-            amux_tui::chat::handle_chat_key(&mut chat, &model, key, (WIDTH, HEIGHT), at(NOW));
-        assert!(action.is_none(), "{key:?} must do nothing");
-    }
-    amux_tui::chat::handle_chat_paste(&mut chat, &model, "pasted");
+    amux_tui::chat::handle_chat_paste(&mut chat, &model, "one more thing");
+    let action = key(&mut chat, &model, KeyEvent::from(KeyCode::Enter));
+    assert_eq!(
+        action,
+        Some(UiAction::Dispatch(Command::ClaudeSdk(
+            ClaudeSdkCommand::SendPrompt {
+                agent: agent_id(),
+                text: "one more thing".to_string(),
+            }
+        ))),
+        "Enter sends the draft"
+    );
     assert!(
         chat.composer_mut().is_empty(),
-        "nothing may reach a composer"
+        "and the draft leaves with it"
     );
 }
 
-/// The keys that leave still work, so a person is never stuck in a frame
-/// that cannot talk to its agent.
+/// Ctrl+X interrupts a session that is in the middle of something.
 #[test]
-fn sdk_chat_closes_on_the_leader_chord() {
-    let model = model();
+fn sdk_chat_ctrl_x_interrupts_a_working_session() {
+    let model = mid_reply();
     let mut chat = open_chat(&model);
-    let leader = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
-    assert!(
-        amux_tui::chat::handle_chat_key(&mut chat, &model, leader, (WIDTH, HEIGHT), at(NOW))
-            .is_none()
+    assert_eq!(
+        key(&mut chat, &model, ctrl('x')),
+        Some(UiAction::Dispatch(Command::ClaudeSdk(
+            ClaudeSdkCommand::Interrupt { agent: agent_id() }
+        ))),
+        "Ctrl+X interrupts"
     );
-    let action = amux_tui::chat::handle_chat_key(
+}
+
+/// Shift+Tab asks the session for its next permission mode.
+#[test]
+fn sdk_chat_shift_tab_cycles_the_permission_mode() {
+    let model = session("text");
+    let mut chat = open_chat(&model);
+    assert_eq!(
+        key(&mut chat, &model, KeyEvent::from(KeyCode::BackTab)),
+        Some(UiAction::Dispatch(Command::ClaudeSdk(
+            ClaudeSdkCommand::CyclePermissionMode { agent: agent_id() }
+        ))),
+        "Shift+Tab cycles the mode the header states"
+    );
+}
+
+/// Ctrl+V attaches what the clipboard holds; the draft gains a token for
+/// it rather than the bytes.
+#[test]
+fn sdk_chat_ctrl_v_attaches_the_clipboard() {
+    let model = session("text");
+    let mut chat = open_chat(&model);
+    amux_tui::chat::handle_chat_clipboard(
         &mut chat,
         &model,
-        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
-        (WIDTH, HEIGHT),
-        at(NOW),
+        amux_tui::clipboard::ClipboardContent::Image {
+            mime: "image/png".to_string(),
+            bytes: vec![b'p'; 512],
+        },
     );
-    assert!(matches!(action, Some(UiAction::CloseChat)));
+    assert!(
+        !chat.composer_mut().tokens().is_empty(),
+        "the draft carries the attachment"
+    );
+}
+
+/// The review chord asks for the diff the page is frozen against.
+#[test]
+fn sdk_chat_leader_r_asks_for_the_diff_to_review() {
+    let model = session("text");
+    let mut chat = open_chat(&model);
+    assert!(key(&mut chat, &model, ctrl('a')).is_none(), "leader pends");
+    assert!(
+        matches!(
+            key(&mut chat, &model, KeyEvent::from(KeyCode::Char('r'))),
+            Some(UiAction::Dispatch(Command::RequestDiff { agent, .. })) if agent == agent_id()
+        ),
+        "the chord asks for a diff to review"
+    );
+}
+
+/// Ctrl+T reopens the plan this session already got through.
+#[test]
+fn sdk_chat_ctrl_t_opens_the_accepted_plan() {
+    let model = approved_plan();
+    let mut chat = open_chat(&model);
+    assert!(
+        key(&mut chat, &model, ctrl('t')).is_none(),
+        "the reader opens"
+    );
+    let text = buffer_text(&render_buffer(
+        &model,
+        chat,
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("ship it") && text.contains("read the rows"),
+        "the reader shows the plan: {text}"
+    );
 }

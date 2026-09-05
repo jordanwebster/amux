@@ -267,8 +267,8 @@ fn open_selected(view: &mut ViewState, model: &Model, other_mode: bool) -> Optio
     }
     // Read-only agents and kinds without terminal_v1 open in chat only —
     // raw attach is absent, not disabled, so every entry key opens the one
-    // mode that exists. For an SDK-driven Claude this is the deliberate
-    // unsupported placeholder; opening it must not ask the daemon for a PTY.
+    // mode that exists. A Claude session with no terminal behind it has
+    // nothing to attach to, so opening it must not ask for a PTY.
     if card.agent.readonly || !card.agent.kind.exposes(amux_ui::Protocol::TerminalV1) {
         mode = OpenMode::Chat;
     }

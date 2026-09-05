@@ -267,8 +267,9 @@ pub fn record_scroll(
     const EVENT_COUNT_PER_DIRECTION: usize = 12;
     const FRAME_DELAY_CENTISECONDS: u16 = 12;
 
-    // An SDK-driven chat renders only its unsupported placeholder; a long
-    // scrolling feed recorded for it would be an invention, not evidence.
+    // No long-feed fixture folds `claude_sdk_v1` rows yet, and a scroll
+    // recording taken over rows nobody folded would be an invention
+    // rather than evidence.
     if matches!(protocol, StructuredProtocol::ClaudeSdk) {
         return Err(ShotError::Render(
             "an SDK-driven chat has no native feed to scroll".to_string(),

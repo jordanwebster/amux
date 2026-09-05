@@ -17,10 +17,10 @@ pub(crate) mod panel;
 pub(crate) mod reader;
 
 use amux_ui::claude::{AskDocument, QuestionFact, SuggestionFact, ToolInvocation};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 
 use crate::chat::blocks;
-use crate::render::{Theme, push_span};
+use crate::render::{Theme, push_span, str_width};
 use crate::view::QuitGuard;
 
 /// The armed quit guard's replacement hint row (`docs/CHAT.md`
@@ -168,4 +168,96 @@ impl SharedAsk<'_> {
             _ => None,
         }
     }
+}
+
+/// The `?` overlay: the chat's full effective key list with tier
+/// annotations, from the one binding table (`crate::bindings`) — kitty
+/// rows appear only when probed, ext rows are marked terminal-dependent.
+/// Fullscreen like the reader; any key closes. On short viewports the
+/// tail gives way and a `⋮` row states the cut honestly.
+pub(crate) fn help_overlay(
+    sections: Vec<crate::bindings::Section>,
+    quit_guard_armed: bool,
+    theme: Theme,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    // One aligned action column across every section.
+    let key_col = blocks::TEXT_COL
+        + 2
+        + sections
+            .iter()
+            .flat_map(|section| &section.bindings)
+            .map(|binding| str_width(&binding.keys))
+            .max()
+            .unwrap_or(0)
+        + 3;
+
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for (index, section) in sections.iter().enumerate() {
+        if index > 0 {
+            rows.push(Line::default());
+        }
+        let mut title = Line::default();
+        push_span(&mut title, blocks::GLYPH_COL, section.title, theme.muted());
+        rows.push(title);
+        for binding in &section.bindings {
+            let mut line = Line::default();
+            push_span(
+                &mut line,
+                blocks::TEXT_COL + 2,
+                binding.keys.clone(),
+                theme.text(),
+            );
+            push_span(&mut line, key_col, binding.action.clone(), theme.muted());
+            if let Some(mark) = crate::render::tier_mark(binding.tier) {
+                line.spans
+                    .push(Span::styled(format!(" · {mark}"), theme.muted()));
+            }
+            rows.push(line);
+        }
+    }
+
+    // Fixed chrome is five rows: the title, the gap under it, two rules
+    // and the hint. The body consumes every remaining viewport row.
+    let body_h = height.saturating_sub(5).max(1);
+    if rows.len() > body_h {
+        rows.truncate(body_h.saturating_sub(1));
+        let mut more = Line::default();
+        push_span(
+            &mut more,
+            blocks::GLYPH_COL,
+            "⋮ more — a taller terminal shows the full list",
+            theme.muted(),
+        );
+        rows.push(more);
+    }
+    while rows.len() < body_h {
+        rows.push(Line::default());
+    }
+
+    let mut title = Line::default();
+    push_span(&mut title, blocks::GLYPH_COL, "keys", theme.emphasis());
+    let hint = if quit_guard_armed {
+        armed_quit_line(theme)
+    } else {
+        let mut line = Line::default();
+        push_span(
+            &mut line,
+            blocks::TEXT_COL,
+            "any key to close",
+            theme.muted(),
+        );
+        line
+    };
+
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
+    lines.push(title);
+    lines.push(Line::default());
+    lines.push(reader::rule_line(width, theme));
+    lines.extend(rows);
+    lines.push(reader::rule_line(width, theme));
+    lines.push(hint);
+    lines.truncate(height);
+    lines
 }

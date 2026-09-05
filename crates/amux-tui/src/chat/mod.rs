@@ -6,12 +6,12 @@ pub(crate) mod attach;
 pub(crate) mod attachments;
 pub(crate) mod blocks;
 pub(crate) mod claude;
+pub(crate) mod claude_sdk;
 pub(crate) mod claude_shared;
 mod codex;
 pub mod diff;
 pub(crate) mod frame;
 pub(crate) mod inline;
-mod unsupported;
 pub(crate) mod viewport;
 
 use std::cell::RefCell;
@@ -51,11 +51,8 @@ pub enum FeedScroll {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum AgentChatView {
     Claude(claude::View),
+    ClaudeSdk(claude_sdk::View),
     Codex(codex::View),
-    /// A protocol this build has no fold for. It renders a placeholder and
-    /// takes no input, so a kind can ship before its reader does without
-    /// leaving its agents unreachable from the fleet.
-    Unsupported(unsupported::View),
 }
 
 #[derive(Clone, Debug)]
@@ -121,28 +118,29 @@ fn frame_parts(
         AgentChatView::Claude(view) => {
             claude::claude_frame_parts(model, view, &chat.viewport, cache, ctx)
         }
+        AgentChatView::ClaudeSdk(view) => {
+            claude_sdk::claude_sdk_frame_parts(model, view, &chat.viewport, cache, ctx)
+        }
         AgentChatView::Codex(view) => {
             codex::codex_frame_parts(model, view, &chat.viewport, cache, ctx)
         }
-        AgentChatView::Unsupported(view) => unsupported::frame_parts(model, view, ctx),
     }
 }
 
 impl ChatView {
     pub fn open(model: &Model, agent: AgentId, leader: char, kitty: bool) -> Option<Self> {
         let protocol = model.agent(agent)?.structured_protocol()?;
-        let inner =
-            match protocol {
-                StructuredProtocol::Claude => {
-                    AgentChatView::Claude(claude::View::open(agent, leader, kitty))
-                }
-                StructuredProtocol::Codex => {
-                    AgentChatView::Codex(codex::View::open(agent, leader, kitty))
-                }
-                StructuredProtocol::ClaudeSdk => AgentChatView::Unsupported(
-                    unsupported::View::open(agent, protocol.as_str(), leader, kitty),
-                ),
-            };
+        let inner = match protocol {
+            StructuredProtocol::Claude => {
+                AgentChatView::Claude(claude::View::open(agent, leader, kitty))
+            }
+            StructuredProtocol::Codex => {
+                AgentChatView::Codex(codex::View::open(agent, leader, kitty))
+            }
+            StructuredProtocol::ClaudeSdk => {
+                AgentChatView::ClaudeSdk(claude_sdk::View::open(agent, leader, kitty))
+            }
+        };
         Some(Self {
             agent,
             viewport: FeedViewport::following(),
@@ -180,18 +178,11 @@ impl ChatView {
         }
     }
 
-    pub fn open_unsupported(
-        agent: AgentId,
-        protocol: &'static str,
-        leader: char,
-        kitty: bool,
-    ) -> Self {
+    pub fn open_claude_sdk(agent: AgentId, leader: char, kitty: bool) -> Self {
         Self {
             agent,
             viewport: FeedViewport::following(),
-            inner: AgentChatView::Unsupported(unsupported::View::open(
-                agent, protocol, leader, kitty,
-            )),
+            inner: AgentChatView::ClaudeSdk(claude_sdk::View::open(agent, leader, kitty)),
             feed_metrics: RefCell::new(None),
             paint_cache: RefCell::new(PaintCache::default()),
         }
@@ -201,7 +192,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => &mut view.composer,
             AgentChatView::Codex(view) => &mut view.composer,
-            AgentChatView::Unsupported(view) => &mut view.composer,
+            AgentChatView::ClaudeSdk(view) => &mut view.composer,
         }
     }
 
@@ -209,7 +200,7 @@ impl ChatView {
         match &self.inner {
             AgentChatView::Claude(view) => &view.quit_guard,
             AgentChatView::Codex(view) => &view.quit_guard,
-            AgentChatView::Unsupported(view) => &view.quit_guard,
+            AgentChatView::ClaudeSdk(view) => &view.quit_guard,
         }
     }
 
@@ -217,7 +208,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => &mut view.quit_guard,
             AgentChatView::Codex(view) => &mut view.quit_guard,
-            AgentChatView::Unsupported(view) => &mut view.quit_guard,
+            AgentChatView::ClaudeSdk(view) => &mut view.quit_guard,
         }
     }
 
@@ -225,7 +216,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.help = help,
             AgentChatView::Codex(view) => view.help = help,
-            AgentChatView::Unsupported(view) => view.help = help,
+            AgentChatView::ClaudeSdk(view) => view.help = help,
         }
     }
 
@@ -233,7 +224,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.kitty = kitty,
             AgentChatView::Codex(view) => view.kitty = kitty,
-            AgentChatView::Unsupported(view) => view.kitty = kitty,
+            AgentChatView::ClaudeSdk(view) => view.kitty = kitty,
         }
     }
 
@@ -269,8 +260,8 @@ impl ChatView {
         self.feed_metrics.get_mut().take();
         match &mut self.inner {
             AgentChatView::Claude(view) => view.reconcile(model),
+            AgentChatView::ClaudeSdk(view) => view.reconcile(model),
             AgentChatView::Codex(view) => view.reconcile(model),
-            AgentChatView::Unsupported(_) => {}
         }
     }
 
@@ -278,17 +269,16 @@ impl ChatView {
         self.feed_metrics.get_mut().take();
         match &mut self.inner {
             AgentChatView::Claude(view) => view.note_dispatched(op, command),
+            AgentChatView::ClaudeSdk(view) => view.note_dispatched(op, command),
             AgentChatView::Codex(view) => view.note_dispatched(op, command),
-            // This chat dispatches nothing, so it has nothing to await.
-            AgentChatView::Unsupported(_) => {}
         }
     }
 
     pub fn needs_tick(&self, model: &Model) -> bool {
         match &self.inner {
             AgentChatView::Claude(view) => view.needs_tick(model),
+            AgentChatView::ClaudeSdk(view) => view.needs_tick(model),
             AgentChatView::Codex(view) => view.needs_tick(model),
-            AgentChatView::Unsupported(_) => false,
         }
     }
 
@@ -347,7 +337,7 @@ impl ChatView {
         match &self.inner {
             AgentChatView::Claude(view) => view.pending_leader,
             AgentChatView::Codex(view) => view.pending_leader,
-            AgentChatView::Unsupported(view) => view.pending_leader,
+            AgentChatView::ClaudeSdk(view) => view.pending_leader,
         }
     }
 
@@ -355,17 +345,17 @@ impl ChatView {
     fn open_review_mut(&mut self) -> Option<&mut crate::review::ReviewView> {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.open_review_mut(),
-            // Only Claude's chat can draft a review.
-            AgentChatView::Codex(_) | AgentChatView::Unsupported(_) => None,
+            AgentChatView::ClaudeSdk(view) => view.open_review_mut(),
+            // Only a Claude chat can draft a review.
+            AgentChatView::Codex(_) => None,
         }
     }
 
     fn overlay_open(&self) -> bool {
         match &self.inner {
             AgentChatView::Claude(view) => view.overlay_open(),
+            AgentChatView::ClaudeSdk(view) => view.overlay_open(),
             AgentChatView::Codex(view) => view.overlay_open(),
-            // The placeholder never opens an overlay of its own.
-            AgentChatView::Unsupported(_) => false,
         }
     }
 
@@ -375,8 +365,10 @@ impl ChatView {
     /// text's length on the feed row and leaves it there until Codex's
     /// screen grows one of its own.
     fn open_text_reader(&mut self, name: String, body: String) {
-        if let AgentChatView::Claude(view) = &mut self.inner {
-            view.open_text_reader(name, body);
+        match &mut self.inner {
+            AgentChatView::Claude(view) => view.open_text_reader(name, body),
+            AgentChatView::ClaudeSdk(view) => view.open_text_reader(name, body),
+            AgentChatView::Codex(_) => {}
         }
     }
 
@@ -392,7 +384,11 @@ impl ChatView {
                 view.open_review_reader(header, comments);
                 true
             }
-            _ => false,
+            AgentChatView::ClaudeSdk(view) => {
+                view.open_review_reader(header, comments);
+                true
+            }
+            AgentChatView::Codex(_) => false,
         }
     }
 
@@ -400,7 +396,7 @@ impl ChatView {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.pending_leader = false,
             AgentChatView::Codex(view) => view.pending_leader = false,
-            AgentChatView::Unsupported(view) => view.pending_leader = false,
+            AgentChatView::ClaudeSdk(view) => view.pending_leader = false,
         }
         self.quit_guard_mut().disarm();
     }
@@ -541,15 +537,15 @@ pub fn handle_chat_key(
 
     let action = match &mut chat.inner {
         AgentChatView::Claude(view) => claude::handle_chat_key(view, model, key, viewport, now),
+        AgentChatView::ClaudeSdk(view) => {
+            claude_sdk::handle_chat_key(view, model, key, viewport, now)
+        }
         AgentChatView::Codex(view) => codex::handle_chat_key(view, model, key, viewport, now),
-        AgentChatView::Unsupported(view) => unsupported::handle_chat_key(view, model, key, now),
     };
     let intent = match &mut chat.inner {
         AgentChatView::Claude(view) => view.scroll_intent.take(),
+        AgentChatView::ClaudeSdk(view) => view.scroll_intent.take(),
         AgentChatView::Codex(view) => view.scroll_intent.take(),
-        // The placeholder emits no scroll intents; wheel motion over its
-        // feed still routes through the shared viewport below.
-        AgentChatView::Unsupported(_) => None,
     };
     if let Some(intent) = intent {
         let metrics = chat.metrics_for(model, viewport, now);
@@ -572,18 +568,16 @@ pub fn handle_chat_key(
 pub fn handle_chat_clipboard(chat: &mut ChatView, model: &Model, content: ClipboardContent) {
     match &mut chat.inner {
         AgentChatView::Claude(view) => claude::keys::attach_clipboard(view, model, content),
+        AgentChatView::ClaudeSdk(view) => claude_sdk::keys::attach_clipboard(view, model, content),
         AgentChatView::Codex(view) => codex::keys::attach_clipboard(view, model, content),
-        // The placeholder has no draft to attach anything to.
-        AgentChatView::Unsupported(_) => {}
     }
 }
 
 pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
     match &mut chat.inner {
         AgentChatView::Claude(view) => claude::handle_chat_paste(view, model, text),
+        AgentChatView::ClaudeSdk(view) => claude_sdk::handle_chat_paste(view, model, text),
         AgentChatView::Codex(view) => codex::handle_chat_paste(view, model, text),
-        // Nothing to paste into.
-        AgentChatView::Unsupported(_) => {}
     }
 }
 
@@ -852,8 +846,7 @@ fn ask_detail(model: &Model, need: &FamilyNeed<'_>) -> Option<String> {
     match need.layer()? {
         StructuredProtocol::Claude => claude::ask_detail(model, need.agent()),
         StructuredProtocol::Codex => codex::ask_detail(model, need.agent()),
-        // An unfolded layer raises no need, so it has no detail to give.
-        StructuredProtocol::ClaudeSdk => None,
+        StructuredProtocol::ClaudeSdk => claude_sdk::ask_detail(model, need.agent()),
     }
 }
 
@@ -915,6 +908,7 @@ fn has_closable_completion(model: &Model, agent: AgentId) -> bool {
         || model
             .codex(agent)
             .is_some_and(amux_ui::codex::CodexLayer::has_foldable_completion)
+        || claude_sdk::has_foldable_completion(model, agent)
 }
 
 /// The header's family marker (U3): how many agents this one has spawned,
@@ -949,7 +943,8 @@ pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
         Some(StructuredProtocol::Codex) => model.codex(agent).map_or(0, |layer| {
             layer.evicted_entries() + layer.entry_count() as u64
         }),
-        Some(StructuredProtocol::ClaudeSdk) | None => 0,
+        Some(StructuredProtocol::ClaudeSdk) => claude_sdk::entry_watermark(model, agent),
+        None => 0,
     }
 }
 
