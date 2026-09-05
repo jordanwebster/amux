@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Verify complete account profiles across every supported surface.**
+The installation hosts independent account devices behind one administrative
+socket, with profile selection in the CLI and TUI and an in-process host API.
+Final validation passes lint, 1,986 workspace tests including both spec suites,
+the iOS build without local agents, all three embedding tests and all 22
+real-process CLI scenarios. The eight focused update specs also pass, covering
+preparation failure, interrupted replacement and independent recovery; the CLI
+capture shows both profiles' active agents resumed while an already-suspended
+agent remains parked. Formatting leaves the tree unchanged. The switcher and
+both fleet captures match their recorded hashes and show distinct agents.
+The phone app's bridge remains unchanged; iOS validation compiles the library,
+and the embedding tests exercise its account lifecycle.
+
 2026-09-05 — **Keep report fixtures replayable with profile-switch chords.**
 Both committed report traces now record `pending_leader: false` in their initial
 view snapshot, matching the inactive chord state added for profile switching.
