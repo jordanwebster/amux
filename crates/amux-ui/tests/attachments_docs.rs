@@ -10,7 +10,9 @@ fn documented_review_is_the_formatter_output_and_name_is_optional() {
     let guide = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/ATTACHMENTS.md"),
     )
-    .expect("read the attachment guide");
+    .expect("read the attachment guide")
+    // Git may check Markdown out with CRLF on Windows; the formatter emits LF.
+    .replace("\r\n", "\n");
     let documented = guide
         .split_once("```text\n<amux-attachment kind=\"review\"")
         .expect("attachment guide has a canonical review example")

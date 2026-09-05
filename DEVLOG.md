@@ -4,6 +4,11 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Verify documented attachments on Windows checkouts.** The
+executable guide example normalizes checkout line endings before locating its
+Markdown fence. Its comparison against the complete formatter output is
+unchanged; Windows CI previously failed to find the example in a CRLF file.
+
 2026-09-05 — **Initialize agent storage on a fresh installation.** Agent
 dependencies create the data directory before canonicalizing its path. A clean
 Linux runner exposed that construction previously depended on a directory left
