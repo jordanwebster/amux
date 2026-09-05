@@ -30,6 +30,9 @@ run = "cargo build --workspace --all-targets"
 [task.test]
 run = 'scripts/workspace-test.sh "$@"'
 
+[task.test-recipes]
+run = "timeout 30 python3 scripts/tests/workspace_test.py"
+
 [task.lint]
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 

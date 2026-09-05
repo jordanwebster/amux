@@ -32,8 +32,18 @@ pub struct Codex {
 impl Codex {
     /// Connect to a codex app-server, performing the initialize handshake.
     pub(crate) async fn connect(config: CodexConfig) -> Result<Self, Error> {
-        let (child, stdin, stdout, stderr) =
-            transport::spawn_process(&config).map_err(|e| Error::Process(format!("{e:#}")))?;
+        let process = transport::spawn_process(transport::process_command(&config))
+            .map_err(|e| Error::Process(format!("{e:#}")))?;
+        Self::from_process(config, process).await
+    }
+
+    async fn from_process(config: CodexConfig, process: transport::Process) -> Result<Self, Error> {
+        let transport::Process {
+            child,
+            stdin,
+            stdout,
+            stderr,
+        } = process;
 
         let cancel = CancellationToken::new();
         let recorder = config
@@ -428,11 +438,9 @@ mod remediation_tests {
 
     #[cfg(unix)]
     async fn assert_subprocess_waiter_awaited(initialize_error: bool) {
-        use std::os::unix::fs::PermissionsExt;
-
         let temp = tempfile::tempdir().unwrap();
-        let script_path = temp.path().join("fake-codex");
         let marker_path = temp.path().join("stopped");
+        let release_path = temp.path().join("release");
         let response = if initialize_error {
             serde_json::json!({
                 "id": 1,
@@ -449,33 +457,65 @@ mod remediation_tests {
                 }
             })
         };
-        let script = format!(
-            "#!/bin/sh\ntrap 'sleep 0.1; printf stopped > \"$MARKER\"; exit 0' TERM\nIFS= read -r request\nprintf '%s\\n' '{}'\nwhile :; do sleep 1; done\n",
-            response
-        );
-        std::fs::write(&script_path, script).unwrap();
-        let mut permissions = std::fs::metadata(&script_path).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&script_path, permissions).unwrap();
-
-        let mut config = CodexConfig {
-            codex_path: Some(script_path),
-            ..CodexConfig::default()
-        };
-        config.env = Some(std::collections::HashMap::from([(
-            "MARKER".into(),
-            marker_path.to_string_lossy().into_owned(),
-        )]));
-
-        let result = tokio::time::timeout(Duration::from_secs(5), Codex::connect(config))
+        let script = r#"
+trap '
+  printf stopping > "$MARKER"
+  while [ ! -e "$RELEASE" ]; do sleep 0.01; done
+  printf stopped > "$MARKER"
+  exit 0
+' TERM
+printf 'ready\n'
+IFS= read -r request
+printf '%s\n' "$RESPONSE"
+while :; do sleep 1; done
+"#;
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .args(["-c", script])
+            .env("RESPONSE", response.to_string())
+            .env("MARKER", &marker_path)
+            .env("RELEASE", &release_path)
+            .kill_on_drop(true);
+        let mut process = transport::spawn_process(command).unwrap();
+        let pid = nix::unistd::Pid::from_raw(process.child.id().unwrap() as i32);
+        let mut ready = String::new();
+        tokio::time::timeout(Duration::from_secs(5), process.stdout.read_line(&mut ready))
             .await
-            .expect("connect/shutdown timed out");
-        if initialize_error {
-            assert!(matches!(result, Err(Error::Rpc { code: -32602, .. })));
-        } else {
-            result.unwrap().close().await;
-        }
+            .expect("shell fixture did not start within 5 seconds")
+            .unwrap();
+        assert_eq!(ready, "ready\n");
+
+        let shutdown = tokio::spawn(async move {
+            let result = Codex::from_process(CodexConfig::default(), process).await;
+            if initialize_error {
+                assert!(matches!(result, Err(Error::Rpc { code: -32602, .. })));
+            } else {
+                result.unwrap().close().await;
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while std::fs::read_to_string(&marker_path).unwrap_or_default() != "stopping" {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("child did not receive shutdown");
+        // The child is held inside its TERM handler until the test releases
+        // it. A close that only sends a signal must not count as completion.
+        assert!(
+            !shutdown.is_finished(),
+            "shutdown returned before the child exited"
+        );
+        std::fs::write(release_path, b"exit").unwrap();
+        tokio::time::timeout(Duration::from_secs(5), shutdown)
+            .await
+            .expect("shutdown did not reap the released child")
+            .unwrap();
         assert_eq!(std::fs::read_to_string(marker_path).unwrap(), "stopped");
+        assert_eq!(
+            nix::sys::signal::kill(pid, None),
+            Err(nix::errno::Errno::ESRCH)
+        );
     }
 
     #[cfg(unix)]

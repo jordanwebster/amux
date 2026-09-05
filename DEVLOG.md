@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Provider tests time the behavior they own.** Fresh temporary
+executables were queueing behind other worktrees' macOS security assessments,
+so subprocess startup consumed deadlines intended to catch protocol or
+shutdown bugs. Session identity, resume ordering, CLI construction, and
+version-cache assertions now use prepared commands and in-memory streams.
+Tests for pipes, stderr, exit status, and shutdown still use real children,
+with script text passed to the existing system shell and an explicit startup
+readiness check before timing protocol behavior. Codex shutdown tests hold
+the child in its TERM handler, prove close remains pending, then release it
+and verify it has been reaped. No provider deadline or host security setting
+changes. The workspace test recipe now honors explicit Cargo target selection
+while retaining full coverage by default and workspace feature unification;
+`docs/TESTING.md` explains both the commands and the test boundaries.
+
 2026-09-05 — **The attachment guide is a byte contract on Windows too.** The
 guide's canonical review example is compiled into a test that compares it
 against the formatter's LF-joined output, and a Windows checkout translated

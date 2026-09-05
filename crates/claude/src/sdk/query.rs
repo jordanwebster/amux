@@ -571,8 +571,6 @@ fn spawn_virtual_supervisor(handles: SupervisorHandles) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex};
 
     use super::*;
@@ -602,11 +600,22 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn write_script(path: &Path, body: String) {
-        use std::os::unix::fs::PermissionsExt;
-
-        std::fs::write(path, body).unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    async fn shell_process(body: &str) -> CliProcess {
+        let mut command = tokio::process::Command::new("/bin/sh");
+        // Script text is input to an existing interpreter, so startup does
+        // not depend on the OS assessing a freshly created executable.
+        command.arg("-c").arg(format!("printf 'ready\\n'\n{body}"));
+        command
+            .env("INIT_RESPONSE", INIT_RESPONSE)
+            .kill_on_drop(true);
+        let mut process = crate::sdk::process::spawn_command(command).unwrap();
+        let mut ready = String::new();
+        tokio::time::timeout(Duration::from_secs(5), process.stdout.read_line(&mut ready))
+            .await
+            .expect("shell fixture did not start within 5 seconds")
+            .unwrap();
+        assert_eq!(ready, "ready\n");
+        process
     }
 
     #[test]
@@ -730,22 +739,20 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn close_completes_when_process_output_is_full() {
-        let directory = tempfile::tempdir().unwrap();
-        let script_path = directory.path().join("full-output.sh");
-        write_script(
-            &script_path,
-            format!(
-                "#!/bin/sh\nread init\nprintf '%b' '{}'\ni=0\nwhile [ \"$i\" -lt 300 ]; do\n  printf '{{\"type\":\"prompt_suggestion\",\"suggestion\":\"%s\",\"uuid\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"test-session\"}}\\n' \"$i\"\n  i=$((i + 1))\ndone\nread eof\n",
-                INIT_RESPONSE.replace('\n', "\\n")
-            ),
-        );
+        let process = shell_process(
+            r#"
+read init
+printf '%s' "$INIT_RESPONSE"
+i=0
+while [ "$i" -lt 300 ]; do
+  printf '{"type":"prompt_suggestion","suggestion":"%s","uuid":"00000000-0000-0000-0000-000000000000","session_id":"test-session"}\n' "$i"
+  i=$((i + 1))
+done
+read eof
+"#,
+        ).await;
 
-        let mut process_options = options();
-        process_options.cli_path = Some(script_path);
-        let session_id = query_session_id(&process_options);
-        let process = crate::sdk::process::spawn_query(&session_id, &process_options).unwrap();
-        process_options.session_id = Some(session_id);
-        let warm = Query::warm_from_process(process_options, process, Duration::from_secs(1))
+        let warm = Query::warm_from_process(options(), process, Duration::from_secs(1))
             .await
             .unwrap();
         let query = warm.into_query();
@@ -765,49 +772,41 @@ mod tests {
         drop(events);
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn untargeted_fork_uses_one_generated_target_identity() {
         let source = "11111111-1111-4111-8111-111111111111";
-        let directory = tempfile::tempdir().unwrap();
-        let script_path = directory.path().join("fork.sh");
-        let args_path = directory.path().join("args");
-        let prompts_path = directory.path().join("prompts.jsonl");
-        write_script(
-            &script_path,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nread init\nprintf '%b' '{}'\nread first\nprintf '%s\\n' \"$first\" > '{}'\nread second\nprintf '%s\\n' \"$second\" >> '{}'\nprintf '%s\\n' '{{\"type\":\"prompt_suggestion\",\"suggestion\":\"seen\",\"uuid\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"test-session\"}}'\n",
-                args_path.display(),
-                INIT_RESPONSE.replace('\n', "\\n"),
-                prompts_path.display(),
-                prompts_path.display(),
-            ),
-        );
-
         let fork_options = QueryOptions {
-            cli_path: Some(script_path),
             resume: Some(source.to_owned()),
             fork_session: true,
             ..QueryOptions::default()
         };
-        let session = crate::sdk::spawn(fork_options).await.unwrap();
-        let crate::sdk::Session {
-            mut events,
-            control,
-        } = session;
+        let (fork_options, command) = crate::sdk::prepare_query(fork_options).unwrap();
+        let (sdk_stdin, server_stdin) = duplex(4096);
+        let (server_stdout, sdk_stdout) = duplex(4096);
+        let server = tokio::spawn(async move {
+            let mut stdin = BufReader::new(server_stdin);
+            let mut stdout = server_stdout;
+            let _init = read_json_line(&mut stdin).await;
+            stdout.write_all(INIT_RESPONSE.as_bytes()).await.unwrap();
+            let first = read_json_line(&mut stdin).await;
+            let second = read_json_line(&mut stdin).await;
+            [first, second]
+        });
+        let session = crate::sdk::from_io(BufReader::new(sdk_stdout), sdk_stdin, fork_options)
+            .await
+            .unwrap();
+        let crate::sdk::Session { events, control } = session;
         let target = control.session_id().to_owned();
         assert_ne!(target, source);
         assert!(uuid::Uuid::parse_str(&target).is_ok());
 
         control.prompt(UserMessage::text("first")).await.unwrap();
         control.prompt(UserMessage::text("second")).await.unwrap();
-        assert!(matches!(
-            next_event(&mut events).await,
-            Some(Ok(SdkEvent::Message(Message::PromptSuggestion(_))))
-        ));
-
-        let args = std::fs::read_to_string(args_path).unwrap();
-        let args = args.lines().collect::<Vec<_>>();
+        let args = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect::<Vec<_>>();
         assert!(args.windows(2).any(|pair| pair == ["--resume", source]));
         assert!(args.contains(&"--fork-session"));
         assert!(
@@ -815,11 +814,10 @@ mod tests {
                 .any(|pair| pair == ["--session-id", target.as_str()])
         );
 
-        let prompts = std::fs::read_to_string(prompts_path).unwrap();
-        let frames = prompts
-            .lines()
-            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-            .collect::<Vec<_>>();
+        let frames = tokio::time::timeout(Duration::from_secs(1), server)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(frames.len(), 2);
         assert!(frames.iter().all(|frame| frame["session_id"] == target));
 
@@ -831,19 +829,21 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn nonzero_exit_includes_captured_stderr() {
-        let directory = tempfile::tempdir().unwrap();
-        let script_path = directory.path().join("nonzero.sh");
-        write_script(
-            &script_path,
-            format!(
-                "#!/bin/sh\nread init\nprintf '%b' '{}'\nread prompt\nprintf '%s\\n' '{{\"type\":\"prompt_suggestion\",\"suggestion\":\"seen\",\"uuid\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"test-session\"}}'\nprintf 'diagnostic from stderr\\n' >&2\nexit 17\n",
-                INIT_RESPONSE.replace('\n', "\\n")
-            ),
-        );
+        let process = shell_process(
+            r#"
+read init
+printf '%s' "$INIT_RESPONSE"
+read prompt
+printf '%s\n' '{"type":"prompt_suggestion","suggestion":"seen","uuid":"00000000-0000-0000-0000-000000000000","session_id":"test-session"}'
+printf 'diagnostic from stderr\n' >&2
+exit 17
+"#,
+        ).await;
 
-        let mut process_options = options();
-        process_options.cli_path = Some(script_path);
-        let session = crate::sdk::spawn(process_options).await.unwrap();
+        let warm = Query::warm_from_process(options(), process, Duration::from_secs(1))
+            .await
+            .unwrap();
+        let session = crate::sdk::session::from_query(warm.into_query());
         let crate::sdk::Session {
             mut events,
             control,

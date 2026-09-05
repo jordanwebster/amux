@@ -1354,25 +1354,42 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    async fn initialized_session(options: QueryOptions) -> (Session, tokio::task::JoinHandle<()>) {
+        let (sdk_stdin, server_stdin) = duplex(4096);
+        let (server_stdout, sdk_stdout) = duplex(4096);
+        let server = tokio::spawn(async move {
+            let mut stdin = BufReader::new(server_stdin);
+            let mut stdout = server_stdout;
+            let init = read_json_line(&mut stdin).await;
+            write_json_line(
+                &mut stdout,
+                json!({
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "success",
+                        "request_id": init["request_id"],
+                        "response": {
+                            "commands": [], "agents": [], "output_style": "default",
+                            "available_output_styles": [], "models": [], "account": {}
+                        }
+                    }
+                }),
+            )
+            .await;
+            let mut line = String::new();
+            while stdin.read_line(&mut line).await.unwrap() != 0 {
+                line.clear();
+            }
+        });
+        let session = claude::sdk::from_io(BufReader::new(sdk_stdout), sdk_stdin, options)
+            .await
+            .unwrap();
+        (session, server)
+    }
+
     #[tokio::test]
-    async fn spawned_backend_uses_amux_session_id() {
+    async fn new_backend_carries_agent_identity_into_provider_session() {
         let directory = tempfile::tempdir().unwrap();
-        let argv = directory.path().join("argv.txt");
-        let script = directory.path().join("fake-claude");
-        let transcript_dir = directory.path().join("transcripts");
-        std::fs::create_dir(&transcript_dir).unwrap();
-        std::fs::write(transcript_dir.join("session.jsonl"), b"must not be opened").unwrap();
-        std::fs::set_permissions(&transcript_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"req_0\",\"response\":{{\"commands\":[],\"agents\":[],\"output_style\":\"default\",\"available_output_styles\":[],\"models\":[],\"account\":{{}}}}}}}}'\nwhile IFS= read -r line; do :; done\n",
-                argv.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let agent_id = Uuid::new_v4();
         let req = CreateAgentRequest {
@@ -1389,7 +1406,14 @@ mod tests {
             initial_prompt: None,
         };
         let mut backend = ClaudeSdkBackend::new(&req, mcp_launch_route_for_tests(Uuid::new_v4()));
-        backend.command = script.to_string_lossy().into_owned();
+        let options = backend.query_options().unwrap();
+        assert_eq!(
+            options.session_id.as_deref(),
+            Some(agent_id.to_string().as_str())
+        );
+        assert!(options.resume.is_none());
+        let (session, server) = initialized_session(options).await;
+        backend.injected = Some(session);
         let (event_tx, _event_rx) = mpsc::channel(8);
         let ingest = backend.start(&event_tx).unwrap();
         let mut rows = backend.log.subscribe().await.unwrap();
@@ -1400,41 +1424,15 @@ mod tests {
         assert_eq!(ready.payload["type"], "amux.claude_sdk.ready");
         assert_eq!(ready.payload["session_id"], agent_id.to_string());
 
-        let arguments = std::fs::read_to_string(&argv).unwrap();
-        let arguments = arguments.lines().collect::<Vec<_>>();
-        assert!(
-            arguments
-                .windows(2)
-                .any(|pair| pair == ["--session-id", agent_id.to_string().as_str()])
-        );
-        assert!(arguments.contains(&"--input-format"));
-        assert!(arguments.contains(&"stream-json"));
-
         backend.stop(StopPolicy::Interrupt).await;
         let _ = ingest.await;
-        std::fs::set_permissions(&transcript_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(
-            std::fs::read(transcript_dir.join("session.jsonl")).unwrap(),
-            b"must not be opened"
-        );
+        server.await.unwrap();
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn sdk_suspend_restart_round_trip_resumes_by_session_id_and_orders_gap() {
         let directory = tempfile::tempdir().unwrap();
         let state_path = directory.path().join("state.yaml");
-        let argv = directory.path().join("resume-argv.txt");
-        let script = directory.path().join("fake-claude");
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"req_0\",\"response\":{{\"commands\":[],\"agents\":[],\"output_style\":\"default\",\"available_output_styles\":[],\"models\":[],\"account\":{{}}}}}}}}'\nwhile IFS= read -r line; do :; done\n",
-                argv.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let agent_id = Uuid::new_v4();
         let session_id = Uuid::new_v4();
@@ -1514,7 +1512,14 @@ mod tests {
             restored_created_at,
             mcp_launch_route_for_tests(Uuid::new_v4()),
         );
-        resumed.command = script.to_string_lossy().into_owned();
+        let options = resumed.query_options().unwrap();
+        assert_eq!(
+            options.resume.as_deref(),
+            Some(restored_session_id.to_string().as_str())
+        );
+        assert!(options.session_id.is_none());
+        let (session, server) = initialized_session(options).await;
+        resumed.injected = Some(session);
         let mut rows = resumed.log.subscribe().await.unwrap();
         let (event_tx, _event_rx) = mpsc::channel(8);
         let ingest = resumed.start(&event_tx).unwrap();
@@ -1536,16 +1541,8 @@ mod tests {
         assert_eq!(ready.payload["session_id"], restored_session_id.to_string());
         assert_eq!(ready.payload["resumed"], true);
 
-        let arguments = std::fs::read_to_string(&argv).unwrap();
-        let arguments = arguments.lines().collect::<Vec<_>>();
-        assert!(
-            arguments
-                .windows(2)
-                .any(|pair| pair == ["--resume", restored_session_id.to_string().as_str()])
-        );
-        assert!(!arguments.contains(&"--session-id"));
-
         resumed.stop(StopPolicy::Interrupt).await;
         let _ = ingest.await;
+        server.await.unwrap();
     }
 }
