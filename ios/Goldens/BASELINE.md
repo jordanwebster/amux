@@ -76,6 +76,31 @@ the same: nothing is reachable yet.
 
 No departures.
 
+## drawer
+
+The fleet as a panel over the screen it was opened from: two groups, a name and
+one line each, the conversation you are in marked, and Hosts, You and how many
+machines are reachable along the foot.
+
+The design has no preserved capture of this, so there is nothing to compare it
+against. Three things about the picture are worth knowing:
+
+- **What is behind the panel is the app's ground, not a conversation.** The
+  conversation is the next milestone's screen, and photographing the drawer over
+  a stand-in would put a stand-in in a baseline. So the capture shows the panel,
+  the dimming, the card edge it uncovers and the shadow, and nothing pretending
+  to be a transcript. When the transcript lands, this baseline is retaken with
+  it behind the panel and the panel itself does not change.
+- **Two groups, where the home has three.** The home folds work that has been
+  quiet for a day into a line naming what is in it; that fold exists to keep a
+  home short enough to scan. This is a panel you are already scrolling, so the
+  folded work is the tail of everything else rather than a second thing to open.
+- **The foot repeats the tab bar.** Hosts and You are reachable from both,
+  because the drawer is the way out of a conversation without going back to a
+  list first, and reaching for the tab bar underneath means leaving the
+  conversation to get there. The design drew this panel for an app with no tab
+  bar; this one has both, and the shorter path wins.
+
 ## probe
 
 Not a screen of the app. The capture harness's own target: the ground, a glass

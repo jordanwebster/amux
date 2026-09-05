@@ -70,9 +70,57 @@ public struct Shell: View {
     private func page(_ route: Route) -> some View {
         switch route {
         case .conversation(let agent):
-            ConversationPlaceholder(agent: agent, router: router, stores: stores)
+            ConversationPage(agent: agent, router: router, stores: stores)
         default:
             UnbuiltPage(route: route)
+        }
+    }
+}
+
+/// One agent's conversation with the drawer over it.
+///
+/// The drawer is drawn here rather than inside the conversation because it is
+/// not part of the conversation: it is the fleet, borrowing the screen. Wrapped
+/// this way the page underneath is never torn down, so closing the drawer
+/// returns to the same conversation at the position it was left at, and the
+/// screen that replaces the placeholder inherits all of that unchanged.
+private struct ConversationPage: View {
+    let agent: AgentId
+    let router: Router
+    let stores: StoreBundle
+    /// Whose screen this is while it is out: view state, because a drawer is
+    /// something this page is doing and not somewhere the app has gone.
+    @State private var open = false
+
+    var body: some View {
+        DrawerOverlay(open: $open, drawer: drawer) {
+            ConversationPlaceholder(agent: agent, router: router, stores: stores)
+        }
+        .toolbar {
+            // Where the drawer is opened from until the conversation's own
+            // floating pill carries the control.
+            ToolbarItem(placement: .topBarLeading) {
+                Button { open = true } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .accessibilityLabel("Agents")
+                .identified("conversation.drawer", label: "Agents")
+            }
+        }
+    }
+
+    private var drawer: AgentsDrawer {
+        AgentsDrawer(model: stores.fleet, hosts: stores.hosts, current: agent) { action in
+            open = false
+            switch action {
+            case .open(let other):
+                stores.fleet.opened(other)
+                router.open(.conversation(other))
+            case .newAgent: router.open(.newAgent)
+            case .hosts: router.select(.hosts)
+            case .you: router.select(.you)
+            case .dismiss: break
+            }
         }
     }
 }

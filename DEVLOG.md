@@ -4,6 +4,23 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The drawer.** A conversation can reach the whole fleet without
+going back to a list: a panel comes in from the left with two groups — what
+needs you and everything else — a name and one line each, the conversation you
+are in marked, and Hosts, You and how many machines are reachable along its
+foot. It is not the home in miniature. The home is where you decide what to
+open, with ages, arithmetic and a day-old fold; this is where you switch while
+you are already reading one, so the folded work is simply the tail of everything
+else and there is nothing to open twice.
+
+It follows the thumb rather than playing an animation at it: the drag and the
+animation drive the same number, so a drag can catch a panel that is still
+opening and take it back, and a flick decides the rest. The screen behind it is
+never torn down — it slides, shrinks and comes back — so closing the drawer
+returns to the conversation exactly as it was left. Baselines are captured in
+both appearances; `ios/Goldens/BASELINE.md` says what is behind the panel today
+and why.
+
 2026-09-05 — **A launch shows what the phone remembers.** The app draws the
 fleet it saw last time before it has reached anything. The shared library reads
 its own cache file straight off disk — no runtime, no network, no wait — and
