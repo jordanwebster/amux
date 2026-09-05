@@ -6,10 +6,9 @@
                                                                                                                         
     The cap belongs in RetryConfig; I'll thread it through SyncOptions.                                                 
                                                                                                                         
-  ✔ Read sync/config.rs                                                                                                 
-                                                                                                                        
-  ▸ Bash cargo check -p amux-sync                                                                                       
-    └ running                                                                                                           
+│ ✔ Read sync/config.rs                                                                                                 
+│ ▸ Bash cargo check -p amux-sync                                                                                       
+│   └ running                                                                                                           
                                                                                                                         
                                                                                                                         
                                                                                                                         
@@ -37,4 +36,5 @@
     › 1. Approve — auto       agent proceeds, edits apply without asking                                                
       2. Approve — manual     agent asks before each edit                                                               
       3. Request changes      feedback required                                                                         
+                                                                                                                        
     1-3/↑↓ select · enter confirm · f full plan · esc back (never answers)                                              

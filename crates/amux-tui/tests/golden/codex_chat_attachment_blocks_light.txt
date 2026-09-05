@@ -3,15 +3,14 @@
   model=gpt-5.4 · approval=on-request · sandbox=workspace-write                                                         
                                                                                                                         
 ▎   the sync panel looks wrong                                                                                          
-                                                                                                                        
-  ▣ screenshot.png · 117.6 KiB                                                                                          
-                                                                                                                        
-  ▤ trace.log · 4.0 KiB                                                                                                 
-                                                                                                                        
-  ¶ pasted-1 · 240 lines                                                                                                
+▎   [Image #1]                                                                                                          
+▎   [File #1 trace.log]                                                                                                 
+▎   [Pasted #1 · 240 lines]                                                                                             
+▎ ▣ screenshot.png · 117.6 KiB                                                                                          
+▎ ▤ trace.log · 4.0 KiB                                                                                                 
+▎ ¶ pasted-1 · 240 lines                                                                                                
                                                                                                                         
     The panel drops rows above 4k. The full report:                                                                     
-                                                                                                                        
   ▤ coverage.html · 19.5 KiB                                                                                            
                                                                                                                         
   ─ turn completed ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -35,8 +34,9 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     enter send · ctrl+j newline · ? help                                                                                
 --- styles ---
@@ -44,13 +44,12 @@
 ..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.........................................................
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
-........................................................................................................................
-..................mmmmmmmmmmmm..........................................................................................
-........................................................................................................................
-.............mmmmmmmmmm.................................................................................................
-........................................................................................................................
-............mmmmmmmmmmmm................................................................................................
-........................................................................................................................
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ........................................................................................................................
 .................mmmmmmmmmmm............................................................................................
@@ -76,7 +75,8 @@ AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
-........................................................................................................................
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm................................................................................

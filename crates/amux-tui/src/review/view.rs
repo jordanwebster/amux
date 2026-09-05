@@ -402,6 +402,12 @@ impl ReviewView {
         for (index, file) in self.files().iter().enumerate() {
             let folded = self.folded.contains(&index);
             let comments = self.core.comments_in(index);
+            // A file's diff runs to its last row and the next file's header
+            // begins on the very next one, so three files read as one long
+            // patch. One row of air, then the header's band.
+            if index > 0 {
+                lines.push(Line::default());
+            }
             let start = lines.len();
             lines.push(file_line(
                 file,
@@ -671,10 +677,13 @@ pub(super) fn file_line(
     theme: Theme,
     cursor: bool,
 ) -> Line<'static> {
-    let mut line = Line::default();
-    if cursor {
-        push_span(&mut line, 0, "\u{258c}", theme.focus_bar());
-    }
+    let header = theme.panel_header();
+    // The band starts at the page's edge, and the cursor bar is drawn onto
+    // it rather than beside it, so a focused header is still one band.
+    let mut line = Line::from(Span::styled(
+        format!("{} ", if cursor { "\u{258c}" } else { " " }),
+        header.patch(theme.focus_bar()),
+    ));
     push_span(
         &mut line,
         BODY_LEFT,
@@ -685,7 +694,7 @@ pub(super) fn file_line(
             file.added,
             file.removed
         ),
-        theme.diff_meta(),
+        header,
     );
     let mut trailer = String::new();
     if folded {
@@ -699,9 +708,16 @@ pub(super) fn file_line(
         trailer.push_str(&format!("  {comments} {}", plural(comments, "comment")));
     }
     if !trailer.is_empty() {
-        push_span(&mut line, 0, trailer, theme.diff_meta());
+        push_span(&mut line, 0, trailer, theme.panel_header_muted());
     }
-    let _ = width;
+    // A file header is a band across the page, not a line of text with a
+    // glyph. Three files whose headers look like their rows read as one long
+    // patch however much air sits between them.
+    let used = crate::render::line_len(&line);
+    if used < width {
+        line.spans
+            .push(Span::styled(" ".repeat(width - used), header));
+    }
     line
 }
 
@@ -789,7 +805,7 @@ mod tests {
         assert_eq!(files.len(), 3);
         assert_eq!(files[0].hunk_starts, vec![0, 5]);
         assert_eq!((files[0].added, files[0].removed), (4, 2));
-        assert_eq!(files[0].rows.len(), 12);
+        assert_eq!(files[0].rows.len(), 11);
     }
 
     #[test]
@@ -798,10 +814,10 @@ mod tests {
         assert_eq!(press(&mut view, 'k'), ReviewOutcome::Handled);
         assert_eq!(view.cursor(), RowRef { file: 0, row: 0 });
 
-        for _ in 0..11 {
+        for _ in 0..10 {
             press(&mut view, 'j');
         }
-        assert_eq!(view.cursor(), RowRef { file: 0, row: 11 });
+        assert_eq!(view.cursor(), RowRef { file: 0, row: 10 });
         press(&mut view, 'j');
         assert_eq!(
             view.cursor(),
@@ -809,7 +825,7 @@ mod tests {
             "the last row of a file steps into the next file"
         );
         press(&mut view, 'k');
-        assert_eq!(view.cursor(), RowRef { file: 0, row: 11 }, "and back again");
+        assert_eq!(view.cursor(), RowRef { file: 0, row: 10 }, "and back again");
 
         press(&mut view, 'G');
         let last = view.review().document().files[2].rows.len() - 1;
@@ -890,7 +906,7 @@ mod tests {
         assert!(!view.is_folded(0));
         press(&mut view, 'G');
         press(&mut view, 'g');
-        for _ in 0..12 {
+        for _ in 0..11 {
             press(&mut view, 'j');
         }
         assert_eq!(view.cursor(), RowRef { file: 1, row: 0 });
@@ -1082,7 +1098,7 @@ mod tests {
     }
 
     #[test]
-    fn the_body_paints_file_headers_hunk_meta_and_blank_continuation_gutters() {
+    fn the_body_paints_file_headers_hunk_breaks_and_aligned_continuations() {
         let view = open();
         let lines = text_of(&view.frame(Theme::default(), 120, 40));
         assert!(
@@ -1092,21 +1108,31 @@ mod tests {
             "{lines:?}"
         );
         assert!(
-            lines.iter().any(|line| line.contains("@@ -10,3 +10,5 @@")),
-            "hunk headers stay in the body: {lines:?}"
+            !lines.iter().any(|line| line.contains("@@")),
+            "the patch format's own syntax is not shown: {lines:?}"
         );
         let wrapped = lines
             .iter()
             .position(|line| line.contains("A review holds its diff open"))
             .expect("the long added line is painted");
         let continuation = &lines[wrapped + 1];
+        // The numbers are blank under a wrap, but the spine holds its column
+        // so the continuation stays inside the row it belongs to.
+        let spine = lines[wrapped]
+            .find('\u{2502}')
+            .expect("the row draws a spine");
+        assert_eq!(
+            continuation.find('\u{2502}'),
+            Some(spine),
+            "the continuation keeps the spine's column: {continuation:?}"
+        );
         assert!(
-            continuation[..9].chars().all(char::is_whitespace)
+            continuation[..spine].chars().all(char::is_whitespace)
                 && continuation.contains("refetches."),
             "a wrapped row continues under a blank gutter: {continuation:?}"
         );
         assert!(
-            lines[wrapped].contains("11 +"),
+            lines[wrapped].contains("11 \u{2502} +"),
             "and the first screen row of that source row carries its number: {:?}",
             lines[wrapped]
         );
@@ -1122,7 +1148,7 @@ mod tests {
             .find(|line| line.contains("rows folded"))
             .expect("the folded file keeps its header");
         assert!(
-            header.contains("\u{25b8} src/lib.rs") && header.contains("12 rows folded"),
+            header.contains("\u{25b8} src/lib.rs") && header.contains("11 rows folded"),
             "{header}"
         );
         assert!(
@@ -1136,7 +1162,7 @@ mod tests {
     #[test]
     fn a_side_is_never_derived_outside_the_core() {
         let view = open();
-        let at = RowRef { file: 0, row: 2 };
+        let at = RowRef { file: 0, row: 1 };
         let anchor = anchor(view.review().document(), at, at).expect("removed row anchors");
         assert_eq!(anchor.side, Side::Old);
         assert_eq!(anchor.path, "src/lib.rs");

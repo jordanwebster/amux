@@ -252,11 +252,15 @@ pub fn parse_patch(
                 line: section.start_line,
             });
         }
+        // A hunk stop is the hunk's first real line. Only the hunks after
+        // the first are preceded by a boundary row, and landing the cursor
+        // on that boundary would put it on a blank.
         let mut hunk_starts = Vec::with_capacity(document.hunks.len());
         let mut row = 0;
-        for hunk in &document.hunks {
+        for (index, hunk) in document.hunks.iter().enumerate() {
+            row += usize::from(index > 0);
             hunk_starts.push(row);
-            row += 1 + hunk.lines.len();
+            row += hunk.lines.len();
         }
         let rows = document.rows();
         let added = rows.iter().filter(|row| row.kind == RowKind::Added).count() as u32;
@@ -592,7 +596,7 @@ fn endpoint(row: &RowFact, row_ref: RowRef) -> Result<(Side, u32), ReviewError> 
             .new
             .map(|line| (Side::New, line))
             .ok_or(ReviewError::NotAnchorable { row: row_ref }),
-        RowKind::Meta => Err(ReviewError::NotAnchorable { row: row_ref }),
+        RowKind::Boundary | RowKind::Note => Err(ReviewError::NotAnchorable { row: row_ref }),
     }
 }
 
@@ -728,14 +732,14 @@ index 0000000..4444444
         let document = document();
         let late = anchor(
             &document,
-            RowRef { file: 2, row: 2 },
-            RowRef { file: 2, row: 2 },
+            RowRef { file: 2, row: 1 },
+            RowRef { file: 2, row: 1 },
         )
         .unwrap();
         let early = anchor(
             &document,
-            RowRef { file: 0, row: 3 },
-            RowRef { file: 0, row: 3 },
+            RowRef { file: 0, row: 2 },
+            RowRef { file: 0, row: 2 },
         )
         .unwrap();
         let comment = |anchor: Anchor, text: &str| ReviewComment {
@@ -784,16 +788,16 @@ index 0000000..4444444
         let document = document();
         assert_eq!(document.files.len(), 3);
         assert_eq!(document.files[0].hunk_starts, vec![0, 5]);
-        assert_eq!(document.files[0].rows[1].old, Some(1));
-        assert_eq!(document.files[0].rows[1].new, Some(1));
-        assert_eq!(document.files[0].rows[2].old, Some(2));
-        assert_eq!(document.files[0].rows[2].new, None);
-        assert_eq!(document.files[0].rows[3].old, None);
-        assert_eq!(document.files[0].rows[3].new, Some(2));
-        assert_eq!(document.files[1].rows[1].old, Some(1));
-        assert_eq!(document.files[1].rows[1].new, None);
-        assert_eq!(document.files[2].rows[1].old, None);
-        assert_eq!(document.files[2].rows[1].new, Some(1));
+        assert_eq!(document.files[0].rows[0].old, Some(1));
+        assert_eq!(document.files[0].rows[0].new, Some(1));
+        assert_eq!(document.files[0].rows[1].old, Some(2));
+        assert_eq!(document.files[0].rows[1].new, None);
+        assert_eq!(document.files[0].rows[2].old, None);
+        assert_eq!(document.files[0].rows[2].new, Some(2));
+        assert_eq!(document.files[1].rows[0].old, Some(1));
+        assert_eq!(document.files[1].rows[0].new, None);
+        assert_eq!(document.files[2].rows[0].old, None);
+        assert_eq!(document.files[2].rows[0].new, Some(1));
 
         for (file_index, file) in document.files.iter().enumerate() {
             for (row_index, row) in file.rows.iter().enumerate() {
@@ -801,7 +805,7 @@ index 0000000..4444444
                     file: file_index,
                     row: row_index,
                 };
-                if row.kind == RowKind::Meta {
+                if matches!(row.kind, RowKind::Boundary | RowKind::Note) {
                     assert_eq!(
                         anchor(&document, row_ref, row_ref),
                         Err(ReviewError::NotAnchorable { row: row_ref })
@@ -819,8 +823,8 @@ index 0000000..4444444
         let document = document();
         let selection = anchor(
             &document,
+            RowRef { file: 0, row: 1 },
             RowRef { file: 0, row: 2 },
-            RowRef { file: 0, row: 3 },
         )
         .unwrap();
         assert_eq!(selection.start_side, Side::Old);
@@ -829,14 +833,14 @@ index 0000000..4444444
         assert_eq!(selection.line, 2);
         assert_eq!(selection.quoted, vec!["-old", "+new"]);
 
-        let meta = RowRef { file: 0, row: 0 };
+        let boundary = RowRef { file: 0, row: 4 };
         assert_eq!(
-            anchor(&document, meta, RowRef { file: 0, row: 1 }),
-            Err(ReviewError::NotAnchorable { row: meta })
+            anchor(&document, boundary, RowRef { file: 0, row: 5 }),
+            Err(ReviewError::NotAnchorable { row: boundary })
         );
         assert_eq!(
-            anchor(&document, RowRef { file: 0, row: 1 }, meta),
-            Err(ReviewError::NotAnchorable { row: meta })
+            anchor(&document, RowRef { file: 0, row: 0 }, boundary),
+            Err(ReviewError::NotAnchorable { row: boundary })
         );
     }
 
@@ -847,14 +851,14 @@ index 0000000..4444444
         let mut review = Review::new(document.clone(), diff.clone());
         let new_file = anchor(
             &document,
+            RowRef { file: 2, row: 0 },
             RowRef { file: 2, row: 1 },
-            RowRef { file: 2, row: 2 },
         )
         .unwrap();
         let changed = anchor(
             &document,
+            RowRef { file: 0, row: 1 },
             RowRef { file: 0, row: 2 },
-            RowRef { file: 0, row: 3 },
         )
         .unwrap();
         review.add(new_file, "Explain the new file.".into());
@@ -866,7 +870,7 @@ index 0000000..4444444
         assert_eq!(review.comments_in(2), 1);
         assert_eq!(
             review.rows_with_comments(),
-            vec![RowRef { file: 0, row: 3 }, RowRef { file: 2, row: 2 }]
+            vec![RowRef { file: 0, row: 2 }, RowRef { file: 2, row: 1 }]
         );
         let header = review.header();
         assert_eq!(header.diff, diff);

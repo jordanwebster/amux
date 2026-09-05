@@ -324,10 +324,8 @@ mod tests {
 
     /// Walk the cursor to the removed row of the first hunk.
     fn to_removed_row(view: &mut ReviewView) {
-        for _ in 0..2 {
-            press(view, 'j');
-        }
-        assert_eq!(view.cursor(), RowRef { file: 0, row: 2 });
+        press(view, 'j');
+        assert_eq!(view.cursor(), RowRef { file: 0, row: 1 });
     }
 
     #[test]
@@ -339,7 +337,7 @@ mod tests {
         assert_eq!(
             view.selection()
                 .map(|selection| (selection.first(), selection.last())),
-            Some((RowRef { file: 0, row: 2 }, RowRef { file: 0, row: 3 }))
+            Some((RowRef { file: 0, row: 1 }, RowRef { file: 0, row: 2 }))
         );
 
         press(&mut view, 'c');
@@ -438,7 +436,7 @@ mod tests {
         view.handle_key(&key(KeyCode::Enter));
         assert_eq!(view.review().comment_count(), 1);
 
-        assert_eq!(view.cursor(), RowRef { file: 0, row: 2 });
+        assert_eq!(view.cursor(), RowRef { file: 0, row: 1 });
         view.handle_key(&key(KeyCode::Enter));
         let editor = view.editor().expect("enter on a commented row edits it");
         assert_eq!(editor.editing, Some(0));
@@ -470,11 +468,16 @@ mod tests {
     #[test]
     fn a_row_without_a_line_number_cannot_be_commented_on() {
         let mut view = open();
-        assert_eq!(view.cursor(), RowRef { file: 0, row: 0 });
+        // The break between two hunks. A file opens on real content now, so
+        // reaching an unanchorable row means walking to the boundary.
+        for _ in 0..4 {
+            press(&mut view, 'j');
+        }
+        assert_eq!(view.cursor(), RowRef { file: 0, row: 4 });
         press(&mut view, 'c');
         assert!(
             view.editor().is_none(),
-            "a hunk header has no side and no line, so it has no anchor"
+            "a hunk boundary has no side and no line, so it has no anchor"
         );
     }
 

@@ -180,10 +180,15 @@ pub enum OpenMode {
     Chat,
 }
 
-/// A shipped theme name or a YAML theme file path.
+/// Where the palette comes from: the terminal amux was started in, a
+/// shipped theme name, or a YAML theme file path.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ThemeSetting {
+    /// Derived from what the terminal reports about its own colours, with
+    /// the shipped dark palette as the fallback for a terminal that does
+    /// not answer.
     #[default]
+    Terminal,
     Dark,
     Light,
     File(PathBuf),
@@ -195,6 +200,7 @@ impl Serialize for ThemeSetting {
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
         match self {
+            Self::Terminal => serializer.serialize_str("terminal"),
             Self::Dark => serializer.serialize_str("dark"),
             Self::Light => serializer.serialize_str("light"),
             Self::File(path) => path.serialize(serializer),
@@ -208,6 +214,7 @@ impl<'de> Deserialize<'de> for ThemeSetting {
     ) -> std::result::Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
         Ok(match value.as_str() {
+            "terminal" => Self::Terminal,
             "dark" => Self::Dark,
             "light" => Self::Light,
             _ => Self::File(PathBuf::from(value)),
@@ -798,13 +805,13 @@ mod tests {
     }
 
     #[test]
-    fn ui_theme_and_color_defaults_are_dark_and_auto() {
+    fn ui_theme_and_color_defaults_are_terminal_and_auto() {
         let config = Config::default();
-        assert_eq!(config.ui.theme, ThemeSetting::Dark);
+        assert_eq!(config.ui.theme, ThemeSetting::Terminal);
         assert_eq!(config.ui.color, ColorSetting::Auto);
 
         let parsed: Config = serde_yaml::from_str("ui: {}\n").unwrap();
-        assert_eq!(parsed.ui.theme, ThemeSetting::Dark);
+        assert_eq!(parsed.ui.theme, ThemeSetting::Terminal);
         assert_eq!(parsed.ui.color, ColorSetting::Auto);
     }
 

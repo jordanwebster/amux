@@ -12,7 +12,7 @@ use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
 
 use super::blocks::{GLYPH_COL, TEXT_COL, paint_header};
-use super::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintedBlock};
+use super::frame::{BlockKey, BlockKind, ChatFrameParts, FeedBlocks, PaintedBlock};
 use crate::composer::Composer;
 use crate::render::{FrameContext, Theme, push_span};
 use crate::view::{QuitGuard, UiAction};
@@ -158,6 +158,7 @@ fn placeholder_block(chat: &View, theme: Theme) -> PaintedBlock {
     let headline = "this chat is unsupported in this build";
     PaintedBlock {
         key: BlockKey(0),
+        kind: BlockKind::Activity,
         copy_text: format!("{headline}\n{missing}\n{running}"),
         lines: vec![
             row(headline, theme.warn()),

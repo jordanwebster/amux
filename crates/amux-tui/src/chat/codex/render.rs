@@ -20,13 +20,16 @@ use ratatui::text::{Line, Span};
 use serde_json::Value;
 
 use super::View;
-use crate::chat::attachments::{attachment_key, described, prose};
+use crate::chat::attachments::{attachment_key, described, prose, words};
 use crate::chat::blocks::{
-    self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant, paint_attachment,
-    paint_compaction_rule, paint_composer_block, paint_error, paint_header, paint_mcp_startup,
-    paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
+    self, Carrier, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant,
+    paint_attachment, paint_compaction_rule, paint_composer_block, paint_error, paint_header,
+    paint_mcp_startup, paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized,
+    paint_user_prompt,
 };
-use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
+use crate::chat::frame::{
+    BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
+};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph};
 use crate::markdown;
@@ -733,10 +736,12 @@ fn feed_blocks(
                 .get_or_paint(
                     BlockKey(entry.id),
                     entry,
-                    width,
-                    theme,
-                    chat.reports_open,
-                    || entry_block(entry, theme, width, reports),
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: chat.reports_open,
+                    },
+                    || entry_block(entry, layer.attachments(), theme, width, reports),
                 )
                 .clone(),
         );
@@ -746,9 +751,22 @@ fn feed_blocks(
             let key = attachment_key(entry.id, index);
             blocks.push(
                 cache
-                    .get_or_paint(key, attachment, width, theme, false, || {
-                        paint_attachment(key, attachment, theme, width)
-                    })
+                    .get_or_paint(
+                        key,
+                        attachment,
+                        PaintInputs {
+                            width,
+                            theme,
+                            expanded: false,
+                        },
+                        || {
+                            let carrier = match &entry.kind {
+                                FeedEntryKind::Prompt(_) => Carrier::Person,
+                                _ => Carrier::Agent,
+                            };
+                            paint_attachment(key, attachment, carrier, theme, width)
+                        },
+                    )
                     .clone(),
             );
         }
@@ -783,6 +801,7 @@ fn merged(mut block: PaintedBlock, tail: PaintedBlock) -> PaintedBlock {
 
 fn entry_block(
     entry: &FeedEntry,
+    index: &amux_ui::attachments::AttachmentIndex,
     theme: Theme,
     width: usize,
     reports: MessageView<'_>,
@@ -794,7 +813,7 @@ fn entry_block(
                 PromptSource::Protocol => String::new(),
                 PromptSource::SteerEcho => "steer · ".to_string(),
             };
-            text.push_str(&prompt_body(prompt));
+            text.push_str(&prompt_body(prompt, index));
             paint_user_prompt(
                 key,
                 &text,
@@ -1204,12 +1223,11 @@ fn resolution_label(reason: ApprovalResolution) -> &'static str {
     }
 }
 
-/// The prompt's words: its text parts with their attachment elements
-/// removed, then whatever the protocol sent that was not text. The
-/// elements have their own rows, so leaving them in the body would say
-/// everything twice.
-fn prompt_body(prompt: &PromptEntry) -> String {
-    let mut pieces = vec![prose(&prompt.content)];
+/// The prompt's words: its text parts with each attachment element shown
+/// as the token it was typed as, then whatever the protocol sent that was
+/// not text.
+fn prompt_body(prompt: &PromptEntry, index: &amux_ui::attachments::AttachmentIndex) -> String {
+    let mut pieces = vec![words(index, &prompt.content)];
     pieces.extend(prompt.parts.iter().filter_map(non_text_part));
     pieces.retain(|piece| !piece.is_empty());
     pieces.join(" ")

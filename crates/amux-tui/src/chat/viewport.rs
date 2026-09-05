@@ -293,6 +293,7 @@ mod tests {
         let run = RunKey(11);
         let blocks = vec![PaintedBlock {
             key: BlockKey(7),
+            kind: crate::chat::frame::BlockKind::Activity,
             lines: Vec::new(),
             copy_text: String::new(),
             run: Some(run),
@@ -312,6 +313,7 @@ mod tests {
         let current = RunKey(12);
         let blocks = vec![PaintedBlock {
             key: BlockKey(8),
+            kind: crate::chat::frame::BlockKind::Activity,
             lines: Vec::new(),
             copy_text: String::new(),
             run: Some(current),

@@ -1188,6 +1188,7 @@ mod tests {
     fn seed_focus_cache(chat: &mut ChatView) {
         let block = |key, text: &str| PaintedBlock {
             key: BlockKey(key),
+            kind: crate::chat::frame::BlockKind::Activity,
             lines: vec![Line::from(text.to_string())],
             copy_text: text.to_string(),
             run: None,
@@ -1210,6 +1211,7 @@ mod tests {
                 block(3, "newest block"),
             ],
             following_geometry: super::frame::ChatGeometry {
+                content_indent: crate::chat::frame::CONTENT_INDENT,
                 width: 120,
                 height: 40,
                 feed_top: 2,
@@ -1217,6 +1219,7 @@ mod tests {
                 bottom_top: 39,
             },
             paused_geometry: super::frame::ChatGeometry {
+                content_indent: crate::chat::frame::CONTENT_INDENT,
                 width: 120,
                 height: 40,
                 feed_top: 2,
@@ -1310,6 +1313,9 @@ mod tests {
                 },
                 blocks: Vec::new(),
                 following_geometry: super::frame::ChatGeometry {
+                    content_indent: crate::chat::frame::CONTENT_INDENT,
+                    // A synthetic geometry for scroll arithmetic: its rows are
+                    // chosen by hand, so it declares no border to match them.
                     width: 120,
                     height: 40,
                     feed_top: 2,
@@ -1317,6 +1323,9 @@ mod tests {
                     bottom_top: 39,
                 },
                 paused_geometry: super::frame::ChatGeometry {
+                    content_indent: crate::chat::frame::CONTENT_INDENT,
+                    // A synthetic geometry for scroll arithmetic: its rows are
+                    // chosen by hand, so it declares no border to match them.
                     width: 120,
                     height: 40,
                     feed_top: 2,
@@ -1591,6 +1600,9 @@ mod tests {
                 },
                 blocks: Vec::new(),
                 following_geometry: super::frame::ChatGeometry {
+                    content_indent: crate::chat::frame::CONTENT_INDENT,
+                    // A synthetic geometry for scroll arithmetic: its rows are
+                    // chosen by hand, so it declares no border to match them.
                     width: 120,
                     height: 40,
                     feed_top: 2,
@@ -1598,6 +1610,9 @@ mod tests {
                     bottom_top: 39,
                 },
                 paused_geometry: super::frame::ChatGeometry {
+                    content_indent: crate::chat::frame::CONTENT_INDENT,
+                    // A synthetic geometry for scroll arithmetic: its rows are
+                    // chosen by hand, so it declares no border to match them.
                     width: 120,
                     height: 40,
                     feed_top: 2,

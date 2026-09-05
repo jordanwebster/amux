@@ -7,10 +7,20 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::render::{Theme, clip_to_width, line_len, push_span};
 
-/// The two number columns keep two digits of shape even for a tiny patch.
+/// The number column keeps two digits of shape even for a tiny patch.
 const MIN_GUTTER_DIGITS: usize = 2;
-/// One blank cell separates the dual gutter from the sign column.
-const GUTTER_GAP: usize = 1;
+/// A blank cell, the spine, then a blank cell, between the dual gutter and
+/// the sign column.
+const GUTTER_GAP: usize = 3;
+/// The rule between the line numbers and the code.
+///
+/// Without it the numbers run straight into a tinted band and read as part
+/// of the first added line rather than as a margin beside it.
+///
+const SPINE: &str = "\u{2502}";
+/// The mark a numberless document puts between two hunks: an ellipsis, for
+/// the lines that are not shown.
+const BOUNDARY: &str = "\u{22ef}";
 const NEW_FILE_LEFT: usize = 3;
 const NEW_FILE_GUTTER_GAP: usize = 2;
 const NEW_FILE_SIGN_GAP: usize = 1;
@@ -144,14 +154,13 @@ fn paint_rows_with_layout(
             .map(|number| number.to_string().len())
             .max(),
     };
-    let gutter_width = match (layout, digits) {
-        (GutterLayout::Dual, Some(digits)) => digits * 2 + 1,
-        (GutterLayout::NewOnly, Some(digits)) => digits,
-        (_, None) => 0,
-    };
+    let gutter_width = digits.unwrap_or(0);
     let sign_col = left
         + gutter_width
         + match layout {
+            // No numbers means no spine, and a gap that separates the code
+            // from nothing is just an indent the rows do not need.
+            GutterLayout::Dual if digits.is_none() => 0,
             GutterLayout::Dual => GUTTER_GAP,
             GutterLayout::NewOnly => NEW_FILE_GUTTER_GAP,
         };
@@ -173,8 +182,27 @@ fn paint_row(
     width: usize,
     fill_row: bool,
 ) -> Vec<Line<'static>> {
+    // `@@ -12,3 +12,5 @@` is the patch format talking to itself. What it
+    // says that a reader needs — that the next line is not the one after the
+    // last — the numbers in the gutter already say. So the row becomes the
+    // air between two hunks. It stays a row rather than disappearing because
+    // the review page addresses its cursor and its hunk stops by row index.
+    if row.kind == RowKind::Boundary {
+        let mut line = Line::default();
+        // Without numbers nothing else says that lines were skipped here,
+        // so the row says it, quietly.
+        if digits.is_none() {
+            push_span(&mut line, sign_col, BOUNDARY, theme.diff_meta());
+        }
+        // Still the panel's own surface where there is one: an unfilled
+        // row inside a tinted panel is a hole punched in it.
+        if fill_row {
+            fill(&mut line, width, theme.panel());
+        }
+        return vec![line];
+    }
     let style = match row.kind {
-        RowKind::Meta => theme.diff_meta(),
+        RowKind::Boundary | RowKind::Note => theme.diff_meta(),
         RowKind::Context => theme.diff_context(),
         RowKind::Added => theme.diff_added(),
         RowKind::Removed => theme.diff_removed(),
@@ -187,7 +215,7 @@ fn paint_row(
         RowKind::Added => ('+', strip_prefix(&row.text, '+'), sign_col + 1 + sign_gap),
         RowKind::Removed => ('-', strip_prefix(&row.text, '-'), sign_col + 1 + sign_gap),
         RowKind::Context => (' ', strip_prefix(&row.text, ' '), sign_col + 1 + sign_gap),
-        RowKind::Meta => (' ', row.text.as_str(), sign_col),
+        RowKind::Boundary | RowKind::Note => (' ', row.text.as_str(), sign_col),
     };
     let content = content.replace('\t', "    ");
     let content_width = width.saturating_sub(content_col).max(1);
@@ -208,33 +236,57 @@ fn paint_row(
             rest.split_at(head.len())
         };
         let mut line = Line::default();
+        // The spine runs the whole height of a wrapped row. Without it a
+        // continuation loses the column it belongs to and reads as a
+        // separate, unnumbered line of the file.
+        let spine = |line: &mut Line<'static>| {
+            if matches!(layout, GutterLayout::Dual) && digits.is_some() {
+                push_span(line, sign_col - 2, SPINE, theme.gutter());
+            }
+        };
         if first {
             if let Some(digits) = digits {
-                let (col, numbers) = match layout {
-                    GutterLayout::Dual => (
-                        sign_col - (digits * 2 + 1 + GUTTER_GAP),
-                        format!(
-                            "{:>digits$} {:>digits$}",
-                            row.old.map(|number| number.to_string()).unwrap_or_default(),
-                            row.new.map(|number| number.to_string()).unwrap_or_default(),
-                        ),
-                    ),
-                    GutterLayout::NewOnly => (
-                        sign_col - (digits + NEW_FILE_GUTTER_GAP),
-                        format!(
-                            "{:>digits$}",
-                            row.new.map(|number| number.to_string()).unwrap_or_default()
-                        ),
-                    ),
+                // One number, not two. A row belongs to one side of the
+                // patch — the sign says which — and a second column of
+                // numbers that is blank on half the rows reads as a hole
+                // rather than as information.
+                let gap = match layout {
+                    GutterLayout::Dual => GUTTER_GAP,
+                    GutterLayout::NewOnly => NEW_FILE_GUTTER_GAP,
                 };
-                push_span(&mut line, col, numbers, theme.gutter());
+                let number = row.new.or(row.old);
+                push_span(
+                    &mut line,
+                    sign_col - (digits + gap),
+                    format!(
+                        "{:>digits$}",
+                        number.map(|number| number.to_string()).unwrap_or_default()
+                    ),
+                    theme.gutter(),
+                );
             }
-            if row.kind != RowKind::Meta {
+            spine(&mut line);
+            if row.kind != RowKind::Note {
                 push_span(&mut line, sign_col, sign.to_string(), style);
             }
+        } else {
+            spine(&mut line);
+            // The sign column stays blank on a continuation, but in the
+            // row's own surface: a gap of bare ground inside a tinted band
+            // is a hole in it.
+            push_span(
+                &mut line,
+                sign_col,
+                " ".repeat(content_col - sign_col),
+                style,
+            );
         }
         push_span(&mut line, content_col, chunk.to_string(), style);
-        if fill_row {
+        // A tint that stops where the text stops leaves a hunk as a column
+        // of ragged coloured stubs, and a wrapped added line stops looking
+        // added halfway through. Added and removed rows carry a surface, so
+        // the surface is the row.
+        if fill_row || matches!(row.kind, RowKind::Added | RowKind::Removed) {
             fill(&mut line, width, style);
         }
         lines.push(line);
@@ -303,21 +355,50 @@ mod tests {
     }
 
     #[test]
-    fn old_and_new_gutters_advance_independently() {
+    fn the_gutter_numbers_the_side_a_row_belongs_to() {
         let rows = rows(
             Numbering::Absolute,
             vec![hunk(14, 20, &[" ctx", "-old", "+new", "+extra"])],
         );
         let lines = paint_rows(&rows, Theme::default(), 60, 0, false).into_lines();
         assert_eq!(
-            text_of(&lines),
+            text_of(&lines)
+                .into_iter()
+                .map(|row| row.trim_end().to_string())
+                .collect::<Vec<_>>(),
             vec![
-                "      @@ -14,2 +20,3 @@",
-                "14 20  ctx",
-                "15    -old",
-                "   21 +new",
-                "   22 +extra",
+                "20 \u{2502}  ctx",
+                "15 \u{2502} -old",
+                "21 \u{2502} +new",
+                "22 \u{2502} +extra",
             ]
+        );
+    }
+
+    #[test]
+    fn a_numberless_boundary_says_that_lines_were_skipped() {
+        let numberless = rows(
+            Numbering::None,
+            vec![hunk(1, 1, &[" a", "+b"]), hunk(9, 9, &["-c"])],
+        );
+        let lines = paint_rows(&numberless, Theme::default(), 40, 0, false).into_lines();
+        assert_eq!(
+            text_of(&lines)
+                .into_iter()
+                .map(|row| row.trim_end().to_string())
+                .collect::<Vec<_>>(),
+            vec![" a", "+b", BOUNDARY, "-c"],
+            "with no line numbers, the boundary is the only sign of a gap"
+        );
+        let numbered = rows(
+            Numbering::Absolute,
+            vec![hunk(1, 1, &[" a", "+b"]), hunk(9, 9, &["-c"])],
+        );
+        let lines = paint_rows(&numbered, Theme::default(), 40, 0, false).into_lines();
+        assert_eq!(
+            text_of(&lines)[2].trim_end(),
+            "",
+            "the numbers already say it, so the row stays blank"
         );
     }
 
@@ -325,7 +406,13 @@ mod tests {
     fn numberless_rows_never_pay_for_empty_gutters() {
         let rows = rows(Numbering::None, vec![hunk(1, 1, &[" ctx", "-old", "+new"])]);
         let lines = paint_rows(&rows, Theme::default(), 40, 0, false).into_lines();
-        assert_eq!(text_of(&lines), vec!["  ctx", " -old", " +new"]);
+        assert_eq!(
+            text_of(&lines)
+                .into_iter()
+                .map(|row| row.trim_end().to_string())
+                .collect::<Vec<_>>(),
+            vec![" ctx", "-old", "+new"]
+        );
     }
 
     #[test]
@@ -338,9 +425,14 @@ mod tests {
         }];
         let painted = paint_rows(&rows, Theme::default(), 20, 0, false);
         assert_eq!(painted.screen_len(), 2);
+        // The spine and the sign column hold their places under the wrap, so
+        // a continuation stays in the column its row started in.
         assert_eq!(
-            text_of(&painted.into_lines()),
-            vec!["    9 +abcdefghijklm", "       nopqrstuvwxyz",]
+            text_of(&painted.into_lines())
+                .into_iter()
+                .map(|row| row.trim_end().to_string())
+                .collect::<Vec<_>>(),
+            vec![" 9 \u{2502} +abcdefghijklmn", "   \u{2502}  opqrstuvwxyz",]
         );
     }
 
@@ -387,6 +479,6 @@ mod tests {
 
         assert_eq!(preview.lines.len(), 7);
         assert_eq!(preview.hidden, 1);
-        assert!(text_of(&preview.lines)[0].starts_with("    9 +"));
+        assert!(text_of(&preview.lines)[0].starts_with(" 9 \u{2502} +"));
     }
 }

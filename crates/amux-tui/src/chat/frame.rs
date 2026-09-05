@@ -32,10 +32,36 @@ pub(crate) const MARK_GLYPH: &str = "\u{258e}";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct BlockKey(pub(crate) u64);
 
+/// What a block is, as far as the space around it is concerned.
+///
+/// A feed mixes things that were said with things that happened, and the two
+/// want different amounts of air. The distinction lives here rather than in
+/// each painter's head because it is the frame, not the painter, that owns
+/// the rows between blocks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BlockKind {
+    /// Someone's words: the person's message, the agent's reply, a note from
+    /// another agent, a plan it wrote.
+    Speech,
+    /// Something the agent did: a command, a search, a file changed, an
+    /// error, a thought.
+    Activity,
+    /// One attachment a message carries, as a row of its own so it can be
+    /// focused and opened by itself. It belongs to the speech above it and
+    /// hangs directly under it.
+    Attachment,
+    /// A rule across the feed marking a boundary rather than an event.
+    Divider,
+    /// A docked panel: a permission ask, a diff. Full-weight content that
+    /// arrives with its own surface.
+    Panel,
+}
+
 /// Finished rows and interaction metadata produced by one block painter.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PaintedBlock {
     pub(crate) key: BlockKey,
+    pub(crate) kind: BlockKind,
     pub(crate) lines: Vec<Line<'static>>,
     pub(crate) copy_text: String,
     pub(crate) run: Option<RunKey>,
@@ -60,7 +86,7 @@ impl ChatFrameParts {
     pub(crate) fn geometry(&self, viewport: (u16, u16), target_paused: bool) -> ChatGeometry {
         chat_geometry(
             viewport,
-            FrameSpacing::DEFAULT,
+            FrameShape::DEFAULT,
             self.banner.is_some(),
             self.activity.is_some(),
             target_paused,
@@ -86,8 +112,46 @@ impl FeedBlocks {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FrameSpacing {
     pub(crate) header_gap: usize,
+    /// Rows between two adjacent blocks, unless both are machinery.
     pub(crate) block_gap: usize,
+    /// Rows between two consecutive actions.
+    pub(crate) action_gap: usize,
     pub(crate) bottom_gap: usize,
+}
+
+/// The rows of air between two adjacent blocks.
+///
+/// Both the geometry pass and the compose pass ask this, and they must agree
+/// exactly: a feed whose measured height disagrees with its painted height
+/// scrolls to a bottom that is not the bottom.
+pub(crate) fn gap_between(previous: BlockKind, next: BlockKind, spacing: FrameSpacing) -> usize {
+    match (previous, next) {
+        (BlockKind::Activity, BlockKind::Activity) => spacing.action_gap,
+        (BlockKind::Speech | BlockKind::Attachment, BlockKind::Attachment) => 0,
+        _ => spacing.block_gap,
+    }
+}
+
+/// Everything besides content that decides the frame's arithmetic: the
+/// rows of air, and the columns kept clear at the left edge.
+///
+/// One value rather than two arguments because they always travel together
+/// and the geometry pass and the compose pass must agree on both, or a feed
+/// scrolls to a bottom that is not the bottom.
+///
+/// A conversation is never bounded. The fleet draws a box; a conversation
+/// runs to the edges, and the mark column is its only left-edge chrome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FrameShape {
+    pub(crate) spacing: FrameSpacing,
+    pub(crate) content_indent: usize,
+}
+
+impl FrameShape {
+    pub(crate) const DEFAULT: Self = Self {
+        spacing: FrameSpacing::DEFAULT,
+        content_indent: CONTENT_INDENT,
+    };
 }
 
 impl FrameSpacing {
@@ -97,10 +161,13 @@ impl FrameSpacing {
     /// margin on a screen this short. One blank row between blocks keeps
     /// a long feed legible without halving how much of it fits, and one
     /// above the bottom block separates what the agent said from what
-    /// the person is typing.
+    /// the person is typing. No blank row between two consecutive actions:
+    /// a burst of tool work is one event to a reader, and nine rows of
+    /// machinery spread over eighteen read as nine separate events.
     pub(crate) const DEFAULT: Self = Self {
         header_gap: 1,
         block_gap: 1,
+        action_gap: 0,
         bottom_gap: 1,
     };
 }
@@ -113,6 +180,9 @@ pub(crate) struct ChatGeometry {
     pub(crate) feed_top: usize,
     pub(crate) feed_rows: usize,
     pub(crate) bottom_top: usize,
+    /// Carried on the geometry so a caller that already has one does not
+    /// need the design in hand to ask how wide a feed row may be.
+    pub(crate) content_indent: usize,
 }
 
 impl ChatGeometry {
@@ -120,25 +190,32 @@ impl ChatGeometry {
     /// column and its separator. Used by the agent adapters.
     #[allow(dead_code)]
     pub(crate) fn feed_width(&self) -> usize {
-        self.width.saturating_sub(CONTENT_INDENT)
+        self.width.saturating_sub(self.content_indent)
     }
 }
 
 /// Compute the full-screen frame budget without inspecting agent content.
 fn chat_geometry(
     viewport: (u16, u16),
-    spacing: FrameSpacing,
+    shape: FrameShape,
     banner: bool,
     activity: bool,
     paused: bool,
     bottom_rows: usize,
 ) -> ChatGeometry {
+    let FrameShape {
+        spacing,
+        content_indent,
+    } = shape;
     let width = viewport.0 as usize;
     let height = viewport.1 as usize;
     let feed_top = (1 + usize::from(banner) + spacing.header_gap).min(height);
     let bottom_top = height.saturating_sub(bottom_rows.min(height));
+    // The working row is a block of its own: air above it as well as
+    // below, or it hangs off whatever the feed happened to end with.
+    let activity_rows = if activity { 1 + spacing.bottom_gap } else { 0 };
     let feed_bottom =
-        bottom_top.saturating_sub(spacing.bottom_gap + usize::from(activity) + usize::from(paused));
+        bottom_top.saturating_sub(spacing.bottom_gap + activity_rows + usize::from(paused));
     let feed_rows = feed_bottom.saturating_sub(feed_top);
     ChatGeometry {
         width,
@@ -146,6 +223,7 @@ fn chat_geometry(
         feed_top,
         feed_rows,
         bottom_top,
+        content_indent,
     }
 }
 
@@ -171,8 +249,8 @@ pub(crate) fn feed_metrics(
     let mut cursor = feed.boundary_rows();
     let mut ranges = Vec::with_capacity(feed.blocks.len());
     for (index, block) in feed.blocks.iter().enumerate() {
-        if index > 0 {
-            cursor += spacing.block_gap;
+        if let Some(previous) = index.checked_sub(1) {
+            cursor += gap_between(feed.blocks[previous].kind, block.kind, spacing);
         }
         let start = cursor;
         cursor += block.lines.len();
@@ -218,18 +296,21 @@ pub(crate) fn compose_chat_frame(
         ));
     }
     let boundary_rows = boundary.len();
+    let chained = chained_runs(&parts.feed.blocks);
     let mut feed = Vec::with_capacity(metrics.total_rows);
     for (index, block) in parts.feed.blocks.iter().enumerate() {
-        if index > 0 {
-            feed.extend((0..spacing.block_gap).map(|_| (Line::default(), None)));
+        if let Some(previous) = index.checked_sub(1) {
+            let gap = gap_between(parts.feed.blocks[previous].kind, block.kind, spacing);
+            feed.extend((0..gap).map(|_| (Line::default(), None)));
         }
-        feed.extend(
-            block
-                .lines
-                .iter()
-                .cloned()
-                .map(|line| (line, Some(block.key))),
-        );
+        feed.extend(block.lines.iter().cloned().map(|line| {
+            let line = if chained[index] {
+                write_mark(line, CHAIN, theme.gutter())
+            } else {
+                line
+            };
+            (line, Some(block.key))
+        }));
     }
 
     let max_top = metrics.max_top;
@@ -274,6 +355,7 @@ pub(crate) fn compose_chat_frame(
         ));
     }
     if let Some(activity) = parts.activity {
+        lines.extend((0..spacing.bottom_gap).map(|_| Line::default()));
         lines.push(activity);
     }
     lines.extend((0..spacing.bottom_gap).map(|_| Line::default()));
@@ -330,8 +412,49 @@ fn indented_row(text: &str, style: Style, theme: Theme) -> Line<'static> {
 /// block. It overwrites that column instead of being inserted, so
 /// focusing a block never pushes its text one cell to the right.
 fn mark_focused(line: Line<'static>, theme: Theme) -> Line<'static> {
+    write_mark(line, MARK_GLYPH, theme.focus_bar())
+}
+
+/// The line linking a run of consecutive actions into one thing.
+///
+/// A burst of tool work stacked with no air between the rows reads as a
+/// list of unrelated events that happen to be adjacent. The line says they
+/// are one stretch of work — and it lives in the mark column, so the focus
+/// bar simply replaces it on the row it lands on.
+const CHAIN: &str = "\u{2502}";
+
+/// Which blocks sit inside a run of two or more consecutive actions.
+fn chained_runs(blocks: &[PaintedBlock]) -> Vec<bool> {
+    let neighbour = |index: usize| {
+        blocks
+            .get(index)
+            .is_some_and(|block| block.kind == BlockKind::Activity)
+    };
+    (0..blocks.len())
+        .map(|index| {
+            blocks[index].kind == BlockKind::Activity
+                && (index.checked_sub(1).is_some_and(neighbour) || neighbour(index + 1))
+        })
+        .collect()
+}
+
+/// Overwrite a row's first cell with a mark, rather than inserting one.
+///
+/// Every feed row leaves that column clear for exactly this: marking a block
+/// must never push its text one cell to the right, or focusing something
+/// would reflow it.
+fn write_mark(line: Line<'static>, glyph: &str, style: Style) -> Line<'static> {
     let mut spans = Vec::with_capacity(line.spans.len() + 1);
-    spans.push(Span::styled(MARK_GLYPH, theme.focus_bar()));
+    // The mark takes the surface of the cell it replaces: a bar or a chain
+    // drawn on a panel stays on the panel rather than punching a hole of
+    // bare ground in its first column.
+    let under = line
+        .spans
+        .iter()
+        .find(|span| str_width(&span.content) > 0)
+        .map(|span| span.style)
+        .unwrap_or_default();
+    spans.push(Span::styled(glyph.to_string(), under.patch(style)));
     let mut marked = false;
     for span in line.spans {
         if marked || str_width(&span.content) == 0 {
@@ -364,14 +487,42 @@ pub struct PaintStats {
     pub reused: usize,
 }
 
+/// Everything besides a block's own content that decides what it looks
+/// like. The cache validates against all of it, which is the whole reason it
+/// is one value: an input added here and forgotten at a comparison site is
+/// how a cache starts serving rows painted for a different screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PaintInputs {
+    pub(crate) width: usize,
+    pub(crate) theme: Theme,
+    pub(crate) expanded: bool,
+}
+
+/// The comparable projection of those inputs. A `Theme` carries a whole
+/// palette; what decides a repaint is which palette.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PaintKey {
+    width: usize,
+    theme: (ThemeName, ColorMode),
+    expanded: bool,
+}
+
+impl From<PaintInputs> for PaintKey {
+    fn from(inputs: PaintInputs) -> Self {
+        Self {
+            width: inputs.width,
+            theme: (inputs.theme.name, inputs.theme.mode),
+            expanded: inputs.expanded,
+        }
+    }
+}
+
 struct CachedBlock {
     /// `Send` so the whole view can be cloned into a diagnostic snapshot
     /// that crosses to the runtime's Msg tap. Cache content is plain data
     /// — the bound costs nothing and states where the view can travel.
     content: Box<dyn Any + Send>,
-    width: usize,
-    theme: (ThemeName, ColorMode),
-    expanded: bool,
+    key: PaintKey,
     block: PaintedBlock,
 }
 
@@ -396,16 +547,12 @@ impl PaintCache {
         &mut self,
         key: BlockKey,
         content: &K,
-        width: usize,
-        theme: Theme,
-        expanded: bool,
+        inputs: PaintInputs,
         paint: impl FnOnce() -> PaintedBlock,
     ) -> &PaintedBlock {
-        let theme_key = (theme.name, theme.mode);
+        let paint_key = PaintKey::from(inputs);
         let hit = self.entries.get(&key).is_some_and(|cached| {
-            cached.width == width
-                && cached.theme == theme_key
-                && cached.expanded == expanded
+            cached.key == paint_key
                 && cached
                     .content
                     .downcast_ref::<K>()
@@ -421,9 +568,7 @@ impl PaintCache {
             key,
             CachedBlock {
                 content: Box::new(content.clone()),
-                width,
-                theme: theme_key,
-                expanded,
+                key: paint_key,
                 block: paint(),
             },
         );
@@ -482,6 +627,7 @@ mod tests {
     fn block(key: u64, rows: &[&str]) -> PaintedBlock {
         PaintedBlock {
             key: BlockKey(key),
+            kind: BlockKind::Activity,
             lines: rows
                 .iter()
                 .map(|row| Line::from((*row).to_string()))
@@ -517,10 +663,24 @@ mod tests {
         lines.iter().map(line_text).collect()
     }
 
+    /// The chat's left margin: column 0 is the mark column and column 1
+    /// separates it from the text.
+    const CONTENT_INDENT: usize = 2;
+
+    /// The frame arithmetic these tests measure against: the shipped shape,
+    /// varied only in what each test is about.
+    const SHIPPED_SHAPE: FrameShape = FrameShape {
+        spacing: FrameSpacing::DEFAULT,
+        content_indent: CONTENT_INDENT,
+    };
+
     fn paint(key: BlockKey, label: &str) -> PaintedBlock {
         block(key.0, &[label])
     }
 
+    /// Every optional row is accounted for: the header, a banner, the gap
+    /// under them, the paused rule, the activity row with the gap above it,
+    /// and the bottom block.
     #[test]
     fn geometry_at_120_by_40_accounts_for_every_optional_row() {
         let mut parts = parts(Vec::new());
@@ -531,28 +691,34 @@ mod tests {
         assert_eq!(
             geometry,
             ChatGeometry {
+                content_indent: CONTENT_INDENT,
                 width: 120,
                 height: 40,
                 feed_top: 3,
-                feed_rows: 30,
+                feed_rows: 29,
                 bottom_top: 36,
             }
         );
+        assert_eq!(geometry.feed_width(), 118);
     }
 
     #[test]
     fn minimum_geometry_saturates_under_two_spacing_values() {
-        let roomy = chat_geometry((24, 10), FrameSpacing::DEFAULT, true, true, true, 4);
+        let roomy = chat_geometry((24, 10), SHIPPED_SHAPE, true, true, true, 4);
         assert_eq!(roomy.feed_top, 3);
         assert_eq!(roomy.feed_rows, 0);
         assert_eq!(roomy.bottom_top, 6);
 
         let tight = chat_geometry(
             (24, 10),
-            FrameSpacing {
-                header_gap: 0,
-                block_gap: 0,
-                bottom_gap: 0,
+            FrameShape {
+                spacing: FrameSpacing {
+                    header_gap: 0,
+                    block_gap: 0,
+                    action_gap: 0,
+                    bottom_gap: 0,
+                },
+                ..SHIPPED_SHAPE
             },
             true,
             true,
@@ -569,10 +735,14 @@ mod tests {
         let blocks = vec![block(1, &["a", "b"]), block(2, &["c"]), block(3, &[])];
         let geometry = chat_geometry(
             (20, 8),
-            FrameSpacing {
-                header_gap: 0,
-                block_gap: 2,
-                bottom_gap: 0,
+            FrameShape {
+                spacing: FrameSpacing {
+                    header_gap: 0,
+                    block_gap: 2,
+                    action_gap: 2,
+                    bottom_gap: 0,
+                },
+                ..SHIPPED_SHAPE
             },
             false,
             false,
@@ -588,6 +758,7 @@ mod tests {
             FrameSpacing {
                 header_gap: 0,
                 block_gap: 2,
+                action_gap: 2,
                 bottom_gap: 0,
             },
             &geometry,
@@ -612,10 +783,14 @@ mod tests {
         };
         let geometry = chat_geometry(
             (20, 5),
-            FrameSpacing {
-                header_gap: 0,
-                block_gap: 1,
-                bottom_gap: 0,
+            FrameShape {
+                spacing: FrameSpacing {
+                    header_gap: 0,
+                    block_gap: 1,
+                    action_gap: 1,
+                    bottom_gap: 0,
+                },
+                ..SHIPPED_SHAPE
             },
             false,
             false,
@@ -703,8 +878,11 @@ mod tests {
         assert!(!middle.iter().any(|line| line.contains("loading session")));
     }
 
+    /// A borderless frame spends nothing on chrome: the header is the
+    /// first row, every row fills the width, and no cell anywhere is a box
+    /// glyph. The mark column is the screen's own first column.
     #[test]
-    fn a_full_screen_frame_is_borderless_and_starts_with_the_header() {
+    fn a_borderless_frame_starts_with_the_header_and_draws_no_box() {
         let mut parts = parts(vec![
             block(1, &["  first block"]),
             block(2, &["  second block"]),
@@ -726,26 +904,30 @@ mod tests {
 
         assert_eq!(frame.len(), 40);
         assert!(rendered[0].starts_with("header"), "{:?}", rendered[0]);
-        for (row, line) in frame.iter().enumerate() {
+        for (row, rendered) in rendered.iter().enumerate() {
             assert_eq!(
-                str_width(&rendered[row]),
+                str_width(rendered),
                 120,
-                "row {row} must fill the width: {:?}",
-                rendered[row]
+                "row {row} must fill the width: {rendered:?}"
             );
-            let first = rendered[row].chars().next().expect("a filled row");
+            let first = rendered.chars().next().expect("a filled row");
+            // The chain is the one glyph allowed in the mark column: it ties
+            // a run of actions together and stops where the run does, which
+            // is the opposite of a border that encloses everything.
+            let chain = first.to_string() == CHAIN;
             assert!(
-                !"┌┐└┘├┤┬┴┼│─═║╭╮╰╯".contains(first),
-                "row {row} starts with chrome: {:?}",
-                rendered[row]
+                chain || !"┌┐└┘├┤┬┴┼│─═║╭╮╰╯".contains(first),
+                "row {row} starts with chrome: {rendered:?}"
             );
-            for span in &line.spans {
-                assert!(
-                    !span.content.contains('│'),
-                    "row {row} keeps a border glyph: {:?}",
-                    rendered[row]
-                );
-            }
+            // A vertical rule is not a border. The chat draws two of them
+            // on purpose — the chain tying a run of actions together and the
+            // diff's spine — and both live in a column of their own rather
+            // than around anything. What this test forbids is a box, which
+            // is the first-cell check above plus the horizontal runs below.
+            assert!(
+                !rendered.contains("──"),
+                "row {row} draws a border rule: {rendered:?}"
+            );
         }
         assert!(
             rendered
@@ -753,9 +935,22 @@ mod tests {
                 .any(|row| row.starts_with("\u{258e} first block")),
             "the focused block wears the mark in column 0: {rendered:?}"
         );
+        // The unfocused block is the second of two consecutive actions, so
+        // the chain has its column — and the focus mark, not the chain, is
+        // what says which block is selected.
         assert!(
-            rendered.iter().any(|row| row.starts_with("  second block")),
-            "an unfocused block keeps the mark column clear: {rendered:?}"
+            rendered
+                .iter()
+                .any(|row| row.starts_with(&format!("{CHAIN} second block"))),
+            "an unfocused block in a run wears the chain, not the mark: {rendered:?}"
+        );
+        assert_eq!(
+            rendered
+                .iter()
+                .filter(|row| row.starts_with(MARK_GLYPH))
+                .count(),
+            1,
+            "only the focused block wears the mark: {rendered:?}"
         );
     }
 
@@ -799,17 +994,21 @@ mod tests {
         cache.get_or_paint(
             key,
             &"first".to_string(),
-            80,
-            Theme::default(),
-            false,
+            PaintInputs {
+                width: 80,
+                theme: Theme::default(),
+                expanded: false,
+            },
             || paint(key, "first"),
         );
         cache.get_or_paint(
             key,
             &"first".to_string(),
-            80,
-            Theme::default(),
-            false,
+            PaintInputs {
+                width: 80,
+                theme: Theme::default(),
+                expanded: false,
+            },
             || panic!("cache hit must not repaint"),
         );
         assert_eq!(
@@ -824,9 +1023,11 @@ mod tests {
         cache.get_or_paint(
             key,
             &"changed".to_string(),
-            80,
-            Theme::default(),
-            false,
+            PaintInputs {
+                width: 80,
+                theme: Theme::default(),
+                expanded: false,
+            },
             || paint(key, "changed"),
         );
         assert_eq!(
@@ -843,14 +1044,28 @@ mod tests {
         let mut cache = PaintCache::default();
         let key = BlockKey(1);
         let content = "same".to_string();
-        cache.get_or_paint(key, &content, 80, Theme::default(), false, || {
-            paint(key, "80")
-        });
+        cache.get_or_paint(
+            key,
+            &content,
+            PaintInputs {
+                width: 80,
+                theme: Theme::default(),
+                expanded: false,
+            },
+            || paint(key, "80"),
+        );
 
         cache.reset_stats();
-        cache.get_or_paint(key, &content, 81, Theme::default(), false, || {
-            paint(key, "81")
-        });
+        cache.get_or_paint(
+            key,
+            &content,
+            PaintInputs {
+                width: 81,
+                theme: Theme::default(),
+                expanded: false,
+            },
+            || paint(key, "81"),
+        );
         assert_eq!(
             cache.stats(),
             PaintStats {
@@ -865,16 +1080,25 @@ mod tests {
         let mut cache = PaintCache::default();
         let key = BlockKey(1);
         let content = "same".to_string();
-        cache.get_or_paint(key, &content, 81, Theme::default(), false, || {
-            paint(key, "dark")
-        });
+        cache.get_or_paint(
+            key,
+            &content,
+            PaintInputs {
+                width: 81,
+                theme: Theme::default(),
+                expanded: false,
+            },
+            || paint(key, "dark"),
+        );
         cache.reset_stats();
         cache.get_or_paint(
             key,
             &content,
-            81,
-            Theme::light(ColorMode::TrueColor),
-            false,
+            PaintInputs {
+                width: 81,
+                theme: Theme::light(ColorMode::TrueColor),
+                expanded: false,
+            },
             || paint(key, "light"),
         );
         assert_eq!(
@@ -891,13 +1115,27 @@ mod tests {
         let mut cache = PaintCache::default();
         let key = BlockKey(1);
         let content = "same".to_string();
-        cache.get_or_paint(key, &content, 81, Theme::default(), false, || {
-            paint(key, "closed")
-        });
+        cache.get_or_paint(
+            key,
+            &content,
+            PaintInputs {
+                width: 81,
+                theme: Theme::default(),
+                expanded: false,
+            },
+            || paint(key, "closed"),
+        );
         cache.reset_stats();
-        cache.get_or_paint(key, &content, 81, Theme::default(), true, || {
-            paint(key, "open")
-        });
+        cache.get_or_paint(
+            key,
+            &content,
+            PaintInputs {
+                width: 81,
+                theme: Theme::default(),
+                expanded: true,
+            },
+            || paint(key, "open"),
+        );
         assert_eq!(
             cache.stats(),
             PaintStats {
@@ -912,18 +1150,32 @@ mod tests {
         let mut cache = PaintCache::default();
         for value in 1..=3 {
             let key = BlockKey(value);
-            cache.get_or_paint(key, &value, 80, Theme::default(), false, || {
-                paint(key, "collapsed")
-            });
+            cache.get_or_paint(
+                key,
+                &value,
+                PaintInputs {
+                    width: 80,
+                    theme: Theme::default(),
+                    expanded: false,
+                },
+                || paint(key, "collapsed"),
+            );
         }
 
         cache.reset_stats();
         for value in 1..=3 {
             let key = BlockKey(value);
             let expanded = value == 2;
-            cache.get_or_paint(key, &value, 80, Theme::default(), expanded, || {
-                paint(key, "expanded")
-            });
+            cache.get_or_paint(
+                key,
+                &value,
+                PaintInputs {
+                    width: 80,
+                    theme: Theme::default(),
+                    expanded,
+                },
+                || paint(key, "expanded"),
+            );
         }
         assert_eq!(
             cache.stats(),
@@ -939,18 +1191,39 @@ mod tests {
         let mut cache = PaintCache::default();
         for value in 1..=3 {
             let key = BlockKey(value);
-            cache.get_or_paint(key, &value, 80, Theme::default(), false, || {
-                paint(key, "painted")
-            });
+            cache.get_or_paint(
+                key,
+                &value,
+                PaintInputs {
+                    width: 80,
+                    theme: Theme::default(),
+                    expanded: false,
+                },
+                || paint(key, "painted"),
+            );
         }
         cache.retain(&[BlockKey(1), BlockKey(3)]);
         cache.reset_stats();
-        cache.get_or_paint(BlockKey(1), &1_u64, 80, Theme::default(), false, || {
-            panic!("retained key must be reused")
-        });
-        cache.get_or_paint(BlockKey(2), &2_u64, 80, Theme::default(), false, || {
-            paint(BlockKey(2), "repainted")
-        });
+        cache.get_or_paint(
+            BlockKey(1),
+            &1_u64,
+            PaintInputs {
+                width: 80,
+                theme: Theme::default(),
+                expanded: false,
+            },
+            || panic!("retained key must be reused"),
+        );
+        cache.get_or_paint(
+            BlockKey(2),
+            &2_u64,
+            PaintInputs {
+                width: 80,
+                theme: Theme::default(),
+                expanded: false,
+            },
+            || paint(BlockKey(2), "repainted"),
+        );
         assert_eq!(
             cache.stats(),
             PaintStats {

@@ -1,17 +1,17 @@
-          @@ -14,4 +14,5 @@                                                                                             
-    14 14  pub struct RetryConfig {                                                                                     
-    15    -    pub max_attempts: u8,                                                                                    
-       15 +    pub max_attempts: u8,        // capped at 6                                                              
-       16 +    pub jitter_ms: u16,                                                                                      
-    16 17      pub base_delay: Duration,                                                                                
-    17 18  }                                                                                                            
-          @@ -64,3 +65,5 @@                                                                                             
-    64 65  impl SyncOptions {                                                                                           
-    65    -    pub fn defaults() -> Self { Self { retries: 3 } }                                                        
-       66 +    pub fn defaults() -> Self {                                                                              
-       67 +        Self { retries: RetryConfig::default() }                                                             
-       68 +    }                                                                                                        
-    66 69  }                                                                                                            
+    14 │  pub struct RetryConfig {                                                                                      
+    15 │ -    pub max_attempts: u8,                                                                                     
+    15 │ +    pub max_attempts: u8,        // capped at 6                                                               
+    16 │ +    pub jitter_ms: u16,                                                                                       
+    17 │      pub base_delay: Duration,                                                                                 
+    18 │  }                                                                                                             
+                                                                                                                        
+    65 │  impl SyncOptions {                                                                                            
+    65 │ -    pub fn defaults() -> Self { Self { retries: 3 } }                                                         
+    66 │ +    pub fn defaults() -> Self {                                                                               
+    67 │ +        Self { retries: RetryConfig::default() }                                                              
+    68 │ +    }                                                                                                         
+    69 │  }                                                                                                             
+                                                                                                                        
                                                                                                                         
                                                                                                                         
                                                                                                                         

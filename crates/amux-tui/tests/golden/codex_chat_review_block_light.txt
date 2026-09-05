@@ -3,8 +3,8 @@
   model=gpt-5.4 · approval=on-request · sandbox=workspace-write                                                         
                                                                                                                         
 ▎   three things before this lands                                                                                      
-                                                                                                                        
-  ⌗ review · 3 comments · 2 files                                                                                       
+▎   [Review · 3 comments]                                                                                               
+▎ ⌗ review · 3 comments · 2 files                                                                                       
                                                                                                                         
   ─ turn completed ─────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
@@ -34,9 +34,9 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
-                                                                                                                        
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     enter send · ctrl+j newline · ? help                                                                                
 --- styles ---
@@ -44,8 +44,8 @@
 ..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.........................................................
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
-........................................................................................................................
-..........mmmmmmmmmmmmmmmmmmmmmmm.......................................................................................
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
 ........................................................................................................................
@@ -75,8 +75,8 @@ AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
-........................................................................................................................
-........................................................................................................................
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm................................................................................

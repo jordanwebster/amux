@@ -995,9 +995,19 @@ its tier.
 ## Themes
 
 The chat and fleet consume one semantic `Theme`; painters name roles rather
-than terminal colours. amux ships exactly two hand-tuned palettes, `dark` and
-`light`. A third-party theme is a YAML base16 or base24 scheme with optional
-semantic overrides:
+than terminal colours. By default the palette is derived from the terminal
+amux was started in: at startup amux asks the terminal for its background,
+its foreground and its sixteen palette colours (OSC 11, 10 and 4), keeps the
+ground and the body text as the terminal's own — left unpainted, so a
+translucent or image background stays that way — and computes everything
+else from them. Surfaces are the ground moved toward the text, muted text is
+the text pulled back toward the ground, and the accents and diff tints take
+the terminal's own red, green, yellow, blue, magenta and cyan, repaired for
+contrast the same way an imported scheme is. A terminal that does not answer
+within a quarter of a second gets the shipped `dark` palette.
+
+amux also ships two hand-tuned palettes, `dark` and `light`. A third-party
+theme is a YAML base16 or base24 scheme with optional semantic overrides:
 
 ```yaml
 scheme: my theme             # optional metadata
@@ -1065,7 +1075,7 @@ Select the palette and terminal colour policy in the ordinary amux config:
 
 ```yaml
 ui:
-  theme: dark                  # dark, light, or a YAML file path
+  theme: terminal              # terminal, dark, light, or a YAML file path
   color: auto                  # auto, truecolor, or ansi
 ```
 

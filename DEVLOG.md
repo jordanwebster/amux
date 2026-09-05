@@ -492,6 +492,123 @@ and subscription backoff, while an explicit stop still interrupts either
 wait immediately. Stop also cancels credential and connection-detail
 preparation, so a stalled cloud API request cannot block profile teardown;
 an established routing connector still shuts down through link cleanup.
+2026-09-05 — **Fresh Codex agents resume before becoming ready.** With
+codex-cli 0.153.4, naming a paginated thread updates metadata without writing
+its rollout, so the vanilla TUI's first resume failed before any message was
+sent. Startup now explicitly requests a history-inclusive resume of the same
+thread and adopts its replacement SDK event registration before publishing
+readiness. Failed resume requests retry the same id; naming remains separately
+reconciled metadata. This relies on the current provider's persistence behavior
+and is documented as a compatibility workaround, not a durable-creation API.
+Regression coverage checks naming success followed by resume failure, events
+arriving during resume, failed naming, and transport loss during bootstrap.
+The opt-in `wt run codex-live -- raw_unnamed raw_named unnamed_reconnect`
+scenarios verify actual `/status` responses before any model turn, including
+detach/reattach and recovery of the same thread after server restart. The
+previous ANSI-only check could accept the startup screen of a failing TUI.
+The documented offline command runs the full suite: filtering by `codex`
+would skip replay tests whose names do not contain the provider name.
+
+2026-09-05 — **Three raw-attach papercuts.** `<leader>s` from `amux new` or
+`amux attach` was treated as a detach and dropped the person at the shell;
+it now opens the fleet, the same place it leads from an attach started in
+the fleet. Killing an agent under a fleet-started attach produced a "press
+any key to return to the fleet" prompt and then the fleet. Neither was
+wanted: someone who just killed their agent asked to be out, and the fleet
+is one chord away when they want it. The prompt existed because the fleet
+path returned instead of exiting, and the stdin reader is parked in a
+blocking read that only a keypress or the process ending can finish. The
+fleet-started attach now ends the way `amux attach` always has: the session
+being over exits the process, a detach returns to the shell, and only
+`<leader>s` leads to the fleet. (A polling reader was tried first so the
+fleet could resume without the keypress; it was the wrong destination and
+is gone.) And every way out of the passthrough now writes the
+terminal-hygiene reset unconditionally — mouse and focus reporting,
+bracketed paste, kitty keyboard flags, cursor, alternate screen, text
+style — because the agent's own restore travels over the pty, which nobody
+is watching after a detach and which is gone entirely when the agent is
+killed. That was the shell filling with `35;30;33M` mouse-motion reports
+after leaving a session. The focus and style resets joined the shared
+restore sequence, so the signal handler covers them too when a signal
+lands mid-attach.
+
+2026-09-05 — **The attachment guide is a byte contract on Windows too.** The
+guide's canonical review example is compiled into a test that compares it
+against the formatter's LF-joined output, and a Windows checkout translated
+its line endings, so the test could not even find the example's code fence.
+`.gitattributes` pins the file to LF alongside the golden frames and replay
+recordings that are byte contracts for the same reason. The failure had been
+hiding behind an earlier job: fail-fast cancelled the Windows tests before
+they ran.
+
+2026-09-05 — **The daemon makes its data directory before asking the
+filesystem to resolve it.** Canonicalizing `data_dir`, added so managed
+Claude sees a stable artifact root, assumed the directory already existed —
+true on a machine that has run amux before, false on a fresh one. Every
+test that builds the PTY host from the default config failed on CI with
+`NotFound`, and a first run on a new machine would have failed the same
+way; `AgentDeps::new` now creates the directory before canonicalizing it.
+Alongside: only the macOS attachment viewer reads the artifact kind, so the
+other platforms discard `meta` explicitly rather than trip `-D warnings`,
+and three files that had drifted from rustfmt were reformatted.
+
+2026-09-05 — **Attachments stay with the message that carried them.** A
+sent message's attachment rows were painted as machinery: a blank row below
+the person's words, then rows on the bare ground chained to whatever tool
+calls followed, so a review someone attached read as the first thing the
+agent did. Attachment rows are now a block kind of their own that hangs
+directly under its message with no air, on the person's surface with the
+bar when the person sent it and plain when the agent did, and the chain
+ignores them. The message also keeps the token the person typed —
+`[Image #1]`, `[Pasted #1 · 240 lines]`, `[Review · 1 comment]` — where
+the composer had it, instead of dropping the element and leaving a hole in
+the sentence; the row underneath is still the thing that opens.
+
+2026-09-05 — **amux asks the terminal what colours it is using.** The
+derived palette needs three facts a terminal will report about itself, and
+until now nothing asked. `query_terminal_colors` sends OSC 11, 10 and 4 for
+the ground, the text and the sixteen slots, reads the answers off stdin in
+raw mode before the chrome takes the terminal, and gives a silent terminal a
+quarter of a second. The queries end with a primary-device-attributes request,
+which every terminal answers and answers last, so the read stops on that
+reply rather than on a clock and nothing is left in the input for the key
+reader to take as typing; a slot the terminal stays quiet about takes xterm's colour,
+while a silent ground or text means no palette is derived. `ui.theme`
+gained `terminal`, now the default, which derives from those answers and
+falls back to the shipped dark palette when there are none. The reply
+parser copes with replies split across reads, either OSC terminator, one to
+four hex digits per channel, and keystrokes mixed into the stream. Not yet
+exercised against a live terminal from this session — the parser and the
+fallback are unit-tested, and the whole path wants a person to start
+`amux` in their own terminal and see their own ground.
+
+2026-09-05 — **The TUI's new look, ported without the harness that found it.**
+A design pass on a separate branch rendered every screen to PNG, compared
+palettes and layouts, and settled a look. This branch carries only what the
+running program needs to draw it. Colour: `Theme::from_terminal` derives a
+whole palette from a terminal's reported ground, text colour and sixteen
+slots — surfaces are the ground moved toward the text, de-emphasis is the
+text pulled back toward the ground, accents are the terminal's own hues with
+the same contrast repair imported schemes get — and a `Token` can be
+borrowed, resolving to the terminal's default so a translucent ground stays
+translucent. Conversation: consecutive tool calls stack with no blank row and
+a hairline down the mark column ties the run together; the composer carries a
+row of air above and below its text while the person's message stays tight;
+the working row is a block with air above it. Diffs: `@@` headers are gone —
+`RowKind::Meta` split into a blank `Boundary` between hunks and a `Note` for
+`\ No newline at end of file` — one number column with the side the sign
+says, a spine between numbers and code that holds under a wrapped line,
+tints that run to the edge, and no surface of their own on context rows or
+the gutter, so outside a panel they sit on the bare page. Panels run to the
+left edge, keep a row of air above their key hints, and a mark written into a
+surface's first cell keeps that surface's background. The review page draws
+one full-width header band per file and a row of air between files. Goldens
+re-recorded (144 files); the five assertions that encoded the old gutter and
+geometry now encode the new ones. Independent review caught the sixteen-colour
+path judging a derived palette by the conventional ANSI values: the contrast
+repair now measures faces by what the terminal said each slot paints as, and
+a token that is one of those slots keeps it — swapping slots changes what a
+colour means, and the terminal's red is red everywhere else in the session.
 
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by

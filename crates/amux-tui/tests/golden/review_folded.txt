@@ -1,16 +1,16 @@
   review · working tree @ 4f2a9c1                                                         3 files · +7 −4 · 0 comments  
   src/lib.rs  +4 −2                                                                                      lines 1-10/10  
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-▌ ▸ src/lib.rs  +4 −2  12 rows folded                                                                                   
+▌ ▸ src/lib.rs  +4 −2  11 rows folded                                                                                   
+                                                                                                                        
   ▾ notes/old-plan.md  +0 −2                                                                                            
-        @@ -1,2 +0,0 @@                                                                                                 
-   1    -Store every attachment in the session log.                                                                     
-   2    -Re-read it on restart.                                                                                         
+   1 │ -Store every attachment in the session log.                                                                      
+   2 │ -Re-read it on restart.                                                                                          
+                                                                                                                        
   ▾ src/attachments.rs  +3 −0                                                                                           
-        @@ -0,0 +1,3 @@                                                                                                 
-      1 +//! Message attachments, addressed by content.                                                                 
-      2 +                                                                                                               
-      3 +pub struct Attachment;                                                                                         
+   1 │ +//! Message attachments, addressed by content.                                                                  
+   2 │ +                                                                                                                
+   3 │ +pub struct Attachment;                                                                                          
                                                                                                                         
                                                                                                                         
                                                                                                                         

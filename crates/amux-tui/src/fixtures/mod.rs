@@ -398,19 +398,14 @@ fn commented_review() -> Fixture {
     let mut fixture = review_fixture(review_working_tree(), &[]);
     for (walk, text) in [
         (
-            &[
-                ReviewKey::Char('j'),
-                ReviewKey::Char('j'),
-                ReviewKey::Char('j'),
-            ][..],
+            // A file opens on its first real row rather than on the break
+            // above it, so every walk here is one step shorter than the
+            // count of rows it passes.
+            &[ReviewKey::Char('j'), ReviewKey::Char('j')][..],
             "Say why the store had to go.",
         ),
         (
-            &[
-                ReviewKey::Char(']'),
-                ReviewKey::Char(']'),
-                ReviewKey::Char('j'),
-            ][..],
+            &[ReviewKey::Char(']'), ReviewKey::Char(']')][..],
             "Name the crate this belongs to.",
         ),
         (
@@ -1412,13 +1407,12 @@ mod tests {
             "The cap belongs in",             // assistant markdown
             "file changes · 1 · done",        // the landed file change
             "sync/backoff.rs · update",
-            "@@ -12,3 +12,4 @@",                    // its patch, with a gutter
-            "12 12      if attempt >= config",      // a numbered context row
-            "13    -        return Err(RetryError", // a numbered removal
-            "13 +        return Err(RetryError",    // a numbered addition
-            "unrecognized Codex row",               // the degraded row
-            "thread/experimental/telemetryPing",    // and the method it kept
-            "─ turn completed",                     // the turn rule
+            "12 \u{2502}      if attempt >= config", // a numbered context row
+            "13 \u{2502} -        return Err(RetryError", // a numbered removal
+            "13 \u{2502} +        return Err(RetryError", // a numbered addition
+            "unrecognized Codex row",                // the degraded row
+            "thread/experimental/telemetryPing",     // and the method it kept
+            "─ turn completed",                      // the turn rule
             "$ cargo test --workspace · awaiting approval",
             "approval — command", // the docked approval
             "apply network policy change · allow crates.io",

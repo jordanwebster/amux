@@ -1278,6 +1278,9 @@ fn open_with_platform_viewer(meta: &ArtifactMeta, path: &Path) -> io::Result<()>
 }
 
 fn platform_open_command(meta: &ArtifactMeta, path: &Path) -> io::Result<std::process::Command> {
+    // Only the macOS viewer chooses its application from the artifact kind.
+    #[cfg(not(target_os = "macos"))]
+    let _ = meta;
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = std::process::Command::new("open");
