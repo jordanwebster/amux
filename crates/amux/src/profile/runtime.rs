@@ -1000,27 +1000,12 @@ mod tests {
     async fn config_split_daemon_without_credentials_serves_locally() {
         tokio::time::timeout(Duration::from_secs(5), async {
             let root = tempdir().unwrap();
-            let config = options(root.path(), Listeners::Sockets).service_config();
-            let server_config = config.clone();
-            let server = tokio::spawn(async move {
-                crate::server::Server::builder()
-                    .config(server_config)
-                    .run()
-                    .await
-                    .unwrap();
-            });
-            let channel = loop {
-                match crate::client::connect_existing_client_service(&config).await {
-                    Ok(channel) => break channel,
-                    Err(_) => {
-                        assert!(
-                            !server.is_finished(),
-                            "daemon exited before serving clients"
-                        );
-                        tokio::task::yield_now().await;
-                    }
-                }
-            };
+            let runtime_options = options(root.path(), Listeners::Sockets);
+            let config = runtime_options.service_config();
+            let runtime = start(runtime_options).await.unwrap();
+            let channel = crate::client::connect_existing_client_service(&config)
+                .await
+                .unwrap();
             let client = Client::from_client_service_channel(channel, None);
             let dump = client
                 .debug_dump(crate::debug::DebugFormat::Json)
@@ -1029,12 +1014,15 @@ mod tests {
             let debug: serde_json::Value = serde_json::from_str(&dump).unwrap();
             assert_eq!(debug["has_cloud_credentials"], false);
             assert!(debug["config"].get("enable_cloud_mode").is_none());
-            client.start_qr_pairing().await.unwrap();
+
+            crate::installation::ProfileAdmin::new(runtime.services.client.clone())
+                .start_qr_pairing()
+                .await
+                .unwrap();
             println!(
-                "Credential-free daemon serves local calls and can prepare a pairing QR:\n{dump}"
+                "Credential-free profile serves local calls and can prepare a pairing QR:\n{dump}"
             );
-            client.shutdown().await.unwrap();
-            server.await.unwrap();
+            runtime.stop(ShutdownReason::UserRequested).await;
         })
         .await
         .expect("local daemon test timed out");

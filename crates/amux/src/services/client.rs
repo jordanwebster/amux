@@ -2,6 +2,7 @@
 //!
 //! This module holds the state transitions behind the ClientService gRPC shim.
 
+mod admin;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -9,6 +10,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use admin::ProfileAdmin;
 use chrono::Utc;
 use futures_util::{Stream, StreamExt, stream};
 use tokio::sync::{RwLock, mpsc, oneshot};
@@ -1262,236 +1264,6 @@ impl wire::client_service_server::ClientService for ClientService {
         }))
     }
 
-    async fn start_pairing(
-        &self,
-        request: tonic::Request<wire::StartPairingRequest>,
-    ) -> TonicResult<wire::StartPairingResponse> {
-        let _operation = self.pairing_trust.trust_commit_lock.lock().await;
-        self.pairing_trust
-            .trust_commit_lock
-            .check()
-            .map_err(protocol_status)?;
-        require_local_admin_client(&request)?;
-        let request = request.into_inner();
-        let mode = wire::start_pairing_request::Mode::try_from(request.mode).map_err(|_| {
-            tonic::Status::invalid_argument(format!(
-                "invalid StartPairingRequest mode: {}",
-                request.mode
-            ))
-        })?;
-        if request.demo.is_some() && mode != wire::start_pairing_request::Mode::Pin {
-            return Err(tonic::Status::invalid_argument(
-                "demo pairing requires PIN mode",
-            ));
-        }
-        let (name, tcp_port, cloud_url) = {
-            let state = self.server_state.read().await;
-            (
-                state.config.host_name.clone(),
-                state.config.tcp_port,
-                state.config.cloud_url.clone(),
-            )
-        };
-        if name.len() > MAX_PAIRING_NAME_BYTES {
-            return Err(tonic::Status::invalid_argument(
-                "host_name is too long for pairing",
-            ));
-        }
-        if request.require_lan_direct && tcp_port.is_none() {
-            return Err(tonic::Status::failed_precondition(
-                "set `tcp_port` in your config, or use cloud / SSH pairing",
-            ));
-        }
-        let (method, ttl, secret) = if let Some(demo) = request.demo {
-            if demo.ttl_seconds == 0 || demo.ttl_seconds > DEMO_PAIR_MODE_MAX_TTL.as_secs() {
-                return Err(tonic::Status::invalid_argument(format!(
-                    "demo pairing ttl must be between 1 second and {} days",
-                    DEMO_PAIR_MODE_MAX_TTL.as_secs() / 86_400
-                )));
-            }
-            let ttl = std::time::Duration::from_secs(demo.ttl_seconds);
-            self.pair_mode
-                .start_demo_pin(demo.pin.clone(), ttl)
-                .map_err(|error| match error {
-                    PairModeError::InvalidPinFormat => {
-                        tonic::Status::invalid_argument("PIN must be six decimal digits")
-                    }
-                    other => pair_mode_admin_status(other),
-                })
-                .inspect_err(|error| audit::pairing_failure("demo", error))?;
-            tracing::warn!(
-                ttl_seconds = demo.ttl_seconds,
-                "demo pairing active: a reusable fixed PIN pairs any device that presents it"
-            );
-            (
-                "demo",
-                ttl,
-                wire::start_pairing_response::Secret::Pin(demo.pin),
-            )
-        } else {
-            let method = pairing_mode_name(mode);
-            let secret = start_pairing_secret(&self.pair_mode, mode).inspect_err(|error| {
-                audit::pairing_failure(method, error);
-            })?;
-            (method, PAIR_MODE_TTL, secret)
-        };
-        audit::pairing_start(method);
-        Ok(tonic::Response::new(wire::StartPairingResponse {
-            identity: Some(wire::PairingIdentity {
-                host_id: self.local_agents.host_id().as_bytes().to_vec(),
-                pubkey: self.pairing_trust.local_pubkey.clone(),
-                name,
-            }),
-            ttl_seconds: ttl.as_secs(),
-            tcp_port: tcp_port.map(u32::from),
-            cloud_url,
-            secret: Some(secret),
-        }))
-    }
-
-    async fn get_pairing_status(
-        &self,
-        request: tonic::Request<wire::GetPairingStatusRequest>,
-    ) -> TonicResult<wire::GetPairingStatusResponse> {
-        require_local_admin_client(&request)?;
-        Ok(tonic::Response::new(wire::GetPairingStatusResponse {
-            active: self.pair_mode.is_active(),
-        }))
-    }
-
-    async fn cancel_pairing(
-        &self,
-        request: tonic::Request<wire::CancelPairingRequest>,
-    ) -> TonicResult<wire::CancelPairingResponse> {
-        let _operation = self.pairing_trust.trust_commit_lock.lock().await;
-        self.pairing_trust
-            .trust_commit_lock
-            .check()
-            .map_err(protocol_status)?;
-        require_local_admin_client(&request)?;
-        if self.pair_mode.cancel() {
-            audit::pairing_cancel("admin");
-        }
-        Ok(tonic::Response::new(wire::CancelPairingResponse {}))
-    }
-
-    async fn pair_peer(
-        &self,
-        request: tonic::Request<wire::PairPeerRequest>,
-    ) -> TonicResult<wire::PairPeerResponse> {
-        require_local_admin_client(&request)?;
-        let trust = &self.pairing_trust;
-        let request = request.into_inner();
-        let peer = request
-            .peer
-            .ok_or_else(|| tonic::Status::invalid_argument("PairPeerRequest.peer is required"))?;
-        let (host_id, pubkey, name) = ssh_pairing_identity_from_wire(peer)?;
-        if host_id == self.local_agents.host_id() || pubkey == trust.local_pubkey {
-            return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
-        }
-        let reachability = pair_peer_reachability_from_wire(request.reachability)?;
-        let link_reachability = reachability.clone();
-        let method = pair_peer_audit_method(&link_reachability);
-
-        audit::pairing_start(method);
-        commit_peer_trust(
-            PeerTrustCommitContext::new(
-                trust.trust_store.clone(),
-                trust.trust_commit_lock.clone(),
-                self.remote_agent_connections.clone(),
-                trust.data_dir.clone(),
-            ),
-            PeerTrustUpdate::new(host_id, pubkey, name, reachability),
-        )
-        .await
-        .inspect_err(|error| {
-            audit::pairing_failure(method, error);
-        })?;
-        audit::pairing_success(method, host_id);
-        self.publish_host_status_update(host_id).await;
-        if let Some(reachability) = link_reachability {
-            self.reachability_links
-                .spawn_pair_time_link(host_id, reachability);
-        }
-        Ok(tonic::Response::new(wire::PairPeerResponse {}))
-    }
-
-    async fn pair_pin_cloud_peer(
-        &self,
-        request: tonic::Request<wire::PairPinCloudPeerRequest>,
-    ) -> TonicResult<wire::PairPinCloudPeerResponse> {
-        require_local_admin_client(&request)?;
-        let request = request.into_inner();
-        let peer_host_id = uuid_from_bytes("PairPinCloudPeerRequest.host_id", &request.host_id)?;
-        let peer = self
-            .pair_cloud_peer_with_secret(peer_host_id, request.pin.as_bytes(), "cloud_pin")
-            .await?;
-        Ok(tonic::Response::new(wire::PairPinCloudPeerResponse {
-            peer: Some(peer),
-        }))
-    }
-
-    async fn pair_qr_cloud_peer(
-        &self,
-        request: tonic::Request<wire::PairQrCloudPeerRequest>,
-    ) -> TonicResult<wire::PairQrCloudPeerResponse> {
-        require_local_admin_client(&request)?;
-        let request = request.into_inner();
-        let peer_host_id = uuid_from_bytes("PairQrCloudPeerRequest.host_id", &request.host_id)?;
-        validate_pairing_qr_secret("PairQrCloudPeerRequest.secret", &request.secret)?;
-        let peer = self
-            .pair_cloud_peer_with_secret(peer_host_id, &request.secret, "cloud_qr")
-            .await?;
-        Ok(tonic::Response::new(wire::PairQrCloudPeerResponse {
-            peer: Some(peer),
-        }))
-    }
-
-    async fn list_peers(
-        &self,
-        request: tonic::Request<wire::ListPeersRequest>,
-    ) -> TonicResult<wire::ListPeersResponse> {
-        require_local_admin_client(&request)?;
-        let peers = self
-            .peer_entries()?
-            .into_iter()
-            .map(|(host_id, entry)| peer_entry_to_wire(host_id, &entry))
-            .collect();
-        Ok(tonic::Response::new(wire::ListPeersResponse { peers }))
-    }
-
-    async fn get_peer(
-        &self,
-        request: tonic::Request<wire::GetPeerRequest>,
-    ) -> TonicResult<wire::GetPeerResponse> {
-        require_local_admin_client(&request)?;
-        let request = request.into_inner();
-        let peer = request
-            .peer
-            .ok_or_else(|| tonic::Status::invalid_argument("GetPeerRequest.peer is required"))?;
-        let (host_id, entry) = self.peer_entry(peer)?;
-        Ok(tonic::Response::new(wire::GetPeerResponse {
-            peer: Some(peer_entry_to_wire(host_id, &entry)),
-        }))
-    }
-
-    async fn unpair(
-        &self,
-        request: tonic::Request<wire::UnpairRequest>,
-    ) -> TonicResult<wire::UnpairResponse> {
-        require_local_admin_client(&request)?;
-        let caller = audit_caller(&request);
-        audit::client_service_disruptive_call("ClientService.Unpair", &caller, None);
-        let request = request.into_inner();
-        let peer = request
-            .peer
-            .ok_or_else(|| tonic::Status::invalid_argument("UnpairRequest.peer is required"))?;
-        let (host_id, entry) = self.unpair_peer(peer, request.reason).await?;
-        Ok(tonic::Response::new(wire::UnpairResponse {
-            removed_peer: Some(peer_entry_to_wire(host_id, &entry)),
-        }))
-    }
-
     async fn handle_hook(
         &self,
         request: tonic::Request<wire::HandleHookRequest>,
@@ -1779,20 +1551,6 @@ fn validate_ssh_target(target: &str) -> Result<(), tonic::Status> {
         ));
     }
     Ok(())
-}
-
-fn require_local_admin_client<T>(request: &tonic::Request<T>) -> Result<(), tonic::Status> {
-    match request.extensions().get::<BoxedGrpcConnectInfo>() {
-        Some(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        }) => Ok(()),
-        Some(_) => Err(tonic::Status::permission_denied(
-            "local admin RPC is only available to local clients",
-        )),
-        None => Err(tonic::Status::failed_precondition(
-            "local admin RPC requires local connection metadata",
-        )),
-    }
 }
 
 fn audit_caller<T>(request: &tonic::Request<T>) -> String {
@@ -5475,11 +5233,8 @@ mod tests {
             });
             request
         };
-        let start = |request| {
-            <ClientService as wire::client_service_server::ClientService>::start_pairing(
-                &service, request,
-            )
-        };
+        let admin = ProfileAdmin::new(service.clone());
+        let start = |request| admin.rpc_start_pairing(request);
 
         let error = start(request(wire::start_pairing_request::Mode::Qr, "123456", 60))
             .await
@@ -5534,13 +5289,10 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let response =
-            <ClientService as wire::client_service_server::ClientService>::start_pairing(
-                &service,
-                pin_request,
-            )
-            .await
-            .unwrap()
-            .into_inner();
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), pin_request)
+                .await
+                .unwrap()
+                .into_inner();
 
         let identity = response.identity.as_ref().unwrap();
         assert_eq!(identity.host_id, local.host_id.as_bytes().to_vec());
@@ -5558,14 +5310,13 @@ mod tests {
             .insert(BoxedGrpcConnectInfo {
                 auth: BoxedGrpcAuth::LocalTrusted,
             });
-        let status =
-            <ClientService as wire::client_service_server::ClientService>::get_pairing_status(
-                &service,
-                status_request,
-            )
-            .await
-            .unwrap()
-            .into_inner();
+        let status = ProfileAdmin::rpc_get_pairing_status(
+            &ProfileAdmin::new(service.clone()),
+            status_request,
+        )
+        .await
+        .unwrap()
+        .into_inner();
         assert!(status.active);
 
         let mut duplicate_request = tonic::Request::new(wire::StartPairingRequest {
@@ -5579,12 +5330,9 @@ mod tests {
                 auth: BoxedGrpcAuth::LocalTrusted,
             });
         let duplicate_error =
-            <ClientService as wire::client_service_server::ClientService>::start_pairing(
-                &service,
-                duplicate_request,
-            )
-            .await
-            .unwrap_err();
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), duplicate_request)
+                .await
+                .unwrap_err();
         assert_eq!(duplicate_error.code(), tonic::Code::FailedPrecondition);
 
         let mut cancel_request = tonic::Request::new(wire::CancelPairingRequest {});
@@ -5593,12 +5341,9 @@ mod tests {
             .insert(BoxedGrpcConnectInfo {
                 auth: BoxedGrpcAuth::LocalTrusted,
             });
-        <ClientService as wire::client_service_server::ClientService>::cancel_pairing(
-            &service,
-            cancel_request,
-        )
-        .await
-        .unwrap();
+        ProfileAdmin::rpc_cancel_pairing(&ProfileAdmin::new(service.clone()), cancel_request)
+            .await
+            .unwrap();
         assert!(!service.pair_mode.is_active());
 
         let mut qr_request = tonic::Request::new(wire::StartPairingRequest {
@@ -5610,12 +5355,10 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let response =
-            <ClientService as wire::client_service_server::ClientService>::start_pairing(
-                &service, qr_request,
-            )
-            .await
-            .unwrap()
-            .into_inner();
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), qr_request)
+                .await
+                .unwrap()
+                .into_inner();
         let Some(wire::start_pairing_response::Secret::QrSecret(secret)) = response.secret else {
             panic!("expected QR secret");
         };
@@ -5639,11 +5382,10 @@ mod tests {
         qr_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        let error = <ClientService as wire::client_service_server::ClientService>::start_pairing(
-            &service, qr_request,
-        )
-        .await
-        .unwrap_err();
+        let error =
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), qr_request)
+                .await
+                .unwrap_err();
         assert_eq!(error.code(), tonic::Code::FailedPrecondition);
         assert!(error.message().contains("tcp_port"));
         assert!(!service.pair_mode.is_active());
@@ -5656,12 +5398,10 @@ mod tests {
         lan_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        let error = <ClientService as wire::client_service_server::ClientService>::start_pairing(
-            &service,
-            lan_request,
-        )
-        .await
-        .unwrap_err();
+        let error =
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), lan_request)
+                .await
+                .unwrap_err();
         assert_eq!(error.code(), tonic::Code::FailedPrecondition);
         assert!(!service.pair_mode.is_active());
 
@@ -5680,12 +5420,10 @@ mod tests {
             .insert(BoxedGrpcConnectInfo {
                 auth: BoxedGrpcAuth::LocalTrusted,
             });
-        let error = <ClientService as wire::client_service_server::ClientService>::start_pairing(
-            &service,
-            bad_name_request,
-        )
-        .await
-        .unwrap_err();
+        let error =
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), bad_name_request)
+                .await
+                .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert!(!service.pair_mode.is_active());
 
@@ -5699,180 +5437,12 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let response =
-            <ClientService as wire::client_service_server::ClientService>::start_pairing(
-                &service,
-                lan_request,
-            )
-            .await
-            .unwrap()
-            .into_inner();
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), lan_request)
+                .await
+                .unwrap()
+                .into_inner();
         assert_eq!(response.tcp_port, Some(4242));
         assert!(service.pair_mode.is_active());
-    }
-
-    #[tokio::test]
-    async fn tonic_pairing_admin_rpcs_reject_paired_remote_callers() {
-        let data_dir = TempDir::new().unwrap();
-        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let remote = Uuid::from_u128(2);
-        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        let service =
-            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
-
-        let mut start_request = tonic::Request::new(wire::StartPairingRequest {
-            mode: wire::start_pairing_request::Mode::Pin as i32,
-            require_lan_direct: false,
-            demo: None,
-        });
-        start_request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
-        });
-        let error = <ClientService as wire::client_service_server::ClientService>::start_pairing(
-            &service,
-            start_request,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-
-        let mut status_request = tonic::Request::new(wire::GetPairingStatusRequest {});
-        status_request
-            .extensions_mut()
-            .insert(BoxedGrpcConnectInfo {
-                auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
-            });
-        let error =
-            <ClientService as wire::client_service_server::ClientService>::get_pairing_status(
-                &service,
-                status_request,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-
-        let mut cancel_request = tonic::Request::new(wire::CancelPairingRequest {});
-        cancel_request
-            .extensions_mut()
-            .insert(BoxedGrpcConnectInfo {
-                auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
-            });
-        let error = <ClientService as wire::client_service_server::ClientService>::cancel_pairing(
-            &service,
-            cancel_request,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-
-        let mut direct_request = tonic::Request::new(wire::PairPeerRequest {
-            peer: Some(wire::PairingIdentity {
-                host_id: Uuid::from_u128(2).as_bytes().to_vec(),
-                pubkey: vec![7; 32],
-                name: "remote".to_string(),
-            }),
-            reachability: Some(wire::pair_peer_request::Reachability::DirectTcpAddr(
-                "127.0.0.1:4242".to_string(),
-            )),
-        });
-        direct_request
-            .extensions_mut()
-            .insert(BoxedGrpcConnectInfo {
-                auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
-            });
-        let error = <ClientService as wire::client_service_server::ClientService>::pair_peer(
-            &service,
-            direct_request,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-
-        let mut cloud_request = tonic::Request::new(wire::PairPinCloudPeerRequest {
-            host_id: Uuid::from_u128(2).as_bytes().to_vec(),
-            pin: "123456".to_string(),
-        });
-        cloud_request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
-        });
-        let error =
-            <ClientService as wire::client_service_server::ClientService>::pair_pin_cloud_peer(
-                &service,
-                cloud_request,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-
-        let mut qr_cloud_request = tonic::Request::new(wire::PairQrCloudPeerRequest {
-            host_id: Uuid::from_u128(2).as_bytes().to_vec(),
-            secret: vec![8; 32],
-        });
-        qr_cloud_request
-            .extensions_mut()
-            .insert(BoxedGrpcConnectInfo {
-                auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
-            });
-        let error =
-            <ClientService as wire::client_service_server::ClientService>::pair_qr_cloud_peer(
-                &service,
-                qr_cloud_request,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-
-        let mut list_peers_request = tonic::Request::new(wire::ListPeersRequest {});
-        list_peers_request
-            .extensions_mut()
-            .insert(BoxedGrpcConnectInfo {
-                auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
-            });
-        let error = <ClientService as wire::client_service_server::ClientService>::list_peers(
-            &service,
-            list_peers_request,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-
-        let peer_ref = wire::PeerRef {
-            identifier: Some(wire::peer_ref::Identifier::HostId(
-                remote.as_bytes().to_vec(),
-            )),
-        };
-        let mut get_peer_request = tonic::Request::new(wire::GetPeerRequest {
-            peer: Some(peer_ref.clone()),
-        });
-        get_peer_request
-            .extensions_mut()
-            .insert(BoxedGrpcConnectInfo {
-                auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
-            });
-        let error = <ClientService as wire::client_service_server::ClientService>::get_peer(
-            &service,
-            get_peer_request,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-
-        let mut unpair_request = tonic::Request::new(wire::UnpairRequest {
-            peer: Some(peer_ref),
-            reason: "test".to_string(),
-        });
-        unpair_request
-            .extensions_mut()
-            .insert(BoxedGrpcConnectInfo {
-                auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
-            });
-        let error = <ClientService as wire::client_service_server::ClientService>::unpair(
-            &service,
-            unpair_request,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-        assert!(!service.pair_mode.is_active());
     }
 
     #[tokio::test]
@@ -5892,11 +5462,9 @@ mod tests {
         });
 
         let error =
-            <ClientService as wire::client_service_server::ClientService>::pair_pin_cloud_peer(
-                &service, request,
-            )
-            .await
-            .unwrap_err();
+            ProfileAdmin::rpc_pair_pin_cloud_peer(&ProfileAdmin::new(service.clone()), request)
+                .await
+                .unwrap_err();
 
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert_eq!(error.message(), "SELF_PAIRING");
@@ -5919,11 +5487,9 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let error =
-            <ClientService as wire::client_service_server::ClientService>::pair_qr_cloud_peer(
-                &service, request,
-            )
-            .await
-            .unwrap_err();
+            ProfileAdmin::rpc_pair_qr_cloud_peer(&ProfileAdmin::new(service.clone()), request)
+                .await
+                .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert_eq!(error.message(), "SELF_PAIRING");
         assert!(trust_store.read().unwrap().is_empty());
@@ -5945,12 +5511,9 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let error =
-            <ClientService as wire::client_service_server::ClientService>::pair_qr_cloud_peer(
-                &service,
-                short_secret,
-            )
-            .await
-            .unwrap_err();
+            ProfileAdmin::rpc_pair_qr_cloud_peer(&ProfileAdmin::new(service.clone()), short_secret)
+                .await
+                .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert_eq!(
             error.message(),
@@ -5980,7 +5543,7 @@ mod tests {
         request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        <ClientService as wire::client_service_server::ClientService>::pair_peer(&service, request)
+        ProfileAdmin::rpc_pair_peer(&ProfileAdmin::new(service.clone()), request)
             .await
             .unwrap();
 
@@ -6022,7 +5585,7 @@ mod tests {
         request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        <ClientService as wire::client_service_server::ClientService>::pair_peer(&service, request)
+        ProfileAdmin::rpc_pair_peer(&ProfileAdmin::new(service.clone()), request)
             .await
             .unwrap();
 
@@ -6106,8 +5669,8 @@ mod tests {
             vec![crate::routing::Route::Direct(link)]
         );
 
-        let response = <ClientService as wire::client_service_server::ClientService>::unpair(
-            &service,
+        let response = ProfileAdmin::rpc_unpair(
+            &ProfileAdmin::new(service.clone()),
             local_client_request(wire::UnpairRequest {
                 peer: Some(wire::PeerRef {
                     identifier: Some(wire::peer_ref::Identifier::Name("phone".to_string())),
@@ -6147,7 +5710,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_unpair_list_and_get_peers_are_local_admin() {
+    async fn profile_owner_can_unpair_list_and_get_peers() {
         let data_dir = TempDir::new().unwrap();
         let local = DeviceIdentity::for_test(Uuid::from_u128(1));
         let peer = DeviceIdentity::for_test(Uuid::from_u128(2));
@@ -6168,8 +5731,8 @@ mod tests {
         let service =
             client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
 
-        let peers = <ClientService as wire::client_service_server::ClientService>::list_peers(
-            &service,
+        let peers = ProfileAdmin::rpc_list_peers(
+            &ProfileAdmin::new(service.clone()),
             local_client_request(wire::ListPeersRequest {}),
         )
         .await
@@ -6179,20 +5742,19 @@ mod tests {
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].name, "phone");
 
-        let peer_response =
-            <ClientService as wire::client_service_server::ClientService>::get_peer(
-                &service,
-                local_client_request(wire::GetPeerRequest {
-                    peer: Some(wire::PeerRef {
-                        identifier: Some(wire::peer_ref::Identifier::HostId(
-                            peer.host_id.as_bytes().to_vec(),
-                        )),
-                    }),
+        let peer_response = ProfileAdmin::rpc_get_peer(
+            &ProfileAdmin::new(service.clone()),
+            local_client_request(wire::GetPeerRequest {
+                peer: Some(wire::PeerRef {
+                    identifier: Some(wire::peer_ref::Identifier::HostId(
+                        peer.host_id.as_bytes().to_vec(),
+                    )),
                 }),
-            )
-            .await
-            .unwrap()
-            .into_inner();
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
         assert_eq!(peer_response.peer.unwrap().name, "phone");
     }
 
@@ -6215,44 +5777,12 @@ mod tests {
         request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        let error = <ClientService as wire::client_service_server::ClientService>::pair_peer(
-            &service, request,
-        )
-        .await
-        .unwrap_err();
+        let error = ProfileAdmin::rpc_pair_peer(&ProfileAdmin::new(service.clone()), request)
+            .await
+            .unwrap_err();
 
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert_eq!(error.message(), "SELF_PAIRING");
-    }
-
-    #[tokio::test]
-    async fn tonic_pair_ssh_peer_rejects_paired_remote_callers() {
-        let data_dir = TempDir::new().unwrap();
-        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let peer = DeviceIdentity::for_test(Uuid::from_u128(2));
-        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        let service =
-            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
-        let mut request = tonic::Request::new(wire::PairPeerRequest {
-            peer: Some(wire::PairingIdentity {
-                host_id: peer.host_id.as_bytes().to_vec(),
-                pubkey: peer.public_key().to_vec(),
-                name: "remote".to_string(),
-            }),
-            reachability: None,
-        });
-        request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::TlsTrusted { peer: peer.host_id },
-        });
-
-        let error = <ClientService as wire::client_service_server::ClientService>::pair_peer(
-            &service, request,
-        )
-        .await
-        .unwrap_err();
-
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
-        assert!(trust_store.read().unwrap().is_empty());
     }
 
     #[tokio::test]

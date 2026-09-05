@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Move trust administration off profile connections.**
+The profile ClientService no longer serves pairing windows, peer inspection,
+pairing commits or revocation. Generated clients and descriptors drop those
+nine methods, and the local-connection metadata exception is removed.
+Installation owners use a separate in-process ProfileAdmin handle; the front
+door delegates to the same handlers. Pairing fixtures use owner handles while
+agent clients keep their ordinary service. A spec probes every removed trust
+method through a profile socket and a paired tunnel, requiring UNIMPLEMENTED
+and verifying the pairing window, trust, inventory and terminal session remain
+intact. Shutdown, suspend and resume remain available on ClientService.
+
 2026-09-05 — **Keep profile host inventory consistent for every caller.**
 ClientService lists and streams the local host and trusted peers, including
 trusted devices that are offline. Pairing candidates are available through

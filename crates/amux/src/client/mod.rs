@@ -4,7 +4,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
-use std::time::Duration;
 
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -49,14 +48,8 @@ mod method {
     pub(super) const CLIENT_SUBSCRIBE_SESSION_NAME: &str =
         "/amux.v1.ClientService/SubscribeSession";
     pub(super) const CLIENT_HANDLE_HOOK_NAME: &str = "/amux.v1.ClientService/HandleHook";
-    pub(super) const CLIENT_START_PAIRING_NAME: &str = "/amux.v1.ClientService/StartPairing";
-    pub(super) const CLIENT_PAIR_PIN_CLOUD_PEER_NAME: &str =
-        "/amux.v1.ClientService/PairPinCloudPeer";
-    pub(super) const CLIENT_PAIR_QR_CLOUD_PEER_NAME: &str =
-        "/amux.v1.ClientService/PairQrCloudPeer";
-    pub(super) const CLIENT_LIST_PEERS_NAME: &str = "/amux.v1.ClientService/ListPeers";
-    pub(super) const CLIENT_GET_PEER_NAME: &str = "/amux.v1.ClientService/GetPeer";
-    pub(super) const CLIENT_UNPAIR_NAME: &str = "/amux.v1.ClientService/Unpair";
+    #[cfg(test)]
+    pub(super) const PROFILE_START_PAIRING_NAME: &str = "/amux.v1.ProfileService/StartPairing";
 }
 
 pub use connect::ConnectError;
@@ -858,252 +851,6 @@ impl Client {
         })
     }
 
-    pub async fn start_pin_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Pin, false, None)
-            .await
-    }
-
-    pub async fn start_lan_pin_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Pin, true, None)
-            .await
-    }
-
-    pub async fn start_qr_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Qr, false, None)
-            .await
-    }
-
-    /// Start a reusable fixed-PIN pairing session that outlives this call.
-    pub async fn start_demo_pin_pairing(
-        &self,
-        pin: String,
-        ttl: Duration,
-    ) -> Result<PairingStart, ClientError> {
-        self.start_pairing(
-            wire::start_pairing_request::Mode::Pin,
-            false,
-            Some(wire::DemoPairing {
-                pin,
-                ttl_seconds: ttl.as_secs(),
-            }),
-        )
-        .await
-    }
-
-    async fn start_pairing(
-        &self,
-        mode: wire::start_pairing_request::Mode,
-        require_lan_direct: bool,
-        demo: Option<wire::DemoPairing>,
-    ) -> Result<PairingStart, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .start_pairing(wire::StartPairingRequest {
-                mode: mode as i32,
-                require_lan_direct,
-                demo,
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        pairing_start_from_wire(method::CLIENT_START_PAIRING_NAME, response)
-    }
-
-    pub async fn cancel_pairing(&self) -> Result<(), ClientError> {
-        self.ensure_open()?;
-        self.inner
-            .lock()
-            .await
-            .cancel_pairing(wire::CancelPairingRequest {})
-            .await
-            .map_err(status_to_client_error)?;
-        Ok(())
-    }
-
-    pub async fn pairing_is_active(&self) -> Result<bool, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .get_pairing_status(wire::GetPairingStatusRequest {})
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        Ok(response.active)
-    }
-
-    pub async fn pair_ssh_peer(
-        &self,
-        peer: SshPairingPeer,
-        ssh_target: Option<String>,
-    ) -> Result<(), ClientError> {
-        let reachability = ssh_target.map(wire::pair_peer_request::Reachability::SshTarget);
-        self.pair_peer(peer, reachability).await
-    }
-
-    pub async fn pair_direct_peer(
-        &self,
-        peer: SshPairingPeer,
-        address: SocketAddr,
-    ) -> Result<(), ClientError> {
-        self.pair_peer(
-            peer,
-            Some(wire::pair_peer_request::Reachability::DirectTcpAddr(
-                address.to_string(),
-            )),
-        )
-        .await
-    }
-
-    pub async fn pair_pin_cloud_peer(
-        &self,
-        host_id: uuid::Uuid,
-        pin: String,
-    ) -> Result<SshPairingPeer, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .pair_pin_cloud_peer(wire::PairPinCloudPeerRequest {
-                host_id: host_id.as_bytes().to_vec(),
-                pin,
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let peer = response.peer.ok_or_else(|| ClientError::Decode {
-            method: method::CLIENT_PAIR_PIN_CLOUD_PEER_NAME,
-            message: "missing PairPinCloudPeerResponse.peer".to_string(),
-        })?;
-        let (host_id, pubkey, name) =
-            pairing_identity_from_wire(method::CLIENT_PAIR_PIN_CLOUD_PEER_NAME, peer)?;
-        Ok(SshPairingPeer {
-            host_id,
-            pubkey,
-            name,
-        })
-    }
-
-    pub async fn pair_qr_cloud_peer(
-        &self,
-        host_id: uuid::Uuid,
-        secret: Vec<u8>,
-    ) -> Result<SshPairingPeer, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .pair_qr_cloud_peer(wire::PairQrCloudPeerRequest {
-                host_id: host_id.as_bytes().to_vec(),
-                secret,
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let peer = response.peer.ok_or_else(|| ClientError::Decode {
-            method: method::CLIENT_PAIR_QR_CLOUD_PEER_NAME,
-            message: "missing PairQrCloudPeerResponse.peer".to_string(),
-        })?;
-        let (host_id, pubkey, name) =
-            pairing_identity_from_wire(method::CLIENT_PAIR_QR_CLOUD_PEER_NAME, peer)?;
-        Ok(SshPairingPeer {
-            host_id,
-            pubkey,
-            name,
-        })
-    }
-
-    pub async fn list_peers(&self) -> Result<Vec<PeerEntry>, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .list_peers(wire::ListPeersRequest {})
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        response
-            .peers
-            .into_iter()
-            .map(|peer| peer_entry_from_wire(method::CLIENT_LIST_PEERS_NAME, peer))
-            .collect()
-    }
-
-    pub async fn get_peer(
-        &self,
-        peer: impl Into<PeerIdentifier>,
-    ) -> Result<PeerEntry, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .get_peer(wire::GetPeerRequest {
-                peer: Some(peer_ref(peer.into())),
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let peer = response.peer.ok_or_else(|| ClientError::Decode {
-            method: method::CLIENT_GET_PEER_NAME,
-            message: "missing GetPeerResponse.peer".to_string(),
-        })?;
-        peer_entry_from_wire(method::CLIENT_GET_PEER_NAME, peer)
-    }
-
-    pub async fn unpair(
-        &self,
-        peer: impl Into<PeerIdentifier>,
-        reason: impl Into<String>,
-    ) -> Result<PeerEntry, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .unpair(wire::UnpairRequest {
-                peer: Some(peer_ref(peer.into())),
-                reason: reason.into(),
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let peer = response.removed_peer.ok_or_else(|| ClientError::Decode {
-            method: method::CLIENT_UNPAIR_NAME,
-            message: "missing UnpairResponse.removed_peer".to_string(),
-        })?;
-        peer_entry_from_wire(method::CLIENT_UNPAIR_NAME, peer)
-    }
-
-    async fn pair_peer(
-        &self,
-        peer: SshPairingPeer,
-        reachability: Option<wire::pair_peer_request::Reachability>,
-    ) -> Result<(), ClientError> {
-        self.ensure_open()?;
-        self.inner
-            .lock()
-            .await
-            .pair_peer(wire::PairPeerRequest {
-                peer: Some(wire::PairingIdentity {
-                    host_id: peer.host_id.as_bytes().to_vec(),
-                    pubkey: peer.pubkey,
-                    name: peer.name,
-                }),
-                reachability,
-            })
-            .await
-            .map_err(status_to_client_error)?;
-        Ok(())
-    }
-
     pub async fn debug_dump(&self, format: DebugFormat) -> Result<String, ClientError> {
         self.debug_dump_verbose(false, format).await
     }
@@ -1821,7 +1568,7 @@ mod tests {
     fn pairing_start_response_decodes_identity_transport_metadata_and_secret() {
         let host_id = Uuid::from_u128(42);
         let start = pairing_start_from_wire(
-            method::CLIENT_START_PAIRING_NAME,
+            method::PROFILE_START_PAIRING_NAME,
             wire::StartPairingResponse {
                 identity: Some(wire::PairingIdentity {
                     host_id: host_id.as_bytes().to_vec(),
@@ -1850,7 +1597,7 @@ mod tests {
     #[test]
     fn pairing_start_response_rejects_invalid_tcp_port() {
         let error = pairing_start_from_wire(
-            method::CLIENT_START_PAIRING_NAME,
+            method::PROFILE_START_PAIRING_NAME,
             wire::StartPairingResponse {
                 identity: Some(wire::PairingIdentity {
                     host_id: Uuid::from_u128(42).as_bytes().to_vec(),

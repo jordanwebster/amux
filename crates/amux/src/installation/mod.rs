@@ -15,6 +15,8 @@ pub mod rpc {
     };
 }
 
+pub use crate::services::client::ProfileAdmin;
+
 pub mod binding;
 mod credentials;
 mod operation;

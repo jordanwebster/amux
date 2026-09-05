@@ -1034,14 +1034,22 @@ impl Daemon {
         .await;
     }
 
-    /// Gets a local-admin client to this daemon's `ClientService`,
-    /// exactly what a local CLI gets over the Unix socket.
+    /// Connects to this daemon's ordinary agent and host service.
     pub(crate) async fn admin_client(&self) -> Client {
         let guard = self.runtime().await;
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         runtime.client()
+    }
+
+    pub(crate) async fn pairing_admin(&self) -> crate::installation::ProfileAdmin {
+        if let Some(owner) = &self.inner.installation {
+            return owner.installation_admin().await;
+        }
+        crate::installation::ProfileAdmin::new(
+            self.try_parts().await.expect("daemon is running").client,
+        )
     }
 
     async fn trusts_now(&self, other: &Daemon) -> bool {

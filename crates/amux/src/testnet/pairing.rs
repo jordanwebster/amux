@@ -1,9 +1,8 @@
-//! Pairing verbs: the real pairing flows, driven through each daemon's
-//! local-admin `ClientService` surface exactly as the CLI drives them.
+//! Pairing verbs: the real pairing flows and profile-owner administration.
 //!
 //! Responder verbs (`start_pairing`, `start_qr_pairing`, `cancel_pairing`)
-//! call the pairing admin RPCs. Initiator verbs run the real bootstrap
-//! flows: the one SPAKE2 protocol over direct TCP or a cloud-routed tunnel
+//! use the profile owner's in-process administration handle. Initiator verbs
+//! run the real bootstrap flows: the one SPAKE2 protocol over direct TCP or a cloud-routed tunnel
 //! (the secret typed as a PIN or scanned from a QR), and the SSH identity
 //! exchange (over an in-memory stream in place of a real `ssh` child).
 
@@ -59,7 +58,7 @@ pub struct QrPayload {
 }
 
 impl Daemon {
-    /// Responder: enters pair-mode via the local-admin `StartPairing` RPC
+    /// Responder: enters pair-mode via the `StartPairing` operation
     /// (PIN mode) and returns the generated PIN. Panics on rejection; use
     /// [`Self::try_start_pairing`] to observe the error.
     pub async fn start_pairing(&self) -> Pin {
@@ -68,10 +67,10 @@ impl Daemon {
             .unwrap_or_else(|error| panic!("'{}' failed to start pairing: {error}", self.name()))
     }
 
-    /// Responder: `StartPairing` in PIN mode, surfacing the RPC error (e.g.
+    /// Responder: `StartPairing` in PIN mode, surfacing the operation error (e.g.
     /// when pair-mode is already active).
     pub async fn try_start_pairing(&self) -> anyhow::Result<Pin> {
-        let start = self.admin_client().await.start_pin_pairing().await?;
+        let start = self.pairing_admin().await.start_pin_pairing().await?;
         match start.secret {
             PairingSecret::Pin(pin) => Ok(Pin(pin)),
             PairingSecret::QrSecret(_) => {
@@ -89,9 +88,9 @@ impl Daemon {
             .unwrap_or_else(|error| panic!("'{}' failed to start QR pairing: {error}", self.name()))
     }
 
-    /// Responder: `StartPairing` in QR mode, surfacing the RPC error.
+    /// Responder: `StartPairing` in QR mode, surfacing the operation error.
     pub async fn try_start_qr_pairing(&self) -> anyhow::Result<QrPayload> {
-        let start = self.admin_client().await.start_qr_pairing().await?;
+        let start = self.pairing_admin().await.start_qr_pairing().await?;
         match start.secret {
             PairingSecret::QrSecret(secret) => Ok(QrPayload {
                 host_id: start.identity.host_id,
@@ -101,7 +100,7 @@ impl Daemon {
         }
     }
 
-    /// Test seam for pair-mode TTL expiry: the real `StartPairing` RPC always
+    /// Test seam for pair-mode TTL expiry: the real `StartPairing` operation always
     /// uses the production ~5-minute TTL, so this starts PIN pair-mode
     /// directly on the daemon's `PairMode` with a short TTL. Everything else
     /// (the PIN attempt, status, expiry purge) runs the production code.
@@ -119,16 +118,16 @@ impl Daemon {
         Pin(pin)
     }
 
-    /// Responder: cancels pair-mode via the local-admin `CancelPairing` RPC.
+    /// Responder: cancels pair-mode via the `CancelPairing` operation.
     pub async fn cancel_pairing(&self) {
-        self.admin_client()
+        self.pairing_admin()
             .await
             .cancel_pairing()
             .await
             .unwrap_or_else(|error| panic!("'{}' failed to cancel pairing: {error}", self.name()));
     }
 
-    /// Pair-mode assertion via the `GetPairingStatus` RPC: pair-mode is (or
+    /// Pair-mode assertion via the `GetPairingStatus` operation: pair-mode is (or
     /// becomes) active.
     pub async fn pair_mode_active(&self) {
         let assertion = format!("pair-mode on '{}' is active", self.name());
@@ -140,7 +139,7 @@ impl Daemon {
         .await;
     }
 
-    /// Pair-mode assertion via the `GetPairingStatus` RPC: pair-mode ends
+    /// Pair-mode assertion via the `GetPairingStatus` operation: pair-mode ends
     /// (consumed, cancelled, attempt-capped, or expired).
     pub async fn pair_mode_ends(&self) {
         let assertion = format!("pair-mode on '{}' ends", self.name());
@@ -161,9 +160,9 @@ impl Daemon {
         }
     }
 
-    /// Revocation via the local-admin `Unpair` RPC.
+    /// Revocation via the `Unpair` operation.
     pub async fn unpair(&self, other: &Daemon) {
-        self.admin_client()
+        self.pairing_admin()
             .await
             .unpair(other.host_id(), "spec test revocation")
             .await
@@ -177,7 +176,7 @@ impl Daemon {
     }
 
     async fn pair_mode_active_now(&self) -> bool {
-        self.admin_client()
+        self.pairing_admin()
             .await
             .pairing_is_active()
             .await
@@ -196,7 +195,7 @@ pub struct PairAttempt<'a> {
 impl PairAttempt<'_> {
     /// PIN pairing over direct TCP: dial the responder's listener, run the
     /// real SPAKE2 exchange, and commit trust through the initiator's
-    /// local-admin `PairPeer` RPC.
+    /// `PairPeer` operation.
     pub async fn with_pin(self, pin: &str) -> anyhow::Result<()> {
         let addr = self.to.inner.tcp_addr.unwrap_or_else(|| {
             panic!(
@@ -204,7 +203,7 @@ impl PairAttempt<'_> {
                 self.to.name()
             )
         });
-        let client = self.from.admin_client().await;
+        let client = self.from.pairing_admin().await;
         pair_via_pin_direct_tcp(
             &self.from.inner.data_dir,
             self.from.name(),
@@ -216,23 +215,23 @@ impl PairAttempt<'_> {
         Ok(())
     }
 
-    /// PIN pairing through the cloud: the local-admin `PairPinCloudPeer` RPC
+    /// PIN pairing through the cloud: the `PairPinCloudPeer` operation
     /// runs SPAKE2 over a cloud-routed pairing tunnel to `other`.
     pub async fn with_cloud_pin(self, pin: &str) -> anyhow::Result<()> {
         self.from
-            .admin_client()
+            .pairing_admin()
             .await
             .pair_pin_cloud_peer(self.to.host_id(), pin.to_string())
             .await?;
         Ok(())
     }
 
-    /// QR pairing through the cloud: the local-admin `PairQrCloudPeer` RPC
+    /// QR pairing through the cloud: the `PairQrCloudPeer` operation
     /// feeds the QR's 256-bit secret into the same SPAKE2 stream the typed
     /// PIN uses, over a cloud-routed pairing tunnel.
     pub async fn with_qr(self, qr: &QrPayload) -> anyhow::Result<()> {
         self.from
-            .admin_client()
+            .pairing_admin()
             .await
             .pair_qr_cloud_peer(qr.host_id, qr.secret.clone())
             .await?;
@@ -242,11 +241,11 @@ impl PairAttempt<'_> {
     /// SSH pairing: runs the real identity exchange (initiator on `self`,
     /// `amux pair-recv` responder on `other`) over an in-memory stream
     /// standing in for the authenticated SSH stdio. Both sides commit via
-    /// their own local-admin `PairPeer` RPCs, exactly like the CLI flow.
+    /// their own `PairPeer` operations, exactly like the CLI flow.
     pub async fn over_ssh(self) -> anyhow::Result<()> {
         let (initiator_io, responder_io) = tokio::io::duplex(64 * 1024);
-        let initiator_client = self.from.admin_client().await;
-        let responder_client = self.to.admin_client().await;
+        let initiator_client = self.from.pairing_admin().await;
+        let responder_client = self.to.pairing_admin().await;
         let responder_data_dir = self.to.inner.data_dir.clone();
         let responder_name = self.to.name().to_string();
         let responder = tokio::spawn(async move {

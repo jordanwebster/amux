@@ -47,6 +47,16 @@ pub(crate) struct ProfileOwner {
 }
 
 impl ProfileOwner {
+    pub(crate) async fn installation_admin(&self) -> crate::installation::ProfileAdmin {
+        self.installation
+            .upgrade()
+            .expect("installation dropped")
+            .current()
+            .admin(self.id)
+            .await
+            .expect("profile is running")
+    }
+
     pub(crate) fn admin_client(&self) -> crate::installation::ProfileAdminClient {
         use crate::installation::{FrontDoor, FrontDoorClient, rpc};
         let owner = self.installation.upgrade().expect("installation dropped");

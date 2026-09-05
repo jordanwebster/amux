@@ -17,21 +17,11 @@ use super::Daemon;
 use super::assertions::{DEFAULT_TIMEOUT, eventually};
 use crate::agents::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 use crate::client::{Client, ClientError};
-use crate::protocol::ProtocolError;
 use crate::services::LocalAgentHost;
 use crate::{
     Agent, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
     DiffBase, DiffResponse, SendInputRequest, SendMessageRequest, SubscribeSessionEvent,
 };
-
-/// Asserts a routed local-admin RPC was rejected with permission-denied.
-fn assert_permission_denied(rpc: &str, result: Result<(), ClientError>) {
-    match result {
-        Err(ClientError::Protocol(ProtocolError::PermissionDenied { .. })) => {}
-        Err(other) => panic!("routed {rpc} failed with {other}, expected permission-denied"),
-        Ok(()) => panic!("routed {rpc} unexpectedly succeeded; a remote peer must not invoke it"),
-    }
-}
 
 impl Daemon {
     /// Hold every queue slot of an echo PTY until the returned permits drop.
@@ -1050,34 +1040,37 @@ impl Daemon {
         peer.cannot_see(self).await;
     }
 
-    /// Authority boundary (N-S-2): the local-admin trust RPCs `ListPeers`,
-    /// `GetPeer`, and `Unpair` are rejected with permission-denied when a
-    /// paired remote `peer` invokes them over the route, even though `peer` is
-    /// fully trusted for runtime ops. None of them mutate state — the gate
-    /// rejects before the handler body runs.
+    /// Pairing and trust administration are absent from a peer's ClientService.
     pub async fn rejects_remote_trust_admin_from(&self, peer: &Daemon) {
-        let client = peer.routed_admin_client_to(self).await;
-        assert_permission_denied("ListPeers", client.list_peers().await.map(|_| ()));
-        assert_permission_denied("GetPeer", client.get_peer(self.host_id()).await.map(|_| ()));
-        assert_permission_denied(
-            "Unpair",
-            client
-                .unpair(peer.host_id(), "spec authority probe")
-                .await
-                .map(|_| ()),
-        );
+        let parts = peer.try_parts().await.expect("peer is running");
+        let channel = parts
+            .connections
+            .channel_to(self.host_id())
+            .await
+            .expect("peer route");
+        assert_trust_admin_absent(channel, "peer tunnel").await;
+        peer.can_call(self).await;
     }
 
-    /// Positive control for [`Self::rejects_remote_trust_admin_from`]: the
-    /// same `ListPeers` RPC succeeds over this daemon's local Unix socket.
-    pub async fn allows_local_trust_admin(&self) {
-        self.admin_client()
+    /// The same trust methods are absent from the plain profile socket.
+    pub async fn rejects_trust_admin_on_socket(&self, socket_path: std::path::PathBuf) {
+        let config = crate::Config {
+            socket_path,
+            ..Default::default()
+        };
+        let channel = crate::client::connect_existing_client_service(&config)
+            .await
+            .expect("profile socket");
+        assert_trust_admin_absent(channel, "profile socket").await;
+    }
+
+    /// The installation owner can inspect trust in process.
+    pub async fn allows_owner_trust_admin(&self) {
+        self.pairing_admin()
             .await
             .list_peers()
             .await
-            .unwrap_or_else(|error| {
-                panic!("'{}' rejected a local ListPeers: {error}", self.name())
-            });
+            .expect("owner trust inventory");
     }
 
     /// Opens a `Client` over `peer`'s *routed* `ClientService` — a remote
@@ -1316,6 +1309,40 @@ impl EchoSession {
                 // Stream lifecycle markers carry no echo payload.
                 SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
             }
+        }
+    }
+}
+
+async fn assert_trust_admin_absent(channel: tonic::transport::Channel, boundary: &str) {
+    for service in ["ClientService", "ProfileService"] {
+        for method in [
+            "StartPairing",
+            "GetPairingStatus",
+            "CancelPairing",
+            "PairPeer",
+            "PairPinCloudPeer",
+            "PairQrCloudPeer",
+            "ListPeers",
+            "GetPeer",
+            "Unpair",
+        ] {
+            let path = format!("/amux.v1.{service}/{method}");
+            let mut grpc = tonic::client::Grpc::new(channel.clone());
+            grpc.ready().await.expect("profile channel ready");
+            let result: Result<tonic::Response<crate::protocol::wire::ListPeersResponse>, _> = grpc
+                .unary(
+                    tonic::Request::new(crate::protocol::wire::ListPeersRequest {}),
+                    path.parse().unwrap(),
+                    tonic_prost::ProstCodec::default(),
+                )
+                .await;
+            let status = result.expect_err("administration must not be served on ClientService");
+            assert_eq!(
+                status.code(),
+                tonic::Code::Unimplemented,
+                "{path}: {status}"
+            );
+            println!("{path}: UNIMPLEMENTED over {boundary}");
         }
     }
 }

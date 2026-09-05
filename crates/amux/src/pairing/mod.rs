@@ -28,7 +28,7 @@ pub trait PairingAdmin: Sync {
 }
 
 #[async_trait::async_trait]
-impl PairingAdmin for crate::Client {
+impl PairingAdmin for crate::installation::ProfileAdmin {
     async fn pair_ssh_peer(
         &self,
         peer: ssh::SshPairingPeer,

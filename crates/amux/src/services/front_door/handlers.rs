@@ -216,11 +216,11 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         self.operations
             .run(op, "start_pairing", encoded, async move {
                 let admin = installation
-                    .admin_service(profile_id(&request.profile_id)?)
+                    .admin(profile_id(&request.profile_id)?)
                     .await
                     .map_err(installation_error)?;
                 admin
-                    .start_pairing(local(
+                    .rpc_start_pairing(local(
                         request
                             .pairing
                             .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
@@ -242,11 +242,11 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         self.operations
             .run(op, "cancel_pairing", encoded, async move {
                 let admin = installation
-                    .admin_service(profile_id(&request.profile_id)?)
+                    .admin(profile_id(&request.profile_id)?)
                     .await
                     .map_err(installation_error)?;
                 admin
-                    .cancel_pairing(local(wire::CancelPairingRequest {}))
+                    .rpc_cancel_pairing(local(wire::CancelPairingRequest {}))
                     .await
                     .map(Response::into_inner)
             })
@@ -264,11 +264,11 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         self.operations
             .run(op, "pair_peer", encoded, async move {
                 let admin = installation
-                    .admin_service(profile_id(&request.profile_id)?)
+                    .admin(profile_id(&request.profile_id)?)
                     .await
                     .map_err(installation_error)?;
                 admin
-                    .pair_peer(local(
+                    .rpc_pair_peer(local(
                         request
                             .pairing
                             .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
@@ -290,11 +290,11 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         self.operations
             .run(op, "pair_pin_cloud_peer", encoded, async move {
                 let admin = installation
-                    .admin_service(profile_id(&request.profile_id)?)
+                    .admin(profile_id(&request.profile_id)?)
                     .await
                     .map_err(installation_error)?;
                 admin
-                    .pair_pin_cloud_peer(local(
+                    .rpc_pair_pin_cloud_peer(local(
                         request
                             .pairing
                             .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
@@ -316,11 +316,11 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         self.operations
             .run(op, "pair_qr_cloud_peer", encoded, async move {
                 let admin = installation
-                    .admin_service(profile_id(&request.profile_id)?)
+                    .admin(profile_id(&request.profile_id)?)
                     .await
                     .map_err(installation_error)?;
                 admin
-                    .pair_qr_cloud_peer(local(
+                    .rpc_pair_qr_cloud_peer(local(
                         request
                             .pairing
                             .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
@@ -342,11 +342,11 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         self.operations
             .run(op, "unpair", encoded, async move {
                 let admin = installation
-                    .admin_service(profile_id(&request.profile_id)?)
+                    .admin(profile_id(&request.profile_id)?)
                     .await
                     .map_err(installation_error)?;
                 admin
-                    .unpair(local(wire::UnpairRequest {
+                    .rpc_unpair(local(wire::UnpairRequest {
                         peer: request.peer,
                         reason: request.reason,
                     }))
@@ -363,11 +363,11 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         let request = request.into_inner();
         let admin = self
             .installation
-            .admin_service(profile_id(&request.profile_id)?)
+            .admin(profile_id(&request.profile_id)?)
             .await
             .map_err(installation_error)?;
         admin
-            .get_pairing_status(local(wire::GetPairingStatusRequest {}))
+            .rpc_get_pairing_status(local(wire::GetPairingStatusRequest {}))
             .await
     }
     async fn list_peers(
@@ -377,10 +377,10 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         let request = request.into_inner();
         let admin = self
             .installation
-            .admin_service(profile_id(&request.profile_id)?)
+            .admin(profile_id(&request.profile_id)?)
             .await
             .map_err(installation_error)?;
-        admin.list_peers(local(wire::ListPeersRequest {})).await
+        admin.rpc_list_peers(local(wire::ListPeersRequest {})).await
     }
     async fn get_peer(
         &self,
@@ -389,11 +389,11 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         let request = request.into_inner();
         let admin = self
             .installation
-            .admin_service(profile_id(&request.profile_id)?)
+            .admin(profile_id(&request.profile_id)?)
             .await
             .map_err(installation_error)?;
         admin
-            .get_peer(local(wire::GetPeerRequest { peer: request.peer }))
+            .rpc_get_peer(local(wire::GetPeerRequest { peer: request.peer }))
             .await
     }
     async fn debug_profile(

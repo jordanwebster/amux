@@ -1,11 +1,9 @@
 //! Chapter 5 — Remote sessions & authority.
 //!
-//! What a paired peer can do once trust exists: list another daemon's agents,
-//! attach to one and round-trip terminal I/O across the route, hold that
-//! session open through unrelated routing churn, and wield full runtime
-//! authority — while the daemon-local trust-administration RPCs stay reserved
-//! for local callers. (docs/PROTOCOL.md "Tunnels: who am I calling";
-//! docs/ARCHITECTURE.md "Service surface map")
+//! Paired peers list agents, attach and round-trip terminal I/O across routes,
+//! and keep sessions open through unrelated routing churn. Pairing and trust
+//! administration belong to the installation owner and are absent from both
+//! profile sockets and peer tunnels.
 
 use amux::testnet::{TestNet, Via};
 
@@ -106,24 +104,42 @@ async fn a_paired_peer_can_shut_the_daemon_down() {
     desktop.shutdown_via(&laptop).await;
 }
 
-/// A paired remote peer cannot reach the daemon-local trust-administration
-/// RPCs (N-S-2): `ListPeers`, `GetPeer`, and `Unpair` are permission-denied
-/// over remote mTLS, even though the same caller wields full runtime
-/// authority. The identical `ListPeers` succeeds over the local Unix socket.
+/// A paired peer can use agent calls, but trust administration is absent
+/// from its gRPC service. The installation owner still administers trust.
 #[tokio::test]
-async fn local_admin_rpcs_are_refused_to_remote_peers() {
+async fn trust_administration_is_absent_from_profile_sockets_and_peer_tunnels() {
     let net = TestNet::builder()
+        .installation("desktop")
+        .persistent()
+        .profile("work")
         .daemon("laptop")
-        .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop/work", Via::Tcp)
         .start()
         .await;
-    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+    let desktop = net.installation("desktop").profile("work");
+    let laptop = net.daemon("laptop");
 
-    laptop.can_call(&desktop).await; // the route is up; runtime calls work
-
-    // The laptop is the dialer, so it holds the route into the desktop and
-    // plays the remote caller against the desktop's admin surface.
+    desktop.start_pairing().await;
+    let agent = desktop.spawn_echo_agent("worker").await;
+    laptop.can_call(&desktop).await;
     desktop.rejects_remote_trust_admin_from(&laptop).await;
-    desktop.allows_local_trust_admin().await;
+    desktop
+        .rejects_trust_admin_on_socket(desktop.paths().socket_path)
+        .await;
+    desktop.pair_mode_active().await;
+    desktop.trusts(&laptop).await;
+    desktop.allows_owner_trust_admin().await;
+    assert!(
+        desktop
+            .socket_client()
+            .await
+            .list_agents()
+            .await
+            .unwrap()
+            .iter()
+            .any(|row| row.id == agent.id)
+    );
+    let mut session = laptop.attach(&desktop, "worker").await;
+    session.send("still-serving").await;
+    session.expect_output("still-serving").await;
 }

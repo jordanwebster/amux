@@ -979,7 +979,7 @@ mod tests {
     use crate::transport::in_process_incoming;
     use crate::trust::{Reachability, TrustEntry};
     use crate::user_state::ShutdownRequest;
-    use crate::{Client, HostId, SessionCloseReason, SubscribeSessionEvent};
+    use crate::{HostId, SessionCloseReason, SubscribeSessionEvent};
 
     fn test_state(host_id: Uuid) -> Arc<RwLock<ServerState>> {
         let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
@@ -1499,15 +1499,13 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         responder.serve_external_tcp_listener(listener);
-        let (channel, server_task) = initiator.open_in_process_client_channel();
-        let client = Client::from_client_service_channel(channel, None);
 
         let paired_peer = crate::pair_via_pin_direct_tcp(
             initiator_dir.path(),
             "initiator",
             addr,
             "123456",
-            &client,
+            &crate::installation::ProfileAdmin::new(initiator.client.clone()),
         )
         .await
         .unwrap();
@@ -1535,8 +1533,6 @@ mod tests {
         }
 
         wait_for_host_entry(&initiator.routing, responder_identity.host_id).await;
-
-        server_task.abort();
     }
 
     #[tokio::test]
@@ -2017,9 +2013,7 @@ mod tests {
             .pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
-        let (client_channel, client_server_task) = host_a.open_in_process_client_channel();
-        let client = Client::from_client_service_channel(client_channel, None);
-        let paired_peer = client
+        let paired_peer = crate::installation::ProfileAdmin::new(host_a.client.clone())
             .pair_pin_cloud_peer(identity_b.host_id, "123456".to_string())
             .await
             .unwrap();
@@ -2041,7 +2035,6 @@ mod tests {
         assert_eq!(trust_b_entry.name, "local");
         assert_eq!(trust_b_entry.reachabilities, vec![Reachability::Cloud]);
 
-        client_server_task.abort();
         task_a.abort();
         task_b.abort();
         server_task.abort();
@@ -2129,13 +2122,11 @@ mod tests {
             .pair_mode
             .start_qr_secret_for_duration(secret, Duration::from_secs(60))
             .unwrap();
-        let (client_channel, client_server_task) = host_a.open_in_process_client_channel();
-        let client = Client::from_client_service_channel(client_channel, None);
-        client
+        crate::installation::ProfileAdmin::new(host_a.client.clone())
             .pair_qr_cloud_peer(identity_b.host_id, vec![42; 32])
             .await
             .expect_err("a wrong QR secret must fail without consuming the real one");
-        let paired_peer = client
+        let paired_peer = crate::installation::ProfileAdmin::new(host_a.client.clone())
             .pair_qr_cloud_peer(identity_b.host_id, secret.to_vec())
             .await
             .unwrap();
@@ -2157,7 +2148,6 @@ mod tests {
         assert_eq!(trust_b_entry.name, "local");
         assert_eq!(trust_b_entry.reachabilities, vec![Reachability::Cloud]);
 
-        client_server_task.abort();
         task_a.abort();
         task_b.abort();
         server_task.abort();
