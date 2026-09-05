@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Exercise account isolation through production installations.**
+TestNet now builds named installations and profiles with real identity-server
+binding, per-account relay authentication, profile sockets and production runtime
+ownership. Profile handles reuse the daemon assertion surface; persistent fixtures
+reopen the same root and expose lifecycle operations and ordered watches.
+The isolation chapter proves key rejection across profiles, separate tenant
+presence, claims, routes, candidates and tunnel frames, independent pairing
+secrets and attempt budgets, exclusive roots and sockets, and continued service
+after one profile fails to start. Same-tenant frame probes and explicit LAN
+pairing provide positive controls. Cloud fixtures override only the relay
+transport; credential validation and connector lifecycle remain production paths.
+
 2026-09-05 — **Bind profiles atomically to stable cloud accounts.**
 Login validates identity-server userinfo, preserves explicit targets, adopts the
 sole pristine profile or creates a new one, and refuses account reassignment.

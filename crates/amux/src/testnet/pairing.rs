@@ -107,7 +107,7 @@ impl Daemon {
     /// (the PIN attempt, status, expiry purge) runs the production code.
     pub async fn start_pairing_with_ttl(&self, ttl: Duration) -> Pin {
         let pin = format!("{:06}", uuid::Uuid::new_v4().as_u128() % 1_000_000);
-        let guard = self.inner.runtime.lock().await;
+        let guard = self.runtime().await;
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));

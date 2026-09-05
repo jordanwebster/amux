@@ -398,7 +398,7 @@ fn unique_token(kind: &str, sub: &str) -> String {
     )
 }
 
-fn relay_token(label: &str) -> String {
+pub(crate) fn relay_token(label: &str) -> String {
     format!("fixture-relay-{label}")
 }
 

@@ -135,6 +135,8 @@ pub(super) struct Inner {
     credentials: CredentialSource,
     identity_http: reqwest::Client,
     binding: AsyncMutex<VecDeque<binding::PendingLogin>>,
+    #[cfg(testnet)]
+    fixtures: Option<RuntimeFixtureFactory>,
 }
 
 struct State {
@@ -158,7 +160,7 @@ struct Entry {
 }
 struct Slot {
     operations: Arc<OperationGate>,
-    runtime: AsyncMutex<Option<ProfileRuntime>>,
+    runtime: Arc<AsyncMutex<Option<ProfileRuntime>>>,
     credentials: Mutex<Option<Arc<ProfileCredentialStore>>>,
     revoked_at: std::sync::atomic::AtomicU64,
 }
@@ -222,6 +224,18 @@ impl State {
 
 impl Installation {
     pub async fn open(options: InstallationOptions) -> Result<Self, InstallationError> {
+        Self::open_inner(
+            options,
+            #[cfg(testnet)]
+            None,
+        )
+        .await
+    }
+
+    async fn open_inner(
+        options: InstallationOptions,
+        #[cfg(testnet)] fixtures: Option<RuntimeFixtureFactory>,
+    ) -> Result<Self, InstallationError> {
         let registry = Registry::open(options.root)?;
         let temporary_root = if registry.path().is_none() {
             #[cfg(unix)]
@@ -260,6 +274,8 @@ impl Installation {
             credentials: options.credentials,
             identity_http: options.identity_http,
             binding: AsyncMutex::new(VecDeque::new()),
+            #[cfg(testnet)]
+            fixtures,
         });
         for record in records {
             inner.insert(record);
@@ -456,7 +472,7 @@ impl Inner {
             },
             slot: Arc::new(Slot {
                 operations: Arc::default(),
-                runtime: AsyncMutex::new(None),
+                runtime: Arc::new(AsyncMutex::new(None)),
                 credentials: Mutex::new(None),
                 revoked_at: std::sync::atomic::AtomicU64::new(0),
             }),
@@ -533,7 +549,11 @@ impl Inner {
                 enable_cloud_mode: Some(record.binding.is_some()),
                 listeners: self.listeners,
                 #[cfg(testnet)]
-                fixtures: runtime::RuntimeFixtures::default(),
+                fixtures: self
+                    .fixtures
+                    .as_ref()
+                    .map(|factory| factory(id))
+                    .unwrap_or_default(),
             };
             let config_path = paths.config_path.as_ref().unwrap();
             if config_path.exists() {
@@ -860,3 +880,8 @@ mod binding;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(testnet)]
+mod testnet;
+#[cfg(testnet)]
+use testnet::RuntimeFixtureFactory;

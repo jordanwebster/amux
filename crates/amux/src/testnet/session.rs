@@ -343,7 +343,7 @@ impl Daemon {
         )
         .await;
 
-        let guard = self.inner.runtime.lock().await;
+        let guard = self.runtime().await;
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
@@ -581,7 +581,7 @@ impl Daemon {
             })
             .await;
 
-        let guard = self.inner.runtime.lock().await;
+        let guard = self.runtime().await;
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
@@ -707,7 +707,7 @@ impl Daemon {
     /// resolved before delivery, so the unavailable carrier implementation
     /// cannot mask this authority check.
     pub async fn refuses_unknown_message_sender(&self, recipient: &str) {
-        let guard = self.inner.runtime.lock().await;
+        let guard = self.runtime().await;
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
@@ -906,7 +906,7 @@ impl Daemon {
             })
             .await;
 
-        let guard = self.inner.runtime.lock().await;
+        let guard = self.runtime().await;
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));

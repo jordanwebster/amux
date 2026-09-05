@@ -72,6 +72,7 @@ pub(crate) struct RuntimeFixtures {
     pub(crate) tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
     pub(crate) artifact_clock: Option<Arc<dyn amux_artifacts::Clock>>,
     pub(crate) cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
+    pub(crate) cloud_transport: Option<tonic::transport::Channel>,
 }
 
 pub(crate) struct ProfileRuntimeOptions {
@@ -174,6 +175,8 @@ pub(crate) struct ProfileRuntime {
     pub(crate) trust: crate::trust::SharedTrustStore,
     #[cfg(testnet)]
     test_cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
+    #[cfg(testnet)]
+    test_cloud_transport: Option<tonic::transport::Channel>,
     client: Client,
     #[cfg(testnet)]
     pub(crate) client_channel: tonic::transport::Channel,
@@ -361,6 +364,8 @@ async fn build(
         trust,
         #[cfg(testnet)]
         test_cloud: options.fixtures.cloud,
+        #[cfg(testnet)]
+        test_cloud_transport: options.fixtures.cloud_transport,
         client,
         #[cfg(testnet)]
         client_channel,
@@ -488,6 +493,8 @@ impl ProfileRuntime {
             self.state.clone(),
             self.services.link_connector_ctx(),
             self.status.clone(),
+            #[cfg(testnet)]
+            self.test_cloud_transport.clone(),
         ));
         Ok(())
     }
