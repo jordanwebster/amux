@@ -7596,3 +7596,15 @@ dialog scenario did not produce a dialog frame, so its executable probe stays
 available for future investigation but is no longer advertised as recorded
 evidence. This keeps the strict corpus check honest: every registered
 specification has a manifest and consumes its captured stream completely.
+
+## Context breakdown fixture carries a whole reply
+
+The named state behind the context-breakdown screenshot pressed the chord
+and got an empty overlay: its hand-written context row carried only a
+threshold and category names, so the typed reply failed to parse and the
+chat held no breakdown at all. The row is now a complete reply — every
+category other than free space adds up to the meter's own count — and the
+named state carries the request the chord issues through to its answer, so
+the footer states how old the numbers are instead of calling them an
+anonymous snapshot. A test renders that state and fails if the overlay
+ever goes back to painting its waiting line.

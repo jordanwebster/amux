@@ -662,6 +662,58 @@ fn sdk_chat_context_overlay_lists_the_breakdown() {
     });
 }
 
+/// The captured screen of the breakdown overlay shows the answer, not
+/// the wait: the fixture behind every screenshot has to carry a whole
+/// context reply, because a partial one silently fails to parse and the
+/// capture would show an empty overlay to whoever reads it.
+#[test]
+fn sdk_chat_context_named_state_shows_the_answered_breakdown() {
+    let fixture = amux_tui::fixtures::fixture(
+        amux_tui::fixtures::NamedState::ClaudeSdkContextBreakdown,
+    );
+    let backend = TestBackend::new(WIDTH, HEIGHT);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    let context = FrameContext {
+        viewport: (WIDTH, HEIGHT),
+        theme: Theme::default(),
+        now: fixture.now,
+    };
+    terminal
+        .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
+        .expect("render");
+    let text = buffer_text(terminal.backend().buffer());
+
+    assert!(
+        text.contains("context · 154,880 of 200,000 tokens"),
+        "the overlay states the total against the window: {text}"
+    );
+    for category in [
+        "System prompt",
+        "System tools",
+        "Memory files",
+        "Skills",
+        "Messages",
+        "Free space",
+    ] {
+        assert!(
+            text.contains(category),
+            "and every category the session reported, missing {category}: {text}"
+        );
+    }
+    assert!(
+        text.contains("fetched just now"),
+        "with how old the snapshot is: {text}"
+    );
+    assert!(
+        text.contains("c refresh"),
+        "and how to ask again: {text}"
+    );
+    assert!(
+        !text.contains("waiting for the session"),
+        "and never the wait it already finished: {text}"
+    );
+}
+
 /// A subagent's block says what it was asked to do, what it came back
 /// with, and what it cost.
 #[test]

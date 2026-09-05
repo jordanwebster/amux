@@ -10,8 +10,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use amux_ui::{
-    Agent, AgentId, HostEntry, HostId, HostTrustStatus, Model, Msg, ServerMsg, StreamEntry,
-    StreamMsg, StructuredProtocol, update,
+    Agent, AgentId, Command, HostEntry, HostId, HostTrustStatus, Model, Msg, OpId, OpOutcome,
+    ServerMsg, StreamEntry, StreamMsg, StructuredProtocol, update,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
@@ -265,10 +265,13 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::ClaudeSdkTasks => sdk_fixture(sdk_task_rows()),
         NamedState::ClaudeSdkContext => sdk_fixture(sdk_context_rows()),
         // The overlay is reached the way a person reaches it, so a
-        // capture can never show a breakdown the chord does not open.
+        // capture can never show a breakdown the chord does not open,
+        // and the request it costs is carried through to its answer so
+        // the footer can say how old the numbers are.
         NamedState::ClaudeSdkContextBreakdown => {
             let mut fixture = sdk_fixture(sdk_context_rows());
             press_leader(&mut fixture, 'c');
+            settle_context_request(&mut fixture);
             fixture
         }
         NamedState::ClaudeSdkLongFeed => long_feed(StructuredProtocol::ClaudeSdk, 1_000),
@@ -649,6 +652,35 @@ fn review_type(fixture: &mut Fixture, text: &str) {
             KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
         );
     }
+}
+
+/// Carry the breakdown request the chord issued through to its answer.
+/// The chat learns the request's identity the way the runtime tells it,
+/// and the answer stamps the moment, so the overlay's footer states the
+/// age a person would read instead of an anonymous snapshot.
+fn settle_context_request(fixture: &mut Fixture) {
+    let op = OpId(uuid::Uuid::from_u128(0x0c07_0e70_0000_4000_8000_0000_0000_0001));
+    let command = Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::RequestContextBreakdown {
+        agent: agent_id(StructuredProtocol::ClaudeSdk),
+    });
+    update(&mut fixture.model, Msg::Tick { now: fixture.now });
+    update(
+        &mut fixture.model,
+        Msg::Command {
+            op,
+            command: command.clone(),
+        },
+    );
+    update(
+        &mut fixture.model,
+        Msg::OpResult {
+            op,
+            outcome: OpOutcome::InputSent,
+        },
+    );
+    let chat = fixture.view.chat.as_mut().expect("Claude chat open");
+    chat.note_dispatched(op, &command);
+    chat.reconcile(&fixture.model);
 }
 
 fn press(fixture: &mut Fixture, key: KeyEvent) {
@@ -1447,18 +1479,33 @@ fn sdk_context_rows() -> Vec<Value> {
         sdk_result(32),
         sdk_facts(Some(154_880)),
     ];
+    // The whole answer a session gives, not just the part the overlay
+    // paints: a partial one fails to parse and the overlay would show
+    // nothing. The categories other than free space add up to the
+    // meter's own count, which is what a real answer does.
     rows.push(json!({
         "type": "amux.claude_sdk.context_breakdown",
         "usage": {
-            "autoCompactThreshold": 167_000,
             "categories": [
-                {"name": "System prompt", "tokens": 6_553},
-                {"name": "System tools", "tokens": 14_149},
-                {"name": "Memory files", "tokens": 662},
-                {"name": "Skills", "tokens": 1_994},
-                {"name": "Messages", "tokens": 131_522},
-                {"name": "Free space", "tokens": 45_120},
+                {"name": "System prompt", "tokens": 6_553, "color": "promptBorder"},
+                {"name": "System tools", "tokens": 14_149, "color": "inactive"},
+                {"name": "Memory files", "tokens": 662, "color": "claude"},
+                {"name": "Skills", "tokens": 1_994, "color": "warning"},
+                {"name": "Messages", "tokens": 131_522, "color": "text"},
+                {"name": "Free space", "tokens": 45_120, "color": "promptBorder"},
             ],
+            "totalTokens": 154_880,
+            "maxTokens": 200_000,
+            "rawMaxTokens": 200_000,
+            "percentage": 77.44,
+            "gridRows": [],
+            "model": "claude-opus-5",
+            "memoryFiles": [],
+            "mcpTools": [],
+            "agents": [],
+            "autoCompactThreshold": 167_000,
+            "isAutoCompactEnabled": true,
+            "apiUsage": null,
         },
     }));
     rows
