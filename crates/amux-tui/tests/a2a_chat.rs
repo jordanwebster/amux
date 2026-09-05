@@ -1637,3 +1637,292 @@ fn a2a_inline_answer_survives_a_viewport_too_small_to_draw() {
         }
     }
 }
+
+// --- families with a stream-JSON session in them --------------------------
+
+/// A Claude session driven over stream-JSON, in the same family shapes.
+/// The vocabulary is that session's own: its rows are typed, so this
+/// fixture states them rather than writing a transcript.
+const SESSION_LEAD: &str = "sync-tunnels";
+const SESSION_CHILD: &str = "tidy-the-imports";
+const PROOFER: &str = "check-the-types";
+
+fn a_session_agent(name: &str, parent: Option<&str>) -> Agent {
+    Agent {
+        kind: amux_ui::AgentKind::Claude {
+            driver: amux_ui::ClaudeDriver::Sdk,
+        },
+        ..an_agent(name, "claude", CLAUDE_PROTOCOL, parent)
+    }
+}
+
+fn session_ready() -> Value {
+    json!({
+        "type": "amux.claude_sdk.ready",
+        "session_id": "8a09557f-e719-4329-8b4c-9ef4e3eeeaa1",
+        "resumed": false,
+    })
+}
+
+/// The permission request the session raises, carrying the
+/// session-scoped suggestion a real request carries, so the panel's
+/// second action reads the same here as in the child's own chat.
+fn session_permission_row() -> Value {
+    json!({
+        "type": "amux.claude_sdk.permission_required",
+        "request_id": "perm-1",
+        "tool_name": "Bash",
+        "input": {"command": "cargo fmt --all"},
+        "suggestions": [{"type": "addRules", "destination": "session", "rules": [
+            {"toolName": "Bash", "ruleContent": "cargo fmt:*"},
+        ]}],
+    })
+}
+
+/// A stream-JSON session leading a Claude child that is blocked on a
+/// permission, with nothing of its own to answer.
+fn session_parent_family() -> Model {
+    let mut msgs = vec![
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host_id()),
+        }),
+        Msg::Server(ServerMsg::HostUpserted { host: a_host() }),
+        Msg::Server(ServerMsg::AgentUpserted {
+            agent: a_session_agent(SESSION_LEAD, None),
+        }),
+        agent_up(&an_agent(PROOFER, "claude", CLAUDE_PROTOCOL, Some(SESSION_LEAD))),
+        Msg::Server(ServerMsg::HostsSynchronized),
+        Msg::Server(ServerMsg::AgentsSynchronized),
+    ];
+    msgs.extend(opened(SESSION_LEAD));
+    msgs.push(batch(SESSION_LEAD, NOW - 60, vec![session_ready()]));
+    msgs.extend(opened(PROOFER));
+    msgs.push(batch(
+        PROOFER,
+        NOW - 20,
+        vec![
+            claude_ready(),
+            prompt_row(1, "check the new types"),
+            answerable_permission_row(),
+        ],
+    ));
+    fold(msgs)
+}
+
+/// A Claude lead with a stream-JSON child that is blocked on a
+/// permission, and nothing of the lead's own in the way.
+fn session_child_family() -> Model {
+    let mut msgs = vec![
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host_id()),
+        }),
+        Msg::Server(ServerMsg::HostUpserted { host: a_host() }),
+        agent_up(&an_agent(LEAD, "claude", CLAUDE_PROTOCOL, None)),
+        Msg::Server(ServerMsg::AgentUpserted {
+            agent: a_session_agent(SESSION_CHILD, Some(LEAD)),
+        }),
+        Msg::Server(ServerMsg::HostsSynchronized),
+        Msg::Server(ServerMsg::AgentsSynchronized),
+    ];
+    msgs.extend(opened(LEAD));
+    msgs.push(batch(
+        LEAD,
+        NOW - 60,
+        vec![
+            claude_ready(),
+            prompt_row(1, "split the tunnel supervisor"),
+            assistant_row(2, "Handing the imports to a helper."),
+            stop_row(),
+        ],
+    ));
+    msgs.extend(opened(SESSION_CHILD));
+    msgs.push(batch(
+        SESSION_CHILD,
+        NOW - 20,
+        vec![session_ready(), session_permission_row()],
+    ));
+    fold(msgs)
+}
+
+/// A stream-JSON session's chat carries the same banner as any other
+/// parent's: whose need it is, what it is blocked on, and the chord that
+/// docks it.
+#[test]
+fn a2a_banner_in_a_session_parents_chat() {
+    let model = session_parent_family();
+    let view = chat_on(&model, SESSION_LEAD);
+    assert_eq!(
+        banner_of(&model, &view).as_deref(),
+        Some("⚠ check-the-types needs permission: git push --force origin a2a · C-a a answer"),
+    );
+}
+
+/// A stream-JSON child raises its banner in an ordinary Claude parent's
+/// chat, in that child's own words.
+#[test]
+fn a2a_banner_for_a_session_child() {
+    let model = session_child_family();
+    let view = chat_on(&model, LEAD);
+    assert_eq!(
+        banner_of(&model, &view).as_deref(),
+        Some("⚠ tidy-the-imports needs permission: cargo fmt --all · C-a a answer"),
+    );
+}
+
+/// A stream-JSON session hosts a Claude child's panel: the child's own
+/// rows, attributed, and confirming dispatches the CHILD's command.
+#[test]
+fn a2a_inline_answer_in_a_session_parents_chat() {
+    let model = session_parent_family();
+    let frame = frame_of(&model, &docked(&model, SESSION_LEAD));
+    assert!(
+        frame.contains("answering check-the-types"),
+        "the boundary says whose ask this is:\n{frame}"
+    );
+    assert!(
+        frame.contains("Allow once") && frame.contains("git push --force origin a2a"),
+        "the child layer's own panel:\n{frame}"
+    );
+
+    let mut view = docked(&model, SESSION_LEAD);
+    let chat = view.chat.as_mut().expect("an open chat");
+    let action = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Enter, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    match action {
+        Some(UiAction::Dispatch(amux_ui::Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
+            agent,
+            ..
+        }))) => assert_eq!(agent, agent_id(PROOFER), "the child is the addressee"),
+        other => panic!("expected the child's own AnswerAsk, got {other:?}"),
+    }
+}
+
+/// …and the other way round: an ordinary Claude parent hosts a
+/// stream-JSON child's panel and dispatches that child's own command.
+#[test]
+fn a2a_inline_answer_hosts_a_session_childs_panel() {
+    let model = session_child_family();
+    let frame = frame_of(&model, &docked(&model, LEAD));
+    assert!(
+        frame.contains("answering tidy-the-imports"),
+        "the boundary names the child:\n{frame}"
+    );
+    assert!(
+        frame.contains("Allow once") && frame.contains("cargo fmt --all"),
+        "the child layer's own panel:\n{frame}"
+    );
+
+    let mut view = docked(&model, LEAD);
+    let chat = view.chat.as_mut().expect("an open chat");
+    let action = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Enter, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    match action {
+        Some(UiAction::Dispatch(amux_ui::Command::ClaudeSdk(
+            amux_ui::claude_sdk::ClaudeSdkCommand::AnswerAsk { agent, .. },
+        ))) => assert_eq!(agent, agent_id(SESSION_CHILD), "the child is the addressee"),
+        other => panic!("expected the child's own AnswerAsk, got {other:?}"),
+    }
+}
+
+/// Answering a docked guest is the same act as answering in the child's
+/// own chat, whichever layer either of them is.
+#[test]
+fn a2a_inline_answer_matches_the_session_childs_own_view() {
+    let model = session_child_family();
+
+    let mut inline = docked(&model, LEAD);
+    let chat = inline.chat.as_mut().expect("an open chat");
+    let from_the_parent = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Enter, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+
+    let mut own = chat_on(&model, SESSION_CHILD);
+    let chat = own.chat.as_mut().expect("an open chat");
+    let from_the_child = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Enter, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+
+    assert_eq!(from_the_parent, from_the_child);
+}
+
+/// A session with its own ask has nowhere to put a guest: its own
+/// obligations come first, and the banner stops naming the chord.
+#[test]
+fn a2a_inline_answer_yields_to_a_session_parents_own_ask() {
+    let mut model = session_parent_family();
+    update(
+        &mut model,
+        batch(SESSION_LEAD, NOW - 10, vec![session_permission_row()]),
+    );
+    let view = chat_on(&model, SESSION_LEAD);
+    let banner = banner_of(&model, &view).expect("the child still needs somebody");
+    assert!(
+        !banner.contains("answer"),
+        "no chord is named where nothing would dock:\n{banner}"
+    );
+    let frame = frame_of(&model, &docked(&model, SESSION_LEAD));
+    assert!(
+        !frame.contains("answering check-the-types"),
+        "the session's own ask keeps the bottom block:\n{frame}"
+    );
+}
+
+/// `<leader> n` walks a family with a stream-JSON session in it exactly
+/// as it walks any other: into the child and back to the top.
+#[test]
+fn a2a_family_cycle_walks_a_session_family() {
+    let model = session_parent_family();
+    let mut view = chat_on(&model, SESSION_LEAD);
+    let Some(UiAction::OpenChat(next)) = leader(&mut view, &model, 'n') else {
+        panic!("the chord names the child");
+    };
+    assert_eq!(next, agent_id(PROOFER));
+
+    let mut view = chat_on_id(&model, next);
+    let Some(UiAction::OpenChat(back)) = leader(&mut view, &model, 'n') else {
+        panic!("the chord wraps back to the top");
+    };
+    assert_eq!(back, agent_id(SESSION_LEAD));
+}
+
+/// Both directions, locked as frames: a session hosting a Claude child's
+/// panel, and a Claude parent hosting a session's.
+#[test]
+fn a2a_inline_answer_session_parent() {
+    let model = session_parent_family();
+    assert_surface(
+        "a2a_inline_answer_session_parent",
+        &model,
+        &docked(&model, SESSION_LEAD),
+        HEIGHT,
+    );
+}
+
+#[test]
+fn a2a_inline_answer_session_child() {
+    let model = session_child_family();
+    assert_surface(
+        "a2a_inline_answer_session_child",
+        &model,
+        &docked(&model, LEAD),
+        HEIGHT,
+    );
+}

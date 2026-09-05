@@ -16,12 +16,14 @@
 
 use amux_ui::claude::AskState;
 use amux_ui::claude::answer::{self, AskAnswer};
+use amux_ui::claude_sdk::{AskState as SdkAskState, ClaudeSdkCommand, SdkPhase};
 use amux_ui::{AgentId, ClaudeCommand, CodexCommand, Command, Model, StructuredProtocol};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
 
 use crate::chat::claude::shared_ask;
+use crate::chat::claude_sdk::{answer_command as sdk_answer_command, shared_ask as sdk_shared_ask};
 use crate::chat::claude_shared::ask_ui::{AskKeyOutcome, AskUi};
 use crate::chat::claude_shared::panel;
 use crate::chat::codex::render::{ApprovalView, approval_panel};
@@ -37,12 +39,16 @@ pub(crate) struct InlineAsk {
 }
 
 /// Panel state, one variant per layer that knows how to draw an ask. It
-/// is the child's layer's own type in both cases — the Claude stage
-/// machine and the Codex decision cursor — so an inline panel behaves
-/// exactly like the same panel in the child's own chat.
+/// is the child's layer's own type in every case — the two Claude
+/// layers' shared stage machine and the Codex decision cursor — so an
+/// inline panel behaves exactly like the same panel in the child's own
+/// chat. The two Claude layers hold the same panel state but read their
+/// asks from different folds and answer with different commands, so
+/// they stay separate variants rather than one with a flag.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum Ui {
     Claude(AskUi),
+    ClaudeSession(AskUi),
     Codex { cursor: usize },
 }
 
@@ -85,8 +91,12 @@ pub(crate) fn can_open(model: &Model, parent: AgentId, child: AgentId) -> bool {
             .codex(child)
             .and_then(|layer| layer.ask_head())
             .is_some(),
+        Some(StructuredProtocol::ClaudeSdk) => model
+            .claude_sdk(child)
+            .and_then(|layer| layer.ask_head())
+            .is_some(),
         // A layer nothing folds has no ask to dock.
-        Some(StructuredProtocol::ClaudeSdk) | None => false,
+        None => false,
     }
 }
 
@@ -108,8 +118,12 @@ fn bottom_is_taken(model: &Model, parent: AgentId) -> bool {
             .codex(parent)
             .and_then(|layer| layer.ask_head())
             .is_some(),
-        // The placeholder frame has no composer to give up.
-        Some(StructuredProtocol::ClaudeSdk) | None => true,
+        Some(StructuredProtocol::ClaudeSdk) => model
+            .claude_sdk(parent)
+            .and_then(|layer| layer.ask_head())
+            .is_some(),
+        // A frame with no composer has none to give up.
+        None => true,
     }
 }
 
@@ -127,7 +141,9 @@ impl InlineAsk {
                 model.codex(child)?.ask_head()?;
                 Ui::Codex { cursor: 0 }
             }
-            StructuredProtocol::ClaudeSdk => return None,
+            StructuredProtocol::ClaudeSdk => Ui::ClaudeSession(AskUi::for_ask(&sdk_shared_ask(
+                model.claude_sdk(child)?.ask_head()?,
+            ))),
         };
         Some(Self { child, ui })
     }
@@ -137,7 +153,7 @@ impl InlineAsk {
     /// the parent's chat does not have to know which layer it is hosting.
     pub(crate) fn active_field(&mut self) -> Option<&mut Composer> {
         match &mut self.ui {
-            Ui::Claude(ui) => ui.active_field(),
+            Ui::Claude(ui) | Ui::ClaudeSession(ui) => ui.active_field(),
             Ui::Codex { .. } => None,
         }
     }
@@ -160,6 +176,11 @@ pub(crate) fn reconcile(model: &Model, parent: AgentId, slot: &mut Option<Inline
         Ui::Claude(ui) => match model.claude(child).and_then(|layer| layer.ask_head()) {
             Some(ask) if ask.id == ui.ask_id => {}
             Some(ask) => *ui = AskUi::for_ask(&shared_ask(ask)),
+            None => *slot = None,
+        },
+        Ui::ClaudeSession(ui) => match model.claude_sdk(child).and_then(|layer| layer.ask_head()) {
+            Some(ask) if ask.id == ui.ask_id => {}
+            Some(ask) => *ui = AskUi::for_ask(&sdk_shared_ask(ask)),
             None => *slot = None,
         },
         Ui::Codex { cursor } => match model.codex(child).and_then(|layer| layer.ask_head()) {
@@ -198,6 +219,30 @@ pub(crate) fn panel_lines(
                 .map(|layer| layer.ask_count())
                 .unwrap_or(1);
             let shared = shared_ask(ask);
+            let mut parts = panel::ask_panel(
+                &shared,
+                count,
+                Some(ui),
+                None,
+                crate::chat::blocks::panel_body_width(width),
+                theme,
+                quit_guard_armed,
+            );
+            parts.title = format!("answering {name} — {}", parts.title);
+            if !parts.hints.is_empty() {
+                parts.hints.push_str(" · esc back");
+            }
+            panel::paint(&shared, parts, theme, width)
+        }
+        Ui::ClaudeSession(ui) => {
+            let Some(ask) = model.claude_sdk(child).and_then(|layer| layer.ask_head()) else {
+                return Vec::new();
+            };
+            let count = model
+                .claude_sdk(child)
+                .map(|layer| layer.ask_count())
+                .unwrap_or(1);
+            let shared = sdk_shared_ask(ask);
             let mut parts = panel::ask_panel(
                 &shared,
                 count,
@@ -306,6 +351,40 @@ pub(crate) fn handle_key(model: &Model, inline: &mut InlineAsk, key: &KeyEvent) 
                 AskKeyOutcome::NotHandled => InlineOutcome::NotHandled,
             }
         }
+        Ui::ClaudeSession(ui) => {
+            let Some(ask) = model.claude_sdk(child).and_then(|layer| layer.ask_head()) else {
+                return InlineOutcome::Close;
+            };
+            let ask_id = ask.id;
+            // Esc steps back through the child's own stages first, as it
+            // does in the child's chat.
+            if key.code == KeyCode::Esc {
+                return if ui.step_back() {
+                    InlineOutcome::Handled
+                } else {
+                    InlineOutcome::Close
+                };
+            }
+            // An answer already in flight has nothing left to select, so
+            // the panel stays on screen and consumes nothing (C5).
+            if !matches!(
+                ask.state,
+                SdkAskState::Pending | SdkAskState::SendFailed { .. }
+            ) {
+                return InlineOutcome::NotHandled;
+            }
+            match ui.handle_key(&sdk_shared_ask(ask), key, true) {
+                AskKeyOutcome::Answer(answer) => {
+                    InlineOutcome::Dispatch(sdk_answer_command(child, ask_id, answer))
+                }
+                AskKeyOutcome::Handled => InlineOutcome::Handled,
+                // The fullscreen reader belongs to the chat whose agent
+                // the document is from; a guest panel does not take the
+                // parent's whole frame over.
+                AskKeyOutcome::OpenReader => InlineOutcome::Handled,
+                AskKeyOutcome::NotHandled => InlineOutcome::NotHandled,
+            }
+        }
         Ui::Codex { cursor } => {
             let Some(ask) = model.codex(child).and_then(|layer| layer.ask_head()) else {
                 return InlineOutcome::Close;
@@ -362,6 +441,20 @@ fn interrupt(model: &Model, inline: &InlineAsk) -> InlineOutcome {
         Ui::Claude(_) => {
             InlineOutcome::Dispatch(Command::Claude(ClaudeCommand::Interrupt { agent: child }))
         }
+        // The session states its own turn lifecycle, so it takes an
+        // interrupt only while there is something to interrupt — the same
+        // rule its own chat applies.
+        Ui::ClaudeSession(_)
+            if matches!(
+                amux_ui::claude_sdk::phase(model, child),
+                SdkPhase::Working | SdkPhase::NeedsYou { .. }
+            ) =>
+        {
+            InlineOutcome::Dispatch(Command::ClaudeSdk(ClaudeSdkCommand::Interrupt {
+                agent: child,
+            }))
+        }
+        Ui::ClaudeSession(_) => InlineOutcome::Handled,
         Ui::Codex { .. } if amux_ui::codex::allows_interrupt(model, child) => {
             InlineOutcome::Dispatch(Command::Codex(CodexCommand::Interrupt { agent: child }))
         }

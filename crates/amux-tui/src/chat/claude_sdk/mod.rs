@@ -20,8 +20,8 @@ use std::borrow::Cow;
 use amux_ui::claude::facts::ask_document;
 use amux_ui::claude::{AcceptedPlan, ToolInvocation};
 use amux_ui::claude_sdk::{
-    Ask, AskKind, AskState, FeedEntryKind, Finality, PermissionAnswer, PlanAnswer, SdkAnswer,
-    SdkPhase, SendGate,
+    Ask, AskKind, AskState, ClaudeSdkCommand, FeedEntryKind, Finality, PermissionAnswer, PlanAnswer,
+    SdkAnswer, SdkPhase, SendGate,
 };
 use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
 use chrono::{DateTime, Utc};
@@ -29,7 +29,7 @@ pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 pub(crate) use render::claude_sdk_frame_parts;
 use serde::{Deserialize, Serialize};
 
-use crate::chat::claude_shared::ask_ui::AskUi;
+use crate::chat::claude_shared::ask_ui::{AskUi, PanelAnswer};
 use crate::chat::claude_shared::draft::{self, ReviewDraft};
 use crate::chat::claude_shared::reader::{ReaderContext, ReaderSource, ReaderView};
 use crate::chat::claude_shared::{AnswerSummary, SharedAsk, SharedAskKind, SharedAskState};
@@ -151,6 +151,28 @@ fn answer_summary(answer: &SdkAnswer) -> AnswerSummary {
         SdkAnswer::Dialog(DialogAnswer::Choose { .. }) => AnswerSummary::DialogChosen,
         SdkAnswer::Dialog(DialogAnswer::Cancel) => AnswerSummary::Cancelled,
     }
+}
+
+/// The command a finished panel answer becomes, addressed to the agent
+/// whose ask it is. The parent's chat reaches this too when it hosts a
+/// child's ask, so both places send the identical command.
+pub(crate) fn answer_command(agent: AgentId, ask: u64, answer: PanelAnswer) -> Command {
+    let answer = match answer {
+        PanelAnswer::Elicitation(answer) => SdkAnswer::Elicitation(answer),
+        PanelAnswer::Dialog(answer) => SdkAnswer::Dialog(answer),
+        PanelAnswer::Claude(answer) => match answer {
+            amux_ui::claude::answer::AskAnswer::Permission(answer) => SdkAnswer::Permission(answer),
+            amux_ui::claude::answer::AskAnswer::Plan(answer) => SdkAnswer::Plan(answer),
+            amux_ui::claude::answer::AskAnswer::Question(response) => {
+                SdkAnswer::Question(response.answers)
+            }
+        },
+    };
+    Command::ClaudeSdk(ClaudeSdkCommand::AnswerAsk {
+        agent,
+        ask,
+        answer,
+    })
 }
 
 /// Whether this client may answer the ask on screen at all: the session

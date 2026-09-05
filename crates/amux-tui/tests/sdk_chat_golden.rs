@@ -442,13 +442,19 @@ fn sdk_chat_paints_an_agent_message() {
     );
 }
 
-/// A child's ask still reaches this parent.
+/// A child's ask still reaches this parent — and this parent can host
+/// it, so the banner names the chord that docks the child's own panel
+/// here rather than only reporting the need.
 #[test]
 fn sdk_chat_still_shows_a_child_ask_banner() {
     let text = assert_surface("sdk_chat_family", &asking_child());
     assert!(
         text.contains("flake-hunter needs permission"),
         "the child's banner reaches the parent: {text}"
+    );
+    assert!(
+        text.contains("C-a a answer"),
+        "and the chord that answers it here: {text}"
     );
 }
 

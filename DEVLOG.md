@@ -4,6 +4,25 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A Claude session driven over stream-JSON now takes part in
+a family in both directions.**
+Docking a child's ask at the parent's composer knew two kinds of child and
+two kinds of parent. A session driven over stream-JSON was neither: it was
+treated as having no composer to give up, so it could host nothing, and as
+having no ask to dock, so nothing could host it. Both are now false. Such
+a session hosts another agent's ask exactly as any parent does — the
+guest's own panel, attributed, dispatching the guest's own command — and
+its own ask docks in an ordinary Claude or Codex parent's chat the same
+way. Its own obligations still come first: while it is waiting on
+something itself, the banner reports the child's need without offering the
+chord, because there is nowhere to put the guest.
+
+Confirming a docked guest sends the identical command the child's own chat
+would send, which is asserted rather than assumed, and the chord that walks
+a family steps into and back out of one of these sessions like any other.
+Two new frames lock both directions, and the parent's banner golden now
+names the answer chord it had no way to offer before.
+
 2026-09-05 — **One rule decides how you get into an agent, and every key,
 hint and help row now reads it.**
 Which ways into an agent exist was decided in four places that could

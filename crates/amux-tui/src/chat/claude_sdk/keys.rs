@@ -7,7 +7,7 @@
 //! session fact this screen can change directly — Shift+Tab cycles it —
 //! rather than a menu somewhere inside the agent's own terminal.
 
-use amux_ui::claude_sdk::{AskState, ClaudeSdkCommand, SdkAnswer, SdkPhase, SendGate};
+use amux_ui::claude_sdk::{AskState, ClaudeSdkCommand, SdkPhase, SendGate};
 use amux_ui::{AgentId, Command, DiffBase, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -562,23 +562,8 @@ fn panel_key(chat: &mut View, model: &Model, key: KeyEvent) -> Option<UiAction> 
 /// Send a collected answer to the session. Every kind this panel can
 /// collect is one this transport carries, so nothing is dropped here.
 fn dispatch_answer(chat: &View, ask: u64, answer: PanelAnswer) -> Option<UiAction> {
-    let answer = match answer {
-        PanelAnswer::Elicitation(answer) => SdkAnswer::Elicitation(answer),
-        PanelAnswer::Dialog(answer) => SdkAnswer::Dialog(answer),
-        PanelAnswer::Claude(answer) => match answer {
-            amux_ui::claude::answer::AskAnswer::Permission(answer) => SdkAnswer::Permission(answer),
-            amux_ui::claude::answer::AskAnswer::Plan(answer) => SdkAnswer::Plan(answer),
-            amux_ui::claude::answer::AskAnswer::Question(response) => {
-                SdkAnswer::Question(response.answers)
-            }
-        },
-    };
-    Some(UiAction::Dispatch(Command::ClaudeSdk(
-        ClaudeSdkCommand::AnswerAsk {
-            agent: chat.agent,
-            ask,
-            answer,
-        },
+    Some(UiAction::Dispatch(super::answer_command(
+        chat.agent, ask, answer,
     )))
 }
 
