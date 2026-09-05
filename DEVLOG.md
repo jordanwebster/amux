@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Fold Claude task lists into shared session facts.**
+Successful TodoWrite results now replace ProviderFacts.todos with the done and
+total counts, current activity and ordered items. Pending writes leave the last
+confirmed list intact; failures remain visible in the feed. Successful updates
+add no transcript rows. The fold consumes native Claude tool blocks, with bounded
+correlation and duplicate memory reusable by both Claude transports. Replay and
+checkpoint specs cover replacement, clearing, malformed inputs, failure,
+disconnect and session reset; mobile callback tests expose the same lists.
+
 2026-09-05 — **Discover provider commands and preserve typed command drafts.**
 Codex discovers enabled, uniquely named skills in the thread's working directory
 through the app-server. Shared session facts carry their names, source and

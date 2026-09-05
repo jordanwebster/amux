@@ -30,6 +30,23 @@ pub struct ProviderFacts {
     pub efforts: Vec<Effort>,
     pub commands: Vec<ProviderCommand>,
     pub permission: PermissionFacts,
+    pub todos: Option<TaskList>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskList {
+    pub done: usize,
+    pub total: usize,
+    pub current: Option<String>,
+    pub items: Vec<(String, TodoState)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoState {
+    Pending,
+    InProgress,
+    Completed,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -90,6 +107,7 @@ pub fn facts(model: &Model, agent: AgentId) -> ProviderFacts {
     }
     if let Some(layer) = model.claude(agent) {
         return ProviderFacts {
+            todos: layer.todos().cloned(),
             permission: PermissionFacts::Claude {
                 mode: layer.session().permission_mode.clone(),
             },

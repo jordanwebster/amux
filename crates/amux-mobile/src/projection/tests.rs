@@ -539,3 +539,44 @@ fn provider_commands_mobile_callback_exposes_reported_list() {
         serde_json::to_string_pretty(&events).unwrap()
     );
 }
+
+#[test]
+fn todos_mobile_callback_replaces_session_facts_without_appending_feed_rows() {
+    let mut model = claude_model();
+    let mut projection = subscribed();
+    let mut phone = PhoneFeed::default();
+    phone.apply_events(&collect(&mut projection, &model));
+    let mut lists = vec![];
+    for (i, line) in include_str!("../../../amux-ui/tests/fixtures/todos/rows.jsonl")
+        .lines()
+        .enumerate()
+    {
+        row(
+            &mut model,
+            i as u64 + 1,
+            serde_json::from_str(line).unwrap(),
+        );
+        let events = collect(&mut projection, &model);
+        assert_eq!(phone.apply_events(&events), 0);
+        for event in &events {
+            if let Event::Session(session) = event
+                && let Some(list) = &session.provider.todos
+                && lists.last() != Some(list)
+            {
+                lists.push(list.clone());
+                println!(
+                    "Mobile todo session callback: {}",
+                    serde_json::to_string(event).unwrap()
+                );
+            }
+        }
+    }
+    assert_eq!(
+        lists
+            .iter()
+            .map(|list| (list.done, list.total))
+            .collect::<Vec<_>>(),
+        [(1, 3), (1, 2), (1, 1), (0, 0)]
+    );
+    assert!(phone.rows.is_empty());
+}

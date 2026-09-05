@@ -774,6 +774,27 @@ fn fold_tool_result(layer: &mut ClaudeLayer, seq: u64, row: &Value, block: &Valu
         .asks
         .retain(|ask| ask.tool_use_id.as_deref() != Some(tool_use_id));
 
+    match layer.todos.observe(block) {
+        super::todos::Disposition::Absorbed => return,
+        super::todos::Disposition::Failed => {
+            push(
+                layer,
+                seq,
+                FeedEntryKind::Tool(ToolEntry {
+                    tool_use_id: tool_use_id.to_owned(),
+                    name: Some("TodoWrite".to_owned()),
+                    invocation: ToolInvocation::Other,
+                    outcome,
+                    message_final: true,
+                    group_with_previous: false,
+                    message_id: None,
+                }),
+            );
+            return;
+        }
+        super::todos::Disposition::Other => {}
+    }
+
     // B6: an approved plan is retained as session state keyed by tool_use
     // id, outside feed windowing — even if the feed entry was evicted.
     if matches!(
@@ -1285,6 +1306,13 @@ fn fold_tool_use(
     let tool_use_id = str_of(block, "id").unwrap_or_default().to_string();
     let name = str_of(block, "name").unwrap_or_default().to_string();
     let input = block.get("input").unwrap_or(&Value::Null);
+    if matches!(
+        layer.todos.observe(block),
+        super::todos::Disposition::Absorbed
+    ) {
+        correlate_ask(layer, seq, &tool_use_id, &name, input, stop_reason);
+        return;
+    }
     let invocation = extract_invocation(&name, input);
 
     // Grouping fact (B4): strictly consecutive read/search one-liners.

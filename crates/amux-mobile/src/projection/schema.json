@@ -88,7 +88,8 @@
         "permission": {
           "provider": "claude",
           "mode": null
-        }
+        },
+        "todos": null
       },
       "settings_gate": {
         "gate": "pty_settings_unavailable"
@@ -290,7 +291,8 @@
         "commands": [],
         "permission": {
           "provider": "unavailable"
-        }
+        },
+        "todos": null
       },
       "settings_gate": {
         "gate": "ready"
@@ -400,7 +402,8 @@
         "commands": [],
         "permission": {
           "provider": "unavailable"
-        }
+        },
+        "todos": null
       },
       "settings_gate": {
         "gate": "unavailable"
