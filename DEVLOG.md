@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Exercise relay inventory from Swift on the iOS simulator.**
+A swiftc-built harness links the debug-tools mobile bridge, connects to a real
+Mac testnet relay and prints daemon names from Fleet callbacks. Its recipe
+checks identities against runner readiness, rejects empty inventory, and
+requires worker stop, graceful runner exit, released sockets and removed
+temporary state. Failure guards reject a live listener and incomplete harness
+output. The dedicated simulator's prior boot state is restored, and debug
+archives are staged separately from the shipping XCFramework.
+
 2026-09-05 — **Restore the native fleet before connecting and export replayable reports.**
 The bridge emits its private, atomically replaced fleet cache before opening
 the embedded runtime. Cached cards stay outside send-gate state and retain

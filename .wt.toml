@@ -47,6 +47,10 @@ run = "timeout 900 sh scripts/mobile-check.sh"
 [task.ios-rust]
 run = "timeout 1800 python3 scripts/ios-rust.py"
 
+[task.ios-loopback-smoke]
+run = "timeout 1800 python3 -B ios/Tools/loopback_smoke.py"
+needs = ["build"]
+
 [task.ios-verify]
 run = "scripts/ios-verify.sh"
 

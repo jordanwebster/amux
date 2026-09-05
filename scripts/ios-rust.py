@@ -10,13 +10,15 @@ import sys
 import tomllib
 
 
-def build(triple: str, output: Path) -> str:
+def build(triple: str, output: Path, *, debug_tools: bool = False) -> str:
     messages_path = output / f"{triple}-build.jsonl"
     command = [
         "cargo", "build", "--locked", "-p", "amux-mobile",
         "--no-default-features", "--lib", "--profile", "mobile",
         "--target", triple, "--message-format=json-render-diagnostics",
     ]
+    if debug_tools:
+        command.extend(["--features", "debug-tools"])
     print(f"Building {triple} with the workspace mobile profile", flush=True)
     environment = os.environ.copy()
     # Static archives embed native objects whose contents can change without

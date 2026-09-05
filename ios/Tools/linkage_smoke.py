@@ -33,6 +33,18 @@ def simulator() -> tuple[str, bool]:
     return device_id, False
 
 
+def compile_swift(directory: Path, headers: Path, source: Path, executable: Path) -> None:
+    sdk = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-path")
+    subprocess.run([
+        "xcrun", "--sdk", "iphonesimulator", "swiftc", "-swift-version", "6", "-target", "arm64-apple-ios26.0-simulator",
+        "-sdk", sdk, "-Xlinker", "-fatal_warnings", "-I", str(headers),
+        "-L", str(directory), "-lamux_mobile", "-framework", "Security",
+        "-framework", "SystemConfiguration", "-framework", "CoreFoundation",
+        str(source), "-o", str(executable),
+    ], check=True, timeout=180)
+    run("codesign", "--force", "--sign", "-", str(executable))
+
+
 def main() -> None:
     framework = Path(sys.argv[1]).resolve()
     output = framework.parent
@@ -46,16 +58,8 @@ def main() -> None:
         and library["SupportedArchitectures"] == ["arm64"]
     ]
     directory = framework / simulator_slice["LibraryIdentifier"]
-    sdk = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-path")
     executable = output / "amux-mobile-linkage"
-    subprocess.run([
-        "xcrun", "--sdk", "iphonesimulator", "swiftc", "-swift-version", "6", "-target", "arm64-apple-ios26.0-simulator",
-        "-sdk", sdk, "-Xlinker", "-fatal_warnings", "-I", str(directory / simulator_slice["HeadersPath"]),
-        "-L", str(directory), "-lamux_mobile", "-framework", "Security",
-        "-framework", "SystemConfiguration", "-framework", "CoreFoundation",
-        str(Path(__file__).with_name("LinkageSmoke.swift")), "-o", str(executable),
-    ], check=True, timeout=180)
-    run("codesign", "--force", "--sign", "-", str(executable))
+    compile_swift(directory, directory / simulator_slice["HeadersPath"], Path(__file__).with_name("LinkageSmoke.swift"), executable)
     device_id, already_booted = simulator()
     try:
         if not already_booted:

@@ -143,3 +143,16 @@ null and release returned strings with `amux_mobile_free`.
 `timeout 900 wt test -- mobile_cache` restarts a paired bridge offline, verifies
 its first callback and stable ordering on reconnect, checks rename persistence,
 and replays an exported recorder snapshot through the shared reducer.
+
+`timeout 1800 wt run ios-loopback-smoke` builds a debug-tools simulator
+library under the mobile profile, stages it separately in `target/ios/loopback`,
+and compiles `ios/Tools/LoopbackSmoke.swift`. The recipe starts the testnet
+runner with two real Mac daemons and passes its relay address and temporary
+bearer token to Swift on the pinned simulator. Swift prints the online daemon
+names and identities received in Fleet callbacks, then stops its Rust worker.
+The recipe compares those identities with runner readiness, requires a
+nonempty inventory, shuts the runner down, and verifies successful process
+exit, released relay/control listeners and removal of temporary state. It
+restores the simulator's previous boot state. The passing capture lives in
+`target/ios/loopback-smoke.txt`. This proves relay inventory from iOS; pairing
+and agent interactions have their own journeys.
