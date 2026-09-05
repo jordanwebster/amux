@@ -376,7 +376,7 @@ Four tiers, in increasing cost:
    inert when no scenario is named.
 
 ```sh
-wt test -- codex
+wt test
 AMUX_CODEX_LIVE_MODEL=gpt-5.6-luna wt run codex-live -- all
 ```
 

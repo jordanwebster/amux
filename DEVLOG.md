@@ -18,6 +18,8 @@ The opt-in `wt run codex-live -- raw_unnamed raw_named unnamed_reconnect`
 scenarios verify actual `/status` responses before any model turn, including
 detach/reattach and recovery of the same thread after server restart. The
 previous ANSI-only check could accept the startup screen of a failing TUI.
+The documented offline command runs the full suite: filtering by `codex`
+would skip replay tests whose names do not contain the provider name.
 
 2026-09-05 — **The attachment guide is a byte contract on Windows too.** The
 guide's canonical review example is compiled into a test that compares it
