@@ -63,6 +63,10 @@ run = "cargo run -p xtask -- codegen"
 run = "timeout 900 cargo run -p e2e-runner -- run"
 needs = ["build"]
 
+[task.testnet]
+run = 'timeout 3600 e2e-runner testnet "$@"'
+needs = ["build"]
+
 # This checkout's daemon. A resource: `wt remove` stops it.
 [task.daemon]
 tied_to = "tree"

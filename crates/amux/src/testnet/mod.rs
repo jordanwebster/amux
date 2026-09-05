@@ -39,7 +39,7 @@
 //!   close links) hard and return only once the affected daemons have
 //!   observed the loss, so follow-up assertions start from a settled net.
 //!
-//! Compiled only with the `testnet` cargo feature; not part of the public
+//! Compiled only with `cfg(testnet)` in debug local-agent builds; not part of the public
 //! API.
 
 mod assertions;
@@ -98,6 +98,26 @@ pub(crate) struct NetInner {
 const RELAY_CALL_ATTEMPT_TIMEOUT: std::time::Duration = assertions::DEFAULT_TIMEOUT;
 
 impl TestNet {
+    /// Loopback endpoint for clients outside the harness process.
+    pub fn relay_addr(&self) -> SocketAddr {
+        self.cloud().addr
+    }
+
+    /// Registers a cloud user, including users with no daemon yet.
+    pub fn user_credentials(&self, label: &str) -> (uuid::Uuid, String) {
+        self.cloud().credentials_for_user(label)
+    }
+
+    /// Stops every daemon and the relay before releasing their data directories.
+    pub async fn shutdown(self) {
+        for daemon in &self.inner.daemons {
+            daemon.stop().await;
+        }
+        if let Some(cloud) = &self.inner.cloud {
+            cloud.go_offline().await;
+        }
+    }
+
     /// Starts declaring a topology; finish with [`TestNetBuilder::start`].
     pub fn builder() -> TestNetBuilder {
         TestNetBuilder::default()

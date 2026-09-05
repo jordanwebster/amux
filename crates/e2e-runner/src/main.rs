@@ -1,6 +1,8 @@
 mod executor;
 mod parser;
 mod terminal;
+#[cfg(testnet)]
+mod testnet;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -62,6 +64,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Serve an isolated relay and declared host topology (debug builds only).
+    #[cfg(testnet)]
+    Testnet {
+        #[command(subcommand)]
+        command: testnet::Command,
+    },
     /// Run E2E tests
     Run {
         /// Filter tests by name (substring match)
@@ -278,6 +286,13 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        #[cfg(testnet)]
+        Commands::Testnet { command } => {
+            if let Err(error) = testnet::run(command) {
+                eprintln!("testnet: {error:#}");
+                std::process::exit(1);
+            }
+        }
         Commands::Run {
             filter,
             test_dir,

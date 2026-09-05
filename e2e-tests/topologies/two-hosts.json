@@ -1,0 +1,11 @@
+{
+  "users": ["personal", "work", "unattached"],
+  "daemons": [
+    {"name": "laptop", "user": "personal", "repository_roots": ["../.."]},
+    {"name": "desktop", "user": "personal", "repository_roots": ["../.."]}
+  ],
+  "paired": [["laptop", "desktop", "Cloud"]],
+  "agents": [
+    {"name": "helper", "daemon": "desktop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}}
+  ]
+}

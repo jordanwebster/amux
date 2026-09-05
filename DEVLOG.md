@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Serve an isolated test network from the command line.**
+`wt run testnet -- serve --topology FILE` starts the declared relay users,
+paired hosts and idle Claude PTY sessions, then prints one readiness JSON line
+with loopback addresses, credentials and identities. A JSON control socket
+accepts Shutdown; SIGTERM follows the same cleanup path. Validation rejects
+unknown users, invalid pairings and unsafe host names before starting resources.
+Script reaction and Codex recording playback currently return explicit errors.
+Four tests cover actual host calls and agent inventory, topology validation,
+and subprocess shutdown with sockets and temporary directories released.
+
 2026-09-05 — **Verify documented attachments on Windows checkouts.** The
 executable guide example normalizes checkout line endings before locating its
 Markdown fence. Its comparison against the complete formatter output is

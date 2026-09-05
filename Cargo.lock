@@ -1032,6 +1032,8 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 name = "e2e-runner"
 version = "0.1.0"
 dependencies = [
+ "amux",
+ "anyhow",
  "chrono",
  "clap",
  "glob",
@@ -1040,8 +1042,11 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "shell-words",
  "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
