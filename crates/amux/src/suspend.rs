@@ -139,6 +139,15 @@ pub(crate) fn save_suspended(
     file.sync_all()?;
     drop(file);
     fs::rename(&temp_path, &suspended_path)?;
+    // The rename must survive a crash before the prepared agents are stopped.
+    #[cfg(unix)]
+    fs::File::open(
+        suspended_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(Path::new(".")),
+    )?
+    .sync_all()?;
 
     tracing::info!(
         path = %suspended_path.display(),
@@ -171,6 +180,14 @@ pub(crate) fn remove_suspended(state_path: &Path) -> Result<(), std::io::Error> 
     let suspended_path = suspended_path(state_path);
     match fs::remove_file(&suspended_path) {
         Ok(()) => {
+            #[cfg(unix)]
+            fs::File::open(
+                suspended_path
+                    .parent()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .unwrap_or(Path::new(".")),
+            )?
+            .sync_all()?;
             tracing::info!(path = %suspended_path.display(), "removed suspended agents");
             Ok(())
         }

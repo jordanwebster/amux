@@ -558,6 +558,7 @@ impl LocalAgentHost for PtyAgentHost {
     }
 
     async fn prepare_suspend(&self, state_path: PathBuf) -> Result<u64, ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
         let (suspended, errors) = prepare_server_suspend(self.state()).await;
         if !errors.is_empty() {
             return Err(ProtocolError::ServerError {
@@ -566,7 +567,24 @@ impl LocalAgentHost for PtyAgentHost {
         }
         let count = suspended.agents.len() as u64;
         if !suspended.agents.is_empty() {
-            suspend::save_suspended(&state_path, &suspended).map_err(|error| {
+            // A failed resume can leave older sessions on disk. Keep them when
+            // preparing the live sessions, replacing only stale copies of an
+            // agent that is running again under the same identity.
+            let mut retained = suspend::load_suspended(&state_path).map_err(|error| {
+                ProtocolError::ServerError {
+                    message: format!("failed to load retained state: {error}"),
+                }
+            })?;
+            let active: std::collections::HashSet<_> = suspended
+                .agents
+                .iter()
+                .map(|agent| agent.agent_id())
+                .collect();
+            retained
+                .agents
+                .retain(|agent| !active.contains(&agent.agent_id()));
+            retained.agents.extend(suspended.agents);
+            suspend::save_suspended(&state_path, &retained).map_err(|error| {
                 ProtocolError::ServerError {
                     message: format!("failed to save state: {error}"),
                 }
@@ -781,6 +799,150 @@ fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
         }
         AgentEvent::AgentDown { agent_id } => (String::new(), agent_id.as_u128()),
         AgentEvent::SnapshotComplete => (String::new(), 0),
+    }
+}
+
+#[cfg(test)]
+mod suspend_tests {
+    use super::*;
+    use crate::agents::{AgentBackend, TestAgentSession};
+    use crate::suspend::{SuspendedAgent, SuspendedServerState};
+
+    fn host(root: &Path) -> Arc<PtyAgentHost> {
+        std::fs::create_dir(root.join("data")).unwrap();
+        let route = McpLaunchRoute::new(
+            std::env::current_exe().unwrap(),
+            None,
+            root.join("amux.sock"),
+            Uuid::new_v4(),
+        )
+        .unwrap();
+        PtyAgentHost::new_with_mcp_launch_route(route, root.join("keymaps"), root.join("data"))
+            .unwrap()
+    }
+
+    fn record(id: Uuid, name: &str) -> SuspendedAgent {
+        TestAgentSession::echo_for_tests(id, Some(name.into()))
+            .suspended_state()
+            .unwrap()
+    }
+
+    async fn register(host: &PtyAgentHost, id: Uuid) {
+        host.state
+            .write()
+            .await
+            .insert_registered_local_agent(
+                host.host_id,
+                id,
+                Box::new(TestAgentSession::echo_for_tests(id, Some("live".into()))),
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_preserves_older_records_and_replaces_stale_active_copies() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        let older = record(Uuid::new_v4(), "previously suspended");
+        let older_yaml = serde_yaml::to_string(&older).unwrap();
+        let active_id = Uuid::new_v4();
+        suspend::save_suspended(
+            &state_path,
+            &SuspendedServerState {
+                agents: vec![older.clone(), record(active_id, "stale")],
+            },
+        )
+        .unwrap();
+        register(&host, active_id).await;
+
+        for _ in 0..2 {
+            assert_eq!(host.prepare_suspend(state_path.clone()).await.unwrap(), 1);
+            assert_eq!(host.agent_count().await, 1);
+            let saved = suspend::load_suspended(&state_path).unwrap();
+            assert_eq!(saved.agents.len(), 2);
+            assert_eq!(serde_yaml::to_string(&saved.agents[0]).unwrap(), older_yaml);
+            assert_eq!(saved.agents[1].agent_id(), active_id);
+            assert_eq!(saved.agents[1].name(), Some("live"));
+        }
+        host.commit_suspend().await;
+        assert_eq!(host.agent_count().await, 0);
+        assert_eq!(
+            suspend::load_suspended(&state_path).unwrap().agents.len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_refuses_unreadable_retained_state_without_stopping_agents() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        let saved_path = root.path().join("suspended.yaml");
+        let original = b"agents: [invalid";
+        std::fs::write(&saved_path, original).unwrap();
+        let active_id = Uuid::new_v4();
+        register(&host, active_id).await;
+
+        assert!(
+            host.prepare_suspend(state_path)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("failed to load retained state")
+        );
+        assert_eq!(std::fs::read(&saved_path).unwrap(), original);
+        assert!(host.agent(active_id).await.is_ok());
+        host.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_write_failure_preserves_saved_and_live_agents() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        suspend::save_suspended(
+            &state_path,
+            &SuspendedServerState {
+                agents: vec![record(Uuid::new_v4(), "older")],
+            },
+        )
+        .unwrap();
+        let saved_path = root.path().join("suspended.yaml");
+        let original = std::fs::read(&saved_path).unwrap();
+        std::fs::create_dir(root.path().join("suspended.yaml.tmp")).unwrap();
+        let active_id = Uuid::new_v4();
+        register(&host, active_id).await;
+
+        assert!(
+            host.prepare_suspend(state_path)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("failed to save state")
+        );
+        assert_eq!(std::fs::read(&saved_path).unwrap(), original);
+        assert!(host.agent(active_id).await.is_ok());
+        host.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_without_live_agents_leaves_saved_state_untouched() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        suspend::save_suspended(
+            &state_path,
+            &SuspendedServerState {
+                agents: vec![record(Uuid::new_v4(), "older")],
+            },
+        )
+        .unwrap();
+        let saved_path = root.path().join("suspended.yaml");
+        let original = std::fs::read(&saved_path).unwrap();
+
+        assert_eq!(host.prepare_suspend(state_path).await.unwrap(), 0);
+        assert_eq!(std::fs::read(&saved_path).unwrap(), original);
     }
 }
 

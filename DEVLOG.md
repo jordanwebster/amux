@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Preserve previously suspended agents during preparation.**
+Preparing live agents now retains older suspended records, replaces stale copies
+of active identities, and reports only the newly prepared count. Preparation
+serializes with resume and refuses unreadable retained state instead of replacing
+it. Suspended-state replacement and removal sync their directory before reporting
+success. Tests cover repeated preparation, preservation of older records, and
+read/write failures leaving live agents registered and saved bytes intact.
+
 2026-09-05 — **Expose installation administration through a separate gRPC front door.**
 ProfileService lists and watches profiles, binds accounts, runs profile lifecycle
 operations and directs pairing and trust administration to the named device.
