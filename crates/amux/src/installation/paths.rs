@@ -14,19 +14,25 @@ pub struct ProfilePaths {
 }
 
 impl ProfilePaths {
+    pub(crate) fn allocated(root: &Path, id: ProfileId) -> Self {
+        let profiles = root.join("profiles");
+        let directory = profiles.join(id.to_string());
+        Self {
+            config_path: Some(directory.join("config.yaml")),
+            socket_path: profiles.join(format!("{id}.sock")),
+            state_path: directory.join("state/state.yaml"),
+            data_dir: directory.join("data"),
+            reports_dir: directory.join("data/reports"),
+        }
+    }
+
     /// Allocate a UUID namespace beneath an already-open installation root.
     /// No name or account subject participates in path construction.
     pub fn for_id(root: &Path, id: ProfileId) -> Result<Self, InstallationError> {
         let root = fs::canonicalize(root)?;
+        let paths = Self::allocated(&root, id);
         let profiles = root.join("profiles");
         let directory = profiles.join(id.to_string());
-        let paths = Self {
-            config_path: Some(directory.join("config.yaml")),
-            socket_path: directory.join("amux.sock"),
-            state_path: directory.join("state/state.yaml"),
-            data_dir: directory.join("data"),
-            reports_dir: directory.join("data/reports"),
-        };
         validate_socket_path(&paths.socket_path)?;
         // Keep the agent host's Codex socket out of the shared /tmp fallback.
         #[cfg(unix)]

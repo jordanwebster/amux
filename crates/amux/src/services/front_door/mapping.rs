@@ -28,9 +28,9 @@ pub(super) fn installation_error(error: InstallationError) -> Status {
         InstallationError::RootBusy(_) | InstallationError::SocketOccupied(_) => {
             Status::already_exists(message)
         }
-        InstallationError::InvalidPath(_) | InstallationError::SocketPathTooLong(_) => {
-            Status::invalid_argument(message)
-        }
+        InstallationError::InvalidPath(_)
+        | InstallationError::SocketPathTooLong(_)
+        | InstallationError::Config(_) => Status::invalid_argument(message),
         InstallationError::Io(_) | InstallationError::Registry(_) => Status::internal(message),
     }
 }

@@ -60,7 +60,7 @@ impl Installation {
         options: InstallationOptions,
         fixtures: RuntimeFixtureFactory,
     ) -> Result<Self, InstallationError> {
-        Self::open_inner(options, Some(fixtures)).await
+        Self::open_inner(options, None, Some(fixtures)).await
     }
 
     pub(crate) fn test_root(&self) -> PathBuf {

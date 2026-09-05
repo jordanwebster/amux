@@ -17,7 +17,8 @@ use super::{
 use crate::HostId;
 use crate::auth::CredentialProvider;
 use crate::client::Client;
-use crate::profile::runtime::{self, ProfileConfig, ProfileRuntime, ProfileRuntimeOptions};
+use crate::config::{ConfigError, InstallationConfig, ProfileConfig, check_path};
+use crate::profile::runtime::{self, ProfileRuntime, ProfileRuntimeOptions, RuntimeConfig};
 use crate::profile::status::RuntimeStatus;
 use crate::server::ShutdownReason;
 
@@ -132,6 +133,7 @@ pub(super) struct Inner {
     root: PathBuf,
     _temporary_root: Option<tempfile::TempDir>,
     settings: Arc<InstallationSettings>,
+    config: InstallationConfig,
     listeners: Listeners,
     credentials: CredentialSource,
     identity_http: reqwest::Client,
@@ -228,10 +230,67 @@ impl State {
     }
 }
 
+fn read_profile_config(
+    installation: &InstallationConfig,
+    id: ProfileId,
+    path: &std::path::Path,
+) -> Result<ProfileConfig, ConfigError> {
+    let profile = ProfileConfig::from_file(path)?;
+    check_path(
+        "installation_config",
+        &installation.file_path(),
+        &profile.installation_config,
+    )?;
+    profile.check_paths(&installation.root, id)?;
+    // A profile file never silently falls back to process defaults when its
+    // explicitly referenced installation file is missing or invalid.
+    let referenced = InstallationConfig::from_file(&profile.installation_config)?;
+    check_path("root", &installation.root, &referenced.root)?;
+    Ok(profile)
+}
+
+fn write_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), InstallationError> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or_else(|| InstallationError::InvalidPath(path.to_owned()))?;
+    std::fs::create_dir_all(parent)?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    let yaml = serde_yaml::to_string(value)
+        .map_err(|error| InstallationError::Registry(error.to_string()))?;
+    staged.write_all(yaml.as_bytes())?;
+    staged.as_file().sync_all()?;
+    staged
+        .persist_noclobber(path)
+        .map_err(|error| error.error)?;
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
 impl Installation {
     pub async fn open(options: InstallationOptions) -> Result<Self, InstallationError> {
         Self::open_inner(
             options,
+            None,
+            #[cfg(testnet)]
+            None,
+        )
+        .await
+    }
+
+    /// Open a desktop installation using shared preferences from its config.
+    pub async fn from_config(config: InstallationConfig) -> Result<Self, InstallationError> {
+        config.validate()?;
+        let options = InstallationOptions {
+            root: InstallationRoot::OnDisk(config.root.clone()),
+            settings: config.settings(),
+            listeners: Listeners::Sockets,
+            credentials: CredentialSource::ProfileFiles,
+            identity_http: reqwest::Client::new(),
+        };
+        Self::open_inner(
+            options,
+            Some(config),
             #[cfg(testnet)]
             None,
         )
@@ -240,6 +299,7 @@ impl Installation {
 
     async fn open_inner(
         options: InstallationOptions,
+        config: Option<InstallationConfig>,
         #[cfg(testnet)] fixtures: Option<RuntimeFixtureFactory>,
     ) -> Result<Self, InstallationError> {
         let registry = Registry::open(options.root)?;
@@ -257,6 +317,39 @@ impl Installation {
             .map(PathBuf::from)
             .or_else(|| temporary_root.as_ref().map(|dir| dir.path().to_owned()))
             .unwrap();
+        let root = std::fs::canonicalize(root)?;
+        let mut config = config.unwrap_or_else(|| InstallationConfig {
+            root: root.clone(),
+            front_door_socket: root.join("amux.sock"),
+            host_name: options.settings.host_name.clone(),
+            prevent_idle_sleep: options.settings.prevent_idle_sleep,
+            keybinds: options.settings.keybinds.clone(),
+            ui: options.settings.ui.clone(),
+            keymaps_dir: options.settings.keymaps_dir.clone(),
+            minimum_client_versions: options.settings.minimum_client_versions.clone(),
+            ..InstallationConfig::default()
+        });
+        config.root = root.clone();
+        let config_path = config.file_path();
+        if !config_path.exists() {
+            write_yaml(&config_path, &config)?;
+        }
+        config.path = Some(std::fs::canonicalize(config_path)?);
+        // Refuse path disagreement before starting any profile. Other startup
+        // failures remain per-profile so an unavailable device cannot block peers.
+        for record in registry
+            .profiles()
+            .filter(|record| !registry.is_deleting(record.id))
+        {
+            let paths = ProfilePaths::allocated(&root, record.id);
+            let path = paths.config_path.as_ref().unwrap();
+            if path.exists()
+                && let Err(error @ ConfigError::Disagreement { .. }) =
+                    read_profile_config(&config, record.id, path)
+            {
+                return Err(error.into());
+            }
+        }
         let records: Vec<_> = registry.profiles().cloned().collect();
         let (events, _) = broadcast::channel(WATCH_CAPACITY);
         let inner = Arc::new(Inner {
@@ -278,6 +371,7 @@ impl Installation {
             root,
             _temporary_root: temporary_root,
             settings: Arc::new(options.settings),
+            config,
             listeners: options.listeners,
             credentials: options.credentials,
             identity_http: options.identity_http,
@@ -548,7 +642,10 @@ impl Inner {
             }
         });
         let result = async {
-            let paths = ProfilePaths::for_id(&self.root, id)?;
+            let mut paths = ProfilePaths::for_id(&self.root, id)?;
+            if let Some(reports_dir) = &self.config.reports_dir {
+                paths.reports_dir = reports_dir.clone();
+            }
             let version = self.state.lock().unwrap().registry.credential_version(id);
             let store = Arc::new(ProfileCredentialStore::open(
                 matches!(self.credentials, CredentialSource::ProfileFiles)
@@ -576,7 +673,7 @@ impl Inner {
                 .unwrap_or_else(|| crate::config::Config::default().cloud_url);
             let mut options = ProfileRuntimeOptions {
                 paths: paths.clone(),
-                config: ProfileConfig {
+                config: RuntimeConfig {
                     cloud_url,
                     tcp_port: None,
                 },
@@ -593,28 +690,21 @@ impl Inner {
             };
             let config_path = paths.config_path.as_ref().unwrap();
             if config_path.exists() {
-                let config = crate::config::Config::from_file(config_path)
-                    .map_err(|error| InstallationError::Registry(error.to_string()))?;
-                if config.socket_path != paths.socket_path
-                    || config.state_path != paths.state_path
-                    || config.data_dir != paths.data_dir
-                {
-                    return Err(InstallationError::Registry(
-                        "profile configuration disagrees with its allocated paths".into(),
-                    ));
-                }
+                let config = read_profile_config(&self.config, id, config_path)?;
                 if record.binding.is_none() {
                     options.config.cloud_url = config.cloud_url;
                 }
                 options.config.tcp_port = config.tcp_port;
             } else {
-                use std::io::Write;
-                let mut staged = tempfile::NamedTempFile::new_in(config_path.parent().unwrap())?;
-                let yaml = serde_yaml::to_string(&options.service_config())
-                    .map_err(|error| InstallationError::Registry(error.to_string()))?;
-                staged.write_all(yaml.as_bytes())?;
-                staged.as_file().sync_all()?;
-                staged.persist(config_path).map_err(|error| error.error)?;
+                let config = ProfileConfig {
+                    installation_config: self.config.file_path(),
+                    socket_path: paths.socket_path.clone(),
+                    data_dir: paths.data_dir.clone(),
+                    state_path: paths.state_path.clone(),
+                    cloud_url: options.config.cloud_url.clone(),
+                    tcp_port: options.config.tcp_port,
+                };
+                write_yaml(config_path, &config)?;
             }
             let runtime = runtime::start_supervised(options, status, slot.operations.clone())
                 .await

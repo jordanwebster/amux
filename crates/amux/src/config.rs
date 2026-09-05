@@ -15,6 +15,33 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Invalid(String),
+    #[error("configuration disagrees on {field}: expected {}, found {}", expected.display(), actual.display())]
+    Disagreement {
+        field: &'static str,
+        expected: PathBuf,
+        actual: PathBuf,
+    },
+}
+
+impl Clone for ConfigError {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Io(error) => Self::Io(match error.raw_os_error() {
+                Some(code) => std::io::Error::from_raw_os_error(code),
+                None => std::io::Error::new(error.kind(), error.to_string()),
+            }),
+            Self::Invalid(message) => Self::Invalid(message.clone()),
+            Self::Disagreement {
+                field,
+                expected,
+                actual,
+            } => Self::Disagreement {
+                field,
+                expected: expected.clone(),
+                actual: actual.clone(),
+            },
+        }
+    }
 }
 
 const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
@@ -222,6 +249,248 @@ impl Default for UiSettings {
             color: ColorSetting::default(),
             artifact_cache_mib: 256,
         }
+    }
+}
+
+/// Preferences shared by every profile in an installation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InstallationConfig {
+    pub root: PathBuf,
+    pub front_door_socket: PathBuf,
+    pub host_name: String,
+    pub prevent_idle_sleep: Option<bool>,
+    pub keybinds: Keybinds,
+    pub ui: UiSettings,
+    pub reports_dir: Option<PathBuf>,
+    pub keymaps_dir: PathBuf,
+    pub update_manifest_url: String,
+    pub minimum_client_versions: HashMap<String, String>,
+    #[serde(skip)]
+    pub path: Option<PathBuf>,
+}
+
+impl Default for InstallationConfig {
+    fn default() -> Self {
+        Self {
+            root: default_data_dir(),
+            front_door_socket: default_socket_path(),
+            host_name: default_host_name(),
+            prevent_idle_sleep: None,
+            keybinds: Keybinds::default(),
+            ui: UiSettings::default(),
+            reports_dir: None,
+            keymaps_dir: crate::keymap_dir(&default_data_dir()),
+            update_manifest_url: format!("{DEFAULT_CLOUD_URL}/manifest.json"),
+            minimum_client_versions: HashMap::new(),
+            path: None,
+        }
+    }
+}
+
+impl InstallationConfig {
+    pub fn default_path() -> PathBuf {
+        amux_xdg_dir("XDG_CONFIG_HOME", ".config").join("config.yaml")
+    }
+
+    pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
+        let path = absolute_path(path, &std::env::current_dir()?)?;
+        let mut config: Self = read_yaml(&path)?;
+        let base = path.parent().unwrap();
+        config.root = absolute_path(&config.root, base)?;
+        config.front_door_socket = absolute_path(&config.front_door_socket, base)?;
+        config.keymaps_dir = absolute_path(&config.keymaps_dir, base)?;
+        config.reports_dir = config
+            .reports_dir
+            .as_deref()
+            .map(|path| absolute_path(path, base))
+            .transpose()?;
+        if let ThemeSetting::File(theme) = &mut config.ui.theme {
+            *theme = absolute_path(theme, base)?;
+        }
+        config.path = Some(path);
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        Config {
+            host_name: self.host_name.clone(),
+            keybinds: self.keybinds.clone(),
+            minimum_client_versions: self.minimum_client_versions.clone(),
+            ..Config::default()
+        }
+        .validate(false)
+    }
+
+    pub(crate) fn file_path(&self) -> PathBuf {
+        self.path
+            .clone()
+            .unwrap_or_else(|| self.root.join("config.yaml"))
+    }
+
+    pub(crate) fn settings(&self) -> crate::installation::InstallationSettings {
+        crate::installation::InstallationSettings {
+            host_name: self.host_name.clone(),
+            prevent_idle_sleep: self.prevent_idle_sleep,
+            keybinds: self.keybinds.clone(),
+            ui: self.ui.clone(),
+            keymaps_dir: self.keymaps_dir.clone(),
+            minimum_client_versions: self.minimum_client_versions.clone(),
+            update_reporter: None,
+            subscription_reporter: None,
+        }
+    }
+}
+
+/// The per-device file named by AMUX_CONFIG. Its installation is explicit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileConfig {
+    pub installation_config: PathBuf,
+    pub socket_path: PathBuf,
+    pub data_dir: PathBuf,
+    pub state_path: PathBuf,
+    #[serde(default = "default_cloud_url")]
+    pub cloud_url: String,
+    #[serde(default)]
+    pub tcp_port: Option<u16>,
+}
+
+impl ProfileConfig {
+    pub(crate) fn from_file(path: &Path) -> Result<Self, ConfigError> {
+        let mut config: Self = read_yaml(path)?;
+        if !config.installation_config.is_absolute() {
+            return Err(ConfigError::Invalid(
+                "installation_config must be an absolute path".into(),
+            ));
+        }
+        let base = path.parent().ok_or_else(|| {
+            ConfigError::Invalid("profile config must have a parent directory".into())
+        })?;
+        config.installation_config = absolute_path(&config.installation_config, base)?;
+        config.socket_path = absolute_path(&config.socket_path, base)?;
+        config.data_dir = absolute_path(&config.data_dir, base)?;
+        config.state_path = absolute_path(&config.state_path, base)?;
+        #[cfg(not(any(debug_assertions, test)))]
+        if !config.cloud_url.starts_with("https://") {
+            return Err(ConfigError::Invalid("cloud_url must use HTTPS".into()));
+        }
+        Ok(config)
+    }
+
+    pub fn artifact_cache_dir(&self) -> PathBuf {
+        self.data_dir.join("cache/artifacts")
+    }
+
+    pub(crate) fn check_paths(
+        &self,
+        root: &Path,
+        id: crate::installation::ProfileId,
+    ) -> Result<(), ConfigError> {
+        let paths = crate::installation::ProfilePaths::allocated(root, id);
+        for (field, expected, actual) in [
+            ("socket_path", &paths.socket_path, &self.socket_path),
+            ("data_dir", &paths.data_dir, &self.data_dir),
+            ("state_path", &paths.state_path, &self.state_path),
+        ] {
+            check_path(field, expected, actual)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedConfig {
+    pub profile_id: crate::installation::ProfileId,
+    pub profile: ProfileConfig,
+    pub installation: InstallationConfig,
+}
+
+impl ResolvedConfig {
+    pub fn artifact_cache_dir(&self) -> PathBuf {
+        self.profile.artifact_cache_dir()
+    }
+
+    pub fn reports_dir(&self) -> PathBuf {
+        self.installation
+            .reports_dir
+            .clone()
+            .unwrap_or_else(|| self.profile.data_dir.join("reports"))
+    }
+}
+
+/// Load both files without opening a registry or starting a runtime. The UUID
+/// directory identifies the profile; its allocated paths cannot be overridden.
+pub fn load_profile_config(path: &Path) -> Result<ResolvedConfig, ConfigError> {
+    let path = absolute_path(path, &std::env::current_dir()?)?;
+    let profile = ProfileConfig::from_file(&path)?;
+    let installation = InstallationConfig::from_file(&profile.installation_config)?;
+    let id = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .and_then(|name| uuid::Uuid::parse_str(name).ok())
+        .map(crate::installation::ProfileId)
+        .ok_or_else(|| ConfigError::Invalid("profile config must be in a UUID directory".into()))?;
+    let expected = crate::installation::ProfilePaths::allocated(&installation.root, id);
+    check_path(
+        "profile config",
+        expected.config_path.as_ref().unwrap(),
+        &path,
+    )?;
+    profile.check_paths(&installation.root, id)?;
+    Ok(ResolvedConfig {
+        profile_id: id,
+        profile,
+        installation,
+    })
+}
+
+pub(crate) fn check_path(
+    field: &'static str,
+    expected: &Path,
+    actual: &Path,
+) -> Result<(), ConfigError> {
+    if expected != actual {
+        return Err(ConfigError::Disagreement {
+            field,
+            expected: expected.to_owned(),
+            actual: actual.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
+    serde_yaml::from_slice(&std::fs::read(path)?)
+        .map_err(|error| ConfigError::Invalid(format!("{}: {error}", path.display())))
+}
+
+// Resolve aliases in the existing ancestor, even before a socket or state file
+// exists. This gives /tmp and /private/tmp the same identity on macOS.
+fn absolute_path(path: &Path, base: &Path) -> Result<PathBuf, ConfigError> {
+    let path = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        base.join(path)
+    };
+    match std::fs::canonicalize(&path) {
+        Ok(path) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = path.parent().ok_or_else(|| {
+                ConfigError::Invalid(format!("cannot resolve {}", path.display()))
+            })?;
+            let parent = absolute_path(parent, base)?;
+            match path.file_name() {
+                Some(name) => Ok(parent.join(name)),
+                None => Err(ConfigError::Invalid(format!(
+                    "cannot resolve {}",
+                    path.display()
+                ))),
+            }
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -762,3 +1031,6 @@ mod tests {
         assert!(err.to_string().contains("cli"));
     }
 }
+
+#[cfg(test)]
+mod split_tests;

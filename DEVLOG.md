@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Separate installation preferences from profile storage.**
+InstallationConfig and ProfileConfig now have strict, separate YAML shapes;
+load_profile_config resolves both files, UUID identity and paths relative to each
+file. Installation::from_config opens profiles with shared preferences, and the
+supervisor writes only per-profile settings into their config files. Path
+mismatches against registry allocation fail before any runtime starts with a
+structured ConfigError::Disagreement. Profile sockets now live directly beneath
+profiles as <UUID>.sock; their shorter adjacent Codex sockets stay in the same
+private directory. Tests cover loading, unknown fields, missing files, path
+mismatch, real Unix gRPC discovery and restart. The daemon CLI and config generators
+still need to adopt the new loader.
+
 2026-09-05 — **Suspend and recover agents across an installation.**
 Installation-wide suspend and resume now serialize against profile lifecycle and
 freeze agent creation, rename, deletion and ordinary resume while an update is

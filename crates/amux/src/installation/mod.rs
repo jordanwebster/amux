@@ -31,6 +31,8 @@ pub use registry::{Binding, InstallationRoot, ProfileId, ProfileLabel, ProfileRe
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstallationError {
+    #[error(transparent)]
+    Config(#[from] crate::ConfigError),
     #[error("unknown profile {0}")]
     UnknownProfile(ProfileId),
     #[error("profile {0} has been deleted")]
@@ -58,6 +60,7 @@ pub enum InstallationError {
 impl Clone for InstallationError {
     fn clone(&self) -> Self {
         match self {
+            Self::Config(error) => Self::Config(error.clone()),
             Self::UnknownProfile(id) => Self::UnknownProfile(*id),
             Self::Deleted(id) => Self::Deleted(*id),
             Self::RevisionMismatch { expected, actual } => Self::RevisionMismatch {

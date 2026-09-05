@@ -33,7 +33,7 @@ use crate::installation::ProfilePaths;
 
 /// Settings that vary between profiles.
 #[derive(Clone, Debug)]
-pub(crate) struct ProfileConfig {
+pub(crate) struct RuntimeConfig {
     pub(crate) cloud_url: String,
     pub(crate) tcp_port: Option<u16>,
 }
@@ -77,7 +77,7 @@ pub(crate) struct RuntimeFixtures {
 
 pub(crate) struct ProfileRuntimeOptions {
     pub(crate) paths: ProfilePaths,
-    pub(crate) config: ProfileConfig,
+    pub(crate) config: RuntimeConfig,
     pub(crate) shared: Arc<InstallationSettings>,
     pub(crate) credentials: Option<Arc<dyn CredentialProvider>>,
     pub(crate) enable_cloud_mode: Option<bool>,
@@ -101,7 +101,7 @@ impl ProfileRuntimeOptions {
             data_dir: config.data_dir.clone(),
             reports_dir: config.reports_dir(),
         };
-        let profile = ProfileConfig {
+        let profile = RuntimeConfig {
             cloud_url: config.cloud_url.clone(),
             tcp_port: config.tcp_port,
         };
@@ -726,7 +726,7 @@ mod tests {
                 reports_dir: data_dir.join("reports"),
                 data_dir,
             },
-            config: ProfileConfig {
+            config: RuntimeConfig {
                 cloud_url: "http://127.0.0.1:1".to_string(),
                 tcp_port: None,
             },

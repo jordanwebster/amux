@@ -68,7 +68,8 @@ pub use client::{
     SuspendSummary,
 };
 pub use config::{
-    ColorSetting, Config, ConfigError, Keybinds, LeaderKey, OpenMode, ThemeSetting, UiSettings,
+    ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey, OpenMode,
+    ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
 };
 pub use debug::DebugFormat;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};

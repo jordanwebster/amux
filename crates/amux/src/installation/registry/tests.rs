@@ -288,7 +288,9 @@ fn profile_owned_paths_are_disjoint_and_directories_are_private() {
     for (id, paths, contents) in [(a.id, &a_files, "personal"), (b.id, &b_files, "work")] {
         let directory = root_path.join("profiles").join(id.to_string());
         for path in paths {
-            assert!(path.starts_with(&directory));
+            let socket = root_path.join("profiles").join(format!("{id}.sock"));
+            let codex = crate::installation::adjacent_codex_socket_path(&socket);
+            assert!(path.starts_with(&directory) || *path == socket || *path == codex);
             for shared in shared {
                 assert!(!path.starts_with(root_path.join(shared)));
             }
@@ -311,7 +313,7 @@ fn profile_owned_paths_are_disjoint_and_directories_are_private() {
         }
         println!("profile {id}: {} (directories 0700)", directory.display());
         for path in paths {
-            println!("  {}", path.strip_prefix(&directory).unwrap().display());
+            println!("  {}", path.strip_prefix(&root_path).unwrap().display());
         }
     }
     for path in &a_files {
@@ -367,17 +369,19 @@ fn symlinks_cannot_redirect_profile_or_registry_writes() {
         "credentials.yaml",
         "config.yaml",
         "data/trust.json",
-        "amux.sock",
+        "profile socket",
+        "Codex socket",
     ] {
         let root = root();
         let registry = open(root.path());
         let id = ProfileId::new();
         let paths = ProfilePaths::for_id(registry.path().unwrap(), id).unwrap();
         let directory = paths.config_path.unwrap().parent().unwrap().to_owned();
-        let alias = if suffix.is_empty() {
-            directory
-        } else {
-            directory.join(suffix)
+        let alias = match suffix {
+            "" => directory,
+            "profile socket" => paths.socket_path.clone(),
+            "Codex socket" => crate::installation::adjacent_codex_socket_path(&paths.socket_path),
+            _ => directory.join(suffix),
         };
         if alias.is_dir() {
             fs::remove_dir_all(&alias).unwrap();
@@ -445,28 +449,25 @@ fn socket_allocation_checks_platform_byte_limit_without_truncation() {
         Err(InstallationError::SocketPathTooLong(_))
     ));
     assert!(!long_root.join("profiles").exists());
-    // A valid amux socket must still be refused if Codex would escape to /tmp.
+    // Profile sockets at the platform limit still leave room for the shorter
+    // Codex socket alongside them, without falling back to a shared /tmp path.
     let id = ProfileId::new();
     let canonical = fs::canonicalize(root.path()).unwrap();
     let overhead = canonical.as_os_str().as_bytes().len()
         + 1
         + "/profiles/".len()
         + id.to_string().len()
-        + "/amux.sock".len();
-    let codex_only_overflow = canonical.join("y".repeat(limit - overhead));
-    let registry = open(&codex_only_overflow);
-    let socket = registry
-        .path()
-        .unwrap()
-        .join("profiles")
-        .join(id.to_string())
-        .join("amux.sock");
-    validate_socket_path(&socket).unwrap();
-    let codex = crate::installation::adjacent_codex_socket_path(&socket);
-    assert!(
-        matches!(ProfilePaths::for_id(registry.path().unwrap(), id), Err(InstallationError::SocketPathTooLong(path)) if path == codex)
-    );
-    assert!(!codex_only_overflow.join("profiles").exists());
+        + ".sock".len();
+    let boundary_root = canonical.join("y".repeat(limit - overhead));
+    let registry = open(&boundary_root);
+    let paths = ProfilePaths::for_id(registry.path().unwrap(), id).unwrap();
+    assert_eq!(paths.socket_path.as_os_str().as_bytes().len(), limit);
+    validate_socket_path(&paths.socket_path).unwrap();
+    let codex = crate::installation::adjacent_codex_socket_path(&paths.socket_path);
+    assert_eq!(codex.parent(), paths.socket_path.parent());
+    assert!(codex.as_os_str().as_bytes().len() <= crate::installation::MAX_CODEX_SOCKET_PATH_BYTES);
+    let _profile_listener = UnixListener::bind(&paths.socket_path).unwrap();
+    let _codex_listener = UnixListener::bind(codex).unwrap();
     println!(
         "Unix socket byte limit: {limit}; exact limit binds; longer and multibyte overflow paths are refused without truncation"
     );
