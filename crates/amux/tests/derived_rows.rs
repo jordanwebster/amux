@@ -479,12 +479,12 @@ async fn open_claude_harness(
 
 async fn send_claude_prompt(
     harness: &ClaudeSdkBackendHarness,
-    input_id: &str,
+    ordinal: u128,
     prompt: &str,
 ) -> Result<()> {
     harness
         .send(
-            input_id.as_bytes(),
+            uuid::Uuid::from_u128(ordinal).as_bytes(),
             ClaudeSdkV1Input::Prompt {
                 text: prompt.to_string(),
                 image_blocks: Vec::new(),
@@ -557,12 +557,12 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
         // This recording sends the prompt before the opening MCP status is acknowledged.
         let (status, prompt) = tokio::join!(biased;
             control.mcp_server_status(),
-            send_claude_prompt(&first, "prompt-1", &prompts[0]),
+            send_claude_prompt(&first, 1, &prompts[0]),
         );
         status?;
         prompt?;
     } else {
-        send_claude_prompt(&first, "prompt-1", &prompts[0]).await?;
+        send_claude_prompt(&first, 1, &prompts[0]).await?;
     }
 
     let mut harnesses = Vec::new();
@@ -708,7 +708,10 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
         "interrupted" => {
             first.wait_for_type("assistant").await?;
             first
-                .send(b"interrupt", ClaudeSdkV1Input::Interrupt)
+                .send(
+                    uuid::Uuid::from_u128(256).as_bytes(),
+                    ClaudeSdkV1Input::Interrupt,
+                )
                 .await?;
             first.wait_for_type("result").await?;
             harnesses.push(first);
@@ -716,7 +719,7 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
         "multi_turn" | "compacted" => {
             first.wait_for_type("result").await?;
             for (index, prompt) in prompts.iter().enumerate().skip(1) {
-                send_claude_prompt(&first, &format!("prompt-{}", index + 1), prompt).await?;
+                send_claude_prompt(&first, (index + 1) as u128, prompt).await?;
                 first.wait_for_type("result").await?;
             }
             harnesses.push(first);
@@ -733,7 +736,7 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
                 &recording,
             )
             .await?;
-            send_claude_prompt(&second, "prompt-2", &prompts[1]).await?;
+            send_claude_prompt(&second, 2, &prompts[1]).await?;
             second.wait_for_type("result").await?;
             harnesses.push(first);
             harnesses.push(second);
@@ -757,6 +760,32 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
     let mut rows = Vec::new();
     for harness in harnesses {
         rows.extend(harness.finish().await?);
+    }
+    let accepted: Vec<_> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row["type"] == "user" && row["input_id"].is_string())
+        .collect();
+    assert_eq!(
+        accepted.len(),
+        prompts.len(),
+        "one accepted row per submitted prompt"
+    );
+    for (turn, ((index, row), prompt)) in accepted.iter().zip(&prompts).enumerate() {
+        assert_eq!(row["message"]["content"], *prompt);
+        assert_eq!(
+            row["uuid"],
+            uuid::Uuid::from_u128((turn + 1) as u128).to_string()
+        );
+        let end = accepted
+            .get(turn + 1)
+            .map_or(rows.len(), |(index, _)| *index);
+        assert!(
+            rows[index + 1..end]
+                .iter()
+                .any(|row| row["type"] == "result"),
+            "accepted prompt must precede its turn result for {recording_name}"
+        );
     }
     for pair in rows.windows(2) {
         if matches!(

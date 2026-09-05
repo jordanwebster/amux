@@ -15,3 +15,10 @@ prove that every field and event survives the adapter in order.
 Regenerate with `UPDATE_DERIVED_ROWS=1 timeout 900 wt test --
 claude_sdk_derived_rows`, then verify with
 `timeout 900 wt test -- derived_rows` without the update flag.
+
+Successful prompt writes publish a `user` row before any reply, with the input
+UUID (or hex bytes for a non-UUID input) as `uuid`. The hex `input_id` links the
+prompt to its `amux.attachments` metadata. These rows preserve the submitted
+text and native image blocks, are retained for reconnect replay, and are absent
+when the provider write fails. The derivation checks one accepted row per
+recorded prompt and its position before the corresponding turn result.

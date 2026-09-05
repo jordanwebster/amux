@@ -272,6 +272,43 @@ fn delta(text: &str) -> Value {
 }
 
 #[test]
+fn recorded_accepted_prompts_are_visible_before_their_replies() {
+    for name in ["text", "streamed", "tools", "tasks", "interrupted"] {
+        let recorded = rows(name);
+        let row = recorded
+            .iter()
+            .find(|row| row["type"] == "user" && row["input_id"].is_string())
+            .expect("the daemon publishes accepted input");
+        let model = feed(recorded.clone());
+        let entries: Vec<_> = claude_sdk_layer(&model, AGENT).entries().collect();
+        let prompt_index = entries
+            .iter()
+            .position(|entry| {
+                matches!(&entry.kind,
+            FeedEntryKind::Prompt(prompt) if prompt.uuid.as_deref() == row["uuid"].as_str())
+            })
+            .unwrap();
+        let FeedEntryKind::Prompt(prompt) = &entries[prompt_index].kind else {
+            unreachable!()
+        };
+        assert_eq!(prompt.text, row["message"]["content"].as_str().unwrap());
+        assert!(!prompt.synthetic);
+        assert!(!prompt.replay);
+        let reply_index = entries
+            .iter()
+            .position(|entry| {
+                matches!(
+                    &entry.kind,
+                    FeedEntryKind::Message(_) | FeedEntryKind::Thinking(_) | FeedEntryKind::Tool(_)
+                )
+            })
+            .unwrap();
+        assert!(prompt_index < reply_index, "{name}: prompt precedes work");
+        capture(&model, &format!("{name}-accepted-prompt"));
+    }
+}
+
+#[test]
 fn prompts_images_and_unknown_rows_are_visible_without_fabricated_content() {
     let model = feed(vec![
         json!({"type":"user", "uuid":"p", "message":{"content":[{"type":"text","text":"hello"},{"type":"image","source":{}}]}}),

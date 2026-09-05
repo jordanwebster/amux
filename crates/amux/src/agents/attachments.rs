@@ -376,7 +376,7 @@ pub(crate) fn artifact_read_rule(root: &Path) -> String {
     format!("Read({}/**)", root.display())
 }
 
-fn hex_bytes(bytes: &[u8]) -> String {
+pub(crate) fn hex_bytes(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
 
     let mut encoded = String::with_capacity(bytes.len() * 2);

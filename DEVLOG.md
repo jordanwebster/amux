@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Retain accepted Claude SDK prompts for every chat reader.**
+Successful prompt writes now publish an identifiable user row before replies
+and retain it for reconnect replay. UUID inputs reconcile the sender's echo;
+the attachment metadata key and native image blocks travel with the prompt.
+Failed writes publish only an error receipt. A held-flush transport regression
+checks fast replies, concurrent readers, repeated text and replay; strict
+recordings and feed specs now include the actual accepted prompts.
+
 2026-09-05 — **Connect Claude SDK chats to streams, session facts and attachments.**
 Local SDK agents now subscribe eagerly for fleet attention; remote and read-only
 agents subscribe when opened. The runtime requests bounded SDK replay and decodes

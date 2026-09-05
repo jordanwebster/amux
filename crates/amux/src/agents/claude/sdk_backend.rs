@@ -122,6 +122,9 @@ pub(super) struct Runtime {
     pub(super) control: Option<Control>,
     pub(super) session_id: Option<Uuid>,
     pending: PendingRequests,
+    // A provider reply can arrive before its stdin write returns. Publish the
+    // accepted prompt and receipt before ingesting that reply.
+    prompt_publication: Arc<tokio::sync::Mutex<()>>,
     facts: SessionFacts,
     pub(super) inflight_inputs: usize,
     pub(super) ready: bool,
@@ -481,7 +484,13 @@ async fn ingest_session(
     write_session_facts(&runtime, &log).await;
     runtime.lock().expect("Claude SDK runtime poisoned").ready = true;
 
+    let prompt_publication = runtime
+        .lock()
+        .expect("Claude SDK runtime poisoned")
+        .prompt_publication
+        .clone();
     while let Some(event) = events.next().await {
+        let _publication = prompt_publication.lock().await;
         match event {
             Ok(SdkEvent::Message(message)) => {
                 let completed = match &message {
@@ -688,7 +697,7 @@ impl ClaudeSdkInputTarget {
             .ok_or_else(|| anyhow!("Claude SDK session is not active"))
     }
 
-    async fn execute(&self, input: ClaudeSdkV1Input) -> Result<()> {
+    async fn execute(&self, input_id: &[u8], input: ClaudeSdkV1Input) -> Result<()> {
         let control = self.control()?;
         match input {
             ClaudeSdkV1Input::Prompt {
@@ -713,7 +722,19 @@ impl ClaudeSdkInputTarget {
                         None,
                     )
                 };
+                let identity = Uuid::from_slice(input_id)
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|_| crate::agents::attachments::hex_bytes(input_id));
+                let row = json!({
+                    "type": "user",
+                    "uuid": identity,
+                    "input_id": crate::agents::attachments::hex_bytes(input_id),
+                    "session_id": control.session_id(),
+                    "parent_tool_use_id": message.parent_tool_use_id,
+                    "message": message.message,
+                });
                 control.prompt(message).await?;
+                self.log.write(row).await;
             }
             ClaudeSdkV1Input::SetPermissionMode { mode } => {
                 self.runtime
@@ -844,7 +865,18 @@ impl ClaudeSdkInputTarget {
             .lock()
             .expect("Claude SDK runtime poisoned")
             .inflight_inputs += 1;
-        let outcome = match self.execute(input).await {
+        let publication = self
+            .runtime
+            .lock()
+            .expect("Claude SDK runtime poisoned")
+            .prompt_publication
+            .clone();
+        let _publication = if matches!(&input, ClaudeSdkV1Input::Prompt { .. }) {
+            Some(publication.lock().await)
+        } else {
+            None
+        };
+        let outcome = match self.execute(&input_id, input).await {
             Ok(()) => "ok".to_string(),
             Err(error) => error.to_string(),
         };
@@ -2059,3 +2091,7 @@ mod tests {
 #[cfg(test)]
 #[path = "sdk_session_tests.rs"]
 mod session_tests;
+
+#[cfg(test)]
+#[path = "sdk_prompt_tests.rs"]
+mod prompt_tests;
