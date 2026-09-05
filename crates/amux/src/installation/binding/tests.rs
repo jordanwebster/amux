@@ -234,8 +234,7 @@ fn options(root: InstallationRoot) -> InstallationOptions {
             ui: Default::default(),
             keymaps_dir: Default::default(),
             minimum_client_versions: Default::default(),
-            update_reporter: None,
-            subscription_reporter: None,
+            status_reporters: Default::default(),
         },
     }
 }

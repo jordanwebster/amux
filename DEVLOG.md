@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Restore desktop update and subscription warnings per profile.**
+Desktop installation settings now select marker-file reporting for each profile's
+state directory. Both runtime observations and update checks use those reporters,
+while embedded hosts retain callback reporting. The CLI and TUI share the same
+marker reader with the library. Update clears every profile's visible markers,
+even with the daemon stopped, instead of clearing an unused installation path.
+A desktop installation regression injects cloud observations into two running
+profiles, verifies one profile connecting cannot erase the other's warnings,
+and exercises update against a local current-version manifest.
+
 2026-09-05 — **Make cloud end-to-end fixtures wait for network readiness.**
 The relay session test checks both profiles are connected before starting
 pairing, so a device's initial connection retry cannot race the pairing command.

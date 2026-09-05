@@ -337,8 +337,7 @@ impl InstallationConfig {
             ui: self.ui.clone(),
             keymaps_dir: self.keymaps_dir.clone(),
             minimum_client_versions: self.minimum_client_versions.clone(),
-            update_reporter: None,
-            subscription_reporter: None,
+            status_reporters: crate::update::StatusReporters::MarkerFiles,
         }
     }
 }

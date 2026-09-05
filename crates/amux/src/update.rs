@@ -2,6 +2,51 @@
 
 use serde::Deserialize;
 
+mod markers;
+pub use markers::MarkerFileReporter;
+
+/// Select persistent per-profile status on desktop or callbacks owned by a host.
+#[derive(Clone, Default)]
+pub enum StatusReporters {
+    #[default]
+    None,
+    MarkerFiles,
+    Host {
+        update: Option<std::sync::Arc<dyn UpdateReporter>>,
+        subscription: Option<std::sync::Arc<dyn crate::SubscriptionReporter>>,
+    },
+}
+
+pub(crate) struct ResolvedReporters {
+    pub update: Option<std::sync::Arc<dyn UpdateReporter>>,
+    pub subscription: Option<std::sync::Arc<dyn crate::SubscriptionReporter>>,
+}
+
+impl StatusReporters {
+    pub(crate) fn resolve(&self, state_path: &std::path::Path) -> ResolvedReporters {
+        match self {
+            Self::None => ResolvedReporters {
+                update: None,
+                subscription: None,
+            },
+            Self::Host {
+                update,
+                subscription,
+            } => ResolvedReporters {
+                update: update.clone(),
+                subscription: subscription.clone(),
+            },
+            Self::MarkerFiles => {
+                let reporter = std::sync::Arc::new(MarkerFileReporter::from_state_path(state_path));
+                ResolvedReporters {
+                    update: Some(reporter.clone()),
+                    subscription: Some(reporter),
+                }
+            }
+        }
+    }
+}
+
 /// Result of an update check.
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {

@@ -524,3 +524,18 @@ impl Drop for TestRelay {
         self.task.abort();
     }
 }
+
+/// Inject a connector observation into a live installation's production status
+/// adapter, without needing a particular cloud refusal or network transport.
+#[cfg(testnet)]
+pub async fn report_profile_status(
+    installation: &crate::installation::Installation,
+    id: crate::installation::ProfileId,
+    observed: crate::installation::Observed,
+) {
+    let runtime = installation.test_runtime(id).await.expect("profile exists");
+    runtime
+        .as_ref()
+        .expect("profile is running")
+        .report_status_for_test(observed);
+}

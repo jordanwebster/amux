@@ -680,19 +680,6 @@ impl Inner {
         };
         let _operation = slot.operations.lock().await;
         let record = self.state.lock().unwrap().active(id)?.status.record.clone();
-        let weak = Arc::downgrade(self);
-        let status = RuntimeStatus::new(None, None).with_observer(move |observed| {
-            if let Some(inner) = weak.upgrade() {
-                let mut state = inner.state.lock().unwrap();
-                if let Some(entry) = state.profiles.get_mut(&id)
-                    && !entry.deleting
-                    && entry.status.observed != observed
-                {
-                    entry.status.observed = observed;
-                    state.publish(id);
-                }
-            }
-        });
         let result = async {
             let mut paths = ProfilePaths::for_id(&self.root, id)?;
             if let Some(reports_dir) = &self.config.reports_dir {
@@ -758,6 +745,21 @@ impl Inner {
                 };
                 write_yaml(config_path, &config)?;
             }
+            let weak = Arc::downgrade(self);
+            let reporters = options.shared.status_reporters.resolve(&paths.state_path);
+            let status = RuntimeStatus::new(reporters.update, reporters.subscription)
+                .with_observer(move |observed| {
+                    if let Some(inner) = weak.upgrade() {
+                        let mut state = inner.state.lock().unwrap();
+                        if let Some(entry) = state.profiles.get_mut(&id)
+                            && !entry.deleting
+                            && entry.status.observed != observed
+                        {
+                            entry.status.observed = observed;
+                            state.publish(id);
+                        }
+                    }
+                });
             let runtime = runtime::start_supervised(options, status, slot.operations.clone())
                 .await
                 .map_err(|error| InstallationError::Unavailable(error.to_string()))?;

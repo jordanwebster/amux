@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use amux::{InstallationConfig, SubscriptionReporter, UpdateInfo, UpdateReporter, UpdateStatus};
+use amux::InstallationConfig;
+pub(crate) use amux::update::MarkerFileReporter;
 use anyhow::{Context, Result, bail};
 use semver::Version;
 use serde::Deserialize;
@@ -11,164 +12,118 @@ use sha2::{Digest, Sha256};
 
 use crate::front_door;
 
-#[derive(Debug, Clone)]
-pub(crate) struct MarkerFileReporter {
-    state_dir: PathBuf,
-}
-
-impl MarkerFileReporter {
-    pub(crate) fn from_state_path(state_path: &Path) -> Self {
-        Self {
-            state_dir: state_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
-        }
-    }
-
-    pub(crate) fn read_update_marker(&self) -> Option<UpdateInfo> {
-        let contents = std::fs::read_to_string(self.update_marker_path()).ok()?;
-        let mut lines = contents.lines();
-        let current_version = lines.next()?.to_string();
-        let update_version = lines.next()?.to_string();
-        if current_version.is_empty() || update_version.is_empty() {
-            return None;
-        }
-        Some(UpdateInfo {
-            current_version,
-            update_version,
-        })
-    }
-
-    pub(crate) fn read_update_required(&self) -> Option<String> {
-        let contents = std::fs::read_to_string(self.update_required_marker_path()).ok()?;
-        let version = contents.trim().to_string();
-        if version.is_empty() {
-            None
-        } else {
-            Some(version)
-        }
-    }
-
-    pub(crate) fn read_active_update_required(&self, current_version: &str) -> Option<String> {
-        let minimum_version = self.read_update_required()?;
-        if current_satisfies_minimum(current_version, &minimum_version) {
-            self.clear_update_required();
-            None
-        } else {
-            Some(minimum_version)
-        }
-    }
-
-    pub(crate) fn subscription_required(&self) -> bool {
-        self.subscription_required_marker_path().is_file()
-    }
-
-    pub(crate) fn is_update_dismissed(&self, minimum_version: &str) -> bool {
-        match std::fs::read_to_string(self.update_dismissed_marker_path()) {
-            Ok(contents) => contents.trim() == minimum_version,
-            Err(_) => false,
-        }
-    }
-
-    pub(crate) fn dismiss_update_required(&self, minimum_version: &str) {
-        let _ = std::fs::write(
-            self.update_dismissed_marker_path(),
-            format!("{minimum_version}\n"),
-        );
-    }
-
-    pub(crate) fn clear_update_marker(&self) {
-        let _ = std::fs::remove_file(self.update_marker_path());
-    }
-
-    pub(crate) fn clear_update_required(&self) {
-        let _ = std::fs::remove_file(self.update_required_marker_path());
-        let _ = std::fs::remove_file(self.update_dismissed_marker_path());
-    }
-
-    pub(crate) fn clear_subscription_required(&self) {
-        let _ = std::fs::remove_file(self.subscription_required_marker_path());
-    }
-
-    pub(crate) fn clear_all(&self) {
-        self.clear_update_marker();
-        self.clear_update_required();
-        self.clear_subscription_required();
-    }
-
-    pub(crate) fn update_marker_path(&self) -> PathBuf {
-        self.state_dir.join("update-available")
-    }
-
-    fn update_required_marker_path(&self) -> PathBuf {
-        self.state_dir.join("update-required")
-    }
-
-    fn update_dismissed_marker_path(&self) -> PathBuf {
-        self.state_dir.join("update-dismissed")
-    }
-
-    fn subscription_required_marker_path(&self) -> PathBuf {
-        self.state_dir.join("subscription-required")
-    }
-
-    fn write_update_marker(&self, info: &UpdateInfo) {
-        let contents = format!("{}\n{}\n", info.current_version, info.update_version);
-        if let Err(e) = std::fs::write(self.update_marker_path(), contents) {
-            tracing::warn!(error = %e, "failed to write update marker");
-        }
-    }
-
-    fn write_update_required(&self, minimum_version: &str) {
-        if let Err(e) = std::fs::write(
-            self.update_required_marker_path(),
-            format!("{minimum_version}\n"),
-        ) {
-            tracing::warn!(error = %e, "failed to write update-required marker");
-        }
-    }
-
-    fn write_subscription_required(&self) {
-        if let Err(e) = std::fs::write(self.subscription_required_marker_path(), b"required\n") {
-            tracing::warn!(error = %e, "failed to write subscription-required marker");
-        }
-    }
-}
-
-fn current_satisfies_minimum(current_version: &str, minimum_version: &str) -> bool {
-    match (
-        Version::parse(current_version),
-        Version::parse(minimum_version),
-    ) {
-        (Ok(current), Ok(minimum)) => current >= minimum,
-        _ => false,
-    }
-}
-
-impl UpdateReporter for MarkerFileReporter {
-    fn report(&self, status: UpdateStatus) {
-        match status {
-            UpdateStatus::Available(Some(info)) => self.write_update_marker(&info),
-            UpdateStatus::Available(None) => self.clear_update_marker(),
-            UpdateStatus::Required(Some(minimum_version)) => {
-                self.write_update_required(&minimum_version);
-            }
-            UpdateStatus::Required(None) => self.clear_update_required(),
-        }
-    }
-}
-
-impl SubscriptionReporter for MarkerFileReporter {
-    fn report_subscription_required(&self, required: bool) {
-        if required {
-            self.write_subscription_required();
-        } else {
-            self.clear_subscription_required();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use amux::{SubscriptionReporter, UpdateInfo, UpdateReporter, UpdateStatus};
+
     use super::*;
+
+    #[tokio::test]
+    async fn desktop_installation_markers_reach_cli_and_clear_on_update() {
+        use amux::installation::{
+            Installation, InstallationRoot, Observed, ProfileId, ProfileLabel, ProfilePaths,
+            Registry,
+        };
+        use amux::test_fixtures::report_profile_status;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            let temp = tempfile::Builder::new().prefix("am").tempdir_in("/tmp").unwrap();
+            let root = std::fs::canonicalize(temp.path()).unwrap();
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let manifest_server = tokio::spawn(async move {
+                loop {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    let mut buffer = [0; 1024];
+                    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                        let count = socket.read(&mut buffer).await.unwrap();
+                        if count == 0 { break; }
+                        request.extend_from_slice(&buffer[..count]);
+                    }
+                    let body = format!(r#"{{"version":"{}","release_notes":"","platforms":{{}}}}"#, env!("CARGO_PKG_VERSION"));
+                    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let _ = socket.write_all(response.as_bytes()).await;
+                }
+            });
+            let config = InstallationConfig {
+                root: root.clone(),
+                path: Some(root.join("config.yaml")),
+                front_door_socket: root.join("amux.sock"),
+                keymaps_dir: root.join("keymaps"),
+                prevent_idle_sleep: Some(false),
+                update_manifest_url: format!("{url}/manifest.json"),
+                ..InstallationConfig::default()
+            };
+            std::fs::write(config.path.as_ref().unwrap(), serde_yaml::to_string(&config).unwrap()).unwrap();
+            let ids = [ProfileId::new(), ProfileId::new()];
+            let mut registry = Registry::open(InstallationRoot::OnDisk(root.clone())).unwrap();
+            let mut readers = Vec::new();
+            for id in ids {
+                registry.create(id, ProfileLabel::default()).unwrap();
+                let paths = ProfilePaths::for_id(&root, id).unwrap();
+                let profile = amux::ProfileConfig {
+                    installation_config: config.path.clone().unwrap(),
+                    socket_path: paths.socket_path,
+                    data_dir: paths.data_dir,
+                    state_path: paths.state_path,
+                    cloud_url: url.clone(),
+                    tcp_port: None,
+                };
+                let path = paths.config_path.unwrap();
+                std::fs::write(&path, serde_yaml::to_string(&profile).unwrap()).unwrap();
+                // Resolve exactly the config path used by CLI selection and TUI startup.
+                let resolved = amux::load_profile_config(&path).unwrap();
+                readers.push(MarkerFileReporter::from_state_path(&resolved.profile.state_path));
+            }
+            drop(registry);
+            let owner = Installation::from_config(config.clone()).await.unwrap();
+            for id in ids {
+                owner.client(id).unwrap().list_agents().await.unwrap();
+            }
+            report_profile_status(&owner, ids[0], Observed::UpdateRequired { minimum_version: Some("99.0.0".into()) }).await;
+            report_profile_status(&owner, ids[0], Observed::SubscriptionRequired).await;
+            report_profile_status(&owner, ids[1], Observed::Connected).await;
+            assert_eq!(readers[0].read_active_update_required(env!("CARGO_PKG_VERSION")).as_deref(), Some("99.0.0"));
+            assert!(readers[0].subscription_required());
+            assert!(readers[1].read_update_required().is_none());
+            assert!(!readers[1].subscription_required());
+            let selected = amux::load_profile_config(
+                &root.join("profiles").join(ids[0].to_string()).join("config.yaml"),
+            ).unwrap();
+            crate::client_common::print_update_banner(&selected.profile.state_path);
+            println!("Desktop profile A: CLI reads update-required=99.0.0 and TUI reads subscription-required; profile B connecting leaves both intact.");
+
+            report_profile_status(&owner, ids[1], Observed::UpdateRequired { minimum_version: Some("98.0.0".into()) }).await;
+            report_profile_status(&owner, ids[1], Observed::SubscriptionRequired).await;
+            for (reader, version) in readers.iter().zip(["99.0.0", "98.0.0"]) {
+                reader.dismiss_update_required(version);
+            }
+            run_update(&config).await.unwrap();
+            for (reader, version) in readers.iter().zip(["99.0.0", "98.0.0"]) {
+                assert!(reader.read_update_marker().is_none());
+                assert!(reader.read_update_required().is_none());
+                assert!(!reader.is_update_dismissed(version));
+                assert!(!reader.subscription_required());
+            }
+            println!("amux update (already current): update-required, update-dismissed and subscription-required clear in both profile state directories.");
+            owner.shutdown(amux::ShutdownReason::UserRequested).await;
+
+            for reader in &readers {
+                reader.report(UpdateStatus::Required(Some("99.0.0".into())));
+                reader.report_subscription_required(true);
+            }
+            run_update(&config).await.unwrap();
+            for reader in &readers {
+                assert!(reader.read_update_required().is_none());
+                assert!(!reader.subscription_required());
+            }
+            println!("amux update also clears both profiles while the installation is stopped.");
+            assert!(!root.join("state/state.yaml").exists());
+            manifest_server.abort();
+        }).await.expect("desktop marker regression timed out");
+    }
 
     #[test]
     fn available_marker_round_trips_and_clears() {
@@ -392,12 +347,38 @@ fn replace_binary(temp: &Path, target: &Path) -> Result<()> {
     std::fs::rename(temp, target).context("failed to replace binary")
 }
 
+fn clear_profile_markers(config: &InstallationConfig) -> Result<()> {
+    let profiles = match std::fs::read_dir(config.root.join("profiles")) {
+        Ok(profiles) => profiles,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).context("failed to enumerate profile markers"),
+    };
+    for entry in profiles {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir()
+            || entry
+                .file_name()
+                .to_str()
+                .and_then(|name| uuid::Uuid::parse_str(name).ok())
+                .is_none()
+        {
+            continue;
+        }
+        let path = entry.path().join("config.yaml");
+        if !path.exists() {
+            continue;
+        }
+        let resolved = amux::load_profile_config(&path)?;
+        MarkerFileReporter::from_state_path(&resolved.profile.state_path).clear_all();
+    }
+    Ok(())
+}
+
 pub async fn run_update(config: &InstallationConfig) -> Result<()> {
     let current =
         Version::parse(env!("CARGO_PKG_VERSION")).context("failed to parse current version")?;
 
     let manifest_url = &config.update_manifest_url;
-    let state_path = config.root.join("state/state.yaml");
     println!("Checking for updates...");
     let manifest = fetch_manifest(manifest_url).await?;
 
@@ -406,7 +387,7 @@ pub async fn run_update(config: &InstallationConfig) -> Result<()> {
 
     if latest <= current {
         println!("Already up to date (v{current}).");
-        MarkerFileReporter::from_state_path(&state_path).clear_all();
+        clear_profile_markers(config)?;
         return Ok(());
     }
 
@@ -443,13 +424,13 @@ pub async fn run_update(config: &InstallationConfig) -> Result<()> {
     }
     println!("Updated to v{latest}.");
 
-    // Clear update markers so stale banners don't persist.
-    MarkerFileReporter::from_state_path(&state_path).clear_all();
+    // A marker cleanup error must not leave the updated daemon stopped.
+    let markers_cleared = clear_profile_markers(config);
 
     if was_running {
         println!("Restarting server...");
         front_door::resume_with_executable(config, &current_exe).await?;
     }
 
-    Ok(())
+    markers_cleared
 }

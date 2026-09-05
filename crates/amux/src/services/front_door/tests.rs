@@ -28,8 +28,7 @@ async fn front(listeners: Listeners) -> FrontDoor {
                 ui: Default::default(),
                 keymaps_dir: PathBuf::new(),
                 minimum_client_versions: HashMap::new(),
-                update_reporter: None,
-                subscription_reporter: None,
+                status_reporters: Default::default(),
             },
         })
         .await

@@ -47,8 +47,7 @@ pub struct InstallationSettings {
     pub ui: UiSettings,
     pub keymaps_dir: PathBuf,
     pub minimum_client_versions: HashMap<String, String>,
-    pub update_reporter: Option<Arc<dyn UpdateReporter>>,
-    pub subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
+    pub status_reporters: crate::update::StatusReporters,
 }
 
 /// Which externally reachable listeners a runtime owns.
@@ -112,8 +111,10 @@ impl ProfileRuntimeOptions {
             ui: config.ui,
             keymaps_dir: crate::keymap_dir(&config.data_dir),
             minimum_client_versions: config.minimum_client_versions,
-            update_reporter,
-            subscription_reporter,
+            status_reporters: crate::update::StatusReporters::Host {
+                update: update_reporter,
+                subscription: subscription_reporter,
+            },
         };
         Self {
             paths,
@@ -194,10 +195,11 @@ pub(crate) struct ProfileRuntime {
 pub(crate) async fn start(
     options: ProfileRuntimeOptions,
 ) -> Result<ProfileRuntime, ProfileStartError> {
-    let status = RuntimeStatus::new(
-        options.shared.update_reporter.clone(),
-        options.shared.subscription_reporter.clone(),
-    );
+    let reporters = options
+        .shared
+        .status_reporters
+        .resolve(&options.paths.state_path);
+    let status = RuntimeStatus::new(reporters.update, reporters.subscription);
     start_observed(options, status).await
 }
 
@@ -239,10 +241,11 @@ pub(crate) async fn start_with_security(
     options: ProfileRuntimeOptions,
     security: DeviceRuntimeSecurity,
 ) -> Result<ProfileRuntime, ProfileStartError> {
-    let status = RuntimeStatus::new(
-        options.shared.update_reporter.clone(),
-        options.shared.subscription_reporter.clone(),
-    );
+    let reporters = options
+        .shared
+        .status_reporters
+        .resolve(&options.paths.state_path);
+    let status = RuntimeStatus::new(reporters.update, reporters.subscription);
     let result = build(options, security, status.clone()).await;
     if result.is_err() {
         status.report(Observed::StartupFailed);
@@ -257,6 +260,10 @@ async fn build(
 ) -> Result<ProfileRuntime, ProfileStartError> {
     #[cfg(testnet)]
     let mut options = options;
+    let reporters = options
+        .shared
+        .status_reporters
+        .resolve(&options.paths.state_path);
     let service_config = options.service_config();
     service_config.validate()?;
 
@@ -267,9 +274,9 @@ async fn build(
         service_config.clone(),
         host_id,
         options.credentials.clone(),
-        options.shared.update_reporter.clone(),
+        reporters.update.clone(),
     )));
-    state.write().await.subscription_reporter = options.shared.subscription_reporter.clone();
+    state.write().await.subscription_reporter = reporters.subscription.clone();
 
     let agent_host = new_local_agent_host(
         host_id,
@@ -329,7 +336,7 @@ async fn build(
     if options.listeners == Listeners::Sockets {
         background_tasks.extend(services.spawn_reachability_links());
         if let Some(task) = crate::server::spawn_periodic_update_check(
-            options.shared.update_reporter.clone(),
+            reporters.update.clone(),
             options.config.cloud_url.clone(),
             env!("CARGO_PKG_VERSION").to_string(),
             Duration::from_secs(3600),
@@ -379,6 +386,11 @@ async fn build(
 impl ProfileRuntime {
     pub(crate) fn client(&self) -> Client {
         self.client.clone()
+    }
+
+    #[cfg(testnet)]
+    pub(crate) fn report_status_for_test(&self, observed: Observed) {
+        self.status.report(observed);
     }
 
     #[allow(dead_code)]
@@ -713,8 +725,7 @@ mod tests {
                 ui: UiSettings::default(),
                 keymaps_dir: root.join("installation-keymaps"),
                 minimum_client_versions: HashMap::new(),
-                update_reporter: None,
-                subscription_reporter: None,
+                status_reporters: Default::default(),
             }),
             credentials: None,
 
