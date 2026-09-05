@@ -1,6 +1,6 @@
 use amux::claude_io::{AskAnswer, PermissionAnswer};
 use amux_ui::attachments::DraftAttachment;
-use amux_ui::claude::{ClaudeCommand, FeedEntryKind};
+use amux_ui::claude::{ClaudeCommand, FeedEntryKind, SendGate};
 use amux_ui::{Command as UiCommand, Model, Runtime, RuntimeOptions};
 use serde_json::json;
 
@@ -77,11 +77,15 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
         })
         .await;
         runtime.note_attached(agent);
+        // The transcript marker alone does not open the composer: the kernel
+        // stream can still be replaying, and a prompt sent then is refused.
+        // Wait for the gate a person would see before typing.
         wait_for(&mut runtime, "agent stream", |model| {
             model.is_synchronized()
                 && model
                     .claude(agent)
                     .is_some_and(|layer| layer.transcript_ready())
+                && amux_ui::claude::send_gate(model, agent) == SendGate::Ready
         })
         .await;
         assert!(

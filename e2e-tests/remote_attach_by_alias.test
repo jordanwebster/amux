@@ -41,6 +41,7 @@ Server started.
 @TpairA
 > amux pair --listen
 @@capture pairing_pin Pairing PIN:
+PIN expires in 5 minutes.
 LAN direct listener: tcp_port $server_a.tcp_port
 Pairing mode active for 5 minutes.
 

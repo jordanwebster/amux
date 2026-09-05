@@ -64,6 +64,7 @@ Server started.
 @TpairA
 > amux pair
 @@capture pairing_pin Pairing PIN:
+PIN expires in 5 minutes.
 Pairing mode active for 5 minutes.
 
 @TpairB

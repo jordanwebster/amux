@@ -158,7 +158,10 @@ pub struct ExecutorConfig {
     pub amux_binary: PathBuf,
     /// Path to the test-agent binary
     pub test_agent_binary: PathBuf,
-    /// Timeout for read operations
+    /// How long a read waits for the output a step expects. Only a step that
+    /// is going to fail ever spends it, so it is generous: a shared CI runner
+    /// can stall a freshly spawned agent for a second or more, and a strict
+    /// comparison that gave up early reported a real echo as missing.
     pub timeout: Duration,
 }
 
@@ -167,7 +170,7 @@ impl Default for ExecutorConfig {
         Self {
             amux_binary: PathBuf::from("target/debug/amux"),
             test_agent_binary: PathBuf::from("target/debug/test-agent"),
-            timeout: Duration::from_millis(200),
+            timeout: Duration::from_secs(5),
         }
     }
 }

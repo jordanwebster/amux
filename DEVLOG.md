@@ -4,6 +4,24 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Three tests that lied about the code they cover.** Pairing now
+tells you when the PIN expires, and the five scripted end-to-end sessions that
+pair two daemons still expected the older three-line block, so every remote
+journey failed on a line that was correct. Their transcripts now carry the
+expiry line where the command prints it.
+
+The relay agents test typed a prompt as soon as the transcript marker arrived,
+but the kernel stream can still be replaying then and the send is refused —
+which it was, on a loaded machine. It now waits for the same send gate a person
+sees on the composer before typing, so the test asks for what the product
+actually promises.
+
+The scripted-session runner gave a step 200ms to produce its expected output. A
+shared CI runner can stall a freshly spawned agent longer than that, and the
+strict comparison then reported a real echo as missing. Waiting up to five
+seconds costs nothing on a passing step and only lengthens a step that is going
+to fail anyway.
+
 2026-09-05 — **The home journey, against the machines that are really
 running.** `wt run ios-journey -- home` starts a relay and two daemons from a
 committed topology with six agents on them — one waiting on permission, one
