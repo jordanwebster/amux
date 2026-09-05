@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Retire three sharp edges left by the profiles work.**
+`default_cache_dir` is gone: with profile paths landed it had no product caller,
+and an exported default was how the artifact cache root drifted away from
+configuration in the first place. The daemon diagnostic `has_cloud_credentials`
+is now `has_credential_provider`, because every profile receives a credential
+store whether or not it holds a token, so the old name reported a login on a
+freshly created unbound profile. The relay test fixture returns the account it
+already registered for a label instead of minting a new tenant, since the token
+is derived from the label and a second registration silently repointed the
+first. Lint passes; the config-split daemon test and all three embedding tests
+pass.
+
 2026-09-05 — **Verify complete account profiles across every supported surface.**
 The installation hosts independent account devices behind one administrative
 socket, with profile selection in the CLI and TUI and an in-process host API.
