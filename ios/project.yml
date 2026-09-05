@@ -28,6 +28,8 @@ packages:
     path: Packages/AmuxDesign
   AmuxFeatures:
     path: Packages/AmuxFeatures
+  AmuxShell:
+    path: Packages/AmuxShell
   AmuxTestSupport:
     path: Packages/AmuxTestSupport
 
@@ -61,6 +63,12 @@ targets:
         CFBundleVersion: "1"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # Pairing links printed by the CLI (`amux://pair?payload=...`) and the
+        # callback the web sign-in returns to. Arriving here pairs with nobody
+        # and signs nobody in; the app asks first.
+        CFBundleURLTypes:
+          - CFBundleURLName: sh.amux.Amux
+            CFBundleURLSchemes: [amux]
         # The transcript is measured against the display's full cadence; the
         # 120 Hz cap iOS applies by default would hide hitches behind it.
         CADisableMinimumFrameDurationOnPhone: true
@@ -96,6 +104,8 @@ targets:
         product: AmuxDesign
       - package: AmuxFeatures
         product: AmuxFeatures
+      - package: AmuxShell
+        product: AmuxShell
 
   # The performance suite runs inside the app it measures: it generates the
   # pinned workloads, hands them to the runtime's own callback and reads the

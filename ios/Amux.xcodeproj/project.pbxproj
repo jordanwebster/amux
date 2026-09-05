@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		03A652855597531ADB49E8BC /* DoorRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */; };
 		05DFFA86753B995BB850DE4C /* ScriptedCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */; };
+		07F4FE52C75D22617CDE6BB9 /* Composition.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60FB9981D4C68D3915DA21A /* Composition.swift */; };
 		08A81513DFEF3EE1567A6A5E /* VisibleTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8CE78DF417F5614935595CA /* VisibleTree.swift */; };
 		0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31777DF351ACE50870B1C6A5 /* LaunchTests.swift */; };
 		0F3AC52183DBFF753C52B8CF /* States.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66609895E99B406673EEADA3 /* States.swift */; };
@@ -40,6 +41,7 @@
 		DDDED99192D1F649C8282E0A /* Perturbation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D67FA937AF3288820FA3464 /* Perturbation.swift */; };
 		E2141E4F9E984ECACF441955 /* Sessions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FF4DBFB3F554EC2761318D /* Sessions.swift */; };
 		E4DF9C7A152AFAF210FB4241 /* AmuxFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */; };
+		EF9507B8D384D5EAE754EFB4 /* AmuxShell in Frameworks */ = {isa = PBXBuildFile; productRef = 62675EA602BEE702494C2D3C /* AmuxShell */; };
 		F840D37348D0746EA906D110 /* Harness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E50ACE0C6E84D336B13332 /* Harness.swift */; };
 		F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BAD30E79F5FE66C97691B57 /* RootView.swift */; };
 /* End PBXBuildFile section */
@@ -87,6 +89,7 @@
 		A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColdStartProbe.swift; sourceTree = "<group>"; };
 		A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorWindow.swift; sourceTree = "<group>"; };
 		B4EFC5ACC5BD2F025A261F98 /* AmuxTestSupport */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxTestSupport; path = Packages/AmuxTestSupport; sourceTree = SOURCE_ROOT; };
+		B60FB9981D4C68D3915DA21A /* Composition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composition.swift; sourceTree = "<group>"; };
 		C0FF4DBFB3F554EC2761318D /* Sessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sessions.swift; sourceTree = "<group>"; };
 		C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedCloud.swift; sourceTree = "<group>"; };
 		D0E455E43044DD55EB8662D4 /* Transcript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transcript.swift; sourceTree = "<group>"; };
@@ -94,6 +97,7 @@
 		D5E1FE40B447768ED3E301C2 /* Instruments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Instruments.swift; sourceTree = "<group>"; };
 		D8269D1B95602732F33C12F2 /* AmuxDesign */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxDesign; path = Packages/AmuxDesign; sourceTree = SOURCE_ROOT; };
 		DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxPerformanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E2D4F1F96B2AE8306CD589E6 /* AmuxShell */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxShell; path = Packages/AmuxShell; sourceTree = SOURCE_ROOT; };
 		E8CE78DF417F5614935595CA /* VisibleTree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisibleTree.swift; sourceTree = "<group>"; };
 		EBADB0CC914373F8BD52E715 /* AmuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmuxApp.swift; sourceTree = "<group>"; };
 		F001566356B6645AB41CE39B /* Budgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Budgets.swift; sourceTree = "<group>"; };
@@ -108,6 +112,7 @@
 				60B54AE413844E002F4EBB19 /* AmuxCore in Frameworks */,
 				6805234D9DC817A50B5F83BD /* AmuxDesign in Frameworks */,
 				E4DF9C7A152AFAF210FB4241 /* AmuxFeatures in Frameworks */,
+				EF9507B8D384D5EAE754EFB4 /* AmuxShell in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -137,6 +142,7 @@
 			isa = PBXGroup;
 			children = (
 				EBADB0CC914373F8BD52E715 /* AmuxApp.swift */,
+				B60FB9981D4C68D3915DA21A /* Composition.swift */,
 				D140E97565E0C456B57BB601 /* DebugTools.swift */,
 				6BAD30E79F5FE66C97691B57 /* RootView.swift */,
 			);
@@ -271,6 +277,7 @@
 				1E66BD0F085353353B013CB1 /* AmuxCore */,
 				D8269D1B95602732F33C12F2 /* AmuxDesign */,
 				35ED0CE4A533E8878FBD1675 /* AmuxFeatures */,
+				E2D4F1F96B2AE8306CD589E6 /* AmuxShell */,
 				B4EFC5ACC5BD2F025A261F98 /* AmuxTestSupport */,
 				4449D0A6A852D2E301F18DB9 /* AmuxCore */,
 				211FF3D8B6D4DECA3AF7C730 /* AmuxTestSupport */,
@@ -338,6 +345,7 @@
 				848B7908370DBF226D9CCEF9 /* AmuxCore */,
 				C0C0812086F76FDC86EC6F93 /* AmuxDesign */,
 				ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */,
+				62675EA602BEE702494C2D3C /* AmuxShell */,
 			);
 			productName = Amux;
 			productReference = 8ED8247A9E0214AD28831928 /* Amux.app */;
@@ -370,6 +378,7 @@
 				6BCA3E1C4A766A300B0FD144 /* XCLocalSwiftPackageReference "Packages/AmuxCore" */,
 				87D93FCE7D2252AFAE7760EA /* XCLocalSwiftPackageReference "Packages/AmuxDesign" */,
 				0033DA7A4EFD7D0F13865D0B /* XCLocalSwiftPackageReference "Packages/AmuxFeatures" */,
+				8A8E38DF270BBB52E142EA5A /* XCLocalSwiftPackageReference "Packages/AmuxShell" */,
 				98FC981B2E43A26E778C7AC1 /* XCLocalSwiftPackageReference "Packages/AmuxTestSupport" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -412,6 +421,7 @@
 				85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */,
 				2F0347A6EA4A7731721003EE /* Budgets.swift in Sources */,
 				B37C5282B90F7083711687FC /* ColdStartProbe.swift in Sources */,
+				07F4FE52C75D22617CDE6BB9 /* Composition.swift in Sources */,
 				63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */,
 				48C852D18B47B3DA431FDA05 /* Door.swift in Sources */,
 				AEE5ABB7E7D74D75A3DF45A5 /* DoorHost.swift in Sources */,
@@ -743,6 +753,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AmuxDesign;
 		};
+		8A8E38DF270BBB52E142EA5A /* XCLocalSwiftPackageReference "Packages/AmuxShell" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxShell;
+		};
 		98FC981B2E43A26E778C7AC1 /* XCLocalSwiftPackageReference "Packages/AmuxTestSupport" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AmuxTestSupport;
@@ -757,6 +771,10 @@
 		5DAB04E1049B001BF097770B /* AmuxFeatures */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AmuxFeatures;
+		};
+		62675EA602BEE702494C2D3C /* AmuxShell */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AmuxShell;
 		};
 		7A185CA200BF122E708201F8 /* AmuxCore */ = {
 			isa = XCSwiftPackageProductDependency;

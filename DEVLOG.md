@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The app has a shell.** The phone app is now three tabs — Agents,
+Hosts and You — each with its own navigation stack, an account menu hanging off
+the Agents title, and routing for the `amux://` links the CLI prints and the
+web sign-in returns to. Navigation lives in one place: screens are functions of
+their stores and say what happened, and the shell decides where that leads, so
+a screen can be captured or replayed without dragging a route along. Pushing a
+page is synchronous and never waits on a fetch — the page goes up on the frame
+the tap happened and what belongs on it loads into place — which the unit suite
+checks by watching what a loader sees when it is called. A pairing link lands on
+a confirmation naming the machine and pairs with nobody. `ios/Tools/feature-lint.sh`
+refuses UIKit anywhere in the screens package but a registered leaf, refuses a
+platform conditional anywhere in it, and checks that it can still fail before it
+says anything passed. Each tab and each page is the plainest thing that reads
+the right store until the designed screen for it lands.
+
 2026-09-05 — **A pinned baseline does not move on its own.** The design's token
 table — every colour in both appearances, every metric, every type role — is
 compared against a committed file, and a mismatch used to rewrite that file on

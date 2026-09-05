@@ -1,44 +1,35 @@
 import AmuxCore
 import AmuxDesign
+import AmuxShell
 import SwiftUI
 
-/// The shell's root. Screens are hung off it as they are built; for now it
-/// draws the design's ground and type so the token set is exercised by the
-/// running app and not only by its tests.
+/// The app's root.
+///
+/// A debug build shows whatever a driver has opened and the launch the
+/// performance suite asked to time; anything else, and any build a person
+/// installs, is the app itself.
 struct RootView: View {
+    @State private var composition = Composition()
+
     var body: some View {
         #if AMUX_DEBUG_TOOLS
-        // A debug build shows whatever a driver has opened, the launch the
-        // performance suite asked to time, and the app itself when nothing
-        // has asked for anything.
         if let probe = ColdStartProbe.requested {
             ColdStartProbe.view(probe)
         } else {
-            DrivenRoot { AppRoot() }
+            DrivenRoot { app }
         }
         #else
-        AppRoot()
+        app
         #endif
     }
-}
 
-struct AppRoot: View {
-    @Environment(\.design) private var design
-
-    var body: some View {
-        ZStack {
-            Ground()
-            VStack(spacing: 8) {
-                Text("root.title")
-                    .designFont(.screenTitle, design)
-                    .foregroundStyle(design.ink.color)
-                    .accessibilityIdentifier("root.title")
-                Text(verbatim: Bridge.version)
-                    .designFont(.caption, design)
-                    .foregroundStyle(design.inkMuted.color)
-                    .accessibilityIdentifier("root.bridgeVersion")
-            }
-        }
-        .accessibilityIdentifier("root")
+    private var app: some View {
+        Shell(
+            router: composition.router,
+            accounts: composition.accounts,
+            stores: composition.stores,
+            actions: { composition.handle($0) }
+        )
+        .onOpenURL { composition.router.open($0) }
     }
 }
