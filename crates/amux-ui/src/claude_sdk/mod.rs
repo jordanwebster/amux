@@ -29,6 +29,7 @@ pub use update::{InFlightInput, InputFailure, PromptEcho};
 
 use crate::AgentMessageKind;
 use crate::claude::facts::ToolInvocation;
+use crate::claude::runs;
 
 pub const PROTOCOL: &str = "claude_sdk_v1";
 pub const FEED_RETAINED: usize = 1000;
@@ -69,6 +70,28 @@ pub enum FeedEntryKind {
     Status(StatusEntry),
     Boundary(BoundaryEntry),
     Unrecognized(UnrecognizedEntry),
+}
+
+/// This feed's exploration runs, projected over its native entries.
+pub type FeedItem<'a> = runs::FeedItem<'a, FeedEntry>;
+/// The lazy walk that yields them.
+pub type FeedItems<'a> = runs::FeedItems<'a, FeedEntry>;
+
+impl runs::RunEntry for FeedEntry {
+    fn run_id(&self) -> u64 {
+        self.id
+    }
+
+    fn exploration(&self) -> Option<&ToolInvocation> {
+        let FeedEntryKind::Tool(tool) = &self.kind else {
+            return None;
+        };
+        runs::groupable(&tool.invocation).then_some(&tool.invocation)
+    }
+
+    fn groups_with_previous(&self) -> bool {
+        matches!(&self.kind, FeedEntryKind::Tool(tool) if tool.group_with_previous)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +136,10 @@ pub struct ToolEntry {
     pub input_json: String,
     pub finality: Finality,
     pub result: Option<ToolResult>,
+    /// Grouping fact: this and the entry immediately before it are both
+    /// read-only exploration. Stated by the fold from the tool's own
+    /// name, never by renderer layout introspection.
+    pub group_with_previous: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -297,6 +324,12 @@ impl ClaudeSdkLayer {
 
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
         self.entries.iter()
+    }
+
+    /// The feed in file order with consecutive exploration entries grouped
+    /// under their first entry id. A lone read or search remains an entry.
+    pub fn feed_items(&self) -> FeedItems<'_> {
+        FeedItems::new(&self.entries)
     }
 
     pub fn entry_count(&self) -> usize {

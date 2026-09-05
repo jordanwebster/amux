@@ -42,6 +42,8 @@ pub enum NamedState {
     ClaudeSdkElicitation,
     ClaudeSdkDialog,
     ClaudeSdkTasks,
+    ClaudeSdkExploration,
+    ClaudeSdkExplorationExpanded,
     ClaudeSdkContext,
     ClaudeSdkContextBreakdown,
     ClaudeSdkLongFeed,
@@ -92,6 +94,8 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::ClaudeSdkElicitation,
     NamedState::ClaudeSdkDialog,
     NamedState::ClaudeSdkTasks,
+    NamedState::ClaudeSdkExploration,
+    NamedState::ClaudeSdkExplorationExpanded,
     NamedState::ClaudeSdkContext,
     NamedState::ClaudeSdkContextBreakdown,
     NamedState::ClaudeSdkLongFeed,
@@ -144,6 +148,8 @@ impl NamedState {
             Self::ClaudeSdkElicitation => "claude-sdk-elicitation",
             Self::ClaudeSdkDialog => "claude-sdk-dialog",
             Self::ClaudeSdkTasks => "claude-sdk-tasks",
+            Self::ClaudeSdkExploration => "claude-sdk-exploration",
+            Self::ClaudeSdkExplorationExpanded => "claude-sdk-exploration-expanded",
             Self::ClaudeSdkContext => "claude-sdk-context",
             Self::ClaudeSdkContextBreakdown => "claude-sdk-context-breakdown",
             Self::ClaudeSdkLongFeed => "claude-sdk-long-feed",
@@ -269,6 +275,28 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::ClaudeSdkElicitation => sdk_asking(sdk_elicitation_request()),
         NamedState::ClaudeSdkDialog => sdk_asking(sdk_dialog_request()),
         NamedState::ClaudeSdkTasks => sdk_fixture(sdk_task_rows()),
+        // Both halves of the pair are one session. Collapsed is what a run
+        // looks like on arrival; expanded is the same screen with the first
+        // run present in the feed viewport's expansion set.
+        NamedState::ClaudeSdkExploration => sdk_fixture(sdk_exploration_rows()),
+        NamedState::ClaudeSdkExplorationExpanded => {
+            let mut fixture = sdk_fixture(sdk_exploration_rows());
+            let chat = fixture.view.chat.as_mut().expect("session chat open");
+            let run = fixture
+                .model
+                .claude_sdk(chat.agent)
+                .expect("session fixture has a layer")
+                .feed_items()
+                .find_map(|item| match item {
+                    amux_ui::claude_sdk::FeedItem::ExplorationRun { id, .. } => {
+                        Some(crate::chat::blocks::RunKey(id))
+                    }
+                    amux_ui::claude_sdk::FeedItem::Entry(_) => None,
+                })
+                .expect("session fixture has a folded run");
+            chat.viewport.expanded.insert(run);
+            fixture
+        }
         NamedState::ClaudeSdkContext => sdk_fixture(sdk_context_rows()),
         // The overlay is reached the way a person reaches it, so a
         // capture can never show a breakdown the chord does not open,
@@ -1659,6 +1687,126 @@ fn sdk_task_rows() -> Vec<Value> {
         "usage": {"total_tokens": 1_440, "tool_uses": 6, "duration_ms": 2_375},
     }));
     rows
+}
+
+/// A run of reads and searches on either side of an edit, arriving over
+/// stream-JSON. The edit is the point: exploration folds away, but the
+/// file that changed keeps its own line between the two runs.
+fn sdk_exploration_rows() -> Vec<Value> {
+    let looked_at = [
+        ("toolu_grep_cap", "Grep", json!({"pattern": "max_attempts"})),
+        (
+            "toolu_read_config",
+            "Read",
+            json!({"file_path": "sync/config.rs"}),
+        ),
+        (
+            "toolu_read_client",
+            "Read",
+            json!({"file_path": "sync/client.rs"}),
+        ),
+        (
+            "toolu_grep_retry",
+            "Grep",
+            json!({"pattern": "RetryConfig"}),
+        ),
+    ];
+    vec![
+        sdk_ready(),
+        sdk_facts(Some(27_906)),
+        sdk_prompt(40, "Find every retry ceiling and raise the default."),
+        sdk_assistant(
+            41,
+            Value::Array(
+                looked_at
+                    .iter()
+                    .map(|(tool_use_id, name, input)| {
+                        json!({
+                            "type": "tool_use",
+                            "id": tool_use_id,
+                            "name": name,
+                            "input": input,
+                        })
+                    })
+                    .collect(),
+            ),
+        ),
+        json!({
+            "type": "user",
+            "uuid": "dddddddd-1111-4000-8000-000000000042",
+            "sessionId": SDK_SESSION,
+            "parent_tool_use_id": null,
+            "message": {"role": "user", "content": looked_at
+                .iter()
+                .map(|(tool_use_id, _, _)| json!({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": "3 matches",
+                }))
+                .collect::<Vec<_>>()},
+        }),
+        sdk_assistant(
+            43,
+            json!([{
+                "type": "tool_use",
+                "id": "toolu_raise_cap",
+                "name": "Edit",
+                "input": {
+                    "file_path": "sync/config.rs",
+                    "old_string": "max_attempts: u8",
+                    "new_string": "max_attempts: u16",
+                },
+            }]),
+        ),
+        json!({
+            "type": "user",
+            "uuid": "dddddddd-1111-4000-8000-000000000044",
+            "sessionId": SDK_SESSION,
+            "parent_tool_use_id": null,
+            "tool_use_result": {
+                "filePath": "sync/config.rs",
+                "structuredPatch": [{
+                    "lines": [
+                        " pub struct RetryConfig {",
+                        "-    pub max_attempts: u8,",
+                        "+    pub max_attempts: u16,",
+                        " }",
+                    ],
+                }],
+            },
+            "message": {"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_raise_cap",
+                "content": "The file sync/config.rs has been updated.",
+            }]},
+        }),
+        sdk_assistant(
+            45,
+            json!([{
+                "type": "tool_use",
+                "id": "toolu_read_tests",
+                "name": "Read",
+                "input": {"file_path": "sync/tests/retry.rs"},
+            }, {
+                "type": "tool_use",
+                "id": "toolu_grep_tests",
+                "name": "Grep",
+                "input": {"pattern": "max_attempts", "path": "sync/tests"},
+            }]),
+        ),
+        json!({
+            "type": "user",
+            "uuid": "dddddddd-1111-4000-8000-000000000046",
+            "sessionId": SDK_SESSION,
+            "parent_tool_use_id": null,
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_read_tests", "content": "88 lines"},
+                {"type": "tool_result", "tool_use_id": "toolu_grep_tests", "content": "2 matches"},
+            ]},
+        }),
+        sdk_facts(Some(31_402)),
+        sdk_result(47),
+    ]
 }
 
 /// A session far enough along that the meter is the thing worth reading,

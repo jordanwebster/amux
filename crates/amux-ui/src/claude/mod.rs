@@ -20,10 +20,10 @@
 pub mod answer;
 pub mod facts;
 mod fold;
+pub mod runs;
 pub(crate) mod update;
 
 use std::collections::{BTreeSet, VecDeque};
-use std::iter::Peekable;
 
 use chrono::{DateTime, TimeDelta, Utc};
 pub use facts::{
@@ -313,113 +313,25 @@ pub struct ToolEntry {
     pub message_id: Option<String>,
 }
 
-/// One native Claude entry, or a consecutive run of read-only exploration.
-/// Raw entries remain available through [`ClaudeLayer::entries`]; this
-/// projection states Claude's grouping semantics without imposing a shared
-/// feed vocabulary on other agent layers.
-#[derive(Clone, Debug, PartialEq)]
-pub enum FeedItem<'a> {
-    Entry(&'a FeedEntry),
-    ExplorationRun {
-        /// Stable identity of the run: its first retained entry.
-        id: u64,
-        /// Entry identities in feed order.
-        member_ids: Vec<u64>,
-        reads: usize,
-        searches: usize,
-        /// Every path stated by a Read invocation, without a presentation cap.
-        read_paths: Vec<&'a str>,
-    },
-}
+/// This feed's exploration runs, projected over its native entries.
+pub type FeedItem<'a> = runs::FeedItem<'a, FeedEntry>;
+/// The lazy walk that yields them.
+pub type FeedItems<'a> = runs::FeedItems<'a, FeedEntry>;
 
-/// Lazy projection over one Claude feed's declared exploration runs.
-pub struct FeedItems<'a> {
-    entries: Peekable<std::collections::vec_deque::Iter<'a, FeedEntry>>,
-}
-
-impl<'a> FeedItems<'a> {
-    fn new(entries: &'a VecDeque<FeedEntry>) -> Self {
-        Self {
-            entries: entries.iter().peekable(),
-        }
+impl runs::RunEntry for FeedEntry {
+    fn run_id(&self) -> u64 {
+        self.id
     }
-}
 
-impl<'a> Iterator for FeedItems<'a> {
-    type Item = FeedItem<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let first = self.entries.next()?;
-        let Some(first_invocation) = exploration_invocation(first) else {
-            return Some(FeedItem::Entry(first));
+    fn exploration(&self) -> Option<&ToolInvocation> {
+        let FeedEntryKind::Tool(tool) = &self.kind else {
+            return None;
         };
-
-        let mut member_ids = vec![first.id];
-        let mut reads = 0;
-        let mut searches = 0;
-        let mut read_paths = Vec::new();
-        count_exploration(first_invocation, &mut reads, &mut searches, &mut read_paths);
-
-        while self.entries.peek().is_some_and(|entry| {
-            matches!(
-                &entry.kind,
-                FeedEntryKind::Tool(tool)
-                    if tool.group_with_previous && tool.invocation.is_exploration()
-            )
-        }) {
-            let entry = self
-                .entries
-                .next()
-                .expect("a peeked exploration entry remains available");
-            let invocation = exploration_invocation(entry)
-                .expect("grouped exploration entries retain their classification");
-            member_ids.push(entry.id);
-            count_exploration(invocation, &mut reads, &mut searches, &mut read_paths);
-        }
-
-        if member_ids.len() == 1 {
-            Some(FeedItem::Entry(first))
-        } else {
-            Some(FeedItem::ExplorationRun {
-                id: first.id,
-                member_ids,
-                reads,
-                searches,
-                read_paths,
-            })
-        }
+        runs::groupable(&tool.invocation).then_some(&tool.invocation)
     }
-}
 
-fn exploration_invocation(entry: &FeedEntry) -> Option<&ToolInvocation> {
-    let FeedEntryKind::Tool(tool) = &entry.kind else {
-        return None;
-    };
-    tool.invocation.is_exploration().then_some(&tool.invocation)
-}
-
-fn count_exploration<'a>(
-    invocation: &'a ToolInvocation,
-    reads: &mut usize,
-    searches: &mut usize,
-    read_paths: &mut Vec<&'a str>,
-) {
-    match invocation {
-        ToolInvocation::Read { file_path } => {
-            *reads += 1;
-            if let Some(path) = file_path {
-                read_paths.push(path);
-            }
-        }
-        ToolInvocation::Query { .. } => *searches += 1,
-        ToolInvocation::Edit { .. }
-        | ToolInvocation::Write { .. }
-        | ToolInvocation::Bash { .. }
-        | ToolInvocation::AmuxSend { .. }
-        | ToolInvocation::Task { .. }
-        | ToolInvocation::Question { .. }
-        | ToolInvocation::Plan { .. }
-        | ToolInvocation::Other => {}
+    fn groups_with_previous(&self) -> bool {
+        matches!(&self.kind, FeedEntryKind::Tool(tool) if tool.group_with_previous)
     }
 }
 

@@ -76,6 +76,8 @@ mod a2a_completed_row; // Chapter 24 — Completions and exits: what each kind m
 
 mod claude_sdk_feed; // Claude stream-JSON messages, tools, tasks and boundaries
 
+mod claude_sdk_runs; // Session feed projection: exploration runs beside raw entries
+
 mod claude_sdk_agreement; // Claude session classification and public projection agreement
 
 mod claude_sdk_write; // Typed SDK commands and authoritative write reconciliation

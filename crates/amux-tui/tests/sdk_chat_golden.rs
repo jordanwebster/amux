@@ -3,6 +3,7 @@
 //! saying it, what it ran, what its subagents did, and what the person
 //! can do about any of it.
 
+use amux_tui::fixtures::{NamedState, fixture};
 use amux_tui::view::{UiAction, ViewState};
 use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
 use amux_ui::claude_sdk::{ClaudeSdkCommand, FeedEntryKind, Finality};
@@ -462,6 +463,40 @@ fn assert_surface_with(name: &str, model: &Model, chat: impl Fn(&Model) -> ChatV
     dark
 }
 
+/// A whole named screen, painted from the fixture's own view rather than
+/// a chat this file opens: the pair that folds and unfolds a run differ
+/// only in what the feed viewport has expanded, which is view state.
+fn assert_named_surface(name: &str, state: NamedState) -> String {
+    let fixture = fixture(state);
+    let mut dark = String::new();
+    for (theme_name, theme) in [
+        ("dark", Theme::default()),
+        ("light", Theme::light(ColorMode::TrueColor)),
+    ] {
+        let backend = TestBackend::new(WIDTH, HEIGHT);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let context = FrameContext {
+            viewport: (WIDTH, HEIGHT),
+            theme,
+            now: fixture.now,
+        };
+        terminal
+            .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let text = buffer_text(buffer);
+        let rendered = format!(
+            "--- text ---\n{text}--- styles ---\n{}",
+            buffer_styles(buffer, theme)
+        );
+        assert_golden(&format!("{name}_{theme_name}"), &rendered);
+        if theme_name == "dark" {
+            dark = text;
+        }
+    }
+    dark
+}
+
 fn key(chat: &mut ChatView, model: &Model, key: KeyEvent) -> Option<UiAction> {
     amux_tui::chat::handle_chat_key(chat, model, key, (WIDTH, HEIGHT), at(NOW))
 }
@@ -531,6 +566,46 @@ fn sdk_chat_states_what_an_errored_turn_said() {
         text.contains("API Error 529"),
         "and the error the session collected is on screen: {text}"
     );
+}
+
+/// Consecutive reads and searches are one row a person can open. The
+/// edit between the two runs is never folded: only looking folds away.
+#[test]
+fn sdk_chat_folds_consecutive_reads_and_searches_into_one_run() {
+    let collapsed = assert_named_surface("sdk_chat_exploration", NamedState::ClaudeSdkExploration);
+    let expanded = assert_named_surface(
+        "sdk_chat_exploration_expanded",
+        NamedState::ClaudeSdkExplorationExpanded,
+    );
+
+    assert!(
+        collapsed.contains("2 reads · 2 searches"),
+        "the folded row counts what the run looked at: {collapsed}"
+    );
+    assert!(
+        !collapsed.contains("Grep \"max_attempts\""),
+        "and the members it stands for are not on screen: {collapsed}"
+    );
+
+    let grep = expanded
+        .find("Grep \"max_attempts\"")
+        .expect("first member");
+    let config = expanded.find("Read sync/config.rs").expect("second member");
+    let client = expanded.find("Read sync/client.rs").expect("third member");
+    let retry = expanded
+        .find("Grep \"RetryConfig\"")
+        .expect("fourth member");
+    assert!(
+        grep < config && config < client && client < retry,
+        "an open run keeps its members in the order they happened: {expanded}"
+    );
+
+    for frame in [&collapsed, &expanded] {
+        assert!(
+            frame.contains("Edit sync/config.rs"),
+            "the edit between the runs stays on its own line: {frame}"
+        );
+    }
 }
 
 #[test]

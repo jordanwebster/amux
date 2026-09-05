@@ -24,7 +24,7 @@ use super::{
     PromptSource, QuestionAnswer, SEEN_ROWS_RETAINED, SlotState, SuccessFacts,
     SuggestionDestination, SuggestionFact, SuggestionKind, TaskNotificationEntry, ThinkingEntry,
     ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry,
-    UnrecognizedEntry,
+    UnrecognizedEntry, runs,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -1110,10 +1110,10 @@ fn fold_tool_use(
     let invocation = facts::invocation(&name, input);
 
     // Grouping fact (B4): strictly consecutive read/search one-liners.
-    let group_with_previous = groupable(&invocation)
+    let group_with_previous = runs::groupable(&invocation)
         && matches!(
             layer.entries.back().map(|entry| &entry.kind),
-            Some(FeedEntryKind::Tool(previous)) if groupable(&previous.invocation)
+            Some(FeedEntryKind::Tool(previous)) if runs::groupable(&previous.invocation)
         );
 
     let entry = push(
@@ -1206,10 +1206,6 @@ fn correlate_ask(
             None,
         ),
     }
-}
-
-fn groupable(invocation: &ToolInvocation) -> bool {
-    invocation.is_exploration()
 }
 
 fn finalize_message(layer: &mut ClaudeLayer, message_id: &str, stop_reason: String) {

@@ -289,6 +289,16 @@ const COLLAPSE: &[SetMember] = &[
         "exploration-expanded-dark.png",
         ThemeSpec::Dark,
     ),
+    member(
+        "claude-sdk-exploration",
+        "claude-sdk-exploration.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-exploration-expanded",
+        "claude-sdk-exploration-expanded.png",
+        ThemeSpec::Dark,
+    ),
 ];
 
 /// What a message carries besides its words: the feed's attachment rows

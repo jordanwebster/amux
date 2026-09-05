@@ -47,6 +47,27 @@ pub(crate) struct RunSummary {
     pub(crate) hidden: usize,
 }
 
+/// Paths are a dense hint, not the run's full retained content: how many
+/// the folded row names before it counts the rest.
+const RUN_PATH_PREVIEW: usize = 2;
+
+/// One folded row's summary, from the counts and every path the layer
+/// stated. Both Claude chats read the same density from here, so a run
+/// says the same thing whichever feed carried it.
+pub(crate) fn run_summary(reads: usize, searches: usize, read_paths: &[&str]) -> RunSummary {
+    let first_paths: Vec<String> = read_paths
+        .iter()
+        .take(RUN_PATH_PREVIEW)
+        .map(|path| (*path).to_string())
+        .collect();
+    RunSummary {
+        reads,
+        searches,
+        hidden: reads.saturating_sub(first_paths.len()),
+        first_paths,
+    }
+}
+
 /// Glyphs sit here; the mark column and its separator stay clear.
 pub(crate) const GLYPH_COL: usize = 2;
 /// Entry text and the composer's draft share this column.

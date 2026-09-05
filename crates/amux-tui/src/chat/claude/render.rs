@@ -45,9 +45,6 @@ const PLAN_PREVIEW_LINES: usize = 6;
 /// Screen rows a diff preview may occupy, including its remainder row.
 const DIFF_PREVIEW_BUDGET: usize = 8;
 
-/// Paths are a dense hint, not the run's full retained content.
-const RUN_PATH_PREVIEW: usize = 2;
-
 /// Synthetic keys for the blocks no entry owns. Pending echoes count
 /// down from the top of the space so they can never collide with an
 /// entry id, which counts up from zero.
@@ -571,17 +568,7 @@ fn feed_blocks(
                 read_paths,
             } => {
                 let key = blocks::RunKey(id);
-                let first_paths = read_paths
-                    .iter()
-                    .take(RUN_PATH_PREVIEW)
-                    .map(|path| (*path).to_string())
-                    .collect::<Vec<_>>();
-                let summary = blocks::RunSummary {
-                    reads,
-                    searches,
-                    hidden: reads.saturating_sub(first_paths.len()),
-                    first_paths,
-                };
+                let summary = blocks::run_summary(reads, searches, &read_paths);
                 let member_entries: Vec<FeedEntry> = member_ids
                     .iter()
                     .filter_map(|id| entries.get(id))

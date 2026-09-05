@@ -406,7 +406,7 @@ admission, because a parity list that hides unbuilt work is worth nothing.
 | Thinking marker | Adopted, and stated rather than inferred: an open thinking block reads `~ thinking`, a closed one `~ thought`, and a redacted one says so. |
 | Tool one-liner with its target and its outcome | Adopted, including a failed tool and the head of what it printed. |
 | File change with its magnitude and a patch preview | Adopted. A landed edit paints as `✎ Edit src/lib.rs · +2 −1` with the patch under it, from the `structuredPatch` the tool result carries. Both chats read that sidecar through the shared facts module. |
-| Collapsed exploration run | **Absent, and buildable.** Consecutive reads and searches collapse to one summary in the terminal chat. The SDK reports each tool by name, so the grouping the terminal layer computes is equally computable here; it has not been written. |
+| Collapsed exploration run | Adopted. Two or more consecutive reads and searches fold to one row — `2 reads · 2 searches · sync/config.rs, sync/client.rs` — that `<leader> o` opens and shuts. The SDK layer states the grouping from its own tool names, and both chats walk the same projection. |
 | Subagent line | Better: a subagent is a task with a lifecycle, so the SDK chat states what each one was asked to do, whether it is running, and what it last used. |
 | Agent-to-agent message and family banners | Adopted unchanged — the kernel gives both chats the message. |
 | Interruption marker | Adopted in a different shape: the interrupted message itself is marked, rather than a separate marker row. |
@@ -431,10 +431,6 @@ admission, because a parity list that hides unbuilt work is worth nothing.
 | Permission-mode cycling on Shift+Tab | Adopted, and better: the acknowledged mode comes back as a fact instead of being read off a screen. |
 | Help overlay and the shared keybinding tiers | Adopted unchanged. |
 | Raw attach | Absent, permanently: the process has no terminal UI to attach to. This chat is the only way in, which is why every request reaches the screen. |
-
-One row above says "buildable": it is the only capability in this
-inventory that the SDK could express today and does not, and it is
-tracked as work rather than excused as a gap.
 
 ## What the three chats share
 
@@ -461,8 +457,10 @@ visible difference between the three chats.
 The two Claude chats share Claude's own tool vocabulary — how an `Edit`,
 `Write`, `Bash`, `Task`, `AskUserQuestion` or `ExitPlanMode` input reads, and
 the documents an ask puts in the reader — through one facts module, because it
-is literally the same provider producing the same JSON. They share nothing
-else: two folds, two conditions, two feeds. `docs/UI.md` states that boundary
+is literally the same provider producing the same JSON. Built directly on that
+vocabulary, they also share the walk that folds consecutive reads and searches
+into one run, so a run reads the same whichever feed carried it. They share
+nothing else: two folds, two conditions, two feeds. `docs/UI.md` states that boundary
 normatively.
 
 ## Named gaps

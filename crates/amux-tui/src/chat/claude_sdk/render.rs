@@ -7,12 +7,14 @@
 //! Every fact rendered here comes from the Model; the code below formats
 //! and never recovers meaning the fold did not keep.
 
+use std::collections::HashMap;
+
 use amux_ui::Model;
 use amux_ui::attachments::Segment;
 use amux_ui::claude::ToolInvocation;
 use amux_ui::claude_sdk::{
-    BoundaryEntry, ContextMeter, FeedEntry, FeedEntryKind, Finality, McpServerFact, SdkPhase,
-    TaskEntry, TaskState, ToolEntry,
+    BoundaryEntry, ContextMeter, FeedEntry, FeedEntryKind, FeedItem, Finality, McpServerFact,
+    SdkPhase, TaskEntry, TaskState, ToolEntry,
 };
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -111,7 +113,7 @@ pub(crate) fn claude_sdk_frame_parts(
             blocks: if loading {
                 Vec::new()
             } else {
-                feed_blocks(model, chat, cache, theme, width)
+                feed_blocks(model, chat, viewport, cache, theme, width)
             },
             history_truncated: model
                 .claude_sdk(chat.agent)
@@ -680,6 +682,7 @@ fn footer_line(
 fn feed_blocks(
     model: &Model,
     chat: &View,
+    viewport: &FeedViewport,
     cache: &mut PaintCache,
     theme: Theme,
     width: usize,
@@ -688,35 +691,93 @@ fn feed_blocks(
     let Some(layer) = model.claude_sdk(agent) else {
         return Vec::new();
     };
+    let entries: HashMap<u64, &FeedEntry> =
+        layer.entries().map(|entry| (entry.id, entry)).collect();
     // The plan reader affordance is a write-side binding; read-only chats
     // never advertise it.
     let plan_hint = !model.agent(agent).is_some_and(|card| card.agent.readonly);
     let reports = MessageView::new(model, agent, chat.reports_open, chat.leader);
+    let eff = effective(chat);
 
     let mut blocks = Vec::new();
-    for entry in layer.entries() {
-        let content = entry_content(layer, entry);
-        let Some(block) = entry_block_cached(
-            entry,
-            &content,
-            cache,
-            theme,
-            width,
-            plan_hint,
-            chat.reports_open,
-            reports,
-        ) else {
-            continue;
-        };
-        blocks.push(block);
-        push_attachment_blocks(
-            &mut blocks,
-            cache,
-            entry.id,
-            &described(layer.attachments(), &content),
-            theme,
-            width,
-        );
+    for item in layer.feed_items() {
+        match item {
+            FeedItem::Entry(entry) => {
+                let content = entry_content(layer, entry);
+                let Some(block) = entry_block_cached(
+                    entry,
+                    &content,
+                    cache,
+                    theme,
+                    width,
+                    plan_hint,
+                    chat.reports_open,
+                    reports,
+                ) else {
+                    continue;
+                };
+                blocks.push(block);
+                push_attachment_blocks(
+                    &mut blocks,
+                    cache,
+                    entry.id,
+                    &described(layer.attachments(), &content),
+                    theme,
+                    width,
+                );
+            }
+            FeedItem::ExplorationRun {
+                id,
+                member_ids,
+                reads,
+                searches,
+                read_paths,
+            } => {
+                let key = blocks::RunKey(id);
+                let summary = blocks::run_summary(reads, searches, &read_paths);
+                // A run's members carry no attachment rows: every member
+                // is a read or a search, and only prompts and messages
+                // say words an attachment can hide behind.
+                let members: Vec<FeedEntry> = member_ids
+                    .iter()
+                    .filter_map(|id| entries.get(id))
+                    .map(|entry| (*entry).clone())
+                    .collect();
+                // An open run offers to shut again, not to open twice.
+                let expanded = viewport.expanded.contains(&key);
+                let hint = eff.fold_hint(expanded);
+                let content = (
+                    summary.clone(),
+                    members.clone(),
+                    plan_hint,
+                    chat.reports_open,
+                    chat.leader,
+                    hint.clone(),
+                );
+                blocks.push(
+                    cache
+                        .get_or_paint(BlockKey(key.0), &content, width, theme, expanded, || {
+                            let painted: Vec<PaintedBlock> = members
+                                .iter()
+                                .map(|entry| {
+                                    entry_block(entry, &[], theme, width, plan_hint, reports)
+                                })
+                                .collect();
+                            blocks::paint_exploration_run(
+                                BlockKey(key.0),
+                                key,
+                                &summary,
+                                &painted,
+                                expanded,
+                                &hint,
+                                theme,
+                                width,
+                            )
+                        })
+                        .clone(),
+                );
+            }
+        }
     }
     if let Some(echo) = layer.pending_echo() {
         let key = BlockKey(ECHO_KEY_BASE);

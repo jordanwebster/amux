@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Consecutive reads and searches fold to one row in the
+stream-JSON Claude chat.**
+`⌄ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o expand`,
+opened and shut with the same chord the terminal chat uses. The grouping is
+a fact the session layer states from the tool's own name — which arrives with
+the block, before its input has finished streaming — not something the
+renderer infers from how rows happen to look. Both Claude feeds now walk one
+projection over their own entries, so a run reads the same whichever carried
+it, and the path-preview cap moved into the shared painter kit for the same
+reason. An edit between two runs still keeps its own line: only looking folds
+away.
+
 2026-09-05 — **An errored turn now says what went wrong.**
 The chat driven over stream-JSON closed a failed turn with the word
 "errored" and nothing else, although the session had already told it what

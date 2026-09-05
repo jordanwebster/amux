@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use super::*;
 use crate::claude::facts::{inbound_message, invocation};
+use crate::claude::runs;
 
 pub(super) fn observe(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
     let kind = row["type"].as_str().unwrap_or("<missing type>");
@@ -300,6 +301,16 @@ fn stream(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
     }
 }
 
+/// The entry this block follows: the one before it where it already
+/// sits, otherwise the feed's last entry, since a new block is appended.
+fn predecessor(layer: &ClaudeSdkLayer, existing: Option<usize>) -> Option<&FeedEntry> {
+    let index = match existing {
+        Some(index) => index.checked_sub(1)?,
+        None => layer.entries.len().checked_sub(1)?,
+    };
+    layer.entries.get(index)
+}
+
 fn block_matches(kind: &FeedEntryKind, block: &Value) -> bool {
     match kind {
         FeedEntryKind::Message(_) => block["type"] == "text",
@@ -359,10 +370,20 @@ fn upsert_block(
                 return;
             };
             let input = bounded_value(&block["input"]);
+            let invocation = invocation(&name, input.as_ref().unwrap_or(&Value::Null));
+            // A tool's classification comes from its name, so a block
+            // still streaming its input already knows whether it explores.
+            // Recomputed on every upsert: the entry ahead of this one may
+            // have arrived, or been rewritten, since the block opened.
+            let group_with_previous = runs::groupable(&invocation)
+                && matches!(
+                    predecessor(layer, existing).map(|entry| &entry.kind),
+                    Some(FeedEntryKind::Tool(previous)) if runs::groupable(&previous.invocation)
+                );
             FeedEntryKind::Tool(ToolEntry {
                 tool_use_id,
                 name: name.clone(),
-                invocation: invocation(&name, input.as_ref().unwrap_or(&Value::Null)),
+                invocation,
                 input,
                 input_json: String::new(),
                 finality,
@@ -370,6 +391,7 @@ fn upsert_block(
                     FeedEntryKind::Tool(t) => t.result.clone(),
                     _ => None,
                 }),
+                group_with_previous,
             })
         }
         _ => {
@@ -529,6 +551,7 @@ fn tool_result(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value, block: &Value)
                 input_json: String::new(),
                 finality: Finality::Complete,
                 result: Some(result),
+                group_with_previous: false,
             }),
             truncated,
         );
