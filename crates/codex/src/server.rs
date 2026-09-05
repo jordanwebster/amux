@@ -442,7 +442,7 @@ mod remediation_tests {
         let result = tokio::time::timeout(
             Duration::from_secs(5),
             Codex::connect(CodexConfig {
-                codex_path: Some("/usr/bin/false".into()),
+                codex_path: Some("false".into()),
                 ..CodexConfig::default()
             }),
         )

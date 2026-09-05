@@ -1405,7 +1405,7 @@ mod tests {
             initial_prompt: None,
         };
         let mut backend = ClaudeSdkBackend::new(&req, mcp_launch_route_for_tests(Uuid::new_v4()));
-        backend.command = "/usr/bin/false".to_owned();
+        backend.command = "false".to_owned();
         let mut rows = backend.log.subscribe().await.unwrap();
         let (event_tx, _event_rx) = mpsc::channel(8);
         let ingest = backend.start(&event_tx).unwrap();

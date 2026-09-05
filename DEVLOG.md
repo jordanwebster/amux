@@ -6,8 +6,9 @@ This file tracks significant development work, decisions made, and current state
 
 2026-09-05 — **Provider test coverage includes startup composition and complete output.**
 Small startup-failure checks run the existing system `false` binary through
-the complete Claude backend and Codex connection paths. The fork fixture
-now collects every frame through EOF, so its count detects duplicate prompts.
+the complete Claude backend and Codex connection paths, resolving it through
+PATH so the checks do not depend on a Unix system's binary layout. The fork
+fixture now collects every frame through EOF, so its count detects duplicate prompts.
 Backend cleanup waits are bounded, and the Codex TERM fixture polls briefly
 so the shell can dispatch its trap and be released before the production
 grace period expires. Recipe
