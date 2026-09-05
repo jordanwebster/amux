@@ -6,6 +6,18 @@ import SwiftUI
 /// draws the design's ground and type so the token set is exercised by the
 /// running app and not only by its tests.
 struct RootView: View {
+    var body: some View {
+        #if AMUX_DEBUG_TOOLS
+        // A debug build shows whatever a driver has opened, and the app
+        // itself when nothing has.
+        DrivenRoot { AppRoot() }
+        #else
+        AppRoot()
+        #endif
+    }
+}
+
+struct AppRoot: View {
     @Environment(\.design) private var design
 
     var body: some View {

@@ -4,6 +4,36 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A door to drive the phone through.** A debug build of the
+iPhone app now listens on loopback and answers one JSON request per line: show
+this screen filled from this named state, answer the cloud like this, connect
+to this relay with this credential, draw light or dark, draw at this type
+size, wait until you have stopped moving, tell me what is on screen, take a
+photograph, tap this, type that, and stop. Every answer is an acknowledgement,
+a reading, a photograph or one sentence saying why not — there is no half
+answer to diagnose. The port is chosen by the kernel and written to the
+readiness path the launch arguments name, so a driver waits for a fact rather
+than for a guess about how long a launch takes. `cargo run -p xtask -- door`
+is the Mac side: it launches the app on the pinned simulator, speaks the
+requests and hands back the replies, and because a sandboxed app cannot write
+to an arbitrary path it asks for captures inside the app's own container and
+moves them out afterwards.
+
+What a query reports is what the screen declared. SwiftUI builds its
+accessibility tree only for an attached accessibility client, so an app asking
+itself what is on screen sees nothing; instead one modifier sets the
+accessibility identifier a journey and VoiceOver use and reports the same
+name, label, value and frame up the view tree for the door to read. One
+declaration, two readers, and no way for them to disagree. Views the app
+builds in UIKit are real views and are still read from the accessibility tree,
+so both kinds of screen are visible to a driver.
+
+The door is compiled only under AMUX_DEBUG_TOOLS and its sources are excluded
+from the release configuration outright, so no stray reference can carry it
+into a shipped binary. `wt run ios-door-smoke` proves the whole path — launch,
+open a state, read the screen back, photograph the composited window at 3x —
+and then builds Release and checks the binary contains none of it.
+
 2026-09-05 — **Every state the app can be in, named.** AmuxTestSupport now
 carries the design's scenario in the core's own vocabulary — the same ten
 agents on the same four machines, one conversation open — and 47 named states

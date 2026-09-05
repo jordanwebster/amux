@@ -1,6 +1,7 @@
 use std::path::Path;
 
 mod ci;
+mod door;
 mod ios_verify;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -8,10 +9,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("codegen") => codegen(),
         Some("ci-status") => ci::main(),
         Some("ci-observe") => ci::observe_main(),
+        Some("door") => door::main(),
         Some("ios-verify") => ios_verify::run(),
         _ => {
             eprintln!(
-                "usage: xtask <codegen|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|ios-verify>"
+                "usage: xtask <codegen|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
             );
             std::process::exit(2);
         }
