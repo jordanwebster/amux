@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Three raw-attach papercuts.** `<leader>s` from `amux new` or
+`amux attach` was treated as a detach and dropped the person at the shell;
+it now opens the fleet, the same place it leads from an attach started in
+the fleet. Killing an agent under a fleet-started attach produced a "press
+any key to return to the fleet" prompt and then the fleet. Neither was
+wanted: someone who just killed their agent asked to be out, and the fleet
+is one chord away when they want it. The prompt existed because the fleet
+path returned instead of exiting, and the stdin reader is parked in a
+blocking read that only a keypress or the process ending can finish. The
+fleet-started attach now ends the way `amux attach` always has: the session
+being over exits the process, a detach returns to the shell, and only
+`<leader>s` leads to the fleet. (A polling reader was tried first so the
+fleet could resume without the keypress; it was the wrong destination and
+is gone.) And every way out of the passthrough now writes the
+terminal-hygiene reset unconditionally — mouse and focus reporting,
+bracketed paste, kitty keyboard flags, cursor, alternate screen, text
+style — because the agent's own restore travels over the pty, which nobody
+is watching after a detach and which is gone entirely when the agent is
+killed. That was the shell filling with `35;30;33M` mouse-motion reports
+after leaving a session. The focus and style resets joined the shared
+restore sequence, so the signal handler covers them too when a signal
+lands mid-attach.
+
 2026-09-05 — **The attachment guide is a byte contract on Windows too.** The
 guide's canonical review example is compiled into a test that compares it
 against the formatter's LF-joined output, and a Windows checkout translated
