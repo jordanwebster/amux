@@ -12,7 +12,14 @@ let package = Package(
         // build or test this package produce it first.
         .binaryTarget(name: "AmuxMobile", path: "../../../target/ios/AmuxMobile.xcframework"),
         .target(name: "AmuxCore", dependencies: ["AmuxMobile"]),
-        .testTarget(name: "AmuxCoreTests", dependencies: ["AmuxCore"]),
+        .testTarget(
+            name: "AmuxCoreTests",
+            dependencies: ["AmuxCore"],
+            // The pinned projection schema, read from the crate that defines
+            // it, so a DTO change breaks this suite instead of drifting past
+            // a stale copy.
+            resources: [.copy("Resources/schema.json")]
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

@@ -4,6 +4,36 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The phone's state, read from the shared core.** AmuxCore now
+holds the Swift side of the bridge: BridgeClient starts the Rust runtime,
+copies each callback batch out of the worker's borrowed buffer, decodes it as
+the pinned projection schema and hands it on for the main actor to apply
+whole, in the order the batches arrived — a batch describes one consistent
+moment, and applying half of it would put a fleet and a conversation into
+different ones. The DTOs are read from the schema file the bridge itself pins,
+so a change to the Rust projection fails the Swift suite instead of drifting
+past a stale copy. Layer vocabularies stay apart: a Claude PTY send gate and a
+Codex one are different types, and row bodies no screen reads yet are carried
+verbatim rather than dropped.
+
+Four stores sit on top. FleetStore places the home once and then reconciles in
+place: a sync that confirms what is already on screen never moves it, arrivals
+land where the ordering says they belong, departures leave, and regrouping
+happens only when the screen asks. The ordering itself is one pure function —
+agents that need you pinned longest-waiting first, because time will never
+float them up on its own; everything else one recency list, because running is
+not a rank; anything quiet for a day folded away by name rather than deleted
+from the screen. Unread is the phone's own knowledge, not the core's, and an
+unread agent never folds however old it is: a turn that ended two days ago
+that nobody has read is the one thing on that list actually waiting for a
+person. ConversationStore applies feed updates by absolute position, so a row
+rewritten upstream is rewritten here rather than repeated and an evicted
+prefix leaves without renumbering what survives. HostsStore lists what can be
+reached. AccountRegistry names which account is on screen and drops any result
+that answers for another one — an answer about someone else's fleet must never
+appear under this account's name. CloudService states everything the app asks
+of the cloud as one protocol, so no screen ever sees HTTP.
+
 2026-09-05 — **The design as values.** AmuxDesign now carries the app's whole
 visual language: one perceptually even neutral ramp with every surface role
 stated as a distance along it rather than as its own colour, so light and dark
