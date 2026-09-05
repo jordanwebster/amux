@@ -208,7 +208,8 @@ Pairing is the trust boundary — a paired peer has full runtime authority,
 including disruptive operations — with exactly one carve-out:
 **trust mutation and pairing administration are local-only**.
 `StartPairing`, `GetPairingStatus`, `CancelPairing`, `PairPeer`,
-`PairPinCloudPeer`, `PairQrCloudPeer`, `GetDeviceIdentity`, `ListPeers`, `GetPeer`, and
+`PairPinCloudPeer`, `PairQrCloudPeer`, `BeginPair`, `ConfirmPair`, `AbandonPair`,
+`GetDeviceIdentity`, `ListPeers`, `GetPeer`, and
 `Unpair` check the connection's admission class
 (`require_local_admin_client` in `services/client.rs`) and refuse anything
 that is not `LocalTrusted`. A remote peer can use your agents; it cannot
@@ -232,7 +233,8 @@ described in [`A2A.md`](./A2A.md).
 
 ## Project discovery
 
-`Client::list_repositories` selects a host by identity and sends an optional
+`Client::list_repositories` uses the `ListRepositories` RPC on both services.
+It selects a host by identity and sends an optional
 case-insensitive path/name query and a total result limit. `ClientService` routes
 it to that host's `AgentService` over the same authenticated direct connection or
 relay tunnel used for agent operations. The host owns the search roots; callers

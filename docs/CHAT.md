@@ -1251,6 +1251,45 @@ Recorded with their evidence so they are not helpfully reintroduced.
   never scroll horizontally; wrapped continuations with a blank
   gutter keep the number column honest — both subjects agree.
 
+## Shared provider controls and task lists
+
+`ProviderFacts` supplies the selected model and effort, offered models with
+their effort levels and defaults, provider commands, permission settings and
+the latest confirmed task list. These are session facts shared by terminal and
+mobile clients; a renderer does not discover choices or infer them from prose.
+
+Codex obtains model choices through paginated app-server discovery. Typed
+`SetModel`, `SetEffort` and `SetPreset` commands pass the session's settings
+gate before reaching the host. Changing the model selects its reported default
+effort. An unknown model or unsupported effort refuses without changing the
+selection. Host settings rows confirm the selection without adding feed entries;
+the configuration survives reconnect and applies to subsequent turns, including
+empty turns. Claude PTY reports its observed permission mode, but refuses these
+settings commands with `PtySettingsUnavailable`. Its existing semantic permission
+cycle remains separate. Claude SDK chat is still unsupported in this build.
+
+Codex command discovery lists enabled, uniquely named skills in the session's
+working directory. Each `ProviderCommand` names its source (`Claude`, `Codex`
+or a plugin) and whether it is terminal-only. Claude PTY reports an empty list.
+A selected command is a `DraftSegment::CommandToken` followed by text arguments,
+not slash-prefixed prompt text. The token must be first and unique; the host
+resolves the skill path and sends a typed provider skill item with the exact
+arguments. Unknown, disabled, ambiguous, terminal-only or stale choices refuse
+delivery. Queue replacement, cancellation and delivery preserve that token;
+the terminal restores it atomically for editing. Command drafts with binary
+attachments currently refuse explicitly. A slash picker remains renderer work.
+
+Claude's `TodoWrite` fold publishes `ProviderFacts.todos` only after a successful
+matching tool result. It replaces the complete ordered list, counts completed
+items, and names the first in-progress item's `activeForm` (or its content when
+absent) as the current activity. A successful empty list clears the tasks. A
+pending or failed write keeps the previous confirmed list; failures remain in
+the feed, while successful bookkeeping adds no feed rows. Malformed blocks
+retain their ordinary tool representation. Bounded correlation and duplicate
+memory survive checkpoints and disconnects; a session reset clears them. The
+fold is reusable by the SDK layer, but currently runs in Claude PTY. Task-list
+presentation can consume these facts without parsing the transcript again.
+
 ## Deferred decisions
 
 Doors left open on purpose; each stays additive under the constraints
@@ -1264,11 +1303,11 @@ above.
   another diff base, model fetching, comment re-anchoring, a side pane, and
   rich clients are listed with the constraint that keeps each open in
   [`ATTACHMENTS.md`](./ATTACHMENTS.md#deferred-decisions).
-- **Slash commands and @-mentions** — `/` and `@` are unclaimed
-  composer grammar; the binding table already feeds a future palette.
+- **Slash picker and @-mentions** — typed provider command drafts are available;
+  the terminal picker and mention grammar remain renderer work.
 - **Shell-passthrough composer mode** (`!` prefix precedent).
 - **Thinking-text expansion** — V1 renders marker + duration only.
-- **Todo-list rendering.**
+- **Todo-list rendering** — the shared confirmed task-list facts are available.
 - **Cost/context-window header** — V1's extent is the working-line
   token count (D5).
 - **Nested subagent timelines** — requires tailing child transcript

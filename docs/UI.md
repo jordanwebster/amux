@@ -124,6 +124,26 @@ through the Effect seam.
 Renderer-local state — focus, scroll, drafts, navigation — stays in
 renderers. Deltas eliminate client *domain* state, not view state.
 
+## Shared session facts
+
+`provider::facts` projects `ProviderFacts`: selected `model` and `effort`,
+offered `models` (including per-model efforts and defaults), current `efforts`,
+`commands` with source and terminal-only status, provider-specific `permission`,
+and optional `todos` with done/total counts, current activity and ordered states.
+Absent facts stay absent. Codex settings/readiness rows supply its choices;
+Claude PTY supplies observed permission mode and successful TodoWrite results.
+Claude SDK remains an unsupported layer in this build.
+
+`SettingsGate` separately names readiness or the reason a settings change
+refuses, including `PtySettingsUnavailable`. Typed model, effort and preset
+commands use that gate and host validation. `Draft` holds text and command-token
+segments, preserving a selected provider command through queueing and replay.
+`QueuedMessage` exposes its draft, hold time and `QueueDelivery` (`Held`,
+`Sending` with operation id, or `Failed` with error). The mobile session
+projection carries provider facts, settings gate and queue alongside native
+send gates and family facts. Clients render these projections rather than
+reconstructing them from feed text.
+
 ## Kernel and per-agent layers
 
 The kernel models what the protocol itself models, agent-agnostically:

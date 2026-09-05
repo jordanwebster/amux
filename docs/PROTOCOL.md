@@ -53,7 +53,9 @@ Clients can pause SPAKE2 before granting trust. `begin_pair_pin` and
 SHA-256 public-key fingerprint and expiry. The expiry travels inside the sealed
 responder identity. Neither trust store changes during this phase. The local
 client service retains the open stream behind an opaque, single-use token;
-unresolved streams expire and the number retained is bounded.
+unresolved streams expire after at most five minutes and at most 32 are retained.
+The token is a local capability, not a serializable trust decision for a UI to
+recreate from the displayed identity fields.
 
 `confirm_pair` sends the initiator's sealed identity, waits for the responder's
 trust commit and stores the peer locally. `abandon_pair` sends a rejection and

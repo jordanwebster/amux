@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Document shared session controls and trust APIs.**
+Chat and UI documentation now describe provider model and effort choices,
+typed command drafts, confirmed Claude task lists and queue projections, with
+the current PTY and SDK limits stated explicitly. The protocol names pending
+pairing bounds and the local confirmation capability; architecture lists the
+two-phase admin RPCs and names ListRepositories while retaining its routing,
+root confinement and durable recent-project semantics.
+
 2026-09-05 — **Expose device identities and verify live session revocation.**
 The shared client reads its own device name, host ID and SHA256 fingerprint
 without entering pair-mode. Paired-device listings expose the same fingerprint
