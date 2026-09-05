@@ -7,6 +7,22 @@ unit, golden, journey and performance recipes are added, they join this check.
 Golden baseline updates and deliberate perturbation runs remain explicit
 commands.
 
+While the native app is being built, this check verifies what exists rather
+than what is planned. The goldens run over the screens the app can open
+(`wt run ios-goldens -- --built`): every one of them is captured in both
+appearances and must still draw what it was locked as, and a screen nobody has
+built yet is reported and counted rather than failed. A bare
+`wt run ios-goldens` is unchanged — it asks the whole catalogue and fails
+naming every screen still owed. The measured run happens only where a number
+from it would mean something: on a machine whose budgets are written down in
+`docs/IOS_PERFORMANCE.md`, or on one judged against its own recorded run once
+that baseline file exists. Otherwise it is skipped with one line naming the
+machine and the file, and recording the baseline enrols it with no further
+edit. `AMUX_PERF_MACHINE` names the row deliberately; the GitHub runner sets
+it because no hardware row identifies it. When the app is finished, the closing
+work makes all of it required: the whole catalogue, every journey and a
+measured run against the recorded runner baseline.
+
 `timeout 900 wt run mobile-check` checks `amux`, `amux-ui` and `amux-mobile`
 for ARM iOS devices and simulators with default features disabled. It also
 rejects local-agent dependencies in that graph. Desktop host executables

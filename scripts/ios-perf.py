@@ -202,14 +202,32 @@ def collect(udid: str, row: dict, record_baseline: bool) -> None:
         print(f"recorded {BASELINES}/{row['name']}.json", flush=True)
 
 
+def describe() -> None:
+    """This machine's budget row as JSON, and whether its baseline is on disk.
+
+    The one place a machine is resolved. Anything else that needs to know
+    whether a measured run would mean something here — the branch's own
+    verification, for one — asks this rather than parsing the measurement
+    document a second time and drifting from it.
+    """
+    row = machine()
+    baseline = BASELINES / f"{row['name']}.json"
+    print(json.dumps(
+        {**row, "baseline": str(baseline), "baseline_present": baseline.is_file()}))
+
+
 def main() -> None:
     arguments = sys.argv[1:]
     record_baseline = "--baseline" in arguments
     unknown = [
-        argument for argument in arguments if argument not in ["--probe", "--baseline"]
+        argument for argument in arguments
+        if argument not in ["--probe", "--baseline", "--machine"]
     ]
     if unknown:
         raise SystemExit(f"unknown argument: {' '.join(unknown)}")
+    if "--machine" in arguments:
+        describe()
+        return
     row = machine()
     print(f"machine: {row['name']} ({'hard budgets' if row['hard'] else 'baseline'})", flush=True)
     udid = ios_simulators.ensure(SIMULATOR)

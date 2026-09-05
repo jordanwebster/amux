@@ -482,6 +482,48 @@ pub fn run(
     Ok(outcomes)
 }
 
+/// The word the door answers with for a screen nobody has built. A refusal
+/// that starts with it names work still to come rather than a break.
+const UNIMPLEMENTED: &str = "unimplemented: ";
+
+/// What a run amounts to: what broke, and what has not been built yet.
+pub struct GoldenReport {
+    pub failed: Vec<String>,
+    pub unimplemented: Vec<String>,
+    pub total: usize,
+}
+
+/// Sorts a run's outcomes into what failed and what is not built yet.
+///
+/// Two questions are being asked of the same captures at different points in
+/// the flight. The whole manifest asks whether every screen the flight owes is
+/// drawn and locked, and a screen nobody has built is a failure — that is the
+/// contract that keeps the catalogue honest. `built_only` asks the narrower
+/// question the branch's own verification asks between milestones: of the
+/// screens that exist today, does every one of them still draw what it was
+/// locked as. There, an unimplemented screen is reported and counted, and
+/// nothing else is forgiven: a screen that opened and has no baseline, or
+/// opened and drew something else, still fails.
+pub fn judge(outcomes: &[GoldenOutcome], built_only: bool) -> GoldenReport {
+    let mut failed = Vec::new();
+    let mut unimplemented = Vec::new();
+    for outcome in outcomes {
+        let name = format!("{}.{}", outcome.id, outcome.appearance);
+        let unbuilt = matches!(
+            &outcome.verdict, GoldenVerdict::CaptureFailed(why) if why.starts_with(UNIMPLEMENTED));
+        if built_only && unbuilt {
+            unimplemented.push(name);
+        } else if !outcome.verdict.passed() {
+            failed.push(name);
+        }
+    }
+    GoldenReport {
+        failed,
+        unimplemented,
+        total: outcomes.len(),
+    }
+}
+
 // MARK: - The command
 
 const MANIFEST: &str = "ios/Goldens/manifest.json";
@@ -508,7 +550,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => {
             eprintln!(
                 "usage: xtask golden <run [--simulator NAME] [--bundle-id ID] [--install APP] \
-                 [--update] [IDS...]|perturb [--simulator NAME] [--bundle-id ID] \
+                 [--update] [--built] [IDS...]|perturb [--simulator NAME] [--bundle-id ID] \
                  [--token NAME] [IDS...]|diff --expected PNG --actual PNG --out DIR|\
                  reference --captures DIR [--out DIR]>"
             );
@@ -529,6 +571,17 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let simulator = value(arguments, "--simulator").unwrap_or_else(|| "amux-golden".into());
     let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.Amux".into());
     let update = arguments.iter().any(|argument| argument == "--update");
+    let built_only = arguments.iter().any(|argument| argument == "--built");
+    // Locking a baseline is a deliberate act about a screen somebody just
+    // looked at. Doing it under a run that forgives unbuilt screens would
+    // quietly write baselines for whatever happened to open.
+    if update && built_only {
+        return Err(
+            "--update rewrites baselines and --built forgives unbuilt screens; \
+                    name the screens to update instead"
+                .into(),
+        );
+    }
     if let Some(application) = value(arguments, "--install") {
         let udid = door::simulator_udid(&simulator)?;
         door::install(&udid, Path::new(&application))?;
@@ -563,29 +616,34 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         None,
     )?;
 
-    let mut failed = Vec::new();
+    let report = judge(&outcomes, built_only);
+    let unimplemented: std::collections::BTreeSet<&String> = report.unimplemented.iter().collect();
     for outcome in &outcomes {
+        let name = format!("{}.{}", outcome.id, outcome.appearance);
         let mark = if outcome.verdict.passed() {
             "ok"
+        } else if unimplemented.contains(&name) {
+            "not built"
         } else {
             "FAILED"
         };
-        println!(
-            "{mark} {}.{}: {}",
-            outcome.id, outcome.appearance, outcome.verdict
-        );
-        if !outcome.verdict.passed() {
-            failed.push(format!("{}.{}", outcome.id, outcome.appearance));
-        }
+        println!("{mark} {name}: {}", outcome.verdict);
     }
     println!(
         "{} captures, {} failed; triplets under {}",
-        outcomes.len(),
-        failed.len(),
+        report.total,
+        report.failed.len(),
         out.display()
     );
-    if !failed.is_empty() {
-        return Err(format!("goldens failed: {}", failed.join(", ")).into());
+    if built_only {
+        println!(
+            "{} of {} captures unimplemented",
+            report.unimplemented.len(),
+            report.total
+        );
+    }
+    if !report.failed.is_empty() {
+        return Err(format!("goldens failed: {}", report.failed.join(", ")).into());
     }
     Ok(())
 }
@@ -753,6 +811,57 @@ mod tests {
                 .collect(),
         };
         write_png(path, &image).expect("the test image is written");
+    }
+
+    fn outcome(id: &str, verdict: GoldenVerdict) -> GoldenOutcome {
+        GoldenOutcome {
+            id: id.to_string(),
+            appearance: Appearance::Light,
+            verdict,
+        }
+    }
+
+    /// Mid-flight, a screen nobody has built yet is work still to come and is
+    /// counted; a screen that opened and has nothing to compare with is a
+    /// baseline somebody forgot to lock, and that still fails.
+    #[test]
+    fn a_run_over_built_screens_counts_the_unbuilt_and_still_fails_the_rest() {
+        let outcomes = [
+            outcome("probe", GoldenVerdict::Same),
+            outcome(
+                "home",
+                GoldenVerdict::CaptureFailed("unimplemented: home".into()),
+            ),
+            outcome("drawer", GoldenVerdict::MissingBaseline),
+            outcome(
+                "hosts",
+                GoldenVerdict::Different {
+                    pixels: 900,
+                    first: (1, 2),
+                },
+            ),
+            outcome(
+                "you",
+                GoldenVerdict::CaptureFailed("no window on screen".into()),
+            ),
+        ];
+        let report = judge(&outcomes, true);
+        assert_eq!(report.unimplemented, ["home.light"]);
+        assert_eq!(report.failed, ["drawer.light", "hosts.light", "you.light"]);
+        assert_eq!(report.total, 5);
+    }
+
+    /// Over the whole catalogue the question is different: a screen the flight
+    /// owes and nobody has built is exactly what the run is there to name.
+    #[test]
+    fn a_run_over_the_whole_manifest_fails_on_a_screen_nobody_has_built() {
+        let outcomes = [outcome(
+            "home",
+            GoldenVerdict::CaptureFailed("unimplemented: home".into()),
+        )];
+        let report = judge(&outcomes, false);
+        assert!(report.unimplemented.is_empty());
+        assert_eq!(report.failed, ["home.light"]);
     }
 
     #[test]

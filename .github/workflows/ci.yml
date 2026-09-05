@@ -189,4 +189,10 @@ jobs:
       - name: Register checkout with wt
         run: timeout 60 wt register . --label amux
       - name: Run iOS verification
+        # The runner is not a Mac anybody wrote a hardware row for, so it names
+        # the budget row it is measured against rather than being identified by
+        # its model. Until that row's baseline has been recorded, the measured
+        # run is skipped with a line saying which file is missing.
+        env:
+          AMUX_PERF_MACHINE: macos-26
         run: timeout 9000 wt run ios-verify

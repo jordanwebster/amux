@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Verification asks what exists.** Between milestones the branch's
+own check now runs the goldens over the screens the app can open
+(`wt run ios-goldens -- --built`): each is captured in both appearances and
+must still draw what it was locked as, a screen that opened with nothing to
+compare against or drawing something else still fails, and a screen nobody has
+built yet is reported and counted rather than failed. A bare
+`wt run ios-goldens` is unchanged and still asks the whole catalogue, which is
+the closing gate. Rewriting baselines under a run that forgives unbuilt screens
+is refused outright: locking a baseline is a deliberate act about a screen
+somebody just looked at.
+
+The measured run now happens only where a number from it would mean something —
+a machine whose budgets are written down, or one judged against its own
+recorded run once that recording exists. Otherwise it is skipped with one line
+naming the machine and the missing file, so recording that baseline is the
+whole of what enrols the machine. Which machine this is stays a question only
+the measurement script answers, so nothing parses the measurement document
+twice and drifts from it.
+
+Both allowances are temporary and named as such: the closing work makes the
+whole catalogue, every journey and a measured run against the recorded runner
+baseline required.
+
 2026-09-05 — **A recorded moment replays into a screen.** A report bundle now
 holds two recordings side by side: `msgs.jsonl`, the shared runtime's own —
 the reducer model it had checkpointed and every message it folded after that —
