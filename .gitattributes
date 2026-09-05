@@ -4,6 +4,9 @@
 crates/amux-tui/tests/golden/*.txt text eol=lf
 crates/amux-cli/tests/fixtures/*.txt text eol=lf
 
+# The mobile JSON schema snapshot is compared with pretty-printed bytes.
+crates/amux-mobile/src/projection/schema.json text eol=lf
+
 # Replay recordings are byte-contracts as well: each manifest stores a digest of
 # the recording beside it, so a checkout that translates line endings
 # invalidates every hash and the recording refuses to load.

@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Make mobile projection checks independent of Windows checkout and timers.**
+Pin the byte-compared JSON schema snapshot to LF so Windows checkout preserves
+the serialized contract. The C callback regression now holds the initial
+callback while queuing a command burst, then requires all 150 distinct error
+results in one batch and preserves the requested minimum callback interval.
+Its previous batch-count bound depended on one-millisecond sleeps completing
+quickly, which Windows timer resolution does not guarantee.
+
 2026-09-05 — **Keep the simulator relay smoke valid before pairing.**
 The Swift smoke now reads relay-discovered daemon identities through the public
 snapshot API and verifies that those unpaired peers stay outside Fleet callbacks.

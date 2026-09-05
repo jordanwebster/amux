@@ -327,6 +327,16 @@ async fn mobile_lifecycle_stop_cancels_unanswered_token_and_bad_reply() {
 
 #[tokio::test]
 async fn mobile_projection_c_callback_batches_and_command_errors() {
+    struct GatedEvents<'a> {
+        events: &'a Events,
+        gate: Mutex<()>,
+    }
+    unsafe extern "C" fn gated_capture(bytes: *const c_char, context: *mut c_void) {
+        let context = unsafe { &*context.cast::<GatedEvents<'_>>() };
+        unsafe { capture(bytes, (context.events as *const Events).cast_mut().cast()) };
+        drop(context.gate.lock().unwrap());
+    }
+
     let root = tempfile::tempdir().unwrap();
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
@@ -336,37 +346,55 @@ async fn mobile_projection_c_callback_batches_and_command_errors() {
     };
     let mut config = config(root.path(), "http://127.0.0.1:9".into(), json!("Callback"));
     config["frame_interval_ns"] = json!(50_000_000);
-    let running = Running {
-        handle: start(&config, &events),
-        _events: &events,
+    let gated = GatedEvents {
+        events: &events,
+        gate: Mutex::new(()),
     };
-    assert!(!running.handle.is_null());
+    let running;
     let mut ids = std::collections::BTreeSet::new();
-    for index in 0..150 {
-        let command = if index % 2 == 0 {
-            "{unknown".to_owned()
-        } else {
-            serde_json::to_string(&Command::Claude(amux_ui::ClaudeCommand::SendPrompt {
-                agent: uuid::Uuid::from_u128(1),
-                text: "refused".into(),
-            }))
-            .unwrap()
+    {
+        // Hold the initial callback until the entire burst is queued. Sleeping
+        // between sends makes the batch count depend on OS timer resolution.
+        // The guard drops before Running even if a dispatch assertion fails.
+        let _gate = gated.gate.lock().unwrap();
+        let config = CString::new(config.to_string()).unwrap();
+        running = Running {
+            handle: unsafe {
+                amux_mobile_start(
+                    config.as_ptr(),
+                    gated_capture,
+                    (&gated as *const GatedEvents<'_>).cast_mut().cast(),
+                )
+            },
+            _events: &events,
         };
-        let invalid = CString::new(command).unwrap();
-        let id = unsafe { amux_mobile_dispatch(running.handle, invalid.as_ptr()) };
-        assert!(!id.is_null());
-        ids.insert(unsafe { CStr::from_ptr(id) }.to_str().unwrap().to_owned());
+        assert!(!running.handle.is_null());
+        for index in 0..150 {
+            let command = if index % 2 == 0 {
+                "{unknown".to_owned()
+            } else {
+                serde_json::to_string(&Command::Claude(amux_ui::ClaudeCommand::SendPrompt {
+                    agent: uuid::Uuid::from_u128(1),
+                    text: "refused".into(),
+                }))
+                .unwrap()
+            };
+            let invalid = CString::new(command).unwrap();
+            let id = unsafe { amux_mobile_dispatch(running.handle, invalid.as_ptr()) };
+            assert!(!id.is_null());
+            ids.insert(unsafe { CStr::from_ptr(id) }.to_str().unwrap().to_owned());
+            unsafe {
+                amux_mobile_free(id);
+            }
+        }
+        let subscribe = CString::new(
+            r#"{"command":"subscribe","agent":"00000000-0000-0000-0000-000000000001"}"#,
+        )
+        .unwrap();
+        let id = unsafe { amux_mobile_dispatch(running.handle, subscribe.as_ptr()) };
         unsafe {
             amux_mobile_free(id);
         }
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
-    let subscribe =
-        CString::new(r#"{"command":"subscribe","agent":"00000000-0000-0000-0000-000000000001"}"#)
-            .unwrap();
-    let id = unsafe { amux_mobile_dispatch(running.handle, subscribe.as_ptr()) };
-    unsafe {
-        amux_mobile_free(id);
     }
     let mut received = std::collections::BTreeSet::new();
     let mut session = false;
@@ -385,7 +413,18 @@ async fn mobile_projection_c_callback_batches_and_command_errors() {
     assert_eq!(received, ids);
     drop(running);
     let batches = events.batches.lock().unwrap();
-    assert!(batches.len() < 30, "commands were not coalesced");
+    assert_eq!(
+        batches
+            .iter()
+            .filter(|(_, batch)| batch
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| ids.contains(e["OpResult"]["op"].as_str().unwrap_or(""))))
+            .count(),
+        1,
+        "queued command results were not coalesced"
+    );
     assert!(
         batches
             .windows(2)
