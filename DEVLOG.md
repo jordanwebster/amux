@@ -4,6 +4,39 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Measuring the phone against numbers that are written down.**
+`docs/IOS_PERFORMANCE.md` now states every performance claim the iPhone app is
+held to — the pinned Mac and simulator, the workloads and their seed, the
+budgets, the tolerances, which figures are proxies for a real phone, and the
+physical-phone checklist nobody has ticked — and the suite reads that document
+rather than a copy of it, so the numbers a person reads and the numbers a run
+enforces cannot drift apart. A machine the document has no row for is refused:
+an unrecognised Mac has neither a budget nor a baseline, and a number from it
+would mean nothing.
+
+The app marks nine named moments in every build, debug and release alike, from
+the kernel's own process start to each transcript commit and each display
+refresh it asks for, so a timing is never a property of the build it came
+from. Workloads — forty cached agents over three hosts, a thousand transcript
+rows in a pinned mixture, twenty seconds of rows at fifty a second — are
+generated from seed 1 and handed to the runtime's own callback, so a measured
+run decodes, orders and applies exactly what a relay-fed run would.
+
+`wt run ios-perf` launches the app five times to time its own first frame,
+then runs the suite in the app's own process for reconciliation at no latency
+and at a hundred milliseconds, the streaming scroll, the idle budget and frame
+cadence, and writes a verdict with every median, worst case, budget and proxy
+label. On the pinned Mac today: first frame 334 ms against 400, reconciliation
+6 ms and 114 ms against 1,000, no hitch time and no idle work at all.
+
+Two things the harness learned about itself are now part of it. Work the test
+does — generating and encoding a workload — is done before the clock starts,
+because the runtime does that on its own thread and counting it would blame
+the app for the harness. And a stream arrives the way the bridge delivers one,
+coalesced per frame rather than in a lump a second: delivering fifty rows at
+once cost eighty-five milliseconds of hitch per second where delivering them
+across the second costs none.
+
 2026-09-05 — **A door to drive the phone through.** A debug build of the
 iPhone app now listens on loopback and answers one JSON request per line: show
 this screen filled from this named state, answer the cloud like this, connect

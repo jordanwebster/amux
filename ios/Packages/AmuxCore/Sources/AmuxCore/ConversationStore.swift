@@ -30,8 +30,21 @@ public final class ConversationStore {
     /// Absolute position of `entries.first`.
     public private(set) var firstPosition: UInt64 = 0
 
+    /// Set when the person has sent and the host has not yet echoed the row
+    /// back. The pair of marks around it is what the optimistic-echo budget
+    /// is measured between.
+    private var awaitingEcho = false
+
     public init(agent: AgentId) {
         self.agent = agent
+    }
+
+    /// The person has sent. Called the instant the tap is handled, before
+    /// anything is drawn, so the echo budget covers the whole round from
+    /// finger to row.
+    public func sendTapped() {
+        awaitingEcho = true
+        Signposts.emit(.sendTapped)
     }
 
     public func apply(_ event: Event) {
@@ -74,6 +87,7 @@ public final class ConversationStore {
             }
             entries[index] = replacement.entry
         }
+        if !update.replace.isEmpty { Signposts.emit(.transcriptCommit) }
         guard !update.append.isEmpty else { return }
         if entries.isEmpty { firstPosition = update.base }
         let end = firstPosition + UInt64(entries.count)
@@ -83,5 +97,11 @@ public final class ConversationStore {
             invariants.append("feed gap between \(end) and \(update.base)")
         }
         entries.append(contentsOf: update.append)
+        for _ in update.append { Signposts.emit(.streamRow) }
+        Signposts.emit(.transcriptCommit)
+        if awaitingEcho {
+            awaitingEcho = false
+            Signposts.emitWhenPresented(.echoCommitted)
+        }
     }
 }

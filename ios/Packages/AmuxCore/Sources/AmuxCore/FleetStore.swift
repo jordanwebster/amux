@@ -51,6 +51,9 @@ public final class FleetStore {
     public private(set) var orderedAt: Date
     public var unread: UnreadWeights
 
+    /// Marked once: the first frame a person can read the fleet from is the
+    /// number the cold-start budget is about, and it happens once per launch.
+    private var markedFirstFrame = false
     private var cards: [AgentId: AgentCard] = [:]
     private var order: [AgentId] = []
     private var placement: [AgentId: FleetSection.Kind] = [:]
@@ -64,13 +67,21 @@ public final class FleetStore {
         switch event {
         case .fleet(let fleet):
             epoch = fleet.epoch
-            reconciled = fleet.reconciled
             hosts = Dictionary(uniqueKeysWithValues: fleet.hosts.map { ($0.entry.id, $0.entry) })
             cards = Dictionary(fleet.agents.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            let wasReconciled = reconciled
+            reconciled = fleet.reconciled
             reconcileOrder()
             rebuild()
+            if !wasReconciled && reconciled { Signposts.emit(.reconciled) }
+            if !markedFirstFrame && !rows.isEmpty {
+                markedFirstFrame = true
+                Signposts.emitWhenPresented(.firstCachedFrame)
+            }
         case .connection(let update):
+            let wasConnected = connection.state == .connected
             connection = update
+            if !wasConnected && update.state == .connected { Signposts.emit(.streamConnected) }
         case .feed, .session, .opResult, .diff, .tokenRequest, .invariant:
             break
         }

@@ -3,7 +3,9 @@
 
 Each local package is its own Xcode scheme, so a `-only-testing:` selector
 picks the package that owns the named test target and the rest of the
-arguments are handed to xcodebuild unchanged.
+arguments are handed to xcodebuild unchanged. A package with more than one
+library gets its whole-package scheme named `<package>-Package`, and only that
+scheme carries the test action, so the scheme is asked for rather than assumed.
 """
 
 from pathlib import Path
@@ -43,11 +45,21 @@ def selected(arguments: list[str]) -> tuple[list[str], list[str]]:
     return (packages or sorted(set(owners.values()))), arguments
 
 
+def scheme(package: str) -> str:
+    """The scheme that can run this package's tests."""
+    listed = subprocess.run(
+        ["xcodebuild", "-list"],
+        cwd=PACKAGES / package, check=True, text=True, capture_output=True, timeout=300,
+    ).stdout
+    whole = f"{package}-Package"
+    return whole if whole in listed.split() else package
+
+
 def test(package: str, udid: str, arguments: list[str]) -> None:
     print(f"Testing {package}", flush=True)
     subprocess.run([
         "xcodebuild", "test",
-        "-scheme", package,
+        "-scheme", scheme(package),
         "-destination", f"id={udid}",
         "-derivedDataPath", str(DERIVED_DATA.resolve()),
         *arguments,

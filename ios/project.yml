@@ -47,6 +47,10 @@ targets:
       # fixture in the shipped binary; compiling its sources lets the release
       # configuration leave them out entirely.
       - path: Packages/AmuxTestSupport/Sources/AmuxTestSupport
+      # The performance harness, for the same reason: the workloads it
+      # generates are forty invented agents and a thousand invented rows, and
+      # none of that belongs in a build a person installs.
+      - path: Packages/AmuxCore/Sources/Instrumentation
       - path: Amux/Resources
         buildPhase: resources
     info:
@@ -75,7 +79,7 @@ targets:
           # are not compiled at all, so a door symbol or a fixture cannot
           # reach a shipped binary by way of a stray reference outside a
           # conditional. `wt run ios-door-smoke` checks the built binary.
-          EXCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/*"
+          EXCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*"
     dependencies:
       - package: AmuxCore
         product: AmuxCore
@@ -83,6 +87,33 @@ targets:
         product: AmuxDesign
       - package: AmuxFeatures
         product: AmuxFeatures
+
+  # The performance suite runs inside the app it measures: it generates the
+  # pinned workloads, hands them to the runtime's own callback and reads the
+  # marks the app leaves. A UI test could not — it drives the app from another
+  # process, and the gap between the two processes would be in every number.
+  AmuxPerformanceTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - AmuxPerformanceTests
+    dependencies:
+      - target: Amux
+      # The suite reads the app's own harness through the host it is loaded
+      # into; the core's types are its own import because a test bundle does
+      # not inherit its host's.
+      - package: AmuxCore
+        product: AmuxCore
+      - package: AmuxDesign
+        product: AmuxDesign
+      - package: AmuxFeatures
+        product: AmuxFeatures
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: sh.amux.AmuxPerformanceTests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TARGETED_DEVICE_FAMILY: "1"
 
   AmuxUITests:
     type: bundle.ui-testing
@@ -112,3 +143,17 @@ schemes:
       # journey plans select from.
       targets:
         - AmuxUITests
+
+  # Its own scheme, because a performance run must never share a process or a
+  # machine with another suite.
+  AmuxPerformance:
+    build:
+      targets:
+        Amux: all
+        AmuxPerformanceTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - AmuxPerformanceTests

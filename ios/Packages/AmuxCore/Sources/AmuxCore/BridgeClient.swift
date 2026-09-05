@@ -228,6 +228,17 @@ public final class BridgeClient: Sendable {
     /// Callback bytes this build could not read as the pinned schema.
     public var malformedBatches: [String] { delivery.malformed }
 
+    /// Hands the runtime's own callback a batch of projected events.
+    ///
+    /// The performance harness generates its workloads as the JSON the
+    /// runtime emits and pushes them through here, so a measured run decodes,
+    /// orders and applies exactly what a relay-fed run would; only the relay
+    /// is missing. Nothing but a measurement should call this — the runtime
+    /// is the source of events in every other case.
+    public func deliverAsRuntime(_ json: String) {
+        json.withCString { delivery.receive($0) }
+    }
+
     private func answerToken(_ request: UInt64) {
         Task { [tokenProvider] in
             let token = await tokenProvider(request)

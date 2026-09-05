@@ -70,6 +70,12 @@ needs = ["ios-rust"]
 run = "timeout 900 python3 -B scripts/ios-door-smoke.py"
 needs = ["ios-build"]
 
+# The measured run: the pinned workloads against the budgets in
+# docs/IOS_PERFORMANCE.md, on a machine that document has a row for.
+[task.ios-perf]
+run = 'timeout 2700 python3 -B scripts/ios-perf.py "$@"'
+needs = ["ios-rust"]
+
 [task.ios-loopback-smoke]
 run = "timeout 1800 python3 -B ios/Tools/loopback_smoke.py"
 needs = ["build"]

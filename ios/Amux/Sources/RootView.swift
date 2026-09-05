@@ -8,9 +8,14 @@ import SwiftUI
 struct RootView: View {
     var body: some View {
         #if AMUX_DEBUG_TOOLS
-        // A debug build shows whatever a driver has opened, and the app
-        // itself when nothing has.
-        DrivenRoot { AppRoot() }
+        // A debug build shows whatever a driver has opened, the launch the
+        // performance suite asked to time, and the app itself when nothing
+        // has asked for anything.
+        if let probe = ColdStartProbe.requested {
+            ColdStartProbe.view(probe)
+        } else {
+            DrivenRoot { AppRoot() }
+        }
         #else
         AppRoot()
         #endif
