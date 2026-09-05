@@ -4,6 +4,7 @@
 //! recordings. Keeping their sessions separate avoids inventing a continuous
 //! live conversation. Client commands are inserted at the recorded input rows;
 //! the daemon rows themselves are replayed unchanged.
+//! A separate full live TUI capture retains its original observation boundary.
 
 use amux_ui::claude_sdk::{
     self, ClaudeSdkCommand, ClaudeSdkInput, FeedEntryKind, Finality, SdkPhase, SendGate,
@@ -15,6 +16,7 @@ use uuid::Uuid;
 use crate::harness::*;
 
 const AGENT: &str = "sdk-conversation";
+const LIVE_ROWS: &str = include_str!("fixtures/claude_sdk/converse.rows.jsonl");
 
 fn rows(name: &str) -> Vec<Value> {
     let raw = match name {
@@ -27,6 +29,7 @@ fn rows(name: &str) -> Vec<Value> {
         "interrupt" => {
             include_str!("../../../amux/tests/fixtures/rows/claude-sdk/interrupted.rows.jsonl")
         }
+        "live" => LIVE_ROWS,
         _ => panic!("unknown conversation"),
     };
     raw.lines()
@@ -37,6 +40,12 @@ fn rows(name: &str) -> Vec<Value> {
 fn sequence(name: &str) -> Vec<Msg> {
     let mut msgs = claude_sdk_base(AGENT);
     for (i, row) in rows(name).into_iter().enumerate() {
+        if name == "live" {
+            // The subscription records rows, not client commands. Do not infer
+            // unrecorded inputs from acknowledgements in this observation replay.
+            msgs.push(batch(AGENT, i as i64, vec![row]));
+            continue;
+        }
         if row["type"] == "user" && row["input_id"].is_string() {
             msgs.push(command(
                 OpId(Uuid::parse_str(row["uuid"].as_str().unwrap()).unwrap()),
@@ -62,7 +71,7 @@ fn sequence(name: &str) -> Vec<Msg> {
 }
 
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
-    ["streaming", "tools", "interrupt"]
+    ["streaming", "tools", "interrupt", "live"]
         .into_iter()
         .map(|name| (name, sequence(name)))
         .collect()
@@ -70,7 +79,8 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
 
 #[test]
 fn recorded_conversations_send_stream_use_tools_interrupt_and_return_to_input_readiness() {
-    for (name, msgs) in sequences() {
+    for name in ["streaming", "tools", "interrupt"] {
+        let msgs = sequence(name);
         crate::wire_free::assert_differential_sequence(name, msgs.clone());
         let mut model = Model::default();
         let mut saw_prompt = false;
@@ -185,6 +195,132 @@ fn recorded_conversations_send_stream_use_tools_interrupt_and_return_to_input_re
                     .collect::<String>(),
             )
             .unwrap();
+        }
+    }
+}
+
+#[test]
+fn live_conversation_replays_streaming_interruption_asks_and_family_messages() {
+    crate::wire_free::assert_differential_sequence("live", sequence("live"));
+    let mut model = fold(claude_sdk_base(AGENT));
+    let mut prompts = 0;
+    let mut results = 0;
+    let mut asks = Vec::new();
+    let mut saw_streaming = false;
+    let mut saw_interrupted = false;
+    let mut captures = Vec::new();
+    for (i, row) in rows("live").into_iter().enumerate() {
+        update(&mut model, batch(AGENT, i as i64, vec![row.clone()]));
+        let layer = claude_sdk_layer(&model, AGENT);
+        let phase = claude_sdk::phase(&model, agent_id(AGENT));
+        let gate = claude_sdk::send_gate(&model, agent_id(AGENT));
+        if row["type"] == "user" && row["input_id"].is_string() {
+            prompts += 1;
+            assert!(layer.entries().any(|entry| matches!(&entry.kind,
+                FeedEntryKind::Prompt(prompt) if prompt.text == row["message"]["content"])));
+            assert_eq!(phase, SdkPhase::Working);
+            captures.push(capture(&model, "live-prompt", &[]));
+        }
+        if !saw_streaming && layer.entries().any(|entry| matches!(&entry.kind,
+            FeedEntryKind::Message(message) if !message.text.is_empty() && message.finality == Finality::Streaming)) {
+            assert!(prompts > 0);
+            saw_streaming = true;
+            captures.push(capture(&model, "live-streaming", &[]));
+        }
+        if row["type"] == "result" {
+            results += 1;
+            assert_eq!(gate, SendGate::Ready);
+            if row["terminal_reason"] == "aborted_streaming" {
+                assert_eq!(phase, SdkPhase::Interrupted);
+                saw_interrupted = true;
+            } else {
+                assert_eq!(phase, SdkPhase::Finished);
+                assert!(layer.entries().any(|entry| matches!(&entry.kind,
+                    FeedEntryKind::Message(message) if Some(message.text.as_str()) == row["result"].as_str()
+                        && message.finality == Finality::Complete)));
+            }
+            captures.push(capture(&model, "live-turn-ended", &[]));
+        }
+        match row["type"].as_str().unwrap() {
+            "amux.claude_sdk.permission_required" | "amux.claude_sdk.elicitation_required" => {
+                let ask = layer
+                    .asks()
+                    .find(|ask| ask.request_id == row["request_id"])
+                    .unwrap();
+                let kind = match &ask.kind {
+                    claude_sdk::AskKind::Permission { .. } => "permission",
+                    claude_sdk::AskKind::Plan { .. } => "plan",
+                    claude_sdk::AskKind::Question { .. } => "question",
+                    claude_sdk::AskKind::Elicitation { .. } => "elicitation",
+                    other => panic!("unexpected live ask: {other:?}"),
+                };
+                asks.push(kind);
+                assert_eq!(gate, SendGate::NeedsYou);
+                captures.push(capture(&model, kind, &[]));
+            }
+            "amux.claude_sdk.permission_resolved" | "amux.claude_sdk.elicitation_resolved" => {
+                assert!(!layer.asks().any(|ask| ask.request_id == row["request_id"]));
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(prompts, 8);
+    assert_eq!(results, 10);
+    assert_eq!(asks, ["permission", "plan", "question", "elicitation"]);
+    assert!(saw_streaming && saw_interrupted);
+    let layer = claude_sdk_layer(&model, AGENT);
+    for text in ["CHILD_TO_PARENT", "CHILD_ACK"] {
+        assert!(layer.entries().any(|entry| matches!(&entry.kind,
+            FeedEntryKind::AgentMessage(message) if message.from == "chat-child" && message.text == text)));
+    }
+    // The observer stopped at a requesting status after the acknowledgement.
+    // No assistant row has started the next client turn yet.
+    assert_eq!(
+        claude_sdk::phase(&model, agent_id(AGENT)),
+        SdkPhase::Finished
+    );
+    assert_eq!(
+        claude_sdk::send_gate(&model, agent_id(AGENT)),
+        SendGate::Ready
+    );
+    if let Some(path) = std::env::var_os("CLAUDE_SDK_CONVERSE_EVIDENCE") {
+        let path = std::path::PathBuf::from(path);
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(
+            path.join("live-states.json"),
+            serde_json::to_string_pretty(&captures).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn live_fixture_has_provenance_and_no_personal_paths_hosts_or_email() {
+    let provenance: Value =
+        serde_json::from_str(include_str!("fixtures/claude_sdk/converse.provenance.json")).unwrap();
+    assert_eq!(
+        LIVE_ROWS.lines().count(),
+        provenance["rows"].as_u64().unwrap() as usize
+    );
+    assert_eq!(provenance["claude_code_version"], "2.1.261");
+    for forbidden in [
+        "/Users/",
+        "/home/",
+        "@",
+        ".local",
+        ".lan",
+        "chWn3d",
+        "54575.sock",
+    ] {
+        assert!(
+            !LIVE_ROWS.contains(forbidden),
+            "unredacted fixture identifier: {forbidden}"
+        );
+    }
+    for row in rows("live") {
+        if row["subtype"] == "init" {
+            assert_eq!(row["cwd"], "/private/tmp/amux-live.sample/project");
+            assert_eq!(row["messaging_socket_path"], "/tmp/cc-socks/00000.sock");
         }
     }
 }

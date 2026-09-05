@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A captured Claude chat now replays offline through the client.**
+The committed fixture retains all 572 rows of a live TUI conversation, with
+provenance and consistently redacted temporary paths, including streamed tool
+arguments. Its spec compares a serialized replay with the live fold after
+every message and checks prompts, streaming, interruption, permission, plan,
+question and elicitation asks, completed replies and child messages. The last
+child acknowledgement starts another turn; the fixture preserves that
+observation boundary. A privacy check rejects personal paths, hostnames and
+email addresses.
+
 2026-09-05 — **A live TUI harness checks Claude conversations, asks and family
 messages through the daemon.**
 The opt-in capture uses an isolated daemon configured for the SDK driver and
