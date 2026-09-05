@@ -10,6 +10,7 @@ use tokio::sync::{OwnedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGua
 pub(crate) struct OperationGate {
     lock: Arc<RwLock<()>>,
     closed: AtomicBool,
+    frozen: AtomicBool,
 }
 
 impl OperationGate {
@@ -27,6 +28,25 @@ impl OperationGate {
 
     pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::Release);
+    }
+
+    /// Call under the exclusive gate to drain admitted lifecycle work first.
+    pub(crate) fn freeze(&self) {
+        self.frozen.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn thaw(&self) {
+        self.frozen.store(false, Ordering::Release);
+    }
+
+    pub(crate) fn check_mutation(&self) -> Result<(), crate::protocol::ProtocolError> {
+        self.check()?;
+        if self.frozen.load(Ordering::Acquire) {
+            return Err(crate::protocol::ProtocolError::FailedPrecondition {
+                message: "installation update is in progress".into(),
+            });
+        }
+        Ok(())
     }
 
     pub(crate) fn check(&self) -> Result<(), crate::protocol::ProtocolError> {

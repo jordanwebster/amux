@@ -108,6 +108,12 @@ pub(crate) trait LocalAgentHost: Send + Sync {
         state_path: PathBuf,
         operations: &crate::installation::OperationGate,
     ) -> Result<(u64, u64), ProtocolError>;
+    async fn prepare_update(&self) -> Result<Vec<crate::suspend::SuspendedAgent>, ProtocolError>;
+    async fn resume_update(
+        &self,
+        agents: Vec<crate::suspend::SuspendedAgent>,
+        operations: &crate::installation::OperationGate,
+    ) -> Vec<crate::installation::AgentResumeResult>;
     async fn stop_all(&self);
     async fn prepare_suspend(&self, state_path: PathBuf) -> Result<u64, ProtocolError>;
     async fn commit_suspend(&self);
@@ -247,7 +253,7 @@ impl AgentServiceCtx {
         request: CreateAgentRpcRequest,
     ) -> Result<Agent, ProtocolError> {
         let _operation = self.operations.read().await;
-        self.operations.check()?;
+        self.operations.check_mutation()?;
         if self.is_cloud_server() || !self.has_supported_agent_types() {
             return Err(no_supported_agent_types());
         }
@@ -264,13 +270,13 @@ impl AgentServiceCtx {
 
     pub(crate) async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {
         let _operation = self.operations.read().await;
-        self.operations.check()?;
+        self.operations.check_mutation()?;
         self.require_host()?.rename(request).await
     }
 
     pub(crate) async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError> {
         let _operation = self.operations.lock().await;
-        self.operations.check()?;
+        self.operations.check_mutation()?;
         let result = match self.host() {
             Some(host) => host.delete(agent_id).await,
             None => Err(ProtocolError::NoAgentFound),

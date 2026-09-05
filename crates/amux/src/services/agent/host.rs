@@ -519,7 +519,7 @@ impl LocalAgentHost for PtyAgentHost {
     ) -> Result<(u64, u64), ProtocolError> {
         let _resume = self.resume_lock.lock().await;
         let operation = operations.read().await;
-        operations.check()?;
+        operations.check_mutation()?;
         let suspended =
             suspend::load_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to load state: {error}"),
@@ -531,10 +531,11 @@ impl LocalAgentHost for PtyAgentHost {
             suspended.agents,
             self.host_id(),
             operations,
+            false,
         )
         .await;
         let _operation = operations.read().await;
-        operations.check()?;
+        operations.check_mutation()?;
         if result.failed_agents.is_empty() {
             suspend::remove_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to remove state: {error}"),
@@ -551,6 +552,52 @@ impl LocalAgentHost for PtyAgentHost {
             })?;
         }
         Ok((result.resumed_count as u64, result.failed_count as u64))
+    }
+
+    async fn prepare_update(&self) -> Result<Vec<suspend::SuspendedAgent>, ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
+        let (state, errors) = prepare_server_suspend(self.state()).await;
+        if !errors.is_empty() {
+            return Err(ProtocolError::ServerError {
+                message: errors.join("; "),
+            });
+        }
+        Ok(state.agents)
+    }
+
+    async fn resume_update(
+        &self,
+        agents: Vec<suspend::SuspendedAgent>,
+        operations: &crate::installation::OperationGate,
+    ) -> Vec<crate::installation::AgentResumeResult> {
+        use crate::installation::{AgentResumeResult, AgentResumeStatus};
+        let _resume = self.resume_lock.lock().await;
+        let mut reports = Vec::new();
+        for agent in agents {
+            let agent_id = agent.agent_id();
+            // Recovery may repeat after a process started but before its result
+            // was persisted. Never construct or start that identity twice.
+            let status = if self.state().read().await.contains_agent_id(&agent_id) {
+                AgentResumeStatus::AlreadyRunning
+            } else {
+                let result = resume_agents(
+                    self.state(),
+                    self.event_tx(),
+                    vec![agent],
+                    self.host_id(),
+                    operations,
+                    true,
+                )
+                .await;
+                if result.failed_count == 0 {
+                    AgentResumeStatus::Resumed
+                } else {
+                    AgentResumeStatus::Failed
+                }
+            };
+            reports.push(AgentResumeResult { agent_id, status });
+        }
+        reports
     }
 
     async fn stop_all(&self) {

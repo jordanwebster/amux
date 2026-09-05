@@ -6,6 +6,17 @@ pub(super) type RuntimeFixtureFactory =
     Arc<dyn Fn(ProfileId) -> runtime::RuntimeFixtures + Send + Sync>;
 
 impl Installation {
+    pub(crate) async fn hold_update_preparation_for_test(
+        &self,
+        id: ProfileId,
+    ) -> crate::testnet::UpdatePreparationHold {
+        let slot = self.inner.state.lock().unwrap().profiles[&id].slot.clone();
+        crate::testnet::UpdatePreparationHold {
+            _runtime: slot.runtime.clone().lock_owned().await,
+            operations: slot.operations.clone(),
+        }
+    }
+
     pub(crate) async fn retained_work_for_test(
         &self,
         id: ProfileId,

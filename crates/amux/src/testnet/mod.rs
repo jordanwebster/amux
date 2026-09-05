@@ -46,7 +46,9 @@ mod assertions;
 mod daemon;
 mod installation;
 mod net;
-pub use installation::{InstallationHandle, Profile, RetainedProfileWork, WatchProbe};
+pub use installation::{
+    InstallationHandle, Profile, RetainedProfileWork, UpdatePreparationHold, WatchProbe,
+};
 mod pairing;
 mod session;
 mod wire;

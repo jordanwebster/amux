@@ -712,3 +712,109 @@ async fn stopping_old_front_door_preserves_a_replacement_socket() {
         .stop(crate::server::ShutdownReason::UserRequested)
         .await;
 }
+
+#[cfg(feature = "local-agents")]
+#[tokio::test]
+async fn suspend_resume_wire_reports_agents_and_replays_across_connections() {
+    use crate::agents::{AgentType, CreateAgentRequest, TEST_ECHO_COMMAND};
+    let front = front(Listeners::InProcessOnly).await;
+    let mut profiles = client(&front);
+    let mut hosted = Vec::new();
+    for name in ["personal", "work"] {
+        let profile = create(&mut profiles, name).await;
+        let profile_id = super::mapping::profile_id(&profile.id).unwrap();
+        let client = front.installation.client(profile_id).unwrap();
+        let agent = client
+            .create_agent(CreateAgentRequest {
+                agent_id: uuid::Uuid::new_v4(),
+                host_id: None,
+                name: Some(name.into()),
+                agent_type: AgentType::TestAgent {
+                    command: TEST_ECHO_COMMAND.into(),
+                },
+                working_dir: std::env::temp_dir(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
+            })
+            .await
+            .unwrap();
+        hosted.push((profile.id, agent.id.to_string(), client));
+    }
+    let mut admin =
+        wire::installation_service_client::InstallationServiceClient::new(front.channel());
+    assert_eq!(
+        admin
+            .suspend_all(wire::SuspendAllRequest {
+                operation_id: op(),
+                reason: wire::SuspendReason::Unspecified as i32,
+            })
+            .await
+            .unwrap_err()
+            .code(),
+        Code::InvalidArgument
+    );
+    let suspend = wire::SuspendAllRequest {
+        operation_id: op(),
+        reason: wire::SuspendReason::Update as i32,
+    };
+    let report = admin
+        .suspend_all(suspend.clone())
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(report.profiles.len(), 2);
+    for (profile, agent, client) in &hosted {
+        let row = report
+            .profiles
+            .iter()
+            .find(|row| &row.profile_id == profile)
+            .unwrap();
+        assert_eq!(row.suspended_count, 1);
+        assert_eq!(&row.agent_ids, &vec![agent.clone()]);
+        assert!(client.list_agents().await.unwrap().is_empty());
+    }
+    let second_front = FrontDoor::new(front.installation.clone(), None);
+    let mut second =
+        wire::installation_service_client::InstallationServiceClient::new(second_front.channel());
+    assert_eq!(
+        second
+            .suspend_all(suspend.clone())
+            .await
+            .unwrap()
+            .into_inner(),
+        report
+    );
+    let resume = wire::ResumeAllRequest { operation_id: op() };
+    let (a, b) = tokio::join!(admin.resume_all(resume.clone()), second.resume_all(resume));
+    let resumed = a.unwrap().into_inner();
+    assert_eq!(resumed, b.unwrap().into_inner());
+    for profile in &resumed.profiles {
+        assert_eq!((profile.resumed_count, profile.failed_count), (1, 0));
+        assert_eq!(profile.agents.len(), 1);
+        assert_eq!(
+            profile.agents[0].status,
+            wire::AgentResumeStatus::Resumed as i32
+        );
+        assert!(profile.error.is_none());
+    }
+    assert_eq!(
+        admin.suspend_all(suspend).await.unwrap().into_inner(),
+        report
+    );
+    for (_, agent, client) in &hosted {
+        let listed = client.list_agents().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(&listed[0].id.to_string(), agent);
+    }
+    println!("SuspendAll gRPC response: {report:#?}");
+    println!("ResumeAll gRPC response: {resumed:#?}");
+    println!(
+        "InstallationService suspends both profiles and returns their agent IDs. Two connections replay the same suspend and concurrent resume operation IDs, returning identical per-agent reports; replaying suspend after resume leaves both fleets running."
+    );
+    front
+        .installation
+        .stop(crate::server::ShutdownReason::UserRequested)
+        .await;
+}

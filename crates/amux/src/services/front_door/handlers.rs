@@ -447,19 +447,97 @@ impl wire::installation_service_server::InstallationService for FrontDoor {
         &self,
         request: Request<wire::SuspendAllRequest>,
     ) -> Rpc<wire::SuspendAllResponse> {
-        operation_id(&request.into_inner().operation_id)?;
-        Err(Status::unimplemented(
-            "installation-wide suspension is not available",
-        ))
+        let request = request.into_inner();
+        let op = operation_id(&request.operation_id)?;
+        let reason = match wire::SuspendReason::try_from(request.reason) {
+            Ok(wire::SuspendReason::User) => crate::installation::SuspendReason::User,
+            Ok(wire::SuspendReason::Update) => crate::installation::SuspendReason::Update,
+            _ => {
+                return Err(Status::invalid_argument(
+                    "suspend reason must be USER or UPDATE",
+                ));
+            }
+        };
+        let installation = self.installation.clone();
+        self.operations
+            .run(op, "suspend_all", request.encode_to_vec(), async move {
+                let report = installation
+                    .suspend_all(op, reason)
+                    .await
+                    .map_err(installation_error)?;
+                Ok(wire::SuspendAllResponse {
+                    profiles: report
+                        .profiles
+                        .into_iter()
+                        .map(|profile| wire::ProfileSuspendResult {
+                            profile_id: profile.profile_id.to_string(),
+                            suspended_count: profile.agent_ids.len() as u64,
+                            agent_ids: profile
+                                .agent_ids
+                                .into_iter()
+                                .map(|id| id.to_string())
+                                .collect(),
+                        })
+                        .collect(),
+                })
+            })
+            .await
+            .map(Response::new)
     }
     async fn resume_all(
         &self,
         request: Request<wire::ResumeAllRequest>,
     ) -> Rpc<wire::ResumeAllResponse> {
-        operation_id(&request.into_inner().operation_id)?;
-        Err(Status::unimplemented(
-            "installation-wide resumption is not available",
-        ))
+        let request = request.into_inner();
+        let op = operation_id(&request.operation_id)?;
+        let installation = self.installation.clone();
+        self.operations
+            .run(op, "resume_all", request.encode_to_vec(), async move {
+                use crate::installation::AgentResumeStatus;
+                let report = installation
+                    .resume_all(op)
+                    .await
+                    .map_err(installation_error)?;
+                Ok(wire::ResumeAllResponse {
+                    profiles: report
+                        .profiles
+                        .into_iter()
+                        .map(|profile| {
+                            let failed_count = profile
+                                .agents
+                                .iter()
+                                .filter(|a| a.status == AgentResumeStatus::Failed)
+                                .count() as u64;
+                            wire::ProfileResumeResult {
+                                profile_id: profile.profile_id.to_string(),
+                                resumed_count: profile.agents.len() as u64 - failed_count,
+                                failed_count,
+                                agents: profile
+                                    .agents
+                                    .into_iter()
+                                    .map(|agent| wire::AgentResumeResult {
+                                        agent_id: agent.agent_id.to_string(),
+                                        status: match agent.status {
+                                            AgentResumeStatus::Resumed => {
+                                                wire::AgentResumeStatus::Resumed
+                                            }
+                                            AgentResumeStatus::AlreadyRunning => {
+                                                wire::AgentResumeStatus::AlreadyRunning
+                                            }
+                                            AgentResumeStatus::Failed => {
+                                                wire::AgentResumeStatus::Failed
+                                            }
+                                        } as i32,
+                                    })
+                                    .collect(),
+                                error: profile.error,
+                            }
+                        })
+                        .collect(),
+                })
+            })
+            .await
+            .map(Response::new)
     }
     async fn shutdown(
         &self,

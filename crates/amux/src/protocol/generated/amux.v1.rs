@@ -1527,6 +1527,8 @@ pub struct ProfileSuspendResult {
     pub profile_id: ::prost::alloc::string::String,
     #[prost(uint64, tag = "2")]
     pub suspended_count: u64,
+    #[prost(string, repeated, tag = "3")]
+    pub agent_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SuspendAllResponse {
@@ -1539,6 +1541,13 @@ pub struct ResumeAllRequest {
     pub operation_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AgentResumeResult {
+    #[prost(string, tag = "1")]
+    pub agent_id: ::prost::alloc::string::String,
+    #[prost(enumeration = "AgentResumeStatus", tag = "2")]
+    pub status: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProfileResumeResult {
     #[prost(string, tag = "1")]
     pub profile_id: ::prost::alloc::string::String,
@@ -1546,6 +1555,10 @@ pub struct ProfileResumeResult {
     pub resumed_count: u64,
     #[prost(uint64, tag = "3")]
     pub failed_count: u64,
+    #[prost(message, repeated, tag = "4")]
+    pub agents: ::prost::alloc::vec::Vec<AgentResumeResult>,
+    #[prost(string, optional, tag = "5")]
+    pub error: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResumeAllResponse {
@@ -2352,6 +2365,38 @@ impl Observed {
             "OBSERVED_SUBSCRIPTION_REQUIRED" => Some(Self::SubscriptionRequired),
             "OBSERVED_UPDATE_REQUIRED" => Some(Self::UpdateRequired),
             "OBSERVED_STARTUP_FAILED" => Some(Self::StartupFailed),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AgentResumeStatus {
+    Unspecified = 0,
+    Resumed = 1,
+    AlreadyRunning = 2,
+    Failed = 3,
+}
+impl AgentResumeStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "AGENT_RESUME_STATUS_UNSPECIFIED",
+            Self::Resumed => "AGENT_RESUME_STATUS_RESUMED",
+            Self::AlreadyRunning => "AGENT_RESUME_STATUS_ALREADY_RUNNING",
+            Self::Failed => "AGENT_RESUME_STATUS_FAILED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "AGENT_RESUME_STATUS_UNSPECIFIED" => Some(Self::Unspecified),
+            "AGENT_RESUME_STATUS_RESUMED" => Some(Self::Resumed),
+            "AGENT_RESUME_STATUS_ALREADY_RUNNING" => Some(Self::AlreadyRunning),
+            "AGENT_RESUME_STATUS_FAILED" => Some(Self::Failed),
             _ => None,
         }
     }

@@ -182,7 +182,9 @@ pub(crate) async fn create_agent_record(
 
     let (agent_count, info) = {
         let operation = operations.read().await;
-        operations.check().map_err(CreateAgentError::Unavailable)?;
+        operations
+            .check_mutation()
+            .map_err(CreateAgentError::Unavailable)?;
         let mut state = agent_state.write().await;
 
         if state.local_agents.len() >= MAX_LOCAL_AGENTS {
@@ -378,6 +380,7 @@ pub(crate) async fn resume_agents(
     suspended: Vec<SuspendedAgent>,
     host_id: Uuid,
     operations: &crate::installation::OperationGate,
+    updating: bool,
 ) -> ResumeAgentsResult {
     let mut resumed = 0usize;
     let mut failed = 0usize;
@@ -397,7 +400,13 @@ pub(crate) async fn resume_agents(
             deps.clone()
         };
         let operation = operations.read().await;
-        if operations.check().is_err() {
+        if (if updating {
+            operations.check()
+        } else {
+            operations.check_mutation()
+        })
+        .is_err()
+        {
             failed += 1;
             failed_agents.push(original);
             continue;
@@ -405,6 +414,15 @@ pub(crate) async fn resume_agents(
         // Keep start and registration atomic with shutdown, without holding
         // the profile gate through agent startup.
         let mut state = agent_state.write().await;
+        if state.contains_agent_id(&agent_id)
+            || name
+                .as_ref()
+                .is_some_and(|name| state.name_taken_by_other(name, agent_id))
+        {
+            failed += 1;
+            failed_agents.push(original);
+            continue;
+        }
         let mut session = agent_from_suspended(sa, &spawn_deps);
         drop(operation);
         match session.start(event_tx) {
@@ -725,6 +743,7 @@ mod tests {
             vec![suspended],
             host_id,
             &crate::installation::OperationGate::default(),
+            false,
         )
         .await;
 

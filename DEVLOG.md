@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Suspend and recover agents across an installation.**
+Installation-wide suspend and resume now serialize against profile lifecycle and
+freeze agent creation, rename, deletion and ordinary resume while an update is
+pending. Every profile saves its active sessions before any agent stops; an
+installation journal retains those snapshots until the entire resume completes.
+Preparation failures leave live sessions running, older parked records remain
+parked, and reopening a pending update waits for explicit resume. Recovery skips
+running identities before constructing sessions and can restore a profile whose
+saved file was consumed before an interrupted resume. The front door now serves
+both operations with replayable per-profile and per-agent results. Six profile
+specs cover preparation refusal, admission races, concurrent calls, older records,
+restart and interrupted cleanup; the gRPC test covers two profiles and replay
+across connections.
+
 2026-09-05 — **Preserve previously suspended agents during preparation.**
 Preparing live agents now retains older suspended records, replaces stale copies
 of active identities, and reports only the newly prepared count. Preparation

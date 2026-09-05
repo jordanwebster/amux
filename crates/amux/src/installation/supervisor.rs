@@ -149,6 +149,7 @@ struct State {
     sequence: u64,
     events: Option<broadcast::Sender<ProfileEvent>>,
     stopped: bool,
+    update_active: bool,
     credential_clock: u64,
     revoked_accounts: HashMap<super::AccountId, u64>,
 }
@@ -175,11 +176,15 @@ enum Mutation {
     Pause(ProfileId),
     Resume(ProfileId),
     Delete(ProfileId, u64),
+    SuspendAll(OperationId, SuspendReason),
+    ResumeAll(OperationId),
 }
 #[derive(Clone)]
 enum Outcome {
     Profile(Box<ProfileStatus>),
     Deleted,
+    Suspended(SuspendReport),
+    Resumed(ResumeReport),
     Bound(Result<Box<ProfileStatus>, BindError>),
 }
 type OperationResult = Result<Outcome, InstallationError>;
@@ -264,6 +269,8 @@ impl Installation {
                 sequence: 0,
                 events: Some(events),
                 stopped: false,
+                update_active: update::Journal::load(&root)?
+                    .is_some_and(|journal| journal.pending()),
                 credential_clock: 0,
                 revoked_accounts: HashMap::new(),
             }),
@@ -443,7 +450,7 @@ impl Installation {
             .await?
         {
             Outcome::Deleted => Ok(()),
-            Outcome::Profile(_) | Outcome::Bound(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
     async fn profile_operation(
@@ -453,7 +460,7 @@ impl Installation {
     ) -> Result<ProfileStatus, InstallationError> {
         match self.inner.operate(op, request).await? {
             Outcome::Profile(status) => Ok(*status),
-            Outcome::Deleted | Outcome::Bound(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
     pub async fn shutdown(self, reason: ShutdownReason) {
@@ -506,6 +513,9 @@ impl Inner {
             deleting: false,
         };
         let mut state = self.state.lock().unwrap();
+        if state.update_active {
+            entry.slot.operations.freeze();
+        }
         if state.registry.is_deleting(id) {
             entry.deleting = true;
             entry.slot.operations.close();
@@ -671,10 +681,22 @@ impl Inner {
                 );
                 let inner = self.clone();
                 tokio::spawn(async move {
-                    let _lifecycle = inner.lifecycle.read().await;
+                    let updating =
+                        matches!(request, Mutation::SuspendAll(..) | Mutation::ResumeAll(..));
+                    let (_shared, _exclusive) = if updating {
+                        (None, Some(inner.lifecycle.write().await))
+                    } else {
+                        (Some(inner.lifecycle.read().await), None)
+                    };
                     let result = if inner.state.lock().unwrap().stopped {
                         Err(InstallationError::Unavailable(
                             "installation stopped".into(),
+                        ))
+                    } else if updating {
+                        inner.update(request).await
+                    } else if inner.state.lock().unwrap().update_active {
+                        Err(InstallationError::Unavailable(
+                            "installation update is in progress".into(),
                         ))
                     } else {
                         inner.mutate(request).await
@@ -738,7 +760,10 @@ impl Inner {
             | Mutation::Pause(id)
             | Mutation::Resume(id)
             | Mutation::Delete(id, _) => id,
-            Mutation::Create(_) | Mutation::Bind(_) => unreachable!(),
+            Mutation::Create(_)
+            | Mutation::Bind(_)
+            | Mutation::SuspendAll(..)
+            | Mutation::ResumeAll(..) => unreachable!(),
         };
         let slot = self.state.lock().unwrap().entry(id)?.slot.clone();
         let _operation = slot.operations.lock().await;
@@ -903,6 +928,11 @@ impl Inner {
 }
 
 mod binding;
+mod update;
+pub use update::{
+    AgentResumeResult, AgentResumeStatus, ProfileResumeResult, ProfileSuspendResult, ResumeReport,
+    SuspendReason, SuspendReport,
+};
 
 #[cfg(test)]
 mod tests;

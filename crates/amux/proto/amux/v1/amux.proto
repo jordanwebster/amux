@@ -826,13 +826,22 @@ message InstallationInfo {
   string front_door_path = 3;
 }
 message SuspendAllRequest { string operation_id = 1; SuspendReason reason = 2; }
-message ProfileSuspendResult { string profile_id = 1; uint64 suspended_count = 2; }
+message ProfileSuspendResult { string profile_id = 1; uint64 suspended_count = 2; repeated string agent_ids = 3; }
 message SuspendAllResponse { repeated ProfileSuspendResult profiles = 1; }
 message ResumeAllRequest { string operation_id = 1; }
+enum AgentResumeStatus {
+  AGENT_RESUME_STATUS_UNSPECIFIED = 0;
+  AGENT_RESUME_STATUS_RESUMED = 1;
+  AGENT_RESUME_STATUS_ALREADY_RUNNING = 2;
+  AGENT_RESUME_STATUS_FAILED = 3;
+}
+message AgentResumeResult { string agent_id = 1; AgentResumeStatus status = 2; }
 message ProfileResumeResult {
   string profile_id = 1;
   uint64 resumed_count = 2;
   uint64 failed_count = 3;
+  repeated AgentResumeResult agents = 4;
+  optional string error = 5;
 }
 message ResumeAllResponse { repeated ProfileResumeResult profiles = 1; }
 message InstallationShutdownRequest { string operation_id = 1; }

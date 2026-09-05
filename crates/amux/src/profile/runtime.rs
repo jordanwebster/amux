@@ -168,7 +168,7 @@ pub(crate) struct ProfileRuntime {
     paths: ProfilePaths,
     state: Arc<RwLock<ServerState>>,
     shutdown_rx: Option<mpsc::Receiver<ShutdownRequest>>,
-    agent_host: Option<Arc<dyn LocalAgentHost>>,
+    pub(crate) agent_host: Option<Arc<dyn LocalAgentHost>>,
     pub(crate) services: StartedUserServices,
     #[cfg(testnet)]
     pub(crate) test_agent_host: Arc<crate::services::PtyAgentHost>,

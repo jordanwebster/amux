@@ -259,7 +259,63 @@ impl std::ops::Deref for Profile {
     }
 }
 
+/// Holds a runtime before the coordinator snapshots it, so a test can submit
+/// a lifecycle request after update admission closes and before preparation.
+pub struct UpdatePreparationHold {
+    pub(crate) _runtime: tokio::sync::OwnedMutexGuard<Option<ProfileRuntime>>,
+    pub(crate) operations: Arc<crate::installation::OperationGate>,
+}
+
+impl UpdatePreparationHold {
+    pub async fn wait_until_frozen(&self) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while self.operations.check_mutation().is_ok() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("update freezes profile lifecycle admission");
+    }
+}
+
 impl Profile {
+    pub async fn hold_update_preparation(&self) -> UpdatePreparationHold {
+        let owner = self.daemon.inner.installation.as_ref().unwrap();
+        owner
+            .installation
+            .upgrade()
+            .unwrap()
+            .current()
+            .hold_update_preparation_for_test(self.id)
+            .await
+    }
+
+    /// Prepare and park the currently active sessions through the local host.
+    pub async fn park_agents(&self) {
+        use crate::services::LocalAgentHost;
+        let runtime = self
+            .daemon
+            .inner
+            .installation
+            .as_ref()
+            .unwrap()
+            .runtime()
+            .await
+            .unwrap();
+        let host = &runtime.as_ref().unwrap().test_agent_host;
+        host.prepare_suspend(self.paths().state_path).await.unwrap();
+        host.commit_suspend().await;
+    }
+
+    pub fn suspended_agent_ids(&self) -> Vec<uuid::Uuid> {
+        crate::suspend::load_suspended(&self.paths().state_path)
+            .unwrap()
+            .agents
+            .iter()
+            .map(crate::suspend::SuspendedAgent::agent_id)
+            .collect()
+    }
+
     /// Retain service work that has already resolved this profile. It does not
     /// reconnect through a client or look up the profile after deletion.
     pub async fn retain_work(&self) -> RetainedProfileWork {
