@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Version-probe tests use explicitly named shell fixtures.**
+The version parser and cache tests now launch `fake-claude.sh`. On the macOS
+verification host, identical fresh scripts named `claude` repeatedly stalled
+beyond the probe deadline, while scripts with a shell extension completed.
+The tests still execute a subprocess and check the same parsing, probe count
+and transcript update behavior; the production ten-second timeout is unchanged.
+
 2026-09-05 — **Live fleet captures verify Claude labels and chat-only entry.**
 The configuration harness now opens an unfiltered 120×40 fleet while its
 default and configured Claude agents coexist, selects the configured agent,
