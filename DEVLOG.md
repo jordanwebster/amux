@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Empty test selections fail instead of reporting a false success.**
+The workspace and spec recipes share a result guard that forwards Cargo's
+output and requires at least one executed Rust test across all selected
+harnesses. Empty unrelated harnesses remain valid, but unmatched filters and
+ignored-only selections fail. Existing Cargo failures retain their status;
+help, listing, and build-only invocations keep their normal behavior. The
+guard leaves compilation, target selection, process startup, and the outer
+timeout with the existing recipes. Recipe checks cover both entry points.
+
 2026-09-05 — **Provider test coverage includes startup composition and complete output.**
 Small startup-failure checks run the existing system `false` binary through
 the complete Claude backend and Codex connection paths, resolving it through
