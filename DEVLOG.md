@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The Claude chat design record now carries an inventory of
+every terminal-chat capability and what the stream-JSON chat does with it.**
+Most rows say adopted, several say better — a partly-arrived reply, a
+subagent with a lifecycle, a context meter with a denominator, a permission
+mode that comes back acknowledged — and two say permanently absent with the
+fact that is missing: there is no terminal to attach to, and the
+post-compaction summary row is an artifact of a file rather than a fact of a
+session. Three rows say something more useful than either: the surface is
+absent and the session already reports what it would need. A landed edit
+still paints as an ordinary tool line although the patch arrives with the
+tool result; consecutive reads and searches are not collapsed although every
+tool is named; and an errored turn says only that it errored although the
+error text is folded. Naming unbuilt work as unbuilt is the point of the
+list — a parity table that launders it into "gaps" is worth nothing.
+
 2026-09-05 — **The three chat screens now state the same two facts in the
 same place: what the session runs on, and what its context costs.**
 A Claude session on a terminal states its model and its permission mode on

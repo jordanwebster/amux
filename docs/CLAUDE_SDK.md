@@ -390,6 +390,52 @@ a model picker is composer grammar, and this design does not add composer
 grammar. Bypass mode is refused with a typed error unless the session was
 launched with it granted.
 
+## The capability inventory
+
+Every capability the Claude terminal chat has, and what the SDK chat does
+with it. "Adopted" means the same surface, from the SDK's own facts.
+"Absent" is followed by the fact that cannot express it, or — where the
+SDK can express it and the surface simply has not been built — by that
+admission, because a parity list that hides unbuilt work is worth nothing.
+
+| Terminal-chat capability | SDK chat |
+| --- | --- |
+| User prompt with optimistic echo, and a failed send that resurfaces the draft | Adopted, from the same composer and the same send lifecycle. |
+| Assistant message as terminal markdown, upserted as its parts arrive | Adopted. Identity is the message's own id rather than an inference over rows. |
+| Partly-arrived reply | Better: the terminal transcript burst-writes whole messages, so it can only show liveness; the SDK streams the text and the block carries a caret. |
+| Thinking marker | Adopted, and stated rather than inferred: an open thinking block reads `~ thinking`, a closed one `~ thought`, and a redacted one says so. |
+| Tool one-liner with its target and its outcome | Adopted, including a failed tool and the head of what it printed. |
+| File change with its magnitude and a patch preview | **Absent, and buildable.** The terminal chat paints a landed edit as `✎ Edit src/lib.rs · +9 -2` with a preview of the patch; the SDK chat paints it as an ordinary tool line. The patch arrives — `tool_use_result` carries `structuredPatch` — so this is unbuilt work, not a missing fact. |
+| Collapsed exploration run | **Absent, and buildable.** Consecutive reads and searches collapse to one summary in the terminal chat. The SDK reports each tool by name, so the grouping the terminal layer computes is equally computable here; it has not been written. |
+| Subagent line | Better: a subagent is a task with a lifecycle, so the SDK chat states what each one was asked to do, whether it is running, and what it last used. |
+| Agent-to-agent message and family banners | Adopted unchanged — the kernel gives both chats the message. |
+| Interruption marker | Adopted in a different shape: the interrupted message itself is marked, rather than a separate marker row. |
+| API error row | **Partly absent, and buildable.** An errored turn closes with `turn · errored`, but what the error said is folded and never painted. The SDK's result row carries the error strings. |
+| Turn rule with its duration | Adopted, plus what the turn cost, which the SDK prices and the transcript does not. |
+| Compaction rule | Adopted, with the tokens before and after. The transcript's post-compaction summary row has no SDK equivalent: it is an artifact of the file, not a fact of the session. |
+| Unrecognized row, retained and painted | Adopted, and additionally a stated ready, resumed, history-gap or conversation-reset boundary. |
+| Attachment blocks, and reading a pasted one | Adopted unchanged. |
+| Review page and the reader over a sent review | Adopted unchanged. |
+| Retention, windowing, scrollback and replay | Adopted unchanged — they belong to the shared frame, not to a backend. |
+| Permission ask | Adopted. Same tool vocabulary and the same suggestion-derived options; the answer is a control response rather than composed keystrokes. |
+| Question ask | Adopted — the same tool, over a different transport. |
+| Plan review and its three actions | Adopted. The terminal path composes keystrokes; this one answers the request. |
+| Collapsed fact for a resolved ask | Adopted unchanged. |
+| Header identity and phase word | Adopted. The phase is a stated session state rather than an inference over file quiet. |
+| Header session facts — model and permission mode | Adopted, and the terminal chat now takes the same line back from this one. |
+| Context meter | Adopted with a denominator: the session states its context window, which no transcript row does. |
+| MCP status line | Absent from the terminal chat, present here: the session reports its server inventory and health. |
+| Read-only chat | Adopted unchanged. |
+| Composer send, steer, newline, history, paste | Adopted unchanged. |
+| Interrupt | Adopted as the SDK interrupt control, which the session acknowledges. |
+| Permission-mode cycling on Shift+Tab | Adopted, and better: the acknowledged mode comes back as a fact instead of being read off a screen. |
+| Help overlay and the shared keybinding tiers | Adopted unchanged. |
+| Raw attach | Absent, permanently: the process has no terminal UI to attach to. This chat is the only way in, which is why every request reaches the screen. |
+
+Three rows above say "buildable". They are the only capabilities in this
+inventory that the SDK could express today and does not, and each is
+tracked as work rather than excused as a gap.
+
 ## What the three chats share
 
 Every surface above, and whether the other two chats take it. "Adopts" means
