@@ -36,6 +36,7 @@ fn assert_permission_denied(rpc: &str, result: Result<(), ClientError>) {
 impl Daemon {
     /// Register a recorded Codex thread through the normal backend ingest and
     /// input paths. The caller keeps the recording transport alive.
+    #[cfg(unix)]
     pub async fn spawn_recorded_codex(
         &self,
         name: &str,

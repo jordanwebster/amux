@@ -221,6 +221,10 @@ a real Claude provider session.
 
 ## Strict Codex recordings
 
+Codex recordings require a Unix host, matching the daemon's Codex backend.
+On Windows the runner rejects a Codex topology before starting the network;
+Claude scripts and the network controls remain available.
+
 `e2e-tests/topologies/codex-recording.json` declares a Codex agent backed by
 `crates/codex/fixtures/approval_allow`. Recording manifests and content hashes
 are checked before startup. The runner uses the recorded client handshake and

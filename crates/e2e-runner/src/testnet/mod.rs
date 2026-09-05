@@ -1,5 +1,6 @@
 //! A loopback process boundary around the same TestNet used by the Rust specs.
 
+#[cfg(unix)]
 mod codex_recording;
 mod report_script;
 
@@ -43,6 +44,7 @@ pub struct Topology {
     #[serde(skip)]
     scripts: HashMap<String, Script>,
     #[serde(skip)]
+    #[cfg(unix)]
     recordings: HashMap<String, codex_recording::Prepared>,
 }
 
@@ -265,12 +267,17 @@ impl Topology {
                     .context("parse Claude script")?;
                     topology.scripts.insert(agent.name.clone(), script);
                 }
+                #[cfg(unix)]
                 ScriptedProvider::Codex { recording } => {
                     *recording = base.join(&*recording);
                     topology.recordings.insert(
                         agent.name.clone(),
                         codex_recording::Prepared::load(recording)?,
                     );
+                }
+                #[cfg(not(unix))]
+                ScriptedProvider::Codex { .. } => {
+                    bail!("Codex recordings require a Unix host")
                 }
             }
         }
@@ -304,6 +311,7 @@ struct ScriptedAgent {
 
 enum AgentProvider {
     Claude(Provider),
+    #[cfg(unix)]
     Codex(codex_recording::Recorded),
 }
 
@@ -311,6 +319,7 @@ impl AgentProvider {
     fn claude(&self) -> Result<&Provider> {
         match self {
             Self::Claude(provider) => Ok(provider),
+            #[cfg(unix)]
             Self::Codex(_) => bail!("Codex recordings accept only recorded client interactions"),
         }
     }
@@ -321,6 +330,7 @@ impl AgentProvider {
     }
 
     async fn close(&mut self) {
+        #[cfg(unix)]
         if let Self::Codex(recorded) = self {
             recorded.close().await;
         }
@@ -386,6 +396,7 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
                     .await?;
                 (agent, AgentProvider::Claude(provider))
             }
+            #[cfg(unix)]
             ScriptedProvider::Codex { .. } => {
                 let (session, recorded) = topology.recordings[&decl.name].open().await?;
                 let agent = daemon
@@ -393,6 +404,8 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
                     .await?;
                 (agent, AgentProvider::Codex(recorded))
             }
+            #[cfg(not(unix))]
+            ScriptedProvider::Codex { .. } => bail!("Codex recordings require a Unix host"),
         };
         agents.push(AgentIdentity {
             name: decl.name.clone(),
@@ -524,6 +537,7 @@ async fn apply(
                 .await?;
         }
         Control::AgentVerifyReplay { agent } => match &scripted(&agent)?.provider {
+            #[cfg(unix)]
             AgentProvider::Codex(recorded) => {
                 recorded.verify()?;
             }
@@ -722,7 +736,7 @@ pub fn run(command: Command) -> Result<()> {
 
 #[cfg(test)]
 mod agents_tests;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod codex_tests;
 
 #[cfg(test)]

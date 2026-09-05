@@ -143,3 +143,59 @@ fn testnet_serve_shutdown_releases_process_sockets_and_temporary_state() {
 fn testnet_serve_sigterm_releases_process_sockets_and_temporary_state() {
     lifecycle(true);
 }
+
+#[cfg(not(unix))]
+#[test]
+fn testnet_serve_rejects_codex_without_starting_on_unsupported_hosts() {
+    let root = tempfile::tempdir().unwrap();
+    let mut runner = Runner(
+        Command::new(env!("CARGO_BIN_EXE_e2e-runner"))
+            .args(["testnet", "serve", "--topology"])
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../e2e-tests/topologies/codex-recording.json"),
+            )
+            .env("TMPDIR", root.path())
+            .env("TMP", root.path())
+            .env("TEMP", root.path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(status) = runner.0.try_wait().unwrap() {
+            assert!(!status.success(), "unsupported topology must fail");
+            break;
+        }
+        assert!(Instant::now() < deadline, "topology rejection stalled");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut stdout = String::new();
+    runner
+        .0
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut stdout)
+        .unwrap();
+    let mut stderr = String::new();
+    runner
+        .0
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert!(stdout.is_empty(), "no network readiness: {stdout}");
+    assert!(
+        stderr.contains("Codex recordings require a Unix host"),
+        "{stderr}"
+    );
+    assert!(
+        std::fs::read_dir(root.path()).unwrap().next().is_none(),
+        "rejection must precede temporary network state"
+    );
+    eprintln!("unsupported Codex topology rejected before startup: {stderr}");
+}

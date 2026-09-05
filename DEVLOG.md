@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Keep recorded Codex hosting within its supported platforms.**
+The replay registration APIs now share the Unix boundary of the daemon's
+Codex backend. Windows builds no longer reference that unavailable backend;
+the testnet runner rejects Codex topologies before network startup there.
+The Unix relay replay journeys remain enabled, and a Windows subprocess
+regression checks the unsupported-topology error and absence of readiness.
+
 2026-09-05 — **Exercise the local test network with one smoke recipe.**
 `wt run testnet-smoke` runs the bounded workspace testnet suite serially,
 capturing actual subprocess readiness, every control verb, scripted Claude

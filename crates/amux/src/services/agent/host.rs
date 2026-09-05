@@ -152,7 +152,7 @@ impl PtyAgentHost {
         Ok((agent, provider))
     }
 
-    #[cfg(testnet)]
+    #[cfg(all(testnet, unix))]
     pub(crate) async fn register_recorded_codex(
         &self,
         name: String,
