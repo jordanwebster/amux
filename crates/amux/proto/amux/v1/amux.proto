@@ -746,9 +746,17 @@ message HostRemoved {
   bytes host_id = 1;
 }
 
+// Last complete inventory observed from one remote host. Subsequent snapshots
+// and confirmed deletions replace this membership; reachability loss does not.
+message HostInventory {
+  bytes host_id = 1;
+  repeated bytes agent_ids = 2;
+}
+
 message SubscribeAgentsRequest {}
 message SubscribeAgentsResponse {
   oneof event {
+    HostInventory host_inventory = 4;
     AgentUp agent_up = 1;
     AgentDown agent_down = 2;
     AgentUpdated agent_updated = 3;

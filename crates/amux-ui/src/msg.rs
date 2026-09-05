@@ -161,6 +161,11 @@ pub enum ServerMsg {
     },
     /// Agent snapshot complete for the current epoch.
     AgentsSynchronized,
+    /// Last complete membership from an authenticated remote inventory stream.
+    HostInventory {
+        host_id: HostId,
+        agent_ids: Vec<AgentId>,
+    },
 }
 
 /// Why the daemon connection went away.

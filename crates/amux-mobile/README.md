@@ -126,6 +126,11 @@ an Invariant diagnostic and leave the live connection running. Cache files are
 private (0600 on Unix). Give each account its own data and cache directories.
 Cached cards remain display data only: they never enter the live reducer or
 permit a send. Cached row order survives reconciliation; new rows append.
+Untrusted pairing candidates are excluded from the fleet. A remote host's completed inventory
+removes cached agents deleted while the phone was offline, including when no
+agents remain. Unpairing removes that host's cached rows after the local host
+list completes. Local agent-list completion and relay connectivity never prove
+remote inventory membership; unreachable paired hosts keep their cached rows.
 
 `amux_mobile_snapshot` returns the shared reducer Model as owned JSON.
 In `debug-tools` builds, `amux_mobile_report_snapshot` returns
@@ -142,6 +147,7 @@ null and release returned strings with `amux_mobile_free`.
 
 `timeout 900 wt test -- mobile_cache` restarts a paired bridge offline, verifies
 its first callback and stable ordering on reconnect, checks rename persistence,
+prunes offline deletions and unpaired hosts without reordering survivors,
 and replays an exported recorder snapshot through the shared reducer.
 
 `timeout 1800 wt run ios-loopback-smoke` builds a debug-tools simulator

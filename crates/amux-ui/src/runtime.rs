@@ -1287,6 +1287,7 @@ async fn pump_inventory(
                     ServerMsg::AgentRemoved { id: agent_id }
                 }
                 Ok(amux::AgentEvent::SnapshotComplete) => ServerMsg::AgentsSynchronized,
+                Ok(amux::AgentEvent::HostInventory { host_id, agent_ids }) => ServerMsg::HostInventory { host_id, agent_ids },
                 Err(error) => return Some(disconnect_reason(&error)),
             },
             _ = maybe_interval_tick(&mut subscription_poll), if subscription_poll.is_some() => {

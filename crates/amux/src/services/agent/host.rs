@@ -837,7 +837,7 @@ fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
             (agent.name.clone().unwrap_or_default(), agent.id.as_u128())
         }
         AgentEvent::AgentDown { agent_id } => (String::new(), agent_id.as_u128()),
-        AgentEvent::SnapshotComplete => (String::new(), 0),
+        AgentEvent::SnapshotComplete | AgentEvent::HostInventory { .. } => (String::new(), 0),
     }
 }
 

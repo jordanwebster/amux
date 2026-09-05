@@ -280,6 +280,7 @@ impl FeedState {
 #[derive(Default)]
 pub struct Projection {
     fleet: Option<Event>,
+    remote_inventories: BTreeMap<amux::HostId, BTreeSet<AgentId>>,
     feeds: BTreeMap<AgentId, FeedState>,
     sessions: BTreeMap<AgentId, SessionDto>,
     finished: BTreeSet<OpId>,
@@ -342,10 +343,17 @@ impl Projection {
                     last_activity: card.last_activity,
                 })
                 .collect(),
-            hosts: model.hosts().cloned().collect(),
+            hosts: model
+                .hosts()
+                .filter(|host| host.entry.trust_status == amux::HostTrustStatus::Trusted)
+                .cloned()
+                .collect(),
             reconciled: model.is_synchronized() && *connection == RelayConnection::Connected,
         };
-        if self.fleet.as_ref() != Some(&fleet) {
+        if self.fleet.as_ref() != Some(&fleet)
+            || &self.remote_inventories != model.remote_inventories()
+        {
+            self.remote_inventories = model.remote_inventories().clone();
             self.fleet = Some(fleet.clone());
             events.push(fleet);
         }

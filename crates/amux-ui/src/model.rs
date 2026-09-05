@@ -7,7 +7,7 @@
 //! This module is part of the pure reducer core: no IO, no clocks, no
 //! randomness may be imported here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use amux::{Agent, AgentId, AgentParent, HostEntry, HostId, WorkingOn};
 use chrono::{DateTime, Utc};
@@ -650,6 +650,8 @@ pub struct Model {
     pub(crate) invariant_warning: bool,
     pub(crate) hosts: BTreeMap<HostId, HostState>,
     pub(crate) agents: BTreeMap<AgentId, AgentCard>,
+    /// Last authoritative remote membership; disconnection does not mean deletion.
+    pub(crate) remote_inventories: BTreeMap<HostId, BTreeSet<AgentId>>,
     pub(crate) streams: BTreeMap<AgentId, StreamState>,
     pub(crate) pending_ops: BTreeMap<OpId, PendingOp>,
     pub(crate) finished_ops: Vec<FinishedOp>,
@@ -669,6 +671,7 @@ impl Default for Model {
             invariant_warning: false,
             hosts: BTreeMap::new(),
             agents: BTreeMap::new(),
+            remote_inventories: BTreeMap::new(),
             streams: BTreeMap::new(),
             pending_ops: BTreeMap::new(),
             finished_ops: Vec::new(),
@@ -697,6 +700,10 @@ impl Model {
                 agents_synchronized: true,
             }
         )
+    }
+
+    pub fn remote_inventories(&self) -> &BTreeMap<HostId, BTreeSet<AgentId>> {
+        &self.remote_inventories
     }
 
     pub fn epoch(&self) -> u64 {

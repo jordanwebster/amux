@@ -1,4 +1,4 @@
-{"checkpoint":{"agents":{},"cloud_auth_required":false,"cloud_subscription_required":false,"connection":{"connection":"connecting"},"epoch":0,"finished_ops":[],"hosts":{},"invariant_warning":false,"local_host_id":null,"now":null,"op_seq":0,"pending_ops":{},"streams":{}},"format_version":1}
+{"checkpoint":{"agents":{},"cloud_auth_required":false,"cloud_subscription_required":false,"remote_inventories":{},"connection":{"connection":"connecting"},"epoch":0,"finished_ops":[],"hosts":{},"invariant_warning":false,"local_host_id":null,"now":null,"op_seq":0,"pending_ops":{},"streams":{}},"format_version":1}
 {"local_host_id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","msg":"server","server":"connected"}
 {"msg":"server","required":false,"server":"cloud_subscription_status"}
 {"host":{"capabilities":{"supported_agent_types":[{"agent_type":"claude"},{"agent_type":"codex"},{"agent_type":"test-agent"}]},"id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","last_dial_error":null,"name":"<REDACTED>_____________","online":true,"trust_status":"trusted","version":"0.6.0"},"msg":"server","server":"host_upserted"}

@@ -441,7 +441,7 @@ async fn run(
                 projection.collect(runtime.ui.model(), &connection, &mut events);
                 let mut cache_errors = Vec::new();
                 for event in &mut events {
-                    if let Err(error) = cache.update(event) {
+                    if let Err(error) = cache.update(event, runtime.ui.model()) {
                         cache_errors.push(Event::Invariant { detail: format!("fleet cache write failed: {error}") });
                     }
                 }

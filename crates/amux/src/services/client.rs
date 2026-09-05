@@ -79,6 +79,7 @@ struct ClientServiceState {
     agents_model: HashMap<Uuid, Agent>,
     host_events: EventSource<HostEvent>,
     agent_events: EventSource<AgentEvent>,
+    remote_inventories: HashMap<Uuid, Vec<Uuid>>,
     remote_agent_subs: HashMap<Uuid, tokio::task::JoinHandle<()>>,
 }
 
@@ -179,9 +180,20 @@ impl ClientService {
 
     pub(crate) async fn subscribe_agents_with_snapshot(
         &self,
-    ) -> (Vec<Agent>, mpsc::Receiver<AgentEvent>) {
+    ) -> (Vec<AgentEvent>, mpsc::Receiver<AgentEvent>) {
         let mut state = self.state.write().await;
-        let snapshot = sorted_values_by_id(&state.agents_model, |agent| agent.id);
+        let mut snapshot = sorted_values_by_id(&state.agents_model, |agent| agent.id)
+            .into_iter()
+            .map(|agent| AgentEvent::AgentUp { agent })
+            .collect::<Vec<_>>();
+        let mut inventories = state.remote_inventories.iter().collect::<Vec<_>>();
+        inventories.sort_by_key(|(host, _)| **host);
+        snapshot.extend(inventories.into_iter().map(|(host_id, agent_ids)| {
+            AgentEvent::HostInventory {
+                host_id: *host_id,
+                agent_ids: agent_ids.clone(),
+            }
+        }));
         let rx = state.agent_events.subscribe_drop_on_overflow();
         (snapshot, rx)
     }
@@ -217,7 +229,9 @@ impl ClientService {
                 state.agent_events.emit(AgentEvent::AgentDown { agent_id });
                 AgentEventOutcome::Removed
             }
-            AgentEvent::SnapshotComplete => AgentEventOutcome::Ignored,
+            AgentEvent::SnapshotComplete | AgentEvent::HostInventory { .. } => {
+                AgentEventOutcome::Ignored
+            }
         }
     }
 
@@ -227,6 +241,8 @@ impl ClientService {
         event: AgentEvent,
     ) -> AgentEventOutcome {
         match &event {
+            // A remote peer cannot supply another host's inventory authority.
+            AgentEvent::HostInventory { .. } => AgentEventOutcome::Ignored,
             AgentEvent::AgentUp { agent } | AgentEvent::AgentUpdated { agent }
                 if agent.host_id != source_host_id =>
             {
@@ -252,9 +268,32 @@ impl ClientService {
                     );
                     return AgentEventOutcome::Ignored;
                 }
-                self.apply_agent_event(event).await
+                let agent_id = *agent_id;
+                let outcome = self.apply_agent_event(event).await;
+                let mut state = self.state.write().await;
+                if let Some(ids) = state.remote_inventories.get_mut(&source_host_id) {
+                    ids.retain(|id| *id != agent_id);
+                    let agent_ids = ids.clone();
+                    state.agent_events.emit(AgentEvent::HostInventory {
+                        host_id: source_host_id,
+                        agent_ids,
+                    });
+                }
+                outcome
             }
-            _ => self.apply_agent_event(event).await,
+            AgentEvent::AgentUp { agent } | AgentEvent::AgentUpdated { agent } => {
+                let id = agent.id;
+                let outcome = self.apply_agent_event(event).await;
+                let mut state = self.state.write().await;
+                if let Some(ids) = state.remote_inventories.get_mut(&source_host_id)
+                    && !ids.contains(&id)
+                {
+                    ids.push(id);
+                    ids.sort_unstable();
+                }
+                outcome
+            }
+            AgentEvent::SnapshotComplete => AgentEventOutcome::Ignored,
         }
     }
 
@@ -534,6 +573,7 @@ impl ClientService {
     }
 
     async fn remove_peer_from_client_model(&self, host_id: Uuid) {
+        self.state.write().await.remote_inventories.remove(&host_id);
         if !matches!(
             self.remove_host(host_id).await,
             HostEventOutcome::IgnoredRelayOrUnknown
@@ -1540,11 +1580,11 @@ pub(crate) fn host_snapshot_to_wire(hosts: Vec<HostEntry>) -> Vec<wire::Subscrib
 }
 
 pub(crate) fn agent_snapshot_to_wire(
-    agents: Vec<Agent>,
+    events: Vec<AgentEvent>,
 ) -> Result<Vec<wire::SubscribeAgentsResponse>, wire::EncodeError> {
-    agents
-        .into_iter()
-        .map(|agent| client_agent_event_to_wire(&AgentEvent::AgentUp { agent }))
+    events
+        .iter()
+        .map(client_agent_event_to_wire)
         .chain(std::iter::once(Ok(subscribe_agents_snapshot_complete())))
         .collect()
 }
@@ -1626,6 +1666,12 @@ pub(crate) fn client_agent_event_to_wire(
             wire::subscribe_agents_response::Event::AgentDown(wire::AgentDown {
                 agent_id: uuid_to_bytes(*agent_id),
                 reason: None,
+            })
+        }
+        AgentEvent::HostInventory { host_id, agent_ids } => {
+            wire::subscribe_agents_response::Event::HostInventory(wire::HostInventory {
+                host_id: host_id.as_bytes().to_vec(),
+                agent_ids: agent_ids.iter().map(|id| id.as_bytes().to_vec()).collect(),
             })
         }
         AgentEvent::SnapshotComplete => {
@@ -2471,16 +2517,57 @@ impl ClientService {
             .await?
             .into_inner();
 
+        let mut snapshot_ids = Some(HashSet::new());
         while let Some(response) = stream.next().await {
             let event = response.and_then(|response| {
                 crate::agents::agent_event_from_wire(response).map_err(decode_remote_status)
             })?;
-            self.apply_remote_agent_event(host_id, event).await;
+            if let Some(ids) = &mut snapshot_ids {
+                match &event {
+                    AgentEvent::AgentUp { agent } | AgentEvent::AgentUpdated { agent }
+                        if agent.host_id == host_id =>
+                    {
+                        ids.insert(agent.id);
+                    }
+                    AgentEvent::AgentDown { agent_id } => {
+                        ids.remove(agent_id);
+                    }
+                    _ => {}
+                }
+            }
+            if matches!(event, AgentEvent::SnapshotComplete) {
+                if let Some(ids) = snapshot_ids.take() {
+                    self.complete_remote_inventory(host_id, ids).await;
+                }
+            } else {
+                self.apply_remote_agent_event(host_id, event).await;
+            }
         }
 
         Err(tonic::Status::unavailable(format!(
             "ClientService.SubscribeAgentEvents stream for host {host_id} closed"
         )))
+    }
+
+    async fn complete_remote_inventory(&self, host_id: Uuid, ids: HashSet<Uuid>) {
+        let mut state = self.state.write().await;
+        let mut removed = state
+            .agents_model
+            .values()
+            .filter(|agent| agent.host_id == host_id && !ids.contains(&agent.id))
+            .map(|agent| agent.id)
+            .collect::<Vec<_>>();
+        removed.sort_unstable();
+        for agent_id in removed {
+            state.agents_model.remove(&agent_id);
+            state.agent_events.emit(AgentEvent::AgentDown { agent_id });
+        }
+        let mut agent_ids = ids.into_iter().collect::<Vec<_>>();
+        agent_ids.sort_unstable();
+        state.remote_inventories.insert(host_id, agent_ids.clone());
+        state
+            .agent_events
+            .emit(AgentEvent::HostInventory { host_id, agent_ids });
     }
 
     async fn has_host(&self, host_id: Uuid) -> bool {
@@ -4093,11 +4180,114 @@ mod tests {
         assert_eq!(removed.host_id, host.id.as_bytes().to_vec());
     }
 
+    #[tokio::test]
+    async fn mobile_cache_remote_inventory_replays_membership_and_confirms_live_deletion() {
+        let service = client_service_with_local_services();
+        let source = Uuid::from_u128(10);
+        let other = agent(3, 20, "other host");
+        let deleted = agent(1, 10, "deleted offline");
+        let survivor = agent(2, 10, "survivor");
+        for agent in [deleted.clone(), survivor.clone(), other.clone()] {
+            service.apply_agent_event(agent_up(agent)).await;
+        }
+        let mut events = service.subscribe_agents().await;
+        service
+            .complete_remote_inventory(source, HashSet::from([survivor.id]))
+            .await;
+        assert_eq!(
+            events.recv().await,
+            Some(AgentEvent::AgentDown {
+                agent_id: deleted.id
+            })
+        );
+        let membership = AgentEvent::HostInventory {
+            host_id: source,
+            agent_ids: vec![survivor.id],
+        };
+        assert_eq!(events.recv().await, Some(membership.clone()));
+        assert_eq!(
+            service.list_agents().await,
+            vec![survivor.clone(), other.clone()]
+        );
+        let (snapshot, _) = service.subscribe_agents_with_snapshot().await;
+        assert_eq!(
+            snapshot,
+            vec![
+                agent_up(survivor.clone()),
+                agent_up(other.clone()),
+                membership
+            ]
+        );
+        // Remote peers cannot forge membership authority, even for themselves.
+        assert_eq!(
+            service
+                .apply_remote_agent_event(
+                    source,
+                    AgentEvent::HostInventory {
+                        host_id: source,
+                        agent_ids: vec![],
+                    }
+                )
+                .await,
+            AgentEventOutcome::Ignored
+        );
+        assert!(events.try_recv().is_err());
+        service
+            .apply_remote_agent_event(
+                source,
+                AgentEvent::AgentDown {
+                    agent_id: survivor.id,
+                },
+            )
+            .await;
+        assert_eq!(
+            events.recv().await,
+            Some(AgentEvent::AgentDown {
+                agent_id: survivor.id
+            })
+        );
+        assert_eq!(
+            events.recv().await,
+            Some(AgentEvent::HostInventory {
+                host_id: source,
+                agent_ids: vec![]
+            })
+        );
+        let added = agent(4, 10, "created later");
+        service
+            .apply_remote_agent_event(source, agent_up(added.clone()))
+            .await;
+        assert_eq!(events.recv().await, Some(agent_up(added.clone())));
+        let (snapshot, _) = service.subscribe_agents_with_snapshot().await;
+        assert_eq!(
+            snapshot.last(),
+            Some(&AgentEvent::HostInventory {
+                host_id: source,
+                agent_ids: vec![added.id]
+            })
+        );
+        // A reachability-driven removal is not evidence that the host deleted it.
+        service
+            .apply_agent_event(AgentEvent::AgentDown { agent_id: added.id })
+            .await;
+        let (snapshot, _) = service.subscribe_agents_with_snapshot().await;
+        assert_eq!(
+            snapshot,
+            vec![
+                agent_up(other),
+                AgentEvent::HostInventory {
+                    host_id: source,
+                    agent_ids: vec![added.id]
+                }
+            ]
+        );
+    }
+
     #[test]
     fn agent_snapshot_and_events_encode_to_client_service_wire() {
         let first = agent(1, 10, "first");
         let second = agent(2, 10, "second");
-        let responses = agent_snapshot_to_wire(vec![first.clone()]).unwrap();
+        let responses = agent_snapshot_to_wire(vec![agent_up(first.clone())]).unwrap();
         assert_eq!(responses.len(), 2);
 
         let wire::subscribe_agents_response::Event::AgentUp(up) =
@@ -5386,6 +5576,13 @@ mod tests {
                 .contains_key(&remote_host_id)
         );
 
+        assert_eq!(
+            recv_agent_event(&mut events).await,
+            AgentEvent::HostInventory {
+                host_id: remote_host_id,
+                agent_ids: vec![],
+            }
+        );
         let mut remote_agent_client = service
             .remote_agent_client("test.RemoteAgentService", remote_host_id)
             .await
@@ -5424,6 +5621,13 @@ mod tests {
             recv_agent_event(&mut events).await,
             AgentEvent::AgentDown { agent_id: down_id } if down_id == agent_id
         ));
+        assert_eq!(
+            recv_agent_event(&mut events).await,
+            AgentEvent::HostInventory {
+                host_id: remote_host_id,
+                agent_ids: vec![],
+            }
+        );
         assert!(service.list_agents().await.is_empty());
     }
 

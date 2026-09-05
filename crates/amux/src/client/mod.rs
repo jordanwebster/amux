@@ -1522,6 +1522,26 @@ fn client_service_agent_response_to_agent_event(
                 down.agent_id,
             )?,
         }),
+        wire::subscribe_agents_response::Event::HostInventory(inventory) => {
+            Some(AgentEvent::HostInventory {
+                host_id: uuid_from_wire_bytes(
+                    method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                    "HostInventory.host_id",
+                    inventory.host_id,
+                )?,
+                agent_ids: inventory
+                    .agent_ids
+                    .into_iter()
+                    .map(|id| {
+                        uuid_from_wire_bytes(
+                            method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                            "HostInventory.agent_ids",
+                            id,
+                        )
+                    })
+                    .collect::<Result<_, _>>()?,
+            })
+        }
         wire::subscribe_agents_response::Event::SnapshotComplete(_) => None,
     };
     Ok(event)

@@ -1359,17 +1359,28 @@ pub struct HostRemoved {
     #[prost(bytes = "vec", tag = "1")]
     pub host_id: ::prost::alloc::vec::Vec<u8>,
 }
+/// Last complete inventory observed from one remote host. Subsequent snapshots
+/// and confirmed deletions replace this membership; reachability loss does not.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HostInventory {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub agent_ids: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeAgentsRequest {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeAgentsResponse {
-    #[prost(oneof = "subscribe_agents_response::Event", tags = "1, 2, 3, 100")]
+    #[prost(oneof = "subscribe_agents_response::Event", tags = "4, 1, 2, 3, 100")]
     pub event: ::core::option::Option<subscribe_agents_response::Event>,
 }
 /// Nested message and enum types in `SubscribeAgentsResponse`.
 pub mod subscribe_agents_response {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Event {
+        #[prost(message, tag = "4")]
+        HostInventory(super::HostInventory),
         #[prost(message, tag = "1")]
         AgentUp(super::AgentUp),
         #[prost(message, tag = "2")]

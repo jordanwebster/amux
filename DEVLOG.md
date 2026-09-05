@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Prune cached mobile agents from authoritative host inventories.**
+The client service now carries each remote host's completed inventory through
+its ordered agent stream and replays that membership to late subscribers.
+Reconnect snapshots remove stale service rows, and confirmed remote deletions
+update membership without confusing reachability loss with deletion. The mobile
+cache uses those facts and the paired-host list to remove offline deletions and
+unpaired hosts, retaining surviving order and keeping cached cards outside the
+reducer. Empty remote inventories still trigger a Fleet callback. Regression
+tests exercise cold restarts, empty inventories, live deletion, unpairing,
+independent offline hosts and the existing reversed-order report replay.
+Stored report fixtures include the shared model's new inventory field.
+
 2026-09-05 — **Exercise relay inventory from Swift on the iOS simulator.**
 A swiftc-built harness links the debug-tools mobile bridge, connects to a real
 Mac testnet relay and prints daemon names from Fleet callbacks. Its recipe

@@ -7,19 +7,31 @@ use crate::protocol::wire as protocol_wire;
 /// Routed agent-inventory stream events.
 ///
 /// These are carried in protobuf stream items for
-/// `AgentService.SubscribeAgentEvents`.
+/// `AgentService.SubscribeAgentEvents` and `ClientService.SubscribeAgents`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
     SnapshotComplete,
-    AgentUp { agent: Agent },
-    AgentUpdated { agent: Agent },
-    AgentDown { agent_id: Uuid },
+    /// ClientService-only authority, attributed to the authenticated source host.
+    HostInventory {
+        host_id: Uuid,
+        agent_ids: Vec<Uuid>,
+    },
+    AgentUp {
+        agent: Agent,
+    },
+    AgentUpdated {
+        agent: Agent,
+    },
+    AgentDown {
+        agent_id: Uuid,
+    },
 }
 
 impl AgentEvent {
     pub fn type_label(&self) -> &'static str {
         match self {
+            Self::HostInventory { .. } => "Agent::HostInventory",
             Self::SnapshotComplete => "Agent::SnapshotComplete",
             Self::AgentUp { .. } => "Agent::AgentUp",
             Self::AgentUpdated { .. } => "Agent::AgentUpdated",
@@ -32,6 +44,11 @@ pub(crate) fn agent_event_to_wire(
     event: &AgentEvent,
 ) -> Result<protocol_wire::SubscribeAgentEventsResponse, protocol_wire::EncodeError> {
     let event = match event {
+        AgentEvent::HostInventory { .. } => {
+            return Err(protocol_wire::EncodeError::Invalid(
+                "host inventory authority belongs to ClientService".into(),
+            ));
+        }
         AgentEvent::SnapshotComplete => {
             protocol_wire::subscribe_agent_events_response::Event::SnapshotComplete(
                 protocol_wire::SnapshotComplete {},

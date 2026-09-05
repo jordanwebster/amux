@@ -409,6 +409,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
     match server {
         ServerMsg::Connected { local_host_id } => {
             model.epoch += 1;
+            model.remote_inventories.clear();
             model.connection = Connection::Connected {
                 hosts_synchronized: false,
                 agents_synchronized: false,
@@ -462,6 +463,9 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             }
             let epoch = model.epoch;
             let agent_id = agent.id;
+            if let Some(ids) = model.remote_inventories.get_mut(&agent.host_id) {
+                ids.insert(agent_id);
+            }
             let is_local = model.local_host_id == Some(agent.host_id);
             match model.agents.get_mut(&agent_id) {
                 Some(card) => {
@@ -503,6 +507,15 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             {
                 return vec![Effect::CloseStream { agent: id }];
             }
+            Vec::new()
+        }
+        ServerMsg::HostInventory { host_id, agent_ids } => {
+            if !model.is_connected() {
+                return tripwire("host inventory while not connected");
+            }
+            model
+                .remote_inventories
+                .insert(host_id, agent_ids.into_iter().collect());
             Vec::new()
         }
         ServerMsg::AgentsSynchronized => {
