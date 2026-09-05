@@ -61,7 +61,11 @@ pub(crate) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
 #[async_trait]
 pub(crate) trait LocalAgentHost: Send + Sync {
     async fn agent(&self, agent_id: Uuid) -> Result<Agent, ProtocolError>;
-    async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError>;
+    async fn create(
+        &self,
+        request: CreateAgentRpcRequest,
+        operations: &crate::installation::OperationGate,
+    ) -> Result<Agent, ProtocolError>;
     async fn spawn_inheritance(&self, agent_id: Uuid) -> Result<SpawnInheritance, ProtocolError>;
     async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError>;
     async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError>;
@@ -76,6 +80,7 @@ pub(crate) trait LocalAgentHost: Send + Sync {
         &self,
         request: SendInputRequest,
         attachment_owner: Option<Arc<amux_artifacts::Owner>>,
+        operation: tokio::sync::RwLockReadGuard<'_, ()>,
     ) -> Result<(), ProtocolError>;
     async fn attachment_log(
         &self,
@@ -98,7 +103,17 @@ pub(crate) trait LocalAgentHost: Send + Sync {
         env: HookEnvironment,
         external: bool,
     ) -> Result<(), ProtocolError>;
-    async fn resume(&self, state_path: PathBuf) -> Result<(u64, u64), ProtocolError>;
+    async fn resume(
+        &self,
+        state_path: PathBuf,
+        operations: &crate::installation::OperationGate,
+    ) -> Result<(u64, u64), ProtocolError>;
+    async fn prepare_update(&self) -> Result<Vec<crate::suspend::SuspendedAgent>, ProtocolError>;
+    async fn resume_update(
+        &self,
+        agents: Vec<crate::suspend::SuspendedAgent>,
+        operations: &crate::installation::OperationGate,
+    ) -> Vec<crate::installation::AgentResumeResult>;
     async fn stop_all(&self);
     async fn prepare_suspend(&self, state_path: PathBuf) -> Result<u64, ProtocolError>;
     async fn commit_suspend(&self);
@@ -140,6 +155,7 @@ pub(crate) struct AgentServiceCtx {
     host_id: Uuid,
     is_cloud_server: bool,
     artifact_owners: Option<Arc<ArtifactOwners>>,
+    operations: Arc<crate::installation::OperationGate>,
 }
 
 impl AgentServiceCtx {
@@ -153,7 +169,16 @@ impl AgentServiceCtx {
             host_id,
             is_cloud_server,
             artifact_owners: None,
+            operations: Arc::default(),
         }
+    }
+
+    pub(crate) fn with_operations(
+        mut self,
+        operations: Arc<crate::installation::OperationGate>,
+    ) -> Self {
+        self.operations = operations;
+        self
     }
 
     pub(crate) fn with_artifact_owners(mut self, owners: Arc<ArtifactOwners>) -> Self {
@@ -183,6 +208,10 @@ impl AgentServiceCtx {
         self.host.as_ref().ok_or_else(local_agents_disabled)
     }
 
+    // Opening an owner creates directories even for reads and replay. Callers
+    // must hold a shared operation guard until storage preparation finishes,
+    // so deletion drains accepted writes and closed profiles cannot recreate
+    // storage. Release it before delivering prepared input to an agent.
     fn require_artifact_owners(&self, method: &str) -> Result<&Arc<ArtifactOwners>, ProtocolError> {
         self.artifact_owners
             .as_ref()
@@ -223,10 +252,13 @@ impl AgentServiceCtx {
         &self,
         request: CreateAgentRpcRequest,
     ) -> Result<Agent, ProtocolError> {
+        let _operation = self.operations.read().await;
+        self.operations.check_mutation()?;
         if self.is_cloud_server() || !self.has_supported_agent_types() {
             return Err(no_supported_agent_types());
         }
-        self.require_host()?.create(request).await
+        drop(_operation);
+        self.require_host()?.create(request, &self.operations).await
     }
 
     pub(crate) async fn spawn_inheritance(
@@ -237,10 +269,14 @@ impl AgentServiceCtx {
     }
 
     pub(crate) async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {
+        let _operation = self.operations.read().await;
+        self.operations.check_mutation()?;
         self.require_host()?.rename(request).await
     }
 
     pub(crate) async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError> {
+        let _operation = self.operations.lock().await;
+        self.operations.check_mutation()?;
         let result = match self.host() {
             Some(host) => host.delete(agent_id).await,
             None => Err(ProtocolError::NoAgentFound),
@@ -274,6 +310,8 @@ impl AgentServiceCtx {
     }
 
     pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
+        let _operation = self.operations.read().await;
+        self.operations.check()?;
         let attachment_owner = if request.pin.is_empty() {
             None
         } else {
@@ -283,7 +321,7 @@ impl AgentServiceCtx {
             )
         };
         self.require_host()?
-            .send_input(request, attachment_owner)
+            .send_input(request, attachment_owner, _operation)
             .await
     }
 
@@ -297,6 +335,8 @@ impl AgentServiceCtx {
         mime: &str,
         bytes: Vec<u8>,
     ) -> Result<ArtifactRef, ProtocolError> {
+        let _operation = self.operations.read().await;
+        self.operations.check()?;
         let log = self.require_host()?.attachment_log(caller).await?;
         let owner = self
             .require_artifact_owners("PutArtifactByAgent")?
@@ -318,6 +358,8 @@ impl AgentServiceCtx {
         &self,
         request: SubscribeSessionRequest,
     ) -> Result<ResponseStream<wire::SubscribeSessionResponse>, ProtocolError> {
+        let _operation = self.operations.read().await;
+        self.operations.check()?;
         let replay_attachments = self
             .artifact_owners
             .as_ref()
@@ -327,6 +369,7 @@ impl AgentServiceCtx {
                     .map(|owner| owner.pinned().into_iter().map(ArtifactRef::from).collect())
             })
             .transpose()?;
+        drop(_operation);
         self.require_host()?
             .subscribe_session(request, replay_attachments)
             .await
@@ -474,6 +517,8 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::PutArtifactRequest>,
     ) -> TonicResult<wire::PutArtifactResponse> {
+        let _operation = self.operations.read().await;
+        self.operations.check().map_err(protocol_status)?;
         let owners = self
             .require_artifact_owners("PutArtifact")
             .map_err(protocol_status)?;
@@ -496,6 +541,8 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::GetArtifactRequest>,
     ) -> TonicResult<wire::GetArtifactResponse> {
+        let _operation = self.operations.read().await;
+        self.operations.check().map_err(protocol_status)?;
         let owners = self
             .require_artifact_owners("GetArtifact")
             .map_err(protocol_status)?;
@@ -523,6 +570,8 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::DiffRequest>,
     ) -> TonicResult<wire::DiffResponse> {
+        let _operation = self.operations.read().await;
+        self.operations.check().map_err(protocol_status)?;
         let owners = self
             .require_artifact_owners("Diff")
             .map_err(protocol_status)?;
@@ -1016,6 +1065,80 @@ mod tests {
             events.try_recv().unwrap(),
             AgentEvent::AgentDown { agent_id } if agent_id == first_id
         ));
+    }
+
+    #[tokio::test]
+    async fn create_waiting_for_host_preparation_does_not_hold_gate_and_rechecks_close() {
+        let host = service_host();
+        let ctx = AgentServiceCtx::new(Some(host.clone()), host.host_id(), false);
+        let state = host.state().write().await;
+        let mut create = Box::pin(ctx.create(CreateAgentRpcRequest {
+            agent_id: Uuid::new_v4(),
+            name: None,
+            parent: None,
+            initial_prompt: None,
+            agent: CreateAgentConfig::TestAgent {
+                command: TEST_ECHO_COMMAND.into(),
+                working_dir: std::env::temp_dir(),
+                terminal_size: None,
+            },
+        }));
+        assert!(futures_util::poll!(create.as_mut()).is_pending());
+        let exclusive = tokio::time::timeout(Duration::from_secs(1), ctx.operations.lock())
+            .await
+            .expect("startup preparation must not hold the profile gate");
+        ctx.operations.close();
+        drop(exclusive);
+        drop(state);
+        assert!(matches!(
+            create.await,
+            Err(ProtocolError::FailedPrecondition { .. })
+        ));
+        assert_eq!(host.agent_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn resume_waiting_for_host_preparation_does_not_hold_gate_or_recreate_closed_storage() {
+        let host = service_host();
+        let operations = crate::installation::OperationGate::default();
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("profile");
+        let state_path = directory.join("state.yaml");
+        crate::suspend::save_suspended(
+            &state_path,
+            &crate::suspend::SuspendedServerState {
+                agents: vec![crate::suspend::SuspendedAgent::TestAgent {
+                    agent_id: Uuid::new_v4(),
+                    name: None,
+                    command: TEST_ECHO_COMMAND.into(),
+                    working_dir: std::env::temp_dir(),
+                    terminal_size: None,
+                    created_at: Utc::now(),
+                    parent: None,
+                    working_on: None,
+                }],
+            },
+        )
+        .unwrap();
+        let state = host.state().write().await;
+        let mut resume = Box::pin(host.resume(state_path, &operations));
+        assert!(futures_util::poll!(resume.as_mut()).is_pending());
+        let exclusive = tokio::time::timeout(Duration::from_secs(1), operations.lock())
+            .await
+            .expect("resume preparation must not hold the profile gate");
+        operations.close();
+        std::fs::remove_dir_all(&directory).unwrap();
+        drop(exclusive);
+        drop(state);
+        assert!(matches!(
+            resume.await,
+            Err(ProtocolError::FailedPrecondition { .. })
+        ));
+        assert_eq!(host.agent_count().await, 0);
+        assert!(
+            !directory.exists(),
+            "failed resume must not recreate closed storage"
+        );
     }
 
     #[tokio::test]

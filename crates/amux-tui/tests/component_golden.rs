@@ -27,6 +27,7 @@ const STATES: &[NamedState] = &[
     NamedState::ClaudeScrolledBack,
     NamedState::CodexScrolledBack,
     NamedState::HelpOverlay,
+    NamedState::ProfileSwitcher,
 ];
 
 struct Capture {

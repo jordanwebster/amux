@@ -274,6 +274,8 @@ pub struct Scratch {
     pub root: PathBuf,
     pub projects: PathBuf,
     pub out: PathBuf,
+    config: Config,
+    config_path: PathBuf,
     active_session: ActiveSessionRegistry,
 }
 
@@ -303,15 +305,10 @@ impl Scratch {
             std::fs::set_permissions(root.join("sock"), std::fs::Permissions::from_mode(0o700))?;
         }
         std::fs::create_dir_all(&out)?;
-        std::fs::write(
-            root.join("config/amux/config.yaml"),
-            format!(
-                "host_name: capture\nsocket_path: {}\nstate_path: {}\nenable_cloud_mode: false\nprevent_idle_sleep: false\n",
-                socket.display(),
-                root.join("state/state.yaml").display(),
-            ),
-        )?;
+        let (config, config_path) = crate::live_installation::configure(&root, "capture")?;
         Ok(Self {
+            config,
+            config_path,
             projects: root.join("projects"),
             out,
             root,
@@ -320,7 +317,7 @@ impl Scratch {
     }
 
     fn socket_path(&self) -> PathBuf {
-        self.root.join("sock/amux.sock")
+        self.config.socket_path.clone()
     }
 
     /// A fresh git-initialized project dir seeded with `config.txt`.
@@ -438,6 +435,10 @@ impl DaemonEnv {
         let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
         env.insert("PATH".into(), format!("{}:{path}", target_debug.display()));
         env.insert(
+            "AMUX_CONFIG".into(),
+            scratch.config_path.display().to_string(),
+        );
+        env.insert(
             "XDG_CONFIG_HOME".into(),
             scratch.root.join("config").display().to_string(),
         );
@@ -531,6 +532,8 @@ impl ScratchDaemon {
         let mut command = Command::new(amux);
         command
             .args(["hooks", "claude"])
+            .env("AMUX_CONFIG", &scratch.config_path)
+            .env("CLAUDE_HOOK_SOCKET", scratch.socket_path())
             .env(
                 "XDG_CONFIG_HOME",
                 scratch.root.join("config").display().to_string(),

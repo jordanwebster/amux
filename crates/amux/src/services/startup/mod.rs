@@ -5,17 +5,17 @@ mod cloud;
 use std::collections::HashMap;
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, UNIX_EPOCH};
 
-pub(crate) use cloud::establish_cloud_connection;
+pub(crate) use cloud::{CloudConnector, establish_cloud_connection};
 use futures_util::{Stream, StreamExt, stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, RwLock, Semaphore, mpsc};
+use tokio::sync::{RwLock, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tonic::codegen::http;
@@ -25,7 +25,6 @@ use tower::Service;
 use uuid::Uuid;
 
 use crate::agents::ArtifactOwners;
-use crate::audit;
 use crate::connection::ConnectionManager;
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
@@ -43,15 +42,19 @@ use crate::services::{
 #[cfg(test)]
 use crate::transport::PreTrustPairingReachability;
 #[cfg(test)]
+use crate::transport::in_process_transport_pair;
+#[cfg(any(test, test_fixtures))]
 use crate::transport::tcp_incoming;
-use crate::transport::{
-    BoxedGrpcIo, TcpServerTransport, in_process_channel, in_process_transport_pair,
-};
 #[cfg(unix)]
-use crate::transport::{bind_unix_listener, unix_incoming};
+use crate::transport::unix_incoming;
+use crate::transport::{
+    BoxedGrpcIo, InProcessConnection, TcpServerTransport, in_process_channel,
+    managed_in_process_transport_pair,
+};
 use crate::trust::{SharedTrustStore, TrustStore};
 use crate::tunnel::{TunnelPool, TunnelTransport};
 use crate::user_state::ServerState;
+use crate::{HostId, audit};
 
 const DEVICE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOUD_TLS_HANDSHAKE_CONCURRENCY: usize = 128;
@@ -153,7 +156,7 @@ impl CloudLinkService {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, test_fixtures))]
     pub(crate) fn serve_on_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
         spawn_cloud_link_service_server(self.clone(), tcp_incoming(listener))
     }
@@ -212,6 +215,25 @@ impl CloudLinkService {
             .await
             .get(&user_id)
             .map(|services| services.connections.clone())
+    }
+
+    #[cfg(testnet)]
+    pub(crate) async fn user_has_link_to(&self, user_id: Uuid, host_id: HostId) -> bool {
+        let tunnels = self
+            .inner
+            .users
+            .read()
+            .await
+            .get(&user_id)
+            .map(|services| services.tunnels.clone());
+        match tunnels {
+            Some(tunnels) => tunnels
+                .link_registry()
+                .link_to_peer(host_id)
+                .await
+                .is_some(),
+            None => false,
+        }
     }
 
     pub(crate) async fn send_link_close_to_all(&self, reason: wire::pb::LinkCloseReason) {
@@ -471,9 +493,8 @@ pub(crate) async fn start_routing_services(
 pub(crate) struct StartedUserServices {
     runtime: StartedRoutingServices,
     pub(crate) artifact_owners: Arc<ArtifactOwners>,
-    #[cfg(test)]
-    pub(crate) agent: AgentServiceCtx,
     #[cfg(any(test, testnet))]
+    pub(crate) agent: AgentServiceCtx,
     pub(crate) client: ClientService,
     trusted_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
     #[cfg(test)]
@@ -482,6 +503,7 @@ pub(crate) struct StartedUserServices {
     pub(crate) pair_mode: Arc<PairMode>,
     reachability_links: ReachabilityLinkConnector,
     dispatcher: TunnelDispatcher,
+    connections_closed: tokio_util::sync::CancellationToken,
 }
 
 #[derive(Clone)]
@@ -489,6 +511,7 @@ pub(crate) struct DeviceRuntimeSecurity {
     identity: DeviceIdentity,
     trust_store: SharedTrustStore,
     data_dir: PathBuf,
+    operations: Arc<crate::installation::OperationGate>,
 }
 
 impl DeviceRuntimeSecurity {
@@ -501,10 +524,22 @@ impl DeviceRuntimeSecurity {
             identity,
             trust_store: Arc::new(std::sync::RwLock::new(trust_store)),
             data_dir,
+            operations: Arc::default(),
         }
     }
 
-    #[cfg(testnet)]
+    pub(crate) fn with_operations(
+        mut self,
+        operations: Arc<crate::installation::OperationGate>,
+    ) -> Self {
+        self.operations = operations;
+        self
+    }
+
+    pub(crate) fn host_id(&self) -> HostId {
+        self.identity.host_id
+    }
+
     pub(crate) fn shared_trust_store(&self) -> SharedTrustStore {
         self.trust_store.clone()
     }
@@ -557,8 +592,9 @@ async fn start_user_services_with_clock(
             .map_err(|error| IdentityError::Io(std::io::Error::other(error)))?,
     );
     let agent = AgentServiceCtx::new(agent_host.clone(), host_id, is_cloud_server)
-        .with_artifact_owners(artifact_owners.clone());
-    let trust_commit_lock = Arc::new(Mutex::new(()));
+        .with_artifact_owners(artifact_owners.clone())
+        .with_operations(device_security.operations.clone());
+    let trust_commit_lock = device_security.operations.clone();
     let pair_mode = Arc::new(PairMode::new());
     let reachability_links = ReachabilityLinkConnector::new(
         device_security.identity.clone(),
@@ -590,11 +626,13 @@ async fn start_user_services_with_clock(
     let (trusted_incoming_tx, trusted_incoming_rx) = mpsc::channel(64);
     let (pairing_incoming_tx, pairing_incoming_rx) = mpsc::channel(64);
 
+    let connections_closed = tokio_util::sync::CancellationToken::new();
     parts.runtime.tasks.push(spawn_trusted_service_server(
         client.clone(),
         agent.clone(),
         parts.runtime.link_service_ctx(),
         trusted_incoming_rx,
+        connections_closed.clone(),
     ));
     parts.runtime.tasks.push(spawn_pairing_service_server(
         PairingService::new(
@@ -607,6 +645,7 @@ async fn start_user_services_with_clock(
             device_security.data_dir.clone(),
         ),
         pairing_incoming_rx,
+        connections_closed.clone(),
     ));
     let dispatcher = TunnelDispatcher::new(
         &device_security.identity,
@@ -648,11 +687,11 @@ async fn start_user_services_with_clock(
     }
 
     Ok(StartedUserServices {
+        connections_closed,
         runtime: parts.runtime,
         artifact_owners,
-        #[cfg(test)]
-        agent,
         #[cfg(any(test, testnet))]
+        agent,
         client,
         trusted_incoming_tx,
         #[cfg(test)]
@@ -679,6 +718,7 @@ impl DerefMut for StartedUserServices {
 }
 
 impl StartedUserServices {
+    #[cfg(test)]
     pub(crate) fn open_in_process_client_channel(&self) -> (Channel, JoinHandle<()>) {
         let (client_transport, server_transport) = in_process_transport_pair();
         let trusted_tx = self.trusted_incoming_tx.clone();
@@ -694,20 +734,31 @@ impl StartedUserServices {
         (in_process_channel(client_transport), task)
     }
 
+    pub(crate) fn open_managed_in_process_client_channel(
+        &self,
+    ) -> (Channel, JoinHandle<()>, InProcessConnection) {
+        let (client_transport, server_transport, connection) = managed_in_process_transport_pair();
+        let trusted_tx = self.trusted_incoming_tx.clone();
+        let task = tokio::spawn(async move {
+            if trusted_tx
+                .send(BoxedGrpcIo::local_trusted(server_transport))
+                .await
+                .is_err()
+            {
+                tracing::warn!("trusted server closed before in-process stream was accepted");
+            }
+        });
+        (in_process_channel(client_transport), task, connection)
+    }
+
     #[cfg(unix)]
-    pub(crate) fn serve_client_service_on_unix_socket(
-        &mut self,
-        socket_path: &Path,
-    ) -> std::io::Result<()> {
-        let listener = bind_unix_listener(socket_path)?;
+    pub(crate) fn serve_client_service_on_unix_listener(
+        &self,
+        listener: tokio::net::UnixListener,
+    ) -> JoinHandle<()> {
         let incoming = unix_incoming(listener);
         let trusted_tx = self.trusted_incoming_tx.clone();
-        self.tasks.push(spawn_forward_to_trusted(
-            incoming,
-            trusted_tx,
-            "Unix socket",
-        ));
-        Ok(())
+        spawn_forward_to_trusted(incoming, trusted_tx, "Unix socket")
     }
 
     pub(crate) fn serve_external_tcp_listener(&mut self, listener: TcpListener) {
@@ -733,6 +784,21 @@ impl StartedUserServices {
 
     pub(crate) fn spawn_reachability_links(&self) -> Vec<JoinHandle<()>> {
         self.reachability_links.spawn_startup_links()
+    }
+
+    pub(crate) fn push_task(&mut self, task: JoinHandle<()>) {
+        self.tasks.push(task);
+    }
+
+    pub(crate) async fn stop_tasks(&mut self) {
+        self.connections_closed.cancel();
+        let tasks = std::mem::take(&mut self.tasks);
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
     }
 
     #[cfg(testnet)]
@@ -778,12 +844,17 @@ fn spawn_trusted_service_server(
     agent: AgentServiceCtx,
     routing: LinkServiceCtx,
     incoming_rx: mpsc::Receiver<BoxedGrpcIo>,
+    connections_closed: tokio_util::sync::CancellationToken,
 ) -> JoinHandle<()> {
-    let incoming = stream::unfold(incoming_rx, |mut rx| async {
-        rx.recv()
-            .await
-            .map(|transport| (Ok::<_, std::io::Error>(transport), rx))
-    });
+    let incoming = stream::unfold(
+        (incoming_rx, connections_closed),
+        |(mut rx, closed)| async move {
+            rx.recv().await.map(|transport| {
+                let transport = crate::transport::ShutdownIo::new(transport, closed.clone());
+                (Ok::<_, std::io::Error>(transport), (rx, closed))
+            })
+        },
+    );
 
     tokio::spawn(async move {
         if let Err(error) = crate::transport::tonic_server_builder()
@@ -801,12 +872,17 @@ fn spawn_trusted_service_server(
 fn spawn_pairing_service_server(
     pairing: PairingService,
     incoming_rx: mpsc::Receiver<BoxedGrpcIo>,
+    connections_closed: tokio_util::sync::CancellationToken,
 ) -> JoinHandle<()> {
-    let incoming = stream::unfold(incoming_rx, |mut rx| async {
-        rx.recv()
-            .await
-            .map(|transport| (Ok::<_, std::io::Error>(transport), rx))
-    });
+    let incoming = stream::unfold(
+        (incoming_rx, connections_closed),
+        |(mut rx, closed)| async move {
+            rx.recv().await.map(|transport| {
+                let transport = crate::transport::ShutdownIo::new(transport, closed.clone());
+                (Ok::<_, std::io::Error>(transport), (rx, closed))
+            })
+        },
+    );
 
     tokio::spawn(async move {
         if let Err(error) = crate::transport::tonic_server_builder()
@@ -902,22 +978,14 @@ mod tests {
     use crate::routing::{Capabilities, Host, Route, SupportedAgentType};
     use crate::transport::in_process_incoming;
     use crate::trust::{Reachability, TrustEntry};
-    use crate::user_state::ShutdownRequest;
-    use crate::{Client, HostId, SessionCloseReason, SubscribeSessionEvent};
+    use crate::{HostId, SessionCloseReason, SubscribeSessionEvent};
 
     fn test_state(host_id: Uuid) -> Arc<RwLock<ServerState>> {
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         let config = Config {
             host_name: "local".to_string(),
             ..Config::default()
         };
-        Arc::new(RwLock::new(ServerState::new(
-            config,
-            host_id,
-            shutdown_tx,
-            None,
-            None,
-        )))
+        Arc::new(RwLock::new(ServerState::new(config, host_id, None, None)))
     }
 
     async fn test_started_services() -> StartedUserServices {
@@ -1423,15 +1491,13 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         responder.serve_external_tcp_listener(listener);
-        let (channel, server_task) = initiator.open_in_process_client_channel();
-        let client = Client::from_client_service_channel(channel, None);
 
         let paired_peer = crate::pair_via_pin_direct_tcp(
             initiator_dir.path(),
             "initiator",
             addr,
             "123456",
-            &client,
+            &crate::installation::ProfileAdmin::for_test(initiator.client.clone()),
         )
         .await
         .unwrap();
@@ -1459,8 +1525,6 @@ mod tests {
         }
 
         wait_for_host_entry(&initiator.routing, responder_identity.host_id).await;
-
-        server_task.abort();
     }
 
     #[tokio::test]
@@ -1495,9 +1559,7 @@ mod tests {
             .unwrap();
         let mut client = wire::client_service_client(channel);
         let response = client
-            .list_hosts(wire::ListHostsRequest {
-                scope: wire::list_hosts_request::Scope::All as i32,
-            })
+            .list_hosts(wire::ListHostsRequest {})
             .await
             .unwrap()
             .into_inner();
@@ -1595,6 +1657,7 @@ mod tests {
                 &identity_b,
                 vec![Reachability::Ssh {
                     target: "workstation".to_string(),
+                    profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
                 }],
             ),
         );
@@ -1644,9 +1707,7 @@ mod tests {
             .unwrap();
         let mut client = wire::client_service_client(channel);
         let response = client
-            .list_hosts(wire::ListHostsRequest {
-                scope: wire::list_hosts_request::Scope::All as i32,
-            })
+            .list_hosts(wire::ListHostsRequest {})
             .await
             .unwrap()
             .into_inner();
@@ -1945,9 +2006,7 @@ mod tests {
             .pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
-        let (client_channel, client_server_task) = host_a.open_in_process_client_channel();
-        let client = Client::from_client_service_channel(client_channel, None);
-        let paired_peer = client
+        let paired_peer = crate::installation::ProfileAdmin::for_test(host_a.client.clone())
             .pair_pin_cloud_peer(identity_b.host_id, "123456".to_string())
             .await
             .unwrap();
@@ -1969,7 +2028,6 @@ mod tests {
         assert_eq!(trust_b_entry.name, "local");
         assert_eq!(trust_b_entry.reachabilities, vec![Reachability::Cloud]);
 
-        client_server_task.abort();
         task_a.abort();
         task_b.abort();
         server_task.abort();
@@ -2057,13 +2115,11 @@ mod tests {
             .pair_mode
             .start_qr_secret_for_duration(secret, Duration::from_secs(60))
             .unwrap();
-        let (client_channel, client_server_task) = host_a.open_in_process_client_channel();
-        let client = Client::from_client_service_channel(client_channel, None);
-        client
+        crate::installation::ProfileAdmin::for_test(host_a.client.clone())
             .pair_qr_cloud_peer(identity_b.host_id, vec![42; 32])
             .await
             .expect_err("a wrong QR secret must fail without consuming the real one");
-        let paired_peer = client
+        let paired_peer = crate::installation::ProfileAdmin::for_test(host_a.client.clone())
             .pair_qr_cloud_peer(identity_b.host_id, secret.to_vec())
             .await
             .unwrap();
@@ -2085,7 +2141,6 @@ mod tests {
         assert_eq!(trust_b_entry.name, "local");
         assert_eq!(trust_b_entry.reachabilities, vec![Reachability::Cloud]);
 
-        client_server_task.abort();
         task_a.abort();
         task_b.abort();
         server_task.abort();
@@ -2123,7 +2178,7 @@ mod tests {
     async fn started_services_public_client_wrapper_uses_in_process_channel() {
         let services = test_started_services().await;
         let (channel, server_task) = services.open_in_process_client_channel();
-        let client = crate::Client::from_client_service_channel(channel, Some(Arc::new(())));
+        let client = crate::Client::from_client_service_channel(channel);
         let agent_id = Uuid::from_u128(43);
 
         let mut host_events = client.subscribe_hosts().await.unwrap();
@@ -2371,7 +2426,7 @@ mod tests {
             .await;
 
         let (channel, server_task) = services.open_in_process_client_channel();
-        let client = crate::Client::from_client_service_channel(channel, Some(Arc::new(())));
+        let client = crate::Client::from_client_service_channel(channel);
         let mut session = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: agent_id.into(),

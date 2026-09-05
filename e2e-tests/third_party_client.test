@@ -1,0 +1,50 @@
+# test: third_party_client
+# description: A proto-generated client discovers profile sockets and lists their isolated agents
+
+## Environment
+
+config:
+  name: local
+  profiles: [personal, work]
+
+directory:
+  name: project
+
+terminal:
+  name: Personal
+  cwd: project
+
+terminal:
+  name: Work
+  cwd: project
+
+terminal:
+  name: Client
+
+## Test
+
+@Personal
+> amux --profile personal new test-agent --name personal-agent
+> ready
+ready
+echo: ready
+
+@Work
+> amux --profile work new test-agent --name work-agent
+> ready
+ready
+echo: ready
+
+@Client
+> e2e-runner client list-profiles $local.front_door
+Profiles:
+  $local.personal.id  personal    $local.personal.socket_path
+  $local.work.id  work    $local.work.socket_path
+
+> e2e-runner client list-agents $local.front_door personal
+Agents for personal:
+  personal-agent  $project.path
+
+> e2e-runner client list-agents $local.front_door work
+Agents for work:
+  work-agent  $project.path

@@ -12,12 +12,12 @@ config:
 config:
   name: server_a
   host_name: host-a
-  enable_cloud_mode: true
+  cloud_account: alice
 
 config:
   name: server_b
   host_name: host-b
-  enable_cloud_mode: true
+  cloud_account: alice
 
 directory:
   name: dir_a
@@ -56,10 +56,23 @@ hello from cloud A
 echo: hello from cloud A
 
 @Tb
+> amux server stop
+Server shutting down.
+
 > amux server start
 Server started.
 
-@@sleep 1500
+@TpairA
+> amux profiles
+@@retry 10000 100
+Profiles:
+  $server_a.id  server_a  alice@example.test  bound / connected
+
+@TpairB
+> amux profiles
+@@retry 10000 100
+Profiles:
+  $server_b.id  server_b  alice@example.test  bound / connected
 
 @TpairA
 > amux pair

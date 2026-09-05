@@ -155,6 +155,7 @@ impl From<std::io::Error> for TerminalError {
 /// A test terminal that wraps a PTY.
 /// The PTY reader runs in a background thread to avoid blocking on read().
 pub struct TestTerminal {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn MasterPty + Send>,
     rx: mpsc::Receiver<Vec<u8>>,
     writer: Box<dyn Write + Send>,
@@ -215,11 +216,13 @@ impl TestTerminal {
             cmd.env(key, value);
         }
         // Then override with test-specific vars
+        // The executor passes an explicit --config for this fixture.
+        cmd.env_remove("AMUX_CONFIG");
         for (key, value) in env {
             cmd.env(key, value);
         }
 
-        let _child = pair.slave.spawn_command(cmd).map_err(|e| TerminalError {
+        let child = pair.slave.spawn_command(cmd).map_err(|e| TerminalError {
             message: format!("Failed to spawn command: {}", e),
         })?;
         drop(pair.slave);
@@ -250,11 +253,33 @@ impl TestTerminal {
         });
 
         Ok(Self {
+            child,
             _master: pair.master,
             rx,
             writer,
             output_buffer: Vec::new(),
         })
+    }
+
+    pub fn wait_exit(&mut self, code: u32, timeout: Duration) -> Result<(), TerminalError> {
+        let start = std::time::Instant::now();
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                return if status.exit_code() == code {
+                    Ok(())
+                } else {
+                    Err(TerminalError {
+                        message: format!("Command exited with {status}"),
+                    })
+                };
+            }
+            if start.elapsed() >= timeout {
+                return Err(TerminalError {
+                    message: "Timeout waiting for command exit".into(),
+                });
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Send input to the terminal (with newline)

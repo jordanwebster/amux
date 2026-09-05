@@ -20,6 +20,11 @@
 //! where applicable, redacted copies, and version-stamped metadata.
 
 #[cfg(unix)]
+#[allow(dead_code)]
+#[path = "support/live_installation.rs"]
+mod live_installation;
+
+#[cfg(unix)]
 mod codex_live {
     pub mod args;
     pub mod depfile;
@@ -518,17 +523,14 @@ fn main() -> anyhow::Result<()> {
             .to_string();
         drop(capture);
 
-        let summary = harness.client().suspend().await?;
-        if summary.suspended_count != 1 {
-            bail!(
-                "expected one suspended agent, got {}",
-                summary.suspended_count
-            );
+        let suspended_count = crate::live_installation::suspend(&harness.scratch.root).await?;
+        if suspended_count != 1 {
+            bail!("expected one suspended agent, got {}", suspended_count);
         }
         harness.stop_for_suspend().await?;
         harness.restart().await?;
-        let resume = harness.client().resume().await?;
-        if resume.resumed_count != 1 || resume.failed_count != 0 {
+        let resume = crate::live_installation::resume(&harness.scratch.root).await?;
+        if resume.0 != 1 || resume.1 != 0 {
             bail!("resume summary was not 1/0: {resume:?}");
         }
         let listed = harness.client().list_agents().await?;
@@ -827,18 +829,18 @@ fn main() -> anyhow::Result<()> {
         let thread_id = recorded_thread_id(harness)?;
         let server_pgid = app_server_process_group(&harness.scratch)?;
         drop(capture);
-        let summary = harness.client().suspend().await?;
-        if summary.suspended_count != 1 {
+        let suspended_count = crate::live_installation::suspend(&harness.scratch.root).await?;
+        if suspended_count != 1 {
             bail!(
                 "expected one zero-turn unnamed agent to suspend, got {}",
-                summary.suspended_count
+                suspended_count
             );
         }
         harness.stop_for_suspend().await?;
         wait_for_process_group_exit(server_pgid, Duration::from_secs(10)).await?;
         harness.restart().await?;
-        let resume = harness.client().resume().await?;
-        if resume.resumed_count != 1 || resume.failed_count != 0 {
+        let resume = crate::live_installation::resume(&harness.scratch.root).await?;
+        if resume.0 != 1 || resume.1 != 0 {
             bail!("unnamed zero-turn resume summary was not 1/0: {resume:?}");
         }
         let mut reconnected = StructuredCapture::open(harness, agent).await?;

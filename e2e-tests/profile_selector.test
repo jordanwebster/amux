@@ -1,0 +1,60 @@
+# test: profile_selector
+# description: Two terminals keep independent fleets despite selecting profiles in alternation
+
+## Environment
+
+config:
+  name: local
+  profiles: [personal, work]
+
+directory:
+  name: project
+
+terminal:
+  name: Personal
+  cwd: project
+
+terminal:
+  name: Work
+  cwd: project
+
+terminal:
+  name: List
+
+## Test
+
+@Personal
+> amux --profile personal new test-agent --name personal-agent
+> hello personal
+hello personal
+echo: hello personal
+
+@Work
+> amux --profile work new test-agent --name work-agent
+> hello work
+hello work
+echo: hello work
+
+@List
+> amux --profile personal list
+Running agents:
+  personal-agent [test-agent] - $project.path
+
+> amux --profile work list
+Running agents:
+  work-agent [test-agent] - $project.path
+
+@Personal
+> personal remains here
+personal remains here
+echo: personal remains here
+
+@Work
+> work remains here
+work remains here
+echo: work remains here
+
+@List
+> amux --profile personal list
+Running agents:
+  personal-agent [test-agent] - $project.path

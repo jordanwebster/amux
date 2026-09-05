@@ -2,6 +2,51 @@
 
 use serde::Deserialize;
 
+mod markers;
+pub use markers::MarkerFileReporter;
+
+/// Select persistent per-profile status on desktop or callbacks owned by a host.
+#[derive(Clone, Default)]
+pub enum StatusReporters {
+    #[default]
+    None,
+    MarkerFiles,
+    Host {
+        update: Option<std::sync::Arc<dyn UpdateReporter>>,
+        subscription: Option<std::sync::Arc<dyn crate::SubscriptionReporter>>,
+    },
+}
+
+pub(crate) struct ResolvedReporters {
+    pub update: Option<std::sync::Arc<dyn UpdateReporter>>,
+    pub subscription: Option<std::sync::Arc<dyn crate::SubscriptionReporter>>,
+}
+
+impl StatusReporters {
+    pub(crate) fn resolve(&self, state_path: &std::path::Path) -> ResolvedReporters {
+        match self {
+            Self::None => ResolvedReporters {
+                update: None,
+                subscription: None,
+            },
+            Self::Host {
+                update,
+                subscription,
+            } => ResolvedReporters {
+                update: update.clone(),
+                subscription: subscription.clone(),
+            },
+            Self::MarkerFiles => {
+                let reporter = std::sync::Arc::new(MarkerFileReporter::from_state_path(state_path));
+                ResolvedReporters {
+                    update: Some(reporter.clone()),
+                    subscription: Some(reporter),
+                }
+            }
+        }
+    }
+}
+
 /// Result of an update check.
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
@@ -33,10 +78,8 @@ async fn fetch_manifest(url: &str) -> Result<Manifest, reqwest::Error> {
 
 /// Check the remote manifest for a newer version. Returns `Some(UpdateInfo)` if
 /// the manifest version is strictly greater than `current_version`.
-pub async fn check_for_update(cloud_url: &str, current_version: &str) -> Option<UpdateInfo> {
-    let manifest_url = format!("{}/manifest.json", cloud_url.trim_end_matches('/'));
-
-    let manifest = match fetch_manifest(&manifest_url).await {
+pub async fn check_for_update(manifest_url: &str, current_version: &str) -> Option<UpdateInfo> {
+    let manifest = match fetch_manifest(manifest_url).await {
         Ok(m) => m,
         Err(e) => {
             tracing::debug!(error = %e, "update check failed");

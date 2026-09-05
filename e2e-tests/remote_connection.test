@@ -37,6 +37,9 @@ hello from server A
 echo: hello from server A
 
 @Tb
+> amux server stop
+Server shutting down.
+
 > amux server start
 Server started.
 

@@ -40,6 +40,8 @@ dependencies = [
  "curve25519-dalek",
  "futures-util",
  "gethostname",
+ "http-body-util",
+ "hyper",
  "hyper-util",
  "jsonwebtoken",
  "libc",
@@ -65,6 +67,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
+ "tokio-util",
  "tonic",
  "tonic-prost",
  "tower",
@@ -1035,13 +1038,27 @@ dependencies = [
  "chrono",
  "clap",
  "glob",
+ "hyper-util",
  "jsonwebtoken",
+ "libc",
  "portable-pty",
+ "prost",
+ "prost-types",
+ "protoc-bin-vendored",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "shell-words",
  "tempfile",
+ "tokio",
+ "toml",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tower",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -3525,6 +3542,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4451,6 +4474,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

@@ -229,6 +229,11 @@ pub fn fleet_sections(
     fleet.extend([
         row("r", "rename selected", Tier::Plain),
         row("d", "delete selected", Tier::Plain),
+        row(
+            format!("{} p", eff.leader_label),
+            "switch profile",
+            Tier::Plain,
+        ),
         row("q", "quit", Tier::Plain),
         row("ctrl+c ctrl+c", "quit (guarded: two presses)", Tier::Plain),
     ]);

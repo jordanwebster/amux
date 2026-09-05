@@ -25,17 +25,29 @@ before capturing an agent's screen.
 
 ## Find the report
 
-By default reports live at `<data_dir>/reports`. A config can select one
-canonical location instead:
+Reports belong to the selected profile. By default they live at that profile's
+`<data_dir>/reports`, allocated beneath the installation root as
+`profiles/<UUID>/data/reports`. Renaming a profile does not move its reports.
+Switching profiles in the TUI changes the destination for subsequent captures
+and automatic runtime reports, including panic reports, to the profile now on
+screen.
+The **installation configuration** can override this with one shared location
+for all profiles:
 
 ```yaml
 reports_dir: /absolute/path/to/amux-reports
 ```
 
-Use the same config as the daemon when inspecting the default location:
+With this override, all profiles share the report directory without UUID
+subdirectories; listing or pruning it sees reports from every profile.
+
+Use `amux profiles` to find the profile, then select it when inspecting reports,
+or set `AMUX_CONFIG` to its profile configuration (which points to the
+installation configuration):
 
 ```console
-$ AMUX_CONFIG=/path/to/config.yaml amux debug report list
+$ amux --profile Work debug report list
+$ AMUX_CONFIG=/path/to/root/profiles/UUID/config.yaml amux debug report list
 ```
 
 The list is newest first and gives the stamp, kind, status, replay verdict and
@@ -75,15 +87,33 @@ A full user capture contains these files:
 | `frame.styles` | One theme-class character per captured cell |
 | `trace.jsonl` | Starting Model/view/theme snapshot, then ordered chrome events |
 | `msgs.jsonl` | Recorder checkpoint and retained daemon messages |
-| `daemon.json` | Hosts, routes, links, tunnels and session diagnostics |
-| `log.txt` | A line-aligned tail of the local log, capped at 64 KiB |
+| `daemon.json` | Selected profile's hosts, routes, links, tunnels and session diagnostics |
+| `log.txt` | Installation-wide log tail, line-aligned and capped at 64 KiB |
 
 The text and style map are the screenshot. A report contains no OS screenshot
 or image file.
 
+The log tail is **installation-wide**, not filtered to the selected profile.
+It can include activity from other profiles and local clients even when the
+report lives in one profile's directory. Logging uses `AMUX_LOG` when set,
+otherwise `$XDG_STATE_HOME/amux/amux.log` (fallback
+`~/.local/state/amux/amux.log`). Use the same `AMUX_LOG` for daemon startup and
+the capturing client; `amux init` also starts the installation. Distinct
+worktree installations need distinct log paths if their tails should stay
+separate.
+
+For a profile's live diagnostics, use
+`amux --profile Work debug daemon --format json`. The front door's
+`ProfileService.DebugProfile` returns that profile's diagnostics;
+`InstallationService.DebugInstallation` reports the installation and profile
+directory, including startup failures. A profile's `daemon.json` is not a
+snapshot of every account in the installation.
+
 ## Replay before changing code
 
-Replay the final frame through the current build:
+Replay the final frame through the current build. An absolute report path (or
+a relative directory containing `report.json`) works without installation
+configuration, even with the daemon stopped:
 
 ```console
 $ amux debug report replay /path/to/report
@@ -154,7 +184,7 @@ the redacted report files beside it.
 Run every committed fixture through the current renderer and privacy checks:
 
 ```console
-$ timeout 600 cargo test -p amux-tui --test reports
+$ timeout 600 wt test -- every_committed_report_fixture_reproduces
 ```
 
 ## Retention and build gating
@@ -168,3 +198,38 @@ command tree are debug-build surfaces. They do not appear in release help or
 the release key table. The report bundle writer remains in every build so a
 release tripwire or panic still leaves a local, self-describing degraded
 report rather than a flat dump.
+
+## Updating every profile
+
+`amux update` reads `update_manifest_url` from the installation configuration.
+Periodic available-update banners use that same URL for every profile; cloud
+required-version and subscription warnings remain specific to each profile.
+The updater downloads and verifies the binary before suspending agents. The front door
+prepares every profile durably, stops only active agents, and shuts down the
+installation before replacement. After restart it resumes exactly those agents;
+older suspended sessions remain suspended. If replacement fails, the updater
+starts the unchanged executable and attempts the same resume before reporting
+the replacement error.
+
+The installation root's `update.json` records the operation and its phase;
+the file also remains after completion, so its presence alone does not mean
+recovery is pending. Each profile's `state/suspended.yaml` (beside its
+configured `state.yaml`) holds
+retained sessions. Preserve these files when investigating interruption: ordinary
+server startup does not auto-resume. The internal `amux server resume` command
+retries recovery through the front door; repeated recovery does not start an
+agent twice. Check both fleets with `amux --profile Personal list` and
+`amux --profile Work list`, and inspect the installation log for resume failures.
+An agent that cannot start, or whose profile cannot host agents, is reported as
+failed and stays in that profile's suspended state. Once all attempts and state
+cleanup finish, the update completes and profile operations and agent creation
+work again. Repeated installation resume returns the completed report. Storage
+errors keep recovery pending and admission closed until cleanup succeeds.
+
+Replay the offline replacement regression with
+`timeout 900 wt run e2e -- update_two_profiles`. Its HTTP fixture serves a higher
+manifest version with the current executable. The runner updates a disposable
+copy, checks both running fleets, and verifies a pre-existing suspended record
+remains intact. It does not install a published release. The preparation,
+interruption and concurrent-resume cases run with
+`timeout 900 wt run spec -- profiles::update`.

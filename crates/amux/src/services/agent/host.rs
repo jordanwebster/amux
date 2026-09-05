@@ -42,6 +42,7 @@ pub(crate) struct PtyAgentHost {
     state: SharedAgentServiceState,
     event_tx: mpsc::Sender<SessionEvent>,
     host_id: Uuid,
+    resume_lock: tokio::sync::Mutex<()>,
 }
 
 impl PtyAgentHost {
@@ -86,6 +87,7 @@ impl PtyAgentHost {
             state,
             event_tx,
             host_id,
+            resume_lock: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -171,30 +173,16 @@ fn codex_private_socket_path_with_fallback(
 ) -> io::Result<PathBuf> {
     use std::os::unix::ffi::OsStrExt;
 
-    const MAX_CODEX_SOCKET_PATH_BYTES: usize = 103;
+    use crate::installation::{MAX_CODEX_SOCKET_PATH_BYTES, adjacent_codex_socket_path};
 
-    let socket_dir = server_socket_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    // Stable FNV-1a keeps servers with different configured socket paths
-    // isolated without copying a potentially long filename into `sun_path`.
-    let hash = server_socket_path
-        .as_os_str()
-        .as_bytes()
-        .iter()
-        .fold(0xcbf29ce484222325_u64, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-        });
-    let file_name = format!("c{hash:016x}.sock");
-    let adjacent = socket_dir.join(&file_name);
+    let adjacent = adjacent_codex_socket_path(server_socket_path);
     if adjacent.as_os_str().as_bytes().len() <= MAX_CODEX_SOCKET_PATH_BYTES {
         Ok(adjacent)
     } else {
         // Move only the Codex runtime socket when the configured amux
         // directory leaves too little room for codex's sun_path cap.
         secure_codex_fallback_directory(fallback_dir)?;
-        Ok(fallback_dir.join(file_name))
+        Ok(fallback_dir.join(adjacent.file_name().expect("Codex socket has a filename")))
     }
 }
 
@@ -286,7 +274,11 @@ impl LocalAgentHost for PtyAgentHost {
             .ok_or(ProtocolError::NoAgentFound)
     }
 
-    async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError> {
+    async fn create(
+        &self,
+        request: CreateAgentRpcRequest,
+        operations: &crate::installation::OperationGate,
+    ) -> Result<Agent, ProtocolError> {
         let req = create_rpc_to_domain_request(request.agent_id, request)?;
         if matches!(req.agent_type, AgentType::Codex { .. }) {
             #[cfg(unix)]
@@ -303,10 +295,16 @@ impl LocalAgentHost for PtyAgentHost {
                 message: "Codex agents are supported only on Unix platforms".to_string(),
             });
         }
-        create_agent_record(self.state(), self.event_tx(), req, self.host_id())
-            .await
-            .map(Into::into)
-            .map_err(create_error_to_protocol)
+        create_agent_record(
+            self.state(),
+            self.event_tx(),
+            req,
+            self.host_id(),
+            operations,
+        )
+        .await
+        .map(Into::into)
+        .map_err(create_error_to_protocol)
     }
 
     async fn spawn_inheritance(&self, agent_id: Uuid) -> Result<SpawnInheritance, ProtocolError> {
@@ -398,8 +396,9 @@ impl LocalAgentHost for PtyAgentHost {
         &self,
         request: SendInputRequest,
         attachment_owner: Option<Arc<amux_artifacts::Owner>>,
+        operation: tokio::sync::RwLockReadGuard<'_, ()>,
     ) -> Result<(), ProtocolError> {
-        session_rpc::send_session_input(self, request, attachment_owner).await
+        session_rpc::send_session_input(self, request, attachment_owner, operation).await
     }
 
     async fn attachment_log(
@@ -513,18 +512,30 @@ impl LocalAgentHost for PtyAgentHost {
         result
     }
 
-    async fn resume(&self, state_path: PathBuf) -> Result<(u64, u64), ProtocolError> {
+    async fn resume(
+        &self,
+        state_path: PathBuf,
+        operations: &crate::installation::OperationGate,
+    ) -> Result<(u64, u64), ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
+        let operation = operations.read().await;
+        operations.check_mutation()?;
         let suspended =
             suspend::load_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to load state: {error}"),
             })?;
+        drop(operation);
         let result = resume_agents(
             self.state(),
             self.event_tx(),
             suspended.agents,
             self.host_id(),
+            operations,
+            false,
         )
         .await;
+        let _operation = operations.read().await;
+        operations.check_mutation()?;
         if result.failed_agents.is_empty() {
             suspend::remove_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to remove state: {error}"),
@@ -543,11 +554,58 @@ impl LocalAgentHost for PtyAgentHost {
         Ok((result.resumed_count as u64, result.failed_count as u64))
     }
 
+    async fn prepare_update(&self) -> Result<Vec<suspend::SuspendedAgent>, ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
+        let (state, errors) = prepare_server_suspend(self.state()).await;
+        if !errors.is_empty() {
+            return Err(ProtocolError::ServerError {
+                message: errors.join("; "),
+            });
+        }
+        Ok(state.agents)
+    }
+
+    async fn resume_update(
+        &self,
+        agents: Vec<suspend::SuspendedAgent>,
+        operations: &crate::installation::OperationGate,
+    ) -> Vec<crate::installation::AgentResumeResult> {
+        use crate::installation::{AgentResumeResult, AgentResumeStatus};
+        let _resume = self.resume_lock.lock().await;
+        let mut reports = Vec::new();
+        for agent in agents {
+            let agent_id = agent.agent_id();
+            // Recovery may repeat after a process started but before its result
+            // was persisted. Never construct or start that identity twice.
+            let status = if self.state().read().await.contains_agent_id(&agent_id) {
+                AgentResumeStatus::AlreadyRunning
+            } else {
+                let result = resume_agents(
+                    self.state(),
+                    self.event_tx(),
+                    vec![agent],
+                    self.host_id(),
+                    operations,
+                    true,
+                )
+                .await;
+                if result.failed_count == 0 {
+                    AgentResumeStatus::Resumed
+                } else {
+                    AgentResumeStatus::Failed
+                }
+            };
+            reports.push(AgentResumeResult { agent_id, status });
+        }
+        reports
+    }
+
     async fn stop_all(&self) {
         shutdown_server(self.state()).await;
     }
 
     async fn prepare_suspend(&self, state_path: PathBuf) -> Result<u64, ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
         let (suspended, errors) = prepare_server_suspend(self.state()).await;
         if !errors.is_empty() {
             return Err(ProtocolError::ServerError {
@@ -556,7 +614,24 @@ impl LocalAgentHost for PtyAgentHost {
         }
         let count = suspended.agents.len() as u64;
         if !suspended.agents.is_empty() {
-            suspend::save_suspended(&state_path, &suspended).map_err(|error| {
+            // A failed resume can leave older sessions on disk. Keep them when
+            // preparing the live sessions, replacing only stale copies of an
+            // agent that is running again under the same identity.
+            let mut retained = suspend::load_suspended(&state_path).map_err(|error| {
+                ProtocolError::ServerError {
+                    message: format!("failed to load retained state: {error}"),
+                }
+            })?;
+            let active: std::collections::HashSet<_> = suspended
+                .agents
+                .iter()
+                .map(|agent| agent.agent_id())
+                .collect();
+            retained
+                .agents
+                .retain(|agent| !active.contains(&agent.agent_id()));
+            retained.agents.extend(suspended.agents);
+            suspend::save_suspended(&state_path, &retained).map_err(|error| {
                 ProtocolError::ServerError {
                     message: format!("failed to save state: {error}"),
                 }
@@ -658,6 +733,7 @@ fn delete_local_agent_and_emit_session_close(
 
 fn create_error_to_protocol(error: CreateAgentError) -> ProtocolError {
     match error {
+        CreateAgentError::Unavailable(error) => error,
         err @ CreateAgentError::LimitReached { .. } => ProtocolError::ResourceExhausted {
             message: err.to_string(),
         },
@@ -770,6 +846,150 @@ fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
         }
         AgentEvent::AgentDown { agent_id } => (String::new(), agent_id.as_u128()),
         AgentEvent::SnapshotComplete => (String::new(), 0),
+    }
+}
+
+#[cfg(test)]
+mod suspend_tests {
+    use super::*;
+    use crate::agents::{AgentBackend, TestAgentSession};
+    use crate::suspend::{SuspendedAgent, SuspendedServerState};
+
+    fn host(root: &Path) -> Arc<PtyAgentHost> {
+        std::fs::create_dir(root.join("data")).unwrap();
+        let route = McpLaunchRoute::new(
+            std::env::current_exe().unwrap(),
+            None,
+            root.join("amux.sock"),
+            Uuid::new_v4(),
+        )
+        .unwrap();
+        PtyAgentHost::new_with_mcp_launch_route(route, root.join("keymaps"), root.join("data"))
+            .unwrap()
+    }
+
+    fn record(id: Uuid, name: &str) -> SuspendedAgent {
+        TestAgentSession::echo_for_tests(id, Some(name.into()))
+            .suspended_state()
+            .unwrap()
+    }
+
+    async fn register(host: &PtyAgentHost, id: Uuid) {
+        host.state
+            .write()
+            .await
+            .insert_registered_local_agent(
+                host.host_id,
+                id,
+                Box::new(TestAgentSession::echo_for_tests(id, Some("live".into()))),
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_preserves_older_records_and_replaces_stale_active_copies() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        let older = record(Uuid::new_v4(), "previously suspended");
+        let older_yaml = serde_yaml::to_string(&older).unwrap();
+        let active_id = Uuid::new_v4();
+        suspend::save_suspended(
+            &state_path,
+            &SuspendedServerState {
+                agents: vec![older.clone(), record(active_id, "stale")],
+            },
+        )
+        .unwrap();
+        register(&host, active_id).await;
+
+        for _ in 0..2 {
+            assert_eq!(host.prepare_suspend(state_path.clone()).await.unwrap(), 1);
+            assert_eq!(host.agent_count().await, 1);
+            let saved = suspend::load_suspended(&state_path).unwrap();
+            assert_eq!(saved.agents.len(), 2);
+            assert_eq!(serde_yaml::to_string(&saved.agents[0]).unwrap(), older_yaml);
+            assert_eq!(saved.agents[1].agent_id(), active_id);
+            assert_eq!(saved.agents[1].name(), Some("live"));
+        }
+        host.commit_suspend().await;
+        assert_eq!(host.agent_count().await, 0);
+        assert_eq!(
+            suspend::load_suspended(&state_path).unwrap().agents.len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_refuses_unreadable_retained_state_without_stopping_agents() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        let saved_path = root.path().join("suspended.yaml");
+        let original = b"agents: [invalid";
+        std::fs::write(&saved_path, original).unwrap();
+        let active_id = Uuid::new_v4();
+        register(&host, active_id).await;
+
+        assert!(
+            host.prepare_suspend(state_path)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("failed to load retained state")
+        );
+        assert_eq!(std::fs::read(&saved_path).unwrap(), original);
+        assert!(host.agent(active_id).await.is_ok());
+        host.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_write_failure_preserves_saved_and_live_agents() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        suspend::save_suspended(
+            &state_path,
+            &SuspendedServerState {
+                agents: vec![record(Uuid::new_v4(), "older")],
+            },
+        )
+        .unwrap();
+        let saved_path = root.path().join("suspended.yaml");
+        let original = std::fs::read(&saved_path).unwrap();
+        std::fs::create_dir(root.path().join("suspended.yaml.tmp")).unwrap();
+        let active_id = Uuid::new_v4();
+        register(&host, active_id).await;
+
+        assert!(
+            host.prepare_suspend(state_path)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("failed to save state")
+        );
+        assert_eq!(std::fs::read(&saved_path).unwrap(), original);
+        assert!(host.agent(active_id).await.is_ok());
+        host.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_without_live_agents_leaves_saved_state_untouched() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        suspend::save_suspended(
+            &state_path,
+            &SuspendedServerState {
+                agents: vec![record(Uuid::new_v4(), "older")],
+            },
+        )
+        .unwrap();
+        let saved_path = root.path().join("suspended.yaml");
+        let original = std::fs::read(&saved_path).unwrap();
+
+        assert_eq!(host.prepare_suspend(state_path).await.unwrap(), 0);
+        assert_eq!(std::fs::read(&saved_path).unwrap(), original);
     }
 }
 
