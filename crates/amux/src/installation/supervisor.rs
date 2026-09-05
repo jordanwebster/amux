@@ -477,6 +477,36 @@ impl Installation {
         &self.inner.root
     }
 
+    #[cfg(test_fixtures)]
+    pub(crate) async fn use_test_cloud_transport(
+        &self,
+        id: ProfileId,
+        channel: tonic::transport::Channel,
+    ) -> Result<(), InstallationError> {
+        let slot = self.inner.state.lock().unwrap().active(id)?.slot.clone();
+        let mut runtime = slot.runtime.lock().await;
+        if self
+            .inner
+            .state
+            .lock()
+            .unwrap()
+            .active(id)?
+            .status
+            .record
+            .binding
+            .is_some()
+        {
+            return Err(InstallationError::Unavailable(
+                "install relay transport before binding".into(),
+            ));
+        }
+        runtime
+            .as_mut()
+            .ok_or_else(|| InstallationError::Unavailable("profile is not running".into()))?
+            .test_cloud_transport = Some(channel);
+        Ok(())
+    }
+
     /// Obtain pairing and trust administration for a running profile in process.
     pub async fn admin(&self, id: ProfileId) -> Result<super::ProfileAdmin, InstallationError> {
         self.admin_service(id)

@@ -23,6 +23,23 @@ code running as the same OS user. Agent processes retain that user's filesystem
 and process access. Desktop profiles share one daemon process, so a process
 crash or binary replacement affects the whole installation.
 
+An **embedded installation** runs the same supervisor inside its host app.
+The host opens `Installation` with an on-disk root or temporary in-memory
+configuration, `Listeners::InProcessOnly`, and a `CredentialSource::HostProvided`
+provider for each profile. It retains the installation, obtains independent
+`Client` handles for screens and `ProfileAdmin` handles for pairing and trust,
+and awaits `shutdown` when finished. Dropping the last screen client leaves
+every profile and cloud connector running. Without the `local-agents` feature,
+local listeners and process hosting are compiled out.
+
+The app calls `host_suspend` to tear down every cloud link while retaining
+identities, trust and local API access. `host_resume` requests fresh host
+credentials and reconnects eligible profiles independently; rejected credentials
+in one account leave other accounts connected. These hooks follow app activity,
+separately from agent suspension for desktop updates. The library integration
+test exercises two accounts through the real relay with local agents compiled
+out; the phone app's adoption of this API and account switching is separate work.
+
 `amux server start --cloud` instead runs a **cloud relay**
 (`ServerMode::CloudRelay` in `server.rs`). It mints a throwaway `host_id`, loads
 no device identity, and starts only the JWT-gated `LinkService`. Its per-user

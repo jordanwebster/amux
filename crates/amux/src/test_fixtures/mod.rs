@@ -517,6 +517,19 @@ impl TestRelay {
             .insert(user.token.clone(), user.user_id);
         user
     }
+
+    /// Use this fixture's plaintext transport for an unbound profile. Credential
+    /// validation and relay authentication still run through the production connector.
+    pub async fn use_for_profile(
+        &self,
+        installation: &crate::Installation,
+        id: crate::ProfileId,
+    ) -> Result<(), crate::installation::InstallationError> {
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", self.addr))
+            .expect("valid relay fixture URI")
+            .connect_lazy();
+        installation.use_test_cloud_transport(id, channel).await
+    }
 }
 
 impl Drop for TestRelay {

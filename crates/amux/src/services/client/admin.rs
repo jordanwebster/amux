@@ -35,6 +35,15 @@ impl ProfileAdmin {
         self.id
     }
 
+    pub async fn list_pairing_hosts(&self) -> Result<Vec<HostEntry>, ClientError> {
+        self.service
+            .pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(|error| status_to_client_error(protocol_status(error)))?;
+        Ok(self.service.list_pairing_candidates().await)
+    }
+
     #[cfg(any(test, testnet))]
     pub(crate) fn for_test(service: ClientService) -> Self {
         let id = crate::installation::ProfileId(service.local_agents.host_id());

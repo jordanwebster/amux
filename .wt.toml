@@ -52,7 +52,7 @@ run = 'scripts/spec-test.sh "$@"'
 run = "cargo check -p amux --no-default-features --target aarch64-apple-ios"
 
 [task.embed-test]
-run = "CARGO_TARGET_DIR=target/embed cargo test -p amux --no-default-features --test embedding"
+run = "AMUX_EMBED_TEST=1 CARGO_TARGET_DIR=target/embed cargo test -p amux --no-default-features --test embedding -- --nocapture"
 
 [task.protobuf]
 run = "cargo run -p xtask -- codegen"

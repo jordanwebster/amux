@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Prove embedded account isolation without local agents.**
+The embedding integration target opens two profiles under distinct relay users,
+binds through the identity fixture, and pairs independent peer profiles after
+every screen client has been dropped. Public directory, trust and host inventory
+calls verify distinct identities, tenant isolation, suspension teardown and
+independent reconnection. A rejected work refresh leaves personal connected;
+recovering work preserves both identities and trust without refreshing personal.
+The architecture describes installation ownership and app lifecycle hooks.
+The UI library no longer enables local agents transitively; its own tests opt
+in separately. The embedding recipe asserts the feature is off and captures
+the public API observations, preventing an unnoticed desktop-feature build.
+Pairing discovery is available through in-process profile administration, and
+the relay fixture can supply its transport without enabling local agents.
+
 2026-09-05 — **Expose installation ownership to embedded hosts.**
 The public library exports installation options, profiles and administration.
 Host suspension tears down cloud connectors while retaining local clients,
