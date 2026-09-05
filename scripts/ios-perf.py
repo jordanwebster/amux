@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -28,6 +29,9 @@ BUNDLE_ID = "sh.amux.Amux"
 # The definitions pin five samples per metric with the state reset between
 # them; a cold start is reset by terminating the app and launching it again.
 COLD_LAUNCHES = 5
+# What a measured run writes and what therefore has to be gone before one
+# starts: a file left over from last time is indistinguishable from a result.
+PRODUCED = ["verdict.json", "samples.json", "cadence.json"]
 
 
 def machines() -> list[dict]:
@@ -119,11 +123,26 @@ def build(udid: str) -> None:
         check=True, timeout=600)
 
 
+def clear_previous(perf: Path, output: Path) -> None:
+    """Throw away the last run's numbers, in the app and on the Mac.
+
+    Both copies go. Leaving the app's would let a suite that died halfway
+    hand back the run before last as its own; leaving the Mac's would let the
+    same stale file be printed and recorded as a baseline when nothing was
+    copied over it.
+    """
+    for folder in [perf, output]:
+        for name in PRODUCED:
+            (folder / name).unlink(missing_ok=True)
+
+
 def inputs(udid: str, row: dict) -> Path:
     """What only the Mac knows, left where the app will read it."""
     baseline = BASELINES / f"{row['name']}.json"
     perf = container(udid) / "Documents/perf"
     perf.mkdir(parents=True, exist_ok=True)
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    clear_previous(perf, OUTPUT)
     (perf / "inputs.json").write_text(json.dumps({
         "machine": row["name"],
         "simulator": SIMULATOR,
@@ -174,17 +193,25 @@ def measure(udid: str) -> None:
     ], check=True, timeout=2400)
 
 
-def collect(udid: str, row: dict, record_baseline: bool) -> None:
-    # The container is asked for again rather than remembered: installing the
-    # test build can give the app a new one, and copying out of the old one
-    # would report the run before last.
-    perf = container(udid) / "Documents/perf"
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-    for name in ["samples.json", "verdict.json", "cadence.json", "cold-samples.jsonl"]:
+def collect(perf: Path, row: dict, record_baseline: bool, output: Path) -> None:
+    """Copy this run's numbers out of the app and judge them.
+
+    What the app wrote is the only thing that can be reported. A run whose
+    suite never reached its verdict has no result, and saying so is the whole
+    point: reading the file already on the Mac would print the run before last
+    under this run's name, and nothing about the numbers would look wrong.
+    """
+    if not (perf / "verdict.json").is_file():
+        raise SystemExit(
+            f"the measured run wrote no verdict: {perf / 'verdict.json'} does not exist. "
+            "The suite did not reach the end, so this run has no result; anything "
+            f"under {output} belongs to an earlier run and is not it.")
+    output.mkdir(parents=True, exist_ok=True)
+    for name in [*PRODUCED, "cold-samples.jsonl"]:
         source = perf / name
         if source.is_file():
-            (OUTPUT / name).write_text(source.read_text())
-    verdict = json.loads((OUTPUT / "verdict.json").read_text())
+            (output / name).write_text(source.read_text())
+    verdict = json.loads((output / "verdict.json").read_text())
     for result in verdict["results"]:
         print(
             f"{measured(result)}: median {result['median']:.1f}, worst {result['worst']:.1f}"
@@ -192,7 +219,7 @@ def collect(udid: str, row: dict, record_baseline: bool) -> None:
             + (" (proxy)" if result["proxy"] else "")
             + ("" if result["passed"] else f" — FAILED: {result['note']}"),
             flush=True)
-    print(f"{OUTPUT / 'verdict.json'}: {'passed' if verdict['passed'] else 'FAILED'}", flush=True)
+    print(f"{output / 'verdict.json'}: {'passed' if verdict['passed'] else 'FAILED'}", flush=True)
     if not verdict["passed"]:
         raise SystemExit("the run is over budget")
     if record_baseline:
@@ -216,18 +243,57 @@ def describe() -> None:
         {**row, "baseline": str(baseline), "baseline_present": baseline.is_file()}))
 
 
+def self_test() -> None:
+    """Prove, on files nobody measured, that a stale verdict cannot be reported.
+
+    A measuring instrument that can hand back the run before last fails
+    silently: the numbers look exactly like numbers. The two guards that stop
+    it are cheap enough to check before every measured run, so they are.
+    """
+    row = {"name": "self-test", "model": None, "hard": False, "baseline_required": False}
+    passing = json.dumps({"passed": True, "results": []})
+    with tempfile.TemporaryDirectory() as directory:
+        perf = Path(directory) / "container"
+        output = Path(directory) / "mac"
+        for folder in [perf, output]:
+            folder.mkdir()
+            for name in PRODUCED:
+                (folder / name).write_text(passing)
+        clear_previous(perf, output)
+        left = sorted(
+            f"{folder.name}/{path.name}"
+            for folder in [perf, output] for path in folder.iterdir())
+        if left:
+            raise SystemExit("clearing left an earlier run behind: " + ", ".join(left))
+
+        (output / "verdict.json").write_text(passing)
+        try:
+            collect(perf, row, False, output)
+        except SystemExit as refusal:
+            if "verdict" not in str(refusal):
+                raise
+        else:
+            raise SystemExit(
+                "a run that wrote no verdict was reported as this run's result")
+    print("self-test: a run without its own verdict is refused", flush=True)
+
+
 def main() -> None:
     arguments = sys.argv[1:]
     record_baseline = "--baseline" in arguments
     unknown = [
         argument for argument in arguments
-        if argument not in ["--probe", "--baseline", "--machine"]
+        if argument not in ["--probe", "--baseline", "--machine", "--self-test"]
     ]
     if unknown:
         raise SystemExit(f"unknown argument: {' '.join(unknown)}")
     if "--machine" in arguments:
         describe()
         return
+    if "--self-test" in arguments:
+        self_test()
+        return
+    self_test()
     row = machine()
     print(f"machine: {row['name']} ({'hard budgets' if row['hard'] else 'baseline'})", flush=True)
     udid = ios_simulators.ensure(SIMULATOR)
@@ -236,7 +302,10 @@ def main() -> None:
     perf = inputs(udid, row)
     cold_starts(udid, perf)
     measure(udid)
-    collect(udid, row, record_baseline)
+    # The container is asked for again rather than remembered: installing the
+    # test build can give the app a new one, and copying out of the old one
+    # would report the run before last.
+    collect(container(udid) / "Documents/perf", row, record_baseline, OUTPUT)
 
 
 if __name__ == "__main__":

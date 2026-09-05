@@ -6,6 +6,11 @@ what the number stands for when it cannot stand for itself. `wt run ios-perf`
 reads the two tables at the bottom of this document, so the numbers a person
 reads here and the numbers the suite enforces are the same numbers.
 
+Every number printed by a run was written by that run. The previous run's
+verdict is deleted before anything is launched, and a run whose suite never
+wrote one stops with that as its reason rather than reporting the file it
+found on disk.
+
 Budgets are hard on the pinned Mac. Any other machine records its own baseline
 row once and from then on is judged against that row with the same tolerances.
 A budget is never loosened to fit a machine.

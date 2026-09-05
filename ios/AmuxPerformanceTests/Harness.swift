@@ -91,11 +91,17 @@ final class Harness {
 
     /// Waits for a mark, or fails rather than hanging until the recipe's
     /// timeout fires.
+    ///
+    /// A measurement that never arrives is a red run, not a skipped one: a
+    /// skip leaves the suite green and the verdict short of a metric, which
+    /// reads as "nothing was wrong" when in fact nothing was measured.
     func wait(for signpost: Signpost, seconds: Double = 10) async throws {
         let deadline = ContinuousClock.now + .seconds(seconds)
         while Signposts.first(signpost) == nil {
             if ContinuousClock.now > deadline {
-                throw XCTSkip("never reached \(signpost.rawValue)")
+                let why = "never reached \(signpost.rawValue) within \(seconds)s"
+                XCTFail(why)
+                throw StalledMeasurement(why: why)
             }
             await frame()
         }
@@ -117,6 +123,13 @@ final class Harness {
             DisplayTick.once { continuation.resume() }
         }
     }
+}
+
+/// A measurement that stopped moving before it finished.
+struct StalledMeasurement: Error, CustomStringConvertible {
+    let why: String
+
+    var description: String { why }
 }
 
 /// The rows a probe list is showing, so appending to the list is one state

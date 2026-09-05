@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A measured run reports only its own numbers.** The performance
+run now throws away the previous run's verdict, samples and cadence — both the
+copy inside the app and the copy on the Mac — before it launches anything, and
+refuses to print or record a result when the app wrote no verdict this time.
+Before, a suite that died halfway left the last good file on disk and the run
+printed it as today's numbers: nothing about them looked wrong. The run checks
+both guards against files nobody measured before it measures anything, so a
+regression in them is a red run rather than a plausible-looking table; the
+check is also available on its own as `wt run ios-perf -- --self-test`. A
+measurement waiting on a moment that never arrives now fails the test instead
+of skipping it, because a skip leaves the suite green and the verdict one
+metric short.
+
 2026-09-05 — **Clearer probe copy.** The capture probe now says “This screen
 uses the same design tokens as the app.” Its light and dark screenshot
 baselines and the sample report's replay image reflect the new subtitle.
