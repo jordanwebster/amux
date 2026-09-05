@@ -17,6 +17,17 @@ use crate::suspend::{SuspendedAgent, SuspendedServerState};
 /// tasks, so this provides an upper bound on per-user resource consumption.
 const MAX_LOCAL_AGENTS: usize = 1024;
 
+pub(super) fn monitor_session_exit(
+    exit_handle: JoinHandle<()>,
+    event_tx: mpsc::Sender<SessionEvent>,
+    agent_id: Uuid,
+) {
+    tokio::spawn(async move {
+        let _ = exit_handle.await;
+        let _ = event_tx.send(SessionEvent::Ended { agent_id }).await;
+    });
+}
+
 pub(crate) fn spawn_session_event_loop(
     agent_state: SharedAgentServiceState,
     mut event_rx: mpsc::Receiver<SessionEvent>,
@@ -217,12 +228,7 @@ pub(crate) async fn create_agent_record(
             context.session.maybe_start_name_sniffer(event_tx);
         }
 
-        // Task: Monitor exit handle and notify server when agent exits
-        let exit_event_tx = event_tx.clone();
-        tokio::spawn(async move {
-            let _ = exit_handle.await;
-            let _ = exit_event_tx.send(SessionEvent::Ended { agent_id }).await;
-        });
+        monitor_session_exit(exit_handle, event_tx.clone(), agent_id);
 
         state.local_agent_events.emit(announce);
 
@@ -445,12 +451,7 @@ pub(crate) async fn resume_agents(
                     continue;
                 }
 
-                // Task: Monitor exit handle and notify server when agent exits
-                let event_tx = event_tx.clone();
-                tokio::spawn(async move {
-                    let _ = exit_handle.await;
-                    let _ = event_tx.send(SessionEvent::Ended { agent_id }).await;
-                });
+                monitor_session_exit(exit_handle, event_tx.clone(), agent_id);
 
                 resumed += 1;
             }

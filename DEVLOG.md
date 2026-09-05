@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Pinned Claude SDK agent-message delivery and lifecycle carriers.**
+Offline subprocess fixtures now exercise a parent message reaching an SDK
+child, its successful result becoming a completion notification, and its
+process exit becoming an exit notification. Both notifications pass through
+the SDK parent's real delivery adapter into frozen chat rows. The checks
+verify envelope identity, escaped multiline text, continued child liveness
+after completion, and removal after exit. Fixture registration shares the
+production exit monitor used by new and resumed sessions.
+
 2026-09-05 — **Added Claude SDK session controls and passive context facts.**
 Clients can change permission mode or model, restore the launch model, and
 request a context breakdown. Facts accompany readiness, model and mode

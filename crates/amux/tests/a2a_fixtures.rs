@@ -1,5 +1,9 @@
 use serde_json::Value;
 
+#[cfg(all(unix, testnet))]
+#[path = "a2a_fixtures/claude_sdk.rs"]
+mod claude_sdk;
+
 const SOCKET_DELIVERY: &str = include_str!("fixtures/a2a/socket_delivery.jsonl");
 const PTY_DELIVERY: &str = include_str!("fixtures/a2a/pty_delivery.jsonl");
 const STOP_PAYLOAD: &str = include_str!("fixtures/a2a/stop_payload.jsonl");

@@ -98,9 +98,10 @@ inherit only the parent's permission-mode arguments; Codex children inherit
 approval and sandbox policy.
 
 When a child turn ends, its last assistant message is sent to the parent as a
-`completed` envelope. Claude supplies the text through the `Stop` hook; Codex
-uses the last `agentMessage` observed before `turn/completed`. If the child
-session ends, the parent instead receives an `exited` envelope with an empty
+`completed` envelope. Claude PTY supplies the text through the `Stop` hook;
+Claude SDK uses the successful result row's `result` text; Codex uses the
+last `agentMessage` observed before `turn/completed`. If the child
+session ends, the parent receives an `exited` envelope with an empty
 body. Completion leaves the child alive and idle so a later message can start
 another turn.
 
@@ -183,6 +184,18 @@ the recipient log writes `amux.claude_sdk.message` with the complete envelope
 and `delivery: "stream"`. That row is the recipient-owned durable record. A
 sender response, attempted prompt, or pre-ready queue is never treated as
 delivery evidence.
+
+The offline carrier fixtures in `crates/amux/tests/fixtures/a2a/sdk_*` use
+synthetic stream-JSON subprocesses through the real provider crate, SDK
+adapter, local registry, and lifecycle loop. They freeze the recipient rows
+for a parent message, a child's successful result, and its process exit;
+only the host-generated completion and exit envelope IDs are normalized.
+The subprocess echoes each received prompt so the tests verify the wire text
+as well as the durable row. They do not require a provider login.
+
+Run `timeout 900 wt test -- a2a_fixture` to replay them. To deliberately
+regenerate the SDK rows, run `UPDATE_A2A_FIXTURES=1 timeout 900 wt test --
+a2a_fixture_claude_sdk`, then replay without the update flag.
 
 ### Codex
 

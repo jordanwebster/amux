@@ -16,6 +16,9 @@ use crate::agents::{
 use crate::claude_sdk_io::ClaudeSdkV1Input;
 use crate::codex_io::CodexSdkV1Input;
 
+mod a2a;
+pub use a2a::{ClaudeSdkA2aHarness, SdkRecipientRows};
+
 pub struct ClaudePtyBackendHarness {
     backend: ClaudePtyBackend,
     input: Box<dyn StructuredInput>,

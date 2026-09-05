@@ -1,0 +1,1 @@
+{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":1,"num_turns":1,"result":"The child finishes its assigned work.","session_id":"00000000-0000-0000-0000-000000000003","total_cost_usd":0,"usage":{"input_tokens":4,"output_tokens":8},"modelUsage":{},"permission_denials":[],"uuid":"00000000-0000-0000-0000-000000000004","stop_reason":"end_turn"}
