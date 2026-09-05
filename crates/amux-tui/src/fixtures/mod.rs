@@ -55,6 +55,8 @@ pub enum NamedState {
     Fleet,
     FleetEmpty,
     FleetMixed,
+    FleetSdkHelp,
+    A2aSdkFamily,
     ClaudeLongFeed,
     CodexLongFeed,
     ClaudeScrolledBack,
@@ -103,6 +105,8 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::Fleet,
     NamedState::FleetEmpty,
     NamedState::FleetMixed,
+    NamedState::FleetSdkHelp,
+    NamedState::A2aSdkFamily,
     NamedState::ClaudeLongFeed,
     NamedState::CodexLongFeed,
     NamedState::ClaudeScrolledBack,
@@ -153,6 +157,8 @@ impl NamedState {
             Self::Fleet => "fleet",
             Self::FleetEmpty => "fleet-empty",
             Self::FleetMixed => "fleet-mixed",
+            Self::FleetSdkHelp => "fleet-sdk-help",
+            Self::A2aSdkFamily => "a2a-sdk-family",
             Self::ClaudeLongFeed => "claude-long-feed",
             Self::CodexLongFeed => "codex-long-feed",
             Self::ClaudeScrolledBack => "claude-scrolled-back",
@@ -294,6 +300,8 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::Fleet => fleet_fixture(false),
         NamedState::FleetEmpty => fleet_fixture(true),
         NamedState::FleetMixed => mixed_fleet_fixture(),
+        NamedState::FleetSdkHelp => sdk_fleet_help_fixture(),
+        NamedState::A2aSdkFamily => sdk_family_fixture(),
         NamedState::ClaudeLongFeed => long_feed(StructuredProtocol::Claude, 1_000),
         NamedState::CodexLongFeed => long_feed(StructuredProtocol::Codex, 1_000),
         NamedState::ClaudeScrolledBack => scrolled_back(StructuredProtocol::Claude),
@@ -1079,36 +1087,154 @@ fn mixed_fleet_fixture() -> Fixture {
         Msg::Server(ServerMsg::AgentsSynchronized),
     ]);
     for (protocol, _, rows) in members {
-        messages.extend([
-            Msg::Stream {
-                agent: agent_id(protocol),
-                event: StreamMsg::Opened { truncated: false },
-            },
-            Msg::Stream {
-                agent: agent_id(protocol),
-                event: StreamMsg::ReplayComplete,
-            },
-            Msg::Stream {
-                agent: agent_id(protocol),
-                event: StreamMsg::Batch {
-                    at: at("2026-08-12T09:12:20Z"),
-                    entries: rows
-                        .into_iter()
-                        .enumerate()
-                        .map(|(offset, payload)| StreamEntry {
-                            seq: offset as u64 + 1,
-                            payload,
-                        })
-                        .collect(),
-                },
-            },
-        ]);
+        messages.extend(fleet_stream_rows(agent_id(protocol), rows));
     }
     Fixture {
         model: fold(messages),
         view: ViewState::default(),
         now: fixed_now(),
     }
+}
+
+/// The mixed fleet with the stream-JSON session selected and its `?`
+/// overlay open. The overlay is the claim: a session with no terminal
+/// behind it is offered one way in, so Enter says "open in chat" and no
+/// row anywhere in the sheet offers raw attach.
+fn sdk_fleet_help_fixture() -> Fixture {
+    let mut fixture = mixed_fleet_fixture();
+    fixture.view.selected = select_row(&fixture, agent_id(StructuredProtocol::ClaudeSdk));
+    fixture.view.mode = crate::view::Mode::Help;
+    fixture
+}
+
+/// The index of one agent's row among the rows the fleet is showing.
+/// Reading it back off the ranking is what keeps a fixture honest when
+/// the ranking changes: a hard-coded index would quietly select a
+/// neighbour instead of failing.
+fn select_row(fixture: &Fixture, agent: AgentId) -> usize {
+    crate::view::visible_rows(&fixture.model, &fixture.view)
+        .iter()
+        .position(|row| row.card().is_some_and(|card| card.agent.id == agent))
+        .expect("fixture fleet holds the agent")
+}
+
+fn family_lead_id() -> AgentId {
+    AgentId::from_u128(11)
+}
+
+/// A family whose middle member is a Claude session driven over
+/// stream-JSON, opened so every generation shows. The point of the
+/// capture is that the session sits in the tree like anything else: it
+/// indents where its generation puts it, wears the badge its own state
+/// earned, and the family still occupies one place in the ranking.
+fn sdk_family_fixture() -> Fixture {
+    let lead = Agent {
+        id: family_lead_id(),
+        host_id: host_id(),
+        name: Some("refactor-tunnels".to_string()),
+        command: "claude".to_string(),
+        working_dir: "/work/amux".into(),
+        kind: amux_ui::AgentKind::Claude {
+            driver: amux_ui::ClaudeDriver::Pty,
+        },
+        readonly: false,
+        args: Vec::new(),
+        created_at: at("2026-08-12T09:00:00Z"),
+        parent: None,
+        working_on: Some(amux_ui::WorkingOn {
+            text: "split the tunnel supervisor".to_string(),
+            updated_at: at("2026-08-12T09:05:00Z"),
+        }),
+    };
+    let child_of_lead = |protocol: StructuredProtocol, name: &str| Agent {
+        parent: Some(amux_ui::AgentParent {
+            agent_id: family_lead_id(),
+            host_id: host_id(),
+        }),
+        ..agent(protocol, name)
+    };
+    let members = [
+        (
+            StructuredProtocol::ClaudeSdk,
+            "fix-sync",
+            vec![
+                sdk_ready(),
+                sdk_prompt(1, "Document the new handshake."),
+                sdk_permission_request(),
+            ],
+        ),
+        (
+            StructuredProtocol::Codex,
+            "codex-retry",
+            codex_working_rows(),
+        ),
+    ];
+    let mut messages = vec![
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host_id()),
+        }),
+        Msg::Server(ServerMsg::HostUpserted { host: host() }),
+        Msg::Server(ServerMsg::AgentUpserted {
+            agent: lead.clone(),
+        }),
+    ];
+    for (protocol, name, _) in &members {
+        messages.push(Msg::Server(ServerMsg::AgentUpserted {
+            agent: child_of_lead(*protocol, name),
+        }));
+    }
+    messages.extend([
+        Msg::Server(ServerMsg::HostsSynchronized),
+        Msg::Server(ServerMsg::AgentsSynchronized),
+    ]);
+    for (protocol, _, rows) in members {
+        messages.extend(fleet_stream_rows(agent_id(protocol), rows));
+    }
+    messages.extend(fleet_stream_rows(
+        family_lead_id(),
+        vec![claude_ready(), claude_prompt(1, "Split the supervisor.")],
+    ));
+    let model = fold(messages);
+    let mut view = ViewState {
+        expanded: std::iter::once(family_lead_id()).collect(),
+        ..ViewState::default()
+    };
+    let fixture = Fixture {
+        model,
+        view: view.clone(),
+        now: fixed_now(),
+    };
+    view.selected = select_row(&fixture, agent_id(StructuredProtocol::ClaudeSdk));
+    Fixture { view, ..fixture }
+}
+
+/// One agent's transcript arriving in the fleet: the stream opens, the
+/// replay finishes, and the rows land in one batch.
+fn fleet_stream_rows(agent: AgentId, rows: Vec<Value>) -> Vec<Msg> {
+    vec![
+        Msg::Stream {
+            agent,
+            event: StreamMsg::Opened { truncated: false },
+        },
+        Msg::Stream {
+            agent,
+            event: StreamMsg::ReplayComplete,
+        },
+        Msg::Stream {
+            agent,
+            event: StreamMsg::Batch {
+                at: at("2026-08-12T09:12:20Z"),
+                entries: rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, payload)| StreamEntry {
+                        seq: offset as u64 + 1,
+                        payload,
+                    })
+                    .collect(),
+            },
+        },
+    ]
 }
 
 fn claude_ready() -> Value {

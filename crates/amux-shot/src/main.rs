@@ -381,6 +381,8 @@ const FLEET: &[SetMember] = &[
     member("fleet-mixed", "fleet-mixed.png", ThemeSpec::Dark),
     member("fleet-mixed", "fleet-mixed-light.png", ThemeSpec::Light),
     member("fleet", "fleet-light.png", ThemeSpec::Light),
+    member("fleet-sdk-help", "fleet-sdk-help.png", ThemeSpec::Dark),
+    member("a2a-sdk-family", "a2a-sdk-family.png", ThemeSpec::Dark),
     member("claude-idle", "claude-idle-dark.png", ThemeSpec::Dark),
 ];
 

@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Two fleet screens a person can now capture: the help sheet
+over a session, and a family holding one.**
+The screenshot registry gained a fleet state whose selected row is a Claude
+session driven over stream-JSON with the key sheet open — it offers "open in
+chat" and nothing anywhere in it offers raw attach, because that session has
+no terminal behind it — and a family state whose middle member is such a
+session, opened so every generation shows. The family capture used to be a
+rasterized copy of a frozen frame; it is now drawn from a fixture, so it
+moves when the screen moves. Both join the fleet render set. A fixture that
+needs a row selected reads the index back off the ranking rather than
+hard-coding it, so a change to the ranking fails loudly instead of quietly
+selecting a neighbour.
+
 2026-09-05 — **The command line's one departure from the fleet's entry
 rule is written down and pinned.**
 Every way into an agent reads one answer per agent — except that `amux
