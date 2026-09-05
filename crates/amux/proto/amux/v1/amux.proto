@@ -986,11 +986,22 @@ message HandleHookRequest {
 
 message HandleHookResponse {}
 
+// SSH bootstrap includes the local selector needed for subsequent stdio relays.
+message SshPairingIdentity {
+  PairingIdentity identity = 1;
+  string profile_id = 2;
+}
+
+message SshTarget {
+  string target = 1;
+  string profile_id = 2;
+}
+
 message PairPeerRequest {
   PairingIdentity peer = 1;
 
   oneof reachability {
-    string ssh_target = 2;
+    SshTarget ssh_target = 2;
     string direct_tcp_addr = 3;
   }
 }
@@ -1025,7 +1036,7 @@ message PeerRef {
 message PeerReachability {
   oneof kind {
     Empty cloud = 1;
-    string ssh_target = 2;
+    SshTarget ssh_target = 2;
     string direct_tcp_addr = 3;
   }
 }

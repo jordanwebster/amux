@@ -12,6 +12,7 @@ use crate::{ClientError, PairingStart, PeerEntry, PeerIdentifier, SshPairingPeer
 #[derive(Clone)]
 pub struct ProfileAdmin {
     service: ClientService,
+    id: crate::installation::ProfileId,
 }
 
 mod method {
@@ -26,8 +27,18 @@ mod method {
 }
 
 impl ProfileAdmin {
-    pub(crate) fn new(service: ClientService) -> Self {
-        Self { service }
+    pub(crate) fn new(service: ClientService, id: crate::installation::ProfileId) -> Self {
+        Self { service, id }
+    }
+
+    pub fn profile_id(&self) -> crate::installation::ProfileId {
+        self.id
+    }
+
+    #[cfg(any(test, testnet))]
+    pub(crate) fn for_test(service: ClientService) -> Self {
+        let id = crate::installation::ProfileId(service.local_agents.host_id());
+        Self::new(service, id)
     }
     pub async fn start_pin_pairing(&self) -> Result<PairingStart, ClientError> {
         self.start_pairing(wire::start_pairing_request::Mode::Pin, false, None)
@@ -98,9 +109,14 @@ impl ProfileAdmin {
     pub async fn pair_ssh_peer(
         &self,
         peer: SshPairingPeer,
-        ssh_target: Option<String>,
+        ssh_target: Option<crate::SshTarget>,
     ) -> Result<(), ClientError> {
-        let reachability = ssh_target.map(wire::pair_peer_request::Reachability::SshTarget);
+        let reachability = ssh_target.map(|target| {
+            wire::pair_peer_request::Reachability::SshTarget(wire::SshTarget {
+                target: target.target,
+                profile_id: target.profile.to_string(),
+            })
+        });
         self.pair_peer(peer, reachability).await
     }
 

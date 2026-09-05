@@ -460,7 +460,9 @@ impl Installation {
 
     /// Obtain pairing and trust administration for a running profile in process.
     pub async fn admin(&self, id: ProfileId) -> Result<super::ProfileAdmin, InstallationError> {
-        self.admin_service(id).await.map(super::ProfileAdmin::new)
+        self.admin_service(id)
+            .await
+            .map(|service| super::ProfileAdmin::new(service, id))
     }
 
     pub(crate) async fn admin_service(

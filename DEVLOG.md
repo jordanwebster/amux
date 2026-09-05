@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Reconnect SSH peers to their immutable profile.**
+SSH pairing exchanges the selected profile UUID alongside its device identity
+and persists it with the SSH destination. Relay launches pass that UUID as a
+separate `--profile` argument, so a rename or a changed remote default cannot
+retarget the connection. Peer listings include the stored profile UUID. Debug
+builds accept `AMUX_SSH` for an offline transport fixture; release builds use SSH.
+The real CLI regression pairs, renames the remote profile, changes both remote
+selection defaults, restarts the caller and checks the original fleet through
+the persisted route. The opt-in cross-host attachment harness now writes split
+installation and UUID profile configurations with short socket paths.
+
 2026-09-05 — **Pin managed MCP and hooks to their launching profile.**
 Claude and Codex MCP launches require an explicit profile configuration and
 carry that path alongside the exact socket. MCP connects directly to that

@@ -1497,7 +1497,7 @@ mod tests {
             "initiator",
             addr,
             "123456",
-            &crate::installation::ProfileAdmin::new(initiator.client.clone()),
+            &crate::installation::ProfileAdmin::for_test(initiator.client.clone()),
         )
         .await
         .unwrap();
@@ -1657,6 +1657,7 @@ mod tests {
                 &identity_b,
                 vec![Reachability::Ssh {
                     target: "workstation".to_string(),
+                    profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
                 }],
             ),
         );
@@ -2005,7 +2006,7 @@ mod tests {
             .pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
-        let paired_peer = crate::installation::ProfileAdmin::new(host_a.client.clone())
+        let paired_peer = crate::installation::ProfileAdmin::for_test(host_a.client.clone())
             .pair_pin_cloud_peer(identity_b.host_id, "123456".to_string())
             .await
             .unwrap();
@@ -2114,11 +2115,11 @@ mod tests {
             .pair_mode
             .start_qr_secret_for_duration(secret, Duration::from_secs(60))
             .unwrap();
-        crate::installation::ProfileAdmin::new(host_a.client.clone())
+        crate::installation::ProfileAdmin::for_test(host_a.client.clone())
             .pair_qr_cloud_peer(identity_b.host_id, vec![42; 32])
             .await
             .expect_err("a wrong QR secret must fail without consuming the real one");
-        let paired_peer = crate::installation::ProfileAdmin::new(host_a.client.clone())
+        let paired_peer = crate::installation::ProfileAdmin::for_test(host_a.client.clone())
             .pair_qr_cloud_peer(identity_b.host_id, secret.to_vec())
             .await
             .unwrap();

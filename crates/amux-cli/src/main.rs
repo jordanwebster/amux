@@ -745,7 +745,10 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                     &client,
                 )
                 .await?;
-                println!("Paired with {} ({}) via SSH.", peer.name, peer.host_id);
+                println!(
+                    "Paired with {} ({}) via SSH.",
+                    peer.identity.name, peer.identity.host_id
+                );
                 return Ok(ExitCode::SUCCESS);
             }
 
@@ -900,7 +903,9 @@ fn format_peer_reachabilities(reachabilities: &[amux::PeerReachability]) -> Stri
         .iter()
         .map(|reachability| match reachability {
             amux::PeerReachability::Cloud => "cloud".to_string(),
-            amux::PeerReachability::Ssh { target } => format!("ssh:{target}"),
+            amux::PeerReachability::Ssh { target, profile } => {
+                format!("ssh:{target} (profile {profile})")
+            }
             amux::PeerReachability::DirectTcp { addr } => format!("direct-tcp:{addr}"),
         })
         .collect::<Vec<_>>()

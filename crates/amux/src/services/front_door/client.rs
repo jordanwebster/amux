@@ -43,6 +43,10 @@ impl ProfileAdminClient {
         Self { id, inner }
     }
 
+    pub fn profile_id(&self) -> ProfileId {
+        self.id
+    }
+
     pub async fn list_pairing_hosts(&self) -> Result<Vec<HostEntry>, ClientError> {
         let response = self
             .inner
@@ -143,9 +147,14 @@ impl ProfileAdminClient {
     pub async fn pair_ssh_peer(
         &self,
         peer: SshPairingPeer,
-        ssh_target: Option<String>,
+        ssh_target: Option<crate::SshTarget>,
     ) -> Result<(), ClientError> {
-        let reachability = ssh_target.map(wire::pair_peer_request::Reachability::SshTarget);
+        let reachability = ssh_target.map(|target| {
+            wire::pair_peer_request::Reachability::SshTarget(wire::SshTarget {
+                target: target.target,
+                profile_id: target.profile.to_string(),
+            })
+        });
         self.pair_peer(peer, reachability).await
     }
 

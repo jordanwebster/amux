@@ -1328,7 +1328,12 @@ fn peer_entry_to_wire(host_id: Uuid, entry: &TrustEntry) -> wire::PeerEntry {
 fn peer_reachability_to_wire(reachability: &Reachability) -> wire::PeerReachability {
     let target = match reachability {
         Reachability::Cloud => wire::peer_reachability::Kind::Cloud(wire::Empty {}),
-        Reachability::Ssh { target } => wire::peer_reachability::Kind::SshTarget(target.clone()),
+        Reachability::Ssh { target, profile } => {
+            wire::peer_reachability::Kind::SshTarget(wire::SshTarget {
+                target: target.clone(),
+                profile_id: profile.to_string(),
+            })
+        }
         Reachability::DirectTcp { addr } => {
             wire::peer_reachability::Kind::DirectTcpAddr(addr.to_string())
         }
@@ -1475,8 +1480,17 @@ fn pair_peer_reachability_from_wire(
 ) -> Result<Option<Reachability>, tonic::Status> {
     match reachability {
         Some(wire::pair_peer_request::Reachability::SshTarget(target)) => {
-            validate_ssh_target(&target)?;
-            Ok(Some(Reachability::Ssh { target }))
+            validate_ssh_target(&target.target)?;
+            let profile =
+                crate::installation::ProfileId(target.profile_id.parse().map_err(|_| {
+                    tonic::Status::invalid_argument(
+                        "PairPeerRequest.ssh_target.profile_id must be a UUID",
+                    )
+                })?);
+            Ok(Some(Reachability::Ssh {
+                target: target.target,
+                profile,
+            }))
         }
         Some(wire::pair_peer_request::Reachability::DirectTcpAddr(addr)) => {
             let addr = addr.parse::<SocketAddr>().map_err(|error| {
@@ -5108,7 +5122,7 @@ mod tests {
             });
             request
         };
-        let admin = ProfileAdmin::new(service.clone());
+        let admin = ProfileAdmin::for_test(service.clone());
         let start = |request| admin.rpc_start_pairing(request);
 
         let error = start(request(wire::start_pairing_request::Mode::Qr, "123456", 60))
@@ -5164,7 +5178,7 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let response =
-            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), pin_request)
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::for_test(service.clone()), pin_request)
                 .await
                 .unwrap()
                 .into_inner();
@@ -5186,7 +5200,7 @@ mod tests {
                 auth: BoxedGrpcAuth::LocalTrusted,
             });
         let status = ProfileAdmin::rpc_get_pairing_status(
-            &ProfileAdmin::new(service.clone()),
+            &ProfileAdmin::for_test(service.clone()),
             status_request,
         )
         .await
@@ -5204,10 +5218,12 @@ mod tests {
             .insert(BoxedGrpcConnectInfo {
                 auth: BoxedGrpcAuth::LocalTrusted,
             });
-        let duplicate_error =
-            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), duplicate_request)
-                .await
-                .unwrap_err();
+        let duplicate_error = ProfileAdmin::rpc_start_pairing(
+            &ProfileAdmin::for_test(service.clone()),
+            duplicate_request,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(duplicate_error.code(), tonic::Code::FailedPrecondition);
 
         let mut cancel_request = tonic::Request::new(wire::CancelPairingRequest {});
@@ -5216,7 +5232,7 @@ mod tests {
             .insert(BoxedGrpcConnectInfo {
                 auth: BoxedGrpcAuth::LocalTrusted,
             });
-        ProfileAdmin::rpc_cancel_pairing(&ProfileAdmin::new(service.clone()), cancel_request)
+        ProfileAdmin::rpc_cancel_pairing(&ProfileAdmin::for_test(service.clone()), cancel_request)
             .await
             .unwrap();
         assert!(!service.pair_mode.is_active());
@@ -5230,7 +5246,7 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let response =
-            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), qr_request)
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::for_test(service.clone()), qr_request)
                 .await
                 .unwrap()
                 .into_inner();
@@ -5258,7 +5274,7 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let error =
-            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), qr_request)
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::for_test(service.clone()), qr_request)
                 .await
                 .unwrap_err();
         assert_eq!(error.code(), tonic::Code::FailedPrecondition);
@@ -5274,7 +5290,7 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let error =
-            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), lan_request)
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::for_test(service.clone()), lan_request)
                 .await
                 .unwrap_err();
         assert_eq!(error.code(), tonic::Code::FailedPrecondition);
@@ -5295,10 +5311,12 @@ mod tests {
             .insert(BoxedGrpcConnectInfo {
                 auth: BoxedGrpcAuth::LocalTrusted,
             });
-        let error =
-            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), bad_name_request)
-                .await
-                .unwrap_err();
+        let error = ProfileAdmin::rpc_start_pairing(
+            &ProfileAdmin::for_test(service.clone()),
+            bad_name_request,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert!(!service.pair_mode.is_active());
 
@@ -5312,7 +5330,7 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let response =
-            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::new(service.clone()), lan_request)
+            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::for_test(service.clone()), lan_request)
                 .await
                 .unwrap()
                 .into_inner();
@@ -5336,10 +5354,12 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
 
-        let error =
-            ProfileAdmin::rpc_pair_pin_cloud_peer(&ProfileAdmin::new(service.clone()), request)
-                .await
-                .unwrap_err();
+        let error = ProfileAdmin::rpc_pair_pin_cloud_peer(
+            &ProfileAdmin::for_test(service.clone()),
+            request,
+        )
+        .await
+        .unwrap_err();
 
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert_eq!(error.message(), "SELF_PAIRING");
@@ -5362,7 +5382,7 @@ mod tests {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let error =
-            ProfileAdmin::rpc_pair_qr_cloud_peer(&ProfileAdmin::new(service.clone()), request)
+            ProfileAdmin::rpc_pair_qr_cloud_peer(&ProfileAdmin::for_test(service.clone()), request)
                 .await
                 .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
@@ -5385,10 +5405,12 @@ mod tests {
         short_secret.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        let error =
-            ProfileAdmin::rpc_pair_qr_cloud_peer(&ProfileAdmin::new(service.clone()), short_secret)
-                .await
-                .unwrap_err();
+        let error = ProfileAdmin::rpc_pair_qr_cloud_peer(
+            &ProfileAdmin::for_test(service.clone()),
+            short_secret,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert_eq!(
             error.message(),
@@ -5412,18 +5434,22 @@ mod tests {
                 name: "workstation".to_string(),
             }),
             reachability: Some(wire::pair_peer_request::Reachability::SshTarget(
-                "workstation".to_string(),
+                wire::SshTarget {
+                    target: "workstation".to_string(),
+                    profile_id: Uuid::from_u128(42).to_string(),
+                },
             )),
         });
         request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        ProfileAdmin::rpc_pair_peer(&ProfileAdmin::new(service.clone()), request)
+        ProfileAdmin::rpc_pair_peer(&ProfileAdmin::for_test(service.clone()), request)
             .await
             .unwrap();
 
         let expected = Reachability::Ssh {
             target: "workstation".to_string(),
+            profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
         };
         let live = trust_store.read().unwrap();
         let live_entry = live.entry(peer.host_id).unwrap();
@@ -5460,7 +5486,7 @@ mod tests {
         request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        ProfileAdmin::rpc_pair_peer(&ProfileAdmin::new(service.clone()), request)
+        ProfileAdmin::rpc_pair_peer(&ProfileAdmin::for_test(service.clone()), request)
             .await
             .unwrap();
 
@@ -5544,7 +5570,7 @@ mod tests {
         );
 
         let response = ProfileAdmin::rpc_unpair(
-            &ProfileAdmin::new(service.clone()),
+            &ProfileAdmin::for_test(service.clone()),
             local_client_request(wire::UnpairRequest {
                 peer: Some(wire::PeerRef {
                     identifier: Some(wire::peer_ref::Identifier::Name("phone".to_string())),
@@ -5598,6 +5624,7 @@ mod tests {
                 "phone".to_string(),
                 Reachability::Ssh {
                     target: "phone".to_string(),
+                    profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
                 },
                 Utc.timestamp_millis_opt(200_000).single().unwrap(),
             )
@@ -5606,7 +5633,7 @@ mod tests {
             client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
 
         let peers = ProfileAdmin::rpc_list_peers(
-            &ProfileAdmin::new(service.clone()),
+            &ProfileAdmin::for_test(service.clone()),
             local_client_request(wire::ListPeersRequest {}),
         )
         .await
@@ -5617,7 +5644,7 @@ mod tests {
         assert_eq!(peers[0].name, "phone");
 
         let peer_response = ProfileAdmin::rpc_get_peer(
-            &ProfileAdmin::new(service.clone()),
+            &ProfileAdmin::for_test(service.clone()),
             local_client_request(wire::GetPeerRequest {
                 peer: Some(wire::PeerRef {
                     identifier: Some(wire::peer_ref::Identifier::HostId(
@@ -5651,7 +5678,7 @@ mod tests {
         request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        let error = ProfileAdmin::rpc_pair_peer(&ProfileAdmin::new(service.clone()), request)
+        let error = ProfileAdmin::rpc_pair_peer(&ProfileAdmin::for_test(service.clone()), request)
             .await
             .unwrap_err();
 

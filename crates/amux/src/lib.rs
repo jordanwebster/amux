@@ -78,8 +78,8 @@ pub use pairing::qr::{
     parse_qr_pairing_payload_for_cloud, validate_qr_payload_cloud_url,
 };
 pub use pairing::ssh::{
-    SshPairingError, SshPairingPeer, pair_via_ssh_initiator, pair_via_ssh_responder,
-    pair_via_ssh_target,
+    SshPairingError, SshPairingPeer, SshPairingProfile, SshTarget, pair_via_ssh_initiator,
+    pair_via_ssh_responder, pair_via_ssh_target,
 };
 #[cfg(unix)]
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};

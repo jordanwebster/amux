@@ -1747,6 +1747,21 @@ pub struct HandleHookRequest {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct HandleHookResponse {}
+/// SSH bootstrap includes the local selector needed for subsequent stdio relays.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SshPairingIdentity {
+    #[prost(message, optional, tag = "1")]
+    pub identity: ::core::option::Option<PairingIdentity>,
+    #[prost(string, tag = "2")]
+    pub profile_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SshTarget {
+    #[prost(string, tag = "1")]
+    pub target: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub profile_id: ::prost::alloc::string::String,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PairPeerRequest {
     #[prost(message, optional, tag = "1")]
@@ -1758,8 +1773,8 @@ pub struct PairPeerRequest {
 pub mod pair_peer_request {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Reachability {
-        #[prost(string, tag = "2")]
-        SshTarget(::prost::alloc::string::String),
+        #[prost(message, tag = "2")]
+        SshTarget(super::SshTarget),
         #[prost(string, tag = "3")]
         DirectTcpAddr(::prost::alloc::string::String),
     }
@@ -1816,8 +1831,8 @@ pub mod peer_reachability {
     pub enum Kind {
         #[prost(message, tag = "1")]
         Cloud(super::Empty),
-        #[prost(string, tag = "2")]
-        SshTarget(::prost::alloc::string::String),
+        #[prost(message, tag = "2")]
+        SshTarget(super::SshTarget),
         #[prost(string, tag = "3")]
         DirectTcpAddr(::prost::alloc::string::String),
     }

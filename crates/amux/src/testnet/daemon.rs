@@ -997,7 +997,7 @@ impl Daemon {
         if let Some(owner) = &self.inner.installation {
             return owner.installation_admin().await;
         }
-        crate::installation::ProfileAdmin::new(
+        crate::installation::ProfileAdmin::for_test(
             self.try_parts().await.expect("daemon is running").client,
         )
     }

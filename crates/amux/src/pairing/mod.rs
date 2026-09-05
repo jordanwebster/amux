@@ -15,10 +15,11 @@ use crate::audit;
 /// Stores the trust established by an SSH or direct PIN identity exchange.
 #[async_trait::async_trait]
 pub trait PairingAdmin: Sync {
+    fn profile_id(&self) -> crate::installation::ProfileId;
     async fn pair_ssh_peer(
         &self,
         peer: ssh::SshPairingPeer,
-        target: Option<String>,
+        target: Option<ssh::SshTarget>,
     ) -> Result<(), crate::ClientError>;
     async fn pair_direct_peer(
         &self,
@@ -29,10 +30,13 @@ pub trait PairingAdmin: Sync {
 
 #[async_trait::async_trait]
 impl PairingAdmin for crate::installation::ProfileAdmin {
+    fn profile_id(&self) -> crate::installation::ProfileId {
+        self.profile_id()
+    }
     async fn pair_ssh_peer(
         &self,
         peer: ssh::SshPairingPeer,
-        target: Option<String>,
+        target: Option<ssh::SshTarget>,
     ) -> Result<(), crate::ClientError> {
         self.pair_ssh_peer(peer, target).await
     }
@@ -47,10 +51,13 @@ impl PairingAdmin for crate::installation::ProfileAdmin {
 
 #[async_trait::async_trait]
 impl PairingAdmin for crate::installation::ProfileAdminClient {
+    fn profile_id(&self) -> crate::installation::ProfileId {
+        self.profile_id()
+    }
     async fn pair_ssh_peer(
         &self,
         peer: ssh::SshPairingPeer,
-        target: Option<String>,
+        target: Option<ssh::SshTarget>,
     ) -> Result<(), crate::ClientError> {
         self.pair_ssh_peer(peer, target).await
     }

@@ -11,6 +11,7 @@ use tokio::io::{
 
 use super::PairingAdmin;
 use crate::identity::{DeviceIdentity, IdentityError, load_or_create_device_identity_in};
+use crate::installation::ProfileId;
 use crate::protocol::wire;
 use crate::{HostId, audit};
 
@@ -24,6 +25,20 @@ pub struct SshPairingPeer {
     pub host_id: HostId,
     pub pubkey: Vec<u8>,
     pub name: String,
+}
+
+/// A device identity and its immutable selector on the remote installation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshPairingProfile {
+    pub identity: SshPairingPeer,
+    pub profile: ProfileId,
+}
+
+/// An SSH destination pinned to one profile, independent of its display label.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshTarget {
+    pub target: String,
+    pub profile: ProfileId,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -53,7 +68,7 @@ pub async fn pair_via_ssh_target<P, N, T>(
     local_name: N,
     target: T,
     client: &dyn PairingAdmin,
-) -> Result<SshPairingPeer, SshPairingError>
+) -> Result<SshPairingProfile, SshPairingError>
 where
     P: AsRef<Path>,
     N: AsRef<str>,
@@ -75,7 +90,7 @@ pub async fn pair_via_ssh_initiator<IO, P, N, T>(
     local_name: N,
     target: T,
     client: &dyn PairingAdmin,
-) -> Result<SshPairingPeer, SshPairingError>
+) -> Result<SshPairingProfile, SshPairingError>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
     P: AsRef<Path>,
@@ -84,14 +99,25 @@ where
 {
     let target = target.into();
     validate_ssh_target(&target)?;
-    let peer = exchange_as_ssh_initiator(&mut io, data_dir.as_ref(), local_name.as_ref())
-        .await
-        .inspect_err(|error| {
-            audit::pairing_start("ssh");
-            audit::pairing_failure("ssh", error);
-        })?;
+    let peer = exchange_as_ssh_initiator(
+        &mut io,
+        data_dir.as_ref(),
+        local_name.as_ref(),
+        client.profile_id(),
+    )
+    .await
+    .inspect_err(|error| {
+        audit::pairing_start("ssh");
+        audit::pairing_failure("ssh", error);
+    })?;
     client
-        .pair_ssh_peer(peer.clone(), Some(target))
+        .pair_ssh_peer(
+            peer.identity.clone(),
+            Some(SshTarget {
+                target,
+                profile: peer.profile,
+            }),
+        )
         .await
         .map_err(|error| {
             audit::pairing_failure("ssh", &error);
@@ -106,21 +132,25 @@ pub async fn pair_via_ssh_responder<IO, P, N>(
     data_dir: P,
     local_name: N,
     client: &dyn PairingAdmin,
-) -> Result<SshPairingPeer, SshPairingError>
+) -> Result<SshPairingProfile, SshPairingError>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
     P: AsRef<Path>,
     N: AsRef<str>,
 {
-    let (local_peer, peer) =
-        read_ssh_responder_peer(&mut io, data_dir.as_ref(), local_name.as_ref())
-            .await
-            .inspect_err(|error| {
-                audit::pairing_start("ssh");
-                audit::pairing_failure("ssh", error);
-            })?;
+    let (local_peer, peer) = read_ssh_responder_peer(
+        &mut io,
+        data_dir.as_ref(),
+        local_name.as_ref(),
+        client.profile_id(),
+    )
+    .await
+    .inspect_err(|error| {
+        audit::pairing_start("ssh");
+        audit::pairing_failure("ssh", error);
+    })?;
     client
-        .pair_ssh_peer(peer.clone(), None)
+        .pair_ssh_peer(peer.identity.clone(), None)
         .await
         .map_err(|error| {
             audit::pairing_failure("ssh", &error);
@@ -140,7 +170,7 @@ pub async fn pair_via_ssh_responder_stdio<P, N>(
     data_dir: P,
     local_name: N,
     client: &dyn PairingAdmin,
-) -> Result<SshPairingPeer, SshPairingError>
+) -> Result<SshPairingProfile, SshPairingError>
 where
     P: AsRef<Path>,
     N: AsRef<str>,
@@ -153,15 +183,16 @@ async fn exchange_as_ssh_initiator<IO>(
     io: &mut IO,
     data_dir: &Path,
     local_name: &str,
-) -> Result<SshPairingPeer, SshPairingError>
+    profile: ProfileId,
+) -> Result<SshPairingProfile, SshPairingError>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
 {
-    let (local_identity, local_peer) = local_ssh_identity(data_dir, local_name)?;
+    let (local_identity, local_peer) = local_ssh_identity(data_dir, local_name, profile)?;
 
     write_identity(io, &local_peer).await?;
     let peer = read_identity(io).await?;
-    reject_self_pairing(&local_identity, &peer)?;
+    reject_self_pairing(&local_identity, &peer.identity)?;
     Ok(peer)
 }
 
@@ -169,14 +200,17 @@ async fn read_ssh_responder_peer<IO>(
     io: &mut IO,
     data_dir: &Path,
     local_name: &str,
-) -> Result<(SshPairingPeer, SshPairingPeer), SshPairingError>
+    profile: ProfileId,
+) -> Result<(SshPairingProfile, SshPairingProfile), SshPairingError>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
 {
-    let (local_identity, local_peer) = local_ssh_identity(data_dir, local_name)?;
+    let (local_identity, local_peer) = local_ssh_identity(data_dir, local_name, profile)?;
 
     let peer = read_identity(io).await?;
-    if let Err(error @ SshPairingError::SelfPairing) = reject_self_pairing(&local_identity, &peer) {
+    if let Err(error @ SshPairingError::SelfPairing) =
+        reject_self_pairing(&local_identity, &peer.identity)
+    {
         write_identity(io, &local_peer).await?;
         return Err(error);
     }
@@ -197,7 +231,8 @@ where
 fn local_ssh_identity(
     data_dir: &Path,
     local_name: &str,
-) -> Result<(DeviceIdentity, SshPairingPeer), SshPairingError> {
+    profile: ProfileId,
+) -> Result<(DeviceIdentity, SshPairingProfile), SshPairingError> {
     validate_pairing_name(local_name)?;
     let identity = load_or_create_device_identity_in(data_dir).map_err(identity_error)?;
     let peer = SshPairingPeer {
@@ -205,18 +240,28 @@ fn local_ssh_identity(
         pubkey: identity.public_key().to_vec(),
         name: local_name.to_string(),
     };
-    Ok((identity, peer))
+    Ok((
+        identity,
+        SshPairingProfile {
+            identity: peer,
+            profile,
+        },
+    ))
 }
 
-async fn write_identity<IO>(io: &mut IO, peer: &SshPairingPeer) -> Result<(), SshPairingError>
+async fn write_identity<IO>(io: &mut IO, profile: &SshPairingProfile) -> Result<(), SshPairingError>
 where
     IO: AsyncWrite + Unpin,
 {
+    let peer = &profile.identity;
     validate_peer(peer)?;
-    let frame = wire::pb::PairingIdentity {
-        host_id: peer.host_id.as_bytes().to_vec(),
-        pubkey: peer.pubkey.clone(),
-        name: peer.name.clone(),
+    let frame = wire::pb::SshPairingIdentity {
+        identity: Some(wire::pb::PairingIdentity {
+            host_id: peer.host_id.as_bytes().to_vec(),
+            pubkey: peer.pubkey.clone(),
+            name: peer.name.clone(),
+        }),
+        profile_id: profile.profile.to_string(),
     }
     .encode_to_vec();
     if frame.len() > SSH_PAIRING_FRAME_MAX_BYTES {
@@ -232,7 +277,7 @@ where
     Ok(())
 }
 
-async fn read_identity<IO>(io: &mut IO) -> Result<SshPairingPeer, SshPairingError>
+async fn read_identity<IO>(io: &mut IO) -> Result<SshPairingProfile, SshPairingError>
 where
     IO: AsyncRead + Unpin,
 {
@@ -248,10 +293,21 @@ where
 
     let mut frame = vec![0_u8; len];
     io.read_exact(&mut frame).await?;
-    let identity = wire::pb::PairingIdentity::decode(frame.as_slice())?;
+    let envelope = wire::pb::SshPairingIdentity::decode(frame.as_slice())?;
+    let profile = ProfileId(
+        envelope
+            .profile_id
+            .parse()
+            .map_err(|_| SshPairingError::Protocol("profile_id must be a UUID"))?,
+    );
+    let identity = envelope
+        .identity
+        .ok_or(SshPairingError::Protocol("identity is required"))?;
     let peer = pairing_identity_to_peer(identity)?;
-    validate_peer(&peer)?;
-    Ok(peer)
+    Ok(SshPairingProfile {
+        identity: peer,
+        profile,
+    })
 }
 
 fn pairing_identity_to_peer(
@@ -378,13 +434,24 @@ mod tests {
         let initiator_dir = tempfile::tempdir().unwrap();
         let responder_dir = tempfile::tempdir().unwrap();
         let (mut initiator_io, mut responder_io) = tokio::io::duplex(64 * 1024);
+        let initiator_profile = ProfileId::new();
+        let responder_profile = ProfileId::new();
 
         let (initiator_result, responder_result) = tokio::join!(
-            exchange_as_ssh_initiator(&mut initiator_io, initiator_dir.path(), "laptop",),
+            exchange_as_ssh_initiator(
+                &mut initiator_io,
+                initiator_dir.path(),
+                "laptop",
+                initiator_profile,
+            ),
             async {
-                let (local_peer, peer) =
-                    read_ssh_responder_peer(&mut responder_io, responder_dir.path(), "workstation")
-                        .await?;
+                let (local_peer, peer) = read_ssh_responder_peer(
+                    &mut responder_io,
+                    responder_dir.path(),
+                    "workstation",
+                    responder_profile,
+                )
+                .await?;
                 write_identity(&mut responder_io, &local_peer).await?;
                 Ok::<_, SshPairingError>(peer)
             },
@@ -392,8 +459,10 @@ mod tests {
 
         let responder_peer = initiator_result.unwrap();
         let initiator_peer = responder_result.unwrap();
-        assert_eq!(responder_peer.name, "workstation");
-        assert_eq!(initiator_peer.name, "laptop");
+        assert_eq!(responder_peer.profile, responder_profile);
+        assert_eq!(initiator_peer.profile, initiator_profile);
+        assert_eq!(responder_peer.identity.name, "workstation");
+        assert_eq!(initiator_peer.identity.name, "laptop");
     }
 
     #[tokio::test]
@@ -402,8 +471,18 @@ mod tests {
         let (mut initiator_io, mut responder_io) = tokio::io::duplex(64 * 1024);
 
         let (initiator_result, responder_result) = tokio::join!(
-            exchange_as_ssh_initiator(&mut initiator_io, shared_dir.path(), "same"),
-            read_ssh_responder_peer(&mut responder_io, shared_dir.path(), "same"),
+            exchange_as_ssh_initiator(
+                &mut initiator_io,
+                shared_dir.path(),
+                "same",
+                ProfileId::new()
+            ),
+            read_ssh_responder_peer(
+                &mut responder_io,
+                shared_dir.path(),
+                "same",
+                ProfileId::new()
+            ),
         );
 
         assert!(matches!(
@@ -422,6 +501,31 @@ mod tests {
             validate_ssh_target("-oProxyCommand=bad").unwrap_err(),
             SshPairingError::Protocol("SSH target must not begin with '-'")
         ));
+    }
+
+    #[tokio::test]
+    async fn ssh_pairing_rejects_missing_or_label_profile_selectors() {
+        for selector in ["", "work"] {
+            let frame = wire::pb::SshPairingIdentity {
+                identity: Some(wire::pb::PairingIdentity {
+                    host_id: HostId::new_v4().as_bytes().to_vec(),
+                    pubkey: vec![1; PUBKEY_LEN],
+                    name: "workstation".into(),
+                }),
+                profile_id: selector.into(),
+            }
+            .encode_to_vec();
+            let (mut writer, mut reader) = tokio::io::duplex(4096);
+            writer
+                .write_all(&(frame.len() as u32).to_be_bytes())
+                .await
+                .unwrap();
+            writer.write_all(&frame).await.unwrap();
+            assert!(matches!(
+                read_identity(&mut reader).await.unwrap_err(),
+                SshPairingError::Protocol("profile_id must be a UUID")
+            ));
+        }
     }
 
     #[tokio::test]

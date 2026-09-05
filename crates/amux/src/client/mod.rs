@@ -131,8 +131,13 @@ pub struct PeerEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PeerReachability {
     Cloud,
-    Ssh { target: String },
-    DirectTcp { addr: SocketAddr },
+    Ssh {
+        target: String,
+        profile: crate::installation::ProfileId,
+    },
+    DirectTcp {
+        addr: SocketAddr,
+    },
 }
 
 struct ClientServiceResponseStream<T> {
@@ -1015,7 +1020,15 @@ fn peer_reachability_from_wire(
         message: "PeerReachability.kind is missing".to_string(),
     })? {
         wire::peer_reachability::Kind::Cloud(_) => Ok(PeerReachability::Cloud),
-        wire::peer_reachability::Kind::SshTarget(target) => Ok(PeerReachability::Ssh { target }),
+        wire::peer_reachability::Kind::SshTarget(target) => Ok(PeerReachability::Ssh {
+            profile: crate::installation::ProfileId(target.profile_id.parse().map_err(
+                |error| ClientError::Decode {
+                    method,
+                    message: format!("PeerReachability.ssh_target.profile_id is invalid: {error}"),
+                },
+            )?),
+            target: target.target,
+        }),
         wire::peer_reachability::Kind::DirectTcpAddr(addr) => {
             let addr = addr
                 .parse::<SocketAddr>()

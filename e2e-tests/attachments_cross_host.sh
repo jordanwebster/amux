@@ -54,7 +54,7 @@ cleanup() {
   done
   if [ -n "$scratch" ]; then
     case "$scratch" in
-      /tmp/amux-review-cross-host.*|/private/tmp/amux-review-cross-host.*)
+      /tmp/ar.*|/private/tmp/ar.*)
         rm -rf -- "$scratch"
         ;;
     esac
@@ -63,17 +63,14 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-[ -x "$amux_bin" ] || fail "amux binary not found at $amux_bin; run cargo build -p amux-cli"
+[ -x "$amux_bin" ] || fail "amux binary not found at $amux_bin; run wt build"
 command -v tmux >/dev/null 2>&1 || fail "tmux is required"
 command -v claude >/dev/null 2>&1 || fail "Claude Code is required"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required for JSON validation"
 
 mkdir -p "$frames_dir"
-scratch=$(mktemp -d /tmp/amux-review-cross-host.XXXXXX)
+scratch=$(mktemp -d /tmp/ar.XXXXXX)
 chmod 700 "$scratch"
-a_config=$scratch/host-a.yaml
-u_config=$scratch/host-u.yaml
-v_config=$scratch/host-v.yaml
 project_dir=$scratch/project
 
 allocate_port() {
@@ -89,38 +86,50 @@ u_port=$(allocate_port)
 v_port=$(allocate_port)
 
 write_config() {
-  config_path=$1
-  host_name=$2
-  socket_path=$3
-  state_path=$4
-  data_dir=$5
-  tcp_port=${6:-}
-  {
-    printf "host_name: '%s'\n" "$host_name"
-    printf "socket_path: '%s'\n" "$socket_path"
-    printf "state_path: '%s'\n" "$state_path"
-    printf "data_dir: '%s'\n" "$data_dir"
-    printf 'prevent_idle_sleep: false\n'
-    printf 'ui:\n'
-    printf '  default_open_mode: raw\n'
-    printf '  color: ansi\n'
-    if [ -n "$tcp_port" ]; then
-      printf 'tcp_port: %s\n' "$tcp_port"
-    fi
-  } > "$config_path"
+  python3 - "$scratch/$1" "$2" "$3" <<'PYCONFIG'
+import json
+import sys
+import uuid
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+profile_id = str(uuid.uuid4())
+directory = root / "profiles" / profile_id
+for path in [root, directory, directory / "state", directory / "data"]:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+def write(path, value):
+    path.write_text(json.dumps(value) + "\n")
+    path.chmod(0o600)
+
+write(root / "installation.yaml", {
+    "root": str(root), "front_door_socket": str(root / "amux.sock"),
+    "host_name": sys.argv[2], "keymaps_dir": str(root / "keymaps"),
+    "prevent_idle_sleep": False,
+    "ui": {"default_open_mode": "raw", "color": "ansi"},
+})
+write(root / "registry.yaml", {"profiles": [{
+    "id": profile_id, "label": {"override_name": sys.argv[2]},
+    "binding": None, "paused": False, "revision": 1,
+}]})
+config = directory / "config.yaml"
+write(config, {
+    "installation_config": str(root / "installation.yaml"),
+    "socket_path": str(root / "profiles" / (profile_id + ".sock")),
+    "state_path": str(directory / "state" / "state.yaml"),
+    "data_dir": str(directory / "data"), "tcp_port": int(sys.argv[3]),
+})
+print(config)
+PYCONFIG
 }
 
-write_config "$a_config" host-a "$scratch/a.sock" "$scratch/a-state.yaml" "$scratch/a-data" "$a_port"
-write_config "$u_config" host-u "$scratch/u.sock" "$scratch/u-state.yaml" "$scratch/u-data" "$u_port"
-write_config "$v_config" host-v "$scratch/v.sock" "$scratch/v-state.yaml" "$scratch/v-data" "$v_port"
+a_config=$(write_config a host-a "$a_port")
+u_config=$(write_config u host-u "$u_port")
+v_config=$(write_config v host-v "$v_port")
 
-for config in "$a_config" "$u_config" "$v_config"; do
-  timeout 30 "$amux_bin" --config "$config" init >/dev/null
-done
-
-AMUX_LOG=$scratch/a.log timeout 30 "$amux_bin" --config "$a_config" server start >/dev/null
-AMUX_LOG=$scratch/u.log timeout 30 "$amux_bin" --config "$u_config" server start >/dev/null
-AMUX_LOG=$scratch/v.log timeout 30 "$amux_bin" --config "$v_config" server start >/dev/null
+AMUX_LOG=$scratch/a.log timeout 30 "$amux_bin" --config "$a_config" init >/dev/null
+AMUX_LOG=$scratch/u.log timeout 30 "$amux_bin" --config "$u_config" init >/dev/null
+AMUX_LOG=$scratch/v.log timeout 30 "$amux_bin" --config "$v_config" init >/dev/null
 
 wait_file_text() {
   seconds=$1

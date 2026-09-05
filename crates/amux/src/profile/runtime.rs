@@ -990,7 +990,7 @@ mod tests {
             assert_eq!(debug["has_cloud_credentials"], false);
             assert!(debug["config"].get("enable_cloud_mode").is_none());
 
-            crate::installation::ProfileAdmin::new(runtime.services.client.clone())
+            crate::installation::ProfileAdmin::for_test(runtime.services.client.clone())
                 .start_qr_pairing()
                 .await
                 .unwrap();

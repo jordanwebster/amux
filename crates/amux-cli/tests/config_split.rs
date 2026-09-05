@@ -546,10 +546,251 @@ async fn front_door_cli_ssh_pair_receiver_uses_its_explicit_profile() {
     assert!(remote_personal.list_peers().await.unwrap().is_empty());
     assert_eq!(remote_work.list_peers().await.unwrap().len(), 1);
     assert_eq!(
-        local_admin.get_peer(peer.host_id).await.unwrap().name,
+        local_admin
+            .get_peer(peer.identity.host_id)
+            .await
+            .unwrap()
+            .name,
         "cli-installation"
     );
     println!(
         "SSH pair-recv --profile work completes the framed identity exchange and stores trust only in work."
+    );
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ssh_renamed_profile() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    use amux::installation::FrontDoorClient;
+    use amux::{AgentType, Config, CreateAgentRequest, PeerReachability, Server};
+    use serde_json::{Value, json};
+
+    async fn profile_client(path: &Path) -> amux::Client {
+        let resolved = amux::load_profile_config(path).unwrap();
+        Server::builder()
+            .config(Config {
+                socket_path: resolved.profile.socket_path,
+                ..Config::default()
+            })
+            .daemon()
+            .open()
+            .await
+            .unwrap()
+    }
+
+    let local = Fixture::new();
+    let remote = Fixture::new();
+    remote.run(&["server", "start"]);
+    let created = remote.run(&["profile", "create", "work"]);
+    let created = String::from_utf8(created.stdout).unwrap();
+    let work_id = ProfileId(created.split_whitespace().next().unwrap().parse().unwrap());
+    let work_config = ProfilePaths::for_id(&remote.installation.root, work_id)
+        .unwrap()
+        .config_path
+        .unwrap();
+    let selection = local.installation.root.join("remote-config");
+    std::fs::write(&selection, work_config.to_str().unwrap()).unwrap();
+    let calls = local.installation.root.join("ssh-argv.jsonl");
+    let fake_ssh = local.installation.root.join("fake-ssh");
+    // Replace only SSH transport. The receiver, relay, trust administration and
+    // reconnecting daemon all run the real binary with the real split configs.
+    let script = format!(
+        r#"#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+assert args[:6] == ["-T", "-o", "BatchMode=yes", "--", "remote.example", "amux"], args
+assert args[6:] == ["pair-recv"] or (len(args) == 9 and args[6:8] == ["relay", "--profile"]), args
+fd = os.open({calls}, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+os.write(fd, (json.dumps(args) + "\n").encode())
+os.close(fd)
+env = dict(os.environ)
+env["AMUX_CONFIG"] = Path({selection}).read_text()
+env["AMUX_LOG"] = {remote_log}
+env.pop("AMUX_SSH", None)
+os.execve({binary}, [{binary}] + args[6:], env)
+"#,
+        calls = json!(calls),
+        selection = json!(selection),
+        remote_log = json!(remote.installation.root.join("ssh.log")),
+        binary = json!(env!("CARGO_BIN_EXE_amux")),
+    );
+    std::fs::write(&fake_ssh, script).unwrap();
+    std::fs::set_permissions(&fake_ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let run_local_ssh = |args: &[&str]| {
+        let output = local
+            .command(args)
+            .env("AMUX_SSH", &fake_ssh)
+            .output()
+            .unwrap();
+        println!(
+            "$ amux {}\n{}{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{output:?}");
+        output
+    };
+    run_local_ssh(&["server", "start"]);
+    run_local_ssh(&["pair", "--via-ssh", "remote.example"]);
+
+    let local_front = FrontDoorClient::connect(&local.installation.front_door_socket)
+        .await
+        .unwrap();
+    let remote_front = FrontDoorClient::connect(&remote.installation.front_door_socket)
+        .await
+        .unwrap();
+    let peers = local_front.admin(local.id).list_peers().await.unwrap();
+    assert_eq!(peers.len(), 1);
+    let paired_host = peers[0].host_id;
+    assert_eq!(
+        peers[0].reachabilities,
+        vec![PeerReachability::Ssh {
+            target: "remote.example".into(),
+            profile: work_id,
+        }]
+    );
+    assert!(
+        remote_front
+            .admin(remote.id)
+            .list_peers()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        remote_front
+            .admin(work_id)
+            .list_peers()
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let agent_id = uuid::Uuid::new_v4();
+    for (path, name) in [
+        (&work_config, "ssh-work-agent"),
+        (&remote.profile, "ssh-personal-agent"),
+    ] {
+        let client = profile_client(path).await;
+        client
+            .create_agent(CreateAgentRequest {
+                agent_id,
+                host_id: None,
+                name: Some(name.into()),
+                agent_type: AgentType::TestAgent {
+                    command: "cat".into(),
+                },
+                working_dir: remote.installation.root.clone(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
+            })
+            .await
+            .unwrap();
+    }
+    let wait_for_work = || async {
+        let client = profile_client(&local.profile).await;
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                let agents = client.list_agents().await.unwrap();
+                assert!(
+                    !agents
+                        .iter()
+                        .any(|agent| agent.name.as_deref() == Some("ssh-personal-agent"))
+                );
+                if agents.iter().any(|agent| {
+                    agent.id == agent_id && agent.name.as_deref() == Some("ssh-work-agent")
+                }) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("SSH must reach the paired work profile's fleet");
+    };
+    wait_for_work().await;
+    local.run(&["peer", "list"]);
+    local.run(&["list"]);
+    local.run(&["server", "stop"]);
+    drop(local_front);
+
+    remote.run(&[
+        "profile",
+        "rename",
+        "office",
+        "--profile",
+        &work_id.to_string(),
+    ]);
+    remote.run(&["list", "--profile", "personal"]);
+    std::fs::write(&selection, remote.profile.to_str().unwrap()).unwrap();
+    let remote_last_used = remote.installation.root.join("state/last-profile");
+    assert_eq!(
+        std::fs::read_to_string(&remote_last_used).unwrap().trim(),
+        remote.id.to_string()
+    );
+    let before_redial = std::fs::read_to_string(&calls).unwrap().lines().count();
+    println!(
+        "Remote profile {work_id} renamed work → office; remote AMUX_CONFIG and last-used now select personal."
+    );
+    run_local_ssh(&["server", "start"]);
+    wait_for_work().await;
+    let restarted_front = FrontDoorClient::connect(&local.installation.front_door_socket)
+        .await
+        .unwrap();
+    assert_eq!(
+        restarted_front
+            .admin(local.id)
+            .get_peer(paired_host)
+            .await
+            .unwrap()
+            .reachabilities,
+        peers[0].reachabilities
+    );
+    local.run(&["peer", "list"]);
+    let fleet = local.run(&["list"]);
+    assert!(String::from_utf8_lossy(&fleet.stdout).contains("ssh-work-agent"));
+    assert!(!String::from_utf8_lossy(&fleet.stdout).contains("ssh-personal-agent"));
+    let recorded = std::fs::read_to_string(&calls).unwrap();
+    println!("SSH argv at the process boundary:\n{recorded}");
+    let argv: Vec<Value> = recorded
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(argv.iter().any(|args| args[6] == "pair-recv"));
+    assert!(
+        argv.len() > before_redial,
+        "restart must spawn a new SSH relay"
+    );
+    for args in &argv[before_redial..] {
+        assert_eq!(
+            args,
+            &json!([
+                "-T",
+                "-o",
+                "BatchMode=yes",
+                "--",
+                "remote.example",
+                "amux",
+                "relay",
+                "--profile",
+                work_id.to_string()
+            ])
+        );
+    }
+    assert!(
+        remote_front
+            .admin(remote.id)
+            .list_peers()
+            .await
+            .unwrap()
+            .is_empty()
     );
 }

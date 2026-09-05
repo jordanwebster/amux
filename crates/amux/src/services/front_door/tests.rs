@@ -915,15 +915,16 @@ async fn front_door_admin_client_ssh_exchange_keeps_trust_and_windows_independen
         ),
         crate::pair_via_ssh_responder(responder, paths(&third), "third", &third_admin),
     );
-    let third_identity = paired_third.unwrap();
-    let work_identity = paired_work.unwrap();
+    let third_identity = paired_third.unwrap().identity;
+    let work_identity = paired_work.unwrap().identity;
     assert!(personal_admin.list_peers().await.unwrap().is_empty());
     let peer = work_admin.get_peer(third_identity.host_id).await.unwrap();
     assert_eq!(peer.name, "third");
     assert_eq!(
         peer.reachabilities,
         vec![crate::PeerReachability::Ssh {
-            target: "third.example".into()
+            target: "third.example".into(),
+            profile: ProfileId(third.id.parse().unwrap()),
         }]
     );
     let responder_peer = third_admin.get_peer(work_identity.host_id).await.unwrap();
