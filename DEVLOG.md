@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Stop the stream-JSON launch tests from failing on a busy
+machine.**
+Three tests start a real stand-in `claude` binary and then wait a couple of
+seconds for its first output. On a machine that is also compiling something
+else the child does not always get that far, so the tests failed with a
+timeout while the code under test was fine. They now share one generous
+deadline that only fires on a genuine hang, and the test that reads back the
+arguments Claude was launched with waits for the capture to appear instead of
+assuming a fixed pause was long enough. The stand-ins write that capture to a
+neighbouring path and rename it into place, so a file that exists is never a
+half-written one.
+
 2026-09-05 — **Name every screen of a stream-JSON Claude session, and ban the
 words that would give its machinery away.**
 The deterministic fixture registry gained thirteen states: the idle

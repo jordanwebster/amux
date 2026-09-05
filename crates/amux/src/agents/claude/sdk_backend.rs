@@ -1122,6 +1122,31 @@ mod tests {
     use super::*;
     use crate::agents::mcp_launch_route_for_tests;
 
+    /// How long a test waits for a real child process to produce its first
+    /// output. These tests share a machine with whatever else is building, so
+    /// the deadline is only here to turn a genuine hang into a failure rather
+    /// than to measure how fast the process starts.
+    const START_DEADLINE: Duration = Duration::from_secs(30);
+
+    /// Wait for a stand-in `claude` binary to record the arguments it was
+    /// launched with. The stand-ins write the capture to a neighbouring path
+    /// and rename it into place, so a file that exists is a complete one.
+    #[cfg(unix)]
+    async fn launch_arguments(path: &std::path::Path) -> Vec<String> {
+        let deadline = std::time::Instant::now() + START_DEADLINE;
+        loop {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                return text.lines().map(str::to_string).collect();
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Claude never recorded its launch arguments at {}",
+                path.display()
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
     pub(super) async fn read_json_line(
         reader: &mut BufReader<tokio::io::DuplexStream>,
     ) -> serde_json::Value {
@@ -1226,7 +1251,7 @@ mod tests {
         let argv = directory.path().join("argv.txt");
         std::fs::write(
             &cli,
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AMUX_ARGV_CAPTURE\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AMUX_ARGV_CAPTURE.partial\"\nmv \"$AMUX_ARGV_CAPTURE.partial\" \"$AMUX_ARGV_CAPTURE\"\n",
         )
         .unwrap();
         std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -1260,15 +1285,12 @@ mod tests {
             "AMUX_ARGV_CAPTURE".to_string(),
             argv.to_string_lossy().into_owned(),
         );
-        let launched_session =
-            tokio::time::timeout(Duration::from_secs(2), claude::sdk::spawn(options)).await;
-        let launched = std::fs::read_to_string(&argv).unwrap_or_else(|error| {
-            panic!(
-                "capture Claude launch arguments: {error}; spawn result: {:?}",
-                launched_session.map(|result| result.map(|_| ()))
-            )
-        });
-        let launched = launched.lines().collect::<Vec<_>>();
+        // The stand-in binary exits without answering the handshake, so the
+        // spawn never finishes; the launch arguments it recorded are the point.
+        let launching = tokio::spawn(claude::sdk::spawn(options));
+        let launched = launch_arguments(&argv).await;
+        launching.abort();
+        let launched = launched.iter().map(String::as_str).collect::<Vec<_>>();
         assert!(launched.contains(&"--include-partial-messages"));
         assert!(!launched.contains(&"--setting-sources"));
         let settings_index = launched
@@ -1465,7 +1487,7 @@ mod tests {
             panic!("Claude SDK plane must be structured");
         };
         let mut rows = log.subscribe().await.unwrap();
-        let ready = tokio::time::timeout(Duration::from_secs(2), rows.read())
+        let ready = tokio::time::timeout(START_DEADLINE, rows.read())
             .await
             .expect("SDK ready row timed out")
             .expect("SDK log closed before ready");
@@ -1482,7 +1504,7 @@ mod tests {
             .unwrap();
 
         let mut outputs = vec![ready];
-        while let Some(output) = tokio::time::timeout(Duration::from_secs(2), rows.read())
+        while let Some(output) = tokio::time::timeout(START_DEADLINE, rows.read())
             .await
             .expect("SDK backend row timed out")
         {
@@ -1745,7 +1767,7 @@ mod tests {
             .is_none_or(|row: &Value| row["type"] != "amux.claude_sdk.dialog_required")
         {
             outputs.push(
-                tokio::time::timeout(Duration::from_secs(2), rows.read())
+                tokio::time::timeout(START_DEADLINE, rows.read())
                     .await
                     .unwrap()
                     .unwrap()
@@ -1795,7 +1817,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            let row = tokio::time::timeout(Duration::from_secs(2), rows.read())
+            let row = tokio::time::timeout(START_DEADLINE, rows.read())
                 .await
                 .unwrap()
                 .unwrap()
@@ -1812,7 +1834,7 @@ mod tests {
         );
         exit_tx.send(()).unwrap();
         for kind in ["permission", "elicitation", "dialog"] {
-            let row = tokio::time::timeout(Duration::from_secs(2), rows.read())
+            let row = tokio::time::timeout(START_DEADLINE, rows.read())
                 .await
                 .unwrap()
                 .unwrap()
@@ -1824,7 +1846,7 @@ mod tests {
             outputs.push(row);
         }
         assert!(
-            tokio::time::timeout(Duration::from_secs(2), rows.read())
+            tokio::time::timeout(START_DEADLINE, rows.read())
                 .await
                 .unwrap()
                 .is_none()
@@ -1905,7 +1927,7 @@ mod tests {
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"req_0\",\"response\":{{\"commands\":[],\"agents\":[],\"output_style\":\"default\",\"available_output_styles\":[],\"models\":[],\"account\":{{}}}}}}}}'\nwhile IFS= read -r line; do :; done\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{0}.partial'\nmv '{0}.partial' '{0}'\nprintf '%s\\n' '{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"req_0\",\"response\":{{\"commands\":[],\"agents\":[],\"output_style\":\"default\",\"available_output_styles\":[],\"models\":[],\"account\":{{}}}}}}}}'\nwhile IFS= read -r line; do :; done\n",
                 argv.display()
             ),
         )
@@ -1931,15 +1953,15 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(8);
         let ingest = backend.start(&event_tx).unwrap();
         let mut rows = backend.log.subscribe().await.unwrap();
-        let ready = tokio::time::timeout(Duration::from_secs(5), rows.read())
+        let ready = tokio::time::timeout(START_DEADLINE, rows.read())
             .await
             .unwrap()
             .unwrap();
         assert_eq!(ready.payload["type"], "amux.claude_sdk.ready");
         assert_eq!(ready.payload["session_id"], agent_id.to_string());
 
-        let arguments = std::fs::read_to_string(&argv).unwrap();
-        let arguments = arguments.lines().collect::<Vec<_>>();
+        let arguments = launch_arguments(&argv).await;
+        let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
         assert!(
             arguments
                 .windows(2)
@@ -1967,7 +1989,7 @@ mod tests {
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"req_0\",\"response\":{{\"commands\":[],\"agents\":[],\"output_style\":\"default\",\"available_output_styles\":[],\"models\":[],\"account\":{{}}}}}}}}'\nwhile IFS= read -r line; do :; done\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{0}.partial'\nmv '{0}.partial' '{0}'\nprintf '%s\\n' '{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"req_0\",\"response\":{{\"commands\":[],\"agents\":[],\"output_style\":\"default\",\"available_output_styles\":[],\"models\":[],\"account\":{{}}}}}}}}'\nwhile IFS= read -r line; do :; done\n",
                 argv.display()
             ),
         )
@@ -2057,11 +2079,11 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(8);
         let ingest = resumed.start(&event_tx).unwrap();
 
-        let gap = tokio::time::timeout(Duration::from_secs(5), rows.read())
+        let gap = tokio::time::timeout(START_DEADLINE, rows.read())
             .await
             .unwrap()
             .unwrap();
-        let ready = tokio::time::timeout(Duration::from_secs(5), rows.read())
+        let ready = tokio::time::timeout(START_DEADLINE, rows.read())
             .await
             .unwrap()
             .unwrap();
@@ -2074,8 +2096,8 @@ mod tests {
         assert_eq!(ready.payload["session_id"], restored_session_id.to_string());
         assert_eq!(ready.payload["resumed"], true);
 
-        let arguments = std::fs::read_to_string(&argv).unwrap();
-        let arguments = arguments.lines().collect::<Vec<_>>();
+        let arguments = launch_arguments(&argv).await;
+        let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
         assert!(
             arguments
                 .windows(2)
