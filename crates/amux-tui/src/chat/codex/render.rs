@@ -229,10 +229,12 @@ fn meter_text(usage: Option<&TokenUsage>) -> String {
 
 /// Where the thread's context went, over the whole frame.
 ///
-/// Codex reports four totals for the thread, not a per-tool accounting,
-/// so this states four categories and says so — a coarse answer named as
-/// coarse is more useful than a fine one nobody can produce. Nothing is
-/// fetched: the numbers arrived with the last turn.
+/// Codex reports thread-wide totals, not a per-tool accounting, so this
+/// states input and output and says so — a coarse answer named as coarse
+/// is more useful than a fine one nobody can produce. Cached input and
+/// reasoning are shares of those two, shown underneath them, so the
+/// column never sums past the title. Nothing is fetched: the numbers
+/// arrived with the last turn.
 fn context_overlay(
     model: &Model,
     chat: &View,
@@ -269,20 +271,34 @@ fn context_overlay(
             rows.push(line);
         }
         Some(usage) => {
-            let categories: [(&str, Option<u64>); 4] = [
-                ("input", usage.input_tokens),
-                ("cached input", usage.cached_input_tokens),
-                ("output", usage.output_tokens),
-                ("reasoning", usage.reasoning_output_tokens),
+            // Cached input is part of the input count and reasoning is
+            // part of the output count, so they are indented under the
+            // total they belong to. Four flat rows would invite the
+            // reader to add them up and get more than the title's total.
+            let categories: [(usize, &str, Option<u64>); 4] = [
+                (0, "input", usage.input_tokens),
+                (1, "of it cached", usage.cached_input_tokens),
+                (0, "output", usage.output_tokens),
+                (1, "of it reasoning", usage.reasoning_output_tokens),
             ];
             let widest = categories
                 .iter()
-                .map(|(name, _)| str_width(name))
+                .map(|(depth, name, _)| depth * 2 + str_width(name))
                 .max()
                 .unwrap_or(0);
-            for (name, tokens) in categories {
+            for (depth, name, tokens) in categories {
+                let indent = depth * 2;
                 let mut line = Line::default();
-                push_span(&mut line, TEXT_COL, name.to_string(), theme.text());
+                push_span(
+                    &mut line,
+                    TEXT_COL + indent,
+                    name.to_string(),
+                    if depth == 0 {
+                        theme.text()
+                    } else {
+                        theme.muted()
+                    },
+                );
                 push_span(
                     &mut line,
                     TEXT_COL + widest + 3,
@@ -310,7 +326,7 @@ fn context_overlay(
         push_span(
             &mut line,
             TEXT_COL,
-            "four totals for the whole thread, not a per-tool accounting".to_string(),
+            "input and output for the whole thread, not a per-tool accounting".to_string(),
             theme.muted(),
         );
         line

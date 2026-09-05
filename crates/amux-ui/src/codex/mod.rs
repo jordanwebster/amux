@@ -1080,9 +1080,11 @@ impl CodexLayer {
         self.entries.iter()
     }
 
-    /// What the session last reported its thread costing, and the window
-    /// it has to spend. Latest-wins across turns: it is the size of the
-    /// context now, not a running total.
+    /// What the thread's context holds after the most recent turn, and
+    /// the window it has to spend. Latest-wins across turns, and each
+    /// report states that turn's context rather than adding earlier
+    /// turns in, so this is the size of the context now — never a
+    /// running total that would outgrow the window.
     pub fn token_usage(&self) -> Option<&TokenUsage> {
         self.latest_usage.as_ref()
     }

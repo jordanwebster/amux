@@ -392,9 +392,11 @@ fn codex_review_block_both_themes() {
 /// The header states the session's creation choices — model, how it
 /// asks, what it may touch — beside the phase, and the activity line
 /// states what the thread costs against the window the session reported.
-/// `<leader> c` opens the breakdown behind that number: four totals for
-/// the whole thread, which is all Codex reports, and the overlay says so
-/// rather than implying a per-tool accounting it cannot produce.
+/// `<leader> c` opens the breakdown behind that number: input and output
+/// for the whole thread, which is all Codex reports, with cached input
+/// and reasoning indented as shares of those two so the column never
+/// sums past the heading. The overlay says the accounting is thread-wide
+/// rather than implying a per-tool one it cannot produce.
 /// `<leader> o` opens the same fullscreen reader the two Claude chats
 /// use, over a pasted attachment and over a review someone sent.
 #[test]

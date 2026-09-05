@@ -1259,8 +1259,19 @@ fn fold_thread_status(layer: &mut CodexLayer, row: &Value) {
     };
 }
 
+/// What the thread's context holds now.
+///
+/// The session reports two figures per update: `last`, what the context
+/// held at the end of the most recent turn, and `total`, every turn's
+/// tokens added together. A context meter must state the first — the
+/// second climbs past the window on a long thread and would say the
+/// session is out of room when it is not. `total` is only the fallback
+/// for a report that omits `last`.
 fn token_usage(row: &Value) -> TokenUsage {
-    let usage = row.pointer("/tokenUsage/total").unwrap_or(&Value::Null);
+    let usage = row
+        .pointer("/tokenUsage/last")
+        .or_else(|| row.pointer("/tokenUsage/total"))
+        .unwrap_or(&Value::Null);
     TokenUsage {
         input_tokens: usage.get("inputTokens").and_then(Value::as_u64),
         cached_input_tokens: usage.get("cachedInputTokens").and_then(Value::as_u64),

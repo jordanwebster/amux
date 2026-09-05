@@ -338,10 +338,13 @@ both remain available per agent. Chat mode is the native amux screen —
 composer, feed, approvals, `Ctrl+X` to interrupt. It states the session's
 model, how it asks and what it may touch on the header's right, beside
 the phase; the row between the feed and the composer states what the
-thread costs against the window the session reported (`ctx 30.0k/272.0k`),
-and `<leader> c` opens the four totals behind that number — input, cached
-input, output and reasoning, which is all the app-server reports, and the
-overlay says so. `<leader> o` on a pasted attachment or a sent review
+thread costs against the window the session reported (`ctx 30.0k/272.0k`).
+That number is what the context holds after the most recent turn, not
+every turn's tokens added together — the app-server reports both, and
+only the first can be read against a window. `<leader> c` opens the
+totals behind it: input and output, with cached input and reasoning
+indented as shares of those two rather than listed beside them, which is
+all the app-server reports, and the overlay says so. `<leader> o` on a pasted attachment or a sent review
 opens the same fullscreen reader the Claude chats use. Raw mode is
 `codex resume` on a PTY, byte-identical for every subscriber.
 Because both current creation modes open interactively, `amux new codex`

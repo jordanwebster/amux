@@ -483,6 +483,20 @@ pub fn codex_fixture_rows() -> Vec<serde_json::Value> {
     .collect()
 }
 
+/// Backend rows derived from one recording in the Codex corpus.
+pub fn codex_rows(fixture: &str) -> Vec<serde_json::Value> {
+    let raw = match fixture {
+        "approval_deny" => {
+            include_str!("../../../amux/tests/fixtures/rows/codex/approval_deny.rows.jsonl")
+        }
+        other => panic!("unknown Codex fixture: {other}"),
+    };
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("Codex fixture row parses"))
+        .collect()
+}
+
 pub fn codex_base(agent: &str) -> Vec<Msg> {
     seq([
         vec![

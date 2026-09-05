@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The Codex context meter states what the context holds, not
+what the thread has spent.**
+The session reports two figures with every update: what the context held at
+the end of the last turn, and every turn's tokens added together. The meter
+and its breakdown were reading the second, so a long thread would claim to
+be out of room long before it was — on one recorded session, 29,212 tokens
+against a 258,400 window where the context actually held 14,771. Both now
+read the per-turn figure. The breakdown also stops listing cached input and
+reasoning beside input and output, since they are parts of those two: they
+are indented under the total they belong to, so the column no longer adds up
+to more than the heading.
+
 2026-09-05 — **Consecutive reads and searches fold to one row in the
 stream-JSON Claude chat.**
 `⌄ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o expand`,
