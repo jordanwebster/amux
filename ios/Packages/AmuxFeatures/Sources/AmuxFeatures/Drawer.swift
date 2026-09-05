@@ -54,6 +54,13 @@ public struct AgentsDrawer: View {
                 foot
             }
         }
+        // A panel that names itself must not name everything inside it: a
+        // name put on a container is handed down to every element under it
+        // that the system does not already treat as its own, so without this
+        // the rows keep their names and the title, New Agent and the foot
+        // answer to "drawer" — for VoiceOver and for anything driving the app
+        // alike.
+        .accessibilityElement(children: .contain)
         .identified("drawer", value: current?.description ?? "none")
     }
 
@@ -272,12 +279,15 @@ public struct DrawerOverlay<Content: View>: View {
             content
                 .offset(x: Self.width * progress * 0.82)
                 .scaleEffect(1 - 0.04 * progress, anchor: .center)
+                // While the panel is out, the screen behind it is scenery.
+                // Said before the scrim goes over it, because the scrim is
+                // the way back and a disabled scrim is a drawer that can only
+                // be dragged shut.
+                .disabled(progress > 0)
+                .accessibilityHidden(progress > 0)
                 .overlay { scrim }
                 .clipShape(RoundedRectangle(cornerRadius: 22 * progress, style: .continuous))
                 .shadow(color: .black.opacity(0.24 * progress), radius: 24, x: -6)
-                // While the panel is out, the screen behind it is scenery.
-                .disabled(progress > 0)
-                .accessibilityHidden(progress > 0)
 
             drawer
                 .frame(width: Self.width)

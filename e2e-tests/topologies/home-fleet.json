@@ -1,0 +1,16 @@
+{
+  "users": ["personal"],
+  "daemons": [
+    {"name": "laptop", "user": "personal", "repository_roots": ["../.."]},
+    {"name": "desktop", "user": "personal", "repository_roots": ["../.."]}
+  ],
+  "paired": [["laptop", "desktop", "Cloud"]],
+  "agents": [
+    {"name": "fix-login", "daemon": "laptop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}},
+    {"name": "port-the-parser", "daemon": "laptop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}},
+    {"name": "trim-the-fixtures", "daemon": "laptop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}},
+    {"name": "release-notes", "daemon": "desktop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}},
+    {"name": "chase-the-flake", "daemon": "desktop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}},
+    {"name": "warm-the-cache", "daemon": "desktop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}}
+  ]
+}

@@ -25,6 +25,7 @@
 		63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D140E97565E0C456B57BB601 /* DebugTools.swift */; };
 		65046E7D6034907CF41BD1A7 /* Transcript.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E455E43044DD55EB8662D4 /* Transcript.swift */; };
 		6805234D9DC817A50B5F83BD /* AmuxDesign in Frameworks */ = {isa = PBXBuildFile; productRef = C0C0812086F76FDC86EC6F93 /* AmuxDesign */; };
+		6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BF809F88F54D264E26E1F0B /* DrawerTests.swift */; };
 		7E37AF5A01DF31494E49948C /* AmuxDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 518CACD385E201BC13A07DD6 /* AmuxDesign */; };
 		82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */; };
 		85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBADB0CC914373F8BD52E715 /* AmuxApp.swift */; };
@@ -81,6 +82,7 @@
 		6BAD30E79F5FE66C97691B57 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		7316CFA811C55B9CEEB041C5 /* Judge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Judge.swift; sourceTree = "<group>"; };
 		7841E9EA7855115C8262F599 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		7BF809F88F54D264E26E1F0B /* DrawerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerTests.swift; sourceTree = "<group>"; };
 		7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scenario.swift; sourceTree = "<group>"; };
 		8959E3A72299B8152BE86967 /* AmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8A10C4D43E54FEABB391277E /* PerfRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfRun.swift; sourceTree = "<group>"; };
@@ -176,6 +178,7 @@
 		5445FBC267DE6D42E3D857C1 /* AmuxUITests */ = {
 			isa = PBXGroup;
 			children = (
+				7BF809F88F54D264E26E1F0B /* DrawerTests.swift */,
 				31777DF351ACE50870B1C6A5 /* LaunchTests.swift */,
 			);
 			path = AmuxUITests;
@@ -451,6 +454,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */,
 				0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

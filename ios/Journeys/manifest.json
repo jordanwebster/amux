@@ -5,6 +5,12 @@
       "stage": 5,
       "topology": "e2e-tests/topologies/two-hosts.json",
       "claim": "A launch draws the fleet this phone remembers before it has reached anything, every row shimmering, and a real connection to a real host confirms it without moving what is on screen."
+    },
+    {
+      "id": "home",
+      "stage": 5,
+      "topology": "e2e-tests/topologies/home-fleet.json",
+      "claim": "Six agents on two machines the runner is running: before it has reached anything the phone draws the ones it remembers, the two that need an answer at the top and the one waiting longest first; a real connection reaches both machines and confirms the fleet without moving what survives, and a turn emitted by one of them changes nothing about the order; a phone that remembers nothing shows the home empty; and opening the row at the top reaches the whole fleet from a drawer over the conversation and comes back."
     }
   ]
 }

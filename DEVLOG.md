@@ -4,6 +4,50 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The home journey, against the machines that are really
+running.** `wt run ios-journey -- home` starts a relay and two daemons from a
+committed topology with six agents on them — one waiting on permission, one
+finished, one mid-turn, one gone quiet, one nobody can account for and one that
+has not moved in a day — and puts the phone in front of them. What the phone
+remembers is written in the shared library's own cache format and carries those
+machines' and agents' real identities, so the file on disk is what a previous
+run would have left rather than something invented beside it.
+
+Five launches, because there are five situations: remembering with the relay
+down, reaching the machines, reaching them again after one of them has been
+made to emit a turn, remembering nothing at all, and opening a conversation and
+the drawer over it. The list is read by the names the screens declare — the
+ones VoiceOver reads — and asserted whole: six remembered rows, the two that
+need an answer at the top with the longer wait first, everything else by
+recency, the day-old row reading `1d`, every row saying it is remembered and
+unread, and nothing spinning.
+
+The last of the five is a UI test rather than a door conversation. The door
+reads what a screen declared, which is enough to say what is on it, but it
+cannot press a SwiftUI control: SwiftUI builds an accessibility tree only for
+an attached accessibility client and an app is not one from inside its own
+process. XCUITest is that client, so the taps — open a row, open the drawer,
+close it, and the navigation bar's own back button — are real taps, and the
+journey collects what the test photographed out of its container.
+
+Driving the drawer for the first time found two things wrong with it. Tapping
+the sliver of the page beside the panel did nothing, because the page was
+disabled while the panel was out and the scrim is drawn over that page; the
+drawer could only be dragged shut. And the panel's own name was being handed
+down to everything inside it that the system did not already treat as its own,
+so its title, New Agent and its whole foot answered to `drawer` — for anything
+driving the app and for VoiceOver alike. Both are fixed.
+
+Two claims the journey states plainly rather than asserting: confirming a
+remembered row against the machine that owns it, and the one line that says a
+phone is offline. Opening a connection at all — to a dead relay as much as to a
+live one — makes this phone's own runtime answer for no agents, and the shared
+cache reads a card whose machine is absent from a settled model as one this
+device is no longer paired with, so every remembered row is dropped. Pairing
+from the phone is not built yet. Until it is, the machines disown what the
+phone remembered, and the offline line, which lives above the rows, has no rows
+to live above.
+
 2026-09-05 — **The drawer.** A conversation can reach the whole fleet without
 going back to a list: a panel comes in from the left with two groups — what
 needs you and everything else — a name and one line each, the conversation you

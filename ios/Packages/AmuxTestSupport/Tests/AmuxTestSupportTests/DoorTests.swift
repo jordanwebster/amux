@@ -23,6 +23,7 @@ final class DoorTests: XCTestCase {
             .cloud(.firstRun),
             .connect(relay: "http://127.0.0.1:8080", token: "bearer", user: "ada"),
             .awaitReconciled(seconds: 90),
+            .awaitOffline(seconds: 30),
             .bridge,
             .appearance(.dark),
             .dynamicType("accessibility3"),
@@ -58,6 +59,7 @@ final class DoorTests: XCTestCase {
         XCTAssertEqual(try wire(.capture(path: "/tmp/x.png"))["path"] as? String, "/tmp/x.png")
         XCTAssertEqual(try wire(.settle)["kind"] as? String, "settle")
         XCTAssertEqual(try wire(.awaitReconciled(seconds: 90))["seconds"] as? Double, 90)
+        XCTAssertEqual(try wire(.awaitOffline(seconds: 30))["kind"] as? String, "awaitOffline")
         XCTAssertEqual(try wire(.bridge)["kind"] as? String, "bridge")
         XCTAssertEqual(try wire(.perturb(token: "accent"))["token"] as? String, "accent")
         // Nothing named puts the design back, and is sent as an absent field

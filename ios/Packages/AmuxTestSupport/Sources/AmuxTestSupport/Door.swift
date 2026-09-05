@@ -21,6 +21,11 @@ public enum DoorRequest: Sendable, Equatable {
     /// this many seconds. A connection is asynchronous, so a driver that read
     /// the screen straight after `connect` would read the moment before it.
     case awaitReconciled(seconds: Double)
+    /// Wait until the connection has reported itself gone, or give up after
+    /// this many seconds. A relay that has stopped answering is discovered by
+    /// a connection failing, not by anything the driver did, so there is a
+    /// moment to wait for here too.
+    case awaitOffline(seconds: Double)
     /// What library this app linked and what its connection has arrived at.
     case bridge
     /// Every moment this launch has marked, in order. A driver reads them to
@@ -221,6 +226,8 @@ extension DoorRequest: Codable {
                 user: try fields.decode(String.self, forKey: .user))
         case "awaitReconciled":
             self = .awaitReconciled(seconds: try fields.decode(Double.self, forKey: .seconds))
+        case "awaitOffline":
+            self = .awaitOffline(seconds: try fields.decode(Double.self, forKey: .seconds))
         case "bridge": self = .bridge
         case "signposts": self = .signposts
         case "appearance":
@@ -267,6 +274,9 @@ extension DoorRequest: Codable {
             try fields.encode(user, forKey: .user)
         case .awaitReconciled(let seconds):
             try fields.encode("awaitReconciled", forKey: .kind)
+            try fields.encode(seconds, forKey: .seconds)
+        case .awaitOffline(let seconds):
+            try fields.encode("awaitOffline", forKey: .kind)
             try fields.encode(seconds, forKey: .seconds)
         case .bridge:
             try fields.encode("bridge", forKey: .kind)

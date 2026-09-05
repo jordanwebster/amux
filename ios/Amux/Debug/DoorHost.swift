@@ -67,6 +67,8 @@ final class DoorHost {
             return connect(relay: relay, token: token, user: user)
         case .awaitReconciled(let seconds):
             return await awaitReconciled(within: seconds)
+        case .awaitOffline(let seconds):
+            return await awaitOffline(within: seconds)
         case .bridge: return .bridge(bridgeState())
         case .signposts: return .signposts(Signposts.marks)
         case .appearance(let appearance):
@@ -208,6 +210,20 @@ final class DoorHost {
             "the connection did not arrive within \(seconds)s: \(state.connection), reconciled "
             + "\(state.reconciled), \(state.discovered.count) machines seen, "
             + "\(state.hosts.count) paired, \(state.agents.count) agents")
+    }
+
+    /// Waits for the connection to have given up: the relay is not answering
+    /// and the app has said so to itself. Polled a frame at a time for the
+    /// same reason as the wait above.
+    private func awaitOffline(within seconds: Double) async -> DoorReply {
+        guard bridge != nil else { return .error("nothing has been connected") }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if stores.fleet.connection.state == .disconnected { return .ack }
+            await DoorFrames.next()
+        }
+        return .error(
+            "the connection was still \(stores.fleet.connection.state.rawValue) after \(seconds)s")
     }
 
     private func bridgeState() -> BridgeState {
