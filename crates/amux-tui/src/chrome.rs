@@ -436,6 +436,21 @@ pub enum TraceEvent {
         agent: AgentId,
         codex_configuration: Option<String>,
     },
+    /// The installation's profile list, which the shell read from the front
+    /// door after the switcher chord. Fetching it is the shell's job — the
+    /// chrome has no front door — so the answer enters as its own event and
+    /// a replay opens the switcher over the same accounts.
+    ProfilesListed {
+        entries: Vec<amux_ui::ProfileEntry>,
+        /// The socket of the profile the fleet is already showing, so the
+        /// switcher opens on it.
+        current: Option<std::path::PathBuf>,
+    },
+    /// The runtime was rebound to another account. Everything on screen
+    /// described the account just left — an open chat, a filter, a
+    /// selection — so the screen starts over with the empty Model the new
+    /// runtime folds into.
+    ProfileSwitched { label: String },
 }
 
 /// What the chrome asks the shell to do. A replay drops all of them: it
@@ -448,6 +463,11 @@ pub enum ShellEffect {
     NoteAttached(AgentId),
     WriteClipboard(String),
     Create { host: Option<HostId> },
+    /// Read the installation's profile list and hand it back as
+    /// [`TraceEvent::ProfilesListed`].
+    ListProfiles,
+    /// Rebind the runtime to this profile and start from an empty Model.
+    SwitchProfile(amux_ui::ProfileEntry),
 }
 
 /// Chrome configuration the view does not carry: the palette every frame
@@ -570,6 +590,24 @@ impl Chrome {
                 self.dirty = true;
                 vec![ShellEffect::NoteAttached(*agent)]
             }
+            TraceEvent::ProfilesListed { entries, current } => {
+                self.view.mode = crate::view::Mode::Switcher(
+                    crate::switcher::SwitcherState::open(entries.clone(), current.as_deref()),
+                );
+                self.dirty = true;
+                Vec::new()
+            }
+            TraceEvent::ProfileSwitched { label } => {
+                self.view = crate::view::ViewState {
+                    leader: self.view.leader,
+                    default_open_mode: self.view.default_open_mode,
+                    kitty: self.view.kitty,
+                    notice: Some(crate::view::Notice::done(format!("switched to {label}"))),
+                    ..crate::view::ViewState::default()
+                };
+                self.dirty = true;
+                Vec::new()
+            }
             TraceEvent::Dispatched { op, command } => {
                 // Dispatch can finish synchronously (a reducer refusal, the
                 // disconnected fail-fast): reconcile now so a refused send
@@ -672,6 +710,8 @@ impl Chrome {
             }
             Some(UiAction::Dispatch(command)) => vec![ShellEffect::Dispatch(command)],
             Some(UiAction::Create { host }) => vec![ShellEffect::Create { host }],
+            Some(UiAction::ListProfiles) => vec![ShellEffect::ListProfiles],
+            Some(UiAction::SwitchProfile(entry)) => vec![ShellEffect::SwitchProfile(entry)],
             Some(UiAction::CloseChat) => {
                 self.view.close_chat();
                 Vec::new()

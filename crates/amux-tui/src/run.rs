@@ -6,8 +6,8 @@
 use std::io;
 use std::time::Duration;
 
-use amux_ui::{AgentId, Command, Runtime};
-use anyhow::Result;
+use amux_ui::{AgentId, Command, ProfileDirectory, ProfileEntry, Runtime, RuntimeOptions};
+use anyhow::{Context, Result};
 use chrono::Utc;
 use crossterm::event::EventStream;
 use futures_util::StreamExt;
@@ -32,6 +32,27 @@ use crate::view::{Notice, ViewState, next_agent_name};
 pub enum AttachReturn {
     Fleet(Option<Notice>),
     Exit,
+}
+
+/// How the fleet reaches the installation's other accounts.
+///
+/// The front door is dialled when the switcher opens, not at startup: a
+/// session that never switches accounts should not pay for a second
+/// connection, and a fleet must still open when the front door does not
+/// answer. `options` is asked for a fresh set of runtime options per
+/// selection, because a profile's reports, artifact cache and device
+/// identity are its own.
+/// Builds the runtime options one selected profile is bound with.
+pub type ProfileRuntimeOptions =
+    Box<dyn Fn(&ProfileEntry) -> Result<RuntimeOptions> + Send + Sync>;
+
+pub struct ProfileSwitching {
+    /// The installation's administration socket.
+    pub front_door: std::path::PathBuf,
+    /// The socket of the profile the fleet opened with, so the switcher
+    /// opens on the account already showing.
+    pub current: std::path::PathBuf,
+    pub options: ProfileRuntimeOptions,
 }
 
 pub struct TuiConfig {
@@ -59,6 +80,10 @@ pub struct TuiConfig {
     /// The field itself is absent from builds that record nothing.
     #[cfg(any(debug_assertions, test))]
     pub trace: Option<SharedTrace>,
+    /// How the switcher lists the installation's accounts and what a
+    /// selected one is bound with. `None` in a shell with no installation
+    /// behind it; the chord then says switching is unavailable.
+    pub profiles: Option<ProfileSwitching>,
     /// The daemon dump, log path, reports directory and commit the shell
     /// contributes to a captured report. `None` in a build that captures
     /// none, which is what makes the capture key absent there.
@@ -99,6 +124,10 @@ where
     );
     let mut initial_chat = config.initial_chat;
     let mut initial_chat_configuration = config.initial_chat_configuration.clone();
+    let mut current_profile = config
+        .profiles
+        .as_ref()
+        .map(|switching| switching.current.clone());
     loop {
         match chrome_session(
             runtime,
@@ -106,6 +135,7 @@ where
             &config,
             &mut initial_chat,
             &mut initial_chat_configuration,
+            &mut current_profile,
         )
         .await?
         {
@@ -141,6 +171,7 @@ async fn chrome_session(
     config: &TuiConfig,
     initial_chat: &mut Option<AgentId>,
     initial_chat_configuration: &mut Option<String>,
+    current_profile: &mut Option<std::path::PathBuf>,
 ) -> Result<ChromeExit> {
     let guard = TerminalGuard::enter()?;
     // The guard probed for the kitty keyboard protocol on the way in;
@@ -211,7 +242,15 @@ async fn chrome_session(
                     };
                     record(config, &event);
                     let effects = chrome.step(runtime.model(), &event);
-                    perform(runtime, config, chrome, effects, &mut exit_request)?;
+                    perform(
+                        runtime,
+                        config,
+                        chrome,
+                        effects,
+                        &mut exit_request,
+                        current_profile,
+                    )
+                    .await?;
                     *initial_chat = None;
                 }
                 record(config, &TraceEvent::Drained);
@@ -249,7 +288,15 @@ async fn chrome_session(
                         };
                         record(config, &event);
                         let effects = chrome.step(runtime.model(), &event);
-                        perform(runtime, config, chrome, effects, &mut exit_request)?;
+                        perform(
+                        runtime,
+                        config,
+                        chrome,
+                        effects,
+                        &mut exit_request,
+                        current_profile,
+                    )
+                    .await?;
                     }
                 }
                 Some(Err(error)) => return Err(error.into()),
@@ -303,12 +350,13 @@ async fn chrome_session(
 /// runtime answered as the next event. A dispatch is the case that matters:
 /// the op id is the runtime's to mint, so it enters the chrome as its own
 /// [`TraceEvent::Dispatched`] rather than being guessed.
-fn perform(
+async fn perform(
     runtime: &mut Runtime,
     config: &TuiConfig,
     chrome: &mut Chrome,
     effects: Vec<ShellEffect>,
     exit_request: &mut Option<ChromeExit>,
+    current_profile: &mut Option<std::path::PathBuf>,
 ) -> Result<()> {
     for effect in effects {
         match effect {
@@ -330,6 +378,46 @@ fn perform(
                 record(config, &event);
                 chrome.step(runtime.model(), &event);
             }
+            ShellEffect::ListProfiles => {
+                let event = match list_profiles(config).await {
+                    Ok(entries) => TraceEvent::ProfilesListed {
+                        entries,
+                        current: current_profile.clone(),
+                    },
+                    Err(error) => TraceEvent::Notice(Some(Notice::problem(format!(
+                        "cannot list profiles: {error:#}"
+                    )))),
+                };
+                record(config, &event);
+                chrome.step(runtime.model(), &event);
+            }
+            ShellEffect::SwitchProfile(entry) => {
+                let Some(switching) = config.profiles.as_ref() else {
+                    continue;
+                };
+                match (switching.options)(&entry) {
+                    Ok(options) => {
+                        runtime.switch_in_place(&entry, options);
+                        *current_profile = Some(entry.socket.clone());
+                        // The screen belonged to the account just left: its
+                        // chat, filter and selection all named agents this
+                        // profile does not have. The reset is view state, so
+                        // it enters through the trace like every other one.
+                        let event = TraceEvent::ProfileSwitched { label: entry.label };
+                        record(config, &event);
+                        chrome.step(runtime.model(), &event);
+                    }
+                    Err(error) => set_notice(
+                        runtime,
+                        config,
+                        chrome,
+                        Some(Notice::problem(format!(
+                            "cannot open {}: {error:#}",
+                            entry.label
+                        ))),
+                    ),
+                }
+            }
             ShellEffect::Create { host } => {
                 let name = next_agent_name(runtime.model(), &config.default_agent_type);
                 runtime.dispatch(Command::CreateAgent {
@@ -342,6 +430,20 @@ fn perform(
         }
     }
     Ok(())
+}
+
+/// Read the installation's accounts for the switcher.
+///
+/// A fresh connection per listing: the front door is not on the hot path,
+/// and holding an administration client open for a session that may never
+/// switch accounts costs a socket for nothing.
+async fn list_profiles(config: &TuiConfig) -> Result<Vec<ProfileEntry>> {
+    let switching = config
+        .profiles
+        .as_ref()
+        .context("this shell has no installation to switch profiles in")?;
+    let directory = ProfileDirectory::connect(&switching.front_door).await?;
+    Ok(directory.list().await?)
 }
 
 /// Run the report prompt over the frozen frame until it is answered,

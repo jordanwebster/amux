@@ -1,0 +1,40 @@
+┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ /                                                                                                        2 agents    │
+│                                                                                                                      │
+│     switch profile                                                                                                   │
+│                                                                                                                      │
+│     Personal                robin@example.com                   connected                                            │
+│ ▎   Work                    robin@northwind.example             connected                                            │
+│     Conference laptop       robin@example.org                   logged out                                           │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ● connected · 1 host   j/k move  enter switch  esc close                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

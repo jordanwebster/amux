@@ -128,11 +128,16 @@ pub async fn resolve(
 
 pub fn config_path(installation: &InstallationConfig, info: &rpc::ProfileInfo) -> Result<PathBuf> {
     let id = Uuid::parse_str(&info.id).context("front door returned an invalid profile UUID")?;
-    Ok(installation
+    Ok(config_path_for(installation, id))
+}
+
+/// Where a profile's own configuration lives, from its id alone.
+pub fn config_path_for(installation: &InstallationConfig, id: Uuid) -> PathBuf {
+    installation
         .root
         .join("profiles")
         .join(id.to_string())
-        .join("config.yaml"))
+        .join("config.yaml")
 }
 
 pub fn load(path: &Path) -> Result<Config> {

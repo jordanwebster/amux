@@ -4,6 +4,25 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Switch accounts from the fleet.**
+`<leader> p` on the fleet opens a switcher listing every account on the
+installation with its label, the address behind it and what its link is
+doing; j/k or the arrows move, enter switches, esc closes, and the help
+overlay names the chord. The list is read from the front door when the
+overlay opens rather than at startup, so a fleet still opens when the
+installation socket does not answer, and the overlay is reachable over the
+disconnected screen — the profile whose daemon is unreachable is the one a
+person wants to move away from. Switching rebinds the runtime to the
+selected profile's socket and rebuilds it from that profile's own
+configuration, so its reports, artifact cache and device identity are its
+own; the screen starts over, because the open chat, filter and selection
+all named agents the new account does not have, and the selection is
+remembered for the next command. Two named fixtures — the open switcher and
+the fleet of the account switched to — render through the production view,
+and a `profiles` screenshot set captures the switcher and both fleets. A
+frame test holds the claim the pair of fleets makes: the account switched
+to shares no host and no agent with the one switched away from.
+
 2026-09-05 — **Bind the fleet to one account at a time.**
 The UI runtime carries a generation on every task, stream and command it
 starts. Selecting another profile consumes the runtime, retires its

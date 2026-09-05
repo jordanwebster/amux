@@ -138,7 +138,7 @@ const DEFAULT_ARTIFACT_CACHE_BOUND: u64 = 256 * 1024 * 1024;
 
 /// One profile as the switcher lists it. The reducer never sees this: a
 /// profile the user has not selected is not part of any Model.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ProfileEntry {
     pub id: ProfileId,
     pub label: String,
@@ -391,13 +391,31 @@ impl Runtime {
     /// the selected profile's socket and starts from an empty Model, because
     /// nothing the previous account showed is true of this one.
     pub fn switch(mut self, entry: &ProfileEntry, options: RuntimeOptions) -> Runtime {
+        self.switch_in_place(entry, options);
+        self
+    }
+
+    /// Rebind the shell to another profile behind a borrow.
+    ///
+    /// Identical to [`Runtime::switch`], for a shell that holds its runtime
+    /// by mutable reference for the whole of a session and has nowhere to
+    /// put an owned one. The retired selection is dropped — and its tasks
+    /// aborted — as soon as the new one has taken the Msg channel over.
+    pub fn switch_in_place(&mut self, entry: &ProfileEntry, options: RuntimeOptions) {
         let (closed_tx, closed_rx) = mpsc::channel(1);
         drop(closed_tx);
         let msg_rx = std::mem::replace(&mut self.msg_rx, closed_rx);
         let msg_tx = self.msg_sink.tx.clone();
         let generation = Generation(self.msg_sink.generation.0 + 1);
-        // Dropping the old runtime aborts its connection and stream tasks.
-        drop(self);
+        // The retired selection stops talking first, so the two profiles'
+        // connections never overlap; whatever is already in flight arrives
+        // stamped with a generation the fold refuses.
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+        for (_, task) in self.streams.drain() {
+            task.abort();
+        }
 
         let socket = entry.socket.clone();
         let connector: Connector = Box::new(move || {
@@ -412,7 +430,9 @@ impl Runtime {
                     })
             })
         });
-        Self::start_on_channel(connector, options, msg_tx, msg_rx, generation)
+        let next = Self::start_on_channel(connector, options, msg_tx, msg_rx, generation);
+        // Dropping the retired runtime releases its client and caches.
+        drop(std::mem::replace(self, next));
     }
 
     /// The generation this runtime folds. Results stamped with any other are

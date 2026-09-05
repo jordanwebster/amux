@@ -30,6 +30,10 @@ pub use amux::{
     BaseIdentity, Capabilities, ClaudeDriver, DiffBase, DiffFile, DiffResponse, HostEntry, HostId,
     HostTrustStatus, Protocol, WorkingOn, claude_io,
 };
+// The profile a runtime is bound to. Renderers name accounts, so the id
+// travels with the rest of the entity vocabulary rather than making the
+// TUI depend on the kernel crate.
+pub use amux::installation::ProfileId;
 pub use attachments::{
     ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DraftAttachment, Mention,
     MentionKind, Segment, format_mention, split_mentions,
