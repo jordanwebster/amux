@@ -19,6 +19,8 @@ pub use crate::services::client::ProfileAdmin;
 
 pub mod binding;
 mod credentials;
+mod directory;
+pub use directory::{display_label, status_label};
 mod operation;
 pub use binding::{
     AccountId, BindError, BindRequest, BindTarget, CloudServiceId, NonPristine, UserInfo,

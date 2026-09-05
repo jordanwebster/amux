@@ -377,6 +377,23 @@ pub struct Client {
 }
 
 impl Client {
+    /// Open a client on a ClientService socket the caller already knows.
+    /// The installation front door reports one socket per profile, so a UI
+    /// can bind a profile without reading that profile's config file.
+    #[cfg(unix)]
+    pub async fn connect_socket(path: &std::path::Path) -> Result<Self, ConnectError> {
+        Ok(Self::from_client_service_channel(
+            connect::connect_client_service_socket(path).await?,
+        ))
+    }
+
+    #[cfg(not(unix))]
+    pub async fn connect_socket(_path: &std::path::Path) -> Result<Self, ConnectError> {
+        Err(ConnectError::Start(
+            "local ClientService sockets are not supported on this platform".to_string(),
+        ))
+    }
+
     pub(crate) fn from_client_service_channel(channel: Channel) -> Self {
         Self {
             inner: Arc::new(AsyncMutex::new(wire::client_service_client(channel))),

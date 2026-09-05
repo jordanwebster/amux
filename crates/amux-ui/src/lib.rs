@@ -54,7 +54,9 @@ pub use recorder::{
 };
 pub use runtime::{
     AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ConnectFailure,
-    ConnectFuture, Connector, MsgTap, ReportExtras, ReportExtrasProvider, Runtime, RuntimeOptions,
-    execute_put_then_send, write_panic_report,
+    ConnectFuture, Connector, Generation, LateResult, MsgTap, ProfileDirectory, ProfileEntry, ReportExtras,
+    ReportExtrasProvider, Runtime, RuntimeOptions, execute_put_then_send, write_panic_report,
 };
+#[cfg(debug_assertions)]
+pub use runtime::{RuntimeGone, ShellEdge};
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};

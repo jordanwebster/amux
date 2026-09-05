@@ -12,12 +12,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
+use amux::installation::{FrontDoorClient, rpc};
 use amux::{
     AgentId, AgentIdentifier, ArtifactId, ArtifactKind, ArtifactRef, Client, ClientError,
-    CreateAgentRequest, HostId, ProtocolError, SendInputRequest, SessionCloseReason,
+    CreateAgentRequest, HostId, ProfileId, ProtocolError, SendInputRequest, SessionCloseReason,
     SubscribeSessionEvent, SubscribeSessionRequest, claude_io, codex_io,
 };
 use amux_artifacts::{ArtifactMeta, Cache, FetchError, StoreError, SystemClock};
@@ -135,6 +136,163 @@ impl AttachmentClient for Client {
 
 const DEFAULT_ARTIFACT_CACHE_BOUND: u64 = 256 * 1024 * 1024;
 
+/// One profile as the switcher lists it. The reducer never sees this: a
+/// profile the user has not selected is not part of any Model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProfileEntry {
+    pub id: ProfileId,
+    pub label: String,
+    pub email: Option<String>,
+    pub status: String,
+    pub socket: PathBuf,
+}
+
+/// The installation's profile listing, read from the front door.
+///
+/// This is a second connection, deliberately: the front door administers the
+/// installation and knows nothing about the selected profile, while a
+/// profile's client API knows nothing about its neighbours.
+pub struct ProfileDirectory {
+    front: FrontDoorClient,
+}
+
+impl ProfileDirectory {
+    /// Connect to the installation's well-known administration socket.
+    pub async fn connect(socket: &Path) -> io::Result<Self> {
+        Ok(Self::new(FrontDoorClient::connect(socket).await?))
+    }
+
+    pub fn new(front: FrontDoorClient) -> Self {
+        Self { front }
+    }
+
+    /// Every profile in the installation, in the order the front door reports
+    /// them. Profiles that failed to start are listed with the reason, so the
+    /// switcher can show a profile that cannot currently be selected rather
+    /// than silently omitting an account the user has.
+    pub async fn list(&self) -> Result<Vec<ProfileEntry>, ClientError> {
+        let response = self
+            .front
+            .profiles
+            .clone()
+            .list_profiles(rpc::ListProfilesRequest {})
+            .await
+            .map_err(|status| ClientError::Unexpected {
+                method: "ListProfiles",
+                message: status.message().to_string(),
+            })?
+            .into_inner()
+            .profiles;
+        response
+            .iter()
+            .map(|info| {
+                Ok(ProfileEntry {
+                    // A profile id the front door cannot name is not a profile
+                    // anything may be switched to; say so rather than offering
+                    // a row that would select nothing.
+                    id: ProfileId(info.id.parse().map_err(|error| ClientError::Decode {
+                        method: "ListProfiles",
+                        message: format!("profile id {:?} is not a UUID: {error}", info.id),
+                    })?),
+                    label: amux::installation::display_label(info, &response),
+                    email: (!info.email.is_empty()).then(|| info.email.clone()),
+                    status: amux::installation::status_label(info),
+                    socket: PathBuf::from(&info.socket_path),
+                })
+            })
+            .collect()
+    }
+}
+
+/// Which profile selection a shell task belongs to.
+///
+/// Switching profiles cannot recall work already in flight: an RPC awaiting a
+/// reply, a subscription mid-event, a stream task decoding a batch. Each of
+/// them carries the generation it was started under, and the fold drops
+/// anything stamped with a retired one, so a result about the account the
+/// user just left can never be folded into the account they moved to.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Generation(pub u64);
+
+impl std::fmt::Display for Generation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A shell edge belonging to one selection: what a connection task or a
+/// stream task holds when it reports a result.
+///
+/// Debug builds only, alongside the diagnostic trace. A test of switching
+/// needs a result that is genuinely in flight for the profile being left,
+/// and only something holding that profile's edge can produce one.
+#[cfg(debug_assertions)]
+#[derive(Clone)]
+pub struct ShellEdge(MsgSink);
+
+/// The Runtime an edge was taken from — and every runtime switched to from
+/// it — has been dropped, so there is nothing left to report to.
+#[cfg(debug_assertions)]
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+#[error("the runtime this shell edge belonged to is gone")]
+pub struct RuntimeGone;
+
+#[cfg(debug_assertions)]
+impl ShellEdge {
+    /// Report a result as a task of this selection would.
+    pub async fn report(&self, msg: Msg) -> Result<(), RuntimeGone> {
+        self.0.send(msg).await.map_err(|()| RuntimeGone)
+    }
+}
+
+/// What a dropped late result would have told the reducer.
+///
+/// Coarse on purpose: the question a switch raises is which edge of the shell
+/// is still delivering for an account the user has left, not what any one
+/// message said.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum LateResult {
+    Inventory,
+    Session,
+    Attachment,
+    Command,
+}
+
+impl LateResult {
+    fn of(msg: &Msg) -> Option<Self> {
+        match msg {
+            Msg::Server(_) => Some(Self::Inventory),
+            Msg::Stream { .. } => Some(Self::Session),
+            Msg::OpResult {
+                outcome: OpOutcome::AttachmentOpened { .. } | OpOutcome::DiffFetched { .. },
+                ..
+            } => Some(Self::Attachment),
+            Msg::OpResult { .. } | Msg::Command { .. } => Some(Self::Command),
+            // Folded straight from the caller's thread, never through a task.
+            Msg::Tick { .. } | Msg::UserAttached { .. } => None,
+        }
+    }
+}
+
+/// The one way a shell task reaches the fold. Stamping happens here so no
+/// task can forget to do it.
+#[derive(Clone)]
+pub(crate) struct MsgSink {
+    tx: mpsc::Sender<(Generation, Msg)>,
+    generation: Generation,
+}
+
+impl MsgSink {
+    /// Bounded lossless send: the producer waits, never drops. `Err` means
+    /// the Runtime is gone.
+    async fn send(&self, msg: Msg) -> Result<(), ()> {
+        self.tx
+            .send((self.generation, msg))
+            .await
+            .map_err(|_| ())
+    }
+}
+
 pub struct RuntimeOptions {
     /// The daemon's own host id (read from the local device identity);
     /// enters the Model via `ServerMsg::Connected`.
@@ -191,8 +349,8 @@ pub struct Runtime {
     /// so a panic can snapshot the ring after terminal restore. The fold is
     /// single-threaded — contention is nil; the mutex exists for the hook.
     recorder: Arc<StdMutex<Recorder>>,
-    msg_tx: mpsc::Sender<Msg>,
-    msg_rx: mpsc::Receiver<Msg>,
+    msg_sink: MsgSink,
+    msg_rx: mpsc::Receiver<(Generation, Msg)>,
     client: Arc<StdMutex<Option<Client>>>,
     tasks: Vec<JoinHandle<()>>,
     /// Live per-agent stream tasks (shell resource bookkeeping only; the
@@ -205,6 +363,11 @@ pub struct Runtime {
     msg_tap: Option<MsgTap>,
     artifact_cache: Option<Result<Arc<Cache>, String>>,
     attachment_opener: AttachmentOpener,
+    /// Results from a selection this runtime has left, dropped before the
+    /// reducer. Kept as a tally rather than a log: the set is small and
+    /// fixed, so it cannot grow with a profile that keeps talking.
+    discarded_late: std::collections::BTreeSet<LateResult>,
+    discarded_late_count: usize,
     /// Violation kinds already reported this session: invariant logs and
     /// reports are throttled to once per kind so a persistent incoherence
     /// cannot fill the report directory.
@@ -215,12 +378,89 @@ impl Runtime {
     /// Start the shell with a connector that dials (and re-dials) the
     /// daemon.
     pub fn start(connector: Connector, options: RuntimeOptions) -> Self {
+        let (msg_tx, msg_rx) = mpsc::channel(MSG_CHANNEL_CAPACITY);
+        Self::start_on_channel(connector, options, msg_tx, msg_rx, Generation::default())
+    }
+
+    /// Rebind the shell to another profile.
+    ///
+    /// The old runtime is consumed: its tasks are aborted and its generation
+    /// retired. Abort is not instantaneous, so the two selections share one
+    /// Msg channel and whatever the old profile still delivers arrives
+    /// stamped with a generation the fold now refuses. The new runtime binds
+    /// the selected profile's socket and starts from an empty Model, because
+    /// nothing the previous account showed is true of this one.
+    pub fn switch(mut self, entry: &ProfileEntry, options: RuntimeOptions) -> Runtime {
+        let (closed_tx, closed_rx) = mpsc::channel(1);
+        drop(closed_tx);
+        let msg_rx = std::mem::replace(&mut self.msg_rx, closed_rx);
+        let msg_tx = self.msg_sink.tx.clone();
+        let generation = Generation(self.msg_sink.generation.0 + 1);
+        // Dropping the old runtime aborts its connection and stream tasks.
+        drop(self);
+
+        let socket = entry.socket.clone();
+        let connector: Connector = Box::new(move || {
+            let socket = socket.clone();
+            Box::pin(async move {
+                Client::connect_socket(&socket)
+                    .await
+                    .map_err(|error| ConnectFailure {
+                        message: format!("{error}"),
+                        auth_required: false,
+                        subscription_required: false,
+                    })
+            })
+        });
+        Self::start_on_channel(connector, options, msg_tx, msg_rx, generation)
+    }
+
+    /// The generation this runtime folds. Results stamped with any other are
+    /// dropped before the reducer.
+    pub fn generation(&self) -> Generation {
+        self.msg_sink.generation
+    }
+
+    /// This runtime's shell edge, as its own tasks hold it.
+    #[cfg(debug_assertions)]
+    pub fn shell_edge(&self) -> ShellEdge {
+        ShellEdge(self.msg_sink.clone())
+    }
+
+    /// How many results for an earlier selection this runtime has dropped.
+    pub fn discarded_late_results(&self) -> usize {
+        self.discarded_late_count
+    }
+
+    /// Which shell edges those dropped results came from.
+    pub fn discarded_late_kinds(&self) -> Vec<LateResult> {
+        self.discarded_late.iter().copied().collect()
+    }
+
+    fn discard_late(&mut self, msg: &Msg) {
+        self.discarded_late_count += 1;
+        if let Some(kind) = LateResult::of(msg) {
+            self.discarded_late.insert(kind);
+        }
+        tracing::debug!(?msg, "dropping a result from a profile the runtime has left");
+    }
+
+    fn start_on_channel(
+        connector: Connector,
+        options: RuntimeOptions,
+        msg_tx: mpsc::Sender<(Generation, Msg)>,
+        msg_rx: mpsc::Receiver<(Generation, Msg)>,
+        generation: Generation,
+    ) -> Self {
         let model = Model::default();
         let recorder = Arc::new(StdMutex::new(Recorder::new(
             options.recorder_capacity,
             &model,
         )));
-        let (msg_tx, msg_rx) = mpsc::channel(MSG_CHANNEL_CAPACITY);
+        let msg_sink = MsgSink {
+            tx: msg_tx,
+            generation,
+        };
         let client = Arc::new(StdMutex::new(None));
         let artifact_cache = options.artifact_cache.map(|root| {
             Cache::open(root, options.artifact_cache_bound, Arc::new(SystemClock))
@@ -231,7 +471,7 @@ impl Runtime {
         let subscription_status_provider = options.subscription_status_provider;
         let connection_task = tokio::spawn(connection_task(
             connector,
-            msg_tx.clone(),
+            msg_sink.clone(),
             client.clone(),
             options.local_host_id,
             subscription_status_provider.clone(),
@@ -240,7 +480,7 @@ impl Runtime {
         Self {
             model,
             recorder,
-            msg_tx,
+            msg_sink,
             msg_rx,
             client,
             tasks: vec![connection_task],
@@ -252,6 +492,8 @@ impl Runtime {
             msg_tap: options.msg_tap,
             artifact_cache,
             attachment_opener: options.attachment_opener,
+            discarded_late: std::collections::BTreeSet::new(),
+            discarded_late_count: 0,
             reported_violations: HashSet::new(),
         }
     }
@@ -291,21 +533,32 @@ impl Runtime {
     /// Await the next Msg, then fold everything already pending (up to a
     /// frame budget). Returns false when the shell has shut down.
     pub async fn next(&mut self) -> bool {
-        let Some(msg) = self.msg_rx.recv().await else {
-            return false;
-        };
-        self.process(msg);
-        self.drain();
-        true
+        loop {
+            let Some((generation, msg)) = self.msg_rx.recv().await else {
+                return false;
+            };
+            if generation != self.msg_sink.generation {
+                self.discard_late(&msg);
+                continue;
+            }
+            self.process(msg);
+            self.drain();
+            return true;
+        }
     }
 
     /// Fold every immediately-available Msg (bounded by the frame budget);
     /// returns true if anything was folded.
     pub fn drain(&mut self) -> bool {
         let mut folded = false;
+        // A retired generation spends budget without folding: the frame
+        // stays bounded even while a departed profile is still delivering.
         for _ in 0..DRAIN_BUDGET {
             match self.msg_rx.try_recv() {
-                Ok(msg) => {
+                Ok((generation, msg)) if generation != self.msg_sink.generation => {
+                    self.discard_late(&msg);
+                }
+                Ok((_, msg)) => {
                     self.process(msg);
                     folded = true;
                 }
@@ -360,7 +613,7 @@ impl Runtime {
         let Some(report_dir) = self.report_dir.clone() else {
             return;
         };
-        let _ = PANIC_REPORT.set(PanicReportContext {
+        *lock_panic_report() = Some(PanicReportContext {
             recorder: self.recorder.clone(),
             report_dir,
             log_path: self.log_path.clone(),
@@ -445,7 +698,7 @@ impl Runtime {
         match effect {
             Effect::Rpc { op, command } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
-                let tx = self.msg_tx.clone();
+                let tx = self.msg_sink.clone();
                 tokio::spawn(async move {
                     let outcome = match client {
                         Some(client) => execute_rpc(&client, command).await,
@@ -463,7 +716,7 @@ impl Runtime {
                 payload,
             } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
-                let tx = self.msg_tx.clone();
+                let tx = self.msg_sink.clone();
                 tokio::spawn(async move {
                     let outcome = match client {
                         Some(client) => execute_send_input(&client, agent, input_id, payload).await,
@@ -482,7 +735,7 @@ impl Runtime {
                 pin,
             } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
-                let tx = self.msg_tx.clone();
+                let tx = self.msg_sink.clone();
                 tokio::spawn(async move {
                     let outcome = match client {
                         Some(client) => {
@@ -498,7 +751,7 @@ impl Runtime {
             Effect::FetchDiff { op, agent, id } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
                 let cache = clone_artifact_cache(&self.artifact_cache);
-                let tx = self.msg_tx.clone();
+                let tx = self.msg_sink.clone();
                 tokio::spawn(async move {
                     let outcome = match (client, cache) {
                         (Some(client), Ok(cache)) => {
@@ -526,7 +779,7 @@ impl Runtime {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
                 let cache = clone_artifact_cache(&self.artifact_cache);
                 let opener = self.attachment_opener.clone();
-                let tx = self.msg_tx.clone();
+                let tx = self.msg_sink.clone();
                 tokio::spawn(async move {
                     let outcome = match (client, cache) {
                         (Some(client), Ok(cache)) => {
@@ -557,7 +810,7 @@ impl Runtime {
             }
             Effect::Diff { op, agent, base } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
-                let tx = self.msg_tx.clone();
+                let tx = self.msg_sink.clone();
                 tokio::spawn(async move {
                     let outcome = match client {
                         Some(client) => match client.diff(AgentIdentifier::Id(agent), base).await {
@@ -579,7 +832,7 @@ impl Runtime {
                 tail,
             } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
-                let tx = self.msg_tx.clone();
+                let tx = self.msg_sink.clone();
                 if let Some(stale) = self.streams.insert(
                     agent,
                     tokio::spawn(stream_task(client, agent, protocol, tail, tx)),
@@ -612,6 +865,7 @@ impl Drop for Runtime {
     }
 }
 
+#[derive(Clone)]
 struct PanicReportContext {
     recorder: Arc<StdMutex<Recorder>>,
     report_dir: PathBuf,
@@ -620,9 +874,12 @@ struct PanicReportContext {
     report_extras: Option<ReportExtrasProvider>,
 }
 
-/// The context registered for panic reports: set once by
+/// The context registered for panic reports: written by
 /// [`Runtime::install_panic_report`] and read inside the panic hook.
-static PANIC_REPORT: OnceLock<PanicReportContext> = OnceLock::new();
+/// Replaceable rather than write-once, because switching profiles builds a
+/// new runtime with a new recorder — a panic afterwards must report the
+/// profile the user is actually looking at.
+static PANIC_REPORT: StdMutex<Option<PanicReportContext>> = StdMutex::new(None);
 static PANIC_REPORT_WRITING: AtomicBool = AtomicBool::new(false);
 
 struct PanicReportGuard;
@@ -636,6 +893,14 @@ impl Drop for PanicReportGuard {
 /// Lock the recorder even when poisoned: a panic mid-record must not block
 /// the panic hook from reporting. The ring holds pre-serialized lines, so the
 /// worst a poisoned lock can cost is the newest entry.
+/// Same poison tolerance as [`lock_recorder`], for the same reason: a panic
+/// while installing a context must not stop the hook from reporting.
+fn lock_panic_report() -> std::sync::MutexGuard<'static, Option<PanicReportContext>> {
+    PANIC_REPORT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn lock_recorder(recorder: &StdMutex<Recorder>) -> std::sync::MutexGuard<'_, Recorder> {
     recorder
         .lock()
@@ -685,7 +950,7 @@ pub fn write_panic_report(detail: &str) {
         return;
     }
     let _guard = PanicReportGuard;
-    let Some(context) = PANIC_REPORT.get() else {
+    let Some(context) = lock_panic_report().clone() else {
         return;
     };
     let extras = context
@@ -1159,7 +1424,7 @@ fn disconnect_reason(error: &ClientError) -> DisconnectReason {
 /// semantic decision it forwards as a Msg.
 async fn connection_task(
     mut connector: Connector,
-    tx: mpsc::Sender<Msg>,
+    tx: MsgSink,
     shared_client: Arc<StdMutex<Option<Client>>>,
     local_host_id: Option<HostId>,
     subscription_status_provider: Option<SubscriptionStatusProvider>,
@@ -1178,7 +1443,7 @@ async fn connection_task(
                         message: failure.message,
                     }
                 };
-                if send_msg(&tx, Msg::Server(ServerMsg::Disconnected { reason }))
+                if tx.send( Msg::Server(ServerMsg::Disconnected { reason }))
                     .await
                     .is_err()
                 {
@@ -1204,7 +1469,7 @@ async fn connection_task(
             // The Msg channel closed: the Runtime is gone.
             return;
         };
-        if send_msg(&tx, Msg::Server(ServerMsg::Disconnected { reason }))
+        if tx.send( Msg::Server(ServerMsg::Disconnected { reason }))
             .await
             .is_err()
         {
@@ -1220,7 +1485,7 @@ async fn connection_task(
 /// closed beneath us.
 async fn pump_inventory(
     client: &Client,
-    tx: &mpsc::Sender<Msg>,
+    tx: &MsgSink,
     local_host_id: Option<HostId>,
     subscription_status_provider: Option<&SubscriptionStatusProvider>,
 ) -> Option<DisconnectReason> {
@@ -1233,7 +1498,7 @@ async fn pump_inventory(
         Err(error) => return Some(disconnect_reason(&error)),
     };
 
-    if send_msg(tx, Msg::Server(ServerMsg::Connected { local_host_id }))
+    if tx.send( Msg::Server(ServerMsg::Connected { local_host_id }))
         .await
         .is_err()
     {
@@ -1241,8 +1506,7 @@ async fn pump_inventory(
     }
     let mut subscription_required = subscription_status_provider.map(|provider| provider());
     if let Some(required) = subscription_required
-        && send_msg(
-            tx,
+        && tx.send(
             Msg::Server(ServerMsg::CloudSubscriptionStatus { required }),
         )
         .await
@@ -1284,7 +1548,7 @@ async fn pump_inventory(
                 ServerMsg::CloudSubscriptionStatus { required }
             },
         };
-        if send_msg(tx, Msg::Server(event)).await.is_err() {
+        if tx.send( Msg::Server(event)).await.is_err() {
             return None;
         }
     }
@@ -1296,11 +1560,6 @@ async fn maybe_interval_tick(interval: &mut Option<tokio::time::Interval>) {
     }
 }
 
-async fn send_msg(tx: &mpsc::Sender<Msg>, msg: Msg) -> Result<(), ()> {
-    // Bounded lossless send: the producer waits, never drops.
-    tx.send(msg).await.map_err(|_| ())
-}
-
 /// Subscribe an agent's structured stream and forward coalesced batches.
 /// Always terminates with a `Closed` Msg (unless the Runtime is gone), so
 /// the Model never holds a stream open that no task backs.
@@ -1309,11 +1568,10 @@ async fn stream_task(
     agent: AgentId,
     protocol: StructuredProtocol,
     tail: u64,
-    tx: mpsc::Sender<Msg>,
+    tx: MsgSink,
 ) {
     if let Some(reason) = pump_structured_stream(client, agent, protocol, tail, &tx).await {
-        let _ = send_msg(
-            &tx,
+        let _ = tx.send(
             Msg::Stream {
                 agent,
                 event: StreamMsg::Closed { reason },
@@ -1333,7 +1591,7 @@ async fn pump_structured_stream(
     agent: AgentId,
     protocol: StructuredProtocol,
     tail: u64,
-    tx: &mpsc::Sender<Msg>,
+    tx: &MsgSink,
 ) -> Option<StreamCloseReason> {
     let Some(client) = client else {
         return Some(StreamCloseReason::TransportError {
@@ -1405,8 +1663,7 @@ async fn pump_structured_stream(
             }
             Some(Ok(SubscribeSessionEvent::ReplayComplete { .. })) => {
                 flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
-                send_msg(
-                    tx,
+                tx.send(
                     Msg::Stream {
                         agent,
                         event: StreamMsg::ReplayComplete,
@@ -1431,15 +1688,14 @@ async fn pump_structured_stream(
 /// truncation fact: replay beginning past seq 1 means history was bounded
 /// at the source). Returns `None` when the Runtime is gone.
 async fn flush_stream_batch(
-    tx: &mpsc::Sender<Msg>,
+    tx: &MsgSink,
     agent: AgentId,
     sent_opened: &mut bool,
     batch: &mut Vec<StreamEntry>,
 ) -> Option<()> {
     if !*sent_opened {
         let truncated = batch.first().is_some_and(|entry| entry.seq > 1);
-        send_msg(
-            tx,
+        tx.send(
             Msg::Stream {
                 agent,
                 event: StreamMsg::Opened { truncated },
@@ -1453,8 +1709,7 @@ async fn flush_stream_batch(
         return Some(());
     }
     let entries = std::mem::take(batch);
-    send_msg(
-        tx,
+    tx.send(
         Msg::Stream {
             agent,
             event: StreamMsg::Batch {
@@ -1640,7 +1895,10 @@ mod tests {
         Runtime {
             model,
             recorder,
-            msg_tx,
+            msg_sink: MsgSink {
+                tx: msg_tx,
+                generation: Generation::default(),
+            },
             msg_rx,
             client: Arc::new(StdMutex::new(None)),
             tasks: Vec::new(),
@@ -1652,6 +1910,8 @@ mod tests {
             msg_tap: None,
             artifact_cache: None,
             attachment_opener: Arc::new(open_with_platform_viewer),
+            discarded_late: std::collections::BTreeSet::new(),
+            discarded_late_count: 0,
             reported_violations: HashSet::new(),
         }
     }

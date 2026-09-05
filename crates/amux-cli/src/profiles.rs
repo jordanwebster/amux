@@ -50,24 +50,7 @@ pub fn remember(path: &Path, id: &str) -> Result<()> {
     result.context("cannot remember selected profile")
 }
 
-/// Labels remain selectable without their collision suffix so ambiguity is
-/// diagnosed with full UUIDs. The displayed labels can also be copied verbatim.
-pub fn display_label(info: &rpc::ProfileInfo, directory: &[rpc::ProfileInfo]) -> String {
-    if directory.iter().filter(|p| p.label == info.label).count() > 1 {
-        // Extend the suffix if profiles happen to share their first eight digits.
-        let mut length = 8.min(info.id.len());
-        while length < info.id.len()
-            && directory
-                .iter()
-                .any(|other| other.id != info.id && other.id.starts_with(&info.id[..length]))
-        {
-            length += 1;
-        }
-        format!("{} ({})", info.label, &info.id[..length])
-    } else {
-        info.label.clone()
-    }
-}
+pub use amux::installation::{display_label, status_label};
 
 fn candidates(directory: &[rpc::ProfileInfo]) -> String {
     directory
@@ -200,6 +183,24 @@ pub async fn configuration(path: Option<&Path>, selector: Option<&str>) -> Resul
     Ok(config)
 }
 
+/// Record the profile a command has settled on, before it does its work.
+///
+/// Opening the fleet is an explicit selection in the same way a login is:
+/// the next command should land on the account the user is looking at,
+/// whether or not the daemon connection behind it ever comes up.
+pub fn remember_selection(config: &Config) -> Result<()> {
+    let path = config
+        .path
+        .as_deref()
+        .context("selected profile config is missing")?;
+    let resolved = amux::load_profile_config(&std::fs::canonicalize(path)?)?;
+    let installation = crate::front_door::configuration(Some(path))?;
+    remember(
+        &last_used(&installation),
+        &resolved.profile_id.to_string(),
+    )
+}
+
 pub fn confirm(message: &str) -> Result<bool> {
     if !io::stdin().is_terminal() {
         bail!("{message}\nConfirmation requires an interactive terminal.");
@@ -227,30 +228,8 @@ pub fn print_profile(profile: &rpc::ProfileInfo) {
         profile.id,
         profile.label,
         profile.email,
-        status(profile)
+        status_label(profile)
     );
-}
-
-pub fn status(profile: &rpc::ProfileInfo) -> String {
-    if !profile.startup_error.is_empty() {
-        return format!("unavailable: {}", profile.startup_error);
-    }
-    if !profile.available {
-        return "unavailable".into();
-    }
-    let intent = rpc::Intent::try_from(profile.intent)
-        .map(|v| v.as_str_name())
-        .unwrap_or("unknown");
-    let observed = rpc::Observed::try_from(profile.observed)
-        .map(|v| v.as_str_name())
-        .unwrap_or("unknown");
-    format!(
-        "{} / {}",
-        intent.trim_start_matches("INTENT_").to_ascii_lowercase(),
-        observed
-            .trim_start_matches("OBSERVED_")
-            .to_ascii_lowercase()
-    )
 }
 
 pub async fn administer(
@@ -509,6 +488,53 @@ mod tests {
     fn profile_selector_zero_profiles_offers_create_and_login() {
         let error = select(&[], None, None).unwrap_err().to_string();
         assert!(error.contains("amux profile create") && error.contains("amux login"));
+    }
+
+    #[test]
+    fn switcher_ui_selection_is_remembered_before_the_daemon_answers() {
+        use amux::installation::{ProfileId, ProfilePaths};
+
+        // A short root: the profile socket has to fit the Unix path limit.
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let root = dir.path().to_path_buf();
+        let id = ProfileId::new();
+        let paths = ProfilePaths::for_id(&root, id).unwrap();
+        let installation_path = root.join("installation.yaml");
+        let installation = amux::InstallationConfig {
+            root: std::fs::canonicalize(&root).unwrap(),
+            front_door_socket: root.join("amux.sock"),
+            ..Default::default()
+        };
+        std::fs::write(
+            &installation_path,
+            serde_yaml::to_string(&installation).unwrap(),
+        )
+        .unwrap();
+        let profile_path = paths.config_path.clone().unwrap();
+        std::fs::write(
+            &profile_path,
+            serde_yaml::to_string(&amux::ProfileConfig {
+                installation_config: installation_path,
+                socket_path: paths.socket_path.clone(),
+                state_path: paths.state_path.clone(),
+                data_dir: paths.data_dir.clone(),
+                cloud_url: amux::Config::default().cloud_url,
+                tcp_port: None,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let config = load(&profile_path).unwrap();
+        // Nothing is listening on the front door or on the profile socket:
+        // the selection has to be recorded without either answering.
+        remember_selection(&config).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(last_used(&installation))
+                .unwrap()
+                .trim(),
+            id.to_string()
+        );
     }
 
     #[test]

@@ -24,9 +24,16 @@ pub enum ConnectError {
 /// Connect to an existing daemon's ClientService over local IPC.
 #[cfg(unix)]
 pub(crate) async fn connect_existing_client_service(config: &Config) -> Result<Channel> {
-    let stream = UnixStream::connect(&config.socket_path)
-        .await
-        .map_err(TransportError::from)?;
+    connect_client_service_socket(&config.socket_path).await
+}
+
+/// Connect to a ClientService socket named directly rather than through a
+/// profile config. A client that was handed a socket path — the switcher is
+/// told one per profile by the front door — has no config to load and must
+/// not guess at one.
+#[cfg(unix)]
+pub(crate) async fn connect_client_service_socket(path: &std::path::Path) -> Result<Channel> {
+    let stream = UnixStream::connect(path).await.map_err(TransportError::from)?;
     connect_single_io(
         Endpoint::from_static("http://local-client-service"),
         "local ClientService stream",

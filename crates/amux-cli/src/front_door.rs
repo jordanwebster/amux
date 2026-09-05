@@ -178,7 +178,7 @@ pub async fn list(config: &InstallationConfig) -> Result<()> {
             profile.id,
             crate::profiles::display_label(profile, &profiles),
             profile.email,
-            crate::profiles::status(profile)
+            crate::profiles::status_label(profile)
         );
     }
     Ok(())

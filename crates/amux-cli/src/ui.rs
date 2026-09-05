@@ -42,6 +42,7 @@ async fn run_inner(
     if init::needs_init(&config) {
         init::run_init(&mut config, InitContext::implicit(), false).await?;
     }
+    crate::profiles::remember_selection(&config)?;
 
     let config_dir = config
         .path

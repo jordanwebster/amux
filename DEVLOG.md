@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Bind the fleet to one account at a time.**
+The UI runtime carries a generation on every task, stream and command it
+starts. Selecting another profile consumes the runtime, retires its
+generation and starts a new one on the selected profile's socket from an
+empty model, so an inventory event, session batch, attachment fetch or
+command result the previous account was still delivering is dropped before
+the reducer rather than folded into the account on screen. The new runtime
+takes the selected profile's connector, local host id, subscription status,
+report directory and artifact cache. The switcher reads the installation's
+profile list through the front door, and profile labels and statuses now
+have one implementation shared with the CLI listing. Opening the fleet
+records the selection immediately instead of waiting for the daemon to
+answer, and a panic after a switch reports the profile actually on screen.
+
 2026-09-05 — **Allow embedded profile storage beneath long app roots.**
 Profile allocation enforces Unix and Codex socket lengths only when local
 agents are compiled in. UUID namespaces, private directories and symlink

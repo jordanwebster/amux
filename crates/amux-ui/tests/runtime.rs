@@ -12,7 +12,8 @@ use amux::{AgentIdentifier, ArtifactKind, CreateAgentRequest, claude_io};
 use amux_artifacts::ARTIFACT_SIZE_CAP;
 use amux_ui::{
     AgentPhase, AttachmentClient, AttachmentClientFuture, Attention, Command, DraftAttachment,
-    InputPayload, Model, OpError, OpId, OpOutcome, Runtime, RuntimeOptions, execute_put_then_send,
+    InputPayload, Model, Msg, OpError, OpId, OpOutcome, Runtime, RuntimeOptions,
+    execute_put_then_send,
 };
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -458,4 +459,305 @@ async fn attachments_fetch_and_diff_preserve_typed_runtime_outcomes() {
     installation
         .shutdown(amux::ShutdownReason::UserRequested)
         .await;
+}
+
+/// Switching accounts is not reconnecting: everything the previous profile
+/// was still saying has to be dropped, not folded into the account the user
+/// moved to.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(
+    windows,
+    ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
+)]
+async fn switcher_rejects_late_results() {
+    use amux::installation::FrontDoor;
+    use amux_ui::{LateResult, ProfileDirectory, ServerMsg, StreamMsg};
+
+    let _guard = embedded_server_test_guard().await;
+    let dir = tempdir().unwrap();
+    // The artifact cache reports canonical paths; on macOS the temporary root
+    // is reached through a symlink, so compare against the resolved root.
+    let root = dir.path().canonicalize().unwrap();
+    let installation = Arc::new(socketed_installation().await);
+    let personal = new_profile(&installation, "Personal").await;
+    let work = new_profile(&installation, "Work").await;
+
+    // The switcher reads the directory through the front door. A profile's
+    // own client API knows nothing about its neighbours.
+    let front_socket = installation.root().join("amux.sock");
+    let front = FrontDoor::new(installation.clone(), Some(front_socket.clone()));
+    let front_listener = front.listen().unwrap();
+    let entries = ProfileDirectory::connect(&front_socket)
+        .await
+        .unwrap()
+        .list()
+        .await
+        .unwrap();
+    let entry = |id: amux::ProfileId| {
+        entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .unwrap_or_else(|| panic!("{id:?} is missing from the switcher directory"))
+            .clone()
+    };
+    let personal_entry = entry(personal);
+    let work_entry = entry(work);
+    assert_eq!(personal_entry.label, "Personal");
+    assert_eq!(work_entry.label, "Work");
+    assert!(personal_entry.socket != work_entry.socket);
+
+    let personal_client = installation.client(personal).unwrap();
+    let work_client = installation.client(work).unwrap();
+    let personal_agent = create_test_agent(&personal_client, dir.path()).await;
+    let work_agent = create_test_agent(&work_client, dir.path()).await;
+    let personal_artifact = personal_client
+        .put_artifact(
+            AgentIdentifier::Id(personal_agent.id),
+            ArtifactKind::File,
+            "personal.txt",
+            "text/plain",
+            b"belongs to the personal account".to_vec(),
+        )
+        .await
+        .unwrap();
+    let work_artifact = work_client
+        .put_artifact(
+            AgentIdentifier::Id(work_agent.id),
+            ArtifactKind::File,
+            "work.txt",
+            "text/plain",
+            b"belongs to the work account".to_vec(),
+        )
+        .await
+        .unwrap();
+
+    let opened = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+    let bindings = ProfileBindings::new(&root, opened.clone());
+    let mut runtime = Runtime::start(
+        socket_connector(&personal_entry.socket),
+        bindings.options("personal", false),
+    );
+    wait_for(&mut runtime, "personal synchronization", |model| {
+        model.is_synchronized()
+    })
+    .await;
+    wait_for(&mut runtime, "the personal account's agent", move |model| {
+        model.agent(personal_agent.id).is_some()
+    })
+    .await;
+    assert!(!runtime.model().cloud_subscription_required());
+
+    // Real work for the personal account, left in flight across the switch:
+    // an operation, an attachment fetch, and the inventory event the extra
+    // agent raises. None of it is folded before the switch.
+    let late_command = runtime.dispatch(Command::CreateAgent {
+        host: None,
+        name: "late-personal-agent".to_string(),
+        agent_type: amux::AgentType::TestAgent {
+            command: "cat".to_string(),
+        },
+        working_dir: dir.path().to_path_buf(),
+    });
+    let late_attachment = runtime.dispatch(Command::OpenAttachment {
+        agent: personal_agent.id,
+        id: personal_artifact.id.clone(),
+    });
+    let personal_edge = runtime.shell_edge();
+
+    let mut runtime = runtime.switch(&work_entry, bindings.options("work", true));
+    assert_eq!(runtime.generation(), amux_ui::Generation(1));
+    // A new selection starts from nothing: no agents, not synchronized, no
+    // record of any operation the previous account was running.
+    assert_eq!(runtime.model().agent_count(), 0);
+    assert!(!runtime.model().is_synchronized());
+    assert!(runtime.model().finished_op(late_command).is_none());
+    assert!(runtime.model().finished_op(late_attachment).is_none());
+
+    // The personal account's edge outlives its runtime, exactly as an
+    // in-flight task's does. Every kind of result it can still report has to
+    // be dropped.
+    let late = [
+        Msg::Server(ServerMsg::AgentUpserted {
+            agent: personal_agent.clone(),
+        }),
+        Msg::Stream {
+            agent: personal_agent.id,
+            event: StreamMsg::Opened { truncated: false },
+        },
+        Msg::OpResult {
+            op: late_attachment,
+            outcome: OpOutcome::AttachmentOpened {
+                id: personal_artifact.id.clone(),
+            },
+        },
+        Msg::OpResult {
+            op: late_command,
+            outcome: OpOutcome::AgentCreated {
+                agent: personal_agent.clone(),
+            },
+        },
+    ];
+    for msg in late {
+        personal_edge.report(msg).await.unwrap();
+    }
+
+    wait_for(&mut runtime, "the work account's agent", move |model| {
+        model.agent(work_agent.id).is_some()
+    })
+    .await;
+    for _ in 0..40 {
+        runtime.drain();
+        if runtime.discarded_late_results() >= 4 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    assert_eq!(
+        runtime.discarded_late_kinds(),
+        vec![
+            LateResult::Inventory,
+            LateResult::Session,
+            LateResult::Attachment,
+            LateResult::Command,
+        ],
+        "every shell edge of the personal account reported after the switch"
+    );
+    assert!(
+        runtime.model().agent(personal_agent.id).is_none(),
+        "the personal account's agent reached the work account's model"
+    );
+    assert!(
+        runtime.model().stream(personal_agent.id).is_none(),
+        "the personal account's session reached the work account's model"
+    );
+    assert!(runtime.model().finished_op(late_command).is_none());
+    assert!(runtime.model().finished_op(late_attachment).is_none());
+    assert!(
+        runtime
+            .model()
+            .agents()
+            .all(|card| card.agent.name.as_deref() != Some("late-personal-agent")),
+        "an agent created for the personal account appeared in the work fleet"
+    );
+
+    // The new runtime is bound to the selected profile throughout, not only
+    // in its connection: its subscription status, report directory and
+    // artifact cache are the work account's.
+    assert!(runtime.model().cloud_subscription_required());
+    let report = runtime.report(amux_ui::DumpReason::UserRequested).unwrap();
+    assert!(
+        report.starts_with(root.join("work").join("reports")),
+        "report landed outside the work account: {}",
+        report.display()
+    );
+    let work_open = runtime.dispatch(Command::OpenAttachment {
+        agent: work_agent.id,
+        id: work_artifact.id.clone(),
+    });
+    wait_for(&mut runtime, "the work account's attachment", move |model| {
+        model.finished_op(work_open).is_some()
+    })
+    .await;
+    let cached = opened.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        cached.starts_with(root.join("work").join("cache")),
+        "attachment cached outside the work account: {}",
+        cached.display()
+    );
+
+    drop(runtime);
+    front_listener.stop().await;
+    drop(front);
+    Arc::try_unwrap(installation)
+        .ok()
+        .expect("the front door released the installation")
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
+}
+
+#[cfg(unix)]
+/// Per-profile runtime bindings, laid out under one root so a report or a
+/// cached attachment names the profile it belongs to.
+struct ProfileBindings {
+    root: PathBuf,
+    opened: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+#[cfg(unix)]
+impl ProfileBindings {
+    fn new(root: &Path, opened: Arc<Mutex<Vec<PathBuf>>>) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            opened,
+        }
+    }
+
+    fn options(&self, profile: &str, subscription_required: bool) -> RuntimeOptions {
+        let opened = self.opened.clone();
+        let profile_root = self.root.join(profile);
+        std::fs::create_dir_all(profile_root.join("reports")).unwrap();
+        RuntimeOptions {
+            local_host_id: None,
+            report_dir: Some(profile_root.join("reports")),
+            artifact_cache: Some(profile_root.join("cache")),
+            artifact_cache_bound: 1024 * 1024,
+            subscription_status_provider: Some(Arc::new(move || subscription_required)),
+            attachment_opener: Arc::new(move |_meta: &amux_artifacts::ArtifactMeta, path: &Path| {
+                opened.lock().unwrap().push(path.to_path_buf());
+                Ok(())
+            }),
+            ..RuntimeOptions::default()
+        }
+    }
+}
+
+#[cfg(unix)]
+fn socket_connector(socket: &Path) -> amux_ui::Connector {
+    let socket = socket.to_path_buf();
+    Box::new(move || {
+        let socket = socket.clone();
+        Box::pin(async move {
+            amux::Client::connect_socket(&socket)
+                .await
+                .map_err(|error| amux_ui::ConnectFailure {
+                    message: error.to_string(),
+                    auth_required: false,
+                    subscription_required: false,
+                })
+        })
+    })
+}
+
+#[cfg(unix)]
+async fn socketed_installation() -> amux::Installation {
+    amux::Installation::open(amux::InstallationOptions {
+        root: amux::InstallationRoot::InMemory,
+        settings: amux::InstallationSettings {
+            host_name: "ui-switcher-test".into(),
+            prevent_idle_sleep: Some(false),
+            keybinds: Default::default(),
+            ui: Default::default(),
+            keymaps_dir: PathBuf::new(),
+            minimum_client_versions: Default::default(),
+            update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
+            status_reporters: Default::default(),
+        },
+        listeners: amux::Listeners::Sockets,
+        credentials: amux::CredentialSource::ProfileFiles,
+        identity_http: Default::default(),
+    })
+    .await
+    .unwrap()
+}
+
+#[cfg(unix)]
+async fn new_profile(installation: &amux::Installation, label: &str) -> amux::ProfileId {
+    installation
+        .create(amux::OperationId::new(), Some(label.to_string()))
+        .await
+        .unwrap()
+        .record
+        .id
 }
