@@ -2188,7 +2188,7 @@ impl ClientService {
     }
 
     async fn resume_local_agents(&self) -> Result<(u64, u64), ProtocolError> {
-        let _operation = self.pairing_trust.trust_commit_lock.lock().await;
+        let _operation = self.pairing_trust.trust_commit_lock.read().await;
         self.pairing_trust.trust_commit_lock.check()?;
         let (state_path, is_cloud_server) = {
             let state = self.server_state.read().await;
@@ -2200,7 +2200,11 @@ impl ClientService {
             });
         }
         match self.local_agents.host() {
-            Some(host) => host.resume(state_path).await,
+            Some(host) => {
+                drop(_operation);
+                host.resume(state_path, &self.pairing_trust.trust_commit_lock)
+                    .await
+            }
             None => Err(ProtocolError::FailedPrecondition {
                 message: "local agent support is disabled".to_string(),
             }),

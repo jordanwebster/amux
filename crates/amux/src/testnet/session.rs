@@ -34,6 +34,28 @@ fn assert_permission_denied(rpc: &str, result: Result<(), ClientError>) {
 }
 
 impl Daemon {
+    /// Hold every queue slot of an echo PTY until the returned permits drop.
+    pub async fn hold_echo_input(
+        &self,
+        agent: &Agent,
+    ) -> Vec<tokio::sync::mpsc::OwnedPermit<Vec<u8>>> {
+        use crate::agents::{Plane, Protocol, RawPtyTarget};
+
+        let parts = self.try_parts().await.expect("daemon is running");
+        let pty = {
+            let state = parts.agent_host.state().read().await;
+            match state.local_agents[&agent.id]
+                .session
+                .plane(Protocol::TestEchoV1)
+                .unwrap()
+            {
+                Plane::Terminal(RawPtyTarget::Existing(pty)) => pty,
+                _ => panic!("expected echo PTY"),
+            }
+        };
+        pty.hold_echo_input().await
+    }
+
     /// Spawns a local echo (test) agent named `name` through this daemon's
     /// local-admin `ClientService`, exactly as the CLI would. The agent
     /// echoes session input back as output. Returns once the agent is in the
@@ -534,7 +556,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' did not restart", self.name()));
         let (resumed, failed) = resumed_parts
             .agent_host
-            .resume(state_path)
+            .resume(state_path, &crate::installation::OperationGate::default())
             .await
             .expect("resume suspended agents");
         assert_eq!((resumed, failed), (2, 0));

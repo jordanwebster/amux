@@ -351,6 +351,7 @@ pub(super) async fn send_session_input(
     host: &PtyAgentHost,
     request: SendInputRequest,
     attachment_owner: Option<Arc<Owner>>,
+    operation: tokio::sync::RwLockReadGuard<'_, ()>,
 ) -> Result<(), ProtocolError> {
     let pins = request
         .pin
@@ -364,8 +365,14 @@ pub(super) async fn send_session_input(
     match request.protocol {
         Protocol::TerminalV1 => {
             reject_raw_attachments(attachment_owner.as_deref(), &pins, request.protocol)?;
-            send_raw_session_input(host, request.agent_id, Protocol::TerminalV1, request.event)
-                .await
+            send_raw_session_input(
+                host,
+                request.agent_id,
+                Protocol::TerminalV1,
+                request.event,
+                operation,
+            )
+            .await
         }
         Protocol::ClaudePtyTranscriptV1 => {
             send_structured_session_input(
@@ -374,6 +381,7 @@ pub(super) async fn send_session_input(
                 request.event,
                 attachment_owner.as_deref(),
                 &pins,
+                operation,
             )
             .await
         }
@@ -407,6 +415,7 @@ pub(super) async fn send_session_input(
                 *text = prepared.text;
                 *image_blocks = prepared.image_blocks;
             }
+            drop(operation);
             target
                 .send(StructuredInputEvent::ClaudeSdk { input_id, input })
                 .await
@@ -463,6 +472,7 @@ pub(super) async fn send_session_input(
                             message: format!("failed to encode materialised Codex input: {error}"),
                         })?;
                 }
+                drop(operation);
                 target
                     .send(StructuredInputEvent::Codex { input_id, input })
                     .await
@@ -477,8 +487,14 @@ pub(super) async fn send_session_input(
         }
         Protocol::TestEchoV1 => {
             reject_raw_attachments(attachment_owner.as_deref(), &pins, request.protocol)?;
-            send_raw_session_input(host, request.agent_id, Protocol::TestEchoV1, request.event)
-                .await
+            send_raw_session_input(
+                host,
+                request.agent_id,
+                Protocol::TestEchoV1,
+                request.event,
+                operation,
+            )
+            .await
         }
     }
 }
@@ -510,6 +526,7 @@ async fn send_raw_session_input(
     agent_id: Uuid,
     protocol: Protocol,
     event: SessionInputEvent,
+    operation: tokio::sync::RwLockReadGuard<'_, ()>,
 ) -> Result<(), ProtocolError> {
     let pty = match raw_plane_target(host, agent_id, protocol).await? {
         RawPtyTarget::Existing(pty) => pty,
@@ -522,6 +539,7 @@ async fn send_raw_session_input(
                 })?
         }
     };
+    drop(operation);
     match event {
         SessionInputEvent::Input { payload, .. } => {
             pty.send_input(payload)
@@ -551,6 +569,7 @@ async fn send_structured_session_input(
     event: SessionInputEvent,
     attachment_owner: Option<&Owner>,
     pins: &[ArtifactId],
+    operation: tokio::sync::RwLockReadGuard<'_, ()>,
 ) -> Result<(), ProtocolError> {
     let SessionInputEvent::Input { input_id, payload } = event else {
         return Err(ProtocolError::InvalidArgument {
@@ -563,7 +582,16 @@ async fn send_structured_session_input(
     let mut input = claude_io::decode_pty_transcript_v1_input(&payload)?;
     let (log, target) =
         structured_plane_target(host, agent_id, Protocol::ClaudePtyTranscriptV1).await?;
-    send_claude_pty_to_target(log, target, input_id, &mut input, attachment_owner, pins).await
+    send_claude_pty_to_target(
+        log,
+        target,
+        input_id,
+        &mut input,
+        attachment_owner,
+        pins,
+        operation,
+    )
+    .await
 }
 
 async fn send_claude_pty_to_target(
@@ -573,6 +601,7 @@ async fn send_claude_pty_to_target(
     input: &mut claude_io::ClaudePtyTranscriptV1Input,
     attachment_owner: Option<&Owner>,
     pins: &[ArtifactId],
+    operation: tokio::sync::RwLockReadGuard<'_, ()>,
 ) -> Result<(), ProtocolError> {
     if let Some(owner) = attachment_owner {
         let current_seq = log.current_seq().await;
@@ -599,6 +628,7 @@ async fn send_claude_pty_to_target(
         // provider delivery. Advance the provider-facing sequence across it.
         input.expected_seq = log.current_seq().await;
     }
+    drop(operation);
     target
         .send(StructuredInputEvent::ClaudePty {
             client_seq: input.expected_seq,

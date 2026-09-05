@@ -559,6 +559,25 @@ pub struct RetainedProfileWork {
 }
 
 impl RetainedProfileWork {
+    /// Deliver through the retained production service even after its socket closes.
+    pub async fn send_echo_input(
+        &self,
+        agent: &crate::Agent,
+        payload: &[u8],
+    ) -> Result<(), crate::ProtocolError> {
+        self.agent
+            .send_input(crate::agents::SendInputRequest {
+                agent_id: agent.id,
+                protocol: crate::agents::Protocol::TestEchoV1,
+                event: crate::agents::SessionInputEvent::Input {
+                    input_id: vec![1],
+                    payload: payload.to_vec(),
+                },
+                pin: Vec::new(),
+            })
+            .await
+    }
+
     pub async fn diff(&self, agent: &crate::Agent) -> Result<(), tonic::Status> {
         use wire::agent_service_server::AgentService;
 

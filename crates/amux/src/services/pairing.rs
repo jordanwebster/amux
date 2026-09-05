@@ -12,7 +12,7 @@ use futures_util::{Stream, stream};
 use prost::Message as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{aead, digest, hkdf, hmac};
-use tokio::sync::{OwnedMutexGuard, mpsc};
+use tokio::sync::{OwnedRwLockWriteGuard, mpsc};
 use tonic::{Code, Status};
 
 use crate::connection::ConnectionManager;
@@ -656,7 +656,7 @@ struct PeerTrustCommitGuard {
     staged: Option<TrustStore>,
     outcome: TrustStorePairingUpdate,
     finish_connection: bool,
-    trust_commit_lock: Option<OwnedMutexGuard<()>>,
+    trust_commit_lock: Option<OwnedRwLockWriteGuard<()>>,
 }
 
 struct PeerTrustCommitState {
@@ -687,7 +687,7 @@ impl PeerTrustCommitGuard {
         context: PeerTrustCommitContext,
         host_id: HostId,
         state: PeerTrustCommitState,
-        trust_commit_lock: OwnedMutexGuard<()>,
+        trust_commit_lock: OwnedRwLockWriteGuard<()>,
     ) -> Self {
         Self {
             trust_store: context.trust_store,

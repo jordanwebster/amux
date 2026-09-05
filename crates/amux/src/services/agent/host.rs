@@ -42,6 +42,7 @@ pub(crate) struct PtyAgentHost {
     state: SharedAgentServiceState,
     event_tx: mpsc::Sender<SessionEvent>,
     host_id: Uuid,
+    resume_lock: tokio::sync::Mutex<()>,
 }
 
 impl PtyAgentHost {
@@ -86,6 +87,7 @@ impl PtyAgentHost {
             state,
             event_tx,
             host_id,
+            resume_lock: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -272,7 +274,11 @@ impl LocalAgentHost for PtyAgentHost {
             .ok_or(ProtocolError::NoAgentFound)
     }
 
-    async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError> {
+    async fn create(
+        &self,
+        request: CreateAgentRpcRequest,
+        operations: &crate::installation::OperationGate,
+    ) -> Result<Agent, ProtocolError> {
         let req = create_rpc_to_domain_request(request.agent_id, request)?;
         if matches!(req.agent_type, AgentType::Codex { .. }) {
             #[cfg(unix)]
@@ -289,10 +295,16 @@ impl LocalAgentHost for PtyAgentHost {
                 message: "Codex agents are supported only on Unix platforms".to_string(),
             });
         }
-        create_agent_record(self.state(), self.event_tx(), req, self.host_id())
-            .await
-            .map(Into::into)
-            .map_err(create_error_to_protocol)
+        create_agent_record(
+            self.state(),
+            self.event_tx(),
+            req,
+            self.host_id(),
+            operations,
+        )
+        .await
+        .map(Into::into)
+        .map_err(create_error_to_protocol)
     }
 
     async fn spawn_inheritance(&self, agent_id: Uuid) -> Result<SpawnInheritance, ProtocolError> {
@@ -384,8 +396,9 @@ impl LocalAgentHost for PtyAgentHost {
         &self,
         request: SendInputRequest,
         attachment_owner: Option<Arc<amux_artifacts::Owner>>,
+        operation: tokio::sync::RwLockReadGuard<'_, ()>,
     ) -> Result<(), ProtocolError> {
-        session_rpc::send_session_input(self, request, attachment_owner).await
+        session_rpc::send_session_input(self, request, attachment_owner, operation).await
     }
 
     async fn attachment_log(
@@ -499,18 +512,29 @@ impl LocalAgentHost for PtyAgentHost {
         result
     }
 
-    async fn resume(&self, state_path: PathBuf) -> Result<(u64, u64), ProtocolError> {
+    async fn resume(
+        &self,
+        state_path: PathBuf,
+        operations: &crate::installation::OperationGate,
+    ) -> Result<(u64, u64), ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
+        let operation = operations.read().await;
+        operations.check()?;
         let suspended =
             suspend::load_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to load state: {error}"),
             })?;
+        drop(operation);
         let result = resume_agents(
             self.state(),
             self.event_tx(),
             suspended.agents,
             self.host_id(),
+            operations,
         )
         .await;
+        let _operation = operations.read().await;
+        operations.check()?;
         if result.failed_agents.is_empty() {
             suspend::remove_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to remove state: {error}"),
@@ -644,6 +668,7 @@ fn delete_local_agent_and_emit_session_close(
 
 fn create_error_to_protocol(error: CreateAgentError) -> ProtocolError {
     match error {
+        CreateAgentError::Unavailable(error) => error,
         err @ CreateAgentError::LimitReached { .. } => ProtocolError::ResourceExhausted {
             message: err.to_string(),
         },

@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Keep blocked agent input independent of profile lifecycle.**
+Profile storage work now takes shared access while lifecycle operations and trust
+commits remain exclusive. Input releases its guard after attachment preparation
+and before PTY or provider delivery; a slow agent cannot hold up another agent,
+a Diff, pause, logout, deletion or shutdown. Diff keeps its shared guard until
+completion so deletion still drains accepted artifact writes. Creation and resume
+release the profile gate before startup, recheck closure before preparing storage,
+and register sessions atomically with host shutdown. Resume attempts remain
+serialized per host, and cannot rewrite suspended state after profile closure.
+Regression tests hold a production echo PTY queue full while other calls finish,
+and close profiles during create/resume preparation without resurrecting state.
+
 2026-09-05 — **Prove independent profile lifecycle and drain artifact work before deletion.**
 Lifecycle specs exercise logout, persistent pause, repeated resume, independent
 authentication/subscription/version failures, ordered directory watches and full

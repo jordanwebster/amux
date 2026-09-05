@@ -140,6 +140,8 @@ pub(super) fn parent_envelope(
 
 #[derive(Debug, Error)]
 pub(crate) enum CreateAgentError {
+    #[error("{0}")]
+    Unavailable(crate::protocol::ProtocolError),
     #[error("agent limit reached ({max} max)")]
     LimitReached { max: usize },
     #[error("Agent already exists: {0}")]
@@ -155,6 +157,7 @@ pub(crate) async fn create_agent_record(
     event_tx: &mpsc::Sender<SessionEvent>,
     req: crate::agents::CreateAgentRequest,
     host_id: Uuid,
+    operations: &crate::installation::OperationGate,
 ) -> std::result::Result<AgentRecord, CreateAgentError> {
     let agent_type = req.agent_type.clone();
     let args = req.args.clone();
@@ -178,6 +181,8 @@ pub(crate) async fn create_agent_record(
     };
 
     let (agent_count, info) = {
+        let operation = operations.read().await;
+        operations.check().map_err(CreateAgentError::Unavailable)?;
         let mut state = agent_state.write().await;
 
         if state.local_agents.len() >= MAX_LOCAL_AGENTS {
@@ -198,6 +203,9 @@ pub(crate) async fn create_agent_record(
 
         let mut session = new_agent(&req, &spawn_deps)
             .map_err(|error| CreateAgentError::Start(error.to_string()))?;
+        // The registry lock keeps shutdown from missing this session once
+        // storage preparation is complete and the lifecycle gate is released.
+        drop(operation);
         let exit_handle = session.start(event_tx).map_err(|error| {
             CreateAgentError::Start(format!("failed to start local agent {agent_id}: {error}"))
         })?;
@@ -369,6 +377,7 @@ pub(crate) async fn resume_agents(
     event_tx: &mpsc::Sender<SessionEvent>,
     suspended: Vec<SuspendedAgent>,
     host_id: Uuid,
+    operations: &crate::installation::OperationGate,
 ) -> ResumeAgentsResult {
     let mut resumed = 0usize;
     let mut failed = 0usize;
@@ -387,13 +396,22 @@ pub(crate) async fn resume_agents(
         } else {
             deps.clone()
         };
+        let operation = operations.read().await;
+        if operations.check().is_err() {
+            failed += 1;
+            failed_agents.push(original);
+            continue;
+        }
+        // Keep start and registration atomic with shutdown, without holding
+        // the profile gate through agent startup.
+        let mut state = agent_state.write().await;
         let mut session = agent_from_suspended(sa, &spawn_deps);
+        drop(operation);
         match session.start(event_tx) {
             Ok(exit_handle) => {
                 let info = session.to_agent(host_id);
                 let mut session = Some(session);
                 let registered = {
-                    let mut state = agent_state.write().await;
                     let registration = if state.contains_agent_id(&agent_id) {
                         Err(format!("Agent already exists: {agent_id}"))
                     } else if let Some(name) = &info.name {
@@ -435,6 +453,7 @@ pub(crate) async fn resume_agents(
                     }
                 };
 
+                drop(state);
                 if !registered {
                     if let Some(session) = session {
                         session.stop(StopPolicy::Interrupt).await;
@@ -700,7 +719,14 @@ mod tests {
             working_on: None,
         };
 
-        let result = resume_agents(&agent_state, &event_tx, vec![suspended], host_id).await;
+        let result = resume_agents(
+            &agent_state,
+            &event_tx,
+            vec![suspended],
+            host_id,
+            &crate::installation::OperationGate::default(),
+        )
+        .await;
 
         assert_eq!(result.resumed_count, 0);
         assert_eq!(result.failed_count, 1);

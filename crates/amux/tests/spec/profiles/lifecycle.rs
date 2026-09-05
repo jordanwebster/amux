@@ -387,3 +387,102 @@ async fn delete_closes_every_transport_and_late_service_work_cannot_recreate_the
         "Delete drains an artifact computation that already resolved its owner, closes accepted Unix and in-process subscriptions plus LAN and cloud sessions, and removes the device directory and socket. A held refresh and retained pairing, artifact put/get/diff, pinned input and replay requests all fail after deletion without recreating files. Bob's original link and open session continue working."
     );
 }
+
+#[tokio::test]
+async fn blocked_agent_input_leaves_other_input_diff_and_profile_lifecycle_available() {
+    use std::time::Duration;
+
+    use tokio::time::timeout;
+
+    let checkout = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(checkout.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let output = std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=amux test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "base",
+        ])
+        .current_dir(checkout.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    std::fs::write(checkout.path().join("note.txt"), "concurrent diff\n").unwrap();
+    for action in ["pause", "logout", "delete", "shutdown"] {
+        let net = TestNet::builder()
+            .cloud()
+            .installation("laptop")
+            .profile("personal")
+            .cloud_user("alice")
+            .start()
+            .await;
+        let laptop = net.installation("laptop");
+        let profile = laptop.profile("personal");
+        let blocked_agent = profile
+            .spawn_echo_agent_in("blocked", checkout.path())
+            .await;
+        let responsive_agent = profile
+            .spawn_echo_agent_in("responsive", checkout.path())
+            .await;
+        let mut responsive = profile.attach(&profile, "responsive").await;
+        let mut blocked_session = profile.attach(&profile, "blocked").await;
+        let held_queue = profile.hold_echo_input(&blocked_agent).await;
+        let retained = profile.retain_work().await;
+        let mut blocked = Box::pin(retained.send_echo_input(&blocked_agent, b"held input"));
+        assert!(futures_util::poll!(blocked.as_mut()).is_pending());
+
+        // Keep an accepted Diff pending too: service reads must share the gate.
+        let mut diff = Box::pin(retained.diff(&responsive_agent));
+        assert!(futures_util::poll!(diff.as_mut()).is_pending());
+        timeout(Duration::from_secs(5), async {
+            responsive.send("independent input").await;
+            responsive.expect_output("independent input").await;
+            diff.await.unwrap();
+        })
+        .await
+        .expect("input and Diff must progress past a blocked PTY write");
+        assert!(futures_util::poll!(blocked.as_mut()).is_pending());
+
+        timeout(Duration::from_secs(5), async {
+            match action {
+                "pause" => {
+                    laptop.pause("personal").await;
+                }
+                "logout" => {
+                    laptop.logout("personal").await;
+                }
+                "delete" => laptop.delete("personal").await,
+                "shutdown" => laptop.stop().await,
+                _ => unreachable!(),
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{action} waited for a blocked PTY write"));
+        assert!(futures_util::poll!(blocked.as_mut()).is_pending());
+        if matches!(action, "pause" | "logout") {
+            drop(held_queue);
+            timeout(Duration::from_secs(5), blocked)
+                .await
+                .unwrap()
+                .unwrap();
+            blocked_session.expect_output("held input").await;
+        } else {
+            assert!(matches!(
+                retained.send_echo_input(&responsive_agent, b"late").await,
+                Err(ProtocolError::FailedPrecondition { .. })
+            ));
+        }
+        println!(
+            "With one agent's production PTY input queue blocked, another agent echoes, an accepted Diff completes, and {action} finishes without waiting for that input. Closed profiles reject retained input calls."
+        );
+    }
+}

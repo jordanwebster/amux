@@ -1,23 +1,28 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::sync::{Mutex, MutexGuard, OwnedMutexGuard};
+use tokio::sync::{OwnedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-/// Serializes profile lifecycle with agent mutations and trust commits. Closing
-/// under the lock prevents queued work from recreating a deleted device's state.
+/// Service work shares access to profile storage; lifecycle and trust commits
+/// take exclusive access. Closing under the write lock drains accepted storage
+/// work and prevents queued work from recreating a deleted device's state.
 #[derive(Default)]
 pub(crate) struct OperationGate {
-    mutex: Arc<Mutex<()>>,
+    lock: Arc<RwLock<()>>,
     closed: AtomicBool,
 }
 
 impl OperationGate {
-    pub(crate) async fn lock(&self) -> MutexGuard<'_, ()> {
-        self.mutex.lock().await
+    pub(crate) async fn lock(&self) -> RwLockWriteGuard<'_, ()> {
+        self.lock.write().await
     }
 
-    pub(crate) async fn lock_owned(self: Arc<Self>) -> OwnedMutexGuard<()> {
-        self.mutex.clone().lock_owned().await
+    pub(crate) async fn lock_owned(self: Arc<Self>) -> OwnedRwLockWriteGuard<()> {
+        self.lock.clone().write_owned().await
+    }
+
+    pub(crate) async fn read(&self) -> RwLockReadGuard<'_, ()> {
+        self.lock.read().await
     }
 
     pub(crate) fn close(&self) {
