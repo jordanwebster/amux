@@ -42,7 +42,6 @@ run = "cargo clippy --workspace --all-targets -- -D warnings"
 # workspace build and would compile a second copy of every shared crate.
 [task.spec]
 run = 'scripts/spec-test.sh "$@"'
-needs = ["test-recipes"]
 
 # Regenerates the committed protobuf code (crates/amux/src/protocol/generated)
 # after a proto change. Not a build step: the output is committed, and CI

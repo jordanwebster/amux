@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Test recipes return Cargo's result directly.**
+Removed the Python output guard and its result-parsing checks. Empty test
+selections again retain Cargo's normal successful exit status; the recipes
+no longer interpret human-readable test summaries. The provider fixture
+corrections and explicit Cargo target selection remain. Four lightweight
+argument-forwarding checks continue to cover workspace target selection.
+
 2026-09-06 — **Empty test selections fail instead of reporting a false success.**
 The workspace and spec recipes share a result guard that forwards Cargo's
 output and requires at least one executed Rust test across all selected

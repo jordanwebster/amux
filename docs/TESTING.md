@@ -26,16 +26,8 @@ starting. Select a target when investigating one component. Target selection
 keeps `--workspace`; selecting a package with `-p` can change feature
 unification and compile a second dependency graph.
 
-Both test recipes require at least one executed Rust test across the whole
-run. A filter that matches nothing, or selects only ignored tests, fails;
-unrelated harnesses may still report zero tests. Cargo failures retain their
-exit status. Help, `--no-run`, and `-- --list` remain informational commands.
-The guard reads standard Rust test summaries; custom live suites use their
-own entry points.
-
-Run `wt run test-recipes` to check argument forwarding and the result guard
-without compiling. These checks also run automatically before `wt test` and
-`wt run spec`.
+Run `wt run test-recipes` to check argument forwarding without compiling.
+These checks also run automatically before `wt test`.
 
 ## Choose the boundary the assertion needs
 
