@@ -67,6 +67,9 @@ needs = ["build"]
 run = 'timeout 3600 e2e-runner testnet "$@"'
 needs = ["build"]
 
+[task.testnet-smoke]
+run = 'scripts/workspace-test.sh testnet_ -- --nocapture --test-threads=1'
+
 # This checkout's daemon. A resource: `wt remove` stops it.
 [task.daemon]
 tied_to = "tree"

@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Exercise the local test network with one smoke recipe.**
+`wt run testnet-smoke` runs the bounded workspace testnet suite serially,
+capturing actual subprocess readiness, every control verb, scripted Claude
+prompt and permission observations, and strict Codex replay verdicts. The
+network and Claude journeys now also check that relay and control sockets
+refuse connections after shutdown. Subprocess lifecycle checks print their
+successful exit, socket rebind and temporary-state cleanup results. The
+testnet guide documents the recipe, topology declarations and readiness
+fields alongside the control and provider script formats.
+
 2026-09-05 — **Run Codex recordings through the relay and real daemon backend.**
 Topologies now accept verified Codex recordings. Recorded initialization and
 thread creation use the existing SDK transport; attached clients supply all

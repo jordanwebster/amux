@@ -50,6 +50,7 @@ fn lifecycle(signal: bool) {
         .expect("readiness within 30 seconds");
     assert!(start.elapsed() < Duration::from_secs(30));
     let ready: serde_json::Value = serde_json::from_str(&line).expect("one readiness JSON line");
+    eprintln!("process readiness {}", line.trim_end());
     let relay: SocketAddr = ready["relay"].as_str().unwrap().parse().unwrap();
     let control: SocketAddr = ready["control"].as_str().unwrap().parse().unwrap();
     assert!(relay.ip().is_loopback() && control.ip().is_loopback());
@@ -125,6 +126,10 @@ fn lifecycle(signal: bool) {
     assert!(
         std::fs::read_dir(root.path()).unwrap().next().is_none(),
         "runner removes all temporary state"
+    );
+    eprintln!(
+        "{} cleanup verified: process exited successfully; relay {relay} and control {control} refuse connections and can be rebound; temporary state removed",
+        if signal { "SIGTERM" } else { "Shutdown" }
     );
 }
 

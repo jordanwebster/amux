@@ -894,6 +894,9 @@ mod tests {
         };
         let (result, ()) = tokio::join!(server, exercise);
         result.unwrap();
+        assert!(TcpStream::connect(relay).await.is_err());
+        assert!(TcpStream::connect(address).await.is_err());
+        eprintln!("Network control cleanup verified: relay and control refuse connections");
     }
 
     #[tokio::test]

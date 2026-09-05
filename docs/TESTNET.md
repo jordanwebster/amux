@@ -1,10 +1,57 @@
 # Local test networks
 
+Run the offline smoke suite with:
+
+```sh
+timeout 900 wt run testnet-smoke
+```
+
+The recipe runs the workspace's `testnet_` tests serially and prints their
+control requests, replies and projected transcripts. It starts the runner as
+a subprocess from a declared topology, checks network controls through
+independent clients, sends a scripted Claude prompt and permission answer
+through the relay using the production UI runtime, and verifies a strict
+Codex recording. Shutdown and SIGTERM must both exit successfully, release
+the relay and control listeners so they can be rebound, and remove temporary
+state. The network and provider journeys also assert that their sockets
+refuse connections after shutdown. No provider executable or cloud account
+is needed. The recipe uses the normal workspace build and its 900-second
+test timeout.
+
+## Topology and readiness
+
 Start the debug runner with a topology file:
 
 ```sh
 timeout 3600 wt run testnet -- serve --topology e2e-tests/topologies/two-hosts.json
 ```
+
+A topology is a JSON object with four required lists. For example,
+`e2e-tests/topologies/two-hosts.json` contains:
+
+```json
+{
+  "users": ["personal", "work", "unattached"],
+  "daemons": [
+    {"name": "laptop", "user": "personal", "repository_roots": ["../.."]},
+    {"name": "desktop", "user": "personal", "repository_roots": ["../.."]}
+  ],
+  "paired": [["laptop", "desktop", "Cloud"]],
+  "agents": [
+    {"name": "helper", "daemon": "desktop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}}
+  ]
+}
+```
+
+User labels are unique and each daemon names a declared user. Pairings name
+two distinct daemons and use `Cloud` or `Tcp`; cloud pairings must share a
+user. Daemon and agent names are unique within their lists and may contain
+ASCII letters, digits, hyphens, underscores and periods, except `.` or `..`.
+Each agent names its daemon and either a Claude script or a Codex recording.
+All directory, script and recording paths resolve relative to the topology
+file; directories must
+exist. Invalid declarations fail before network startup. Empty lists are
+allowed, including users without a daemon.
 
 The runner starts real daemons and a loopback relay with isolated identities,
 trust stores and temporary data directories. The first and only stdout line
@@ -12,6 +59,15 @@ is JSON containing `relay`, `control`, per-user bearer credentials, daemon
 identities and agent identities. Readiness follows daemon attachment and the
 declared pairings. A cold workspace build happens before the 30-second
 readiness deadline begins.
+
+Each user entry has `label`, `user_id` (UUID) and `token`. Each daemon entry
+has `name`, `host_id` (UUID) and `fingerprint` (64 hexadecimal SHA-256 digits
+of its public key). Each agent entry has `name`, `daemon` and `agent_id`
+(UUID). Both socket addresses use `127.0.0.1` with an ephemeral port. Tokens
+belong only to this isolated relay instance. Diagnostic output goes to
+stderr, leaving stdout available for a driver to parse.
+
+## Control protocol
 
 Send one JSON value per line to the TCP `control` address. Multiple clients
 may connect; operations execute in arrival order. Each request returns one

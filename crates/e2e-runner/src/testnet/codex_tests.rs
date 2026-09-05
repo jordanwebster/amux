@@ -196,6 +196,7 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
     result.unwrap();
     assert!(TcpStream::connect(ready.relay).await.is_err());
     assert!(TcpStream::connect(ready.control).await.is_err());
+    eprintln!("Codex journey cleanup verified: relay and control refuse connections");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -276,4 +276,7 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
     };
     let (result, ()) = tokio::join!(server, exercise);
     result.unwrap();
+    assert!(TcpStream::connect(ready.relay).await.is_err());
+    assert!(TcpStream::connect(ready.control).await.is_err());
+    eprintln!("Claude journey cleanup verified: relay and control refuse connections");
 }
