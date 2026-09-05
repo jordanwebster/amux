@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Initialize agent storage on a fresh installation.** Agent
+dependencies create the data directory before canonicalizing its path. A clean
+Linux runner exposed that construction previously depended on a directory left
+by an earlier daemon launch. Tests cover missing parent directories, absolute
+artifact paths, and refusal to replace an existing file. Startup diagnostics
+now identify host resources instead of attributing every failure to a socket.
+
+2026-09-05 — **Keep attachment opening warning-free on Linux and Windows.**
+The metadata parameter is only needed by macOS to select Preview. Mark it
+as intentionally unused on the other platforms so warnings-as-errors builds
+retain the same platform opener behavior. The first branch CI run exposed
+this existing platform-specific warning.
+
 2026-09-05 — **Gate native iOS work on the pushed commit.** The macOS iOS job
 pins Xcode 26.6 and checks the iOS 26.5 runtime and iPhone 17 Pro device type.
 It installs a verified wt release and XcodeGen, then runs the bounded iOS

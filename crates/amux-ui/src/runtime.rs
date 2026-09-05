@@ -967,7 +967,7 @@ fn open_with_platform_viewer(meta: &ArtifactMeta, path: &Path) -> io::Result<()>
     Ok(())
 }
 
-fn platform_open_command(meta: &ArtifactMeta, path: &Path) -> io::Result<std::process::Command> {
+fn platform_open_command(_meta: &ArtifactMeta, path: &Path) -> io::Result<std::process::Command> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = std::process::Command::new("open");
@@ -975,7 +975,7 @@ fn platform_open_command(meta: &ArtifactMeta, path: &Path) -> io::Result<std::pr
         // so LaunchServices classifies even valid PNG bytes as public.data.
         // Preview identifies every image format accepted by the composer from
         // the bytes themselves once it is selected explicitly.
-        if meta.kind == ArtifactKind::Image {
+        if _meta.kind == ArtifactKind::Image {
             command.args(["-a", "Preview"]);
         }
         command

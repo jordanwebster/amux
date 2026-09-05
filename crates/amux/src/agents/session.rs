@@ -302,6 +302,7 @@ impl AgentDeps {
     ) -> io::Result<Self> {
         #[cfg(not(unix))]
         let _ = codex_private_socket;
+        std::fs::create_dir_all(&data_dir)?;
         Ok(Self {
             data_dir: std::fs::canonicalize(data_dir)?,
             runtime_dir,
@@ -585,6 +586,41 @@ mod tests {
     use super::*;
     use crate::agents::{AgentType, CreateAgentRequest};
     use crate::suspend::SuspendedLocalAgentNameSource;
+
+    #[test]
+    fn agent_deps_create_missing_data_directory_before_canonicalizing() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("fresh/data");
+        let deps = AgentDeps::new(
+            data_dir.clone(),
+            dir.path().to_path_buf(),
+            dir.path().join("codex.sock"),
+            mcp_launch_route_for_tests(Uuid::new_v4()),
+            dir.path().join("keymaps"),
+        )
+        .unwrap();
+        assert!(data_dir.is_dir());
+        assert_eq!(deps.data_dir, data_dir.canonicalize().unwrap());
+        assert!(deps.artifact_root(Uuid::new_v4()).is_absolute());
+    }
+
+    #[test]
+    fn agent_deps_reject_a_file_at_the_data_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        std::fs::write(&data_dir, "keep this file").unwrap();
+        assert!(
+            AgentDeps::new(
+                data_dir.clone(),
+                dir.path().to_path_buf(),
+                dir.path().join("codex.sock"),
+                mcp_launch_route_for_tests(Uuid::new_v4()),
+                dir.path().join("keymaps"),
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(data_dir).unwrap(), "keep this file");
+    }
 
     #[test]
     fn managed_mcp_route_requires_absolute_existing_launch_facts() {

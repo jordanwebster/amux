@@ -52,7 +52,7 @@ impl PtyAgentHost {
         let route = McpLaunchRoute::for_current_process(&config, host_id)
             .expect("default managed MCP route should be usable");
         Self::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir), config.data_dir)
-            .expect("default Codex private socket path should be usable")
+            .expect("default agent host resources should be usable")
     }
 
     /// Build the host and spawn its session-event loop. Cloud-vs-device is
