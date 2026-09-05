@@ -65,10 +65,12 @@ run = 'timeout 1800 python3 -B scripts/ios-unit.py "$@"'
 needs = ["ios-rust"]
 
 # Launch the debug build, open a named state through the driving door, read
-# the screen back and photograph it.
+# the screen back, photograph it, and connect its shared runtime to a test
+# relay. The workspace build that produces the runner is an input alongside
+# the app.
 [task.ios-door-smoke]
-run = "timeout 900 python3 -B scripts/ios-door-smoke.py"
-needs = ["ios-build"]
+run = "timeout 1800 python3 -B scripts/ios-door-smoke.py"
+needs = ["ios-build", "build"]
 
 # Capture the manifest's screens in both appearances and compare each one
 # with its baseline. No arguments means the whole manifest, which fails on any

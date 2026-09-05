@@ -106,6 +106,26 @@ pub extern "C" fn amux_mobile_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
 }
 
+/// Returns the build of this library as a NUL-terminated UTF-8 string: the
+/// version alone, or the version with `+debug-tools` when the library was
+/// built with the driving tools compiled in. The suffix is a literal only the
+/// debug-tools build contains, so an application binary can be inspected for
+/// it to prove which of the two libraries it linked.
+/// The pointer remains valid for the process lifetime; do not free or modify it.
+#[unsafe(no_mangle)]
+pub extern "C" fn amux_mobile_build() -> *const c_char {
+    #[cfg(feature = "debug-tools")]
+    {
+        concat!(env!("CARGO_PKG_VERSION"), "+debug-tools\0")
+            .as_ptr()
+            .cast()
+    }
+    #[cfg(not(feature = "debug-tools"))]
+    {
+        concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
+    }
+}
+
 /// Starts asynchronously, returning NULL for invalid configuration or failure
 /// to create the worker. Later failures arrive as Connection events.
 ///

@@ -10,6 +10,12 @@ import sys
 import tomllib
 
 
+# The library with the driving tools compiled in, and the slice inside it the
+# app's debug configuration links by path.
+DRIVING_FRAMEWORK = "AmuxMobileDebugTools.xcframework"
+DRIVING_SLICE = "ios-arm64-simulator"
+
+
 def build(triple: str, output: Path, *, debug_tools: bool = False) -> str:
     messages_path = output / f"{triple}-build.jsonl"
     command = [
@@ -60,6 +66,18 @@ def build(triple: str, output: Path, *, debug_tools: bool = False) -> str:
     return f"{triple}: {staged_library.stat().st_size} bytes ({staged_library})"
 
 
+def package(framework: Path, slices: list[Path]) -> None:
+    if framework.exists():
+        shutil.rmtree(framework)
+    command = ["xcodebuild", "-create-xcframework"]
+    for directory in slices:
+        command.extend([
+            "-library", str((directory / "libamux_mobile.a").resolve()),
+            "-headers", str((directory / "include").resolve()),
+        ])
+    command.extend(["-output", str(framework.resolve())])
+    subprocess.run(command, check=True, timeout=180)
+
 def main() -> None:
     profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"]["mobile"]
     output = Path("target/ios")
@@ -68,12 +86,41 @@ def main() -> None:
     # An interrupted build must not leave a previous success report behind.
     report.unlink(missing_ok=True)
     framework = output / "AmuxMobile.xcframework"
-    if framework.exists():
-        shutil.rmtree(framework)
+    driving = output / DRIVING_FRAMEWORK
+    for stale in (framework, driving):
+        if stale.exists():
+            shutil.rmtree(stale)
     (output / "simulator-linkage.txt").unlink(missing_ok=True)
+
     sizes = [build(triple, output) for triple in (
         "aarch64-apple-ios-sim", "aarch64-apple-ios",
     )]
+    simulator = output / "aarch64-apple-ios-sim"
+    device = output / "aarch64-apple-ios"
+    if (simulator / "include/amux_mobile.h").read_bytes() != (device / "include/amux_mobile.h").read_bytes():
+        raise RuntimeError("Device and simulator C headers differ")
+    package(framework, [simulator, device])
+    subprocess.run([
+        sys.executable, "ios/Tools/linkage_smoke.py", str(framework),
+    ], check=True, timeout=600)
+
+    # The second library: the same sources with the driving tools compiled in,
+    # for the simulator alone. Only the debug configuration of the app links
+    # it, and only a simulator runs that configuration, so a phone slice would
+    # be one nothing installs. The shipping library above stays what it was —
+    # the smoke it just passed is what proves it still refuses a plaintext
+    # relay.
+    tools = output / "debug-tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    sizes.append(build("aarch64-apple-ios-sim", tools, debug_tools=True) + " (debug tools)")
+    package(driving, [tools / "aarch64-apple-ios-sim"])
+    linked = driving / DRIVING_SLICE / "libamux_mobile.a"
+    if not linked.is_file():
+        raise RuntimeError(
+            f"{linked} is missing. The debug configuration of the app links this "
+            "exact path (ios/project.yml), so a change in how xcodebuild names "
+            "the slice has to fail here rather than at link time.")
+
     text = "\n".join([
         "amux-mobile static archives (not the linked application size)",
         "iOS deployment target: 26.0",
@@ -81,21 +128,6 @@ def main() -> None:
         *sizes,
         "",
     ])
-    simulator = output / "aarch64-apple-ios-sim"
-    device = output / "aarch64-apple-ios"
-    if (simulator / "include/amux_mobile.h").read_bytes() != (device / "include/amux_mobile.h").read_bytes():
-        raise RuntimeError("Device and simulator C headers differ")
-    command = ["xcodebuild", "-create-xcframework"]
-    for directory in (simulator, device):
-        command.extend([
-            "-library", str((directory / "libamux_mobile.a").resolve()),
-            "-headers", str((directory / "include").resolve()),
-        ])
-    command.extend(["-output", str(framework.resolve())])
-    subprocess.run(command, check=True, timeout=180)
-    subprocess.run([
-        sys.executable, "ios/Tools/linkage_smoke.py", str(framework),
-    ], check=True, timeout=600)
     report.write_text(text)
     print(text, end="", flush=True)
 

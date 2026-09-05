@@ -227,6 +227,20 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
 }
 
 #[test]
+fn build_marker_names_the_debug_tools_library() {
+    // The suffix is how an application binary is told apart from one that
+    // linked the shipping library: it is a string literal the shipping build
+    // does not contain at all. Tests always run with the driving tools on.
+    let build = unsafe { std::ffi::CStr::from_ptr(crate::amux_mobile_build()) }
+        .to_str()
+        .unwrap();
+    let version = unsafe { std::ffi::CStr::from_ptr(crate::amux_mobile_version()) }
+        .to_str()
+        .unwrap();
+    assert_eq!(build, format!("{version}+debug-tools"));
+}
+
+#[test]
 fn mobile_lifecycle_rejects_invalid_endpoints_and_config() {
     let root = tempfile::tempdir().unwrap();
     let (sender, _receive) = mpsc::unbounded_channel();

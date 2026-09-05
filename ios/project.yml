@@ -74,6 +74,15 @@ targets:
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG AMUX_DEBUG_TOOLS
+          # The debug build links the bridge built with its driving tools:
+          # the plaintext loopback relay a test runner speaks, and the
+          # recorder snapshot a report is written from. Force-loading it
+          # first means every bridge symbol is already defined by the time
+          # the shipping archive the package carries is reached, so nothing
+          # is taken from that one. `wt run ios-door-smoke` reads the build
+          # marker back out of the running app and checks that the release
+          # binary does not carry it.
+          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a
         Release:
           # Belt as well as the AMUX_DEBUG_TOOLS braces: the debug sources
           # are not compiled at all, so a door symbol or a fixture cannot

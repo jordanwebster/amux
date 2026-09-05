@@ -4,6 +4,34 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The debug app talks to a real host.** The shared Rust bridge is
+now built twice for the simulator: the shipping library, which refuses a
+plaintext relay, and a second one with its driving tools compiled in, which
+accepts one on this machine. The app's debug configuration links the second
+and its release configuration keeps linking the first. Until now the debug app
+could be handed a relay address and would answer that it had started, and then
+nothing would happen — the library it linked would not speak to a test relay
+in the clear, and every journey that wants a real host would have failed at
+the same place for the same unexplained reason.
+
+Which library an app linked is now a thing you can ask it. `amux_mobile_build`
+answers the version alone, or the version with `+debug-tools` — a string only
+the driving library contains at all. The door reports it, and the release
+check reads the release binary's own bytes for it alongside the symbol that
+only the driving library defines, so the two configurations cannot silently
+swap.
+
+`wt run ios-door-smoke` now starts the two-host test relay from its committed
+topology, connects the app's runtime to it with a user token, waits for the
+connection to arrive and asks what it found. Waiting matters: an acknowledged
+connect only means a runtime started. What the door must come back with is the
+connection established, the fleet confirmed by the other side rather than
+remembered, and the runner's own two machines named. This phone is not paired
+with either of them, so the projected fleet is deliberately empty of them; the
+machines are read from the shared model, where discovery puts every online
+host it saw. Then the relay is shut down and its listeners checked released,
+as the linkage smoke already did.
+
 2026-09-05 — **What the app draws, locked.** `ios/Goldens/manifest.json` now
 names every screen this work owes a golden: the thirty-three the design
 pictured, seventeen states it did not — the drawer, both permission

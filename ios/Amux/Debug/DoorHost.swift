@@ -37,6 +37,10 @@ final class DoorHost {
 
     @ObservationIgnored private var bridge: BridgeClient?
     @ObservationIgnored private var pump: Task<Void, Never>?
+    /// What this device called itself when it connected. The shared model
+    /// lists this device alongside the ones it found, and a driver asking
+    /// what is on the other side does not mean this one.
+    @ObservationIgnored private var deviceName = ""
 
     func handle(_ request: DoorRequest) async -> DoorReply {
         switch request {
@@ -46,6 +50,9 @@ final class DoorHost {
             return .ack
         case .connect(let relay, let token, let user):
             return connect(relay: relay, token: token, user: user)
+        case .awaitReconciled(let seconds):
+            return await awaitReconciled(within: seconds)
+        case .bridge: return .bridge(bridgeState())
         case .appearance(let appearance):
             self.appearance = appearance
             return .ack
@@ -115,6 +122,7 @@ final class DoorHost {
             return .error("the runtime did not start")
         }
         bridge = client
+        deviceName = user
         let stores = stores
         pump = Task { @MainActor in
             for await batch in client.events {
@@ -122,6 +130,63 @@ final class DoorHost {
             }
         }
         return .ack
+    }
+
+    /// Waits for the connection to have arrived somewhere: established, the
+    /// fleet confirmed by the other side rather than remembered, and at least
+    /// one machine seen there. All three, because a runtime that started and a
+    /// runtime that reached a host are otherwise indistinguishable from here.
+    ///
+    /// Polling a frame at a time rather than awaiting the event stream,
+    /// because the stream is already being drained into the stores on this
+    /// actor; a second reader would take batches away from them.
+    private func awaitReconciled(within seconds: Double) async -> DoorReply {
+        guard bridge != nil else { return .error("nothing has been connected") }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            let state = bridgeState()
+            if state.connection == "connected" && state.reconciled && !state.discovered.isEmpty {
+                return .ack
+            }
+            await DoorFrames.next()
+        }
+        let state = bridgeState()
+        return .error(
+            "the connection did not arrive within \(seconds)s: \(state.connection), reconciled "
+            + "\(state.reconciled), \(state.discovered.count) machines seen, "
+            + "\(state.hosts.count) paired, \(state.agents.count) agents")
+    }
+
+    private func bridgeState() -> BridgeState {
+        BridgeState(
+            build: Bridge.build,
+            started: bridge != nil,
+            connection: stores.fleet.connection.state.rawValue,
+            reconciled: stores.fleet.reconciled,
+            hosts: stores.hosts.hosts.map(\.name).sorted(),
+            agents: stores.fleet.rows.map(\.name).sorted(),
+            discovered: discovered())
+    }
+
+    /// The machines the runtime has seen on the other side, this device
+    /// excluded.
+    ///
+    /// Read from the shared model rather than from the stores, because the
+    /// projected fleet deliberately carries only hosts this device is paired
+    /// with — and this app cannot pair yet. A machine here is proof the
+    /// connection reached the relay and the relay reached a host.
+    private func discovered() -> [String] {
+        guard let json = bridge?.snapshot(),
+            let model = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+            let rows = model["hosts"] as? [String: [String: Any]]
+        else { return [] }
+        return rows.values.compactMap { row -> String? in
+            guard let entry = row["entry"] as? [String: Any],
+                entry["online"] as? Bool == true,
+                let name = entry["name"] as? String, name != deviceName
+            else { return nil }
+            return name
+        }.sorted()
     }
 
     private func stop() {

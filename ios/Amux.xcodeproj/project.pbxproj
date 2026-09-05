@@ -526,6 +526,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				OTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a";
 				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.Amux;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG AMUX_DEBUG_TOOLS";

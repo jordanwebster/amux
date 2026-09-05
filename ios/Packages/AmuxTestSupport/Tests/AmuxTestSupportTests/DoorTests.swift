@@ -22,6 +22,8 @@ final class DoorTests: XCTestCase {
             .open(screen: "home", fixture: "home-quiet"),
             .cloud(.firstRun),
             .connect(relay: "http://127.0.0.1:8080", token: "bearer", user: "ada"),
+            .awaitReconciled(seconds: 90),
+            .bridge,
             .appearance(.dark),
             .dynamicType("accessibility3"),
             .settle,
@@ -51,6 +53,8 @@ final class DoorTests: XCTestCase {
         XCTAssertEqual(try wire(.dynamicType("accessibility3"))["size"] as? String, "accessibility3")
         XCTAssertEqual(try wire(.capture(path: "/tmp/x.png"))["path"] as? String, "/tmp/x.png")
         XCTAssertEqual(try wire(.settle)["kind"] as? String, "settle")
+        XCTAssertEqual(try wire(.awaitReconciled(seconds: 90))["seconds"] as? Double, 90)
+        XCTAssertEqual(try wire(.bridge)["kind"] as? String, "bridge")
     }
 
     func testAnUnknownRequestIsRefused() {
@@ -65,9 +69,13 @@ final class DoorTests: XCTestCase {
                 identifier: "home.title", label: "Agents", value: nil,
                 frame: VisibleFrame(x: 16, y: 64, width: 200, height: 32), enabled: true)],
             reconciled: true, shimmering: 3)
+        let bridge = BridgeState(
+            build: "0.1.0+debug-tools", started: true, connection: "connected",
+            reconciled: true, hosts: [], agents: ["helper"], discovered: ["desktop", "laptop"])
         let replies: [DoorReply] = [
             .ack,
             .state(state),
+            .bridge(bridge),
             .captured(path: "/tmp/home.png", width: 1206, height: 2622, scale: 3),
             .error("unimplemented: home"),
         ]

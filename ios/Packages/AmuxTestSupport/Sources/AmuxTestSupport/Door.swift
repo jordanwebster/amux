@@ -16,6 +16,12 @@ public enum DoorRequest: Sendable, Equatable {
     case cloud(ScriptedCloudState)
     /// Start the shared runtime against a relay with a credential.
     case connect(relay: String, token: String, user: String)
+    /// Wait until the fleet has been confirmed by a host, or give up after
+    /// this many seconds. A connection is asynchronous, so a driver that read
+    /// the screen straight after `connect` would read the moment before it.
+    case awaitReconciled(seconds: Double)
+    /// What library this app linked and what its connection has arrived at.
+    case bridge
     case appearance(Appearance)
     case dynamicType(String)
     /// Wait until the screen has stopped changing. A capture that does not
@@ -34,6 +40,7 @@ public enum DoorRequest: Sendable, Equatable {
 public enum DoorReply: Sendable, Equatable {
     case ack
     case state(VisibleState)
+    case bridge(BridgeState)
     case captured(path: String, width: Int, height: Int, scale: Int)
     /// Why the request could not be answered, in one line. The door never
     /// half-answers: a request either happened or is reported here.
@@ -56,6 +63,47 @@ public struct VisibleState: Codable, Sendable, Equatable {
         self.elements = elements
         self.reconciled = reconciled
         self.shimmering = shimmering
+    }
+}
+
+/// What the shared runtime under this app is and what it has reached.
+///
+/// The build is the marker the linked library answers with, so a driver can
+/// tell the shipping library from the one with the driving tools compiled in
+/// without guessing from behaviour. The rest is what a connection actually
+/// produced: an acknowledged `connect` only means the runtime started, and
+/// hosts and agents named here mean it reached the other end.
+public struct BridgeState: Codable, Sendable, Equatable {
+    public let build: String
+    /// Whether a connection has been started at all.
+    public let started: Bool
+    /// The connection's own word for where it is.
+    public let connection: String
+    /// Whether the fleet has been confirmed by a host rather than remembered.
+    public let reconciled: Bool
+    /// The machines the fleet names, by name. A machine appears here once this
+    /// device is paired with it; before that the fleet is confirmed and empty.
+    public let hosts: [String]
+    /// The agents the fleet names, by name.
+    public let agents: [String]
+    /// The machines the connection has seen on the other side, by name,
+    /// whether or not this device is paired with them. Where the fleet is
+    /// what the user may open, this is what the runtime found — the one thing
+    /// that tells a connection which reached a host from one which only
+    /// started.
+    public let discovered: [String]
+
+    public init(
+        build: String, started: Bool, connection: String, reconciled: Bool,
+        hosts: [String], agents: [String], discovered: [String]
+    ) {
+        self.build = build
+        self.started = started
+        self.connection = connection
+        self.reconciled = reconciled
+        self.hosts = hosts
+        self.agents = agents
+        self.discovered = discovered
     }
 }
 
@@ -97,7 +145,7 @@ public struct VisibleFrame: Codable, Sendable, Equatable {
 extension DoorRequest: Codable {
     private enum Key: String, CodingKey {
         case kind, screen, fixture, cloud, relay, token, user, appearance, size, path
-        case identifier, text
+        case identifier, text, seconds
     }
 
     public init(from decoder: any Decoder) throws {
@@ -115,6 +163,9 @@ extension DoorRequest: Codable {
                 relay: try fields.decode(String.self, forKey: .relay),
                 token: try fields.decode(String.self, forKey: .token),
                 user: try fields.decode(String.self, forKey: .user))
+        case "awaitReconciled":
+            self = .awaitReconciled(seconds: try fields.decode(Double.self, forKey: .seconds))
+        case "bridge": self = .bridge
         case "appearance":
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
         case "dynamicType":
@@ -151,6 +202,11 @@ extension DoorRequest: Codable {
             try fields.encode(relay, forKey: .relay)
             try fields.encode(token, forKey: .token)
             try fields.encode(user, forKey: .user)
+        case .awaitReconciled(let seconds):
+            try fields.encode("awaitReconciled", forKey: .kind)
+            try fields.encode(seconds, forKey: .seconds)
+        case .bridge:
+            try fields.encode("bridge", forKey: .kind)
         case .appearance(let appearance):
             try fields.encode("appearance", forKey: .kind)
             try fields.encode(appearance, forKey: .appearance)
@@ -179,7 +235,7 @@ extension DoorRequest: Codable {
 
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
-        case kind, state, path, width, height, scale, message
+        case kind, state, bridge, path, width, height, scale, message
     }
 
     public init(from decoder: any Decoder) throws {
@@ -189,6 +245,8 @@ extension DoorReply: Codable {
         case "ack": self = .ack
         case "state":
             self = .state(try fields.decode(VisibleState.self, forKey: .state))
+        case "bridge":
+            self = .bridge(try fields.decode(BridgeState.self, forKey: .bridge))
         case "captured":
             self = .captured(
                 path: try fields.decode(String.self, forKey: .path),
@@ -211,6 +269,9 @@ extension DoorReply: Codable {
         case .state(let state):
             try fields.encode("state", forKey: .kind)
             try fields.encode(state, forKey: .state)
+        case .bridge(let state):
+            try fields.encode("bridge", forKey: .kind)
+            try fields.encode(state, forKey: .bridge)
         case .captured(let path, let width, let height, let scale):
             try fields.encode("captured", forKey: .kind)
             try fields.encode(path, forKey: .path)
