@@ -1,5 +1,6 @@
 //! Native client bridge over the shared protocol and UI runtime.
 
+mod cache;
 pub mod projection;
 mod runtime;
 
@@ -50,6 +51,9 @@ impl Callback {
 
 enum Control {
     Stop,
+    Snapshot(std::sync::mpsc::SyncSender<Option<String>>),
+    #[cfg(feature = "debug-tools")]
+    ReportSnapshot(std::sync::mpsc::SyncSender<Option<String>>),
     FrameInterval(Duration),
     Dispatch {
         op: OpId,
@@ -236,6 +240,46 @@ pub unsafe extern "C" fn amux_mobile_set_frame_interval(handle: *mut Handle, int
     }));
 }
 
+/// Freezes the shared reducer model as owned JSON; free with amux_mobile_free.
+/// Returns NULL for an unavailable worker or a five-second timeout.
+///
+/// # Safety
+/// handle must be live and may not race stop. Do not call from an event callback:
+/// this function waits for the worker that delivers callbacks.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_snapshot(handle: *mut Handle) -> *mut c_char {
+    unsafe { snapshot(handle, Control::Snapshot) }
+}
+
+/// Freezes recorder checkpoint/message lines and obtains the embedded daemon's
+/// JSON dump. The result has msgs, daemon and daemon_absent_reason fields.
+/// A failed or timed-out dump is null with its reason; msgs remains available.
+/// Free the owned result with amux_mobile_free. Debug-tools builds only.
+///
+/// # Safety
+/// handle must be live and may not race stop. Never call from an event callback.
+#[cfg(feature = "debug-tools")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_report_snapshot(handle: *mut Handle) -> *mut c_char {
+    unsafe { snapshot(handle, Control::ReportSnapshot) }
+}
+
+unsafe fn snapshot(
+    handle: *mut Handle,
+    control: impl FnOnce(std::sync::mpsc::SyncSender<Option<String>>) -> Control,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { handle.as_ref() }?;
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        handle.commands.send(control(send)).ok()?;
+        let json = receive.recv_timeout(Duration::from_secs(5)).ok()??;
+        Some(CString::new(json).ok()?.into_raw())
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
 /// Releases a string returned by this library. NULL is accepted.
 ///
 /// # Safety
@@ -316,6 +360,10 @@ async fn run(
     mut commands: mpsc::UnboundedReceiver<Control>,
     callback: &Callback,
 ) -> Result<(), String> {
+    let mut cache = cache::FleetCache::open(&config.cache_dir);
+    callback.send(&[cache.initial()]);
+    let mut cadence = Cadence::new(Duration::from_nanos(config.frame_interval_ns));
+    cadence.emitted();
     let (requests, mut token_requests) = mpsc::channel(1);
     let credentials = Arc::new(Credentials {
         source: config.relay.token.clone(),
@@ -325,7 +373,6 @@ async fn run(
     let mut runtime = MobileRuntime::open(&config, credentials).await?;
     let mut pending: HashMap<u64, oneshot::Sender<Result<AccessToken, AuthError>>> = HashMap::new();
     let mut projection = Projection::default();
-    let mut cadence = Cadence::new(Duration::from_nanos(config.frame_interval_ns));
     let mut last_connection = RelayConnection::Connecting;
     let mut events = vec![Event::connection(&last_connection)];
     let mut dirty = true;
@@ -335,6 +382,26 @@ async fn run(
             biased;
             control = commands.recv() => match control {
                 None | Some(Control::Stop) => break,
+                Some(Control::Snapshot(reply)) => {
+                    let _ = reply.send(serde_json::to_string(runtime.ui.model()).ok());
+                }
+                #[cfg(feature = "debug-tools")]
+                Some(Control::ReportSnapshot(reply)) => {
+                    let snapshot = runtime.ui.recorder_snapshot();
+                    let client = runtime.client.clone();
+                    tokio::spawn(async move {
+                        let (daemon, reason) = match tokio::time::timeout(Duration::from_secs(3), client.debug_dump(amux::DebugFormat::Json)).await {
+                            Ok(Ok(dump)) => (Some(dump), None),
+                            Ok(Err(error)) => (None, Some(error.to_string())),
+                            Err(_) => (None, Some("daemon dump timed out".to_owned())),
+                        };
+                        let result = serde_json::json!({
+                            "msgs": {"format_version": amux_ui::MSGS_SCHEMA_VERSION, "checkpoint": snapshot.checkpoint, "msgs": snapshot.msgs},
+                            "daemon": daemon, "daemon_absent_reason": reason,
+                        });
+                        let _ = reply.send(serde_json::to_string(&result).ok());
+                    });
+                }
                 Some(Control::FrameInterval(interval)) => cadence.set_interval(interval),
                 Some(Control::Dispatch { op, command }) => {
                     match command {
@@ -372,6 +439,13 @@ async fn run(
                     last_connection = connection.clone();
                 }
                 projection.collect(runtime.ui.model(), &connection, &mut events);
+                let mut cache_errors = Vec::new();
+                for event in &mut events {
+                    if let Err(error) = cache.update(event) {
+                        cache_errors.push(Event::Invariant { detail: format!("fleet cache write failed: {error}") });
+                    }
+                }
+                events.extend(cache_errors);
                 if !events.is_empty() {
                     callback.send(&events);
                     cadence.emitted();

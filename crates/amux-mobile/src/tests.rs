@@ -396,3 +396,241 @@ async fn mobile_projection_c_callback_batches_and_command_errors() {
         batches.len()
     );
 }
+
+fn owned_json(pointer: *mut c_char) -> Value {
+    assert!(!pointer.is_null(), "snapshot unavailable");
+    let value = serde_json::from_str(unsafe { CStr::from_ptr(pointer) }.to_str().unwrap()).unwrap();
+    unsafe { amux_mobile_free(pointer) };
+    value
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("cache-host")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let host = net.daemon("cache-host");
+    let (_, token) = net.user_credentials("owner");
+    let root = tempfile::tempdir().unwrap();
+    let config = config(
+        root.path(),
+        format!("http://{}", net.relay_addr()),
+        json!({"Static":token}),
+    );
+    let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
+    let (requests, _receive) = mpsc::channel(1);
+    let mut seed = MobileRuntime::open(
+        &parsed,
+        Arc::new(Credentials {
+            source: parsed.relay.token.clone(),
+            requests,
+            next_id: AtomicU64::new(1),
+        }),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while *seed.relay.borrow_and_update() != RelayConnection::Connected {
+            seed.relay.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let admin = host.admin_client().await;
+    let pairing = admin.start_qr_pairing().await.unwrap();
+    let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
+        panic!("QR expected")
+    };
+    seed.client
+        .pair_qr_cloud_peer(host.host_id(), secret)
+        .await
+        .unwrap();
+    for (id, name) in [(101, "First"), (102, "Second")] {
+        admin
+            .create_agent(amux::CreateAgentRequest {
+                agent_id: uuid::Uuid::from_u128(id),
+                host_id: None,
+                name: Some(name.into()),
+                agent_type: amux::AgentType::TestAgent {
+                    command: "cat".into(),
+                },
+                working_dir: root.path().to_owned(),
+                terminal_size: None,
+                args: vec![],
+                parent: None,
+                initial_prompt: None,
+            })
+            .await
+            .unwrap();
+    }
+    seed.client.shutdown().await.unwrap();
+    drop(seed);
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(&config, &events),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    until(&mut receive, running.handle, &token, |e| {
+        e["Fleet"]["reconciled"] == true
+            && e["Fleet"]["agents"]
+                .as_array()
+                .is_some_and(|a| a.len() == 2)
+    })
+    .await;
+    admin
+        .rename_agent(uuid::Uuid::from_u128(101), "Renamed".into())
+        .await
+        .unwrap();
+    let changed = until(&mut receive, running.handle, &token, |e| {
+        e["Fleet"]["agents"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|a| a["display_name"] == "Renamed"))
+    })
+    .await;
+    let cache_path = root.path().join("cache/fleet.json");
+    let disk: Value = serde_json::from_slice(&std::fs::read(&cache_path).unwrap()).unwrap();
+    assert_eq!(
+        disk, changed,
+        "fleet change was not persisted before callback"
+    );
+    net.cloud_offline().await;
+    let offline = until(&mut receive, running.handle, &token, |e| {
+        e["Fleet"]["reconciled"] == false
+    })
+    .await;
+    assert_eq!(offline["Fleet"]["agents"].as_array().unwrap().len(), 2);
+    drop(running);
+
+    // A displayed order need not match the reducer's UUID map order.
+    let mut cached: Value = serde_json::from_slice(&std::fs::read(&cache_path).unwrap()).unwrap();
+    cached["Fleet"]["agents"].as_array_mut().unwrap().reverse();
+    std::fs::write(&cache_path, cached.to_string()).unwrap();
+    let ids = |e: &Value| {
+        e["Fleet"]["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["agent"]["id"].clone())
+            .collect::<Vec<_>>()
+    };
+    let expected = ids(&cached);
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(&config, &events),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    let first = tokio::time::timeout(Duration::from_secs(5), receive.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first["Fleet"]["reconciled"], false);
+    assert_eq!(ids(&first), expected);
+    until(&mut receive, running.handle, &token, |e| {
+        e["Connection"]["state"] == "disconnected"
+    })
+    .await;
+    net.cloud_online().await;
+    let reconciled = until(&mut receive, running.handle, &token, |e| {
+        e["Fleet"]["reconciled"] == true
+    })
+    .await;
+    assert_eq!(ids(&reconciled), expected);
+    for event in events
+        .captured
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| e.get("Fleet").is_some())
+    {
+        assert_eq!(
+            ids(event),
+            expected,
+            "cold sync removed or reordered cached rows"
+        );
+    }
+    let report = owned_json(unsafe { amux_mobile_report_snapshot(running.handle) });
+    assert_eq!(
+        report["msgs"]["format_version"],
+        amux_ui::MSGS_SCHEMA_VERSION
+    );
+    assert!(
+        report["msgs"]["msgs"]
+            .as_array()
+            .is_some_and(|msgs| !msgs.is_empty())
+    );
+    assert!(report["daemon_absent_reason"].is_null());
+    let dump: Value = serde_json::from_str(report["daemon"].as_str().unwrap()).unwrap();
+    assert!(dump.is_object());
+    let replay_path = root.path().join("msgs.jsonl");
+    let mut lines = vec![json!({"format_version": report["msgs"]["format_version"], "checkpoint": report["msgs"]["checkpoint"]}).to_string()];
+    lines.extend(
+        report["msgs"]["msgs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|msg| msg.as_str().unwrap().to_owned()),
+    );
+    std::fs::write(&replay_path, lines.join("\n") + "\n").unwrap();
+    let replay = amux_ui::replay_msgs(&replay_path).unwrap();
+    let snapshot: amux_ui::Model =
+        serde_json::from_value(owned_json(unsafe { amux_mobile_snapshot(running.handle) }))
+            .unwrap();
+    assert_eq!(
+        replay.agents().map(|a| a.agent.clone()).collect::<Vec<_>>(),
+        snapshot
+            .agents()
+            .map(|a| a.agent.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(replay.agent_count(), 2);
+    println!("Cold-start first C callback: {first}");
+    println!("Reconciled C callback: {reconciled}");
+    println!("Report C snapshot: {report}");
+    drop(running);
+    drop(admin);
+    net.shutdown().await;
+}
+
+#[test]
+fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fleet.json");
+    for bytes in [
+        None,
+        Some("{"),
+        Some(r#"{"TokenRequest":{"request_id":1}}"#),
+    ] {
+        if let Some(bytes) = bytes {
+            std::fs::write(&path, bytes).unwrap();
+        }
+        let cache = cache::FleetCache::open(root.path());
+        assert!(
+            matches!(cache.initial(), Event::Fleet { agents, reconciled: false, .. } if agents.is_empty())
+        );
+    }
+    let file = root.path().join("not-a-directory");
+    std::fs::write(&file, "file").unwrap();
+    let mut cache = cache::FleetCache::open(&file);
+    assert!(cache.update(&mut cache.initial()).is_err());
+    unsafe {
+        assert!(amux_mobile_snapshot(std::ptr::null_mut()).is_null());
+        assert!(amux_mobile_report_snapshot(std::ptr::null_mut()).is_null());
+        amux_mobile_free(std::ptr::null_mut());
+    }
+}

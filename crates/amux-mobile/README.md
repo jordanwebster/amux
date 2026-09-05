@@ -117,3 +117,29 @@ through replacements, eviction and replay, checks command errors through the
 C callback, and streams 1,000 rows at 50 per second under deterministic virtual
 time. That bench proves cadence and delta payload size; it does not measure
 Swift rendering or presented frames on a simulator or phone.
+
+The first callback is a Fleet from `cache_dir/fleet.json` with `reconciled:
+false`, emitted before the embedded runtime starts connecting. Missing or
+incompatible cache files give an empty initial fleet. Each projected fleet
+change atomically replaces that file before its callback; write failures emit
+an Invariant diagnostic and leave the live connection running. Cache files are
+private (0600 on Unix). Give each account its own data and cache directories.
+Cached cards remain display data only: they never enter the live reducer or
+permit a send. Cached row order survives reconciliation; new rows append.
+
+`amux_mobile_snapshot` returns the shared reducer Model as owned JSON.
+In `debug-tools` builds, `amux_mobile_report_snapshot` returns
+`{"msgs":{"format_version":1,"checkpoint":MODEL,"msgs":[JSON_LINE,...]},
+"daemon":JSON_STRING_OR_NULL,"daemon_absent_reason":STRING_OR_NULL}`.
+The recorder freezes before the embedded daemon dump request. To form
+`msgs.jsonl`, write a header with `format_version` and `checkpoint`, then each
+message string on its own line. The daemon string is the contents of
+`daemon.json`; it describes the embedded phone service and its remote routes.
+If the dump fails or takes more than three seconds, the recorder still returns
+with an explicit absence reason. These calls wait up to five seconds for the
+worker; call them outside the event callback, finish before stop, check for
+null and release returned strings with `amux_mobile_free`.
+
+`timeout 900 wt test -- mobile_cache` restarts a paired bridge offline, verifies
+its first callback and stable ordering on reconnect, checks rename persistence,
+and replays an exported recorder snapshot through the shared reducer.

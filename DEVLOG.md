@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Restore the native fleet before connecting and export replayable reports.**
+The bridge emits its private, atomically replaced fleet cache before opening
+the embedded runtime. Cached cards stay outside send-gate state and retain
+their displayed order while live inventory confirms them. Offline restarts
+preserve the last display, including renames. Owned snapshot APIs expose the
+shared Model and, in debug-tools builds, a frozen recorder plus a bounded
+embedded-daemon dump with an explicit absence reason on failure. A relay test
+restarts offline, checks every callback through reconciliation, and replays
+the exported message window through the shared reducer.
+
 2026-09-05 — **Stream typed native projections in display-paced batches.**
 The mobile callback separates fleet metadata, session state and feed deltas,
 keeping Claude PTY and Codex row vocabularies intact and the unimplemented
