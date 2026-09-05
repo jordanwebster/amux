@@ -310,10 +310,15 @@ edited where it sits, Enter steps to the next one, and on the action list
 Enter answers. A required field left empty keeps Send from being offered,
 with what is missing stated where Send is.
 
-The form is derived from the schema, not authored: one field per property, in
-schema order, typed as text, number, boolean or a choice list from `enum`,
-with `required` marking the fields that must be filled before Send is offered.
-`description` renders as the dim helper line and `default` prefills.
+The form is derived from the schema, not authored: one field per property,
+typed as text, number, boolean or a choice list from `enum`, with `required`
+marking the fields that must be filled before Send is offered. `description`
+renders as the dim helper line and `default` prefills.
+
+Fields are ordered by name, not by the order the server declared them. A JSON
+object's keys do not keep their written order once the request has been read,
+so the declaration order never reaches the chat; name order is the one order
+that draws the same form for the same schema every time.
 
 A schema this cannot express — nested objects, arrays, `oneOf` — renders the
 panel **blocked**, naming the reason and offering only Decline and Cancel. That

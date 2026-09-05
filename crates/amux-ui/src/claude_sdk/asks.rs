@@ -127,6 +127,11 @@ impl ElicitationForm {
     }
 }
 
+/// One field per property of the schema, ordered by field name. A JSON
+/// object's keys do not keep the order they were written in once the row
+/// has been read, so the declaration order the server intended is not
+/// available here; name order is the one order that is stable across
+/// every reading of the same schema.
 fn fields(schema: &Value) -> Result<Vec<ElicitationField>, String> {
     let root = schema.as_object().ok_or("form schema is not an object")?;
     if schema["type"] != "object" {

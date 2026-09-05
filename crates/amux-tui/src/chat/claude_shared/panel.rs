@@ -841,9 +841,11 @@ fn review_lines(
 // --- the elicitation form ----------------------------------------------------
 
 /// An MCP server's own question, as a form over the schema it sent: one
-/// row per field in schema order, then the numbered answers. A schema
-/// this build cannot express states why and offers only the two answers
-/// that need no fields.
+/// row per field in field-name order, then the numbered answers. The
+/// order a server declared its properties in is lost when the schema is
+/// read as JSON, so name order is what can be drawn the same way twice.
+/// A schema this build cannot express states why and offers only the two
+/// answers that need no fields.
 #[allow(clippy::too_many_arguments)]
 fn elicitation_panel(
     server: Option<&str>,

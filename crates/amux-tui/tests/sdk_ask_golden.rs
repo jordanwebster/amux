@@ -241,6 +241,24 @@ fn nested_elicitation() -> Value {
     })
 }
 
+fn unordered_elicitation() -> Value {
+    json!({
+        "type": "amux.claude_sdk.elicitation_required",
+        "request_id": "form-3",
+        "server": "issues",
+        "message": "File the fix.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "release": {"type": "string", "description": "the release tag"},
+                "assignee": {"type": "string", "description": "who picks it up"},
+                "component": {"type": "string", "description": "where it lands"}
+            },
+            "required": ["release"]
+        }
+    })
+}
+
 fn open_chat(model: &Model) -> ChatView {
     let mut chat = ChatView::open(model, agent_id(), 'a', false).expect("the session opens a chat");
     chat.reconcile(model);
@@ -499,6 +517,38 @@ fn claude_sdk_ask_elicitation_forms_the_schema() {
     assert!(
         text.contains("confirmed is required"),
         "and the reason sits where Send is: {text}"
+    );
+}
+
+/// A schema that names its properties out of alphabetical order. The order
+/// the server wrote them in does not survive being read as JSON, so the
+/// form is drawn in field-name order — the same form every time.
+#[test]
+fn claude_sdk_ask_elicitation_orders_fields_by_name() {
+    let model = session_asking(unordered_elicitation());
+    let text = assert_surface("sdk_ask_elicitation_field_order", &model, open_chat);
+    let at_of = |name: &str| {
+        text.find(name)
+            .unwrap_or_else(|| panic!("{name} is missing from the form: {text}"))
+    };
+    assert!(
+        at_of("assignee") < at_of("component") && at_of("component") < at_of("release"),
+        "fields read in name order, not the order the schema declared them: {text}"
+    );
+
+    // The cursor walks them in the order they are drawn: the first thing
+    // typed lands in the first field on screen.
+    let mut chat = open_chat(&model);
+    for value in ["kim", "chat", "0.4"] {
+        amux_tui::chat::handle_chat_paste(&mut chat, &model, value);
+        assert!(press(&mut chat, &model, KeyCode::Enter).is_none());
+    }
+    assert_eq!(
+        answered(press(&mut chat, &model, KeyCode::Enter)),
+        SdkAnswer::Elicitation(ElicitationAnswer::Accept {
+            content: json!({"assignee": "kim", "component": "chat", "release": "0.4"})
+        }),
+        "each answer travels under the field it was typed into"
     );
 }
 

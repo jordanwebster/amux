@@ -25,7 +25,9 @@ use crate::chat::blocks::{
 };
 use crate::chat::claude_sdk::{View, is_open, reader_context, shared_ask};
 use crate::chat::claude_shared::{armed_quit_line, panel, reader};
-use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
+use crate::chat::frame::{
+    BlockKey, CacheView, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock,
+};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
 use crate::render::{FrameContext, Theme, line_len, push_span};
@@ -736,8 +738,40 @@ fn feed_blocks(
     blocks
 }
 
-// The cache keys a block by everything that changes how it reads: the
-// entry itself and the attachment elements resolved out of its words.
+/// What a painted entry is cached against: everything that changes how
+/// it reads — the entry itself and the attachment elements resolved out
+/// of its words.
+#[derive(PartialEq)]
+struct EntryKey {
+    entry: FeedEntry,
+    content: Vec<Segment>,
+}
+
+/// The same key while it is only being compared, borrowing what the
+/// layer already holds so a frame that repaints nothing copies nothing.
+#[derive(Clone, Copy)]
+struct EntryKeyView<'a> {
+    entry: &'a FeedEntry,
+    content: &'a [Segment],
+}
+
+impl PartialEq<EntryKeyView<'_>> for EntryKey {
+    fn eq(&self, other: &EntryKeyView<'_>) -> bool {
+        &self.entry == other.entry && self.content == other.content
+    }
+}
+
+impl CacheView for EntryKeyView<'_> {
+    type Owned = EntryKey;
+
+    fn to_owned_key(self) -> EntryKey {
+        EntryKey {
+            entry: self.entry.clone(),
+            content: self.content.to_vec(),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn entry_block_cached(
     entry: &FeedEntry,
@@ -752,12 +786,11 @@ fn entry_block_cached(
     if !paints(entry) {
         return None;
     }
-    let keyed = (entry.clone(), content.to_vec());
     Some(
         cache
-            .get_or_paint(
+            .get_or_paint_view(
                 BlockKey(entry.id),
-                &keyed,
+                EntryKeyView { entry, content },
                 width,
                 theme,
                 reports_open,

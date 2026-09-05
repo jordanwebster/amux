@@ -4,6 +4,25 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Say which order an elicitation form is in, and stop the
+Claude chat from copying its feed every frame.**
+An MCP server's form is drawn one field per property, and the reference
+said those fields follow the order the schema declared them in. They never
+could: a JSON object's keys do not keep their written order once the
+request has been read, so what reaches the chat is name order. The docs and
+the two doc comments now say that and why, and a new golden pins a schema
+whose properties are written release/assignee/component and drawn
+assignee/component/release, filled in that same order.
+
+The same chat also rebuilt its paint-cache key by deep-copying every feed
+entry and its segments on every frame, which is exactly the work the cache
+exists to avoid. The key is now a pair of borrows compared against what the
+cache holds, and the owned copy is made only when a block is really
+repainted. The repaint and frame-budget suite, which had covered only the
+two older chats, now runs all five of its checks against this one too: a
+thousand-entry feed repaints nothing on a keystroke, a wheel event or a
+row count, and its cold and warm frames are byte-identical.
+
 2026-09-05 — **Give the rest of the stream-JSON tests a deadline that
 survives a busy machine.**
 The same failure that hit the launch tests was still latent elsewhere: a
