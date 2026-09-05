@@ -7859,3 +7859,11 @@ pairing, paired forwarding peers and the cloud's ability to disrupt delivery.
 Checked the four documents against the implementation, both spec suites,
 embedding tests, panic-report regressions and seven real-process CLI scenarios,
 including third-party discovery and updating two profiles.
+
+2026-09-05 — **Debug captures follow the selected account.** Switching the
+fleet now replaces the shell's daemon-dump source and report destination along
+with the runtime. Ctrl+G after Personal → Work therefore captures Work's
+diagnostics and writes beneath Work's data directory, including after leaving
+and re-entering the fleet. A shell regression exercises the switch effect,
+capture key and report prompt through to the written bundle and its replay.
+The existing automatic and panic-report switching behavior is preserved.

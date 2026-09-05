@@ -34,8 +34,13 @@ pub enum AttachReturn {
     Exit,
 }
 
-/// Builds the runtime options one selected profile is bound with.
-pub type ProfileRuntimeOptions = Box<dyn Fn(&ProfileEntry) -> Result<RuntimeOptions> + Send + Sync>;
+/// Builds the runtime and shell sources one selected profile is bound with.
+pub type ProfileRuntimeOptions = Box<dyn Fn(&ProfileEntry) -> Result<ProfileOptions> + Send + Sync>;
+
+pub struct ProfileOptions {
+    pub runtime: RuntimeOptions,
+    pub diagnostics: Option<DiagnosticsSource>,
+}
 
 /// How the fleet reaches the installation's other accounts.
 ///
@@ -103,7 +108,7 @@ enum ChromeExit {
 /// notice ("session ended", …) surfaces in the status line.
 pub async fn run_fleet<F, Fut>(
     runtime: &mut Runtime,
-    config: TuiConfig,
+    mut config: TuiConfig,
     mut attach: F,
 ) -> Result<()>
 where
@@ -131,7 +136,7 @@ where
         match chrome_session(
             runtime,
             &mut chrome,
-            &config,
+            &mut config,
             &mut initial_chat,
             &mut initial_chat_configuration,
             &mut current_profile,
@@ -167,7 +172,7 @@ where
 async fn chrome_session(
     runtime: &mut Runtime,
     chrome: &mut Chrome,
-    config: &TuiConfig,
+    config: &mut TuiConfig,
     initial_chat: &mut Option<AgentId>,
     initial_chat_configuration: &mut Option<String>,
     current_profile: &mut Option<std::path::PathBuf>,
@@ -351,7 +356,7 @@ async fn chrome_session(
 /// [`TraceEvent::Dispatched`] rather than being guessed.
 async fn perform(
     runtime: &mut Runtime,
-    config: &TuiConfig,
+    config: &mut TuiConfig,
     chrome: &mut Chrome,
     effects: Vec<ShellEffect>,
     exit_request: &mut Option<ChromeExit>,
@@ -396,7 +401,11 @@ async fn perform(
                 };
                 match (switching.options)(&entry) {
                     Ok(options) => {
-                        runtime.switch_in_place(&entry, options);
+                        runtime.switch_in_place(&entry, options.runtime);
+                        // Captures must fetch diagnostics and write beside
+                        // the device now on screen, including after detach
+                        // and re-entry into the chrome session.
+                        config.diagnostics = options.diagnostics;
                         *current_profile = Some(entry.socket.clone());
                         // The screen belonged to the account just left: its
                         // chat, filter and selection all named agents this
@@ -451,13 +460,18 @@ async fn list_profiles(config: &TuiConfig) -> Result<Vec<ProfileEntry>> {
 /// and no event is recorded while the flow is up, which is what keeps the
 /// act of reporting out of the recording being reported.
 #[cfg(any(debug_assertions, test))]
-async fn report_flow(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    events: &mut EventStream,
+async fn report_flow<B, E>(
+    terminal: &mut Terminal<B>,
+    events: &mut E,
     frozen: Frozen,
     theme: Theme,
     config: &TuiConfig,
-) -> Result<Option<Notice>> {
+) -> Result<Option<Notice>>
+where
+    B: ratatui::backend::Backend,
+    B::Error: Send + Sync + 'static,
+    E: futures_util::Stream<Item = io::Result<crossterm::event::Event>> + Unpin,
+{
     let Some(diagnostics) = config.diagnostics.as_ref() else {
         return Ok(None);
     };
@@ -574,3 +588,140 @@ fn record(config: &TuiConfig, event: &TraceEvent) {
 /// not retain them or carry trace storage in their configuration.
 #[cfg(not(any(debug_assertions, test)))]
 fn record(_config: &TuiConfig, _event: &TraceEvent) {}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use amux_ui::report::{ReplayVerdict, read_header};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+
+    fn diagnostics(root: &Path, label: &'static str) -> DiagnosticsSource {
+        DiagnosticsSource {
+            daemon_dump: Arc::new(move || {
+                Box::pin(async move { Ok(format!(r#"{{"profile":"{label}"}}"#)) })
+            }),
+            log_path: None,
+            reports_dir: root.join(label),
+            git_sha: "test-sha",
+        }
+    }
+
+    #[tokio::test]
+    async fn switcher_shell_capture_uses_selected_diagnostics_and_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let personal = diagnostics(root.path(), "Personal");
+        let work = diagnostics(root.path(), "Work");
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions::default(),
+        );
+        let mut config = TuiConfig {
+            working_dir: root.path().to_path_buf(),
+            leader: 'a',
+            theme: Theme::default(),
+            default_open_mode: crate::view::OpenMode::RawAttach,
+            default_agent_type: amux_ui::AgentType::TestAgent {
+                command: "unused".into(),
+            },
+            initial_chat: None,
+            initial_chat_configuration: None,
+            trace: Some(crate::trace::shared(crate::trace::SEGMENT_LEN)),
+            profiles: Some(ProfileSwitching {
+                front_door: root.path().join("amux.sock"),
+                current: root.path().join("personal.sock"),
+                options: Box::new(move |_| {
+                    Ok(ProfileOptions {
+                        runtime: RuntimeOptions::default(),
+                        diagnostics: Some(work.clone()),
+                    })
+                }),
+            }),
+            diagnostics: Some(personal),
+        };
+        let mut chrome = Chrome::new(
+            ViewState::default(),
+            ChromeConfig {
+                theme: config.theme,
+            },
+        );
+        let trace = config.trace.as_ref().unwrap().clone();
+        trace.lock().unwrap().roll_if_due(
+            runtime.model(),
+            &chrome.view,
+            chrome.theme(),
+            Utc::now(),
+        );
+        let entry = ProfileEntry {
+            id: amux_ui::ProfileId(uuid::Uuid::new_v4()),
+            label: "Work".into(),
+            email: None,
+            status: "local".into(),
+            socket: root.path().join("work.sock"),
+        };
+        let mut current = Some(root.path().join("personal.sock"));
+        perform(
+            &mut runtime,
+            &mut config,
+            &mut chrome,
+            vec![ShellEffect::SwitchProfile(entry.clone())],
+            &mut None,
+            &mut current,
+        )
+        .await
+        .unwrap();
+        assert_eq!(current.as_ref(), Some(&entry.socket));
+
+        let draw = TraceEvent::Draw {
+            viewport: (120, 40),
+            now: Utc::now(),
+        };
+        record(&config, &draw);
+        chrome.step(runtime.model(), &draw);
+        let lines = chrome.take_frame().unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let frame = terminal
+            .draw(|frame| {
+                frame.render_widget(Paragraph::new(lines), frame.area());
+            })
+            .unwrap()
+            .buffer
+            .clone();
+        let frozen = capture(
+            &Event::Key(CAPTURE_KEY),
+            &config,
+            &runtime,
+            &chrome,
+            Some(&frame),
+        )
+        .expect("the shell intercepts Ctrl+G after switching");
+        let mut answers = futures_util::stream::iter(
+            [KeyCode::Char('b'), KeyCode::Enter, KeyCode::Enter]
+                .map(|key| Ok(Event::Key(KeyEvent::new(key, KeyModifiers::NONE)))),
+        );
+        assert!(
+            report_flow(&mut terminal, &mut answers, frozen, chrome.theme(), &config,)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(!root.path().join("Personal").exists());
+        let reports: Vec<_> = std::fs::read_dir(root.path().join("Work"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(reports[0].join("daemon.json")).unwrap(),
+            r#"{"profile":"Work"}"#,
+        );
+        assert_eq!(
+            read_header(&reports[0]).unwrap().replay,
+            ReplayVerdict::Reproduces
+        );
+    }
+}

@@ -91,19 +91,7 @@ async fn run_inner(
     // terminal.
     runtime.install_panic_report();
 
-    // The dump is fetched when the key is pressed, not now: a report is
-    // meant to explain the daemon's state at the moment something looked
-    // wrong. A missing daemon is a reason string, not a failed capture.
-    let dump_config = config.clone();
-    let diagnostics =
-        amux_cli::diagnostics::source(&config, GIT_SHA, cfg!(debug_assertions), move || {
-            let config = dump_config.clone();
-            async move {
-                crate::server_client::debug(&config, true, DebugFormat::Json)
-                    .await
-                    .map_err(|error| format!("{error:#}"))
-            }
-        });
+    let diagnostics = profile_diagnostics(&config);
 
     // Switching accounts rebuilds the runtime against the selected
     // profile's own configuration: its reports, its artifact cache, its
@@ -125,11 +113,14 @@ async fn run_inner(
                     &crate::profiles::last_used(&installation),
                     &entry.id.0.to_string(),
                 )?;
-                Ok(runtime_options(
-                    &selected,
-                    #[cfg(debug_assertions)]
-                    trace.clone(),
-                ))
+                Ok(amux_tui::run::ProfileOptions {
+                    runtime: runtime_options(
+                        &selected,
+                        #[cfg(debug_assertions)]
+                        trace.clone(),
+                    ),
+                    diagnostics: profile_diagnostics(&selected),
+                })
             })
         },
     });
@@ -161,6 +152,20 @@ async fn run_inner(
         async move { crate::session_client::attach_for_ui(&config, agent).await }
     })
     .await
+}
+
+fn profile_diagnostics(config: &Config) -> Option<amux_tui::DiagnosticsSource> {
+    // Fetch at the capture keypress, using this selection's configuration.
+    // A missing daemon is a reason string, not a failed capture.
+    let dump_config = config.clone();
+    amux_cli::diagnostics::source(config, GIT_SHA, cfg!(debug_assertions), move || {
+        let config = dump_config.clone();
+        async move {
+            crate::server_client::debug(&config, true, DebugFormat::Json)
+                .await
+                .map_err(|error| format!("{error:#}"))
+        }
+    })
 }
 
 /// What one profile's runtime is built from.
