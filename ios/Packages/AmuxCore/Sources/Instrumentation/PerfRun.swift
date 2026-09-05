@@ -33,7 +33,8 @@ public struct PerfInputs: Codable, Sendable, Equatable {
     public let simulator: String
     /// `docs/IOS_PERFORMANCE.md`, verbatim.
     public let measurements: String
-    /// This machine's recorded baseline, when it has one.
+    /// This machine's recorded baseline, when it has one, keyed by metric and
+    /// workload written as `reconciliationMs.latency100`.
     public let baselines: [String: Double]
 
     public init(machine: String, simulator: String, measurements: String, baselines: [String: Double]) {
@@ -49,10 +50,10 @@ public struct PerfInputs: Codable, Sendable, Equatable {
 
     /// The budget table these inputs describe, baselines included.
     public func budgets() throws -> BudgetTable {
-        var recorded: [Metric: Double] = [:]
+        var recorded: [Measured: Double] = [:]
         for (name, value) in baselines {
-            guard let metric = Metric(rawValue: name) else { continue }
-            recorded[metric] = value
+            guard let measured = Measured(name: name) else { continue }
+            recorded[measured] = value
         }
         return try BudgetTable.parse(markdown: measurements).with(baselines: recorded)
     }

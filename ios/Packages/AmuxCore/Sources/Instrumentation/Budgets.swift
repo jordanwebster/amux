@@ -48,10 +48,13 @@ public struct BudgetTable: Sendable, Equatable {
     public let machines: [MachineRow]
     public let budgets: [Metric: Budget]
     /// What this machine measured when its baseline was recorded, if it has
-    /// one. Loaded from `ios/Perf/baselines/<machine>.json`.
-    public let baselines: [Metric: Double]
+    /// one, per metric and workload. Loaded from
+    /// `ios/Perf/baselines/<machine>.json`.
+    public let baselines: [Measured: Double]
 
-    public init(machines: [MachineRow], budgets: [Metric: Budget], baselines: [Metric: Double] = [:]) {
+    public init(
+        machines: [MachineRow], budgets: [Metric: Budget], baselines: [Measured: Double] = [:]
+    ) {
         self.machines = machines
         self.budgets = budgets
         self.baselines = baselines
@@ -66,10 +69,12 @@ public struct BudgetTable: Sendable, Equatable {
         machines.first { $0.model == model }
     }
 
+    /// A metric's budget. There is one per metric, whatever the workload: the
+    /// definitions hold the app to the same number under each.
     public func budget(_ metric: Metric) -> Budget? { budgets[metric] }
-    public func baseline(_ metric: Metric) -> Double? { baselines[metric] }
+    public func baseline(_ measured: Measured) -> Double? { baselines[measured] }
 
-    public func with(baselines: [Metric: Double]) -> BudgetTable {
+    public func with(baselines: [Measured: Double]) -> BudgetTable {
         BudgetTable(machines: machines, budgets: budgets, baselines: baselines)
     }
 }

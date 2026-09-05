@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Reconciliation is judged at each latency.** The measurement
+definitions hold the fleet's arrival to one second whether there is no network
+in front of it or a hundred milliseconds of one, and the suite measures both.
+It was then pooling the two into a single median: five samples at five
+milliseconds and five at a hundred and fifteen gave one number around sixty,
+and a slow hundred-millisecond run could have gone well past a second before
+anything complained. The verdict now carries one row per metric and workload,
+each judged against the same pinned budget on its own, and a failing row names
+the workload it is about. Baselines are recorded and looked up the same way,
+written as `reconciliationMs.latency100`, so a machine judged against its own
+recorded numbers is not comparing a slow reconciliation with a fast one's
+record. The budget tables in `docs/IOS_PERFORMANCE.md` are untouched; what
+changed is which samples are pooled before they are read.
+
 2026-09-05 — **The debug app talks to a real host.** The shared Rust bridge is
 now built twice for the simulator: the shipping library, which refuses a
 plaintext relay, and a second one with its driving tools compiled in, which

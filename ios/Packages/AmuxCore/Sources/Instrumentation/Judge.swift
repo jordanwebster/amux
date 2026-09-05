@@ -48,8 +48,40 @@ public struct MetricSample: Codable, Sendable, Equatable {
     }
 }
 
+/// One metric under one workload: the pair a budget is judged at and a
+/// baseline is recorded for.
+///
+/// Reconciliation with no network in front of it and reconciliation behind a
+/// hundred milliseconds of it are two different measurements of the same
+/// metric, and the definitions hold the app to the budget at each. Pooling
+/// them would let the fast one carry the slow one.
+public struct Measured: Codable, Sendable, Hashable {
+    public let metric: Metric
+    public let workload: Workload
+
+    public init(_ metric: Metric, _ workload: Workload) {
+        self.metric = metric
+        self.workload = workload
+    }
+
+    /// The pair written as one string, for a baseline file and a printed line:
+    /// `reconciliationMs.latency100`.
+    public var name: String { "\(metric.rawValue).\(workload.rawValue)" }
+
+    public init?(name: String) {
+        let parts = name.split(separator: ".", maxSplits: 1)
+        guard parts.count == 2, let metric = Metric(rawValue: String(parts[0])),
+            let workload = Workload(rawValue: String(parts[1]))
+        else { return nil }
+        self.init(metric, workload)
+    }
+}
+
 public struct MetricResult: Codable, Sendable, Equatable {
     public let metric: Metric
+    /// Which workload produced these samples. Two rows can carry the same
+    /// metric, and each is judged against the one pinned budget on its own.
+    public let workload: Workload
     public let budget: Double?
     public let baseline: Double?
     public let median: Double
@@ -60,10 +92,11 @@ public struct MetricResult: Codable, Sendable, Equatable {
     public let note: String?
 
     public init(
-        metric: Metric, budget: Double?, baseline: Double?, median: Double, worst: Double,
-        proxy: Bool, passed: Bool, note: String? = nil
+        metric: Metric, workload: Workload, budget: Double?, baseline: Double?, median: Double,
+        worst: Double, proxy: Bool, passed: Bool, note: String? = nil
     ) {
         self.metric = metric
+        self.workload = workload
         self.budget = budget
         self.baseline = baseline
         self.median = median
@@ -90,12 +123,12 @@ public struct PerfVerdict: Codable, Sendable, Equatable {
 
 public enum PerfError: Error, Sendable, Equatable {
     case unknownMachine(String)
-    case missingBaseline(Metric)
-    case tooFewSamples(Metric, Int)
+    case missingBaseline(Measured)
+    case tooFewSamples(Measured, Int)
 }
 
-/// How many measurements of a metric a verdict is allowed to rest on. Five,
-/// so the median is a median rather than a coin toss.
+/// How many measurements of a metric under one workload a verdict is allowed
+/// to rest on. Five, so the median is a median rather than a coin toss.
 public let requiredSamples = 5
 
 /// Turns samples into a verdict.
@@ -110,45 +143,54 @@ public func judge(
 ) throws(PerfError) -> PerfVerdict {
     guard let row = budgets.machine(machine) else { throw PerfError.unknownMachine(machine) }
 
+    // One row per metric and workload, in the order the two enumerations are
+    // written, so a verdict reads the same way every run.
     var results: [MetricResult] = []
     for metric in Metric.allCases {
-        let taken = samples.filter { $0.metric == metric }
-        guard !taken.isEmpty else { continue }
-        guard taken.count >= requiredSamples else {
-            throw PerfError.tooFewSamples(metric, taken.count)
-        }
-        let values = taken.map(\.value).sorted()
-        let middle = values[values.count / 2]
-        let worst = values[values.count - 1]
-        let budget = budgets.budget(metric)
-        let baseline = budgets.baseline(metric)
-        if row.baselineRequired && baseline == nil { throw PerfError.missingBaseline(metric) }
-
-        var note: String?
-        if row.budgetsAreHard, let limit = budget?.median, middle > limit {
-            note = "median \(rounded(middle)) is over the budget of \(rounded(limit))"
-        }
-        if note == nil, row.budgetsAreHard, let limit = budget?.worst, worst > limit {
-            note = "worst \(rounded(worst)) is over the worst-case budget of \(rounded(limit))"
-        }
-        if note == nil, let baseline {
-            let tolerance = budget?.tolerance ?? 0
-            let allowed = baseline * (1 + tolerance)
-            if middle > allowed {
-                note = "median \(rounded(middle)) is more than "
-                    + "\(Int((tolerance * 100).rounded()))% over the recorded "
-                    + "\(rounded(baseline))"
+        for workload in Workload.allCases {
+            let measured = Measured(metric, workload)
+            let taken = samples.filter { $0.metric == metric && $0.workload == workload }
+            guard !taken.isEmpty else { continue }
+            guard taken.count >= requiredSamples else {
+                throw PerfError.tooFewSamples(measured, taken.count)
             }
+            let values = taken.map(\.value).sorted()
+            let middle = values[values.count / 2]
+            let worst = values[values.count - 1]
+            let budget = budgets.budget(metric)
+            let baseline = budgets.baseline(measured)
+            if row.baselineRequired && baseline == nil {
+                throw PerfError.missingBaseline(measured)
+            }
+
+            var note: String?
+            if row.budgetsAreHard, let limit = budget?.median, middle > limit {
+                note = "median \(rounded(middle)) is over the budget of \(rounded(limit))"
+            }
+            if note == nil, row.budgetsAreHard, let limit = budget?.worst, worst > limit {
+                note = "worst \(rounded(worst)) is over the worst-case budget of "
+                    + "\(rounded(limit))"
+            }
+            if note == nil, let baseline {
+                let tolerance = budget?.tolerance ?? 0
+                let allowed = baseline * (1 + tolerance)
+                if middle > allowed {
+                    note = "median \(rounded(middle)) is more than "
+                        + "\(Int((tolerance * 100).rounded()))% over the recorded "
+                        + "\(rounded(baseline))"
+                }
+            }
+            results.append(MetricResult(
+                metric: metric,
+                workload: workload,
+                budget: budget?.median,
+                baseline: baseline,
+                median: middle,
+                worst: worst,
+                proxy: taken.contains { $0.proxy },
+                passed: note == nil,
+                note: note.map { "\(workload.rawValue): \($0)" }))
         }
-        results.append(MetricResult(
-            metric: metric,
-            budget: budget?.median,
-            baseline: baseline,
-            median: middle,
-            worst: worst,
-            proxy: taken.contains { $0.proxy },
-            passed: note == nil,
-            note: note))
     }
     return PerfVerdict(
         machine: machine,

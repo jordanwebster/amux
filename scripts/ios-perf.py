@@ -84,6 +84,16 @@ def machine() -> dict:
         "set AMUX_PERF_MACHINE to name a row deliberately.")
 
 
+def measured(result: dict) -> str:
+    """How a verdict row is named in a printed line and in a baseline file.
+
+    A metric alone would not do: reconciliation is measured with no network in
+    front of it and again behind a hundred milliseconds of one, and each is
+    held to the budget on its own.
+    """
+    return f"{result['metric']}.{result['workload']}"
+
+
 def container(udid: str) -> Path:
     return Path(subprocess.run(
         ["xcrun", "simctl", "get_app_container", udid, BUNDLE_ID, "data"],
@@ -177,7 +187,7 @@ def collect(udid: str, row: dict, record_baseline: bool) -> None:
     verdict = json.loads((OUTPUT / "verdict.json").read_text())
     for result in verdict["results"]:
         print(
-            f"{result['metric']}: median {result['median']:.1f}, worst {result['worst']:.1f}"
+            f"{measured(result)}: median {result['median']:.1f}, worst {result['worst']:.1f}"
             + (f", budget {result['budget']:.0f}" if result.get("budget") is not None else "")
             + (" (proxy)" if result["proxy"] else "")
             + ("" if result["passed"] else f" — FAILED: {result['note']}"),
@@ -187,7 +197,7 @@ def collect(udid: str, row: dict, record_baseline: bool) -> None:
         raise SystemExit("the run is over budget")
     if record_baseline:
         BASELINES.mkdir(parents=True, exist_ok=True)
-        recorded = {result["metric"]: result["median"] for result in verdict["results"]}
+        recorded = {measured(result): result["median"] for result in verdict["results"]}
         (BASELINES / f"{row['name']}.json").write_text(json.dumps(recorded, indent=2) + "\n")
         print(f"recorded {BASELINES}/{row['name']}.json", flush=True)
 
