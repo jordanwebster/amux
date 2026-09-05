@@ -1,0 +1,114 @@
+{
+  "is_cloud_server": false,
+  "use_cloud_mode": false,
+  "user_count": 1,
+  "agent_count": 0,
+  "remote_agent_count": 0,
+  "host_count": 3,
+  "route_count": 3,
+  "peer_link_count": 1,
+  "tunnel_count": 0,
+  "hosts": [
+    {
+      "id": "804cca0d-572d-4c02-84e8-e0fcdc074f4e",
+      "name": "laptop",
+      "version": "0.6.0",
+      "capabilities": {
+        "supported_agent_types": [
+          {
+            "agent_type": "claude"
+          },
+          {
+            "agent_type": "codex"
+          },
+          {
+            "agent_type": "test-agent"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eb78729e-d46b-45ca-b517-99811a98fae9",
+      "name": "desktop",
+      "version": "0.6.0",
+      "capabilities": {
+        "supported_agent_types": [
+          {
+            "agent_type": "claude"
+          },
+          {
+            "agent_type": "codex"
+          },
+          {
+            "agent_type": "test-agent"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9",
+      "name": "cloud",
+      "version": "0.6.0",
+      "capabilities": {
+        "features": [
+          "amux.cloud_relay"
+        ]
+      }
+    }
+  ],
+  "routes": [
+    {
+      "dst": "804cca0d-572d-4c02-84e8-e0fcdc074f4e",
+      "via": {
+        "kind": "relay",
+        "host": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9"
+      },
+      "hops": 2
+    },
+    {
+      "dst": "eb78729e-d46b-45ca-b517-99811a98fae9",
+      "via": {
+        "kind": "relay",
+        "host": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9"
+      },
+      "hops": 2
+    },
+    {
+      "dst": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9",
+      "via": {
+        "kind": "direct",
+        "link": "fd47f2554dd143d1afd16e8f5b92b0e9#6a2eb07d"
+      },
+      "hops": 1
+    }
+  ],
+  "links": [
+    {
+      "id": "fd47f2554dd143d1afd16e8f5b92b0e9#6a2eb07d",
+      "peer": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9",
+      "direction": "bidirectional",
+      "transport": "cloud_relay",
+      "established_at": null
+    }
+  ],
+  "tunnels": [],
+  "config": {
+    "host_name": "door-smoke",
+    "cloud_url": "https://amux.sh",
+    "socket_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/37FAA7BA-D9B6-4D45-970A-2B9882A20F3A/tmp/door-data/amux.sock",
+    "state_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/37FAA7BA-D9B6-4D45-970A-2B9882A20F3A/tmp/door-data/state.yaml",
+    "data_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/37FAA7BA-D9B6-4D45-970A-2B9882A20F3A/tmp/door-data",
+    "enable_cloud_mode": false,
+    "prevent_idle_sleep": false,
+    "repository_roots": [],
+    "keybinds": {
+      "leader": "ctrl+a"
+    },
+    "ui": {
+      "default_open_mode": "raw",
+      "theme": "dark",
+      "color": "auto",
+      "artifact_cache_mib": 256
+    }
+  }
+}

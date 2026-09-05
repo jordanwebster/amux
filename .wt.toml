@@ -85,6 +85,13 @@ needs = ["ios-build"]
 run = 'timeout 1200 python3 -B scripts/ios-goldens-perturb.py "$@"'
 needs = ["ios-build"]
 
+# Rebuild the screen a recorded report bundle was written with: fold its
+# runtime recording into fresh stores, apply the view-state trace beside it and
+# photograph the result. Nothing is connected and no recorded effect is run.
+[task.ios-replay]
+run = 'timeout 1800 python3 -B scripts/ios-replay.py "$@"'
+needs = ["ios-build"]
+
 # Pair every reference screen's baseline with the design's preserved capture.
 # A report and never a gate: a difference from the design is a conversation.
 [task.ios-goldens-reference]

@@ -45,6 +45,14 @@ final class DoorHost {
     /// what is on the other side does not mean this one.
     @ObservationIgnored private var deviceName = ""
 
+    /// What has been done to the view, in order, since the app started.
+    ///
+    /// The app has no navigation of its own yet, so everything here arrives
+    /// through the door. When the screens land, they record their own routes,
+    /// sheets and scroll positions into the same list and a report written by
+    /// somebody using the app carries what they were looking at.
+    @ObservationIgnored private var trace: [TraceEvent] = []
+
     func handle(_ request: DoorRequest) async -> DoorReply {
         switch request {
         case .open(let screen, let fixture): return open(screen: screen, fixture: fixture)
@@ -58,6 +66,7 @@ final class DoorHost {
         case .bridge: return .bridge(bridgeState())
         case .appearance(let appearance):
             self.appearance = appearance
+            trace.append(.appearance(appearance))
             return .ack
         case .perturb(let token):
             guard let token else {
@@ -74,7 +83,10 @@ final class DoorHost {
                 return .error("no type size named \(name)")
             }
             typeSize = size
+            trace.append(.dynamicType(name))
             return .ack
+        case .report(let path): return report(to: path)
+        case .replay(let path): return replay(from: path)
         case .settle:
             await settle()
             return .ack
@@ -108,8 +120,16 @@ final class DoorHost {
         if let named = fixture.typeSize, let size = DynamicTypeSize(doorName: named) {
             typeSize = size
         }
-        self.screen = screen
+        show(screen)
         return .ack
+    }
+
+    /// Shows a screen without touching the stores. Opening a fixture replaces
+    /// them; a replayed route must not, because the stores it is showing came
+    /// out of the recording.
+    private func show(_ screen: Screen) {
+        self.screen = screen
+        trace.append(.route(screen.rawValue))
     }
 
     private func connect(relay: String, token: String, user: String) -> DoorReply {
@@ -200,6 +220,94 @@ final class DoorHost {
             else { return nil }
             return name
         }.sorted()
+    }
+
+    // MARK: - Recording and replaying
+
+    /// Writes the shared runtime's recording and the view-state trace into a
+    /// directory the driver then reads out of the app's container.
+    private func report(to path: String) -> DoorReply {
+        guard let bridge else {
+            return .error("nothing is connected, so there is no recording to write")
+        }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        do {
+            let parts = try DoorRecording.write(directory, runtime: bridge, trace: trace)
+            return .bundle(path: path, parts: parts)
+        } catch {
+            return .error("\(error)")
+        }
+    }
+
+    /// Rebuilds the stores from a bundle and puts the screen back where its
+    /// trace left it.
+    ///
+    /// Anything the app was connected to is stopped first: a replay is about
+    /// a moment that already happened somewhere else, and a live connection
+    /// delivering into the same stores would write over it.
+    private func replay(from path: String) -> DoorReply {
+        stop()
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        let rebuilt = StoreBundle(account: AccountId("replay"), now: Scenario.now)
+        let events: [Event]
+        let recorded: [TraceEvent]
+        do {
+            events = try DoorRecording.replay(directory, into: rebuilt)
+            recorded = try DoorRecording.trace(directory)
+        } catch {
+            return .error("\(error)")
+        }
+        stores = rebuilt
+        screen = nil
+        trace = []
+        for event in recorded {
+            if case .error(let why) = apply(event) { return .error(why) }
+        }
+        return .replayed(ReplayedState(
+            events: events.count,
+            agents: rebuilt.fleet.rows.map(\.name).sorted(),
+            hosts: rebuilt.hosts.hosts.map(\.name).sorted(),
+            entries: Dictionary(uniqueKeysWithValues: rebuilt.conversations.map {
+                ($0.key.description, $0.value.entries.count)
+            }),
+            reconciled: rebuilt.fleet.reconciled,
+            trace: recorded.count,
+            screen: screen?.rawValue ?? "none"))
+    }
+
+    /// Puts one recorded view-state event back.
+    ///
+    /// A surface the app does not draw yet is a typed refusal rather than a
+    /// silent skip, for the same reason opening an unbuilt screen is: a replay
+    /// that quietly dropped the scroll position would come back looking right
+    /// and be showing the wrong thing.
+    private func apply(_ event: TraceEvent) -> DoorReply {
+        switch event {
+        case .route(let name):
+            guard let screen = Screen(rawValue: name) else { return .error("no screen named \(name)") }
+            guard DoorScreens.isBuilt(screen) else { return .error("unimplemented: \(name)") }
+            show(screen)
+            return .ack
+        case .appearance(let appearance):
+            self.appearance = appearance
+            trace.append(event)
+            return .ack
+        case .dynamicType(let name):
+            guard let size = DynamicTypeSize(doorName: name) else {
+                return .error("no type size named \(name)")
+            }
+            typeSize = size
+            trace.append(event)
+            return .ack
+        // A sheet that was dismissed is nothing to put back, and the app has
+        // no sheet to open and no transcript to scroll until the screens that
+        // hold them are built.
+        case .sheet(nil):
+            trace.append(event)
+            return .ack
+        case .sheet(.some(let name)): return .error("unimplemented sheet: \(name)")
+        case .scroll: return .error("unimplemented: scrolling a transcript")
+        }
     }
 
     private func stop() {

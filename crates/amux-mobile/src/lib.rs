@@ -284,6 +284,53 @@ pub unsafe extern "C" fn amux_mobile_report_snapshot(handle: *mut Handle) -> *mu
     unsafe { snapshot(handle, Control::ReportSnapshot) }
 }
 
+/// Folds a report's `msgs.jsonl` into the model it recorded and projects that
+/// model as the event batch a running runtime would have delivered. Returns
+/// owned JSON `{"events":[…]}`, or `{"error":"…"}` when the file cannot be
+/// read or replayed; free it with amux_mobile_free.
+///
+/// Nothing is connected, nothing is started and no effect the recording asked
+/// for is carried out: the reducer folds the recorded messages and the
+/// projection reads the result. The connection is not part of a recording, so
+/// the projection is told the relay is connected and reconciliation follows
+/// what the recorded model itself synchronized to. Every agent in the model is
+/// subscribed, so a replay carries every conversation the recording held
+/// rather than only the fleet. Debug-tools builds only.
+///
+/// # Safety
+/// path must be a readable NUL-terminated UTF-8 string for this call.
+#[cfg(feature = "debug-tools")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_replay_report(path: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        if path.is_null() {
+            return None;
+        }
+        let path = unsafe { CStr::from_ptr(path) }.to_str().ok()?;
+        let json = match amux_ui::replay_msgs(std::path::Path::new(path)) {
+            Ok(model) => {
+                let mut projection = Projection::default();
+                for card in model.agents() {
+                    projection.subscribe(card.agent.id);
+                }
+                let mut events = Vec::new();
+                projection.outcomes(&model, &mut events);
+                projection.collect(&model, &RelayConnection::Connected, &mut events);
+                serde_json::json!({ "events": events })
+            }
+            Err(error) => serde_json::json!({ "error": error.to_string() }),
+        };
+        Some(
+            CString::new(serde_json::to_string(&json).ok()?)
+                .ok()?
+                .into_raw(),
+        )
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
 unsafe fn snapshot(
     handle: *mut Handle,
     control: impl FnOnce(std::sync::mpsc::SyncSender<Option<String>>) -> Control,

@@ -13,6 +13,7 @@ import contextlib
 from pathlib import Path
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,7 +33,7 @@ RELEASE = DERIVED_DATA / "Build/Products/Release-iphonesimulator/Amux.app/Amux"
 # reach a build a person could install.
 DEBUG_ONLY = [
     "DoorServer", "DoorHost", "DoorScreens", "DoorCapture", "DoorFrames",
-    "DrivenRoot", "VisibleTree", "AmuxTestSupport",
+    "DoorRecording", "DrivenRoot", "VisibleTree", "AmuxTestSupport",
     # The performance harness: its workloads are forty invented agents and a
     # thousand invented transcript rows, and the launch it times exists only
     # to be timed.
@@ -40,14 +41,18 @@ DEBUG_ONLY = [
 ]
 OUTPUT = Path("target/ios/door")
 CAPTURE = OUTPUT / "door-capture.png"
+# Where the app is asked to write its report bundle. The two recordings in it
+# are what `wt run ios-replay` rebuilds a screen from.
+BUNDLE = OUTPUT / "bundle"
 SIMULATOR = "amux-golden"
 TOPOLOGY = "e2e-tests/topologies/two-hosts.json"
 # What the bridge built with the driving tools answers when asked what it is.
 # The shipping library answers the version alone and does not contain this
 # text anywhere, which is what the release check below reads.
 DRIVING_MARKER = "+debug-tools"
-# Defined only by the library with the driving tools compiled in.
-DRIVING_SYMBOL = "amux_mobile_report_snapshot"
+# Defined only by the library with the driving tools compiled in: freezing the
+# recorder for a report, and folding one back into a screen.
+DRIVING_SYMBOLS = ["amux_mobile_report_snapshot", "amux_mobile_replay_report"]
 
 # What is asked, and what must come back. The refusals come first on purpose:
 # a door that answered a screen nobody has built, or a type size nobody
@@ -75,6 +80,13 @@ def exchange(relay: str, token: str) -> list[tuple[dict, str]]:
         ({"kind": "connect", "relay": relay, "token": token, "user": "door-smoke"}, "ack"),
         ({"kind": "awaitReconciled", "seconds": 90}, "ack"),
         ({"kind": "bridge"}, "bridge"),
+        # A last change to the view before the recording is frozen, so the
+        # trace in the bundle ends somewhere a replay of it can be seen to
+        # have followed rather than at whatever a fresh launch defaults to.
+        ({"kind": "appearance", "appearance": "dark"}, "ack"),
+        # What a bug report is made of: the runtime's own recording and the
+        # view-state trace beside it, written by the app that was connected.
+        ({"kind": "report", "path": str(BUNDLE)}, "bundle"),
         ({"kind": "shutdown"}, "ack"),
     ]
 
@@ -82,6 +94,7 @@ def exchange(relay: str, token: str) -> list[tuple[dict, str]]:
 def speak(plan: list[tuple[dict, str]]) -> list[dict]:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     CAPTURE.unlink(missing_ok=True)
+    shutil.rmtree(BUNDLE, ignore_errors=True)
     requests = OUTPUT / "requests.json"
     requests.write_text(json.dumps([request for request, _ in plan], indent=2))
     spoken = subprocess.run([
@@ -126,6 +139,9 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
         flush=True,
     )
 
+    written = next(reply for reply in replies if reply["kind"] == "bundle")
+    check_bundle(written)
+
     before, after = [reply["bridge"] for reply in replies if reply["kind"] == "bridge"]
     if not before["build"].endswith(DRIVING_MARKER):
         raise SystemExit(
@@ -149,6 +165,38 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
     )
 
 
+def check_bundle(written: dict) -> None:
+    """A report bundle is two recordings side by side: what the shared runtime
+    had folded, and what was on screen while it folded it. Both must be there
+    and both must be readable, or a replay of the bundle rebuilds half a
+    moment."""
+    for part in ("msgs.jsonl", "trace.jsonl"):
+        if part not in written["parts"]:
+            raise SystemExit(f"the app did not write {part}: {written}")
+        if not (BUNDLE / part).is_file():
+            raise SystemExit(f"{BUNDLE / part} was not collected from the app")
+    header, *messages = (BUNDLE / "msgs.jsonl").read_text().splitlines()
+    checkpoint = json.loads(header)
+    if "format_version" not in checkpoint or "checkpoint" not in checkpoint:
+        raise SystemExit(f"msgs.jsonl does not start with a recorder header: {header[:200]}")
+    for line in messages:
+        json.loads(line)
+    trace = [json.loads(line) for line in (BUNDLE / "trace.jsonl").read_text().splitlines()]
+    kinds = [event["kind"] for event in trace]
+    # The door drove an appearance, a type size and a screen before it
+    # connected; a trace that did not record them is not recording the view.
+    for expected in ("route", "appearance", "dynamicType"):
+        if expected not in kinds:
+            raise SystemExit(f"the trace beside msgs.jsonl recorded no {expected}: {trace}")
+    if trace[-1] != {"kind": "appearance", "appearance": "dark"}:
+        raise SystemExit(f"the trace does not end where the door left the view: {trace[-1]}")
+    print(
+        f"{BUNDLE}: {', '.join(written['parts'])}; "
+        f"{len(messages)} recorded messages, {len(trace)} view-state events ({', '.join(kinds)})",
+        flush=True,
+    )
+
+
 def release_is_shut(udid: str) -> None:
     """The door is a debug tool. A release build must not contain it at all,
     and it must link the shipping bridge rather than the driving one."""
@@ -167,9 +215,10 @@ def release_is_shut(udid: str) -> None:
     present = sorted({name for name in DEBUG_ONLY if name in symbols})
     if present:
         raise SystemExit(f"the release build carries debug-only code: {', '.join(present)}")
-    if DRIVING_SYMBOL in symbols:
+    linked = sorted(name for name in DRIVING_SYMBOLS if name in symbols)
+    if linked:
         raise SystemExit(
-            f"the release build linked the bridge with the driving tools: {DRIVING_SYMBOL}")
+            f"the release build linked the bridge with the driving tools: {', '.join(linked)}")
     # The build marker the door read back out of the debug app, looked for in
     # the release binary's own bytes. The shipping library does not contain
     # the text at all, so its absence here is which library was linked.
@@ -177,7 +226,7 @@ def release_is_shut(udid: str) -> None:
         raise SystemExit(
             f"the release binary carries the driving build marker {DRIVING_MARKER}")
     print(
-        f"{RELEASE}: none of {', '.join(DEBUG_ONLY)}, no {DRIVING_SYMBOL}, "
+        f"{RELEASE}: none of {', '.join(DEBUG_ONLY)}, no {', '.join(DRIVING_SYMBOLS)}, "
         f"no {DRIVING_MARKER}",
         flush=True,
     )

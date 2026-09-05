@@ -1,0 +1,7 @@
+{"checkpoint":{"remote_inventories":{},"streams":{},"agents":{},"now":null,"finished_ops":[],"queues":{},"epoch":0,"invariant_warning":false,"pending_ops":{},"connection":{"connection":"connecting"},"cloud_auth_required":false,"hosts":{},"cloud_subscription_required":false,"local_host_id":null,"op_seq":0},"format_version":1}
+{"msg":"server","server":"connected","local_host_id":null}
+{"msg":"server","server":"host_upserted","host":{"id":"77041f87-79c2-4af0-9b6d-ddbf8f402069","name":"door-smoke","online":true,"version":"0.6.0","capabilities":{},"trust_status":"trusted","last_dial_error":null}}
+{"msg":"server","server":"hosts_synchronized"}
+{"msg":"server","server":"agents_synchronized"}
+{"msg":"server","server":"host_upserted","host":{"id":"804cca0d-572d-4c02-84e8-e0fcdc074f4e","name":"laptop","online":true,"version":"0.6.0","capabilities":{"supported_agent_types":[{"agent_type":"claude"},{"agent_type":"codex"},{"agent_type":"test-agent"}]},"trust_status":"untrusted_but_online","last_dial_error":null}}
+{"msg":"server","server":"host_upserted","host":{"id":"eb78729e-d46b-45ca-b517-99811a98fae9","name":"desktop","online":true,"version":"0.6.0","capabilities":{"supported_agent_types":[{"agent_type":"claude"},{"agent_type":"codex"},{"agent_type":"test-agent"}]},"trust_status":"untrusted_but_online","last_dial_error":null}}

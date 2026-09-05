@@ -124,10 +124,12 @@ pub fn install(udid: &str, application: &Path) -> Result<(), DoorError> {
 /// Launches the app on the simulator and speaks the given requests to it, in
 /// order, returning one reply for each.
 ///
-/// A `capture` request names a path on the Mac. The app cannot write there —
-/// it is sandboxed — so it is asked to write inside its own container and the
-/// file is moved out afterwards, and the reply names the path the caller
-/// asked for. Everything else is passed through untouched.
+/// A request that names a path names one on the Mac, and the app is sandboxed
+/// away from all of them. A `capture` or a `report` is asked to write inside
+/// the app's own container and what it wrote is moved out afterwards; a
+/// `replay` has its bundle copied into the container first and is pointed at
+/// the copy. Either way the reply names the path the caller asked for, and
+/// every other request is passed through untouched.
 pub fn door(
     simulator: &str,
     bundle_id: &str,
@@ -173,14 +175,29 @@ fn converse(
     let mut writing = stream.try_clone()?;
     let mut reading = BufReader::new(stream);
 
-    let captures = container.join("tmp/captures");
-    std::fs::create_dir_all(&captures)?;
+    // Where anything crossing the sandbox boundary is staged, in both
+    // directions: what the app writes for the Mac, and what the Mac hands the
+    // app to read.
+    let scratch = container.join("tmp/door");
+    std::fs::create_dir_all(&scratch)?;
 
     let mut replies = Vec::with_capacity(requests.len());
     for (index, request) in requests.into_iter().enumerate() {
-        let wanted = capture_destination(&request);
+        let wanted = traffic(&request);
         let sent = match &wanted {
-            Some(_) => rewrite_capture(&request, &captures.join(format!("capture-{index}.png"))),
+            Some((Traffic::CaptureOut, _)) => {
+                rewrite_path(&request, &scratch.join(format!("capture-{index}.png")))
+            }
+            Some((Traffic::BundleOut, _)) => {
+                let inside = scratch.join(format!("bundle-{index}"));
+                std::fs::create_dir_all(&inside)?;
+                rewrite_path(&request, &inside)
+            }
+            Some((Traffic::BundleIn, source)) => {
+                let inside = scratch.join(format!("bundle-{index}"));
+                copy_directory(source, &inside)?;
+                rewrite_path(&request, &inside)
+            }
             None => request,
         };
         writeln!(writing, "{sent}")?;
@@ -193,22 +210,38 @@ fn converse(
         }
         let mut reply: Value = serde_json::from_str(line.trim())
             .map_err(|_| DoorError::Unreadable(line.trim().to_string()))?;
-        if let Some(destination) = wanted {
-            collect(&mut reply, &destination)?;
+        match wanted {
+            Some((Traffic::CaptureOut, destination)) => collect_file(&mut reply, &destination)?,
+            Some((Traffic::BundleOut, destination)) => collect_directory(&mut reply, &destination)?,
+            Some((Traffic::BundleIn, _)) | None => {}
         }
         replies.push(reply);
     }
     Ok(replies)
 }
 
-fn capture_destination(request: &Value) -> Option<PathBuf> {
-    if request.get("kind")?.as_str()? != "capture" {
-        return None;
-    }
-    Some(PathBuf::from(request.get("path")?.as_str()?))
+/// Which way a request's path has to travel across the sandbox boundary.
+enum Traffic {
+    /// One file the app writes and the Mac keeps.
+    CaptureOut,
+    /// A directory of files the app writes and the Mac keeps.
+    BundleOut,
+    /// A directory of files the Mac has and the app must be able to read.
+    BundleIn,
 }
 
-fn rewrite_capture(request: &Value, inside: &Path) -> Value {
+fn traffic(request: &Value) -> Option<(Traffic, PathBuf)> {
+    let path = PathBuf::from(request.get("path")?.as_str()?);
+    let direction = match request.get("kind")?.as_str()? {
+        "capture" => Traffic::CaptureOut,
+        "report" => Traffic::BundleOut,
+        "replay" => Traffic::BundleIn,
+        _ => return None,
+    };
+    Some((direction, path))
+}
+
+fn rewrite_path(request: &Value, inside: &Path) -> Value {
     let mut rewritten = request.clone();
     rewritten["path"] = json!(inside.to_string_lossy());
     rewritten
@@ -216,7 +249,7 @@ fn rewrite_capture(request: &Value, inside: &Path) -> Value {
 
 /// Moves a capture out of the app's container to where the caller asked for
 /// it, and rewrites the reply to name that path.
-fn collect(reply: &mut Value, destination: &Path) -> Result<(), DoorError> {
+fn collect_file(reply: &mut Value, destination: &Path) -> Result<(), DoorError> {
     let Some(written) = reply.get("path").and_then(Value::as_str) else {
         return Ok(());
     };
@@ -226,6 +259,46 @@ fn collect(reply: &mut Value, destination: &Path) -> Result<(), DoorError> {
     std::fs::copy(written, destination)?;
     std::fs::remove_file(written).ok();
     reply["path"] = json!(destination.to_string_lossy());
+    Ok(())
+}
+
+/// Moves a written bundle out of the container. Only the files the reply named
+/// are taken, so whatever else the app keeps in its container stays there.
+fn collect_directory(reply: &mut Value, destination: &Path) -> Result<(), DoorError> {
+    let Some(written) = reply.get("path").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let parts: Vec<String> = reply
+        .get("parts")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    std::fs::create_dir_all(destination)?;
+    for part in parts {
+        let from = Path::new(written).join(&part);
+        std::fs::copy(&from, destination.join(&part))?;
+        std::fs::remove_file(&from).ok();
+    }
+    reply["path"] = json!(destination.to_string_lossy());
+    Ok(())
+}
+
+/// Copies a bundle's files into the app's container. A bundle is flat: its
+/// parts sit beside each other, and anything nested is not one.
+fn copy_directory(source: &Path, destination: &Path) -> Result<(), DoorError> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            std::fs::copy(entry.path(), destination.join(entry.file_name()))?;
+        }
+    }
     Ok(())
 }
 

@@ -641,6 +641,38 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     );
     std::fs::write(&replay_path, lines.join("\n") + "\n").unwrap();
     let replay = amux_ui::replay_msgs(&replay_path).unwrap();
+    // The same file the app hands back through the replay call, which is what
+    // a Mac-side replay of a report bundle reads: the recorded model folded
+    // again and projected as the events a live connection would have sent.
+    let projected = owned_json(unsafe {
+        amux_mobile_replay_report(
+            CString::new(replay_path.to_str().unwrap())
+                .unwrap()
+                .as_ptr(),
+        )
+    });
+    let events = projected["events"].as_array().expect("replayed events");
+    let fleet = events
+        .iter()
+        .find(|event| event.get("Fleet").is_some())
+        .expect("a replayed batch carries the fleet it recorded");
+    // The same agents. Not the same order: the display order lives in the
+    // cache the phone kept, and a replay has only the recording.
+    let (mut replayed_ids, mut recorded_ids) = (ids(fleet), expected.clone());
+    replayed_ids.sort_by_key(ToString::to_string);
+    recorded_ids.sort_by_key(ToString::to_string);
+    assert_eq!(
+        replayed_ids, recorded_ids,
+        "replay rebuilt a different fleet"
+    );
+    assert!(projected["error"].is_null());
+    // A file that is not a recording is refused with a reason rather than
+    // replayed as an empty screen.
+    let missing = owned_json(unsafe {
+        amux_mobile_replay_report(CString::new("/nonexistent/msgs.jsonl").unwrap().as_ptr())
+    });
+    assert!(missing["error"].is_string(), "{missing}");
+    assert!(unsafe { amux_mobile_replay_report(std::ptr::null()) }.is_null());
     let snapshot: amux_ui::Model =
         serde_json::from_value(owned_json(unsafe { amux_mobile_snapshot(running.handle) }))
             .unwrap();

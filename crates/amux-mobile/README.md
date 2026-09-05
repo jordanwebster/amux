@@ -145,6 +145,18 @@ with an explicit absence reason. These calls wait up to five seconds for the
 worker; call them outside the event callback, finish before stop, check for
 null and release returned strings with `amux_mobile_free`.
 
+Also in `debug-tools` builds, `amux_mobile_replay_report` takes the path of a
+`msgs.jsonl` written that way and returns `{"events":[EVENT,...]}` — the same
+projected events a live connection delivers — or `{"error":STRING}` when the
+file cannot be read or folded. It needs no handle and starts nothing: the
+recorded messages are folded by the shared reducer and the result is projected,
+so none of the effects the recording once asked for are carried out. Every
+agent in the recorded model is subscribed, so the batch carries its
+conversations as well as its fleet, and the projection is told the relay is
+connected because a recording holds no connection of its own — reconciliation
+then follows what the recorded model itself synchronized to. Release the result
+with `amux_mobile_free`.
+
 `timeout 900 wt test -- mobile_cache` restarts a paired bridge offline, verifies
 its first callback and stable ordering on reconnect, checks rename persistence,
 prunes offline deletions and unpaired hosts without reordering survivors,

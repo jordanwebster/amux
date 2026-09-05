@@ -33,6 +33,8 @@ final class DoorTests: XCTestCase {
             .capture(path: "/tmp/home.png"),
             .tap(identifier: "home.row.aurora"),
             .type(identifier: "composer.field", text: "hello"),
+            .report(path: "/tmp/report"),
+            .replay(path: "/tmp/report"),
             .shutdown,
         ]
         for request in requests {
@@ -61,6 +63,8 @@ final class DoorTests: XCTestCase {
         // Nothing named puts the design back, and is sent as an absent field
         // rather than a null, like every other request the door takes.
         XCTAssertNil(try wire(.perturb(token: nil))["token"])
+        XCTAssertEqual(try wire(.report(path: "/tmp/report"))["path"] as? String, "/tmp/report")
+        XCTAssertEqual(try wire(.replay(path: "/tmp/report"))["path"] as? String, "/tmp/report")
     }
 
     func testAnUnknownRequestIsRefused() {
@@ -83,6 +87,11 @@ final class DoorTests: XCTestCase {
             .state(state),
             .bridge(bridge),
             .captured(path: "/tmp/home.png", width: 1206, height: 2622, scale: 3),
+            .bundle(path: "/tmp/report", parts: ["msgs.jsonl", "trace.jsonl"]),
+            .replayed(ReplayedState(
+                events: 4, agents: ["aurora"], hosts: ["desktop"],
+                entries: ["6f1c1f8e-0000-4000-8000-000000000001": 12],
+                reconciled: true, trace: 3, screen: "probe")),
             .error("unimplemented: home"),
         ]
         for reply in replies {

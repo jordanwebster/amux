@@ -1,0 +1,11 @@
+{
+  "agents": [],
+  "entries": {},
+  "events": 1,
+  "hosts": [
+    "door-smoke"
+  ],
+  "reconciled": true,
+  "screen": "probe",
+  "trace": 4
+}

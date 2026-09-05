@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		03A652855597531ADB49E8BC /* DoorRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */; };
 		05DFFA86753B995BB850DE4C /* ScriptedCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */; };
 		08A81513DFEF3EE1567A6A5E /* VisibleTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8CE78DF417F5614935595CA /* VisibleTree.swift */; };
 		0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31777DF351ACE50870B1C6A5 /* LaunchTests.swift */; };
@@ -26,6 +27,7 @@
 		7E37AF5A01DF31494E49948C /* AmuxDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 518CACD385E201BC13A07DD6 /* AmuxDesign */; };
 		82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */; };
 		85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBADB0CC914373F8BD52E715 /* AmuxApp.swift */; };
+		894FA032EAF19BFC5E92664F /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4FC885DCA537FD2ABD0FD /* Trace.swift */; };
 		9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */; };
 		A3C2080DEA1ECDCA5A1BA441 /* PerformanceSuite.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */; };
 		A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A10C4D43E54FEABB391277E /* PerfRun.swift */; };
@@ -62,10 +64,12 @@
 /* Begin PBXFileReference section */
 		11108752C34ADBDF5089E372 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
 		1E66BD0F085353353B013CB1 /* AmuxCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxCore; path = Packages/AmuxCore; sourceTree = SOURCE_ROOT; };
+		21A4FC885DCA537FD2ABD0FD /* Trace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trace.swift; sourceTree = "<group>"; };
 		2D67FA937AF3288820FA3464 /* Perturbation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Perturbation.swift; sourceTree = "<group>"; };
 		2DA38C20C8560FEE2BB88D9F /* Door.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Door.swift; sourceTree = "<group>"; };
 		2DE7599AB005A8225918A3EF /* Fixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixture.swift; sourceTree = "<group>"; };
 		31777DF351ACE50870B1C6A5 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
+		33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorRecording.swift; sourceTree = "<group>"; };
 		35ED0CE4A533E8878FBD1675 /* AmuxFeatures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxFeatures; path = Packages/AmuxFeatures; sourceTree = SOURCE_ROOT; };
 		57E50ACE0C6E84D336B13332 /* Harness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Harness.swift; sourceTree = "<group>"; };
 		590B62F0B4C074AA2233FC70 /* DoorServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorServer.swift; sourceTree = "<group>"; };
@@ -198,6 +202,7 @@
 			children = (
 				A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */,
 				5CBBB924EED36840518D0268 /* DoorHost.swift */,
+				33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */,
 				979C7C4DC969977B66A65802 /* DoorScreens.swift */,
 				590B62F0B4C074AA2233FC70 /* DoorServer.swift */,
 				A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */,
@@ -254,6 +259,7 @@
 				C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */,
 				C0FF4DBFB3F554EC2761318D /* Sessions.swift */,
 				66609895E99B406673EEADA3 /* States.swift */,
+				21A4FC885DCA537FD2ABD0FD /* Trace.swift */,
 				D0E455E43044DD55EB8662D4 /* Transcript.swift */,
 			);
 			path = AmuxTestSupport;
@@ -409,6 +415,7 @@
 				63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */,
 				48C852D18B47B3DA431FDA05 /* Door.swift in Sources */,
 				AEE5ABB7E7D74D75A3DF45A5 /* DoorHost.swift in Sources */,
+				03A652855597531ADB49E8BC /* DoorRecording.swift in Sources */,
 				1A2A6C51813425F3286B3CB6 /* DoorScreens.swift in Sources */,
 				546E08243B4B5BE2BDFDAB84 /* DoorServer.swift in Sources */,
 				82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */,
@@ -423,6 +430,7 @@
 				05DFFA86753B995BB850DE4C /* ScriptedCloud.swift in Sources */,
 				E2141E4F9E984ECACF441955 /* Sessions.swift in Sources */,
 				0F3AC52183DBFF753C52B8CF /* States.swift in Sources */,
+				894FA032EAF19BFC5E92664F /* Trace.swift in Sources */,
 				65046E7D6034907CF41BD1A7 /* Transcript.swift in Sources */,
 				08A81513DFEF3EE1567A6A5E /* VisibleTree.swift in Sources */,
 				1EB380BBF813E1A744D85210 /* Workloads.swift in Sources */,

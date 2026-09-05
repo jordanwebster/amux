@@ -209,6 +209,24 @@ public final class BridgeClient: Sendable {
         }
     }
 
+    /// Runs one call against the live runtime, under the same lock every other
+    /// call here takes, and answers nothing once it has stopped.
+    ///
+    /// The library built with the driving tools defines calls the shipping one
+    /// does not — freezing a recorder snapshot is one. A method here for each
+    /// of them would be a symbol the release build could not link, so the
+    /// handle is lent to the caller instead and the debug-only code that may
+    /// name such a call names it. Nothing shipping should reach for this.
+    ///
+    /// Never call this from an event callback for anything that waits on the
+    /// worker; the same rule as `snapshot()`.
+    public func withRuntime<Result>(_ body: (OpaquePointer) -> Result) -> Result? {
+        state.withLock { state in
+            guard let handle = state.handle else { return nil }
+            return body(handle)
+        }
+    }
+
     /// Stops the runtime and joins its worker; no callback can follow.
     public func stop() {
         let handle: OpaquePointer? = state.withLock { state in

@@ -38,6 +38,12 @@ public enum DoorRequest: Sendable, Equatable {
     case capture(path: String)
     case tap(identifier: String)
     case type(identifier: String, text: String)
+    /// Write a report bundle into this directory: the shared runtime's own
+    /// recording and the view-state trace beside it.
+    case report(path: String)
+    /// Rebuild the stores and the view from the bundle in this directory,
+    /// without carrying out anything the recording asked the app to do.
+    case replay(path: String)
     case shutdown
 }
 
@@ -46,9 +52,49 @@ public enum DoorReply: Sendable, Equatable {
     case state(VisibleState)
     case bridge(BridgeState)
     case captured(path: String, width: Int, height: Int, scale: Int)
+    /// A bundle was written at this path, holding these files.
+    case bundle(path: String, parts: [String])
+    case replayed(ReplayedState)
     /// Why the request could not be answered, in one line. The door never
     /// half-answers: a request either happened or is reported here.
     case error(String)
+}
+
+/// What a bundle rebuilt: the fleet the recording held, the conversations it
+/// held, and what the view-state trace then did to the screen.
+///
+/// A capture alone cannot show that a replay read the recording rather than a
+/// fixture — the screen would look the same either way until every screen is
+/// built. This says what came out of the bundle, so a driver can check the
+/// rebuilt fleet against the one the bundle recorded.
+public struct ReplayedState: Codable, Sendable, Equatable {
+    /// Event batches the recording projected into the stores.
+    public let events: Int
+    /// The agents the rebuilt fleet names, by name.
+    public let agents: [String]
+    /// The machines the rebuilt fleet names, by name.
+    public let hosts: [String]
+    /// How many transcript entries each rebuilt conversation holds, by agent.
+    public let entries: [String: Int]
+    /// Whether the rebuilt fleet was confirmed by a host when it was recorded.
+    public let reconciled: Bool
+    /// View-state events applied after the stores were rebuilt.
+    public let trace: Int
+    /// The screen the trace left showing.
+    public let screen: String
+
+    public init(
+        events: Int, agents: [String], hosts: [String], entries: [String: Int],
+        reconciled: Bool, trace: Int, screen: String
+    ) {
+        self.events = events
+        self.agents = agents
+        self.hosts = hosts
+        self.entries = entries
+        self.reconciled = reconciled
+        self.trace = trace
+        self.screen = screen
+    }
 }
 
 /// What is on screen, as the accessibility tree reports it: the same elements
@@ -186,6 +232,10 @@ extension DoorRequest: Codable {
             self = .type(
                 identifier: try fields.decode(String.self, forKey: .identifier),
                 text: try fields.decode(String.self, forKey: .text))
+        case "report":
+            self = .report(path: try fields.decode(String.self, forKey: .path))
+        case "replay":
+            self = .replay(path: try fields.decode(String.self, forKey: .path))
         case "shutdown": self = .shutdown
         default:
             throw DecodingError.dataCorruptedError(
@@ -236,6 +286,12 @@ extension DoorRequest: Codable {
             try fields.encode("type", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)
             try fields.encode(text, forKey: .text)
+        case .report(let path):
+            try fields.encode("report", forKey: .kind)
+            try fields.encode(path, forKey: .path)
+        case .replay(let path):
+            try fields.encode("replay", forKey: .kind)
+            try fields.encode(path, forKey: .path)
         case .shutdown:
             try fields.encode("shutdown", forKey: .kind)
         }
@@ -244,7 +300,7 @@ extension DoorRequest: Codable {
 
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
-        case kind, state, bridge, path, width, height, scale, message
+        case kind, state, bridge, path, width, height, scale, message, parts, replayed
     }
 
     public init(from decoder: any Decoder) throws {
@@ -262,6 +318,12 @@ extension DoorReply: Codable {
                 width: try fields.decode(Int.self, forKey: .width),
                 height: try fields.decode(Int.self, forKey: .height),
                 scale: try fields.decode(Int.self, forKey: .scale))
+        case "bundle":
+            self = .bundle(
+                path: try fields.decode(String.self, forKey: .path),
+                parts: try fields.decode([String].self, forKey: .parts))
+        case "replayed":
+            self = .replayed(try fields.decode(ReplayedState.self, forKey: .replayed))
         case "error":
             self = .error(try fields.decode(String.self, forKey: .message))
         default:
@@ -287,6 +349,13 @@ extension DoorReply: Codable {
             try fields.encode(width, forKey: .width)
             try fields.encode(height, forKey: .height)
             try fields.encode(scale, forKey: .scale)
+        case .bundle(let path, let parts):
+            try fields.encode("bundle", forKey: .kind)
+            try fields.encode(path, forKey: .path)
+            try fields.encode(parts, forKey: .parts)
+        case .replayed(let state):
+            try fields.encode("replayed", forKey: .kind)
+            try fields.encode(state, forKey: .replayed)
         case .error(let message):
             try fields.encode("error", forKey: .kind)
             try fields.encode(message, forKey: .message)

@@ -4,6 +4,35 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A recorded moment replays into a screen.** A report bundle now
+holds two recordings side by side: `msgs.jsonl`, the shared runtime's own —
+the reducer model it had checkpointed and every message it folded after that —
+and `trace.jsonl` beside it, what was being looked at while those messages
+arrived. The app writes both, and `wt run ios-replay -- DIR` hands them back to
+a debug build on the pinned simulator: the runtime folds the messages into a
+model and projects it as the events a live connection would have delivered, the
+app applies the trace on top, and the screen that comes back is photographed.
+Nothing connects, and none of the work the recording once asked for is carried
+out — it was carried out on the phone that wrote it. The committed sample under
+`ios/Fixtures/reports/sample` was written by the app itself against the test
+topology, so what a replay is checked against is what a phone produces rather
+than something composed by hand.
+
+It is checked twice, because the screen this bundle was recorded on does not
+draw the fleet yet: the photograph is compared with the picture the bundle was
+written with, and what came out of the recording — its machines, its
+conversations, whether a host had confirmed them — is compared with the state
+pinned beside it. A picture alone would look identical whether the recording
+rebuilt anything or nothing.
+
+A trace event for a surface the app does not draw yet is a typed refusal rather
+than a silent skip, for the same reason opening an unbuilt screen is: a replay
+that quietly dropped a scroll position would come back looking right and be
+showing the wrong thing. The composer's draft is deliberately not in the trace
+vocabulary — the type it would carry belongs to a screen that is not built, and
+a stand-in would freeze the wrong shape into bundles people have already
+recorded.
+
 2026-09-05 — **Showing the golden check fail.** `wt run ios-goldens-perturb`
 asks the app to draw the probe screen with one colour token replaced by a
 magenta the design never uses, captures and compares it exactly as an ordinary
