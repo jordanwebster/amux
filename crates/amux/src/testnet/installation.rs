@@ -260,6 +260,28 @@ impl std::ops::Deref for Profile {
 }
 
 impl Profile {
+    /// Force refresh through the runtime's installed credential provider and
+    /// await its commit or refusal. No credential material leaves the fixture.
+    pub async fn refresh_credentials(&self) -> Result<(), crate::auth::AuthError> {
+        let owner = self.daemon.inner.installation.as_ref().unwrap();
+        owner
+            .installation
+            .upgrade()
+            .unwrap()
+            .current()
+            .refresh_for_test(self.id)
+            .await
+    }
+
+    pub async fn reaches_status(&self, observed: crate::installation::Observed) {
+        super::assertions::eventually(
+            &format!("{} reaches {observed:?}", self.name()),
+            async || self.status().observed == observed,
+            self.daemon.failure_dump(),
+        )
+        .await;
+    }
+
     pub async fn socket_client(&self) -> crate::Client {
         let config = crate::config::Config {
             socket_path: self.paths().socket_path,

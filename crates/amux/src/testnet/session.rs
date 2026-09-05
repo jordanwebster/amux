@@ -979,16 +979,20 @@ impl Daemon {
             self.name(),
             other.name()
         );
-        let parts = self
-            .try_parts()
-            .await
-            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let channel = parts
-            .connections
-            .channel_to(other.host_id())
-            .await
-            .unwrap_or_else(|error| panic!("failed to route {description}: {error}"));
-        let client = Client::from_client_service_channel(channel, None);
+        let client = if self.host_id() == other.host_id() {
+            self.admin_client().await
+        } else {
+            let parts = self
+                .try_parts()
+                .await
+                .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+            let channel = parts
+                .connections
+                .channel_to(other.host_id())
+                .await
+                .unwrap_or_else(|error| panic!("failed to route {description}: {error}"));
+            Client::from_client_service_channel(channel, None)
+        };
         let stream = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: agent_name.into(),

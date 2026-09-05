@@ -516,6 +516,18 @@ impl Daemon {
         })
     }
 
+    /// Exact live cloud links, including their connection identities. This
+    /// distinguishes keeping a link from silently replacing it during a refusal.
+    pub async fn cloud_link_ids(&self) -> Vec<String> {
+        self.try_parts()
+            .await
+            .unwrap()
+            .tunnels
+            .link_registry()
+            .cloud_link_ids()
+            .await
+    }
+
     /// Presence: `other` shows up as online on this daemon's host-listing
     /// surface.
     pub async fn sees(&self, other: &Daemon) {

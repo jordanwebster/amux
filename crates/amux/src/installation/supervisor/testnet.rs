@@ -6,6 +6,23 @@ pub(super) type RuntimeFixtureFactory =
     Arc<dyn Fn(ProfileId) -> runtime::RuntimeFixtures + Send + Sync>;
 
 impl Installation {
+    pub(crate) async fn refresh_for_test(
+        &self,
+        id: ProfileId,
+    ) -> Result<(), crate::auth::AuthError> {
+        use crate::auth::CredentialProvider;
+        let store = self.inner.state.lock().unwrap().profiles[&id]
+            .slot
+            .credentials
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap();
+        let token = store.access_token().await?;
+        store.invalidate(&token);
+        store.access_token().await.map(|_| ())
+    }
+
     pub(crate) async fn open_for_test(
         options: InstallationOptions,
         fixtures: RuntimeFixtureFactory,

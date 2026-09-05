@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Prove binding against live profile devices.**
+The profile binding specs now exercise production login, logout and credential
+refresh with a real identity fixture, relay and paired peer. They verify account
+refusals preserve exact credential bytes and an open cloud session, concurrent
+logins leave one device and link, swapped subjects cannot reconnect, logout wins
+against a held refresh, reservations and trust survive reopen, and pairing or
+agent creation during login requires adoption confirmation. Testnet can trigger
+the installed credential provider and inspect cloud connection identities without
+exposing tokens; its echo sessions also support local clients.
+
 2026-09-05 — **Exercise account isolation through production installations.**
 TestNet now builds named installations and profiles with real identity-server
 binding, per-account relay authentication, profile sockets and production runtime
