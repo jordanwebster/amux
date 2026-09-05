@@ -20,26 +20,68 @@ async fn every_registered_sdk_specification_replays_strictly() {
     }
 }
 
-#[tokio::test]
 #[cfg(feature = "pty")]
-async fn every_recorded_pty_specification_replays_strictly() {
-    let root = claude::specs::pty::fixtures_root();
-    if !root.exists() {
-        return;
-    }
-    for entry in pty_registry() {
-        replay_pty(entry).await;
-    }
-}
+mod pty_replays {
+    use super::*;
 
-#[tokio::test]
-#[cfg(feature = "pty")]
-async fn plan_approve_pty_replays_strictly() {
-    let entry = pty_registry()
-        .iter()
-        .find(|entry| entry.name == "plan_approve")
-        .expect("plan_approve remains registered");
-    replay_pty(entry).await;
+    macro_rules! scenarios {
+        ($($name:ident),+ $(,)?) => {
+            const SCENARIOS: &[&str] = &[$(stringify!($name)),+];
+
+            $(
+                #[tokio::test]
+                async fn $name() {
+                    let entry = pty_registry().iter()
+                        .find(|entry| entry.name == stringify!($name))
+                        .expect("replay scenario remains registered");
+                    replay_pty(entry).await;
+                }
+            )+
+        };
+    }
+
+    scenarios!(
+        prompt,
+        prompt_multiline,
+        tools,
+        permission_allow_once,
+        permission_allow_scoped,
+        permission_deny_feedback,
+        plan_approve,
+        plan_auto,
+        plan_request_changes,
+        question_single,
+        question_multi_other,
+        question_mixed,
+        question_tabs,
+        question_other_single,
+        interrupt,
+        mode_cycle,
+        compact_relink,
+        clear_relink,
+    );
+
+    #[tokio::test(start_paused = true)]
+    async fn recorded_preparation_and_cleanup_do_not_wait_for_live_timers() {
+        let entry = pty_registry()
+            .iter()
+            .find(|entry| entry.name == "plan_approve")
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        replay_pty(entry).await;
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[test]
+    fn every_registered_scenario_has_a_test() {
+        assert_eq!(
+            SCENARIOS.iter().copied().collect::<BTreeSet<_>>(),
+            pty_registry()
+                .iter()
+                .map(|entry| entry.name)
+                .collect::<BTreeSet<_>>(),
+        );
+    }
 }
 
 #[cfg(feature = "pty")]

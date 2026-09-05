@@ -29,6 +29,36 @@ unification and compile a second dependency graph.
 Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.
 
+## Recorded PTY tests
+
+Each recorded Claude PTY scenario is a separate test. The standard Rust test
+harness runs them concurrently; each owns its replay streams and session state.
+Run the corpus or one scenario with:
+
+```sh
+wt test -- --test spec_replay pty_replays
+wt test -- --test spec_replay pty_replays::plan_approve -- --exact
+```
+
+Recorded readiness waits for output notifications, and keyboard delays advance
+the replay clock. Completing a replay closes its recorded output streams before waiting
+for the simulated process to exit. Live terminal settling waits do not apply
+to recorded sessions; shutdown timeouts are failures.
+
+## Output when diagnosing failures
+
+Rust normally captures test output and reports it for failed tests. If an outer
+timeout kills the harness, it may never report that captured output. Stream
+output during a focused hang investigation with:
+
+```sh
+wt test -- --test spec_replay pty_replays::plan_approve -- --exact --nocapture
+```
+
+Parallel tests can interleave streamed output; add `--test-threads=1` after the
+second `--` when ordering matters. A binary stalled before its first instruction
+has no test output to display, even with capture disabled.
+
 ## Choose the boundary the assertion needs
 
 Test parsing and state transitions with values, and concurrency with explicit

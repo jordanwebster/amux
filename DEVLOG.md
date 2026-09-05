@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Recorded PTY tests complete without live terminal waits.**
+Replays now wait for screen updates, explicitly close their recorded streams,
+and require shutdown to finish. The previous runner silently spent five
+seconds per recording waiting for an exit that could not arrive while its
+output remained open. Its replay driver now waits for write notifications
+inside the runner's own future instead of spinning in a detached task.
+Tool results are matched by ID across independent hook and transcript streams,
+so faster delivery cannot discard a result that arrives before its hook.
+All eighteen scenarios have separate selectable tests, with registry coverage
+and virtual-time checks. The recorded tests pass in 0.07 seconds concurrently
+and 0.23 seconds with one test thread, compared with the captured 110-second
+run. Added regression coverage for EOF with retained controllers, incomplete
+replay accounting, and resuming the driver after an expected write.
+
 2026-09-06 — **Test recipes return Cargo's result directly.**
 Removed the Python output guard and its result-parsing checks. Empty test
 selections again retain Cargo's normal successful exit status; the recipes
