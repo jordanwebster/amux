@@ -48,7 +48,7 @@ fn an_sdk_agent() -> Agent {
     Agent {
         id: agent_id(),
         host_id: host_id(),
-        name: Some("sdk-writer".to_string()),
+        name: Some("fix-sync".to_string()),
         command: "claude".to_string(),
         working_dir: "/work/amux".into(),
         kind: amux_ui::AgentKind::Claude {

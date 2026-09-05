@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Name every screen of a stream-JSON Claude session, and ban the
+words that would give its machinery away.**
+The deterministic fixture registry gained thirteen states: the idle
+conversation, a reply still arriving, all five asks, the subagent list, the
+context meter and its breakdown overlay, a thousand-entry feed and the same
+feed scrolled back, plus a fleet holding a Claude session on each driver
+beside a Codex one. Each is folded from rows in the shapes the daemon really
+records, and the overlay is opened by the chord a person presses, so a
+capture can never show a screen the program cannot reach. The screenshot tool
+renders them in its chat, agent-specific, scroll and fleet sets, takes wheel
+recordings of a stream-JSON session — which it used to refuse, because no
+long feed folded those rows — and gains a parity set that puts the same
+surface from all three chats side by side under names that group each triple.
+A new scan reads every committed golden frame and every named state in both
+themes and fails if any of them says sdk, pty, driver, backend, claude_sdk_v1
+or unsupported. It reads words rather than letters, so `empty` is fine and
+`claude-sdk-idle` is not; the review page is exempt, because it paints a
+repository's own diff. The scan caught the one thing already saying it: the
+golden fixture's agent was named after its driver, and is now called
+fix-sync like any other piece of work.
+
 2026-09-05 — **Show what a Claude SDK session is spending and delegating.**
 The row under the feed now carries the passive context meter — used tokens
 against the window the session reported, `unknown` before any usage has

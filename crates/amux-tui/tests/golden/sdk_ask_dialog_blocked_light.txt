@@ -1,5 +1,5 @@
 --- text ---
-  sdk-writer · claude @ mbp                                             claude-haiku-4-5-20251001 · default · needs you 
+  fix-sync · claude @ mbp                                               claude-haiku-4-5-20251001 · default · needs you 
   ⚠ mcp · 4 ready · 1 needs-auth (claude.ai Google Drive)                                                               
                                                                                                                         
 ▎   Reply with exactly PONG and nothing else.                                                                           
@@ -40,7 +40,7 @@
     › 1. Cancel — the agent is told the dialog was dismissed                                                            
     enter confirm · esc back (never answers)                                                                            
 --- styles ---
-..eeeeeeeeeemmmmmmmmmmmmmmm.............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww.
+..eeeeeeeemmmmmmmmmmmmmmm...............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww.
 ..w.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............................................................
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU

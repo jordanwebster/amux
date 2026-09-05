@@ -1,5 +1,5 @@
 --- text ---
-  sdk-writer · claude @ mbp                                             claude-haiku-4-5-20251001 · default · needs you 
+  fix-sync · claude @ mbp                                               claude-haiku-4-5-20251001 · default · needs you 
   ⚠ mcp · 5 ready · 1 needs-auth (claude.ai Google Drive)                                                               
                                                                                                                         
 ▎   Call the mcp__external__ask_the_operator tool with word set to PELICAN, then reply with exactly what it returned.   
@@ -40,7 +40,7 @@
       3. Cancel                                                                                                         
     tab/↑↓ move · enter next field · esc back (never answers)                                                           
 --- styles ---
-..eeeeeeeeeemmmmmmmmmmmmmmm.............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww.
+..eeeeeeeemmmmmmmmmmmmmmm...............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww.
 ..w.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............................................................
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU

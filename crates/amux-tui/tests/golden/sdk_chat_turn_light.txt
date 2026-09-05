@@ -1,5 +1,5 @@
 --- text ---
-  sdk-writer · claude @ mbp                                              claude-haiku-4-5-20251001 · default · finished 
+  fix-sync · claude @ mbp                                                claude-haiku-4-5-20251001 · default · finished 
   ⚠ mcp · 4 ready · 1 needs-auth (claude.ai Google Drive)                                                               
                                                                                                                         
 ▎   Reply with exactly PONG and nothing else.                                                                           
@@ -40,7 +40,7 @@
                                                                                                                         
     enter send · ctrl+j newline · C-a r review diff · ? help                                             shift+tab mode 
 --- styles ---
-..eeeeeeeeeemmmmmmmmmmmmmmm..............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwww.
+..eeeeeeeemmmmmmmmmmmmmmm................................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwww.
 ..w.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............................................................
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU

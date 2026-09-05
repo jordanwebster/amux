@@ -34,6 +34,18 @@ pub enum NamedState {
     ClaudeQuestionAsk,
     ClaudePlanReader,
     ClaudeDiffReader,
+    ClaudeSdkIdle,
+    ClaudeSdkStreaming,
+    ClaudeSdkPermissionAsk,
+    ClaudeSdkPlanReader,
+    ClaudeSdkQuestionAsk,
+    ClaudeSdkElicitation,
+    ClaudeSdkDialog,
+    ClaudeSdkTasks,
+    ClaudeSdkContext,
+    ClaudeSdkContextBreakdown,
+    ClaudeSdkLongFeed,
+    ClaudeSdkScrolledBack,
     CodexIdle,
     CodexWorking,
     CodexApproval,
@@ -42,6 +54,7 @@ pub enum NamedState {
     HelpOverlay,
     Fleet,
     FleetEmpty,
+    FleetMixed,
     ClaudeLongFeed,
     CodexLongFeed,
     ClaudeScrolledBack,
@@ -69,6 +82,18 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::ClaudeQuestionAsk,
     NamedState::ClaudePlanReader,
     NamedState::ClaudeDiffReader,
+    NamedState::ClaudeSdkIdle,
+    NamedState::ClaudeSdkStreaming,
+    NamedState::ClaudeSdkPermissionAsk,
+    NamedState::ClaudeSdkPlanReader,
+    NamedState::ClaudeSdkQuestionAsk,
+    NamedState::ClaudeSdkElicitation,
+    NamedState::ClaudeSdkDialog,
+    NamedState::ClaudeSdkTasks,
+    NamedState::ClaudeSdkContext,
+    NamedState::ClaudeSdkContextBreakdown,
+    NamedState::ClaudeSdkLongFeed,
+    NamedState::ClaudeSdkScrolledBack,
     NamedState::CodexIdle,
     NamedState::CodexWorking,
     NamedState::CodexApproval,
@@ -77,6 +102,7 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::HelpOverlay,
     NamedState::Fleet,
     NamedState::FleetEmpty,
+    NamedState::FleetMixed,
     NamedState::ClaudeLongFeed,
     NamedState::CodexLongFeed,
     NamedState::ClaudeScrolledBack,
@@ -106,6 +132,18 @@ impl NamedState {
             Self::ClaudeQuestionAsk => "claude-question-ask",
             Self::ClaudePlanReader => "claude-plan-reader",
             Self::ClaudeDiffReader => "claude-diff-reader",
+            Self::ClaudeSdkIdle => "claude-sdk-idle",
+            Self::ClaudeSdkStreaming => "claude-sdk-streaming",
+            Self::ClaudeSdkPermissionAsk => "claude-sdk-permission-ask",
+            Self::ClaudeSdkPlanReader => "claude-sdk-plan-reader",
+            Self::ClaudeSdkQuestionAsk => "claude-sdk-question-ask",
+            Self::ClaudeSdkElicitation => "claude-sdk-elicitation",
+            Self::ClaudeSdkDialog => "claude-sdk-dialog",
+            Self::ClaudeSdkTasks => "claude-sdk-tasks",
+            Self::ClaudeSdkContext => "claude-sdk-context",
+            Self::ClaudeSdkContextBreakdown => "claude-sdk-context-breakdown",
+            Self::ClaudeSdkLongFeed => "claude-sdk-long-feed",
+            Self::ClaudeSdkScrolledBack => "claude-sdk-scrolled-back",
             Self::CodexIdle => "codex-idle",
             Self::CodexWorking => "codex-working",
             Self::CodexApproval => "codex-approval",
@@ -114,6 +152,7 @@ impl NamedState {
             Self::HelpOverlay => "help-overlay",
             Self::Fleet => "fleet",
             Self::FleetEmpty => "fleet-empty",
+            Self::FleetMixed => "fleet-mixed",
             Self::ClaudeLongFeed => "claude-long-feed",
             Self::CodexLongFeed => "codex-long-feed",
             Self::ClaudeScrolledBack => "claude-scrolled-back",
@@ -216,6 +255,24 @@ pub fn fixture(state: NamedState) -> Fixture {
             );
             fixture
         }
+        NamedState::ClaudeSdkIdle => sdk_fixture(sdk_idle_rows()),
+        NamedState::ClaudeSdkStreaming => sdk_fixture(sdk_streaming_rows()),
+        NamedState::ClaudeSdkPermissionAsk => sdk_asking(sdk_permission_request()),
+        NamedState::ClaudeSdkPlanReader => sdk_asking(sdk_plan_request()),
+        NamedState::ClaudeSdkQuestionAsk => sdk_asking(sdk_question_request()),
+        NamedState::ClaudeSdkElicitation => sdk_asking(sdk_elicitation_request()),
+        NamedState::ClaudeSdkDialog => sdk_asking(sdk_dialog_request()),
+        NamedState::ClaudeSdkTasks => sdk_fixture(sdk_task_rows()),
+        NamedState::ClaudeSdkContext => sdk_fixture(sdk_context_rows()),
+        // The overlay is reached the way a person reaches it, so a
+        // capture can never show a breakdown the chord does not open.
+        NamedState::ClaudeSdkContextBreakdown => {
+            let mut fixture = sdk_fixture(sdk_context_rows());
+            press_leader(&mut fixture, 'c');
+            fixture
+        }
+        NamedState::ClaudeSdkLongFeed => long_feed(StructuredProtocol::ClaudeSdk, 1_000),
+        NamedState::ClaudeSdkScrolledBack => scrolled_back(StructuredProtocol::ClaudeSdk),
         NamedState::CodexIdle => codex_fixture(codex_idle_rows()),
         NamedState::CodexWorking => codex_fixture(codex_working_rows()),
         NamedState::CodexApproval => codex_fixture(codex_approval_rows(false)),
@@ -233,6 +290,7 @@ pub fn fixture(state: NamedState) -> Fixture {
         }
         NamedState::Fleet => fleet_fixture(false),
         NamedState::FleetEmpty => fleet_fixture(true),
+        NamedState::FleetMixed => mixed_fleet_fixture(),
         NamedState::ClaudeLongFeed => long_feed(StructuredProtocol::Claude, 1_000),
         NamedState::CodexLongFeed => long_feed(StructuredProtocol::Codex, 1_000),
         NamedState::ClaudeScrolledBack => scrolled_back(StructuredProtocol::Claude),
@@ -724,23 +782,17 @@ pub fn long_feed(protocol: StructuredProtocol, entries: usize) -> Fixture {
     rows.push(match protocol {
         StructuredProtocol::Claude => claude_ready(),
         StructuredProtocol::Codex => codex_ready(),
-        StructuredProtocol::ClaudeSdk => {
-            unreachable!("an SDK-driven chat has no native feed to fixture")
-        }
+        StructuredProtocol::ClaudeSdk => sdk_ready(),
     });
     match protocol {
         StructuredProtocol::Claude => rows.extend((0..entries).map(claude_long_row)),
         StructuredProtocol::Codex => rows.extend((0..entries).map(codex_long_row)),
-        StructuredProtocol::ClaudeSdk => {
-            unreachable!("an SDK-driven chat has no native feed to fixture")
-        }
+        StructuredProtocol::ClaudeSdk => rows.extend((0..entries).map(sdk_long_row)),
     }
     match protocol {
         StructuredProtocol::Claude => claude_fixture(rows),
         StructuredProtocol::Codex => codex_fixture(rows),
-        StructuredProtocol::ClaudeSdk => {
-            unreachable!("an SDK-driven chat has no native feed to fixture")
-        }
+        StructuredProtocol::ClaudeSdk => sdk_fixture(rows),
     }
 }
 
@@ -944,6 +996,36 @@ fn fleet_fixture(empty: bool) -> Fixture {
     }
 }
 
+/// A fleet holding a Claude session on each driver beside a Codex one.
+/// The point of the capture is that the two Claude rows are the same
+/// row: nothing here tells them apart, and nothing on screen should.
+fn mixed_fleet_fixture() -> Fixture {
+    let mut messages = vec![
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host_id()),
+        }),
+        Msg::Server(ServerMsg::HostUpserted { host: host() }),
+    ];
+    for (protocol, name) in [
+        (StructuredProtocol::Claude, "fix-auth"),
+        (StructuredProtocol::ClaudeSdk, "fix-sync"),
+        (StructuredProtocol::Codex, "codex-retry"),
+    ] {
+        messages.push(Msg::Server(ServerMsg::AgentUpserted {
+            agent: agent(protocol, name),
+        }));
+    }
+    messages.extend([
+        Msg::Server(ServerMsg::HostsSynchronized),
+        Msg::Server(ServerMsg::AgentsSynchronized),
+    ]);
+    Fixture {
+        model: fold(messages),
+        view: ViewState::default(),
+        now: fixed_now(),
+    }
+}
+
 fn claude_ready() -> Value {
     json!({"type": "amux.transcript_ready"})
 }
@@ -1108,6 +1190,365 @@ fn claude_long_row(index: usize) -> Value {
                 "stop_reason": "tool_use"
             }
         }),
+    }
+}
+
+// --- a Claude session driven over stream-JSON -------------------------------
+//
+// These rows are written in the shapes the daemon really records, kept
+// short enough to read: a capture is worth nothing if nobody can tell
+// from the fixture what it was supposed to show.
+
+const SDK_SESSION: &str = "33333333-3333-4333-8333-333333333333";
+
+fn sdk_fixture(rows: Vec<Value>) -> Fixture {
+    chat_fixture(StructuredProtocol::ClaudeSdk, "fix-sync", rows)
+}
+
+/// A finished conversation with one further request appended: the frame a
+/// person is looking at while the session waits on them.
+fn sdk_asking(request: Value) -> Fixture {
+    let mut rows = sdk_idle_rows();
+    rows.push(request);
+    sdk_fixture(rows)
+}
+
+fn sdk_ready() -> Value {
+    json!({
+        "type": "amux.claude_sdk.ready",
+        "session_id": SDK_SESSION,
+        "resumed": false,
+    })
+}
+
+/// What the session says about itself after every turn: the model it
+/// runs, the mode it is under, how much of the window the last call saw,
+/// and which of its MCP servers are up. `used` is absent until the first
+/// call reports usage, which is how an unknown meter reaches the screen.
+fn sdk_facts(used: Option<u64>) -> Value {
+    json!({
+        "type": "amux.claude_sdk.session_facts",
+        "model": "claude-opus-5",
+        "permission_mode": "default",
+        "context": used.map(|used| json!({
+            "used_tokens": used,
+            "window_tokens": 200_000,
+            "source": "assistant_usage",
+        })),
+        "mcp_servers": [
+            {"name": "repo-index", "status": "connected"},
+            {"name": "issues", "status": "needs-auth"},
+        ],
+    })
+}
+
+fn sdk_prompt(index: usize, text: &str) -> Value {
+    json!({
+        "type": "user",
+        "uuid": format!("dddddddd-1111-4000-8000-{index:012}"),
+        "sessionId": SDK_SESSION,
+        "parent_tool_use_id": null,
+        "message": {"role": "user", "content": text},
+    })
+}
+
+fn sdk_assistant(index: usize, content: Value) -> Value {
+    json!({
+        "type": "assistant",
+        "uuid": format!("eeeeeeee-1111-4000-8000-{index:012}"),
+        "sessionId": SDK_SESSION,
+        "parent_tool_use_id": null,
+        "message": {
+            "id": format!("msg_{index}"),
+            "role": "assistant",
+            "content": content,
+        },
+    })
+}
+
+fn sdk_text(index: usize, text: &str) -> Value {
+    sdk_assistant(index, json!([{"type": "text", "text": text}]))
+}
+
+/// The row that closes a turn, carrying what the turn cost and how long
+/// it took.
+fn sdk_result(index: usize) -> Value {
+    json!({
+        "type": "result",
+        "uuid": format!("ffffffff-1111-4000-8000-{index:012}"),
+        "sessionId": SDK_SESSION,
+        "subtype": "success",
+        "is_error": false,
+        "stop_reason": "end_turn",
+        "num_turns": 1,
+        "duration_ms": 6_200,
+        "duration_api_ms": 5_100,
+        "total_cost_usd": 0.022_533,
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 48,
+            "cache_read_input_tokens": 18_140,
+            "cache_creation_input_tokens": 9_756,
+        },
+        "modelUsage": {
+            "claude-opus-5": {
+                "contextWindow": 200_000,
+                "inputTokens": 912,
+                "outputTokens": 59,
+                "costUSD": 0.022_533,
+            }
+        },
+    })
+}
+
+fn sdk_stream(event: Value) -> Value {
+    json!({
+        "type": "stream_event",
+        "sessionId": SDK_SESSION,
+        "parent_tool_use_id": null,
+        "event": event,
+    })
+}
+
+fn sdk_idle_rows() -> Vec<Value> {
+    vec![
+        sdk_ready(),
+        sdk_facts(None),
+        sdk_prompt(1, "Add retry with backoff to the sync client."),
+        sdk_text(
+            2,
+            "I added exponential backoff to `Client::reconnect` and kept the retry policy configurable.",
+        ),
+        sdk_facts(Some(27_906)),
+        sdk_result(3),
+        sdk_facts(Some(27_906)),
+    ]
+}
+
+/// A reply half-written: the message opened, two deltas arrived, and
+/// nothing has closed it.
+fn sdk_streaming_rows() -> Vec<Value> {
+    vec![
+        sdk_ready(),
+        sdk_facts(Some(27_906)),
+        sdk_prompt(10, "Now make the retry count configurable."),
+        sdk_stream(json!({
+            "type": "message_start",
+            "message": {"id": "msg_streaming", "role": "assistant", "content": []},
+        })),
+        sdk_stream(json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        })),
+        sdk_stream(json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "The cap belongs in `RetryConfig`;"},
+        })),
+        sdk_stream(json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": " I’ll thread it through `SyncOptions` and state the"},
+        })),
+    ]
+}
+
+/// Two subagents: one back with what it found, one still out.
+fn sdk_task_rows() -> Vec<Value> {
+    let mut rows = vec![
+        sdk_ready(),
+        sdk_facts(Some(27_906)),
+        sdk_prompt(20, "Find every test that still pins the old retry cap."),
+        sdk_assistant(
+            21,
+            json!([{
+                "type": "tool_use",
+                "id": "toolu_sweep",
+                "name": "Task",
+                "input": {"description": "Sweep the retry tests", "subagent_type": "explore"},
+            }]),
+        ),
+        sdk_facts(Some(27_906)),
+    ];
+    for (task_id, description, subagent, finish) in [
+        (
+            "task_sweep",
+            "Sweep the retry tests",
+            "explore",
+            Some(("completed", "Four tests pin the old cap; two are in sync/.")),
+        ),
+        (
+            "task_bench",
+            "Time the backoff loop",
+            "general-purpose",
+            None,
+        ),
+    ] {
+        rows.push(json!({
+            "type": "system",
+            "subtype": "task_started",
+            "sessionId": SDK_SESSION,
+            "task_id": task_id,
+            "description": description,
+            "subagent_type": subagent,
+            "tool_use_id": "toolu_sweep",
+        }));
+        if let Some((status, summary)) = finish {
+            rows.push(json!({
+                "type": "system",
+                "subtype": "task_notification",
+                "sessionId": SDK_SESSION,
+                "task_id": task_id,
+                "status": status,
+                "summary": summary,
+                "usage": {"total_tokens": 1_440, "tool_uses": 6, "duration_ms": 2_375},
+            }));
+        }
+    }
+    rows
+}
+
+/// A session far enough along that the meter is the thing worth reading,
+/// with the breakdown it reported when someone asked where the context
+/// went.
+fn sdk_context_rows() -> Vec<Value> {
+    let mut rows = vec![
+        sdk_ready(),
+        sdk_facts(Some(154_880)),
+        sdk_prompt(30, "Summarise what we changed today."),
+        sdk_text(
+            31,
+            "Retry backoff is configurable, the cap is read from `RetryConfig`, and the sync tests cover both.",
+        ),
+        sdk_facts(Some(154_880)),
+        sdk_result(32),
+        sdk_facts(Some(154_880)),
+    ];
+    rows.push(json!({
+        "type": "amux.claude_sdk.context_breakdown",
+        "usage": {
+            "autoCompactThreshold": 167_000,
+            "categories": [
+                {"name": "System prompt", "tokens": 6_553},
+                {"name": "System tools", "tokens": 14_149},
+                {"name": "Memory files", "tokens": 662},
+                {"name": "Skills", "tokens": 1_994},
+                {"name": "Messages", "tokens": 131_522},
+                {"name": "Free space", "tokens": 45_120},
+            ],
+        },
+    }));
+    rows
+}
+
+fn sdk_permission_request() -> Value {
+    json!({
+        "type": "amux.claude_sdk.permission_required",
+        "request_id": "permission-1",
+        "tool_name": "Edit",
+        "input": {
+            "file_path": "sync/config.rs",
+            "old_string": "pub max_attempts: u8,",
+            "new_string": "pub max_attempts: u8,\npub jitter_ms: u16,"
+        },
+        "suggestions": [{
+            "type": "addDirectories",
+            "destination": "session",
+            "directories": ["/work/amux"]
+        }],
+    })
+}
+
+fn sdk_plan_request() -> Value {
+    json!({
+        "type": "amux.claude_sdk.permission_required",
+        "request_id": "plan-1",
+        "tool_name": "ExitPlanMode",
+        "input": {
+            "plan": "# Plan: make the retry count configurable\n\n- read the current cap\n- add a `max_attempts` key\n- thread it through the retry loop\n- state the default where it is read\n\n## Verification\n\ncargo test -p amux-sync\n",
+            "planFilePath": "plan.md"
+        },
+        "suggestions": [],
+    })
+}
+
+fn sdk_question_request() -> Value {
+    json!({
+        "type": "amux.claude_sdk.permission_required",
+        "request_id": "question-1",
+        "tool_name": "AskUserQuestion",
+        "input": {"questions": [
+            {
+                "header": "storage",
+                "question": "Which stores should the migration cover?",
+                "multiSelect": true,
+                "options": [
+                    {"label": "trust store", "description": "pairing + relay trust records"},
+                    {"label": "session index", "description": "bounded tail metadata"}
+                ]
+            },
+            {
+                "header": "rollout",
+                "question": "When should it run?",
+                "options": [
+                    {"label": "on next start"},
+                    {"label": "behind a flag"}
+                ]
+            }
+        ]},
+        "suggestions": [],
+    })
+}
+
+fn sdk_elicitation_request() -> Value {
+    json!({
+        "type": "amux.claude_sdk.elicitation_required",
+        "request_id": "form-1",
+        "server": "issues",
+        "message": "Which release should this fix be filed against?",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "release": {"type": "string", "description": "the release tag"},
+                "notify": {"type": "boolean", "description": "tell the release channel"}
+            },
+            "required": ["release"]
+        },
+    })
+}
+
+fn sdk_dialog_request() -> Value {
+    json!({
+        "type": "amux.claude_sdk.dialog_required",
+        "request_id": "dialog-1",
+        "dialog_kind": "trust_prompt",
+        "payload": {
+            "message": "The workspace /work/amux is not in your trusted folders.",
+            "options": [
+                {"label": "Trust this folder", "value": {"trust": true}},
+                {"label": "Don’t trust it", "value": {"trust": false}}
+            ]
+        },
+    })
+}
+
+fn sdk_long_row(index: usize) -> Value {
+    match index % 3 {
+        0 => sdk_prompt(index + 100, &format!("Investigate retry case {index}.")),
+        1 => sdk_text(
+            index + 100,
+            &format!("Retry case {index} is covered by the focused test."),
+        ),
+        _ => sdk_assistant(
+            index + 100,
+            json!([{
+                "type": "tool_use",
+                "id": format!("toolu_long_{index}"),
+                "name": "Read",
+                "input": {"file_path": format!("tests/retry_{index}.rs")},
+            }]),
+        ),
     }
 }
 
@@ -1375,6 +1816,14 @@ mod tests {
                 .entries()
                 .any(|entry| matches!(&entry.kind, amux_ui::claude::FeedEntryKind::Tool(_)))
         );
+
+        let sdk = long_feed(StructuredProtocol::ClaudeSdk, 1_000);
+        let sdk_layer = sdk
+            .model
+            .agents()
+            .find_map(|card| sdk.model.claude_sdk(card.agent.id))
+            .expect("session layer");
+        assert_eq!(sdk_layer.entries().count(), 1_000);
 
         let codex = long_feed(StructuredProtocol::Codex, 1_000);
         let codex_layer = codex

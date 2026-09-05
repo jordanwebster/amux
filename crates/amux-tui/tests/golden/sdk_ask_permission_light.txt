@@ -1,5 +1,5 @@
 --- text ---
-  sdk-writer · claude @ mbp                                             claude-haiku-4-5-20251001 · default · needs you 
+  fix-sync · claude @ mbp                                               claude-haiku-4-5-20251001 · default · needs you 
   ⚠ mcp · 4 ready · 1 needs-auth (claude.ai Google Drive)                                                               
                                                                                                                         
 ▎   Use the Write tool once to create tool.txt containing exactly TOOL_OK, then reply exactly DONE.                     
@@ -40,7 +40,7 @@
       3. Deny — tell the agent why (optional)                                                                           
     1-3/↑↓ select · enter confirm · f open document · esc back (never answers)                                          
 --- styles ---
-..eeeeeeeeeemmmmmmmmmmmmmmm.............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww.
+..eeeeeeeemmmmmmmmmmmmmmm...............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww.
 ..w.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............................................................
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU

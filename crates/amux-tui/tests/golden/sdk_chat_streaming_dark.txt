@@ -1,5 +1,5 @@
 --- text ---
-  sdk-writer · claude @ mbp                                               claude-haiku-4-5-20251001 · default · working 
+  fix-sync · claude @ mbp                                                 claude-haiku-4-5-20251001 · default · working 
   ⚠ mcp · 4 ready · 1 needs-auth (claude.ai Google Drive)                                                               
                                                                                                                         
 ▎   Think briefly about the number seven, then reply with exactly SEVEN.                                                
@@ -40,7 +40,7 @@
                                                                                                                         
     send gated while working · ? help                                                                    shift+tab mode 
 --- styles ---
-..eeeeeeeeeemmmmmmmmmmmmmmm...............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm........
+..eeeeeeeemmmmmmmmmmmmmmm.................................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm........
 ..w.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............................................................
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU

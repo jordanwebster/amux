@@ -1,5 +1,5 @@
 --- text ---
-  sdk-writer · claude @ mbp                               claude-haiku-4-5-20251001 · default · read-only · needs owner 
+  fix-sync · claude @ mbp                                 claude-haiku-4-5-20251001 · default · read-only · needs owner 
   ⚠ mcp · 4 ready · 1 needs-auth (claude.ai Google Drive)                                                               
                                                                                                                         
 ▎   Use the Write tool once to create tool.txt containing exactly TOOL_OK, then reply exactly DONE.                     
@@ -40,7 +40,7 @@
                                                                                                                         
     pgup/pgdn scroll · f view document · q back to fleet                                                                
 --- styles ---
-..eeeeeeeeeemmmmmmmmmmmmmmm...............................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwwwwww.
+..eeeeeeeemmmmmmmmmmmmmmm.................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwwwwww.
 ..w.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............................................................
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
