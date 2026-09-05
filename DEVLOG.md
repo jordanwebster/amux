@@ -7867,3 +7867,9 @@ diagnostics and writes beneath Work's data directory, including after leaving
 and re-entering the fleet. A shell regression exercises the switch effect,
 capture key and report prompt through to the written bundle and its replay.
 The existing automatic and panic-report switching behavior is preserved.
+
+2026-09-05 — **Keep reproducible profile screenshots with the docs.** The
+profile switcher, Personal fleet and Work fleet now have committed amux-shot
+PNGs, a SHA-256 manifest and regeneration instructions under
+`docs/screenshots/profiles`. Fresh production renders match the existing
+captures byte for byte; the two fleets show disjoint agent lists.

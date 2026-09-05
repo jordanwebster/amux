@@ -30,6 +30,8 @@ subject; when two overlap, the owner named here wins.
   consumed by the capture drift tooling and its committed fixtures.
 - `../crates/amux-shot/README.md` — the committed 120×40 PNG and wheel-recording
   tool for named TUI states.
+- [Profile screenshots](screenshots/profiles/README.md) — the switcher and
+  both account fleets, with hashes and reproducible capture commands.
 - `PROVIDER_CRATES.md` — the canonical Claude, Codex, PTY-hosting and replay
   crate boundaries; session shapes, capabilities, gaps, corpora and drift
   ledgers.
