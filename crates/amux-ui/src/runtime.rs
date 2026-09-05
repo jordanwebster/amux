@@ -967,7 +967,7 @@ fn open_with_platform_viewer(meta: &ArtifactMeta, path: &Path) -> io::Result<()>
     Ok(())
 }
 
-fn platform_open_command(_meta: &ArtifactMeta, path: &Path) -> io::Result<std::process::Command> {
+fn platform_open_command(_meta: &ArtifactMeta, _path: &Path) -> io::Result<std::process::Command> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = std::process::Command::new("open");
@@ -995,7 +995,7 @@ fn platform_open_command(_meta: &ArtifactMeta, path: &Path) -> io::Result<std::p
     ));
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     {
-        command.arg(path);
+        command.arg(_path);
         Ok(command)
     }
 }

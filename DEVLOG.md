@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Build a native Rust bridge for iOS.**
+The new `amux-mobile` crate produces a static library and a C header generated
+from its exported Rust API. UI dependencies disable local-agent hosting;
+the CLI and test-network runner opt into it explicitly. The mobile check now
+covers all three shared client crates on ARM devices and simulators and
+rejects host-only provider dependencies. `wt run ios-rust` builds both slices
+with the workspace's size-focused mobile profile, stages each archive and
+header from Cargo's exact build outputs, and records archive sizes separately
+from application size. The initial ABI exposes the bridge version.
+
 2026-09-05 — **Settle scripted turns at their final transcript row.**
 The scripted Claude provider now emits its Stop hook before the authoritative
 turn-duration row. A client that observes that completed turn can send its

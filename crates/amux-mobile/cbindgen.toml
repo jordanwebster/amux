@@ -1,0 +1,8 @@
+language = "C"
+include_guard = "AMUX_MOBILE_H"
+autogen_warning = "/* Generated from amux-mobile Rust sources. Do not edit. */"
+cpp_compat = true
+usize_is_size_t = true
+
+[parse]
+parse_deps = false

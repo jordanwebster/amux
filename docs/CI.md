@@ -7,6 +7,20 @@ unit, golden, journey and performance recipes are added, they join this check.
 Golden baseline updates and deliberate perturbation runs remain explicit
 commands.
 
+`timeout 900 wt run mobile-check` checks `amux`, `amux-ui` and `amux-mobile`
+for ARM iOS devices and simulators with default features disabled. It also
+rejects local-agent dependencies in that graph. Desktop host executables
+explicitly enable local agents.
+
+`timeout 1800 wt run ios-rust` builds both ARM iOS static libraries using the
+workspace `mobile` profile: release inheritance, fat LTO, one codegen unit,
+size optimization (`s`) and abort on panic. Each archive and its C header,
+generated from Rust by cbindgen, are staged under
+`target/ios/<target-triple>/`. `target/ios/size.txt` records both archive sizes
+in bytes; these are not linked application sizes. Cargo's JSON build output
+alongside the staged directories identifies the exact source artifacts,
+including on cached builds.
+
 The `ios` GitHub Actions job runs on `macos-26`, selects Xcode 26.6, and checks
 that the iOS 26.5 simulator runtime and iPhone 17 Pro device type are available.
 It installs XcodeGen, both ARM iOS Rust targets and the checksum-verified wt

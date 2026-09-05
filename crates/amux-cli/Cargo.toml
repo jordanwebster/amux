@@ -13,7 +13,7 @@ name = "amux"
 path = "src/main.rs"
 
 [dependencies]
-amux = { workspace = true }
+amux = { workspace = true, features = ["local-agents"] }
 claude = { workspace = true }
 amux-tui = { workspace = true }
 amux-ui = { workspace = true }

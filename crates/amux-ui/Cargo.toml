@@ -5,7 +5,7 @@ edition.workspace = true
 description = "Client state library for amux UIs: reducer core, effects, runtime shell"
 
 [dependencies]
-amux = { workspace = true }
+amux = { workspace = true, default-features = false }
 amux-artifacts = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }

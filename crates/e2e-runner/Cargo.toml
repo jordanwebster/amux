@@ -15,7 +15,7 @@ tempfile = { workspace = true }
 shell-words = { workspace = true }
 chrono = { workspace = true }
 jsonwebtoken = { workspace = true }
-amux = { workspace = true }
+amux = { workspace = true, features = ["local-agents"] }
 amux-ui = { workspace = true }
 codex = { path = "../codex" }
 replay-support = { path = "../replay-support" }

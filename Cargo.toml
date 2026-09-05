@@ -7,7 +7,8 @@ edition = "2024"
 
 [workspace.dependencies]
 # Internal
-amux = { path = "crates/amux" }
+# Clients inherit the protocol core; host executables opt into local agents.
+amux = { path = "crates/amux", default-features = false }
 amux-artifacts = { path = "crates/amux-artifacts" }
 amux-ui = { path = "crates/amux-ui" }
 amux-tui = { path = "crates/amux-tui" }
@@ -80,6 +81,13 @@ nix = { version = "0.31", features = ["process", "signal"] }
 # Tests must unwind, so an abort dev profile makes cargo compile every
 # dependency a second time for `cargo test`. Release keeps abort.
 [profile.release]
+panic = "abort"
+
+[profile.mobile]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
 panic = "abort"
 
 # Workspace crates keep full debuginfo; dependencies drop theirs.
