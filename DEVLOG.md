@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Make cloud end-to-end fixtures wait for network readiness.**
+The relay session test checks both profiles are connected before starting
+pairing, so a device's initial connection retry cannot race the pairing command.
+The identity fixture explicitly makes accepted sockets blocking before timed
+HTTP reads; macOS can inherit the listener's nonblocking mode and otherwise
+drop a request whose body arrives separately. A fragmented-request regression
+fails before the fix and verifies a complete device-authorization response.
+
 2026-09-05 — **Document installations, account profiles and local discovery.**
 The architecture now distinguishes the installation supervisor from each
 profile's complete device identity and runtime, describes split configuration

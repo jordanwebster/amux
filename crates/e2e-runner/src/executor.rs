@@ -585,6 +585,11 @@ fn handle_cloud_request(
     routing_port: u16,
     identity: &mut IdentityState,
 ) {
+    // Accepted sockets can inherit the listener's nonblocking mode on macOS.
+    // Timed reads must wait for the rest of a fragmented HTTP request.
+    if stream.set_nonblocking(false).is_err() {
+        return;
+    }
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut request = Vec::new();
     let (headers_end, content_length) = loop {
@@ -1428,6 +1433,38 @@ impl Executor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_fixture_reads_fragmented_requests_on_accepted_nonblocking_streams() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let (server, _) = listener.accept().unwrap();
+        // Some platforms inherit the fixture listener's nonblocking mode.
+        server.set_nonblocking(true).unwrap();
+        let form = b"scope=openid+profile+email+offline_access+api";
+        write!(
+            client,
+            "POST /connect/deviceauthorization HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n",
+            form.len()
+        )
+        .unwrap();
+        let handler = thread::spawn(move || {
+            let mut identity = IdentityState::new(&[]).unwrap();
+            handle_cloud_request(server, "relay", 1234, &mut identity);
+        });
+        thread::sleep(Duration::from_millis(50));
+        let sent = client.write_all(form);
+        let mut response = String::new();
+        let received = client.read_to_string(&mut response);
+        handler.join().unwrap();
+        sent.unwrap();
+        received.unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(response.contains("device_code"), "{response}");
+    }
 
     #[test]
     fn profile_identity_device_flow_rotates_single_use_tokens_and_separates_accounts() {
