@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Exercise executable updates across two profiles.**
+The end-to-end cloud fixture serves an installation manifest with a higher
+version and the current binary. Update tests replace a disposable executable,
+resume active agents in both profiles, preserve a previously suspended record,
+and repeat resume without duplicating either fleet. A filesystem-error regression
+checks that failed replacement leaves the previous executable intact and runs
+recovery before returning the error. The debugging guide describes the durable
+update journal, retained sessions and explicit recovery after interruption.
+
 2026-09-05 — **Restore desktop update and subscription warnings per profile.**
 Desktop installation settings now select marker-file reporting for each profile's
 state directory. Both runtime observations and update checks use those reporters,

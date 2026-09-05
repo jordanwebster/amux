@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use chrono::{Duration as ChronoDuration, Utc};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use crate::terminal::TestTerminal;
@@ -40,7 +41,7 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     };
 
     match subcommand {
-        "client" | "list" | "ls" | "profiles" | "init" | "login" | "logout" => true,
+        "client" | "list" | "ls" | "profiles" | "init" | "login" | "logout" | "update" => true,
         "profile" => {
             command
                 .args
@@ -175,6 +176,7 @@ pub struct TestResult {
 }
 
 /// Configuration for the executor
+#[derive(Clone)]
 pub struct ExecutorConfig {
     /// Path to the amux binary
     pub amux_binary: PathBuf,
@@ -350,7 +352,10 @@ fn allocate_local_port() -> Result<u16, String> {
         .map_err(|error| format!("failed to read allocated local port: {error}"))
 }
 
-fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFixture>, String> {
+fn configure_cloud_fixture(
+    configs: &mut [TestConfig],
+    executable: &Path,
+) -> Result<Option<CloudFixture>, String> {
     let needs_cloud = configs
         .iter()
         .any(|config| config.cloud_relay || config.cloud_account.is_some());
@@ -378,7 +383,13 @@ fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFix
         Some(port) => port,
     };
     let accounts = relay.accounts.clone();
-    let fixture = CloudFixture::start(routing_host, routing_port, &accounts)?;
+    let fixture = CloudFixture::start(
+        routing_host,
+        routing_port,
+        &accounts,
+        relay.update_version.as_deref(),
+        executable,
+    )?;
     for config in configs {
         config.cloud_url = Some(fixture.url.clone());
     }
@@ -386,7 +397,13 @@ fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFix
 }
 
 impl CloudFixture {
-    fn start(routing_host: String, routing_port: u16, accounts: &[String]) -> Result<Self, String> {
+    fn start(
+        routing_host: String,
+        routing_port: u16,
+        accounts: &[String],
+        update_version: Option<&str>,
+        executable: &Path,
+    ) -> Result<Self, String> {
         let tls_dir =
             TempDir::new().map_err(|error| format!("failed to create cloud TLS dir: {error}"))?;
         let routing_tls_ca = tls_dir.path().join("cloud-routing-ca.pem");
@@ -409,6 +426,16 @@ impl CloudFixture {
             .map_err(|error| format!("failed to configure fake cloud API: {error}"))?;
 
         let identity = Arc::new(Mutex::new(IdentityState::new(accounts)?));
+        let update = update_version.map(|version| {
+            let binary = std::fs::read(executable).map_err(|e| e.to_string())?;
+            let sha256 = format!("{:x}", Sha256::digest(&binary));
+            let platforms = ["macos-arm64", "macos-x86_64", "linux-arm64", "linux-x86_64"]
+                .into_iter().map(|platform| (platform.to_string(), serde_json::json!({
+                    "url": format!("http://{addr}/update/amux"), "sha256": sha256,
+                }))).collect::<serde_json::Map<_, _>>();
+            let manifest = serde_json::json!({"version": version, "release_notes": "E2E replacement fixture", "platforms": platforms}).to_string();
+            Ok::<_, String>((manifest, binary))
+        }).transpose()?;
         let thread_identity = identity.clone();
         let running = Arc::new(AtomicBool::new(true));
         let thread_running = running.clone();
@@ -421,6 +448,7 @@ impl CloudFixture {
                         &thread_host,
                         routing_port,
                         &mut thread_identity.lock().unwrap(),
+                        update.as_ref(),
                     ),
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(10));
@@ -584,6 +612,7 @@ fn handle_cloud_request(
     routing_host: &str,
     routing_port: u16,
     identity: &mut IdentityState,
+    update: Option<&(String, Vec<u8>)>,
 ) {
     // Accepted sockets can inherit the listener's nonblocking mode on macOS.
     // Timed reads must wait for the rest of a fragmented HTTP request.
@@ -628,6 +657,23 @@ fn handle_cloud_request(
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .unwrap_or("/");
+    if let Some((manifest, binary)) = update {
+        let body = match path {
+            "/update/manifest.json" => Some(("application/json", manifest.as_bytes())),
+            "/update/amux" => Some(("application/octet-stream", binary.as_slice())),
+            _ => None,
+        };
+        if let Some((content_type, body)) = body {
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(body);
+            return;
+        }
+    }
     let bearer = headers
         .lines()
         .filter_map(|line| line.split_once(':'))
@@ -719,7 +765,27 @@ impl Executor {
 
     /// Run a test case
     pub fn run_test(&self, test_case: &TestCase) -> TestResult {
-        match self.run_test_inner(test_case) {
+        let result = if test_case
+            .configs
+            .iter()
+            .any(|cfg| cfg.update_version.is_some())
+        {
+            (|| {
+                let bin_dir = tempfile::Builder::new()
+                    .prefix("au")
+                    .tempdir_in("/tmp")
+                    .map_err(|e| e.to_string())?;
+                let executable = bin_dir.path().join("amux");
+                std::fs::copy(&self.config.amux_binary, &executable).map_err(|e| e.to_string())?;
+                let mut config = self.config.clone();
+                config.amux_binary = executable;
+                let executor = Executor::new(config);
+                executor.run_test_inner(test_case)
+            })()
+        } else {
+            self.run_test_inner(test_case)
+        };
+        match result {
             Ok(()) => TestResult {
                 passed: true,
                 error: None,
@@ -745,7 +811,7 @@ impl Executor {
         // Prepare environment by auto-injecting missing fields
         let (directories, mut configs, terminals) =
             self.prepare_environment(test_case, temp_dir.path())?;
-        let cloud_fixture = configure_cloud_fixture(&mut configs)?;
+        let cloud_fixture = configure_cloud_fixture(&mut configs, &self.config.amux_binary)?;
 
         // Build variable context
         let mut var_ctx = VariableContext::new();
@@ -769,6 +835,7 @@ impl Executor {
         }
 
         // Generate config files and populate config paths in variable context
+        let mut retained_sessions = Vec::new();
         let mut config_paths: HashMap<String, PathBuf> = HashMap::new();
         let mut config_envs: HashMap<String, HashMap<String, String>> = HashMap::new();
 
@@ -844,6 +911,7 @@ impl Executor {
                         "root": root, "front_door_socket": root.join("amux.sock"),
                         "host_name": host_name, "prevent_idle_sleep": false,
                         "keymaps_dir": root.join("keymaps"),
+                        "update_manifest_url": cloud_fixture.as_ref().map(|fixture| format!("{}/update/manifest.json", fixture.url)).unwrap_or_else(|| "https://amux.sh/manifest.json".into()),
                     }),
                 )?;
                 let (profile_path, socket) = if cfg.worktree {
@@ -911,6 +979,26 @@ impl Executor {
                                 "cloud_url": cloud_url, "tcp_port": if profile_index == 0 { tcp_port } else { None },
                             }),
                         )?;
+                        if profile_index == 0 && let Some(name) = &cfg.suspended_agent {
+                            let session = serde_json::json!({
+                                "agent_id": uuid::Uuid::new_v4(), "name": name,
+                                "command": self.config.test_agent_binary,
+                                "working_dir": var_ctx.directories.values().next().unwrap(),
+                                "terminal_size": null, "created_at": Utc::now(),
+                            });
+                            let fields =
+                                serde_yaml::to_string(&session).map_err(|e| e.to_string())?;
+                            let record = format!(
+                                "agents:\n- !TestAgent\n{}",
+                                fields
+                                    .lines()
+                                    .map(|line| format!("  {line}\n"))
+                                    .collect::<String>()
+                            );
+                            let path = dir.join("state/suspended.yaml");
+                            std::fs::write(&path, &record).map_err(|e| e.to_string())?;
+                            retained_sessions.push((path, record, name.clone()));
+                        }
                         records.push(serde_json::json!({"id": profile_id, "label": {"override_name": name}, "binding": null, "paused": false, "revision": 1}));
                         var_ctx
                             .captures
@@ -1036,6 +1124,19 @@ impl Executor {
                 )
             })
             .map_err(|error| append_config_logs(error, &config_envs));
+
+        let result = result.and_then(|()| {
+            for (path, expected, name) in retained_sessions {
+                let actual = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+                let actual: serde_yaml::Value = serde_yaml::from_str(&actual).map_err(|e| e.to_string())?;
+                let expected: serde_yaml::Value = serde_yaml::from_str(&expected).map_err(|e| e.to_string())?;
+                if actual != expected {
+                    return Err(format!("Previously suspended session {name} was changed: {actual:?}"));
+                }
+                transcript.push_str(&format!("[persisted state] {name} remains suspended; no newly resumed sessions remain in suspended.yaml.\n"));
+            }
+            Ok(())
+        });
 
         // Cleanup: shut down background servers spawned during the test.
         for cfg in configs.iter().filter(|cfg| !cfg.cloud_relay) {
@@ -1377,6 +1478,8 @@ impl Executor {
                 cloud_url: None,
                 tcp_port: None,
                 cloud_relay: false,
+                update_version: None,
+                suspended_agent: None,
             });
         }
 
@@ -1453,7 +1556,7 @@ mod tests {
         .unwrap();
         let handler = thread::spawn(move || {
             let mut identity = IdentityState::new(&[]).unwrap();
-            handle_cloud_request(server, "relay", 1234, &mut identity);
+            handle_cloud_request(server, "relay", 1234, &mut identity, None);
         });
         thread::sleep(Duration::from_millis(50));
         let sent = client.write_all(form);

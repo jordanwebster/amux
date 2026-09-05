@@ -35,6 +35,12 @@ pub struct TestConfig {
     pub tcp_port: Option<u16>,
     #[serde(default)]
     pub cloud_relay: bool,
+    /// Serve a release manifest and a disposable copy of the current executable.
+    #[serde(default)]
+    pub update_version: Option<String>,
+    /// A retained session in the first profile, predating the tested update.
+    #[serde(default)]
+    pub suspended_agent: Option<String>,
 }
 
 /// Terminal definition in test environment

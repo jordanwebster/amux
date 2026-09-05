@@ -20,6 +20,14 @@ Both accounts have a name and email. Missing requested scopes, reused device
 codes or refresh tokens, and invalid access tokens are refused. An optional
 `cloud_account: alice` on a device logs it in through the CLI during setup.
 
+Set `update_version: 999.0.0` on the relay config to serve a higher-version
+manifest at `/update/manifest.json` and the current executable at `/update/amux`.
+The runner copies the executable into a disposable directory before running
+such a test, so `amux update` never replaces the shared build output. An optional
+`suspended_agent: already-parked` on a device seeds a valid retained session in
+its first profile and checks that record is unchanged after the test. The CLI
+fleet assertions separately prove it was not resumed.
+
 A config with `worktree: true` renders the checked-in `.wt.toml` installation
 template and invokes `scripts/worktree-profile.py` in a fresh temporary
 checkout directory. This tests the generated layout without creating a Git

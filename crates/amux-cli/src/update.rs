@@ -125,6 +125,43 @@ mod tests {
         }).await.expect("desktop marker regression timed out");
     }
 
+    #[tokio::test]
+    async fn replacement_failure_preserves_binary_and_runs_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("amux");
+        std::fs::write(&executable, b"previous executable").unwrap();
+        let mut recovered = false;
+        let error = replace_or_recover(
+            &directory.path().join("missing-download"),
+            &executable,
+            async {
+                assert_eq!(std::fs::read(&executable).unwrap(), b"previous executable");
+                recovered = true;
+                Ok(())
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(recovered);
+        assert!(error.to_string().contains("failed to replace binary"));
+        assert_eq!(std::fs::read(&executable).unwrap(), b"previous executable");
+    }
+
+    #[tokio::test]
+    async fn replacement_success_does_not_run_failure_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("amux");
+        let download = directory.path().join("download");
+        std::fs::write(&executable, b"previous executable").unwrap();
+        std::fs::write(&download, b"new executable").unwrap();
+        replace_or_recover(&download, &executable, async {
+            panic!("recovery must only run when replacement fails")
+        })
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&executable).unwrap(), b"new executable");
+    }
+
     #[test]
     fn available_marker_round_trips_and_clears() {
         let temp = tempfile::tempdir().unwrap();
@@ -347,6 +384,20 @@ fn replace_binary(temp: &Path, target: &Path) -> Result<()> {
     std::fs::rename(temp, target).context("failed to replace binary")
 }
 
+async fn replace_or_recover(
+    temp: &Path,
+    target: &Path,
+    recovery: impl std::future::Future<Output = Result<()>>,
+) -> Result<()> {
+    if let Err(error) = replace_binary(temp, target) {
+        recovery
+            .await
+            .with_context(|| format!("{error:#}; the previous server could not resume"))?;
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn clear_profile_markers(config: &InstallationConfig) -> Result<()> {
     let profiles = match std::fs::read_dir(config.root.join("profiles")) {
         Ok(profiles) => profiles,
@@ -414,14 +465,13 @@ pub async fn run_update(config: &InstallationConfig) -> Result<()> {
 
     let was_running = front_door::suspend_for_update_if_running(config).await?;
 
-    if let Err(error) = replace_binary(&tmp_path, &current_exe) {
+    replace_or_recover(&tmp_path, &current_exe, async {
         if was_running {
-            front_door::resume_with_executable(config, &current_exe)
-                .await
-                .context("binary replacement failed and the previous server could not resume")?;
+            front_door::resume_with_executable(config, &current_exe).await?;
         }
-        return Err(error);
-    }
+        Ok(())
+    })
+    .await?;
     println!("Updated to v{latest}.");
 
     // A marker cleanup error must not leave the updated daemon stopped.

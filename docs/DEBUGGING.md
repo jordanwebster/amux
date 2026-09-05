@@ -190,3 +190,29 @@ command tree are debug-build surfaces. They do not appear in release help or
 the release key table. The report bundle writer remains in every build so a
 release tripwire or panic still leaves a local, self-describing degraded
 report rather than a flat dump.
+
+## Updating every profile
+
+`amux update` reads `update_manifest_url` from the installation configuration.
+It downloads and verifies the binary before suspending agents. The front door
+prepares every profile durably, stops only active agents, and shuts down the
+installation before replacement. After restart it resumes exactly those agents;
+older suspended sessions remain suspended. If replacement fails, the updater
+starts the unchanged executable and attempts the same resume before reporting
+the replacement error.
+
+The installation root's `update.json` records the pending operation. Each
+profile's `state/suspended.yaml` (beside its configured `state.yaml`) holds
+retained sessions. Preserve these files when investigating interruption: ordinary
+server startup does not auto-resume. The internal `amux server resume` command
+retries recovery through the front door; repeated recovery does not start an
+agent twice. Check both fleets with `amux --profile Personal list` and
+`amux --profile Work list`, and inspect the installation log for resume failures.
+
+Replay the offline replacement regression with
+`timeout 900 wt run e2e -- update_two_profiles`. Its HTTP fixture serves a higher
+manifest version with the current executable. The runner updates a disposable
+copy, checks both running fleets, and verifies a pre-existing suspended record
+remains intact. It does not install a published release. The preparation,
+interruption and concurrent-resume cases run with
+`timeout 900 wt run spec -- profiles::update`.
