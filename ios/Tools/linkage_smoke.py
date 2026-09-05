@@ -16,8 +16,26 @@ def run(*command: str, timeout: int = 60) -> str:
     return subprocess.run(command, check=True, text=True, capture_output=True, timeout=timeout).stdout.strip()
 
 
+def device_inventory(attempts: int = 3) -> dict:
+    """Every simulator this machine could run.
+
+    CoreSimulator serialises this query behind whatever else is talking to it,
+    and a machine that is booting or shutting down a device can hold it far
+    past a minute. An expired read says nothing about the machine's devices,
+    so ask again rather than report the pinned simulator missing.
+    """
+    for attempt in range(attempts):
+        try:
+            return json.loads(
+                run("xcrun", "simctl", "list", "devices", "available", "-j", timeout=180)
+            )
+        except subprocess.TimeoutExpired:
+            if attempt + 1 == attempts:
+                raise
+
+
 def simulator() -> tuple[str, bool]:
-    inventory = json.loads(run("xcrun", "simctl", "list", "devices", "available", "-j"))
+    inventory = device_inventory()
     matching = [
         device for device in inventory["devices"].get(RUNTIME, [])
         if device["name"] == DEVICE_NAME

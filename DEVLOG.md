@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Asking CoreSimulator twice.** The iOS checks find the pinned
+simulator by asking `simctl` what devices the machine has. On a shared runner
+that query queues behind whatever else is talking to CoreSimulator — a device
+booting, a device shutting down — and it stopped answering inside a minute,
+which read as "the pinned simulator is not there" and failed the run. An
+expired read says nothing about the machine's devices, so both places that ask
+now wait longer and ask again before believing the answer.
+
 2026-09-05 — **Three tests that lied about the code they cover.** Pairing now
 tells you when the PIN expires, and the five scripted end-to-end sessions that
 pair two daemons still expected the older three-line block, so every remote
