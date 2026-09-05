@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Release installation admission after failed agent recovery.**
+Update resume now completes after every agent has been attempted and retained
+state cleanup succeeds, even when an agent cannot start or its profile has no
+host. Failed agents remain parked in their own profile, including records
+consumed by an earlier partial resume and recovered from the journal after
+restart. Storage failures still keep recovery pending without double-starting
+agents. Spec regressions exercise a removed executable and an occupied profile
+socket, verify front-door failure reports survive restart, and prove agent
+creation, profile lifecycle calls and a later update remain usable.
+
 2026-09-05 — **Read periodic update banners from the installation release source.**
 Shared runtime settings now carry the exact installation manifest URL into
 periodic checks. Profiles keep independent available, required-version and

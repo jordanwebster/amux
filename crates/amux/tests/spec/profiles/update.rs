@@ -1,7 +1,9 @@
 //! Updating an installation restores exactly the sessions that were running.
 
-use amux::installation::{AgentResumeStatus, OperationId, SuspendReason};
-use amux::testnet::TestNet;
+use amux::installation::{
+    AgentResumeStatus, FrontDoor, FrontDoorClient, OperationId, SuspendReason, rpc,
+};
+use amux::testnet::{InstallationHandle, TestNet};
 
 async fn devices() -> TestNet {
     TestNet::builder()
@@ -374,4 +376,181 @@ async fn restart_during_incomplete_resume_restores_even_consumed_profile_records
     println!(
         "Restarting after a partially completed resume restores both profiles, including the profile whose suspended file was already consumed. The installation journal retains the session snapshots until the whole resume succeeds."
     );
+}
+
+async fn assert_failed_resume_releases_installation(
+    laptop: &InstallationHandle,
+    failed_id: uuid::Uuid,
+) {
+    let a = laptop.profile("personal");
+    let b = laptop.profile("work");
+    let mut previous_report = None;
+    let mut new_agent = None;
+    for stage in ["immediately", "after-restart"] {
+        let socket = laptop.root().join("amux.sock");
+        let listener = FrontDoor::new(laptop.front_door(), Some(socket.clone()))
+            .listen()
+            .unwrap();
+        let mut front = FrontDoorClient::connect(&socket).await.unwrap();
+        let report = if stage == "immediately" {
+            front
+                .installation
+                .resume_all(rpc::ResumeAllRequest {
+                    operation_id: OperationId::new().0.to_string(),
+                })
+                .await
+                .unwrap()
+                .into_inner()
+        } else {
+            previous_report.take().unwrap()
+        };
+        let failed = report
+            .profiles
+            .iter()
+            .find(|profile| profile.profile_id == a.id.to_string())
+            .unwrap();
+        assert_eq!(failed.failed_count, 1);
+        assert_eq!(failed.agents[0].agent_id, failed_id.to_string());
+        let healthy = report
+            .profiles
+            .iter()
+            .find(|profile| profile.profile_id == b.id.to_string())
+            .unwrap();
+        assert_eq!(healthy.resumed_count, 1);
+        assert_eq!(healthy.failed_count, 0);
+        assert_eq!(a.suspended_agent_ids(), vec![failed_id]);
+        assert!(b.suspended_agent_ids().is_empty());
+        new_agent = Some(b.spawn_echo_agent(stage).await);
+        if a.status().available {
+            a.spawn_echo_agent(stage).await;
+        }
+        let paused = front
+            .profiles
+            .pause_profile(rpc::ProfileOperation {
+                operation_id: OperationId::new().0.to_string(),
+                profile_id: b.id.to_string(),
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(paused.intent, rpc::Intent::Paused as i32);
+        println!(
+            "{stage}: work creates an agent through ClientService and ProfileService accepts pause; the failed personal agent remains parked only in personal."
+        );
+        let retried = front
+            .installation
+            .resume_all(rpc::ResumeAllRequest {
+                operation_id: OperationId::new().0.to_string(),
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(retried, report, "completed recovery replays its report");
+        println!("ResumeAll {stage}: {retried:?}");
+        previous_report = Some(report);
+        drop(front);
+        listener.stop().await;
+        if stage == "immediately" {
+            laptop.restart().await;
+        }
+    }
+
+    let suspended = laptop
+        .front_door()
+        .suspend_all(OperationId::new(), SuspendReason::Update)
+        .await
+        .unwrap();
+    let work = suspended
+        .profiles
+        .iter()
+        .find(|p| p.profile_id == b.id)
+        .unwrap();
+    assert_eq!(work.agent_ids, vec![new_agent.unwrap().id]);
+    assert!(
+        !suspended
+            .profiles
+            .iter()
+            .any(|p| p.agent_ids.contains(&failed_id))
+    );
+    laptop
+        .front_door()
+        .resume_all(OperationId::new())
+        .await
+        .unwrap();
+    assert_eq!(a.suspended_agent_ids(), vec![failed_id]);
+    println!(
+        "A new update suspends the newly created work agent and leaves the failed personal agent parked."
+    );
+}
+
+#[tokio::test]
+async fn failed_agent_resume_releases_every_profile_before_and_after_restart() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use amux::{AgentType, CreateAgentRequest};
+
+    let net = devices().await;
+    let laptop = net.installation("laptop");
+    let a = laptop.profile("personal");
+    let executable = laptop.root().join("agent.sh");
+    std::fs::write(&executable, "#!/bin/sh\nexec /bin/cat\n").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let failed = a
+        .socket_client()
+        .await
+        .create_agent(CreateAgentRequest {
+            agent_id: uuid::Uuid::new_v4(),
+            host_id: None,
+            name: Some("missing-executable".into()),
+            agent_type: AgentType::TestAgent {
+                command: executable.to_str().unwrap().into(),
+            },
+            working_dir: laptop.root().into(),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        })
+        .await
+        .unwrap();
+    laptop.profile("work").spawn_echo_agent("work").await;
+    laptop
+        .front_door()
+        .suspend_all(OperationId::new(), SuspendReason::Update)
+        .await
+        .unwrap();
+    std::fs::remove_file(executable).unwrap();
+    assert_failed_resume_releases_installation(&laptop, failed.id).await;
+}
+
+#[tokio::test]
+async fn unavailable_host_parks_consumed_records_and_releases_other_profiles() {
+    let net = devices().await;
+    let laptop = net.installation("laptop");
+    let a = laptop.profile("personal");
+    let b = laptop.profile("work");
+    let failed = a.spawn_echo_agent("personal").await;
+    b.spawn_echo_agent("work").await;
+    laptop
+        .front_door()
+        .suspend_all(OperationId::new(), SuspendReason::Update)
+        .await
+        .unwrap();
+    let retained = b.paths().state_path.with_file_name("suspended.yaml");
+    let saved = std::fs::read(&retained).unwrap();
+    std::fs::write(&retained, "unreadable retained state").unwrap();
+    let partial = laptop
+        .front_door()
+        .resume_all(OperationId::new())
+        .await
+        .unwrap();
+    assert!(partial.profiles.iter().any(|p| p.error.is_some()));
+    assert!(a.suspended_agent_ids().is_empty());
+    std::fs::write(retained, saved).unwrap();
+
+    laptop.stop().await;
+    let _occupied = std::os::unix::net::UnixListener::bind(a.paths().socket_path).unwrap();
+    laptop.restart().await;
+    assert!(!a.status().available);
+    assert_failed_resume_releases_installation(&laptop, failed.id).await;
 }

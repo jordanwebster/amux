@@ -299,6 +299,7 @@ impl Inner {
         }
         let targets = self.update_targets().await?;
         let mut report = ResumeReport::default();
+        let mut cleanup_pending = false;
         for profile in &journal.profiles {
             let target = targets.iter().find(|target| target.id == profile.id);
             let (agents, mut error) = match target {
@@ -336,6 +337,24 @@ impl Inner {
                     retained
                         .agents
                         .retain(|agent| !successful.contains(&agent.agent_id()));
+                    // A previous attempt may have consumed this profile's
+                    // records before another profile's cleanup failed. If a
+                    // restart now cannot restore them, park the journal copies.
+                    let retained_ids: HashSet<_> = retained
+                        .agents
+                        .iter()
+                        .map(SuspendedAgent::agent_id)
+                        .collect();
+                    retained.agents.extend(
+                        profile
+                            .agents
+                            .iter()
+                            .filter(|agent| {
+                                !successful.contains(&agent.agent_id())
+                                    && !retained_ids.contains(&agent.agent_id())
+                            })
+                            .cloned(),
+                    );
                     if retained.agents.is_empty() {
                         suspend::remove_suspended(&target.state_path)?;
                     } else {
@@ -349,6 +368,7 @@ impl Inner {
                     Ok(())
                 })();
                 if let Err(failure) = cleanup {
+                    cleanup_pending = true;
                     error = Some(failure.to_string());
                 }
             }
@@ -358,13 +378,10 @@ impl Inner {
                 error,
             });
         }
-        if report.profiles.iter().all(|profile| {
-            profile.error.is_none()
-                && profile
-                    .agents
-                    .iter()
-                    .all(|agent| agent.status != AgentResumeStatus::Failed)
-        }) {
+        // Start failures are final for this transaction; their snapshots stay
+        // parked in the owning profile. Only storage failures need recovery to
+        // keep admission closed. Persist completion before update() thaws it.
+        if !cleanup_pending {
             journal.phase = Phase::Complete;
             journal.resume_operation = Some(op);
             journal.resume_report = Some(report.clone());

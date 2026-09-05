@@ -210,6 +210,11 @@ server startup does not auto-resume. The internal `amux server resume` command
 retries recovery through the front door; repeated recovery does not start an
 agent twice. Check both fleets with `amux --profile Personal list` and
 `amux --profile Work list`, and inspect the installation log for resume failures.
+An agent that cannot start, or whose profile cannot host agents, is reported as
+failed and stays in that profile's suspended state. Once all attempts and state
+cleanup finish, the update completes and profile operations and agent creation
+work again. Repeated installation resume returns the completed report. Storage
+errors keep recovery pending and admission closed until cleanup succeeds.
 
 Replay the offline replacement regression with
 `timeout 900 wt run e2e -- update_two_profiles`. Its HTTP fixture serves a higher
