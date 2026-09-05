@@ -70,6 +70,18 @@ needs = ["ios-rust"]
 run = "timeout 900 python3 -B scripts/ios-door-smoke.py"
 needs = ["ios-build"]
 
+# Capture the manifest's screens in both appearances and compare each one
+# with its baseline. No arguments means the whole manifest, which fails on any
+# screen nobody has built yet rather than skipping it.
+[task.ios-goldens]
+run = 'timeout 2400 python3 -B scripts/ios-goldens.py "$@"'
+needs = ["ios-build"]
+
+# Pair every reference screen's baseline with the design's preserved capture.
+# A report and never a gate: a difference from the design is a conversation.
+[task.ios-goldens-reference]
+run = 'timeout 900 cargo run -q -p xtask -- golden reference'
+
 # The measured run: the pinned workloads against the budgets in
 # docs/IOS_PERFORMANCE.md, on a machine that document has a row for.
 [task.ios-perf]

@@ -1,0 +1,654 @@
+{
+  "screens": [
+    {
+      "id": "probe",
+      "stage": 4,
+      "screen": "probe",
+      "fixture": "probe",
+      "origin": "added_state",
+      "reason": "the harness's own target: a screen made of the design's tokens, so a capture, a diff and a token change can be proven before any real screen exists",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "drawer",
+      "stage": 5,
+      "screen": "drawer",
+      "fixture": "drawer",
+      "origin": "added_state",
+      "reason": "the drawer is a state of the home screen the design has no capture of",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "home",
+      "stage": 5,
+      "screen": "home",
+      "fixture": "home",
+      "origin": "reference",
+      "capture": "home",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "home-quiet",
+      "stage": 5,
+      "screen": "home-quiet",
+      "fixture": "home-quiet",
+      "origin": "reference",
+      "capture": "home-quiet",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "review-cta",
+      "stage": 6,
+      "screen": "review-cta",
+      "fixture": "review-cta",
+      "origin": "reference",
+      "capture": "review-cta",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "run",
+      "stage": 6,
+      "screen": "run",
+      "fixture": "run",
+      "origin": "reference",
+      "capture": "run",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "run-live",
+      "stage": 6,
+      "screen": "run-live",
+      "fixture": "run-live",
+      "origin": "reference",
+      "capture": "run-live",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "stale",
+      "stage": 6,
+      "screen": "run",
+      "fixture": "host-lost",
+      "origin": "added_state",
+      "reason": "a conversation whose host has gone away, which the design does not picture",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "voices",
+      "stage": 6,
+      "screen": "voices",
+      "fixture": "voices",
+      "origin": "reference",
+      "capture": "voices",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "ask-permission",
+      "stage": 7,
+      "screen": "ask-permission",
+      "fixture": "ask-permission",
+      "origin": "reference",
+      "capture": "ask-permission",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "ask-question",
+      "stage": 7,
+      "screen": "ask-question",
+      "fixture": "ask-question",
+      "origin": "reference",
+      "capture": "ask-question",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "codex-approval",
+      "stage": 7,
+      "screen": "ask-permission",
+      "fixture": "ask-permission-codex",
+      "origin": "added_state",
+      "reason": "the same ask in Codex's vocabulary rather than Claude's",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "comment",
+      "stage": 7,
+      "screen": "comment",
+      "fixture": "comment",
+      "origin": "reference",
+      "capture": "comment",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "diff",
+      "stage": 7,
+      "screen": "diff",
+      "fixture": "diff",
+      "origin": "reference",
+      "capture": "diff",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "plan",
+      "stage": 7,
+      "screen": "plan",
+      "fixture": "plan",
+      "origin": "reference",
+      "capture": "plan",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "agent-delete",
+      "stage": 8,
+      "screen": "agent-delete",
+      "fixture": "agent-delete",
+      "origin": "reference",
+      "capture": "agent-delete",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "overflow",
+      "stage": 8,
+      "screen": "overflow",
+      "fixture": "overflow",
+      "origin": "reference",
+      "capture": "overflow",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "permissions-claude",
+      "stage": 8,
+      "screen": "settings",
+      "fixture": "settings",
+      "origin": "added_state",
+      "reason": "the permissions sheet in Claude's vocabulary",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "permissions-codex",
+      "stage": 8,
+      "screen": "settings",
+      "fixture": "settings-codex",
+      "origin": "added_state",
+      "reason": "the permissions sheet in Codex's vocabulary",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "plus",
+      "stage": 8,
+      "screen": "plus",
+      "fixture": "plus",
+      "origin": "reference",
+      "capture": "plus",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "queued",
+      "stage": 8,
+      "screen": "queued",
+      "fixture": "queued",
+      "origin": "reference",
+      "capture": "queued",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "send-refused",
+      "stage": 8,
+      "screen": "working",
+      "fixture": "send-refused",
+      "origin": "added_state",
+      "reason": "a send the gate refuses, which the design does not picture",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "settings",
+      "stage": 8,
+      "screen": "settings",
+      "fixture": "settings",
+      "origin": "reference",
+      "capture": "settings",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "slash-typing",
+      "stage": 8,
+      "screen": "slash-typing",
+      "fixture": "slash-typing",
+      "origin": "reference",
+      "capture": "slash-typing",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "strip",
+      "stage": 8,
+      "screen": "run",
+      "fixture": "strip",
+      "origin": "added_state",
+      "reason": "the facts strip under a conversation",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "tokens",
+      "stage": 8,
+      "screen": "typing",
+      "fixture": "tokens",
+      "origin": "added_state",
+      "reason": "a draft carrying attachment tokens",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "typing",
+      "stage": 8,
+      "screen": "typing",
+      "fixture": "typing",
+      "origin": "reference",
+      "capture": "typing",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "working",
+      "stage": 8,
+      "screen": "working",
+      "fixture": "working",
+      "origin": "reference",
+      "capture": "working",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "devices",
+      "stage": 9,
+      "screen": "hosts",
+      "fixture": "devices",
+      "origin": "added_state",
+      "reason": "this phone's identity and the devices paired with it",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "exited",
+      "stage": 9,
+      "screen": "exited",
+      "fixture": "exited",
+      "origin": "reference",
+      "capture": "exited",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "hosts",
+      "stage": 9,
+      "screen": "hosts",
+      "fixture": "hosts",
+      "origin": "reference",
+      "capture": "hosts",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "new-agent",
+      "stage": 9,
+      "screen": "new-agent",
+      "fixture": "new-agent",
+      "origin": "reference",
+      "capture": "new-agent",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "offline",
+      "stage": 9,
+      "screen": "offline",
+      "fixture": "offline",
+      "origin": "reference",
+      "capture": "offline",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "pair-confirm",
+      "stage": 9,
+      "screen": "pin",
+      "fixture": "pair-confirm",
+      "origin": "added_state",
+      "reason": "the confirmation an amux://pair link arrives at, which never pairs on arrival",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "pin",
+      "stage": 9,
+      "screen": "pin",
+      "fixture": "pin",
+      "origin": "reference",
+      "capture": "pin",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "delete",
+      "stage": 10,
+      "screen": "delete",
+      "fixture": "delete",
+      "origin": "reference",
+      "capture": "delete",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "delete-blocked",
+      "stage": 10,
+      "screen": "delete",
+      "fixture": "delete-blocked",
+      "origin": "added_state",
+      "reason": "account deletion blocked by live billing",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "first-run",
+      "stage": 10,
+      "screen": "first-run",
+      "fixture": "first-run",
+      "origin": "reference",
+      "capture": "first-run",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "first-run-paid",
+      "stage": 10,
+      "screen": "first-run-paid",
+      "fixture": "first-run-paid",
+      "origin": "reference",
+      "capture": "first-run-paid",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "paywall",
+      "stage": 10,
+      "screen": "paywall",
+      "fixture": "paywall",
+      "origin": "reference",
+      "capture": "paywall",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "profiles",
+      "stage": 10,
+      "screen": "profiles",
+      "fixture": "profiles",
+      "origin": "reference",
+      "capture": "profiles",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "sign-in",
+      "stage": 10,
+      "screen": "sign-in",
+      "fixture": "sign-in",
+      "origin": "reference",
+      "capture": "sign-in",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "sign-in-failed",
+      "stage": 10,
+      "screen": "sign-in",
+      "fixture": "sign-in-failed",
+      "origin": "added_state",
+      "reason": "a sign-in the cloud refuses",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "you",
+      "stage": 10,
+      "screen": "you",
+      "fixture": "you",
+      "origin": "reference",
+      "capture": "you",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "dump",
+      "stage": 11,
+      "screen": "dump",
+      "fixture": "dump",
+      "origin": "reference",
+      "capture": "dump",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "shake",
+      "stage": 11,
+      "screen": "shake",
+      "fixture": "shake",
+      "origin": "reference",
+      "capture": "shake",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "upload-failed",
+      "stage": 11,
+      "screen": "dump",
+      "fixture": "upload-failed",
+      "origin": "added_state",
+      "reason": "a report the cloud would not take",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "ax-conversation",
+      "stage": 12,
+      "screen": "run",
+      "fixture": "run-accessibility",
+      "origin": "added_state",
+      "reason": "a conversation at an accessibility text size",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "ax-home",
+      "stage": 12,
+      "screen": "home",
+      "fixture": "home-accessibility",
+      "origin": "added_state",
+      "reason": "the home screen at an accessibility text size",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "small-home",
+      "stage": 12,
+      "screen": "home",
+      "fixture": "home",
+      "origin": "added_state",
+      "reason": "the home screen on the narrowest supported display",
+      "simulator": "amux-small",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    }
+  ]
+}

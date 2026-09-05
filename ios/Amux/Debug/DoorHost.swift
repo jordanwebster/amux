@@ -72,9 +72,13 @@ final class DoorHost {
 
     private func open(screen name: String, fixture: String?) -> DoorReply {
         guard let screen = Screen(rawValue: name) else { return .error("no screen named \(name)") }
+        // Whether the screen exists is asked first: a screen nobody has built
+        // is unimplemented whether or not its state has been written yet, and
+        // a golden run over the whole manifest needs to hear that word rather
+        // than a complaint about a fixture.
+        guard DoorScreens.isBuilt(screen) else { return .error("unimplemented: \(name)") }
         let wanted = fixture ?? name
         guard let fixture = Fixtures.named(wanted) else { return .error("no state named \(wanted)") }
-        guard DoorScreens.isBuilt(screen) else { return .error("unimplemented: \(name)") }
         // A fresh bundle every time: a screen opened after another one must
         // not inherit the conversation the last one left behind.
         stores = StoreBundle(account: AccountId("door"), now: Scenario.now)

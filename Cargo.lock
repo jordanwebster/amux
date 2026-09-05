@@ -5029,6 +5029,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "png 0.17.16",
  "protoc-bin-vendored",
  "serde",
  "serde_json",

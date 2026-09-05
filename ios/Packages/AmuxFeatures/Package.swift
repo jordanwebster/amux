@@ -13,6 +13,13 @@ let package = Package(
     ],
     targets: [
         .target(name: "AmuxFeatures", dependencies: ["AmuxCore", "AmuxDesign"]),
+        .testTarget(
+            name: "AmuxFeaturesTests",
+            dependencies: ["AmuxFeatures"],
+            // The golden manifest, read from where the recipes read it, so a
+            // screen added to the catalogue without a golden fails here.
+            resources: [.copy("Resources/manifest.json")]
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

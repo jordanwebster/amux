@@ -4,6 +4,35 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **What the app draws, locked.** `ios/Goldens/manifest.json` now
+names every screen this work owes a golden: the thirty-three the design
+pictured, seventeen states it did not — the drawer, both permission
+vocabularies, a stale host, a refused send, a pairing confirmation, the
+accessibility and small-display screens — each with the milestone that builds
+it, the state it is filled from and the device it belongs on. A run over the
+whole manifest fails and names every screen nobody has built yet, because a
+manifest that quietly skipped them would be a list of promises with no way to
+tell which had been kept.
+
+`xtask golden` is the tool underneath. It drives the app through its door,
+captures the composited window in both appearances, and writes the baseline,
+the capture and their difference side by side for every comparison, with the
+changed pixels marked in red over a dimmed copy so what moved is legible
+without a pixel inspector. Two values a channel are allowed, because the same
+screen captured twice can differ where a gradient is dithered, and failing on
+that trains everybody to update baselines without looking; anything a person
+could see differs by far more, in far more places. A screen that has never
+been locked says so, and a screen the app refuses to show says why rather than
+leaving a missing file to be interpreted.
+
+The probe screen — the design's ground, glass, ink and bundled type, and
+nothing else — is locked in both appearances at 1206×2622. It is the proof
+that a capture, a comparison and a token change all work before there is a
+real screen to point them at. Reference comparison is a separate report:
+each screen's baseline paired with the design's preserved capture, produced
+only for screens that have been built, and never a gate — a difference from
+the design is a conversation, not a failure.
+
 2026-09-05 — **Measuring the phone against numbers that are written down.**
 `docs/IOS_PERFORMANCE.md` now states every performance claim the iPhone app is
 held to — the pinned Mac and simulator, the workloads and their seed, the

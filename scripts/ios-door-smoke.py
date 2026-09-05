@@ -24,6 +24,10 @@ RELEASE = DERIVED_DATA / "Build/Products/Release-iphonesimulator/Amux.app/Amux"
 DEBUG_ONLY = [
     "DoorServer", "DoorHost", "DoorScreens", "DoorCapture", "DoorFrames",
     "DrivenRoot", "VisibleTree", "AmuxTestSupport",
+    # The performance harness: its workloads are forty invented agents and a
+    # thousand invented transcript rows, and the launch it times exists only
+    # to be timed.
+    "Workloads", "ColdStartProbe", "PerfRun", "BudgetTable",
 ]
 OUTPUT = Path("target/ios/door")
 CAPTURE = OUTPUT / "door-capture.png"
