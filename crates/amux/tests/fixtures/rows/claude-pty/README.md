@@ -38,8 +38,7 @@ live-suite scenarios and are deliberately not synthetic row fixtures.
 Regenerate the corpus after an intentional daemon-boundary change with:
 
 ```sh
-UPDATE_DERIVED_ROWS=1 timeout 900 \
-  cargo test -p amux --test derived_rows claude_pty_recordings
+UPDATE_DERIVED_ROWS=1 timeout 900 wt test -- claude_pty_derived_rows
 ```
 
 Without `UPDATE_DERIVED_ROWS`, the same test is the executable byte-for-byte

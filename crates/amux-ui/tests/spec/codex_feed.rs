@@ -450,3 +450,43 @@ fn the_committed_capture_is_a_regression_anchor_even_with_redacted_payloads() {
     assert!(layer.entry_count() > 0);
     assert!(model.check_invariants().is_empty());
 }
+
+/// The meter must state what the context holds, not what the thread has
+/// spent. This recording's second report says the last turn's context is
+/// 14,771 tokens while every turn's tokens add up to 29,212; a meter that
+/// read the sum would claim twice the room is gone.
+#[test]
+fn context_size_tracks_the_last_turn_rather_than_the_thread_total() {
+    let rows = codex_rows("approval_deny");
+    let reports: Vec<_> = rows
+        .iter()
+        .filter(|row| {
+            row.get("type").and_then(serde_json::Value::as_str) == Some("thread/tokenUsage/updated")
+        })
+        .collect();
+    assert!(
+        reports.len() > 1,
+        "the recording reports usage more than once, so the two figures diverge"
+    );
+    let last = reports.last().expect("a final usage report");
+    assert_ne!(
+        last.pointer("/tokenUsage/last/totalTokens"),
+        last.pointer("/tokenUsage/total/totalTokens"),
+        "the final report's per-turn and cumulative totals differ"
+    );
+
+    let model = feed(rows);
+    let usage = codex_layer(&model, AGENT)
+        .token_usage()
+        .expect("the session reported what its thread costs");
+    assert_eq!(usage.total_tokens, Some(14_771), "the last turn's context");
+    assert_eq!(usage.input_tokens, Some(14_755));
+    assert_eq!(usage.cached_input_tokens, Some(14_080));
+    assert_eq!(usage.output_tokens, Some(16));
+    assert_eq!(usage.model_context_window, Some(258_400));
+    assert_ne!(
+        usage.total_tokens,
+        Some(29_212),
+        "the running total across turns is not the size of the context"
+    );
+}

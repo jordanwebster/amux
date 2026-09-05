@@ -1,0 +1,40 @@
+┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ /                                                                                                        4 agents    │
+│                                                                                                                      │
+│ ▎ ! fix-auth              claude   nova       2m    permission                                                       │
+│   ! fix-sync              claude   nova       2m    permission                                                       │
+│   ⋯ docs-auth             claude   nova       12s   working                                                          │
+│   ⋯ docs-sync             claude   nova       12s   working                                                          │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ● connected · 1 host   enter raw attach  o chat  n new  r rename  d delete  q quit  ? help                           │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

@@ -13,6 +13,7 @@
 
 pub mod attachments;
 pub mod claude;
+pub mod claude_sdk;
 pub mod codex;
 pub mod diff;
 mod effect;
@@ -38,6 +39,7 @@ pub use attachments::{
     MentionKind, Segment, format_mention, split_mentions,
 };
 pub use claude::{ClaudeCommand, SendGate};
+pub use claude_sdk::{ClaudeSdkCommand, ClaudeSdkInput, SdkAnswer};
 pub use codex::{CodexCommand, CodexDecision, CodexInput};
 pub use effect::{DumpReason, Effect, InputPayload};
 pub use model::{

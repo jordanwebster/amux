@@ -15,20 +15,17 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::document::{self, AskDocument};
+use super::facts::{self, AskDocument, InboundMessage};
 use super::{
     ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, ApiErrorEntry, Ask, AskKind, AskState,
     ClaudeLayer, CompactSummaryEntry, CompactionEntry, FEED_RETAINED, FeedEntry, FeedEntryKind,
     InterruptionEntry, InterruptionKind, MESSAGES_RETAINED, MessageEntry, MessageFinality,
     MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry,
-    PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED,
-    STRUCTURED_PATCH_BYTES_RETAINED, STRUCTURED_PATCH_HUNKS_RETAINED,
-    STRUCTURED_PATCH_LINES_RETAINED, SlotState, SuccessFacts, SuggestionDestination,
-    SuggestionFact, SuggestionKind, TaskNotificationEntry, ThinkingEntry, ToolEntry,
-    ToolInvocation, ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry,
-    envelope,
+    PromptSource, QuestionAnswer, SEEN_ROWS_RETAINED, SlotState, SuccessFacts,
+    SuggestionDestination, SuggestionFact, SuggestionKind, TaskNotificationEntry, ThinkingEntry,
+    ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry,
+    UnrecognizedEntry, runs,
 };
-use crate::diff::{Document, Hunk, Numbering};
 
 // --- tolerant readers -------------------------------------------------------
 
@@ -295,7 +292,7 @@ fn ask_key(tool_name: &str, input: &Value) -> u64 {
 /// has none — its permission menu shape is unknown, which the C6 encoder
 /// states honestly).
 fn ask_kind(tool_name: Option<&str>, input: &Value, suggestions: Vec<SuggestionFact>) -> AskKind {
-    match extract_invocation(tool_name.unwrap_or_default(), input) {
+    match facts::invocation(tool_name.unwrap_or_default(), input) {
         ToolInvocation::Question { questions } => AskKind::Question { questions },
         invocation => AskKind::Permission {
             tool_name: tool_name.map(str::to_string),
@@ -336,28 +333,6 @@ fn extract_suggestions(row: &Value) -> Vec<SuggestionFact> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// The ask's typed panel/reader body (C2), computed once at creation — the
-/// one place a diff is ever computed (diff-rendering §1.4: the transcript
-/// states no diff at ask time). Routed on the tool name like everything
-/// else; tools without a body document carry `None`.
-fn ask_document(tool_name: Option<&str>, input: &Value) -> Option<AskDocument> {
-    match tool_name {
-        Some("Edit") => {
-            let old = str_of(input, "old_string")?;
-            let new = str_of(input, "new_string")?;
-            Some(AskDocument::Diff(document::ask_time_diff(
-                old,
-                new,
-                bool_of(input, "replace_all"),
-            )))
-        }
-        Some("Write") => Some(AskDocument::NewFile {
-            content: str_of(input, "content")?.to_string(),
-        }),
-        _ => None,
-    }
 }
 
 fn push_ask(
@@ -404,7 +379,7 @@ fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
         return;
     }
     let kind = ask_kind(tool_name, input, extract_suggestions(row));
-    let document = ask_document(tool_name, input);
+    let document = facts::ask_document(tool_name, input);
     push_ask(
         layer,
         seq,
@@ -438,7 +413,7 @@ fn fold_user(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Va
     // inbox carrier's row is meta) and before the prompt path (the paste
     // carrier's row wears human discriminators it did not earn).
     if let Some(text) = row.pointer("/message/content").and_then(Value::as_str)
-        && let Some(message) = envelope::read(text)
+        && let Some(message) = facts::inbound_message(text)
     {
         fold_agent_message(layer, seq, row, message);
         return;
@@ -505,12 +480,7 @@ fn fold_user(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Va
 /// own discriminators — when the harness treated the delivery as the start
 /// of a turn, the recipient IS working, and saying otherwise would leave a
 /// wrong badge on the fleet.
-fn fold_agent_message(
-    layer: &mut ClaudeLayer,
-    seq: u64,
-    row: &Value,
-    message: envelope::InboundMessage,
-) {
+fn fold_agent_message(layer: &mut ClaudeLayer, seq: u64, row: &Value, message: InboundMessage) {
     let starts_turn = row.pointer("/origin/kind").and_then(Value::as_str) == Some("human")
         || matches!(
             str_of(row, "promptSource"),
@@ -865,24 +835,12 @@ fn tool_outcome(row: &Value, block: &Value) -> ToolOutcome {
 fn success_facts(row: &Value, block: &Value) -> SuccessFacts {
     let sidecar = row.get("toolUseResult");
     if let Some(sidecar) = sidecar.filter(|sidecar| sidecar.is_object()) {
-        if let (Some(file_path), Some(patch)) = (
-            str_of(sidecar, "filePath"),
-            sidecar.get("structuredPatch").and_then(Value::as_array),
-        ) {
-            let (mut added, removed) = patch_magnitude(patch);
-            // A Write that CREATED the file carries an empty patch (Phase 1
-            // fixture observation); the honest magnitude is the created
-            // content's line count.
-            if added == 0 && removed == 0 && str_of(sidecar, "type") == Some("create") {
-                added = str_of(sidecar, "content")
-                    .map(|content| content.lines().count() as u64)
-                    .unwrap_or(0);
-            }
+        if let Some(edit) = facts::landed_edit(sidecar) {
             return SuccessFacts::Edit {
-                file_path: file_path.to_string(),
-                added,
-                removed,
-                document: structured_patch_document(patch),
+                file_path: edit.file_path,
+                added: edit.added,
+                removed: edit.removed,
+                document: edit.document,
             };
         }
         if let Some(answers) = sidecar.get("answers").and_then(Value::as_object) {
@@ -937,161 +895,6 @@ fn result_text(block: &Value) -> Option<(String, bool)> {
             .map(head_of),
         _ => None,
     }
-}
-
-/// Change magnitude from `structuredPatch` hunks (FACT — the transcript
-/// states every landed edit; the client never recomputes one).
-fn patch_magnitude(patch: &[Value]) -> (u64, u64) {
-    let mut added = 0;
-    let mut removed = 0;
-    for hunk in patch {
-        let Some(lines) = hunk.get("lines").and_then(Value::as_array) else {
-            continue;
-        };
-        for line in lines.iter().filter_map(Value::as_str) {
-            match line.as_bytes().first() {
-                Some(b'+') => added += 1,
-                Some(b'-') => removed += 1,
-                _ => {}
-            }
-        }
-    }
-    (added, removed)
-}
-
-/// Typed, bounded head of jsdiff's `structuredPatch` hunks. Magnitude is
-/// folded separately from the complete sidecar, so bounding presentation
-/// bytes cannot change the landed change counts.
-fn structured_patch_document(patch: &[Value]) -> Document {
-    let mut document = Document {
-        numbering: Numbering::Absolute,
-        hunks: Vec::new(),
-        truncated: false,
-    };
-    let mut retained_lines = 0usize;
-    let mut retained_bytes = 0usize;
-
-    'hunks: for value in patch {
-        let (Some(old_start), Some(new_start), Some(source_lines)) = (
-            u64_of(value, "oldStart").and_then(|n| u32::try_from(n).ok()),
-            u64_of(value, "newStart").and_then(|n| u32::try_from(n).ok()),
-            value.get("lines").and_then(Value::as_array),
-        ) else {
-            document.truncated |= document.hunks.len() < STRUCTURED_PATCH_HUNKS_RETAINED
-                && value
-                    .get("lines")
-                    .and_then(Value::as_array)
-                    .is_some_and(|lines| !lines.is_empty());
-            continue;
-        };
-        if document.hunks.len() == STRUCTURED_PATCH_HUNKS_RETAINED {
-            if !source_lines.is_empty() {
-                document.truncated = true;
-                break;
-            }
-            continue;
-        }
-        let (derived_old_count, derived_new_count) = patch_hunk_counts(source_lines);
-        let old_count = u64_of(value, "oldLines")
-            .and_then(|n| u32::try_from(n).ok())
-            .unwrap_or(derived_old_count);
-        let new_count = u64_of(value, "newLines")
-            .and_then(|n| u32::try_from(n).ok())
-            .unwrap_or(derived_new_count);
-        let mut lines = Vec::new();
-
-        for source_line in source_lines {
-            let Some(line) = source_line.as_str() else {
-                document.truncated = true;
-                continue;
-            };
-            if retained_lines == STRUCTURED_PATCH_LINES_RETAINED
-                || retained_bytes == STRUCTURED_PATCH_BYTES_RETAINED
-            {
-                document.truncated = true;
-                if !lines.is_empty() {
-                    document.hunks.push(Hunk {
-                        old_start,
-                        new_start,
-                        header: Some(structured_hunk_header(
-                            old_start, old_count, new_start, new_count,
-                        )),
-                        lines,
-                    });
-                }
-                break 'hunks;
-            }
-
-            let room = STRUCTURED_PATCH_BYTES_RETAINED - retained_bytes;
-            let byte_count = line.len();
-            let retained = if byte_count > room {
-                document.truncated = true;
-                let mut end = room;
-                while !line.is_char_boundary(end) {
-                    end -= 1;
-                }
-                line[..end].to_string()
-            } else {
-                line.to_string()
-            };
-            if !retained.is_empty() || line.is_empty() {
-                retained_bytes += retained.len();
-                retained_lines += 1;
-                lines.push(retained);
-            }
-
-            if byte_count > room {
-                document.hunks.push(Hunk {
-                    old_start,
-                    new_start,
-                    header: Some(structured_hunk_header(
-                        old_start, old_count, new_start, new_count,
-                    )),
-                    lines,
-                });
-                break 'hunks;
-            }
-        }
-
-        if !lines.is_empty() {
-            document.hunks.push(Hunk {
-                old_start,
-                new_start,
-                header: Some(structured_hunk_header(
-                    old_start, old_count, new_start, new_count,
-                )),
-                lines,
-            });
-        }
-    }
-
-    document
-}
-
-fn patch_hunk_counts(lines: &[Value]) -> (u32, u32) {
-    let mut old = 0u32;
-    let mut new = 0u32;
-    for line in lines.iter().filter_map(Value::as_str) {
-        match line.as_bytes().first() {
-            Some(b' ') => {
-                old = old.saturating_add(1);
-                new = new.saturating_add(1);
-            }
-            Some(b'-') => old = old.saturating_add(1),
-            Some(b'+') => new = new.saturating_add(1),
-            _ => {}
-        }
-    }
-    (old, new)
-}
-
-fn structured_hunk_header(
-    old_start: u32,
-    old_count: u32,
-    new_start: u32,
-    new_count: u32,
-) -> String {
-    format!("@@ -{old_start},{old_count} +{new_start},{new_count} @@")
 }
 
 fn retain_plan(layer: &mut ClaudeLayer, tool_use_id: &str, row: &Value) {
@@ -1173,6 +976,25 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     let stop_reason = message
         .and_then(|message| str_of(message, "stop_reason"))
         .map(str::to_string);
+
+    // The session-fact line's two live facts: what the turn ran on and
+    // what it cost. Both ride every assistant message, so latest-wins is
+    // the whole rule. A tailed transcript file is one session's own
+    // messages — a subagent writes its own file — so no message here can
+    // be another context's.
+    if let Some(message) = message {
+        if let Some(name) = str_of(message, "model") {
+            layer.session.model = Some(name.to_string());
+        }
+        if let Some(usage) = message.get("usage") {
+            let tokens = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
+            layer.session.context_used_tokens = Some(
+                tokens("input_tokens")
+                    .saturating_add(tokens("cache_read_input_tokens"))
+                    .saturating_add(tokens("cache_creation_input_tokens")),
+            );
+        }
+    }
 
     // A new message id closes any OTHER still-open message as abandoned
     // (B2) — same-id rows are the normal multi-row upsert.
@@ -1313,13 +1135,13 @@ fn fold_tool_use(
         correlate_ask(layer, seq, &tool_use_id, &name, input, stop_reason);
         return;
     }
-    let invocation = extract_invocation(&name, input);
+    let invocation = facts::invocation(&name, input);
 
     // Grouping fact (B4): strictly consecutive read/search one-liners.
-    let group_with_previous = groupable(&invocation)
+    let group_with_previous = runs::groupable(&invocation)
         && matches!(
             layer.entries.back().map(|entry| &entry.kind),
-            Some(FeedEntryKind::Tool(previous)) if groupable(&previous.invocation)
+            Some(FeedEntryKind::Tool(previous)) if runs::groupable(&previous.invocation)
         );
 
     let entry = push(
@@ -1411,90 +1233,6 @@ fn correlate_ask(
             ask_kind(Some(name), input, Vec::new()),
             None,
         ),
-    }
-}
-
-fn groupable(invocation: &ToolInvocation) -> bool {
-    invocation.is_exploration()
-}
-
-fn extract_invocation(name: &str, input: &Value) -> ToolInvocation {
-    match name {
-        "Edit" => ToolInvocation::Edit {
-            file_path: string_of(input, "file_path"),
-            replace_all: bool_of(input, "replace_all"),
-        },
-        "Write" => ToolInvocation::Write {
-            file_path: string_of(input, "file_path"),
-        },
-        "Bash" => ToolInvocation::Bash {
-            command: string_of(input, "command"),
-            description: string_of(input, "description"),
-        },
-        "Read" => ToolInvocation::Read {
-            file_path: string_of(input, "file_path"),
-        },
-        "Grep" | "Glob" => ToolInvocation::Query {
-            text: string_of(input, "pattern"),
-        },
-        "WebSearch" | "ToolSearch" => ToolInvocation::Query {
-            text: string_of(input, "query"),
-        },
-        "WebFetch" => ToolInvocation::Query {
-            text: string_of(input, "url"),
-        },
-        crate::claude::MCP_SEND_TOOL => ToolInvocation::AmuxSend {
-            to: string_of(input, "to"),
-            text: string_of(input, "text"),
-        },
-        "Task" | "Agent" => ToolInvocation::Task {
-            description: string_of(input, "description"),
-            subagent_type: string_of(input, "subagent_type"),
-            background: bool_of(input, "run_in_background"),
-        },
-        "AskUserQuestion" => ToolInvocation::Question {
-            questions: input
-                .get("questions")
-                .and_then(Value::as_array)
-                .map(|questions| questions.iter().map(question_fact).collect())
-                .unwrap_or_default(),
-        },
-        "ExitPlanMode" => ToolInvocation::Plan {
-            plan: string_of(input, "plan"),
-            plan_file_path: string_of(input, "planFilePath"),
-        },
-        _ => ToolInvocation::Other,
-    }
-}
-
-fn question_fact(question: &Value) -> QuestionFact {
-    QuestionFact {
-        header: string_of(question, "header"),
-        question: string_of(question, "question"),
-        multi_select: bool_of(question, "multiSelect"),
-        options: question
-            .get("options")
-            .and_then(Value::as_array)
-            .map(|options| {
-                options
-                    .iter()
-                    .filter_map(|option| {
-                        // Options are `{label, description}` objects (Phase
-                        // 0 capture); tolerate the older plain-string form.
-                        match option {
-                            Value::String(label) => Some(QuestionOption {
-                                label: label.clone(),
-                                description: None,
-                            }),
-                            _ => str_of(option, "label").map(|label| QuestionOption {
-                                label: label.to_string(),
-                                description: string_of(option, "description"),
-                            }),
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
     }
 }
 
@@ -1647,93 +1385,4 @@ fn entry_kind(layer: &ClaudeLayer, id: u64) -> Option<&FeedEntryKind> {
     let front = layer.entries.front()?.id;
     let index = id.checked_sub(front)? as usize;
     layer.entries.get(index).map(|entry| &entry.kind)
-}
-
-#[cfg(test)]
-mod patch_tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn retained_patch_rows_are_bounded_without_bounding_magnitude() {
-        let line_count = STRUCTURED_PATCH_LINES_RETAINED + 5;
-        let lines: Vec<Value> = (0..line_count)
-            .map(|index| Value::String(format!("+line {index}")))
-            .collect();
-        let patch = vec![json!({
-            "oldStart": 1,
-            "oldLines": 0,
-            "newStart": 1,
-            "newLines": line_count,
-            "lines": lines,
-        })];
-
-        assert_eq!(patch_magnitude(&patch), (line_count as u64, 0));
-        let document = structured_patch_document(&patch);
-        assert!(document.truncated);
-        assert_eq!(document.line_count(), STRUCTURED_PATCH_LINES_RETAINED);
-        let expected_header = format!("@@ -1,0 +1,{line_count} @@");
-        assert_eq!(
-            document.hunks[0].header.as_deref(),
-            Some(expected_header.as_str())
-        );
-    }
-
-    #[test]
-    fn retained_patch_hunks_and_bytes_have_independent_caps() {
-        let patch: Vec<Value> = (0..=STRUCTURED_PATCH_HUNKS_RETAINED)
-            .map(|index| {
-                json!({
-                    "oldStart": index + 1,
-                    "newStart": index + 1,
-                    "lines": ["+x"],
-                })
-            })
-            .collect();
-        let document = structured_patch_document(&patch);
-        assert!(document.truncated);
-        assert_eq!(document.hunks.len(), STRUCTURED_PATCH_HUNKS_RETAINED);
-
-        let wide = "🦀".repeat(STRUCTURED_PATCH_BYTES_RETAINED);
-        let document = structured_patch_document(&[json!({
-            "oldStart": 1,
-            "newStart": 1,
-            "lines": [format!("+{wide}")],
-        })]);
-        assert!(document.truncated);
-        let retained = &document.hunks[0].lines[0];
-        assert!(retained.len() <= STRUCTURED_PATCH_BYTES_RETAINED);
-        assert!(retained.len() > STRUCTURED_PATCH_BYTES_RETAINED - '🦀'.len_utf8());
-        assert!(retained.is_char_boundary(retained.len()));
-    }
-
-    #[test]
-    fn malformed_hunks_state_only_real_retention_loss() {
-        let valid: Vec<Value> = (0..STRUCTURED_PATCH_HUNKS_RETAINED)
-            .map(|index| {
-                json!({
-                    "oldStart": index + 1,
-                    "newStart": index + 1,
-                    "lines": ["+x"],
-                })
-            })
-            .collect();
-        let mut trailing_malformed = valid.clone();
-        trailing_malformed.push(json!({"lines": ["+unlocated"]}));
-        assert!(!structured_patch_document(&trailing_malformed).truncated);
-
-        let mut trailing_bodyless = valid.clone();
-        trailing_bodyless.push(json!({"oldStart": 20, "newStart": 20}));
-        assert!(!structured_patch_document(&trailing_bodyless).truncated);
-
-        let malformed_inside_capacity = [
-            json!({"oldStart": 1, "newStart": 1, "lines": ["+kept"]}),
-            json!({"lines": ["+unlocated"]}),
-            json!({"oldStart": 2, "newStart": 2, "lines": ["+also kept"]}),
-        ];
-        let document = structured_patch_document(&malformed_inside_capacity);
-        assert!(document.truncated);
-        assert_eq!(document.hunks.len(), 2);
-    }
 }

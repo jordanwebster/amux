@@ -100,6 +100,11 @@ mod tests {
     };
     use crate::envelope::{AgentSender, EnvelopeKind, Sender};
 
+    /// These waits prove a row arrives at all, not that it arrives quickly. A
+    /// machine compiling other crates alongside the test can stall the session
+    /// task for seconds, so only a genuine stall should trip the budget.
+    const ROW_DEADLINE: Duration = Duration::from_secs(30);
+
     async fn read_json_line(reader: &mut BufReader<tokio::io::DuplexStream>) -> serde_json::Value {
         let mut line = String::new();
         reader.read_line(&mut line).await.unwrap();
@@ -282,16 +287,18 @@ mod tests {
         let mut rows = log.subscribe().await.unwrap();
         let (event_tx, _event_rx) = mpsc::channel::<SessionEvent>(8);
         let ingest = backend.start(&event_tx).unwrap();
-        let ready = tokio::time::timeout(Duration::from_secs(2), rows.read())
+        let ready = tokio::time::timeout(ROW_DEADLINE, rows.read())
             .await
             .unwrap()
             .unwrap();
         assert_eq!(ready.payload["type"], "amux.claude_sdk.ready");
+        let facts = rows.read().await.unwrap();
+        assert_eq!(facts.payload["type"], "amux.claude_sdk.session_facts");
         assert!(matches!(target.liveness(), Ok(DeliveryLiveness::Live)));
 
         let envelope = envelope(agent_id);
         assert_eq!(target.deliver(&envelope).await.unwrap(), Delivery::Stream);
-        let row = tokio::time::timeout(Duration::from_secs(2), rows.read())
+        let row = tokio::time::timeout(ROW_DEADLINE, rows.read())
             .await
             .unwrap()
             .unwrap();
@@ -338,11 +345,13 @@ mod tests {
         let mut rows = log.subscribe().await.unwrap();
         let (event_tx, _event_rx) = mpsc::channel::<SessionEvent>(8);
         let ingest = backend.start(&event_tx).unwrap();
-        let ready = tokio::time::timeout(Duration::from_secs(2), rows.read())
+        let ready = tokio::time::timeout(ROW_DEADLINE, rows.read())
             .await
             .unwrap()
             .unwrap();
         assert_eq!(ready.payload["type"], "amux.claude_sdk.ready");
+        let facts = rows.read().await.unwrap();
+        assert_eq!(facts.payload["type"], "amux.claude_sdk.session_facts");
 
         let error = target.deliver(&envelope(agent_id)).await.unwrap_err();
         assert!(

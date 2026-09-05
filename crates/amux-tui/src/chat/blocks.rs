@@ -47,6 +47,27 @@ pub(crate) struct RunSummary {
     pub(crate) hidden: usize,
 }
 
+/// Paths are a dense hint, not the run's full retained content: how many
+/// the folded row names before it counts the rest.
+const RUN_PATH_PREVIEW: usize = 2;
+
+/// One folded row's summary, from the counts and every path the layer
+/// stated. Both Claude chats read the same density from here, so a run
+/// says the same thing whichever feed carried it.
+pub(crate) fn run_summary(reads: usize, searches: usize, read_paths: &[&str]) -> RunSummary {
+    let first_paths: Vec<String> = read_paths
+        .iter()
+        .take(RUN_PATH_PREVIEW)
+        .map(|path| (*path).to_string())
+        .collect();
+    RunSummary {
+        reads,
+        searches,
+        hidden: reads.saturating_sub(first_paths.len()),
+        first_paths,
+    }
+}
+
 /// Glyphs sit here; the mark column and its separator stay clear.
 pub(crate) const GLYPH_COL: usize = 2;
 /// Entry text and the composer's draft share this column.
@@ -191,6 +212,27 @@ pub(crate) fn paint_header(
     push_span(&mut line, col, right.to_string(), theme.muted());
     line.spans.push(Span::styled(phase.0.to_string(), phase.1));
     line
+}
+
+/// The header's right-hand facts, joined and trimmed to what the line can
+/// actually hold. The phase word is the one thing the header must always
+/// state, so when name + facts + phase would not fit, the least important
+/// fact goes first — `facts` is given in drop order. Returns the joined
+/// text, each fact followed by its separator, ready for `paint_header`.
+pub(crate) fn fit_header_facts(
+    name: &str,
+    mut facts: Vec<String>,
+    phase: &str,
+    width: usize,
+) -> String {
+    loop {
+        let right: String = facts.iter().map(|fact| format!("{fact} · ")).collect();
+        let needed = GLYPH_COL + str_width(name) + 1 + str_width(&right) + str_width(phase) + 1;
+        if needed <= width || facts.is_empty() {
+            return right;
+        }
+        facts.remove(0);
+    }
 }
 
 // --- the user's own words ---------------------------------------------------

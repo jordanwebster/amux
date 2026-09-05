@@ -1,6 +1,5 @@
 --- text ---
-  codex-retry · codex @ mbp                                                                            chat · needs you 
-  model=gpt-5.4 · approval=on-request · sandbox=workspace-write                                                         
+  codex-retry · codex @ mbp                                          gpt-5.4 · on-request · workspace-write · needs you 
                                                                                                                         
   ⚠ $ cargo test --workspace · awaiting approval                                                                        
     └ cwd /work/amux                                                                                                    
@@ -27,6 +26,7 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
+    ctx unknown                                                                                                         
                                                                                                                         
     approval — command                                                                                                  
                                                                                                                         
@@ -40,8 +40,7 @@
       4. cancel                                                                                                         
     ↑↓/1-9 select · enter confirm · ctrl+x interrupt                                                                    
 --- styles ---
-..eeeeeeeeeeemmmmmmmmmmmmmm............................................................................mmmmmmmwwwwwwwww.
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.........................................................
+..eeeeeeeeeeemmmmmmmmmmmmmm..........................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww.
 ........................................................................................................................
 ..w.....................................................................................................................
 ....m.mmmmmmmmmmmmmm....................................................................................................
@@ -68,6 +67,7 @@
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
+....mmmmmmmmmmm.........................................................................................................
 ........................................................................................................................
 .PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 .PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP

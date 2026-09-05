@@ -73,6 +73,8 @@
         "layer": "claude_pty",
         "session": {
           "permission_mode": null,
+          "model": null,
+          "context_used_tokens": null,
           "ai_title": null,
           "agent_name": null
         },

@@ -483,6 +483,20 @@ pub fn codex_fixture_rows() -> Vec<serde_json::Value> {
     .collect()
 }
 
+/// Backend rows derived from one recording in the Codex corpus.
+pub fn codex_rows(fixture: &str) -> Vec<serde_json::Value> {
+    let raw = match fixture {
+        "approval_deny" => {
+            include_str!("../../../amux/tests/fixtures/rows/codex/approval_deny.rows.jsonl")
+        }
+        other => panic!("unknown Codex fixture: {other}"),
+    };
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("Codex fixture row parses"))
+        .collect()
+}
+
 pub fn codex_base(agent: &str) -> Vec<Msg> {
     seq([
         vec![
@@ -500,6 +514,27 @@ pub fn codex_base(agent: &str) -> Vec<Msg> {
 
 pub fn codex_layer<'m>(model: &'m Model, agent: &str) -> &'m CodexLayer {
     model.codex(agent_id(agent)).expect("Codex layer folded")
+}
+
+pub fn claude_sdk_base(agent: &str) -> Vec<Msg> {
+    let mut sdk = an_agent(agent, "nova");
+    sdk.kind = amux::AgentKind::Claude {
+        driver: amux::ClaudeDriver::Sdk,
+    };
+    seq([
+        vec![connected("nova"), host_up(&a_host("nova")), agent_up(&sdk)],
+        synced(),
+        vec![
+            stream(agent, StreamMsg::Opened { truncated: false }),
+            stream(agent, StreamMsg::ReplayComplete),
+        ],
+    ])
+}
+
+pub fn claude_sdk_layer<'m>(model: &'m Model, agent: &str) -> &'m amux_ui::ClaudeSdkLayer {
+    model
+        .claude_sdk(agent_id(agent))
+        .expect("Claude SDK layer folded")
 }
 
 // --- Folding --------------------------------------------------------------
@@ -545,6 +580,12 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::phase::sequences());
     sequences.extend(crate::write::sequences());
     sequences.extend(crate::codex_feed::sequences());
+    sequences.extend(crate::claude_sdk_feed::sequences());
+    sequences.extend(crate::claude_sdk_agreement::sequences());
+    sequences.extend(crate::claude_sdk_write::sequences());
+    sequences.extend(crate::claude_sdk_runtime::sequences());
+    sequences.extend(crate::a2a_claude_sdk_inbound::sequences());
+    sequences.extend(crate::claude_sdk_converse::sequences());
     sequences.extend(crate::codex_asks::sequences());
     sequences.extend(crate::codex_write::sequences());
     sequences.extend(crate::model_effort::sequences());
@@ -553,6 +594,7 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::codex_agreement::sequences());
     sequences.extend(crate::claude_agreement::sequences());
     sequences.extend(crate::a2a_fleet::sequences());
+    sequences.extend(crate::fleet_mixed::sequences());
     sequences.extend(crate::a2a_claude_inbound::sequences());
     sequences.extend(crate::a2a_claude_send_row::sequences());
     sequences.extend(crate::a2a_codex_inbound::sequences());

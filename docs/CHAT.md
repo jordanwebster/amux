@@ -21,23 +21,41 @@ Agent-to-agent envelopes and parent/child lifecycle are specified in
 `docs/A2A.md`; this document owns how their recipient rows and family actions
 appear in the chat.
 
+The Claude agent this document describes is the one driven through a terminal.
+The same provider driven through its stream-JSON interface gets its own chat,
+whose header, streaming block, task and context surfaces and five ask panels
+are specified in `docs/CLAUDE_SDK.md`; that document also records, surface by
+surface, which of them this chat and the Codex chat take up and which
+capability the other backends lack. The two Claude layers share Claude's own
+tool vocabulary and exploration grouping; their TUI adapters reuse the Claude
+ask, reader and review presentation. Their folds, conditions and feeds remain
+separate.
+
 ## Vocabulary
 
 - **Chat** — the shared structured conversation screen over a known agent
   session. Claude's native layer consumes `claude_pty_transcript_v1`
   transcript and hook rows and sends seq-guarded semantic intents that the
   daemon encodes for the session's observed Claude version; Codex's native
-  layer consumes its app-server control plane and sends typed requests.
-  Both enter the same presentation shell without sharing a content model.
+  layer consumes its app-server control plane and sends typed requests. Claude
+  SDK consumes `claude_sdk_v1` rows and sends typed SDK commands. All three
+  enter the same presentation shell without sharing a content model.
 - **Feed** — the scrolling sequence of conversation entries. An
   **entry** is one rendered unit: a prompt, a message, a tool line, a
   marker, a collapsed ask fact.
 - **Composer** — the user's input surface, docked at the bottom.
 - **Ask** — an agent-initiated blocking request that needs the user
-  before the session proceeds. Exactly two kinds: **permission** and
-  **question**. Plan review is a permission variant — the
-  `ExitPlanMode` tool with a plan payload and a specialized fullscreen
-  presentation — not a third kind. An ask is the chat-layer surface of
+  before the session proceeds. Four kinds exist across the Claude chats:
+  **permission**, **question**, **elicitation** (an MCP server's own form)
+  and **dialog** (a request the CLI would have drawn itself). This chat
+  carries exactly two of them, permission and question, because Claude's
+  terminal answers elicitations and dialogs in band and writes nothing about
+  them to the transcript; the SDK chat implements all four channels, with
+  dialogs still unvalidated against a real provider frame.
+  `docs/CLAUDE_SDK.md` specifies their panels and that limitation. Plan review
+  is a permission variant in both — the `ExitPlanMode` tool with a plan payload and a
+  specialized fullscreen presentation — not a kind of its own. An ask is the
+  chat-layer surface of
   what `docs/UI.md` calls a live obligation; its retention rule (evict
   bytes, never obligations) applies to asks verbatim.
 - **Phase** — the derived activity state of the session (working, idle,
@@ -56,10 +74,35 @@ session phrasing are common to Codex CLI and opencode; "working" as the
 busy-phase word is Codex's; sticky-bottom "following" is opencode's.
 "Ask" is ours. Nothing is inherited from the React Native app.
 
+## SDK capability inventory
+
+The SDK chat is implemented in the shared shell. The full PTY parity inventory
+and three-chat consistency table live in [`CLAUDE_SDK.md`](./CLAUDE_SDK.md).
+
+| Surface | Shipped behavior |
+| --- | --- |
+| Conversation | Prompt echo, streamed and final replies, thinking, tools, interruption, attachments, readers and review pages. |
+| Human requests | Permission, plan and question panels share Claude's tool facts; MCP elicitations render flat typed forms. Unsupported schemas offer explicit Decline and Cancel. |
+| Session details | Header model and mode, passive context meter, requested context breakdown, task lifecycle, MCP status and turn cost. |
+| Fleet and families | Both Claude drivers rank and group alike; SDK parents and children exchange messages and host each other's asks through native panels. |
+| Creation and entry | `claude.driver` chooses new agents, `--driver` overrides it, and `pty` remains the default. SDK agents offer chat only; remote terminal-capable agents default to chat with raw attach available through the other-mode key. |
+| Dialog | Kind-and-payload recognizer with a blocked fallback; no kind is recorded and no live dialog answer is validated. |
+
+At Claude Code 2.1.261 there are **37 registered dialog kinds**. The headless
+adapter forwards exactly `refusal_fallback_prompt` and
+`fable_overage_consent_prompt` as `request_user_dialog` and returns defaults for
+the others; MCP elicitation uses its separate control channel. Forwarding needs
+a declared kind and runtime conditions; amux currently declares none. The
+overage path requires a billing state we will not manufacture, while a benign
+copyright refusal ended normally without firing refusal fallback. The corpus
+therefore still contains no `request_user_dialog` frame. The dialog panel ships
+as the recognizer with a blocked fallback, unvalidated against a real frame;
+the daemon must never auto-cancel a dialog it receives.
+
 ## Modes and entry (A)
 
-From the fleet, a Claude agent opens in one of two modes: **raw attach**
-(the existing byte passthrough) or **chat**. Enter opens the default
+From the fleet, a local terminal-capable agent opens in one of two modes:
+**raw attach** (the existing byte passthrough) or **chat**. Enter opens the default
 mode; which mode is default is a client setting in the standard amux
 config (mobile clients are chat-only and carry no such setting), and
 the shipped default is raw attach — the battle-tested path stays the path of least
@@ -72,7 +115,28 @@ startup, and the guaranteed plain-key fallback is `o` in the fleet
 the running terminal.
 
 Read-only agents open in chat only; raw attach is absent for them — not
-disabled-with-an-error, absent (A3). There is no in-session mode
+disabled-with-an-error, absent (A3). So is any agent with no terminal
+behind it: a Claude session driven over stream-JSON has no bytes to pass
+through, so every entry key opens its chat and neither its hint nor its
+`?` overlay names raw attach.
+
+An agent on another machine keeps both modes but defaults to the chat
+whatever the setting says: the chat travels over the connection the fleet
+already holds, while raw attach pipes a terminal across the network, so
+the safe half of the pair leads and the other-mode key still reaches raw
+attach for anyone who wants it. `amux attach` applies the same rule.
+
+Every affordance in the fleet — Enter, Ctrl+Enter and `o`, the status-line
+hint and the `?` overlay rows — derives from that one answer per agent, so a
+key, its hint and its help row can never disagree.
+
+`amux attach` opens chat for remote agents, agents without a terminal, and
+Codex agents on any host. A local Claude PTY agent opens raw attach through
+that command. The command line has no other-mode key; the configured local
+open-mode preference applies to fleet entry and creation, not to this attach
+command. The fleet still offers both modes for local terminal-capable agents.
+
+There is no in-session mode
 switching in V1: the mode is chosen at open, with no toggle inside a
 chat or an attach (A4). The protocol allows concurrent raw and
 structured subscriptions (proved by `claude_pty_live`'s
@@ -302,7 +366,11 @@ fixture-verified); `tool_name` + `tool_input` equals the transcript
 `tool_use.input` byte-for-byte, and that equality is the correlation.
 Kind is permission or question; the payload is typed per kind, and a
 permission carrying an `ExitPlanMode` plan is the plan-review
-variant. Pending signals: the amux
+variant. The other two kinds a Claude session can raise — an MCP
+server's elicitation and a CLI user dialog — reach a client only over the
+stream-JSON interface, where they carry their own request ids and answer
+shapes; their panels live in `docs/CLAUDE_SDK.md`, and the lifecycle,
+docking and Esc rules below apply to them verbatim. Pending signals: the amux
 `hook.permission_request` row (FACT, arrival-ordered), which fires
 for tool permissions AND for `AskUserQuestion`/`ExitPlanMode` (Phase
 0, observed) — extraction routes on its `tool_name`, never assuming a
@@ -531,24 +599,32 @@ every focus state including open ask panels, even while send is gated
 (D3). It is never on Esc, and the feed records the interruption entry
 (B8). An interrupted turn never eats the draft.
 
-Permission mode displays in the footer's right segment and cycles with
-Shift+Tab when the composer has focus (D4). The current mode is sourced
-from the hook payloads' `permission_mode` field — the live source
-(Phase 3, fixture-verified: mid-session cycling emits NO
-`permission-mode` row; that row is a launch-time/bookkeeping signal).
-Cycle order: default → acceptEdits → plan → default, with bypass
-offered only to a session launched with it.
+Permission mode displays in the header's right segment, beside the model
+the session is running, and cycles with Shift+Tab when the composer has
+focus (D4); the footer's right segment states that key rather than the
+mode. The current mode is sourced from the hook payloads'
+`permission_mode` field — the live source (Phase 3, fixture-verified:
+mid-session cycling emits NO `permission-mode` row; that row is a
+launch-time/bookkeeping signal). Cycle order: default → acceptEdits →
+plan → default, with bypass offered only to a session launched with it.
+The model comes from `message.model` on the newest assistant row. Both
+are context rather than state a person must see, so a terminal too
+narrow to hold the phase word as well drops them — the model first.
 
-The working indicator renders while phase is working: spinner, elapsed
-time, interrupt hint — `◐ working · 24s · ctrl+x interrupt` (D5).
+The activity line sits between the feed and the composer. While the
+phase is working it leads with a spinner, elapsed time and the
+interrupt hint — `◐ working · 24s · ctx 31.6k · ctrl+x interrupt` (D5).
 Elapsed starts at the prompt row's timestamp, ticks locally, and is
 replaced by the authoritative `durationMs` when the turn closes. One
 1 Hz Tick drives both the elapsed text and the spinner frame, scheduled
 only while the indicator is visible (UI.md's event-driven rule); a
-static glyph replaces the spinner when animations are off. A token
-count appears when cheaply available — usage summed with dedupe by
-`message.id`, since per-row summing overcounts by row multiplicity;
-the cost/context header is deferred.
+static glyph replaces the spinner when animations are off.
+
+The context meter on that line is a passive fact, stated working or
+idle: the newest assistant message's own usage — fresh input plus both
+cache halves — as `ctx 31.6k`, and `ctx unknown` before any message has
+reported one. It carries no denominator, because no transcript row
+states the context window.
 
 ## Phase and attention (E)
 
@@ -613,7 +689,7 @@ text cursor.
 ### Idle
 
 ```
-  fix-auth · claude @ mbp                                                                                   chat · idle
+  fix-auth · claude @ mbp                                                    claude-haiku-4-5-20251001 · default · idle
 
 ▎   add retry with backoff to the sync client
 
@@ -631,15 +707,17 @@ text cursor.
 
                                                     [feed owns the remaining rows]
 
+    ctx 31.6k
+
 ▎   Type a message▌
 
-    enter send · ctrl+j newline · ? help                                                                   mode default
+    enter send · ctrl+j newline · ? help                                                                 shift+tab mode
 ```
 
 ### Working
 
 ```
-  fix-auth · claude @ mbp                                                                                chat · working
+  fix-auth · claude @ mbp                                                 claude-haiku-4-5-20251001 · default · working
 
 ▎   now make the retry count configurable
 
@@ -654,11 +732,11 @@ text cursor.
 
                                                     [feed owns the remaining rows]
 
-  ◐ working · 24s · ctrl+x interrupt
+  ◐ working · 24s · ctx 31.6k · ctrl+x interrupt
 
 ▎   and please document it▌
 
-    draft kept — send gated while working                                                                  mode default
+    draft kept — send gated while working                                                                shift+tab mode
 ```
 
 A held message adds a queue row beside the working line. The row remains
@@ -762,7 +840,7 @@ visible through disconnect and states any delivery failure.
 ### Scrolled back
 
 ```
-  fix-auth · claude @ mbp                                                                                chat · working
+  fix-auth · claude @ mbp                                                 claude-haiku-4-5-20251001 · default · working
 
 ▎   follow-up question 1
 
@@ -775,11 +853,11 @@ visible through disconnect and states any delivery failure.
                                                     [older feed rows remain above]
 
   ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest
-  ◓ working · 9s · ctrl+x interrupt
+  ◓ working · 9s · ctx 31.6k · ctrl+x interrupt
 
 ▎   draft preserved while reading▌
 
-    C-a k/j focus · C-a y copy                                                                             mode default
+    C-a k/j focus · C-a y copy                                                                           shift+tab mode
 ```
 
 Sticky-bottom until the user scrolls; the paused rule with a new-entry
@@ -789,7 +867,7 @@ stays visible so scrolling never hides that the agent is active.
 ### Read-only
 
 ```
-  ci-triage · claude @ mbp                                                               chat · read-only · needs owner
+  ci-triage · claude @ mbp                                claude-haiku-4-5-20251001 · default · read-only · needs owner
 
 ▎   fix the flaky teardown
 
@@ -799,6 +877,8 @@ stays visible so scrolling never hides that the agent is active.
     └ 2 failed: token_refresh, expired_session
 
                                                     [feed owns the remaining rows]
+
+    ctx 31.6k
 
     the agent is asking permission — Edit testnet/harness.rs (+1)
 
@@ -1097,20 +1177,21 @@ a PTY, connect to a daemon, or depend on the local terminal. From the repository
 root:
 
 ```sh
-cargo run -p amux-shot -- list
-cargo run -p amux-shot -- render claude-idle --out target/shot/claude-idle.png
-cargo run -p amux-shot -- render claude-idle --theme light --color ansi \
+timeout 900 wt build
+target/debug/amux-shot list
+target/debug/amux-shot render claude-idle --out target/shot/claude-idle.png
+target/debug/amux-shot render claude-idle --theme light --color ansi \
   --out target/shot/claude-idle-light-ansi.png
-cargo run -p amux-shot -- render-set themes --out target/shot/themes
-cargo run -p amux-shot -- record-scroll claude --out target/shot/scroll
-cargo run -p amux-shot -- verify target/shot
+target/debug/amux-shot render-set themes --out target/shot/themes
+target/debug/amux-shot record-scroll claude --out target/shot/scroll
+target/debug/amux-shot verify target/shot
 ```
 
 `--theme` accepts `dark`, `light`, or a YAML path; `--color` accepts
 `truecolor` or `ansi`. The declared sets are `chat`, `agent-specific`,
-`gallery`, `scroll`, `copy`, `collapse`, `themes`, `fleet`, and `all`.
-`record-scroll` accepts `claude` or `codex` and drives real mouse-wheel events
-through the production handler. Each render records its state, theme, colour
+`gallery`, `scroll`, `copy`, `collapse`, `themes`, `fleet`, `parity`, and `all`.
+`record-scroll` accepts `claude`, `claude-sdk` or `codex` and drives real
+mouse-wheel events through the production handler. Each render records its state, theme, colour
 mode, viewport, pixel dimensions, filename, and SHA-256 digest in a manifest;
 `verify` checks hashes, dimensions, and decodability. These PNGs and GIFs are
 repeatable review proof, not an image-golden CI gate; text and semantic
@@ -1129,15 +1210,16 @@ chat-specific consequences.
   and drifts by version.
 - The Codex chat layer independently consumes native app-server entries and
   retains Codex-only approvals, network-policy amendments, MCP startup rows,
-  and token usage. Neither layer implements a shared content trait. The shared
-  shell accepts painted blocks and owns presentation mechanics only.
+  and token usage. The SDK Claude layer folds stream-JSON messages, session
+  facts and pending control requests. None implements a shared content trait.
+  The shared shell accepts painted blocks and owns presentation mechanics only.
 - Interpretation happens only in layer folds; core transports rows
   opaquely; nothing new rides the peer wire (G2). Views format, never
   decide — no error-string sniffing, no heuristics in renderers.
 - All chat Msgs flow through the recorder from day one; redacted
   real-session recordings graduate into committed Tier-1 fixtures; the
-  differential fold-equals-live property extends to the Claude layer
-  (G3). High-rate transcript replay is coalesced before recording.
+  differential fold-equals-live property covers all three native layers
+  (G3). High-rate replay is coalesced before recording.
 - Golden-frame coverage exists for every feed entry kind and every ask
   form, including the read-only fact variants (G4).
 
@@ -1168,6 +1250,21 @@ structure, ids, answer objects, and filesystem outcomes rather than assistant
 wording. `claude-probe` runs every provider specification against an installed
 binary, appends passing versions to recording and keymap ledgers, re-records
 only broken claims, and writes additive drift for review.
+
+The SDK corpus derives through the real daemon adapter into
+`crates/amux/tests/fixtures/rows/claude-sdk/`. Client specs cover feed, agreement,
+commands, conversation and family messages. The redacted live conversation in
+`crates/amux-ui/tests/spec/fixtures/claude_sdk/converse.rows.jsonl` preserves all
+572 parent rows, including the final child acknowledgement before another
+assistant row arrives. Replay compares the client fold after every message.
+
+The opt-in harnesses `sdk_chat_live.sh`, `remote_open_live.sh`,
+`claude_driver_config.sh` and `user_hooks_live.sh` under `e2e-tests/` capture
+conversation and asks, paired-host entry, creation defaults and overrides, and
+a user Stop hook under direct Claude and amux. They use isolated state and retain
+terminal frames and boundary evidence. The dialog gap above remains outside the
+successful live sequence. Workspace validation is `wt build`, `wt lint`,
+`wt test`, `wt run spec` and `wt run mobile-check`, under `timeout`.
 
 ## Rejected alternatives
 
@@ -1308,8 +1405,8 @@ above.
 - **Shell-passthrough composer mode** (`!` prefix precedent).
 - **Thinking-text expansion** — V1 renders marker + duration only.
 - **Todo-list rendering** — the shared confirmed task-list facts are available.
-- **Cost/context-window header** — V1's extent is the working-line
-  token count (D5).
+- **Cost accounting** — the activity line states context tokens (D5);
+  what a turn cost in money is not in the transcript.
 - **Nested subagent timelines** — requires tailing child transcript
   files; B7's one-line summaries stand until then.
 - **Message-level retry and archive.**

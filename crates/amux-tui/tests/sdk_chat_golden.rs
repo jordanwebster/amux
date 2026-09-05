@@ -1,21 +1,31 @@
-//! The chat of a Claude agent driven through the SDK. This build folds no
-//! `claude_sdk_v1` rows, so the frame it owes a person is a placeholder that
-//! names the gap — locked here in both themes, and proven inert to input.
+//! The chat of a Claude session driven over stream-JSON, drawn from rows
+//! the daemon really recorded: what the session said while it was still
+//! saying it, what it ran, what its subagents did, and what the person
+//! can do about any of it.
 
+use amux_tui::fixtures::{NamedState, fixture};
 use amux_tui::view::{UiAction, ViewState};
 use amux_tui::{ChatView, ColorMode, FrameContext, Theme, render};
+use amux_ui::claude_sdk::{ClaudeSdkCommand, FeedEntryKind, Finality};
 use amux_ui::{
-    Agent, AgentId, HostEntry, HostId, Model, Msg, ServerMsg, StreamEntry, StreamMsg, update,
+    Agent, AgentId, Command, HostEntry, HostId, Model, Msg, ServerMsg, StreamEntry, StreamMsg,
+    update,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 const NOW: &str = "2026-08-12T09:12:30Z";
 const WIDTH: u16 = 120;
 const HEIGHT: u16 = 40;
+
+/// The model and permission mode the recorded sessions ran under. Both
+/// belong on screen, so both are asserted by name rather than by shape.
+const RECORDED_MODEL: &str = "claude-haiku-4-5-20251001";
+const RECORDED_MODE: &str = "default";
 
 fn at(value: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(value)
@@ -39,7 +49,7 @@ fn an_sdk_agent() -> Agent {
     Agent {
         id: agent_id(),
         host_id: host_id(),
-        name: Some("sdk-writer".to_string()),
+        name: Some("fix-sync".to_string()),
         command: "claude".to_string(),
         working_dir: "/work/amux".into(),
         kind: amux_ui::AgentKind::Claude {
@@ -51,6 +61,33 @@ fn an_sdk_agent() -> Agent {
         parent: None,
         working_on: None,
     }
+}
+
+/// The recorded rows of one session, exactly as the daemon wrote them.
+fn recorded(name: &str) -> Vec<Value> {
+    let raw = match name {
+        "text" => include_str!("../../amux/tests/fixtures/rows/claude-sdk/text_turn.rows.jsonl"),
+        "streamed" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/streamed_turn.rows.jsonl")
+        }
+        "tasks" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/subagent_task.rows.jsonl")
+        }
+        "messaged" => include_str!("../../amux/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
+        "introspection" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/introspection.rows.jsonl")
+        }
+        "interrupted" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/interrupted.rows.jsonl")
+        }
+        "max_turns" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/max_turns.rows.jsonl")
+        }
+        other => panic!("unknown recording {other}"),
+    };
+    raw.lines()
+        .map(|line| serde_json::from_str(line).expect("recorded row"))
+        .collect()
 }
 
 fn base() -> Vec<Msg> {
@@ -73,7 +110,32 @@ fn base() -> Vec<Msg> {
         }),
         Msg::Server(ServerMsg::HostsSynchronized),
         Msg::Server(ServerMsg::AgentsSynchronized),
+        Msg::Stream {
+            agent: agent_id(),
+            event: StreamMsg::Opened { truncated: false },
+        },
+        Msg::Stream {
+            agent: agent_id(),
+            event: StreamMsg::ReplayComplete,
+        },
     ]
+}
+
+fn batch(seq: u64, rows: Vec<Value>) -> Msg {
+    Msg::Stream {
+        agent: agent_id(),
+        event: StreamMsg::Batch {
+            at: at("2026-08-12T09:12:00Z"),
+            entries: rows
+                .into_iter()
+                .enumerate()
+                .map(|(offset, payload)| StreamEntry {
+                    seq: seq + offset as u64,
+                    payload,
+                })
+                .collect(),
+        },
+    }
 }
 
 fn fold(msgs: Vec<Msg>) -> Model {
@@ -86,15 +148,175 @@ fn fold(msgs: Vec<Msg>) -> Model {
     model
 }
 
-/// The SDK agent alone: the only frame this build can honestly draw.
-fn model() -> Model {
-    fold(base())
+/// A whole recorded session, folded row by row exactly as it arrived.
+fn session(name: &str) -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded(name).into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
+    fold(msgs)
 }
 
-/// The same agent with a Codex child stopped on an approval, so the family
-/// banner still reaches a parent whose own rows nobody folds.
-fn model_with_asking_child() -> Model {
+/// The same recording stopped at the first frame that has a reply
+/// half-written: the session is still speaking and the feed has to show
+/// that without pretending the block is finished.
+fn mid_reply() -> Model {
     let mut msgs = base();
+    let mut model = fold(msgs.clone());
+    for (index, row) in recorded("streamed").into_iter().enumerate() {
+        let msg = batch(index as u64, vec![row]);
+        msgs.push(msg.clone());
+        update(&mut model, msg);
+        let streaming = model
+            .claude_sdk(agent_id())
+            .expect("the session layer")
+            .entries()
+            .any(|entry| match &entry.kind {
+                FeedEntryKind::Message(message) => {
+                    !message.text.is_empty() && message.finality == Finality::Streaming
+                }
+                _ => false,
+            });
+        if streaming {
+            return fold(msgs);
+        }
+    }
+    panic!("the recording never streamed a reply");
+}
+
+/// A finished session with one plan it put up and got through, so the
+/// chord that reopens plans has something to reopen. Synthetic, because
+/// no recording in the corpus proposes a plan.
+fn approved_plan() -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded("text").into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
+    msgs.push(batch(
+        900,
+        vec![
+            json!({
+                "type": "assistant",
+                "parent_tool_use_id": null,
+                "message": {
+                    "id": "msg_plan",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_plan",
+                        "name": "ExitPlanMode",
+                        "input": {"plan": "# ship it\n\n- read the rows\n- draw the rows"}
+                    }]
+                }
+            }),
+            json!({
+                "type": "user",
+                "parent_tool_use_id": null,
+                "message": {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_plan",
+                        "content": "approved"
+                    }]
+                }
+            }),
+        ],
+    ));
+    fold(msgs)
+}
+
+/// A finished session whose turn landed one edit. Synthetic, because the
+/// recorded corpus has no Edit that reached a result.
+fn landed_edit() -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded("text").into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
+    msgs.push(batch(
+        900,
+        vec![
+            json!({
+                "type": "assistant",
+                "parent_tool_use_id": null,
+                "message": {
+                    "id": "msg_edit",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_edit",
+                        "name": "Edit",
+                        "input": {
+                            "file_path": "src/lib.rs",
+                            "old_string": "mod store;",
+                            "new_string": "mod attachments;"
+                        }
+                    }]
+                }
+            }),
+            json!({
+                "type": "user",
+                "parent_tool_use_id": null,
+                "tool_use_result": {
+                    "filePath": "src/lib.rs",
+                    "structuredPatch": [{
+                        "oldStart": 4,
+                        "oldLines": 3,
+                        "newStart": 4,
+                        "newLines": 4,
+                        "lines": [
+                            " mod diff;",
+                            "-mod store;",
+                            "+mod attachments;",
+                            "+mod reader;",
+                            " mod view;"
+                        ]
+                    }]
+                },
+                "message": {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_edit",
+                        "content": "The file src/lib.rs has been updated."
+                    }]
+                }
+            }),
+        ],
+    ));
+    fold(msgs)
+}
+
+/// A session whose turn ended in an error, with the strings the session
+/// collected. Synthetic, because no recording in the corpus fails.
+fn errored_turn() -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded("text").into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
+    msgs.push(batch(
+        900,
+        vec![json!({
+            "type": "result",
+            "subtype": "error_during_execution",
+            "is_error": true,
+            "uuid": "result-error",
+            "duration_ms": 4200,
+            "result": "the session stopped",
+            "errors": ["API Error 529: the upstream model is overloaded"],
+            "usage": {"input_tokens": 120, "output_tokens": 18}
+        })],
+    ));
+    fold(msgs)
+}
+
+/// The recorded session with a Codex child stopped on an approval, so the
+/// family banner reaches a parent whose own rows this chat folds.
+fn asking_child() -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded("text").into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
     let mut child = an_sdk_agent();
     child.id = child_id();
     child.name = Some("flake-hunter".to_string());
@@ -118,11 +340,11 @@ fn model_with_asking_child() -> Model {
         event: StreamMsg::Batch {
             at: at("2026-08-12T09:12:00Z"),
             entries: vec![
-                serde_json::json!({"type":"amux.codex_ready"}),
-                serde_json::json!({"type":"turn/started","turn":{"id":"t1","status":"inProgress"}}),
-                serde_json::json!({"type":"item/started","item":{"id":"exec-1","type":"commandExecution","command":"cargo test","cwd":"/work","status":"inProgress"}}),
-                serde_json::json!({"type":"item/commandExecution/requestApproval","itemId":"exec-1","command":"cargo test","cwd":"/work","reason":"run tests?"}),
-                serde_json::json!({"type":"amux.codex_approval_required","request_id":7,"availableDecisions":["accept","cancel"]}),
+                json!({"type":"amux.codex_ready"}),
+                json!({"type":"turn/started","turn":{"id":"t1","status":"inProgress"}}),
+                json!({"type":"item/started","item":{"id":"exec-1","type":"commandExecution","command":"cargo test","cwd":"/work","status":"inProgress"}}),
+                json!({"type":"item/commandExecution/requestApproval","itemId":"exec-1","command":"cargo test","cwd":"/work","reason":"run tests?"}),
+                json!({"type":"amux.codex_approval_required","request_id":7,"availableDecisions":["accept","cancel"]}),
             ]
             .into_iter()
             .enumerate()
@@ -136,9 +358,29 @@ fn model_with_asking_child() -> Model {
     fold(msgs)
 }
 
+/// The same recording stopped while a subagent is still out — the frame a
+/// person watching the work would be looking at.
+fn mid_task() -> Model {
+    let mut msgs = base();
+    let mut model = fold(msgs.clone());
+    for (index, row) in recorded("tasks").into_iter().enumerate() {
+        let msg = batch(index as u64, vec![row]);
+        msgs.push(msg.clone());
+        update(&mut model, msg);
+        let running = model
+            .claude_sdk(agent_id())
+            .expect("the session layer")
+            .tasks()
+            .any(|task| matches!(task.state, amux_ui::claude_sdk::TaskState::Running));
+        if running {
+            return fold(msgs);
+        }
+    }
+    panic!("the recording never started a subagent");
+}
+
 fn open_chat(model: &Model) -> ChatView {
-    let mut chat = ChatView::open(model, agent_id(), 'a', false)
-        .expect("an SDK-driven Claude opens its placeholder chat");
+    let mut chat = ChatView::open(model, agent_id(), 'a', false).expect("the session opens a chat");
     chat.reconcile(model);
     chat
 }
@@ -203,12 +445,17 @@ fn assert_golden(name: &str, rendered: &str) {
 }
 
 fn assert_surface(name: &str, model: &Model) -> String {
+    assert_surface_with(name, model, open_chat)
+}
+
+/// The same, for a screen a person had to press something to reach.
+fn assert_surface_with(name: &str, model: &Model, chat: impl Fn(&Model) -> ChatView) -> String {
     let mut dark = String::new();
     for (theme_name, theme) in [
         ("dark", Theme::default()),
         ("light", Theme::light(ColorMode::TrueColor)),
     ] {
-        let buffer = render_buffer(model, open_chat(model), theme, (WIDTH, HEIGHT));
+        let buffer = render_buffer(model, chat(model), theme, (WIDTH, HEIGHT));
         let text = buffer_text(&buffer);
         let rendered = format!(
             "--- text ---\n{text}--- styles ---\n{}",
@@ -222,29 +469,217 @@ fn assert_surface(name: &str, model: &Model) -> String {
     dark
 }
 
-/// The placeholder itself: it names the agent, its driver, and the protocol
-/// this build cannot read, and it offers the keys that leave.
+/// A whole named screen, painted from the fixture's own view rather than
+/// a chat this file opens: the pair that folds and unfolds a run differ
+/// only in what the feed viewport has expanded, which is view state.
+fn assert_named_surface(name: &str, state: NamedState) -> String {
+    let fixture = fixture(state);
+    let mut dark = String::new();
+    for (theme_name, theme) in [
+        ("dark", Theme::default()),
+        ("light", Theme::light(ColorMode::TrueColor)),
+    ] {
+        let backend = TestBackend::new(WIDTH, HEIGHT);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let context = FrameContext {
+            viewport: (WIDTH, HEIGHT),
+            theme,
+            now: fixture.now,
+        };
+        terminal
+            .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let text = buffer_text(buffer);
+        let rendered = format!(
+            "--- text ---\n{text}--- styles ---\n{}",
+            buffer_styles(buffer, theme)
+        );
+        assert_golden(&format!("{name}_{theme_name}"), &rendered);
+        if theme_name == "dark" {
+            dark = text;
+        }
+    }
+    dark
+}
+
+fn key(chat: &mut ChatView, model: &Model, key: KeyEvent) -> Option<UiAction> {
+    amux_tui::chat::handle_chat_key(chat, model, key, (WIDTH, HEIGHT), at(NOW))
+}
+
+fn ctrl(code: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(code), KeyModifiers::CONTROL)
+}
+
+/// The whole conversation: what was asked, what came back, and the rule
+/// that closed the turn — with the model and the permission mode stated
+/// where a person can see them before the next thing they type.
 #[test]
-fn sdk_chat_renders_the_unsupported_placeholder() {
-    let text = assert_surface("sdk_chat_placeholder", &model());
+fn sdk_chat_paints_a_finished_turn() {
+    let text = assert_surface("sdk_chat_turn", &session("text"));
     assert!(
-        text.contains("unsupported"),
-        "the frame must say so in words: {text}"
+        text.contains(RECORDED_MODEL) && text.contains(RECORDED_MODE),
+        "the header states what this session runs on and under: {text}"
     );
     assert!(
-        text.contains("claude_sdk_v1"),
-        "and name the protocol: {text}"
+        text.contains("turn ·"),
+        "the turn closes with a rule: {text}"
     );
 }
 
-/// A child's ask still reaches this parent: the family banner is chrome,
-/// not a fact folded from the parent's own stream.
+/// A reply still arriving reads as unfinished, not as a short answer.
+#[test]
+fn sdk_chat_paints_a_streaming_reply() {
+    let text = assert_surface("sdk_chat_streaming", &mid_reply());
+    assert!(
+        text.contains('▌'),
+        "an open block carries the caret that says more is coming: {text}"
+    );
+    assert!(
+        text.contains("working"),
+        "and the session reads as working: {text}"
+    );
+}
+
+/// Tools and the subagents they start each get their own row.
+/// A landed edit is a file change, not a tool outcome: it states what
+/// moved and by how much, and hangs the patch the session sent back
+/// under it.
+#[test]
+fn sdk_chat_paints_a_landed_edit_as_a_file_change() {
+    let text = assert_surface("sdk_chat_file_change", &landed_edit());
+    assert!(
+        text.contains("Edit src/lib.rs") && text.contains("+2 \u{2212}1"),
+        "the file change states the path and the magnitude: {text}"
+    );
+    assert!(
+        text.contains("+mod attachments;") && text.contains("-mod store;"),
+        "and the patch preview shows the rows that moved: {text}"
+    );
+}
+
+/// A turn that failed says what failed: the rule marks it errored and
+/// the session's own words follow, because "errored" alone tells a
+/// person nothing they can act on.
+#[test]
+fn sdk_chat_states_what_an_errored_turn_said() {
+    let text = assert_surface("sdk_chat_errored_turn", &errored_turn());
+    assert!(
+        text.contains("turn · errored"),
+        "the rule marks the turn errored: {text}"
+    );
+    assert!(
+        text.contains("API Error 529"),
+        "and the error the session collected is on screen: {text}"
+    );
+}
+
+/// A turn someone interrupted says so in words. The session also files
+/// a diagnostic for its own authors — a tag and a row of key/value pairs
+/// — and that is not an explanation anyone at the keyboard can use, so
+/// it never reaches the screen. An error the session wrote as a sentence
+/// still does.
+#[test]
+fn sdk_chat_states_an_interrupted_turn_without_the_provider_diagnostic() {
+    let text = assert_surface("sdk_chat_interrupted_turn", &session("interrupted"));
+    assert!(
+        text.contains("turn · errored"),
+        "the rule still marks the turn errored: {text}"
+    );
+    assert!(
+        !text.contains("ede_diagnostic") && !text.contains("result_type="),
+        "and the session's internal diagnostic stays off screen: {text}"
+    );
+    assert!(
+        text.contains("error during execution"),
+        "what is left says how the turn ended, in words: {text}"
+    );
+
+    let prose = assert_surface("sdk_chat_max_turns_turn", &session("max_turns"));
+    assert!(
+        prose.contains("Reached maximum number of turns"),
+        "an error the session wrote as a sentence is still shown: {prose}"
+    );
+}
+
+/// Consecutive reads and searches are one row a person can open. The
+/// edit between the two runs is never folded: only looking folds away.
+#[test]
+fn sdk_chat_folds_consecutive_reads_and_searches_into_one_run() {
+    let collapsed = assert_named_surface("sdk_chat_exploration", NamedState::ClaudeSdkExploration);
+    let expanded = assert_named_surface(
+        "sdk_chat_exploration_expanded",
+        NamedState::ClaudeSdkExplorationExpanded,
+    );
+
+    assert!(
+        collapsed.contains("2 reads · 2 searches"),
+        "the folded row counts what the run looked at: {collapsed}"
+    );
+    assert!(
+        !collapsed.contains("Grep \"max_attempts\""),
+        "and the members it stands for are not on screen: {collapsed}"
+    );
+
+    let grep = expanded
+        .find("Grep \"max_attempts\"")
+        .expect("first member");
+    let config = expanded.find("Read sync/config.rs").expect("second member");
+    let client = expanded.find("Read sync/client.rs").expect("third member");
+    let retry = expanded
+        .find("Grep \"RetryConfig\"")
+        .expect("fourth member");
+    assert!(
+        grep < config && config < client && client < retry,
+        "an open run keeps its members in the order they happened: {expanded}"
+    );
+
+    for frame in [&collapsed, &expanded] {
+        assert!(
+            frame.contains("Edit sync/config.rs"),
+            "the edit between the runs stays on its own line: {frame}"
+        );
+    }
+}
+
+#[test]
+fn sdk_chat_paints_tools_and_tasks() {
+    let model = session("tasks");
+    let text = assert_surface("sdk_chat_tools", &model);
+    let layer = model.claude_sdk(agent_id()).expect("the session layer");
+    let task = layer
+        .tasks()
+        .next()
+        .expect("the recording started a subagent");
+    assert!(
+        text.contains(&format!("task {}", task.description)),
+        "the subagent's work is named: {text}"
+    );
+}
+
+/// A message from another agent is drawn the way every chat draws one.
+#[test]
+fn sdk_chat_paints_an_agent_message() {
+    let text = assert_surface("sdk_chat_agent_message", &session("messaged"));
+    assert!(
+        text.contains('←'),
+        "an inbound message wears its direction: {text}"
+    );
+}
+
+/// A child's ask still reaches this parent — and this parent can host
+/// it, so the banner names the chord that docks the child's own panel
+/// here rather than only reporting the need.
 #[test]
 fn sdk_chat_still_shows_a_child_ask_banner() {
-    let text = assert_surface("sdk_chat_placeholder_family", &model_with_asking_child());
+    let text = assert_surface("sdk_chat_family", &asking_child());
     assert!(
         text.contains("flake-hunter needs permission"),
-        "the child's banner must survive an unfolded parent: {text}"
+        "the child's banner reaches the parent: {text}"
+    );
+    assert!(
+        text.contains("C-a a answer"),
+        "and the chord that answers it here: {text}"
     );
 }
 
@@ -252,52 +687,328 @@ fn sdk_chat_still_shows_a_child_ask_banner() {
 /// below the frame's minimum.
 #[test]
 fn sdk_chat_renders_at_every_viewport() {
-    let model = model();
+    let model = session("tasks");
     for size in [(20, 6), (24, 10), (40, 12), (80, 24), (200, 60)] {
         let _ = render_buffer(&model, open_chat(&model), Theme::default(), size);
     }
 }
 
-/// Typing goes nowhere: the chat has no input to accept, so the composer
-/// stays empty and no command is dispatched.
+/// Enter sends what was typed, and the draft leaves with it.
 #[test]
-fn sdk_chat_accepts_no_composer_input() {
-    let model = model();
+fn sdk_chat_enter_sends_the_draft() {
+    let model = session("text");
     let mut chat = open_chat(&model);
-    for key in [
-        KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
-        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-    ] {
-        let action =
-            amux_tui::chat::handle_chat_key(&mut chat, &model, key, (WIDTH, HEIGHT), at(NOW));
-        assert!(action.is_none(), "{key:?} must do nothing");
-    }
-    amux_tui::chat::handle_chat_paste(&mut chat, &model, "pasted");
+    amux_tui::chat::handle_chat_paste(&mut chat, &model, "one more thing");
+    let action = key(&mut chat, &model, KeyEvent::from(KeyCode::Enter));
+    assert_eq!(
+        action,
+        Some(UiAction::Dispatch(Command::ClaudeSdk(
+            ClaudeSdkCommand::SendPrompt {
+                agent: agent_id(),
+                text: "one more thing".to_string(),
+            }
+        ))),
+        "Enter sends the draft"
+    );
     assert!(
         chat.composer_mut().is_empty(),
-        "nothing may reach a composer"
+        "and the draft leaves with it"
     );
 }
 
-/// The keys that leave still work, so a person is never stuck in a frame
-/// that cannot talk to its agent.
+/// Ctrl+X interrupts a session that is in the middle of something.
 #[test]
-fn sdk_chat_closes_on_the_leader_chord() {
-    let model = model();
+fn sdk_chat_ctrl_x_interrupts_a_working_session() {
+    let model = mid_reply();
     let mut chat = open_chat(&model);
-    let leader = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
-    assert!(
-        amux_tui::chat::handle_chat_key(&mut chat, &model, leader, (WIDTH, HEIGHT), at(NOW))
-            .is_none()
+    assert_eq!(
+        key(&mut chat, &model, ctrl('x')),
+        Some(UiAction::Dispatch(Command::ClaudeSdk(
+            ClaudeSdkCommand::Interrupt { agent: agent_id() }
+        ))),
+        "Ctrl+X interrupts"
     );
-    let action = amux_tui::chat::handle_chat_key(
+}
+
+/// Shift+Tab asks the session for its next permission mode.
+#[test]
+fn sdk_chat_shift_tab_cycles_the_permission_mode() {
+    let model = session("text");
+    let mut chat = open_chat(&model);
+    assert_eq!(
+        key(&mut chat, &model, KeyEvent::from(KeyCode::BackTab)),
+        Some(UiAction::Dispatch(Command::ClaudeSdk(
+            ClaudeSdkCommand::CyclePermissionMode { agent: agent_id() }
+        ))),
+        "Shift+Tab cycles the mode the header states"
+    );
+}
+
+/// Ctrl+V attaches what the clipboard holds; the draft gains a token for
+/// it rather than the bytes.
+#[test]
+fn sdk_chat_ctrl_v_attaches_the_clipboard() {
+    let model = session("text");
+    let mut chat = open_chat(&model);
+    amux_tui::chat::handle_chat_clipboard(
         &mut chat,
         &model,
-        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
-        (WIDTH, HEIGHT),
-        at(NOW),
+        amux_tui::clipboard::ClipboardContent::Image {
+            mime: "image/png".to_string(),
+            bytes: vec![b'p'; 512],
+        },
     );
-    assert!(matches!(action, Some(UiAction::CloseChat)));
+    assert!(
+        !chat.composer_mut().tokens().is_empty(),
+        "the draft carries the attachment"
+    );
+}
+
+/// The review chord asks for the diff the page is frozen against.
+#[test]
+fn sdk_chat_leader_r_asks_for_the_diff_to_review() {
+    let model = session("text");
+    let mut chat = open_chat(&model);
+    assert!(key(&mut chat, &model, ctrl('a')).is_none(), "leader pends");
+    assert!(
+        matches!(
+            key(&mut chat, &model, KeyEvent::from(KeyCode::Char('r'))),
+            Some(UiAction::Dispatch(Command::RequestDiff { agent, .. })) if agent == agent_id()
+        ),
+        "the chord asks for a diff to review"
+    );
+}
+
+/// Ctrl+T reopens the plan this session already got through.
+#[test]
+fn sdk_chat_ctrl_t_opens_the_accepted_plan() {
+    let model = approved_plan();
+    let mut chat = open_chat(&model);
+    assert!(
+        key(&mut chat, &model, ctrl('t')).is_none(),
+        "the reader opens"
+    );
+    let text = buffer_text(&render_buffer(
+        &model,
+        chat,
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("ship it") && text.contains("read the rows"),
+        "the reader shows the plan: {text}"
+    );
+}
+
+/// The row under the feed carries the passive context meter and how many
+/// subagents are still out.
+#[test]
+fn sdk_chat_activity_line_states_the_context_and_open_tasks() {
+    let text = buffer_text(&render_buffer(
+        &session("text"),
+        open_chat(&session("text")),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("ctx 27.9k/200.0k"),
+        "the meter states what the last turn actually saw, against the window: {text}"
+    );
+
+    let model = mid_task();
+    let running = buffer_text(&render_buffer(
+        &model,
+        open_chat(&model),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        running.contains("1 task running"),
+        "and how many subagents are still out: {running}"
+    );
+
+    // A session that has not reported usage says so rather than guessing.
+    let fresh = fold(base());
+    let quiet = buffer_text(&render_buffer(
+        &fresh,
+        open_chat(&fresh),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        quiet.contains("ctx unknown"),
+        "an unreported meter is unknown, not zero: {quiet}"
+    );
+}
+
+/// `<leader> c` asks the session where its context went and opens the
+/// answer over the frame.
+#[test]
+fn sdk_chat_context_overlay_lists_the_breakdown() {
+    let model = session("introspection");
+    let mut chat = open_chat(&model);
+    assert!(key(&mut chat, &model, ctrl('a')).is_none(), "leader pends");
+    assert_eq!(
+        key(&mut chat, &model, KeyEvent::from(KeyCode::Char('c'))),
+        Some(UiAction::Dispatch(Command::ClaudeSdk(
+            ClaudeSdkCommand::RequestContextBreakdown { agent: agent_id() }
+        ))),
+        "the chord costs one round trip, and only when asked"
+    );
+    let text = buffer_text(&render_buffer(
+        &model,
+        chat.clone(),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("context · 23,394 of 200,000 tokens"),
+        "the overlay states the total against the window: {text}"
+    );
+    assert!(
+        text.contains("System prompt") && text.contains("Messages"),
+        "and every category the session reported: {text}"
+    );
+    assert!(text.contains("esc close"), "with the way out: {text}");
+
+    assert!(
+        key(&mut chat, &model, KeyEvent::from(KeyCode::Esc)).is_none(),
+        "esc closes it"
+    );
+    let closed = buffer_text(&render_buffer(
+        &model,
+        chat,
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        !closed.contains("System prompt"),
+        "and the chat is back: {closed}"
+    );
+    assert_surface_with("sdk_chat_context", &model, |model| {
+        let mut chat = open_chat(model);
+        let _ = key(&mut chat, model, ctrl('a'));
+        let _ = key(&mut chat, model, KeyEvent::from(KeyCode::Char('c')));
+        chat
+    });
+}
+
+/// The captured screen of the breakdown overlay shows the answer, not
+/// the wait: the fixture behind every screenshot has to carry a whole
+/// context reply, because a partial one silently fails to parse and the
+/// capture would show an empty overlay to whoever reads it.
+#[test]
+fn sdk_chat_context_named_state_shows_the_answered_breakdown() {
+    let fixture =
+        amux_tui::fixtures::fixture(amux_tui::fixtures::NamedState::ClaudeSdkContextBreakdown);
+    let backend = TestBackend::new(WIDTH, HEIGHT);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    let context = FrameContext {
+        viewport: (WIDTH, HEIGHT),
+        theme: Theme::default(),
+        now: fixture.now,
+    };
+    terminal
+        .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
+        .expect("render");
+    let text = buffer_text(terminal.backend().buffer());
+
+    assert!(
+        text.contains("context · 154,880 of 200,000 tokens"),
+        "the overlay states the total against the window: {text}"
+    );
+    for category in [
+        "System prompt",
+        "System tools",
+        "Memory files",
+        "Skills",
+        "Messages",
+        "Free space",
+    ] {
+        assert!(
+            text.contains(category),
+            "and every category the session reported, missing {category}: {text}"
+        );
+    }
+    assert!(
+        text.contains("fetched just now"),
+        "with how old the snapshot is: {text}"
+    );
+    assert!(text.contains("c refresh"), "and how to ask again: {text}");
+    assert!(
+        !text.contains("waiting for the session"),
+        "and never the wait it already finished: {text}"
+    );
+}
+
+/// A subagent's block says what it was asked to do, what it came back
+/// with, and what it cost.
+#[test]
+fn sdk_chat_task_block_states_what_the_subagent_did() {
+    let model = session("tasks");
+    let text = buffer_text(&render_buffer(
+        &model,
+        open_chat(&model),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("done ·"),
+        "a finished task reads as finished: {text}"
+    );
+    let running = mid_task();
+    let watching = buffer_text(&render_buffer(
+        &running,
+        open_chat(&running),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        watching.contains("running"),
+        "and one still out reads as running: {watching}"
+    );
+}
+
+/// An MCP server that is not ready is stated once, above the feed; a
+/// session whose servers are all connected says nothing.
+#[test]
+fn sdk_chat_mcp_status_line_names_what_is_not_ready() {
+    let model = session("text");
+    let text = buffer_text(&render_buffer(
+        &model,
+        open_chat(&model),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("mcp · ") && text.contains("needs-auth"),
+        "the line names the state and who is in it: {text}"
+    );
+    let fresh = fold(base());
+    let quiet = buffer_text(&render_buffer(
+        &fresh,
+        open_chat(&fresh),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        !quiet.contains("mcp · "),
+        "a session with no servers to report says nothing: {quiet}"
+    );
+}
+
+/// The rule that closes a turn carries what the turn cost.
+#[test]
+fn sdk_chat_turn_rule_states_the_cost() {
+    let model = session("text");
+    let text = buffer_text(&render_buffer(
+        &model,
+        open_chat(&model),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("$0.0225"),
+        "the turn rule prices the turn the session priced: {text}"
+    );
 }

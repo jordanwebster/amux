@@ -1174,3 +1174,218 @@ fn a2a_bindings_fleet_overlay_lists_the_fold_key_only_with_a_family() {
         "no family, no row:\n{flat}"
     );
 }
+
+// --- one fleet, two kinds of Claude session -------------------------------
+
+/// The same Claude agent, reached over stream-JSON instead of a terminal.
+/// Everything a fleet row reads — the command it was started with, the
+/// host, the ages, the badge — is the same fact from the same agent; only
+/// the machinery behind it differs, and the fleet never asks about that.
+fn a_session_agent(name: &str, on: &str) -> Agent {
+    Agent {
+        kind: amux_ui::AgentKind::Claude {
+            driver: amux_ui::ClaudeDriver::Sdk,
+        },
+        ..an_agent(name, "claude", on)
+    }
+}
+
+fn session_ready_row() -> serde_json::Value {
+    serde_json::json!({
+        "type": "amux.claude_sdk.ready",
+        "session_id": "33333333-3333-4333-8333-333333333333",
+        "resumed": false,
+    })
+}
+
+fn session_prompt_row() -> serde_json::Value {
+    serde_json::json!({
+        "type": "user",
+        "sessionId": "33333333-3333-4333-8333-333333333333",
+        "parent_tool_use_id": null,
+        "message": {"role": "user", "content": "do the thing"},
+    })
+}
+
+fn session_permission_row() -> serde_json::Value {
+    serde_json::json!({
+        "type": "amux.claude_sdk.permission_required",
+        "request_id": "permission-1",
+        "tool_name": "Bash",
+        "input": {"command": "echo probe"},
+        "suggestions": [],
+    })
+}
+
+/// Two pairs of Claude agents on one host: in each pair one session is
+/// driven over a terminal and the other over stream-JSON, both stopped on
+/// the same thing at the same moment. A pair that renders as two identical
+/// rows is the whole claim.
+fn mixed_fleet_msgs() -> Vec<Msg> {
+    let mut msgs = vec![
+        server(ServerMsg::Connected {
+            local_host_id: Some(host_id("nova")),
+        }),
+        server(ServerMsg::HostUpserted {
+            host: a_host("nova"),
+        }),
+        agent_up(&an_agent("fix-auth", "claude", "nova")),
+        agent_up(&a_session_agent("fix-sync", "nova")),
+        agent_up(&an_agent("docs-auth", "claude", "nova")),
+        agent_up(&a_session_agent("docs-sync", "nova")),
+    ];
+    msgs.extend(synced());
+    msgs.extend(stream_rows(
+        "fix-auth",
+        NOW - 120,
+        vec![ready_row(), prompt_row(1), permission_row()],
+    ));
+    msgs.extend(stream_rows(
+        "fix-sync",
+        NOW - 120,
+        vec![
+            session_ready_row(),
+            session_prompt_row(),
+            session_permission_row(),
+        ],
+    ));
+    msgs.extend(stream_rows(
+        "docs-auth",
+        NOW - 12,
+        vec![ready_row(), prompt_row(2)],
+    ));
+    msgs.extend(stream_rows(
+        "docs-sync",
+        NOW - 12,
+        vec![session_ready_row(), session_prompt_row()],
+    ));
+    msgs
+}
+
+fn mixed_fleet_model() -> Model {
+    fold(mixed_fleet_msgs())
+}
+
+/// Where a named agent sits in the ranked fleet, so a test can select it
+/// without hard-coding an order the ranking owns.
+fn fleet_row_index(model: &Model, name: &str) -> usize {
+    model
+        .fleet()
+        .iter()
+        .position(|item| match item {
+            amux_ui::FleetItem::Agent(card) => card.display_name() == name,
+            amux_ui::FleetItem::Family { parent, .. } => parent.display_name() == name,
+            amux_ui::FleetItem::PendingCreate { .. } => false,
+        })
+        .unwrap_or_else(|| panic!("{name} has a fleet row"))
+}
+
+/// The row a name is drawn on, with the name itself blanked out: what is
+/// left is every column the fleet decided for that agent.
+fn fleet_row_without_name(frame: &str, name: &str) -> String {
+    frame
+        .lines()
+        .find(|line| line.contains(name))
+        .unwrap_or_else(|| panic!("no row for {name} in:\n{frame}"))
+        .replace(name, "————————")
+}
+
+#[test]
+fn fleet_mixed_rows() {
+    let rendered = render_frame(&mixed_fleet_model(), &view_default(), 120, 40);
+    assert_golden("fleet_mixed_rows", &rendered);
+}
+
+/// Two Claude sessions stopped on the same ask at the same moment draw
+/// the same row: same badge, same command, same host, same age, same
+/// state word. Blank the names and the two lines are one line. The
+/// selection bar repaints whichever row it sits on, so each pair is read
+/// off a frame whose selection is on the other pair.
+#[test]
+fn fleet_mixed_rows_are_identical_apart_from_the_name() {
+    let model = mixed_fleet_model();
+    for (selected, terminal, session) in [
+        ("docs-auth", "fix-auth", "fix-sync"),
+        ("fix-auth", "docs-auth", "docs-sync"),
+    ] {
+        let view = ViewState {
+            selected: fleet_row_index(&model, selected),
+            ..view_default()
+        };
+        let frame = render_frame(&model, &view, 120, 40);
+        assert_eq!(
+            fleet_row_without_name(&frame, terminal),
+            fleet_row_without_name(&frame, session),
+            "{terminal} and {session} are the same row:\n{frame}"
+        );
+    }
+}
+
+/// The badges are the same colour too, which the text frame cannot see:
+/// a permission badge that read as a warning on one row and an error on
+/// the other would still pass the text comparison above. The selection
+/// bar repaints whichever row it sits on, so each pair is compared from
+/// a frame whose selection is on the other pair.
+#[test]
+fn fleet_mixed_badges_wear_the_same_tokens() {
+    let model = mixed_fleet_model();
+    let theme = Theme::default();
+    let style_row = |selected: &str, of: &str| {
+        let view = ViewState {
+            selected: fleet_row_index(&model, selected),
+            ..view_default()
+        };
+        let frame = render_frame(&model, &view, 120, 40);
+        let row = frame
+            .lines()
+            .position(|line| line.contains(of))
+            .unwrap_or_else(|| panic!("no row for {of}:\n{frame}"));
+        let styles = buffer_styles(&render_buffer(&model, &view, 120, 40, theme), theme);
+        styles.lines().nth(row).expect("a style row").to_string()
+    };
+    for (selected, terminal, session) in [
+        ("docs-auth", "fix-auth", "fix-sync"),
+        ("fix-auth", "docs-auth", "docs-sync"),
+    ] {
+        assert_eq!(
+            style_row(selected, terminal),
+            style_row(selected, session),
+            "{terminal} and {session} are painted from the same tokens"
+        );
+    }
+}
+
+/// A session with no terminal behind it has one way in, and the overlay
+/// says so: `enter` opens the chat and there is no second mode to offer.
+#[test]
+fn fleet_mixed_help_overlay_for_a_session_agent() {
+    let model = mixed_fleet_model();
+    let view = ViewState {
+        mode: Mode::Help,
+        selected: fleet_row_index(&model, "fix-sync"),
+        ..view_default()
+    };
+    let rendered = render_frame(&model, &view, 120, 40);
+    assert!(rendered.contains("open in chat"), "{rendered}");
+    assert!(
+        !rendered.contains("raw attach"),
+        "there is no terminal to attach to:\n{rendered}"
+    );
+    assert_golden("fleet_mixed_help_overlay_session", &rendered);
+}
+
+/// The same overlay for the agent beside it, which does have a terminal:
+/// the difference is the agent's own capability, not the screen's mood.
+#[test]
+fn fleet_mixed_help_overlay_for_a_terminal_agent() {
+    let model = mixed_fleet_model();
+    let view = ViewState {
+        mode: Mode::Help,
+        selected: fleet_row_index(&model, "fix-auth"),
+        ..view_default()
+    };
+    let rendered = render_frame(&model, &view, 120, 40);
+    assert!(rendered.contains("open in raw attach"), "{rendered}");
+    assert!(rendered.contains("open in chat"), "{rendered}");
+    assert_golden("fleet_mixed_help_overlay_terminal", &rendered);
+}

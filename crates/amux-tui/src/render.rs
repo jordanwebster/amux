@@ -642,9 +642,14 @@ fn command_verb(command: &Command) -> &'static str {
         Command::FetchDiff { .. } => "fetch review",
         Command::OpenAttachment { .. } => "open attachment",
         Command::RequestDiff { .. } => "request diff",
-        // Chat write-path commands (`docs/CHAT.md` C5/D3/D4); the chat
-        // screen itself arrives in Phase 4 — until then a failure still
-        // states its verb honestly in the chrome status line.
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::SendPrompt { .. }) => "send",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::AnswerAsk { .. }) => "answer",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::Interrupt { .. }) => "interrupt",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::CyclePermissionMode { .. }) => "mode cycle",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::SetModel { .. }) => "set model",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::RequestContextBreakdown { .. }) => {
+            "request context"
+        }
         Command::Claude(amux_ui::ClaudeCommand::SendPrompt { .. }) => "send",
         Command::Claude(amux_ui::ClaudeCommand::AnswerAsk { .. }) => "answer",
         Command::Claude(amux_ui::ClaudeCommand::Interrupt { .. }) => "interrupt",
@@ -716,27 +721,16 @@ fn status_line(model: &Model, view: &ViewState, width: usize, theme: Theme) -> L
     push_span(&mut line, BADGE_COL, summary, theme.text());
 
     let hints = match &view.mode {
-        // `z` joins the row only where something folds, and only when
-        // the row still fits: a hint that names a dead key is a lie, and
-        // a hint block that vanishes wholesale to make room for one more
-        // is a worse trade than leaving that one to the `?` overlay.
-        Mode::Normal => {
-            let plain = "n new  r rename  d delete  q quit  ? help";
-            let with_fold = "n new  r rename  d delete  z fold  q quit  ? help";
-            match has_families(model) && fits(with_fold, width) {
-                true => with_fold,
-                false => plain,
-            }
-        }
-        // "open", not "attach": Enter opens the settings-default mode
-        // (A1), which may be the chat — the hint stays truthful either
-        // way.
-        Mode::Filter => "esc nav-mode  enter open",
-        Mode::Rename { .. } => "enter apply  esc cancel",
-        Mode::ConfirmDelete { .. } => "",
-        Mode::Help => "any key to close",
+        Mode::Normal => normal_hints(model, view, width),
+        // "open", not "attach": Enter opens whichever mode the entry
+        // policy resolved for the selected row (A1), which the wider
+        // hint beside it names in full.
+        Mode::Filter => "esc nav-mode  enter open".to_string(),
+        Mode::Rename { .. } => "enter apply  esc cancel".to_string(),
+        Mode::ConfirmDelete { .. } => String::new(),
+        Mode::Help => "any key to close".to_string(),
     };
-    if !hints.is_empty() && fits(hints, width) {
+    if !hints.is_empty() && fits(&hints, width) {
         push_span(&mut line, HINTS_COL, hints, theme.muted());
     }
     finish_line(&mut line, width, theme);
@@ -747,6 +741,31 @@ fn status_line(model: &Model, view: &ViewState, width: usize, theme: Theme) -> L
 /// summary.
 fn fits(hints: &str, width: usize) -> bool {
     HINTS_COL + hints.chars().count() <= width.saturating_sub(2)
+}
+
+/// The navigation hints, longest first: the ways into the selected row
+/// lead, then `z` where something folds, and each is dropped in turn
+/// until the block fits. A hint that names a dead key is a lie, and a
+/// block that vanishes wholesale to make room for one more is a worse
+/// trade than leaving that one to the `?` overlay.
+fn normal_hints(model: &Model, view: &ViewState, width: usize) -> String {
+    let entry = crate::bindings::entry_hint(crate::keys::selected_entry_modes(view, model));
+    let rest = "n new  r rename  d delete  q quit  ? help";
+    let rest_folding = "n new  r rename  d delete  z fold  q quit  ? help";
+    let folds = has_families(model);
+    let mut candidates = Vec::new();
+    if folds {
+        candidates.push(format!("{entry}  {rest_folding}"));
+    }
+    candidates.push(format!("{entry}  {rest}"));
+    if folds {
+        candidates.push(rest_folding.to_string());
+    }
+    candidates.push(rest.to_string());
+    candidates
+        .into_iter()
+        .find(|hints| fits(hints, width))
+        .unwrap_or_else(|| rest.to_string())
 }
 
 /// Whether anything on this fleet has children — the fact `z` exists on:
@@ -766,7 +785,7 @@ fn has_families(model: &Model) -> bool {
 fn help_lines(model: &Model, view: &ViewState, theme: Theme) -> Vec<Line<'static>> {
     let sections = crate::bindings::fleet_sections(
         &crate::bindings::Effective::new(view.kitty, view.leader),
-        view.default_open_mode,
+        crate::keys::selected_entry_modes(view, model),
         has_families(model),
     );
     let mut lines = Vec::new();

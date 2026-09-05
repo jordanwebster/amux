@@ -373,6 +373,14 @@ struct CachedBlock {
     block: PaintedBlock,
 }
 
+/// A cache key held as borrowed parts. Comparing costs nothing; the
+/// owned copy the cache keeps is built only when a block is repainted.
+pub(crate) trait CacheView: Copy {
+    type Owned: PartialEq<Self> + Send + 'static;
+
+    fn to_owned_key(self) -> Self::Owned;
+}
+
 /// Memoized block painting, validated against all paint-affecting inputs.
 #[derive(Default)]
 pub(crate) struct PaintCache {
@@ -428,6 +436,48 @@ impl PaintCache {
         &self.entries.get(&key).expect("painted entry exists").block
     }
 
+    /// [`Self::get_or_paint`] for a key that has to be assembled out of
+    /// several borrowed parts. The frame compares what the layer already
+    /// holds; the owned copy is built only when the block is actually
+    /// repainted, so a steady frame copies nothing.
+    pub(crate) fn get_or_paint_view<V: CacheView>(
+        &mut self,
+        key: BlockKey,
+        view: V,
+        width: usize,
+        theme: Theme,
+        expanded: bool,
+        paint: impl FnOnce() -> PaintedBlock,
+    ) -> &PaintedBlock {
+        let theme_key = (theme.name, theme.mode);
+        let hit = self.entries.get(&key).is_some_and(|cached| {
+            cached.width == width
+                && cached.theme == theme_key
+                && cached.expanded == expanded
+                && cached
+                    .content
+                    .downcast_ref::<V::Owned>()
+                    .is_some_and(|cached_content| *cached_content == view)
+        });
+        if hit {
+            self.stats.reused += 1;
+            return &self.entries.get(&key).expect("cache hit exists").block;
+        }
+
+        self.stats.painted += 1;
+        self.entries.insert(
+            key,
+            CachedBlock {
+                content: Box::new(view.to_owned_key()),
+                width,
+                theme: theme_key,
+                expanded,
+                block: paint(),
+            },
+        );
+        &self.entries.get(&key).expect("painted entry exists").block
+    }
+
     pub(crate) fn retain(&mut self, live: &[BlockKey]) {
         let live: HashSet<_> = live.iter().copied().collect();
         self.entries.retain(|key, _| live.contains(key));
@@ -456,7 +506,7 @@ fn geometry_identical_for_claude_and_codex_fixtures_at_120_by_40() {
         .chat
         .as_mut()
         .expect("Codex fixture opens a chat")
-        .set_codex_configuration_label(None);
+        .set_codex_configuration(None);
 
     let geometry = |fixture: &crate::fixtures::Fixture| {
         let chat = fixture.view.chat.as_ref().expect("fixture opens a chat");

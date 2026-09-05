@@ -1,4 +1,4 @@
-  fix-auth · claude @ mbp                                                                                   chat · idle 
+  fix-auth · claude @ mbp                                                                                default · idle 
                                                                                                                         
 ▎   the sync panel looks wrong — here is the screen, the log, and the stack I pasted                                    
                                                                                                                         
@@ -33,8 +33,8 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
+    ctx unknown                                                                                                         
                                                                                                                         
 ▎   Type a message▌                                                                                                     
                                                                                                                         
-    enter send · ctrl+j newline · C-a r review diff · ? help                                               mode default 
+    enter send · ctrl+j newline · C-a r review diff · ? help                                             shift+tab mode 

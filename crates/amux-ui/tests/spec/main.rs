@@ -67,6 +67,8 @@ mod claude_agreement; // Chapter 18 — Claude classification/projection agreeme
 
 mod a2a_fleet; // Chapter 19 — Families: parent edges folded into fleet rows
 
+mod fleet_mixed; // One fleet: both Claude drivers rank, sort and group alike
+
 mod a2a_claude_inbound; // Chapter 20 — Claude inbound: a message from another agent
 
 mod a2a_claude_send_row; // Chapter 21 — Claude outbound: sending to another agent
@@ -76,3 +78,17 @@ mod a2a_codex_inbound; // Chapter 22 — Codex inbound: agent messages and amux 
 mod a2a_family_needs; // Chapter 23 — Family needs: a child's ask, composed into its parent
 
 mod a2a_completed_row; // Chapter 24 — Completions and exits: what each kind makes of itself
+
+mod claude_sdk_feed; // Claude stream-JSON messages, tools, tasks and boundaries
+
+mod claude_sdk_runs; // Session feed projection: exploration runs beside raw entries
+
+mod claude_sdk_agreement; // Claude session classification and public projection agreement
+
+mod claude_sdk_write; // Typed SDK commands and authoritative write reconciliation
+
+mod claude_sdk_runtime; // Subscription, attachments and session facts
+
+mod a2a_claude_sdk_inbound; // SDK agent-message carriers and outbound send
+
+mod claude_sdk_converse; // Recorded conversations from prompt through work and interruption

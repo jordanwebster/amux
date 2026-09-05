@@ -118,13 +118,15 @@ fn view(model: &Model) -> ViewState {
     dressed(model, chat)
 }
 
-/// The chat as every golden shows it: the configuration label set and
-/// reconciled. Taking the chat rather than building it lets a golden
+/// The chat as every golden shows it: the session's creation choices set
+/// and reconciled. Taking the chat rather than building it lets a golden
 /// drive keys into the view first.
 fn dressed(model: &Model, mut chat: ChatView) -> ViewState {
-    chat.set_codex_configuration_label(Some(
-        "model=gpt-5.4 · approval=on-request · sandbox=workspace-write".to_string(),
-    ));
+    chat.set_codex_configuration(Some(vec![
+        "gpt-5.4".to_string(),
+        "on-request".to_string(),
+        "workspace-write".to_string(),
+    ]));
     chat.reconcile(model);
     ViewState {
         chat: Some(chat),
@@ -377,11 +379,110 @@ fn review_rows() -> Vec<Value> {
 }
 
 /// A review reads the same in Codex's feed as in Claude's: one row
-/// stating what was written and over how many files. Codex has no
-/// reader, so the row states everything it can and stops there.
+/// stating what was written and over how many files, and `<leader> o`
+/// opens it in the same reader.
 #[test]
 fn codex_review_block_both_themes() {
     assert_surface("review_block", &model(review_rows()));
+}
+
+/// The surfaces this chat takes from the shared design, each shown where
+/// a person meets it.
+///
+/// The header states the session's creation choices — model, how it
+/// asks, what it may touch — beside the phase, and the activity line
+/// states what the thread costs against the window the session reported.
+/// `<leader> c` opens the breakdown behind that number: input and output
+/// for the whole thread, which is all Codex reports, with cached input
+/// and reasoning indented as shares of those two so the column never
+/// sums past the heading. The overlay says the accounting is thread-wide
+/// rather than implying a per-tool one it cannot produce.
+/// `<leader> o` opens the same fullscreen reader the two Claude chats
+/// use, over a pasted attachment and over a review someone sent.
+#[test]
+fn codex_chat_golden_shared_surfaces() {
+    let usage = model(idle_rows());
+    assert_surface("session_facts", &usage);
+
+    let chat = ChatView::open(&usage, agent_id(), 'a', false).expect("Codex chat opens");
+    let mut state = dressed(&usage, chat);
+    press(
+        &usage,
+        state.chat.as_mut().expect("chat open"),
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    );
+    press(
+        &usage,
+        state.chat.as_mut().expect("chat open"),
+        KeyCode::Char('c'),
+        KeyModifiers::NONE,
+    );
+    assert_state_surface("context_breakdown", &usage, &state, HEIGHT);
+
+    let attached = model(attachment_rows());
+    let chat = ChatView::open(&attached, agent_id(), 'a', false).expect("Codex chat opens");
+    let mut state = dressed(&attached, chat);
+    // Step the feed focus back onto the pasted attachment, then open it.
+    for _ in 0..4 {
+        press(
+            &attached,
+            state.chat.as_mut().expect("chat open"),
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        );
+        press(
+            &attached,
+            state.chat.as_mut().expect("chat open"),
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+        );
+    }
+    press(
+        &attached,
+        state.chat.as_mut().expect("chat open"),
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    );
+    press(
+        &attached,
+        state.chat.as_mut().expect("chat open"),
+        KeyCode::Char('o'),
+        KeyModifiers::NONE,
+    );
+    assert_state_surface("text_reader", &attached, &state, HEIGHT);
+
+    let reviewed = model(review_rows());
+    let chat = ChatView::open(&reviewed, agent_id(), 'a', false).expect("Codex chat opens");
+    let mut state = dressed(&reviewed, chat);
+    // The newest block is the turn rule, then the review row.
+    for _ in 0..2 {
+        press(
+            &reviewed,
+            state.chat.as_mut().expect("chat open"),
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        );
+        press(
+            &reviewed,
+            state.chat.as_mut().expect("chat open"),
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+        );
+    }
+    press(
+        &reviewed,
+        state.chat.as_mut().expect("chat open"),
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    );
+    press(
+        &reviewed,
+        state.chat.as_mut().expect("chat open"),
+        KeyCode::Char('o'),
+        KeyModifiers::NONE,
+    );
+    assert_state_surface("review_reader", &reviewed, &state, HEIGHT);
 }
 
 #[test]

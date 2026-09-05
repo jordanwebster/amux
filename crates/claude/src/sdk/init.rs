@@ -87,7 +87,7 @@ pub struct AccountInfo {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextUsageCategory {
     pub name: String,
@@ -100,7 +100,7 @@ pub struct ContextUsageCategory {
 }
 
 /// Lossless typed top-level response from `Query::get_context_usage`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextUsage {
     pub categories: Vec<ContextUsageCategory>,

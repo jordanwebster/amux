@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 /// The driver used to host a Claude agent.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaudeDriver {
+    #[default]
     Pty,
     Sdk,
 }

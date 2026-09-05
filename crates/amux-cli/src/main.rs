@@ -61,7 +61,7 @@ enum Commands {
         /// Agent type: claude, codex, or test-agent (test-agent only in dev builds)
         agent_type: String,
 
-        /// Claude driver (Claude agents only; defaults to pty)
+        /// Override the configured Claude driver (Claude agents only)
         #[arg(long, value_enum)]
         driver: Option<CliClaudeDriver>,
 
@@ -465,6 +465,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                         model,
                         approval_policy,
                         sandbox_policy,
+                        &config,
                     )?;
                     ensure_initialized(&mut config).await?;
                     check_update_required(&config);
@@ -1096,6 +1097,7 @@ fn configure_agent_type(
     model: Option<String>,
     approval_policy: Option<CliCodexApprovalPolicy>,
     sandbox_policy: Option<CliCodexSandboxPolicy>,
+    config: &Config,
 ) -> Result<AgentType> {
     match agent_type {
         AgentType::Claude { .. } => {
@@ -1105,7 +1107,7 @@ fn configure_agent_type(
                 ));
             }
             Ok(AgentType::Claude {
-                driver: driver.unwrap_or(CliClaudeDriver::Pty).into(),
+                driver: amux::resolve_claude_driver(driver.map(Into::into), config),
             })
         }
         AgentType::Codex {
@@ -1361,7 +1363,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_claude_driver_and_defaults_to_pty() {
+    fn claude_driver_cli_uses_config_and_explicit_override() {
+        let default_config = Config::default();
         for (args, expected) in [
             (vec!["amux", "new", "claude"], amux::ClaudeDriver::Pty),
             (
@@ -1391,12 +1394,43 @@ mod tests {
                 model,
                 approval_policy,
                 sandbox_policy,
+                &default_config,
             )
             .unwrap();
             assert_eq!(configured, AgentType::Claude { driver: expected });
         }
 
         assert!(Cli::try_parse_from(["amux", "new", "claude", "--driver", "unknown"]).is_err());
+
+        let sdk_config: Config = serde_yaml::from_str("claude:\n  driver: sdk\n").unwrap();
+        assert_eq!(
+            configure_agent_type(
+                parse_agent_type("claude").unwrap(),
+                None,
+                None,
+                None,
+                None,
+                &sdk_config,
+            )
+            .unwrap(),
+            AgentType::Claude {
+                driver: amux::ClaudeDriver::Sdk,
+            }
+        );
+        assert_eq!(
+            configure_agent_type(
+                parse_agent_type("claude").unwrap(),
+                Some(CliClaudeDriver::Pty),
+                None,
+                None,
+                None,
+                &sdk_config,
+            )
+            .unwrap(),
+            AgentType::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            }
+        );
     }
 
     #[test]
@@ -1430,6 +1464,7 @@ mod tests {
             model,
             approval_policy,
             sandbox_policy,
+            &Config::default(),
         )
         .unwrap();
         assert!(matches!(
@@ -1563,6 +1598,7 @@ mod tests {
             Some("gpt-5.4".to_string()),
             None,
             None,
+            &Config::default(),
         )
         .unwrap_err();
         assert!(error.to_string().contains("require agent type `codex`"));
@@ -1576,6 +1612,7 @@ mod tests {
             None,
             None,
             None,
+            &Config::default(),
         )
         .unwrap_err();
         assert_eq!(error.to_string(), "--driver requires agent type `claude`");

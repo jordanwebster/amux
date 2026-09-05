@@ -32,10 +32,19 @@ const UPDATE_FLAG: &str = "UPDATE_DERIVED_ROWS";
 const MODEL: &str = codex::specs::CAPTURE_MODEL;
 const CLAUDE_SDK_DERIVATIONS: &[(&str, &str)] = &[
     ("text_turn", "session/text_turn"),
+    ("controls", "control/permission_mode_and_model"),
+    ("introspection", "control/session_introspection"),
+    ("connected_mcp_servers", "control/connected_mcp_servers"),
     ("permission_callback", "tools/permission_callback"),
     ("interrupted", "results/interrupted"),
     ("resumed", "history/resumed"),
     ("multi_turn", "session/multi_turn"),
+    ("streamed_turn", "session/streamed_turn"),
+    ("subagent_task", "agents/subagent_task"),
+    ("compacted", "commands/compacted"),
+    ("cleared", "commands/cleared"),
+    ("max_turns", "results/max_turns"),
+    ("elicitation_accepted", "tools/elicitation_accepted"),
 ];
 const CLAUDE_PTY_DERIVATIONS: &[(&str, &str)] = &[
     ("prompt", "pong"),
@@ -358,7 +367,7 @@ async fn derive(spec: &str, recording_dir: &Path) -> Result<Vec<u8>> {
 }
 
 #[tokio::test]
-async fn codex_recordings_derive_backend_rows_byte_for_byte() -> Result<()> {
+async fn codex_derived_rows_match_recordings_byte_for_byte() -> Result<()> {
     let update = std::env::var_os(UPDATE_FLAG).is_some();
     let output_root = fixtures_root();
     let expected_names = codex::specs::registry()
@@ -435,8 +444,24 @@ async fn open_claude_harness(
     transport: ReplayTransport,
     session_id: &str,
     resumed: bool,
-) -> Result<ClaudeSdkBackendHarness> {
-    let mut options = QueryOptions::default();
+    recording: &Recording,
+) -> Result<(ClaudeSdkBackendHarness, claude::sdk::Control)> {
+    let mut options = QueryOptions {
+        include_partial_messages: true,
+        ..QueryOptions::default()
+    };
+    for event in &recording.io {
+        if event.direction != IoDirection::Write {
+            continue;
+        }
+        let value: Value = serde_json::from_str(&event.line)?;
+        if value.pointer("/request/subtype").and_then(Value::as_str) == Some("initialize") {
+            if let Some(agents) = value.pointer("/request/agents") {
+                options.agents = serde_json::from_value(agents.clone())?;
+            }
+            break;
+        }
+    }
     if resumed {
         options.resume = Some(session_id.to_string());
     } else {
@@ -445,17 +470,21 @@ async fn open_claude_harness(
     let session = claude::sdk::from_io(transport.reader, transport.writer, options)
         .await
         .context("initialize Claude SDK over strict replay")?;
-    ClaudeSdkBackendHarness::with_session(session).await
+    let control = session.control.clone();
+    Ok((
+        ClaudeSdkBackendHarness::with_session(session).await?,
+        control,
+    ))
 }
 
 async fn send_claude_prompt(
     harness: &ClaudeSdkBackendHarness,
-    input_id: &str,
+    ordinal: u128,
     prompt: &str,
 ) -> Result<()> {
     harness
         .send(
-            input_id.as_bytes(),
+            uuid::Uuid::from_u128(ordinal).as_bytes(),
             ClaudeSdkV1Input::Prompt {
                 text: prompt.to_string(),
                 image_blocks: Vec::new(),
@@ -476,10 +505,10 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
         );
     }
     let prompts = claude_prompts(&recording)?;
-    let expected_prompts = if matches!(recording_name, "resumed" | "multi_turn") {
-        2
-    } else {
-        1
+    let expected_prompts = match recording_name {
+        "resumed" | "multi_turn" => 2,
+        "compacted" => 3,
+        _ => 1,
     };
     if prompts.len() != expected_prompts {
         bail!(
@@ -517,33 +546,158 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
     let first_transport = ordered_transports
         .pop_front()
         .context("Claude recording has no first transport")?;
-    let mut first =
-        open_claude_harness(first_transport, &recording.manifest.session_ids[0], false).await?;
-    send_claude_prompt(&first, "prompt-1", &prompts[0]).await?;
+    let (mut first, control) = open_claude_harness(
+        first_transport,
+        &recording.manifest.session_ids[0],
+        false,
+        &recording,
+    )
+    .await?;
+    if recording_name == "connected_mcp_servers" {
+        // This recording sends the prompt before the opening MCP status is acknowledged.
+        let (status, prompt) = tokio::join!(biased;
+            control.mcp_server_status(),
+            send_claude_prompt(&first, 1, &prompts[0]),
+        );
+        status?;
+        prompt?;
+    } else {
+        send_claude_prompt(&first, 1, &prompts[0]).await?;
+    }
 
     let mut harnesses = Vec::new();
     match recording_name {
-        "text_turn" => {
+        "controls" => {
+            first
+                .send(
+                    b"mode",
+                    ClaudeSdkV1Input::SetPermissionMode {
+                        mode: claude::sdk::PermissionMode::AcceptEdits,
+                    },
+                )
+                .await?;
+            first
+                .send(
+                    b"model",
+                    ClaudeSdkV1Input::SetModel {
+                        model: Some("claude-haiku-4-5-20251001".into()),
+                    },
+                )
+                .await?;
             first.wait_for_type("result").await?;
             harnesses.push(first);
         }
-        "permission_callback" => {
-            let request = first
+        "introspection" => {
+            first
+                .send(b"context", ClaudeSdkV1Input::RequestContextBreakdown)
+                .await?;
+            first
+                .wait_for_type("amux.claude_sdk.context_breakdown")
+                .await?;
+            // Replay the recording's other caller actions, outside the daemon's input plane.
+            control.mcp_server_status().await?;
+            control.background_tasks(None).await?;
+            control.stop_task("task_that_does_not_exist").await?;
+            first.wait_for_type("result").await?;
+            harnesses.push(first);
+        }
+        "connected_mcp_servers" => {
+            control
+                .set_mcp_permission_mode_override(
+                    "external",
+                    Some(claude::sdk::McpPermissionMode::Auto),
+                )
+                .await?;
+            control.reconnect_mcp_server("external").await?;
+            let request = recording
+                .io
+                .iter()
+                .filter(|event| event.direction == IoDirection::Write)
+                .filter_map(|event| serde_json::from_str::<Value>(&event.line).ok())
+                .find(|row| {
+                    row.pointer("/request/subtype").and_then(Value::as_str)
+                        == Some("mcp_set_servers")
+                })
+                .context("recording has no server replacement")?;
+            control
+                .set_mcp_servers(serde_json::from_value(
+                    request["request"]["servers"].clone(),
+                )?)
+                .await?;
+            control.mcp_server_status().await?;
+            first.wait_for_type("result").await?;
+            harnesses.push(first);
+        }
+        "text_turn" | "streamed_turn" | "subagent_task" | "cleared" => {
+            first.wait_for_type("result").await?;
+            harnesses.push(first);
+        }
+        "permission_callback" | "max_turns" => {
+            let count = if recording_name == "max_turns" { 2 } else { 1 };
+            for index in 0..count {
+                let request = first
+                    .wait_for_type("amux.claude_sdk.permission_required")
+                    .await?;
+                let request_id = request["request_id"]
+                    .as_str()
+                    .context("permission row has no request id")?
+                    .to_string();
+                first
+                    .send(
+                        if index == 0 {
+                            b"permission-allow"
+                        } else {
+                            b"permission-allow-2"
+                        },
+                        ClaudeSdkV1Input::PermissionDecision {
+                            request_id,
+                            decision: PermissionResult::Allow {
+                                updated_input: Some(request["input"].clone()),
+                                updated_permissions: None,
+                                tool_use_id: None,
+                            },
+                        },
+                    )
+                    .await?;
+            }
+            first.wait_for_type("result").await?;
+            harnesses.push(first);
+        }
+        "elicitation_accepted" => {
+            let permission = first
                 .wait_for_type("amux.claude_sdk.permission_required")
                 .await?;
-            let request_id = request["request_id"]
-                .as_str()
-                .context("permission row has no request id")?
-                .to_string();
             first
                 .send(
                     b"permission-allow",
                     ClaudeSdkV1Input::PermissionDecision {
-                        request_id,
+                        request_id: permission["request_id"]
+                            .as_str()
+                            .context("permission has no request id")?
+                            .to_string(),
                         decision: PermissionResult::Allow {
-                            updated_input: Some(request["input"].clone()),
+                            updated_input: Some(permission["input"].clone()),
                             updated_permissions: None,
                             tool_use_id: None,
+                        },
+                    },
+                )
+                .await?;
+            let request = first
+                .wait_for_type("amux.claude_sdk.elicitation_required")
+                .await?;
+            let request_id = request["request_id"]
+                .as_str()
+                .context("elicitation has no request id")?
+                .to_string();
+            first
+                .send(
+                    b"elicitation-accept",
+                    ClaudeSdkV1Input::ElicitationDecision {
+                        request_id,
+                        result: claude::sdk::ElicitationResult::Accept {
+                            content: Some(json!({"confirmed": "PELICAN"})),
+                            extensions: Default::default(),
                         },
                     },
                 )
@@ -554,15 +708,20 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
         "interrupted" => {
             first.wait_for_type("assistant").await?;
             first
-                .send(b"interrupt", ClaudeSdkV1Input::Interrupt)
+                .send(
+                    uuid::Uuid::from_u128(256).as_bytes(),
+                    ClaudeSdkV1Input::Interrupt,
+                )
                 .await?;
             first.wait_for_type("result").await?;
             harnesses.push(first);
         }
-        "multi_turn" => {
+        "multi_turn" | "compacted" => {
             first.wait_for_type("result").await?;
-            send_claude_prompt(&first, "prompt-2", &prompts[1]).await?;
-            first.wait_for_type("result").await?;
+            for (index, prompt) in prompts.iter().enumerate().skip(1) {
+                send_claude_prompt(&first, (index + 1) as u128, prompt).await?;
+                first.wait_for_type("result").await?;
+            }
             harnesses.push(first);
         }
         "resumed" => {
@@ -570,10 +729,14 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
             let second_transport = ordered_transports
                 .pop_front()
                 .context("resumed Claude recording has no second transport")?;
-            let mut second =
-                open_claude_harness(second_transport, &recording.manifest.session_ids[1], true)
-                    .await?;
-            send_claude_prompt(&second, "prompt-2", &prompts[1]).await?;
+            let (mut second, _) = open_claude_harness(
+                second_transport,
+                &recording.manifest.session_ids[1],
+                true,
+                &recording,
+            )
+            .await?;
+            send_claude_prompt(&second, 2, &prompts[1]).await?;
             second.wait_for_type("result").await?;
             harnesses.push(first);
             harnesses.push(second);
@@ -598,11 +761,82 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
     for harness in harnesses {
         rows.extend(harness.finish().await?);
     }
+    let accepted: Vec<_> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row["type"] == "user" && row["input_id"].is_string())
+        .collect();
+    assert_eq!(
+        accepted.len(),
+        prompts.len(),
+        "one accepted row per submitted prompt"
+    );
+    for (turn, ((index, row), prompt)) in accepted.iter().zip(&prompts).enumerate() {
+        assert_eq!(row["message"]["content"], *prompt);
+        assert_eq!(
+            row["uuid"],
+            uuid::Uuid::from_u128((turn + 1) as u128).to_string()
+        );
+        let end = accepted
+            .get(turn + 1)
+            .map_or(rows.len(), |(index, _)| *index);
+        assert!(
+            rows[index + 1..end]
+                .iter()
+                .any(|row| row["type"] == "result"),
+            "accepted prompt must precede its turn result for {recording_name}"
+        );
+    }
+    for pair in rows.windows(2) {
+        if matches!(
+            pair[0]["type"].as_str(),
+            Some("assistant" | "result" | "amux.claude_sdk.ready")
+        ) {
+            assert_eq!(pair[1]["type"], "amux.claude_sdk.session_facts");
+        }
+    }
+    if let Some(used_tokens) = match recording_name {
+        "text_turn" => Some(27906),
+        "streamed_turn" => Some(27910),
+        _ => None,
+    } {
+        let meter = &rows
+            .iter()
+            .rev()
+            .find(|row| row["type"] == "amux.claude_sdk.session_facts")
+            .context("missing final session facts")?["context"];
+        assert_eq!(
+            *meter,
+            json!({"used_tokens": used_tokens, "window_tokens": 200000, "source": "result_usage"})
+        );
+    }
+    let recorded_stream_events = recording
+        .io
+        .iter()
+        .filter(|event| event.direction == IoDirection::Read)
+        .map(|event| serde_json::from_str::<Value>(&event.line))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|row| row["type"] == "stream_event")
+        .collect::<Vec<_>>();
+    if recording_name == "streamed_turn" {
+        assert!(!recorded_stream_events.is_empty());
+    }
+    let emitted_stream_events = rows
+        .iter()
+        .filter(|row| row["type"] == "stream_event")
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        String::from_utf8(encode_rows(&emitted_stream_events)?)?,
+        String::from_utf8(encode_rows(&recorded_stream_events)?)?,
+        "stream events must pass through verbatim for {recording_name}"
+    );
     encode_rows(&rows)
 }
 
 #[tokio::test]
-async fn claude_sdk_recordings_derive_backend_rows_byte_for_byte() -> Result<()> {
+async fn claude_sdk_derived_rows_match_recordings_byte_for_byte() -> Result<()> {
     let update = std::env::var_os(UPDATE_FLAG).is_some();
     let output_root = claude_sdk_fixtures_root();
     if update {
@@ -926,7 +1160,7 @@ fn derived_pty_metadata(fixture: &str, recording: &Recording) -> Value {
 }
 
 #[tokio::test]
-async fn claude_pty_recordings_derive_backend_rows_byte_for_byte() -> Result<()> {
+async fn claude_pty_derived_rows_match_recordings_byte_for_byte() -> Result<()> {
     let update = std::env::var_os(UPDATE_FLAG).is_some();
     let output_root = claude_pty_fixtures_root();
     let registry_names = claude::specs::pty_registry()

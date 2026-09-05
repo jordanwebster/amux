@@ -17,6 +17,7 @@ const WIDTH_DECLARING_GOLDENS: &[(&str, (u16, u16))] = &[
     ("fleet_ranked_60col", (60, 11)),
     ("fleet_ranked_80col", (80, 11)),
     ("chat_quit_armed_panel_narrow", (60, 20)),
+    ("chat_session_facts_60col", (60, 20)),
     ("fleet_too_narrow", (12, 11)),
 ];
 const STATES: &[NamedState] = &[
@@ -110,7 +111,7 @@ fn assert_cell_dimensions(name: &str, rendered: &str, viewport: (u16, u16), exac
 }
 
 #[test]
-fn viewport_policy_keeps_only_the_five_width_declaring_goldens_nonstandard() {
+fn viewport_policy_keeps_only_width_declaring_goldens_nonstandard() {
     assert_eq!(
         WIDTH_DECLARING_GOLDENS
             .iter()
@@ -121,6 +122,7 @@ fn viewport_policy_keeps_only_the_five_width_declaring_goldens_nonstandard() {
             "fleet_ranked_60col",
             "fleet_ranked_80col",
             "chat_quit_armed_panel_narrow",
+            "chat_session_facts_60col",
             "fleet_too_narrow",
         ]
     );

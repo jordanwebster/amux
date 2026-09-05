@@ -1,6 +1,5 @@
 --- text ---
-  codex-retry · codex @ mbp                                                                                 chat · idle 
-  model=gpt-5.4 · approval=on-request · sandbox=workspace-write                                                         
+  codex-retry · codex @ mbp                                               gpt-5.4 · on-request · workspace-write · idle 
                                                                                                                         
 ▎   three things before this lands                                                                                      
                                                                                                                         
@@ -35,13 +34,13 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
+    ctx unknown                                                                                                         
                                                                                                                         
 ▎   Type a message▌                                                                                                     
                                                                                                                         
     enter send · ctrl+j newline · ? help                                                                                
 --- styles ---
-..eeeeeeeeeeemmmmmmmmmmmmmm.................................................................................mmmmmmmmmmm.
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.........................................................
+..eeeeeeeeeeemmmmmmmmmmmmmm...............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
@@ -76,6 +75,7 @@ AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
+....mmmmmmmmmmm.........................................................................................................
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................

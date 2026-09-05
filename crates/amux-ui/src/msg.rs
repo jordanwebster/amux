@@ -141,6 +141,8 @@ pub enum Command {
     Claude(crate::claude::ClaudeCommand),
     /// Codex-native writes.
     Codex(crate::codex::CodexCommand),
+    /// Claude stream-JSON writes.
+    ClaudeSdk(crate::claude_sdk::ClaudeSdkCommand),
 }
 
 /// Connection and inventory events. Entity events are idempotent upserts —

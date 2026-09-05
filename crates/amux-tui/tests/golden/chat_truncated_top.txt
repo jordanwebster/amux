@@ -1,4 +1,4 @@
-  fix-auth · claude @ mbp                                                                                   chat · idle 
+  fix-auth · claude @ mbp                                                              claude-haiku-4-5-20251001 · idle 
                                                                                                                         
   ⋯ earlier history unavailable                                                                                         
 ▎   what does the dispatcher do on a seq mismatch?                                                                      
@@ -32,9 +32,9 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
   ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest                                                 
+    ctx 31.6k                                                                                                           
                                                                                                                         
 ▎   Type a message▌                                                                                                     
                                                                                                                         
-    C-a k/j focus · C-a y copy · ? help                                                                                 
+    C-a k/j focus · C-a y copy · ? help                                                                  shift+tab mode 

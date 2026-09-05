@@ -267,14 +267,6 @@ pub fn record_scroll(
     const EVENT_COUNT_PER_DIRECTION: usize = 12;
     const FRAME_DELAY_CENTISECONDS: u16 = 12;
 
-    // An SDK-driven chat renders only its unsupported placeholder; a long
-    // scrolling feed recorded for it would be an invention, not evidence.
-    if matches!(protocol, StructuredProtocol::ClaudeSdk) {
-        return Err(ShotError::Render(
-            "an SDK-driven chat has no native feed to scroll".to_string(),
-        ));
-    }
-
     fs::create_dir_all(out)?;
     let agent = protocol_name(protocol);
     let gif_name = format!("{agent}-wheel.gif");
@@ -1183,6 +1175,27 @@ mod tests {
             serde_json::from_slice(&fs::read(directory.path().join("manifest.json")).unwrap())
                 .unwrap();
         assert_eq!(manifest.entries.len(), 2, "each render appends a row");
+    }
+
+    /// The wheel works the same over a session driven by stream-JSON, so
+    /// a scroll recording can be taken of one. It used to be refused,
+    /// because no long feed folded those rows; one does now.
+    #[test]
+    fn scroll_recording_covers_a_session_driven_over_stream_json() {
+        let directory = tempdir().unwrap();
+        let recording = record_scroll(
+            StructuredProtocol::ClaudeSdk,
+            Theme::dark(ColorMode::TrueColor),
+            directory.path(),
+        )
+        .unwrap();
+
+        assert_eq!(recording.frames, 25);
+        assert_eq!(
+            recording.events.last().map(|event| &event.scroll),
+            Some(&RecordedScrollState::Following)
+        );
+        assert!(directory.path().join(&recording.gif).is_file());
     }
 
     #[test]

@@ -9,6 +9,8 @@ mod pty_backend;
 mod sdk_backend;
 #[cfg(feature = "local-agents")]
 mod sdk_delivery;
+#[cfg(feature = "local-agents")]
+mod sdk_facts;
 pub mod sdk_io;
 #[cfg(feature = "local-agents")]
 mod suspend;

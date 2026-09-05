@@ -11,6 +11,7 @@ pub(crate) use render::codex_frame_parts;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::chat::claude_shared::reader::{ReaderContext, ReaderSource, ReaderView};
 use crate::chat::inline::InlineAsk;
 use crate::chat::viewport::ScrollIntent;
 use crate::composer::Composer;
@@ -45,8 +46,10 @@ pub(crate) struct View {
     pub pending_leader: bool,
     pub kitty: bool,
     pub help: bool,
-    /// Creation choices supplied by the CLI for the initial structured view.
-    pub(crate) configuration_label: Option<String>,
+    /// The creation choices the header states: model, approval, sandbox.
+    /// Empty until the launcher hands them over, which it does only for
+    /// the chat `amux new` opens.
+    pub(crate) configuration: Vec<String>,
     /// Whether completions show their whole body (`<leader> m`). Closed
     /// by default: a child's last message is a report, and a chat that
     /// opens every report it receives stops being readable at the exact
@@ -56,6 +59,30 @@ pub(crate) struct View {
     /// U2). The child's layer owns the panel and the answer; this chat
     /// owns only the decision to show it.
     pub(crate) inline_ask: Option<InlineAsk>,
+    /// The fullscreen reader, when `<leader> o` opened one over a pasted
+    /// text attachment or a review someone sent. The same reader the two
+    /// Claude chats use: its documents come with the message that carried
+    /// them, so nothing here needs Claude's ask vocabulary.
+    pub(crate) reader: Option<ReaderView>,
+    /// Whether the context breakdown is open (`<leader> c`).
+    pub(crate) context_open: bool,
+}
+
+/// Everything the shared reader needs from this chat. Codex has no
+/// Claude-shaped ask, so the reader here never carries an action row: its
+/// documents are things someone sent, not obligations to answer.
+pub(crate) fn reader_context<'m>(model: &'m Model, chat: &'m View) -> Option<ReaderContext<'m>> {
+    let reader = chat.reader.as_ref()?;
+    let layer = model.codex(chat.agent)?;
+    Some(ReaderContext {
+        reader,
+        ask: None,
+        ask_ui: None,
+        can_answer: false,
+        accepted_plans: std::borrow::Cow::Borrowed(&[]),
+        attachments: layer.attachments(),
+        quit_guard_armed: chat.quit_guard.is_armed(),
+    })
 }
 
 impl View {
@@ -76,9 +103,11 @@ impl View {
             pending_leader: false,
             kitty,
             help: false,
-            configuration_label: None,
+            configuration: Vec::new(),
             reports_open: false,
             inline_ask: None,
+            reader: None,
+            context_open: false,
         }
     }
 
@@ -89,7 +118,30 @@ impl View {
     }
 
     pub(crate) fn overlay_open(&self) -> bool {
-        self.help
+        self.help || self.reader.is_some() || self.context_open
+    }
+
+    /// Open the fullscreen reader on a text attachment from the feed.
+    pub(crate) fn open_text_reader(&mut self, name: String, body: String) {
+        self.reader = Some(ReaderView {
+            source: ReaderSource::Text { name, body },
+            scroll: 0,
+        });
+    }
+
+    /// Open the fullscreen reader on a review someone sent.
+    pub(crate) fn open_review_reader(
+        &mut self,
+        header: amux_ui::review::ReviewHeader,
+        comments: Vec<amux_ui::review::ReviewComment>,
+    ) {
+        self.reader = Some(ReaderView {
+            source: ReaderSource::Review {
+                header: Box::new(header),
+                comments,
+            },
+            scroll: 0,
+        });
     }
 
     pub(crate) fn reconcile(&mut self, model: &Model) {

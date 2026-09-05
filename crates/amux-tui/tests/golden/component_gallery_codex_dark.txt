@@ -1,5 +1,4 @@
-  codex-retry · codex @ mbp                                                                            chat · needs you 
-  model=gpt-5.4 · approval=on-request · sandbox=workspace-write                                                         
+  codex-retry · codex @ mbp                                          gpt-5.4 · on-request · workspace-write · needs you 
                                                                                                                         
   ─ context compacted · turn-08 ────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
@@ -28,6 +27,7 @@
   ─ turn completed ─────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
   ⚠ $ cargo test --workspace · awaiting approval                                                                        
+    ctx unknown                                                                                                         
                                                                                                                         
     approval — command                                                                                                  
                                                                                                                         

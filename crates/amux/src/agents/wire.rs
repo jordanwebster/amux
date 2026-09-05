@@ -1321,6 +1321,22 @@ mod tests {
                     },
                 )),
             }),
+            pb::send_input_request::Event::ClaudeSdkV1(pb::ClaudeSdkV1Input {
+                input: Some(pb::claude_sdk_v1_input::Input::ElicitationDecision(
+                    pb::ClaudeSdkElicitationDecision {
+                        request_id: "elicitation".into(),
+                        result_json: br#"{"action":"accept","content":{"choice":"a"}}"#.to_vec(),
+                    },
+                )),
+            }),
+            pb::send_input_request::Event::ClaudeSdkV1(pb::ClaudeSdkV1Input {
+                input: Some(pb::claude_sdk_v1_input::Input::DialogDecision(
+                    pb::ClaudeSdkDialogDecision {
+                        request_id: "dialog".into(),
+                        result_json: br#"{"behavior":"completed","result":[null,true]}"#.to_vec(),
+                    },
+                )),
+            }),
             pb::send_input_request::Event::CodexSdkV1(pb::CodexSdkV1Input {
                 input: Some(pb::codex_sdk_v1_input::Input::Interrupt(
                     pb::CodexSdkV1Interrupt {

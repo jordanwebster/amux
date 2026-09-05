@@ -434,7 +434,7 @@ pub enum TraceEvent {
     /// `amux new` asked for, once its inventory row arrived.
     ChatOpened {
         agent: AgentId,
-        codex_configuration: Option<String>,
+        codex_configuration: Option<Vec<String>>,
     },
 }
 
@@ -565,7 +565,7 @@ impl Chrome {
             } => {
                 self.view.open_chat(model, *agent);
                 if let Some(chat) = self.view.chat.as_mut() {
-                    chat.set_codex_configuration_label(codex_configuration.clone());
+                    chat.set_codex_configuration(codex_configuration.clone());
                 }
                 self.dirty = true;
                 vec![ShellEffect::NoteAttached(*agent)]

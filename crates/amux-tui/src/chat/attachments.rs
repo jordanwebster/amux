@@ -132,6 +132,21 @@ fn owner_content(model: &Model, agent: AgentId, owner: u64) -> Option<Vec<Segmen
             .find(|(index, _)| echo_owner(*index) == owner)?;
         return Some(layer.attachments().segments(&echo.1.text));
     }
+    if let Some(layer) = model.claude_sdk(agent) {
+        if let Some(entry) = layer.entries().find(|entry| entry.id == owner) {
+            return match &entry.kind {
+                amux_ui::claude_sdk::FeedEntryKind::Prompt(prompt) => {
+                    Some(layer.attachments().segments(&prompt.text))
+                }
+                amux_ui::claude_sdk::FeedEntryKind::Message(message) => {
+                    Some(layer.attachments().segments(&message.text))
+                }
+                _ => None,
+            };
+        }
+        let echo = layer.pending_echo().filter(|_| echo_owner(0) == owner)?;
+        return Some(layer.attachments().segments(&echo.text));
+    }
     let layer = model.codex(agent)?;
     let entry = layer.entries().find(|entry| entry.id == owner)?;
     match &entry.kind {

@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **The Claude SDK chat joins the native app’s shared core.**
+The reviewed SDK implementation now lives beside the phone’s queue, typed
+Codex settings and commands, confirmed Claude task lists, repository discovery,
+and two-phase pairing and revocation. The terminal retains its queued-message
+row alongside the incoming context meter; the obsolete unsupported SDK screen
+is replaced by the real streaming chat. SDK fixtures retain the host’s explicit
+repository-root configuration, and protocol bindings are regenerated from the
+combined schema. Expanded session facts are boxed in mobile events to keep the
+event enum compact without changing its JSON representation. The mobile schema
+fixture now includes the newly observed PTY model and context-token facts.
+Active-session SDK effort and initialization command publication still require
+implementation. Formatting, lint, the SDK tests, all 407 host/client prose
+specifications, both iOS Rust targets and the full workspace suite pass locally.
+
 2026-09-06 — **A journey says only what its run showed.** The cold-start
 journey claimed a real connection confirmed the remembered fleet "without
 moving what is on screen". It does not: pairing from the phone is not built, so
@@ -836,6 +850,539 @@ executed iOS verification step. Unit tests cover stale heads, missing/running/
 failed/skipped jobs and verification lists with no Rust checks. Command-level
 tests check JSON output and stop-on-failure behavior. Existing formatting drift
 is corrected so the unchanged format job can pass on this branch.
+2026-09-05 — **Live fleet captures verify Claude labels and chat-only entry.**
+The configuration harness now opens an unfiltered 120×40 fleet while its
+default and configured Claude agents coexist, selects the configured agent,
+and captures the fleet and help overlay in plain and styled terminal frames.
+It checks identical Claude kind columns, chat-only help, absent backend
+vocabulary and complete captures, and refuses reused evidence directories.
+Validation: the live harness passes against the ordinary Claude login;
+shell syntax and 28 capture validation cases pass, including rejection of
+missing frames, backend words, wrong selection and raw-attach help.
+
+2026-09-05 — **The guides describe the shipped Claude SDK chat and its limits.**
+The client, chat, provider-boundary and family guides now cover the three native
+chats, creation defaults, shared entry policy, SDK controls and user-owned hooks.
+The SDK guide matches the header and activity-row layout and documents the
+known dialog routing in Claude Code 2.1.261: 37 registered kinds, two headless
+forwarding paths, and no recorded live dialog. The generic panel remains
+unvalidated against a real frame; received dialogs are never auto-cancelled.
+The capability inventory states that limitation alongside the flat-form limit.
+Validation: `wt build`, `wt lint`, `wt test`, `wt run spec` and
+`wt run mobile-check` pass together, including the iOS library without
+terminal hosting. No product code, test assertions or deadlines change.
+
+2026-09-05 — **A live comparison verifies user Stop hooks in Claude and amux.**
+The hook harness isolates settings while retaining the ordinary secure-store
+login and clears inherited Claude session identity for the direct launch.
+It creates the amux agent through the TUI, waits for the composer, and sends
+the prompt there. Captures retain the direct reply, both hook markers, the
+agent inventory and chat frames. The harness refuses stale evidence, retains
+the direct marker immediately and keeps daemon diagnostics. Validation:
+Claude Code 2.1.261 fires the configured Stop hook in both launches; shell
+syntax, the workspace build and lint pass.
+
+2026-09-05 — **Standalone MCP spawn addresses its prompt by agent ID.**
+Without a parent agent, the spawn tool sends the initial prompt after creating
+the session. It now keeps the returned UUID as a typed agent identifier;
+converting it to an owned string had selected a name lookup and reported
+“No agent found” while leaving the new session idle. The regression checks
+the destination ID, prompt and human sender at the daemon boundary.
+
+2026-09-05 — **A captured Claude chat now replays offline through the client.**
+The committed fixture retains all 572 rows of a live TUI conversation, with
+provenance and consistently redacted temporary paths, including streamed tool
+arguments. Its spec compares a serialized replay with the live fold after
+every message and checks prompts, streaming, interruption, permission, plan,
+question and elicitation asks, completed replies and child messages. The last
+child acknowledgement starts another turn; the fixture preserves that
+observation boundary. A privacy check rejects personal paths, hostnames and
+email addresses.
+
+2026-09-05 — **A live TUI harness checks Claude conversations, asks and family
+messages through the daemon.**
+The opt-in capture uses an isolated daemon configured for the SDK driver and
+a 120×40 tmux chat. It verifies partial text, interruption, a one-time Write
+approval, plan approval followed by the edit, a selected question answer and
+an MCP form whose typed answer returns through the real provider. A child
+created through the agent's spawn tool asks for a Write approval in the
+parent chat, then exchanges messages with its parent. Named plain and styled
+frames accompany the retained daemon rows and transcript. The row observer
+only subscribes; prompts and decisions go through the TUI. Checks correlate
+request resolutions, require submitted prompt echoes, and distinguish exact
+messages from initial instructions and completion summaries. Existing capture
+directories are refused so stale frames cannot mask an incomplete replay.
+Validation: live capture against Claude Code 2.1.261, shell syntax, six row
+predicate tests, `wt build` and `wt lint` pass.
+
+2026-09-05 — **Live captures verify driver selection and fleet entry across
+paired hosts.**
+Two opt-in shell harnesses use isolated daemon identities and a private
+120×40 tmux server. The inventory capture creates Claude agents before and
+after changing the configured driver, then with an explicit override, checking
+that the earlier agents keep their drivers. The remote capture pairs two
+daemons by LAN PIN and checks Enter and `o` on both Claude and Codex, remotely
+and locally. Each entry saves plain and styled terminal frames, with a
+transcript and diagnostic logs retained on failure. Codex gets a short seed
+conversation first because its terminal cannot resume an unused thread; chat
+checks use the shared composer hint, since a fresh Codex chat need not yet
+offer a review action.
+
+2026-09-05 — **The side-by-side capture set compares collapsed exploration
+too.**
+The set a person walks to judge whether the three chats read as one design
+had no capture of a folded exploration run, because until this week only the
+terminal chat could fold one. It now renders both Claude chats closed and
+both open, so a fold that reads differently on either side shows up in the
+same directory listing as every other paired surface.
+
+2026-09-05 — **An interrupted turn no longer prints the provider's own
+diagnostic.**
+Alongside sentences a person can read, the session files error strings
+written for its authors — a bracketed tag and a row of key/value pairs that
+say nothing about the turn that just stopped. The chat printed them verbatim.
+It now recognizes that shape and drops it, and spells the remaining outcome
+word out in plain language, while an error the session wrote as prose is
+still shown exactly as it arrived.
+
+2026-09-05 — **The Codex context meter states what the context holds, not
+what the thread has spent.**
+The session reports two figures with every update: what the context held at
+the end of the last turn, and every turn's tokens added together. The meter
+and its breakdown were reading the second, so a long thread would claim to
+be out of room long before it was — on one recorded session, 29,212 tokens
+against a 258,400 window where the context actually held 14,771. Both now
+read the per-turn figure. The breakdown also stops listing cached input and
+reasoning beside input and output, since they are parts of those two: they
+are indented under the total they belong to, so the column no longer adds up
+to more than the heading.
+
+2026-09-05 — **Consecutive reads and searches fold to one row in the
+stream-JSON Claude chat.**
+`⌄ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o expand`,
+opened and shut with the same chord the terminal chat uses. The grouping is
+a fact the session layer states from the tool's own name — which arrives with
+the block, before its input has finished streaming — not something the
+renderer infers from how rows happen to look. Both Claude feeds now walk one
+projection over their own entries, so a run reads the same whichever carried
+it, and the path-preview cap moved into the shared painter kit for the same
+reason. An edit between two runs still keeps its own line: only looking folds
+away.
+
+2026-09-05 — **An errored turn now says what went wrong.**
+The chat driven over stream-JSON closed a failed turn with the word
+"errored" and nothing else, although the session had already told it what
+happened. The rule is now followed by the session's own words — the error
+strings it collected, or the result text when it collected none — because a
+person who has just watched a turn fail needs the reason, not the fact.
+
+2026-09-05 — **A landed edit reads as a file change in the stream-JSON
+Claude chat too, not as another tool line.**
+`✎ Edit src/lib.rs · +2 −1` with the patch hanging under it, the same block
+the terminal chat has always painted. Nothing had to be computed: the tool
+result carries the structured patch, and both chats now read it through the
+one module that holds Claude's own tool vocabulary — the sidecar extraction,
+the change counts and the bounded patch head moved there from the terminal
+fold, along with the tests that bound them. The two carriers spell the
+sidecar key differently, so each fold hands over the value it found and
+nothing else differs.
+
+2026-09-05 — **The Claude chat design record now carries an inventory of
+every terminal-chat capability and what the stream-JSON chat does with it.**
+Most rows say adopted, several say better — a partly-arrived reply, a
+subagent with a lifecycle, a context meter with a denominator, a permission
+mode that comes back acknowledged — and two say permanently absent with the
+fact that is missing: there is no terminal to attach to, and the
+post-compaction summary row is an artifact of a file rather than a fact of a
+session. Three rows say something more useful than either: the surface is
+absent and the session already reports what it would need. A landed edit
+still paints as an ordinary tool line although the patch arrives with the
+tool result; consecutive reads and searches are not collapsed although every
+tool is named; and an errored turn says only that it errored although the
+error text is folded. Naming unbuilt work as unbuilt is the point of the
+list — a parity table that launders it into "gaps" is worth nothing.
+
+2026-09-05 — **The three chat screens now state the same two facts in the
+same place: what the session runs on, and what its context costs.**
+A Claude session on a terminal states its model and its permission mode on
+the header's right, where a session driven over stream-JSON already did;
+the permission mode leaves the footer, which now names the key that cycles
+it instead of repeating the value. Its activity line is always present and
+carries `ctx 31.6k` — what the newest assistant message reported its
+context costing — with no denominator, because no transcript row states the
+context window. The Codex chat states its model, how it asks and what it
+may touch in that same header slot rather than on a row of its own, and its
+activity line carries the full meter, `ctx 138/128.0k`, from the totals the
+session reports. When the terminal is too narrow to hold both the facts and
+the phase word, the facts give way one at a time — the least important
+first — because a screen that hides "needs you" to show a model name has
+its priorities backwards.
+
+The Codex chat also grew three surfaces the other two already had. A
+partly-arrived reply carries the same caret rather than a marker row of its
+own. `<leader> c` opens what the thread's context went on: four totals —
+input, cached input, output, reasoning — which is all the app-server
+reports, and the overlay says so rather than implying an accounting it
+cannot produce. `<leader> o` opens a pasted attachment or a sent review in
+the same fullscreen reader the Claude chats use; it carries no action row,
+because a Codex reader only ever shows something someone already sent.
+
+2026-09-05 — **Two fleet screens a person can now capture: the help sheet
+over a session, and a family holding one.**
+The screenshot registry gained a fleet state whose selected row is a Claude
+session driven over stream-JSON with the key sheet open — it offers "open in
+chat" and nothing anywhere in it offers raw attach, because that session has
+no terminal behind it — and a family state whose middle member is such a
+session, opened so every generation shows. The family capture used to be a
+rasterized copy of a frozen frame; it is now drawn from a fixture, so it
+moves when the screen moves. Both join the fleet render set. A fixture that
+needs a row selected reads the index back off the ranking rather than
+hard-coding it, so a change to the ranking fails loudly instead of quietly
+selecting a neighbour.
+
+2026-09-05 — **The command line's one departure from the fleet's entry
+rule is written down and pinned.**
+Every way into an agent reads one answer per agent — except that `amux
+attach` opens a Codex agent's own structured screen even on this machine,
+where the fleet's Enter still raw attaches under the shipped default. That
+is deliberate: Codex ships its own screen, and the command line has no
+second key to spend, so it spends its only one on the richer surface. The
+chat document claimed no such difference existed; it now names it and says
+why. Two tests, one on each side, hold the pair in place so the prose and
+the code cannot drift apart again.
+
+2026-09-05 — **A Claude session driven over stream-JSON takes both halves
+of an agent-to-agent conversation.**
+Its chat now has frozen frames for the whole exchange: a message from
+another agent arriving whole, a child's completion closed over the two
+lines behind its first, an exit as a bare notice with nothing to open, and
+its own outgoing send as the recipient and a one-line summary rather than
+a dump of the tool's arguments. The chord that opens every completion in a
+chat works here too. Each row is asserted to read the way the other two
+chats' rows read, because the shape is decided once for all of them.
+
+A completion from such a session also reaches a parent that is not one:
+both an ordinary Claude parent and a Codex parent render the finished
+report over their own carrier and keep the sender as family. What a child
+is driven by is not something a parent's chat can see, and there is now a
+test that says so rather than an assumption that it does not matter.
+
+Spawning follows the same setting every other creation path follows: the
+spawn tool gives a new Claude child the driver the configuration resolves
+to, and a spawned Codex child is untouched by it. The setting had a test
+that the resolver reads the config; it now has one that a spawned child
+actually gets that answer.
+
+2026-09-05 — **The fleet cannot tell one kind of Claude session from the
+other, and there are now frames and specs that say so.**
+Two Claude agents stopped on the same permission request at the same
+moment — one reached over a terminal, one over stream-JSON — draw one row
+each, and blanking out their names makes the two lines identical: same
+badge, same command, same host, same age, same state word. A style
+comparison backs the text up, because a badge painted from a different
+token would still pass a text diff.
+
+The ranking is proved by observation rather than by reading the sort. The
+same fleet is built twice with the two agents' machinery swapped, and the
+ranked order does not move — under equal attention, under a recency
+difference inside one band, and as a family whose members are driven
+different ways and whose loudest member is a child. The key is attention,
+then recency, then identity; nothing about how a session is driven is in
+it.
+
+The one place the two do differ is the way in, and it is the agent's own
+capability speaking: a session with no terminal behind it offers the chat
+alone, so its `?` overlay names one entry key where its neighbour's names
+two. The mixed-fleet screenshot state now folds real rows instead of three
+agents in an unknown state, so the capture shows the badges the claim is
+about.
+
+2026-09-05 — **A Claude session driven over stream-JSON now takes part in
+a family in both directions.**
+Docking a child's ask at the parent's composer knew two kinds of child and
+two kinds of parent. A session driven over stream-JSON was neither: it was
+treated as having no composer to give up, so it could host nothing, and as
+having no ask to dock, so nothing could host it. Both are now false. Such
+a session hosts another agent's ask exactly as any parent does — the
+guest's own panel, attributed, dispatching the guest's own command — and
+its own ask docks in an ordinary Claude or Codex parent's chat the same
+way. Its own obligations still come first: while it is waiting on
+something itself, the banner reports the child's need without offering the
+chord, because there is nowhere to put the guest.
+
+Confirming a docked guest sends the identical command the child's own chat
+would send, which is asserted rather than assumed, and the chord that walks
+a family steps into and back out of one of these sessions like any other.
+Two new frames lock both directions, and the parent's banner golden now
+names the answer chord it had no way to offer before.
+
+2026-09-05 — **One rule decides how you get into an agent, and every key,
+hint and help row now reads it.**
+Which ways into an agent exist was decided in four places that could
+disagree: the fleet's entry keys, the status-line hint, the `?` overlay,
+and `amux attach`. Now a single policy answers it per agent, from the
+agent's kind, its read-only flag and whether it lives on this machine.
+
+Two rules come out of it. A session with no terminal behind it — a
+read-only viewer, or a Claude session driven over a structured protocol —
+has no raw mode at all, so no entry key can hand it to attach, the `o` and
+Ctrl+Enter rows disappear from its help, and its hint reads `enter chat`
+and nothing else. An agent on another machine keeps both ways in but
+defaults to the chat: the chat travels over the connection the fleet
+already holds, while raw attach pipes a terminal across the network, so
+the safe half of the pair leads and `o` still reaches the other one.
+`amux attach` follows the same rule for a remote agent as the fleet does.
+
+The status line now names the ways into the selected row before the rest
+of its hints, dropping them first when the terminal is too narrow to hold
+everything — the fleet goldens are regenerated for that line.
+
+2026-09-05 — **Say which order an elicitation form is in, and stop the
+Claude chat from copying its feed every frame.**
+An MCP server's form is drawn one field per property, and the reference
+said those fields follow the order the schema declared them in. They never
+could: a JSON object's keys do not keep their written order once the
+request has been read, so what reaches the chat is name order. The docs and
+the two doc comments now say that and why, and a new golden pins a schema
+whose properties are written release/assignee/component and drawn
+assignee/component/release, filled in that same order.
+
+The same chat also rebuilt its paint-cache key by deep-copying every feed
+entry and its segments on every frame, which is exactly the work the cache
+exists to avoid. The key is now a pair of borrows compared against what the
+cache holds, and the owned copy is made only when a block is really
+repainted. The repaint and frame-budget suite, which had covered only the
+two older chats, now runs all five of its checks against this one too: a
+thousand-entry feed repaints nothing on a keystroke, a wheel event or a
+row count, and its cold and warm frames are byte-identical.
+
+2026-09-05 — **Give the rest of the stream-JSON tests a deadline that
+survives a busy machine.**
+The same failure that hit the launch tests was still latent elsewhere: a
+handful of waits gave a spawned helper or a session task one or two seconds
+to produce its first output. Those waits only ever proved that something
+finishes at all, never that it finishes quickly, so each is now a named
+thirty-second budget that only a genuine hang can trip. Two of them also
+spun on `yield_now` while waiting for a subprocess to fill a channel, which
+competed with that subprocess for the core it needed; they sleep a
+millisecond between checks instead. Twelve copies of the affected suite run
+concurrently take up to six seconds each where one alone takes half a second
+— the margin the old budgets did not have.
+
+2026-09-05 — **Stop the stream-JSON launch tests from failing on a busy
+machine.**
+Three tests start a real stand-in `claude` binary and then wait a couple of
+seconds for its first output. On a machine that is also compiling something
+else the child does not always get that far, so the tests failed with a
+timeout while the code under test was fine. They now share one generous
+deadline that only fires on a genuine hang, and the test that reads back the
+arguments Claude was launched with waits for the capture to appear instead of
+assuming a fixed pause was long enough. The stand-ins write that capture to a
+neighbouring path and rename it into place, so a file that exists is never a
+half-written one.
+
+2026-09-05 — **Name every screen of a stream-JSON Claude session, and ban the
+words that would give its machinery away.**
+The deterministic fixture registry gained thirteen states: the idle
+conversation, a reply still arriving, all five asks, the subagent list, the
+context meter and its breakdown overlay, a thousand-entry feed and the same
+feed scrolled back, plus a fleet holding a Claude session on each driver
+beside a Codex one. Each is folded from rows in the shapes the daemon really
+records, and the overlay is opened by the chord a person presses, so a
+capture can never show a screen the program cannot reach. The screenshot tool
+renders them in its chat, agent-specific, scroll and fleet sets, takes wheel
+recordings of a stream-JSON session — which it used to refuse, because no
+long feed folded those rows — and gains a parity set that puts the same
+surface from all three chats side by side under names that group each triple.
+A new scan reads every committed golden frame and every named state in both
+themes and fails if any of them says sdk, pty, driver, backend, claude_sdk_v1
+or unsupported. It reads words rather than letters, so `empty` is fine and
+`claude-sdk-idle` is not; the review page is exempt, because it paints a
+repository's own diff. The scan caught the one thing already saying it: the
+golden fixture's agent was named after its driver, and is now called
+fix-sync like any other piece of work.
+
+2026-09-05 — **Show what a Claude SDK session is spending and delegating.**
+The row under the feed now carries the passive context meter — used tokens
+against the window the session reported, `unknown` before any usage has
+arrived — beside the count of subagents still out. A leader chord asks the
+session where its context went and opens the answer over the frame, category
+by category, saying how old the snapshot is; it costs one round trip and
+refetches only when asked again. A subagent's block reads for what a person
+wants from it: where a running one has got to, and what a finished one came
+back with and cost. An MCP server that is not ready is stated once above the
+feed, naming who is in which state, and a session whose servers are all
+connected says nothing. The rule that closes a turn now prices it. Every
+surface is drawn from sessions the daemon really recorded, including a real
+unauthenticated MCP server and a real context breakdown.
+
+2026-09-05 — **Answer every kind of Claude SDK ask from the chat.**
+A session driven over stream-JSON now docks whatever it is waiting on where
+the composer sits, in the numbered-list idiom both Claude chats already use:
+a permission with the document it would write, a plan opening the reader with
+the three-way review, the question form with its tabs and free-text row, an
+MCP server's elicitation as a form derived from the schema it sent, and a
+dialog rendered by kind. A schema of nested objects and a dialog payload in no
+answerable shape both render blocked, stating the reason and offering only the
+answers that need no fields — nothing that reads as agreement, and never the
+payload's own JSON. The panel and the answer encoder read one derivation of
+what a dialog offers, so a choice on screen is always a choice that encodes.
+Esc steps back a stage without answering and never dismisses a pending ask;
+read-only chats state the fact and wait. Eleven tests over recorded permission
+and elicitation sessions, with plan, question and dialog requests appended in
+the shapes the protocol documents, lock both themes.
+
+2026-09-05 — **Give a Claude session over stream-JSON its own chat screen.**
+The placeholder that named a protocol it could not read is gone; a Claude
+session driven over stream-JSON now opens a real chat inside the shared frame.
+The header carries the model and the permission mode the session reported; the
+feed paints prompts, replies still arriving, thinking, tools, subagent tasks,
+turn rules, compaction, boundaries and messages from other agents through the
+shared block vocabulary. Enter sends, Ctrl+X interrupts, Shift+Tab cycles the
+permission mode, Ctrl+V attaches, Ctrl+T reopens accepted plans and the leader
+review chord freezes a diff. Accepted plans are derived from the feed's own
+tool rows rather than kept a second time beside them, so the reader takes its
+plan list borrowed or owned. The `?` overlay moved into the shared Claude
+module, which both chats now build from one binding table. Goldens over five
+recorded sessions lock the frames in both themes.
+
+2026-09-05 — **Give exited Claude agents equal fleet attention.**
+An exited SDK session now reports idle attention, matching Claude PTY while
+keeping chat input closed. Agreement specs check the same status and badge
+attention for both, recency ordering with either backend newer, and removal
+of both children's asks from their parent's family needs after exit. The
+projection invariant still detects an exited card retaining working attention.
+
+2026-09-05 — **Replay Claude SDK conversations and agent messages in specs.**
+Recorded streaming, tool-use and interrupted sessions now exercise typed
+client commands, accepted prompt echoes and readiness for another prompt.
+Each message passes the same differential replay and invariant checks as the
+whole spec suite. Agent-message specs retain sender, delivery, completion and
+empty-exit facts; the outbound MCP capture gains the SDK envelope identity it
+omitted and verifies the unchanged send call paired with its result. Offline
+state captures preserve these boundaries without claiming live screen coverage.
+
+2026-09-05 — **Retain accepted Claude SDK prompts for every chat reader.**
+Successful prompt writes now publish an identifiable user row before replies
+and retain it for reconnect replay. UUID inputs reconcile the sender's echo;
+the attachment metadata key and native image blocks travel with the prompt.
+Failed writes publish only an error receipt. A held-flush transport regression
+checks fast replies, concurrent readers, repeated text and replay; strict
+recordings and feed specs now include the actual accepted prompts.
+
+2026-09-05 — **Connect Claude SDK chats to streams, session facts and attachments.**
+Local SDK agents now subscribe eagerly for fleet attention; remote and read-only
+agents subscribe when opened. The runtime requests bounded SDK replay and decodes
+its rows instead of rejecting the protocol. Attachment metadata and fetched
+review patches reach the SDK layer, and prompt uploads preserve their artifact
+pins through the native input. Typed model, mode, MCP, slash-command and context
+facts live beside the feed. Specs cover subscription retries, family needs,
+attachment dispatch and checkpoint replay; runtime tests pin the wire boundary.
+
+2026-09-05 — **Send typed Claude SDK commands and keep pending answers honest.**
+Prompts, all five answer kinds, interruption, permission-mode cycling, model
+selection and deliberate context requests now reduce to SDK-native input
+effects. Writes share the session gate and finish local refusals immediately.
+Plan approvals send explicit session mode updates; questions preserve tool
+input and forms validate required fields and types. Prompt echoes and answered
+asks await authoritative rows, while correlated failures make drafts retryable.
+Accepted rows take precedence over late transport errors. The write specs cover
+encodings, gates, attachment dispatch, retries and checkpoint replay.
+
+2026-09-05 — **Derive Claude SDK phase, attention and input readiness together.**
+One session classification now drives chat phase, fleet attention and the prompt
+gate from authoritative turn results and stream lifecycle. Working does not
+expire with time. Permission, plan, question, elicitation and dialog requests
+queue independently of retained content, preserving their full answer payloads.
+Flat elicitation schemas expose typed fields; unsupported schemas retain the
+request with an explicit reason. Reducer specs check projection agreement after
+every message, reconnect and exit behavior, content eviction, and checkpoint
+replay of recorded requests.
+
+2026-09-05 — **Fold Claude SDK rows into a bounded typed chat feed.**
+Streaming text, thinking and tool input reconcile with final assistant blocks
+by message and block identity. Tool results and subagent task updates retain
+their original positions; turn results expose usage and cost. Agent messages,
+compaction, reset, status and unknown rows have distinct feed entries. Stream
+closure stops unfinished blocks, while retained history and clipped content
+report their losses separately. Recorded-row specs cover the public feed and
+checkpoint replay, including interleaved parent and child streams.
+
+2026-09-05 — **Reset Claude SDK context usage after compaction and clearing.**
+Compaction now publishes the provider's post-compaction token count with the
+known model window. If that count is absent, or the conversation is cleared,
+the meter becomes unknown. Regression tests cover both transitions, including
+zero tokens, and recorded compaction and clearing rows pin the client output.
+
+2026-09-05 — **Pinned Claude SDK agent-message delivery and lifecycle carriers.**
+Offline subprocess fixtures now exercise a parent message reaching an SDK
+child, its successful result becoming a completion notification, and its
+process exit becoming an exit notification. Both notifications pass through
+the SDK parent's real delivery adapter into frozen chat rows. The checks
+verify envelope identity, escaped multiline text, continued child liveness
+after completion, and removal after exit. Fixture registration shares the
+production exit monitor used by new and resumed sessions.
+
+2026-09-05 — **Added Claude SDK session controls and passive context facts.**
+Clients can change permission mode or model, restore the launch model, and
+request a context breakdown. Facts accompany readiness, model and mode
+acknowledgements, initialization, status changes, and assistant/result rows.
+The meter counts the latest parent assistant call's input and cache tokens;
+result rows supply the matching model's window without polling the provider.
+Bypass requires a launch grant, including when requested in a permission
+answer. Frozen protobuf shapes, strict recorded controls and MCP replays,
+and a synthetic transport check cover the new boundary and its idle silence.
+
+2026-09-05 — **Made Claude SDK elicitation and dialog asks answerable.**
+The daemon now publishes typed pending asks and waits for a client decision.
+The protobuf inputs preserve provider result payloads, including extensions;
+resolved rows precede input acknowledgements, unknown or repeated answers
+return an error, and session exit resolves every remaining ask. Debug reports
+include all three transport ask kinds. Strict replay of the accepted MCP
+elicitation now produces a frozen client row fixture. Synthetic stream-JSON
+dialog tests preserve unknown dialog kinds and opaque payloads without
+claiming a recorded provider dialog.
+
+2026-09-05 — **Enabled streaming in managed Claude SDK sessions.** Launches
+now request partial messages, with a captured-argv test proving the flag
+reaches Claude. Recorded streaming, subagent activity, compaction, clearing,
+and turn-limit sessions now replay through the daemon into frozen client row
+fixtures. Stream events are checked against the original inbound JSON, and
+the codec preserves explicit null stop fields in opening stream messages.
+The subagent fixture retains completion notifications after the first result.
+
+2026-09-04 — **Gave both Claude chats one set of ask surfaces.** The ask
+panels, the panel stage machine, the fullscreen reader, the review draft and
+Claude's document chrome now live in one presentation module beside the
+provider facts they read. A chat hands them a borrowed view of its own pending
+ask — the tool invocation, the questions, the suggestions, the ask-time
+document, whether an answer is in flight and, when its transport cannot carry
+one, why — so nothing in the panels or the reader knows how the ask arrived or
+how the answer will be encoded. Claude's permission suggestion facts moved into
+the shared facts module for the same reason. The PTY chat consumes the result
+unchanged: every chat, agent-to-agent and review golden is byte-identical.
+
+2026-09-04 — **Shared Claude's provider facts between chat layers.** Claude
+tool invocations, question and plan facts, ask-time documents, and inbound
+agent-message envelope parsing now live in one provider-specific facts module.
+The existing PTY fold consumes that module without changing its public types,
+serialized shapes, tolerant parsing, or feed and ask behavior, leaving the SDK
+chat free to read the same Claude vocabulary without sharing PTY lifecycle
+inferences.
+
+2026-09-04 — **Kept user hooks owned by Claude's settings.** The managed SDK
+launch now has a boundary test that captures the real provider argument vector
+and proves it carries no setting-source restriction, no merged hook block, and
+no SDK hook subscription. An opt-in live harness installs one Stop hook in an
+isolated Claude config directory, runs it through direct print mode and an amux
+SDK agent, and preserves both observable marker files for comparison.
+
+2026-09-04 — **Made the Claude driver a creation default.** Configuration now
+accepts a closed `claude.driver` setting with `pty` as the shipped default and
+`sdk` as the alternative. One resolver applies explicit command-line choice
+before configuration, and the command-line, fleet create action, and managed
+agent spawn tool all use it. Focused tests cover absent configuration, SDK
+configuration, explicit PTY override, and rejected Claude-section keys.
 
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by
@@ -8193,3 +8740,48 @@ reports whether the body actually moved. Learning the screen size split in two
 for this: keys go on using the setter that pulls the body back to the cursor,
 while the wheel only resizes, because following the cursor there would have
 undone each notch before the next one arrived.
+
+2026-09-04 — **The design record for Claude's stream-JSON chat.** Claude driven
+over stream-JSON now has a written chat design in `docs/CLAUDE_SDK.md`: session
+facts on a second header line, an assistant message that is genuinely open
+while it streams and is replaced by its final row, a task block per subagent
+run, a context meter read passively from the usage that arrives anyway, and a
+per-category breakdown fetched only when someone asks for it. Five asks are
+specified with wireframes and with the wire shapes recorded against Claude Code
+2.1.260: permission, question and plan review all arrive on the permission
+channel, while an MCP elicitation and a user dialog have their own request ids
+and answer shapes. Two findings from the recordings shaped the plan review.
+A bare allow on `ExitPlanMode` is followed by a status row switching the session
+to accept-edits, so approving a plan *manually* has to send the mode back to
+default explicitly or it silently means the same thing as approving
+automatically. And no user dialog has ever been recorded — the kind is an open
+string — so a payload with a message and labelled options is answered as a
+choice and anything else renders visibly blocked with cancel, rather than
+guessing at a live agent's request. The record ends with a table naming, per
+surface, whether the terminal-driven Claude chat and the Codex chat take it up
+or which backend capability they lack: streaming is impossible on a
+burst-written transcript but free in Codex, the terminal chat's context meter
+can have no denominator because no row states the window, and neither of the
+other two gets a task list for want of a task lifecycle. `docs/UI.md` now
+states the boundary between the two Claude layers: they share the provider's
+own tool vocabulary and nothing else.
+
+2026-09-04 — **The SDK replay registry names only observed traffic.** The
+question, plan-review and accepted-elicitation captures from Claude Code
+2.1.260 now replay as part of the complete SDK corpus. The attempted user
+dialog scenario did not produce a dialog frame, so its executable probe stays
+available for future investigation but is no longer advertised as recorded
+evidence. This keeps the strict corpus check honest: every registered
+specification has a manifest and consumes its captured stream completely.
+
+## Context breakdown fixture carries a whole reply
+
+The named state behind the context-breakdown screenshot pressed the chord
+and got an empty overlay: its hand-written context row carried only a
+threshold and category names, so the typed reply failed to parse and the
+chat held no breakdown at all. The row is now a complete reply — every
+category other than free space adds up to the meter's own count — and the
+named state carries the request the chord issues through to its answer, so
+the footer states how old the numbers are instead of calling them an
+anonymous snapshot. A test renders that state and fails if the overlay
+ever goes back to painting its waiting line.

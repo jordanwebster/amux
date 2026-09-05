@@ -5,6 +5,7 @@
 //! `amux.attachments` row is also synthesized here. Both are a closed enum so
 //! additions require a protocol change and a frozen-shape test.
 
+pub use claude::sdk::init::ContextUsage;
 use prost::Message as ProstMessage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,9 +46,24 @@ pub enum ClaudeSdkV1Input {
         image_blocks: Vec<claude::sdk::ContentBlock>,
     },
     Interrupt,
+    SetPermissionMode {
+        mode: claude::sdk::PermissionMode,
+    },
+    SetModel {
+        model: Option<String>,
+    },
+    RequestContextBreakdown,
     PermissionDecision {
         request_id: String,
         decision: claude::sdk::PermissionResult,
+    },
+    ElicitationDecision {
+        request_id: String,
+        result: claude::sdk::ElicitationResult,
+    },
+    DialogDecision {
+        request_id: String,
+        result: claude::sdk::UserDialogResult,
     },
 }
 
@@ -71,6 +87,40 @@ pub enum ClaudeSdkSynthesized {
         request_id: String,
         decision: String,
     },
+    #[serde(rename = "amux.claude_sdk.elicitation_required")]
+    ElicitationRequired {
+        request_id: String,
+        server: Option<String>,
+        message: String,
+        schema: Value,
+    },
+    #[serde(rename = "amux.claude_sdk.elicitation_resolved")]
+    ElicitationResolved {
+        request_id: String,
+        decision: String,
+    },
+    #[serde(rename = "amux.claude_sdk.dialog_required")]
+    DialogRequired {
+        request_id: String,
+        dialog_kind: String,
+        payload: Value,
+    },
+    #[serde(rename = "amux.claude_sdk.dialog_resolved")]
+    DialogResolved {
+        request_id: String,
+        decision: String,
+    },
+    #[serde(rename = "amux.claude_sdk.session_facts")]
+    SessionFacts {
+        model: Option<String>,
+        permission_mode: Option<String>,
+        context: Option<ContextMeter>,
+        mcp_servers: Vec<McpServerFact>,
+    },
+    #[serde(rename = "amux.claude_sdk.context_breakdown")]
+    ContextBreakdown {
+        usage: Box<claude::sdk::init::ContextUsage>,
+    },
     #[serde(rename = "amux.claude_sdk.input_result")]
     InputResult { input_id: Vec<u8>, outcome: String },
     #[serde(rename = "amux.claude_sdk.message")]
@@ -80,6 +130,31 @@ pub enum ClaudeSdkSynthesized {
         input_id: Option<String>,
         refs: Vec<ArtifactRef>,
     },
+}
+
+/// Latest observed context size, with a passively observed window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextMeter {
+    pub used_tokens: u64,
+    pub window_tokens: Option<u64>,
+    pub source: ContextMeterSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextMeterSource {
+    AssistantUsage,
+    ResultUsage,
+    AssistantContextUsage,
+    CompactBoundary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpServerFact {
+    pub name: String,
+    pub status: String,
 }
 
 /// One row on `claude_sdk_v1`.
@@ -180,6 +255,30 @@ pub(crate) fn decode_claude_sdk_v1_input(
             image_blocks: Vec::new(),
         }),
         wire::claude_sdk_v1_input::Input::Interrupt(_) => Ok(ClaudeSdkV1Input::Interrupt),
+        wire::claude_sdk_v1_input::Input::SetPermissionMode(input) => {
+            Ok(ClaudeSdkV1Input::SetPermissionMode {
+                mode: serde_json::from_value(Value::String(input.mode))
+                    .map_err(|error| invalid_input(format!("invalid permission mode: {error}")))?,
+            })
+        }
+        wire::claude_sdk_v1_input::Input::SetModel(input) => {
+            Ok(ClaudeSdkV1Input::SetModel { model: input.model })
+        }
+        wire::claude_sdk_v1_input::Input::RequestContextBreakdown(_) => {
+            Ok(ClaudeSdkV1Input::RequestContextBreakdown)
+        }
+        wire::claude_sdk_v1_input::Input::ElicitationDecision(decision) => {
+            Ok(ClaudeSdkV1Input::ElicitationDecision {
+                request_id: decision.request_id,
+                result: decode_json(&decision.result_json, "elicitation result_json")?,
+            })
+        }
+        wire::claude_sdk_v1_input::Input::DialogDecision(decision) => {
+            Ok(ClaudeSdkV1Input::DialogDecision {
+                request_id: decision.request_id,
+                result: decode_json(&decision.result_json, "dialog result_json")?,
+            })
+        }
         wire::claude_sdk_v1_input::Input::PermissionDecision(permission) => {
             let decision = permission
                 .decision
@@ -231,8 +330,35 @@ pub fn encode_claude_sdk_v1_input(input: ClaudeSdkV1Input) -> Result<Vec<u8>, Pr
         ClaudeSdkV1Input::Prompt { text, .. } => {
             wire::claude_sdk_v1_input::Input::Prompt(wire::ClaudeSdkPrompt { text })
         }
+        ClaudeSdkV1Input::SetPermissionMode { mode } => {
+            wire::claude_sdk_v1_input::Input::SetPermissionMode(wire::ClaudeSdkSetPermissionMode {
+                mode: mode.as_str().to_string(),
+            })
+        }
+        ClaudeSdkV1Input::SetModel { model } => {
+            wire::claude_sdk_v1_input::Input::SetModel(wire::ClaudeSdkSetModel { model })
+        }
+        ClaudeSdkV1Input::RequestContextBreakdown => {
+            wire::claude_sdk_v1_input::Input::RequestContextBreakdown(
+                wire::ClaudeSdkRequestContextBreakdown {},
+            )
+        }
         ClaudeSdkV1Input::Interrupt => {
             wire::claude_sdk_v1_input::Input::Interrupt(wire::ClaudeSdkInterrupt {})
+        }
+        ClaudeSdkV1Input::ElicitationDecision { request_id, result } => {
+            wire::claude_sdk_v1_input::Input::ElicitationDecision(
+                wire::ClaudeSdkElicitationDecision {
+                    request_id,
+                    result_json: encode_json(&result, "elicitation result")?,
+                },
+            )
+        }
+        ClaudeSdkV1Input::DialogDecision { request_id, result } => {
+            wire::claude_sdk_v1_input::Input::DialogDecision(wire::ClaudeSdkDialogDecision {
+                request_id,
+                result_json: encode_json(&result, "dialog result")?,
+            })
         }
         ClaudeSdkV1Input::PermissionDecision {
             request_id,
@@ -401,6 +527,156 @@ mod tests {
     }
 
     #[test]
+    fn claude_sdk_ask_inputs_preserve_provider_results_and_freeze_wire_shape() {
+        for (dialog, result) in [
+            (
+                false,
+                json!({"action": "accept", "content": {"choice": "a"}, "future": [1, null]}),
+            ),
+            (false, json!({"action": "accept"})),
+            (false, json!({"action": "decline"})),
+            (false, json!({"action": "cancel"})),
+            (
+                true,
+                json!({"behavior": "completed", "result": [null, {"ok": true}], "future": 42}),
+            ),
+            (true, json!({"behavior": "completed", "result": null})),
+            (true, json!({"behavior": "cancelled"})),
+        ] {
+            let input = if dialog {
+                ClaudeSdkV1Input::DialogDecision {
+                    request_id: "r".into(),
+                    result: serde_json::from_value(result.clone()).unwrap(),
+                }
+            } else {
+                ClaudeSdkV1Input::ElicitationDecision {
+                    request_id: "r".into(),
+                    result: serde_json::from_value(result.clone()).unwrap(),
+                }
+            };
+            let expected = input_as_json(&input);
+            let encoded = encode_claude_sdk_v1_input(input).unwrap();
+            let decoded = decode_claude_sdk_v1_input(&encoded).unwrap();
+            assert_eq!(input_as_json(&decoded), expected);
+
+            // Freeze the oneof tags and the nested request-id/result field numbers.
+            let json_bytes = match decoded {
+                ClaudeSdkV1Input::DialogDecision { result, .. } => {
+                    serde_json::to_vec(&result).unwrap()
+                }
+                ClaudeSdkV1Input::ElicitationDecision { result, .. } => {
+                    serde_json::to_vec(&result).unwrap()
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                serde_json::from_slice::<Value>(&json_bytes).unwrap(),
+                result
+            );
+            assert!(json_bytes.len() + 5 < 128);
+            let mut expected_wire = vec![
+                if dialog { 114 } else { 106 },
+                (json_bytes.len() + 5) as u8,
+                10,
+                1,
+                b'r',
+                18,
+                json_bytes.len() as u8,
+            ];
+            expected_wire.extend(json_bytes);
+            assert_eq!(encoded, expected_wire);
+        }
+    }
+
+    #[test]
+    fn claude_sdk_context_breakdown_shape_preserves_provider_extensions() {
+        let usage = json!({"categories": [{"name": "messages", "tokens": 42, "color": "blue", "extra": true}],
+            "totalTokens": 42, "maxTokens": 200000, "rawMaxTokens": 200000, "percentage": 0.021,
+            "gridRows": [], "model": "model", "memoryFiles": [], "mcpTools": [], "agents": [],
+            "isAutoCompactEnabled": true, "apiUsage": null, "future": [1, null]});
+        let row = ClaudeSdkSynthesized::ContextBreakdown {
+            usage: serde_json::from_value(usage.clone()).unwrap(),
+        };
+        let value = ClaudeSdkV1Row::Synthesized(row.clone()).into_json();
+        assert_eq!(
+            value,
+            json!({"type": "amux.claude_sdk.context_breakdown", "usage": usage})
+        );
+        assert_eq!(
+            ClaudeSdkV1Row::from_json(value.clone()).unwrap(),
+            ClaudeSdkV1Row::Synthesized(row)
+        );
+        let mut invalid = value;
+        invalid["unexpected"] = json!(true);
+        assert!(ClaudeSdkV1Row::from_json(invalid).is_err());
+    }
+
+    #[test]
+    fn claude_sdk_session_input_wire_shapes_are_frozen() {
+        for (input, expected) in [
+            (
+                ClaudeSdkV1Input::SetPermissionMode {
+                    mode: claude::sdk::PermissionMode::Plan,
+                },
+                vec![122, 6, 10, 4, b'p', b'l', b'a', b'n'],
+            ),
+            (
+                ClaudeSdkV1Input::SetModel {
+                    model: Some("x".into()),
+                },
+                vec![130, 1, 3, 10, 1, b'x'],
+            ),
+            (ClaudeSdkV1Input::SetModel { model: None }, vec![130, 1, 0]),
+            (
+                ClaudeSdkV1Input::SetModel {
+                    model: Some(String::new()),
+                },
+                vec![130, 1, 2, 10, 0],
+            ),
+            (ClaudeSdkV1Input::RequestContextBreakdown, vec![138, 1, 0]),
+        ] {
+            let shape = input_as_json(&input);
+            let bytes = encode_claude_sdk_v1_input(input).unwrap();
+            assert_eq!(bytes, expected);
+            assert_eq!(
+                input_as_json(&decode_claude_sdk_v1_input(&bytes).unwrap()),
+                shape
+            );
+        }
+    }
+
+    #[test]
+    fn claude_sdk_malformed_ask_results_are_rejected() {
+        for result_json in [
+            b"".to_vec(),
+            b"not-json".to_vec(),
+            br#"{"action":"unknown"}"#.to_vec(),
+            b"null".to_vec(),
+        ] {
+            for input in [
+                wire::claude_sdk_v1_input::Input::ElicitationDecision(
+                    wire::ClaudeSdkElicitationDecision {
+                        request_id: "r".into(),
+                        result_json: result_json.clone(),
+                    },
+                ),
+                wire::claude_sdk_v1_input::Input::DialogDecision(wire::ClaudeSdkDialogDecision {
+                    request_id: "r".into(),
+                    result_json: result_json.clone(),
+                }),
+            ] {
+                let encoded = wire::ClaudeSdkV1Input { input: Some(input) }.encode_to_vec();
+                assert!(
+                    decode_claude_sdk_v1_input(&encoded)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("result_json must be JSON")
+                );
+            }
+        }
+    }
+
+    #[test]
     fn malformed_nested_permission_json_is_rejected() {
         let encoded = wire::ClaudeSdkV1Input {
             input: Some(wire::claude_sdk_v1_input::Input::PermissionDecision(
@@ -427,8 +703,35 @@ mod tests {
     }
 
     #[test]
-    fn synthesized_row_json_shape_is_frozen() {
+    fn claude_sdk_synthesized_row_json_shape_is_frozen() {
         let cases = [
+            (
+                ClaudeSdkSynthesized::SessionFacts {
+                    model: Some("model".into()),
+                    permission_mode: Some("plan".into()),
+                    context: Some(ContextMeter {
+                        used_tokens: 42,
+                        window_tokens: Some(200000),
+                        source: ContextMeterSource::AssistantUsage,
+                    }),
+                    mcp_servers: vec![McpServerFact {
+                        name: "tools".into(),
+                        status: "connected".into(),
+                    }],
+                },
+                json!({"type": "amux.claude_sdk.session_facts", "model": "model", "permission_mode": "plan",
+                    "context": {"used_tokens": 42, "window_tokens": 200000, "source": "assistant_usage"},
+                    "mcp_servers": [{"name": "tools", "status": "connected"}]}),
+            ),
+            (
+                ClaudeSdkSynthesized::SessionFacts {
+                    model: None,
+                    permission_mode: None,
+                    context: None,
+                    mcp_servers: vec![],
+                },
+                json!({"type": "amux.claude_sdk.session_facts", "model": null, "permission_mode": null, "context": null, "mcp_servers": []}),
+            ),
             (
                 ClaudeSdkSynthesized::Ready {
                     session_id: "session-1".to_string(),
@@ -457,6 +760,46 @@ mod tests {
                     decision: "allow".to_string(),
                 },
                 json!({"type": "amux.claude_sdk.permission_resolved", "request_id": "permission-1", "decision": "allow"}),
+            ),
+            (
+                ClaudeSdkSynthesized::ElicitationRequired {
+                    request_id: "e".into(),
+                    server: Some("forms".into()),
+                    message: "Pick one".into(),
+                    schema: json!({"type": "object"}),
+                },
+                json!({"type": "amux.claude_sdk.elicitation_required", "request_id": "e", "server": "forms", "message": "Pick one", "schema": {"type": "object"}}),
+            ),
+            (
+                ClaudeSdkSynthesized::ElicitationRequired {
+                    request_id: "e".into(),
+                    server: None,
+                    message: "Pick one".into(),
+                    schema: Value::Null,
+                },
+                json!({"type": "amux.claude_sdk.elicitation_required", "request_id": "e", "server": null, "message": "Pick one", "schema": null}),
+            ),
+            (
+                ClaudeSdkSynthesized::ElicitationResolved {
+                    request_id: "e".into(),
+                    decision: "accept".into(),
+                },
+                json!({"type": "amux.claude_sdk.elicitation_resolved", "request_id": "e", "decision": "accept"}),
+            ),
+            (
+                ClaudeSdkSynthesized::DialogRequired {
+                    request_id: "d".into(),
+                    dialog_kind: "Future.Kind".into(),
+                    payload: json!([null, {"x": [1, 2]}]),
+                },
+                json!({"type": "amux.claude_sdk.dialog_required", "request_id": "d", "dialog_kind": "Future.Kind", "payload": [null, {"x": [1, 2]}]}),
+            ),
+            (
+                ClaudeSdkSynthesized::DialogResolved {
+                    request_id: "d".into(),
+                    decision: "completed".into(),
+                },
+                json!({"type": "amux.claude_sdk.dialog_resolved", "request_id": "d", "decision": "completed"}),
             ),
             (
                 ClaudeSdkSynthesized::InputResult {
@@ -500,6 +843,9 @@ mod tests {
         for (row, expected) in cases {
             let value = ClaudeSdkV1Row::Synthesized(row.clone()).into_json();
             assert_eq!(value, expected);
+            let mut unknown_field = value.clone();
+            unknown_field["unexpected"] = json!(true);
+            assert!(ClaudeSdkV1Row::from_json(unknown_field).is_err());
             assert_eq!(
                 ClaudeSdkV1Row::from_json(value).unwrap(),
                 ClaudeSdkV1Row::Synthesized(row)
@@ -508,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn synthesized_namespace_is_closed() {
+    fn claude_sdk_synthesized_namespace_is_closed() {
         for invalid in [
             json!({"type": "amux.claude_sdk.unknown"}),
             json!({"type": "amux.claude_sdk.ready", "session_id": "session-1", "resumed": false, "unexpected": true}),
@@ -543,7 +889,20 @@ mod tests {
     fn input_as_json(input: &ClaudeSdkV1Input) -> Value {
         match input {
             ClaudeSdkV1Input::Prompt { text, .. } => json!({"prompt": text}),
+            ClaudeSdkV1Input::SetPermissionMode { mode } => {
+                json!({"type": "set_permission_mode", "mode": mode})
+            }
+            ClaudeSdkV1Input::SetModel { model } => json!({"type": "set_model", "model": model}),
+            ClaudeSdkV1Input::RequestContextBreakdown => {
+                json!({"type": "request_context_breakdown"})
+            }
             ClaudeSdkV1Input::Interrupt => json!({"interrupt": {}}),
+            ClaudeSdkV1Input::ElicitationDecision { request_id, result } => json!({
+                "elicitation_decision": {"request_id": request_id, "result": result}
+            }),
+            ClaudeSdkV1Input::DialogDecision { request_id, result } => json!({
+                "dialog_decision": {"request_id": request_id, "result": result}
+            }),
             ClaudeSdkV1Input::PermissionDecision {
                 request_id,
                 decision,

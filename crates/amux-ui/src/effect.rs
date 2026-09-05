@@ -29,6 +29,9 @@ pub enum InputPayload {
     Codex {
         payload: CodexInput,
     },
+    ClaudeSdk {
+        payload: crate::claude_sdk::ClaudeSdkInput,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

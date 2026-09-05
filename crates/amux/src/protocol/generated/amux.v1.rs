@@ -196,7 +196,10 @@ pub struct ClaudeSdkV1Output {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkV1Input {
-    #[prost(oneof = "claude_sdk_v1_input::Input", tags = "10, 11, 12")]
+    #[prost(
+        oneof = "claude_sdk_v1_input::Input",
+        tags = "10, 11, 12, 13, 14, 15, 16, 17"
+    )]
     pub input: ::core::option::Option<claude_sdk_v1_input::Input>,
 }
 /// Nested message and enum types in `ClaudeSdkV1Input`.
@@ -209,6 +212,16 @@ pub mod claude_sdk_v1_input {
         Interrupt(super::ClaudeSdkInterrupt),
         #[prost(message, tag = "12")]
         PermissionDecision(super::ClaudeSdkPermissionDecision),
+        #[prost(message, tag = "13")]
+        ElicitationDecision(super::ClaudeSdkElicitationDecision),
+        #[prost(message, tag = "14")]
+        DialogDecision(super::ClaudeSdkDialogDecision),
+        #[prost(message, tag = "15")]
+        SetPermissionMode(super::ClaudeSdkSetPermissionMode),
+        #[prost(message, tag = "16")]
+        SetModel(super::ClaudeSdkSetModel),
+        #[prost(message, tag = "17")]
+        RequestContextBreakdown(super::ClaudeSdkRequestContextBreakdown),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -218,6 +231,22 @@ pub struct ClaudeSdkPrompt {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkInterrupt {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkElicitationDecision {
+    #[prost(string, tag = "1")]
+    pub request_id: ::prost::alloc::string::String,
+    /// Provider ElicitationResult JSON, including optional extension fields.
+    #[prost(bytes = "vec", tag = "2")]
+    pub result_json: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkDialogDecision {
+    #[prost(string, tag = "1")]
+    pub request_id: ::prost::alloc::string::String,
+    /// Provider UserDialogResult JSON; the completed result payload is opaque.
+    #[prost(bytes = "vec", tag = "2")]
+    pub result_json: ::prost::alloc::vec::Vec<u8>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkPermissionDecision {
     #[prost(string, tag = "1")]
@@ -253,6 +282,19 @@ pub struct ClaudeSdkPermissionDeny {
     #[prost(string, optional, tag = "3")]
     pub tool_use_id: ::core::option::Option<::prost::alloc::string::String>,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkSetPermissionMode {
+    #[prost(string, tag = "1")]
+    pub mode: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkSetModel {
+    /// Absent restores the launch model.
+    #[prost(string, optional, tag = "1")]
+    pub model: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkRequestContextBreakdown {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ClaudeDriver {

@@ -1,4 +1,4 @@
-  ci-triage · claude @ mbp                                                                      chat · read-only · idle 
+  ci-triage · claude @ mbp                                                 claude-haiku-4-5-20251001 · read-only · idle 
                                                                                                                         
 ▎   fix the flaky teardown                                                                                              
                                                                                                                         
@@ -33,7 +33,7 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
+    ctx 31.6k                                                                                                           
                                                                                                                         
   ⊘ read-only — you are observing this session                                                                          
                                                                                                                         

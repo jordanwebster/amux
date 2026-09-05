@@ -1400,6 +1400,11 @@ mod tests {
     use super::*;
     use crate::sdk::control::ControlRequestBody;
 
+    /// A wait here proves a task completes at all, not that it completes
+    /// quickly; a loaded machine can stall a runtime for seconds, so only a
+    /// genuine hang should trip this budget.
+    const TEST_DEADLINE: Duration = Duration::from_secs(30);
+
     fn test_inner(stdin_tx: mpsc::UnboundedSender<WriteCommand>) -> Arc<QueryInner> {
         Arc::new(QueryInner {
             session_id: "test-session".to_owned(),
@@ -1529,7 +1534,7 @@ mod tests {
         ack.send(Ok(())).unwrap();
         drop_pending_controls(inner.clone()).await;
 
-        let error = timeout(Duration::from_secs(1), task)
+        let error = timeout(TEST_DEADLINE, task)
             .await
             .expect("send_control should not hang")
             .expect("task should complete")

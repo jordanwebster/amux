@@ -26,6 +26,7 @@ use crate::chat::blocks::{
     paint_compaction_rule, paint_composer_block, paint_error, paint_header, paint_mcp_startup,
     paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
+use crate::chat::claude_shared::reader;
 use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph};
@@ -60,19 +61,12 @@ pub(crate) fn codex_frame_parts(
     let working = active_phase(&phase);
     let loading = matches!(phase, CodexPhase::Replaying);
 
-    // A child waiting on a person beats the session's own configuration:
-    // one is a person being blocked, the other is context that will still
-    // be true a minute from now.
-    let banner = match family_banner(model, chat.agent) {
-        Some(banner) => Some(family_banner_line(
+    let banner = family_banner(model, chat.agent).map(|banner| {
+        family_banner_line(
             &banner.row(banner_answerable(model, chat, &banner), chat.leader),
             theme,
-        )),
-        None => chat
-            .configuration_label
-            .as_deref()
-            .map(|label| configuration_row(label, theme)),
-    };
+        )
+    });
 
     let paused = matches!(viewport.scroll, FeedScroll::Paused { .. });
     ChatFrameParts {
@@ -92,15 +86,22 @@ pub(crate) fn codex_frame_parts(
         activity: crate::chat::queue::strip(
             model,
             chat.agent,
-            working.then(|| working_row(model, chat, &phase, ctx)),
+            activity_row(model, chat, &phase, ctx, working),
             theme,
             width,
             chat.inline_ask.is_none(),
         ),
         bottom: bottom_block(model, chat, theme, width, height, paused),
-        overlay: chat
-            .help
-            .then(|| help_overlay(model, chat, theme, width, height)),
+        overlay: if chat.help {
+            Some(help_overlay(model, chat, theme, width, height))
+        } else if chat.context_open {
+            Some(context_overlay(model, chat, theme, width, height))
+        } else if chat.reader.is_some() {
+            super::reader_context(model, chat)
+                .and_then(|ctx| reader::reader_frame(&ctx, theme, width, height))
+        } else {
+            None
+        },
     }
 }
 
@@ -128,20 +129,23 @@ fn header_row(
     if readonly && matches!(phase, CodexPhase::AwaitingApproval { .. }) {
         word = "needs owner".to_string();
     }
-    let right = if readonly {
-        "chat · read-only · "
-    } else {
-        "chat · "
-    };
-    paint_header(&name, (&word, style), right, theme, width)
-}
-
-/// The session's own settings, stated once under the header: what model
-/// this is, how it asks, and what it is allowed to touch.
-fn configuration_row(label: &str, theme: Theme) -> Line<'static> {
-    let mut line = Line::default();
-    push_span(&mut line, GLYPH_COL, label.to_string(), theme.muted());
-    line
+    // The session facts: what the turn runs on, whether it asks before
+    // acting, and what it may touch. They are settled when the session is
+    // created and the launcher hands them over, so a chat opened another
+    // way states none — the same "has not said yet" honesty the other two
+    // chats use for a fact that has not arrived.
+    let mut facts = chat.configuration.clone();
+    if readonly {
+        facts.push("read-only".to_string());
+    }
+    // Facts are context and the phase word is not, so a line too narrow
+    // to hold both drops facts from the least important end — the model
+    // first, then how it asks; what it may touch survives longest.
+    let mut right = blocks::fit_header_facts(&name, facts, &word, width);
+    if right.is_empty() {
+        right.push_str("chat · ");
+    }
+    paint_header(&name, (&word, style), &right, theme, width)
 }
 
 /// Whether this banner's chord would do anything from here: the child
@@ -160,45 +164,220 @@ fn family_banner_line(text: &str, theme: Theme) -> Line<'static> {
     line
 }
 
-fn working_row(
+/// The row between the feed and the composer: what the session is doing,
+/// how much of its context the thread has spent, and the keys that reach
+/// into a live turn.
+///
+/// The meter is a passive fact — whatever the session last reported the
+/// thread costing — so it is stated whenever this session has a layer at
+/// all, working or not, and says `unknown` before any report has arrived.
+fn activity_row(
     model: &Model,
     chat: &View,
     phase: &CodexPhase,
     ctx: &FrameContext,
-) -> Line<'static> {
-    let label = match phase {
-        CodexPhase::Responding { .. } => "responding",
-        CodexPhase::Executing { .. } => "executing",
-        _ => "thinking",
-    };
-    let spinner = SPINNER[ctx.now.timestamp().unsigned_abs() as usize % SPINNER.len()];
+    working: bool,
+) -> Option<Line<'static>> {
+    let layer = model.codex(chat.agent)?;
     let mut line = Line::default();
-    push_span(
-        &mut line,
-        GLYPH_COL,
-        format!("{spinner} {label}"),
-        ctx.theme.text(),
-    );
-    let mut hints = Vec::new();
+    if working {
+        let label = match phase {
+            CodexPhase::Responding { .. } => "responding",
+            CodexPhase::Executing { .. } => "executing",
+            _ => "thinking",
+        };
+        let spinner = SPINNER[ctx.now.timestamp().unsigned_abs() as usize % SPINNER.len()];
+        push_span(
+            &mut line,
+            GLYPH_COL,
+            format!("{spinner} {label}"),
+            ctx.theme.text(),
+        );
+    } else {
+        push_span(&mut line, TEXT_COL, "", ctx.theme.muted());
+    }
+
+    let mut facts = vec![meter_text(layer.token_usage())];
     // A docked child ask owns Enter and Ctrl+X while it is on screen, so
     // the activity line stops naming them: a hint that would do
     // something else than it says is worse than no hint (P10). The
     // panel's own rows say what those keys do instead.
-    if chat.inline_ask.is_none() {
+    if working && chat.inline_ask.is_none() {
         if amux_ui::codex::allows_steer(model, chat.agent) {
-            hints.push("enter steer");
+            facts.push("enter steer".to_string());
         }
         if amux_ui::codex::allows_interrupt(model, chat.agent) {
-            hints.push("ctrl+x interrupt");
+            facts.push("ctrl+x interrupt".to_string());
         }
     }
-    if !hints.is_empty() {
-        line.spans.push(Span::styled(
-            format!(" · {}", hints.join(" · ")),
-            ctx.theme.muted(),
-        ));
+    let joined = facts.join(" · ");
+    if working {
+        line.spans
+            .push(Span::styled(format!(" · {joined}"), ctx.theme.muted()));
+    } else {
+        line.spans.push(Span::styled(joined, ctx.theme.muted()));
     }
-    line
+    Some(line)
+}
+
+/// `ctx 30.0k/272.0k`, `ctx 30.0k` when no report has stated the window,
+/// and `ctx unknown` before the session has reported at all.
+fn meter_text(usage: Option<&TokenUsage>) -> String {
+    let Some(used) = usage.and_then(|usage| usage.total_tokens) else {
+        return "ctx unknown".to_string();
+    };
+    match usage.and_then(|usage| usage.model_context_window) {
+        Some(window) if window > 0 => {
+            format!("ctx {}/{}", fmt_tokens(used), fmt_tokens(window))
+        }
+        _ => format!("ctx {}", fmt_tokens(used)),
+    }
+}
+
+/// Where the thread's context went, over the whole frame.
+///
+/// Codex reports thread-wide totals, not a per-tool accounting, so this
+/// states input and output and says so — a coarse answer named as coarse
+/// is more useful than a fine one nobody can produce. Cached input and
+/// reasoning are shares of those two, shown underneath them, so the
+/// column never sums past the title. Nothing is fetched: the numbers
+/// arrived with the last turn.
+fn context_overlay(
+    model: &Model,
+    chat: &View,
+    theme: Theme,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let usage = model
+        .codex(chat.agent)
+        .and_then(|layer| layer.token_usage().cloned());
+
+    let title = match usage.as_ref().and_then(|usage| usage.total_tokens) {
+        Some(total) => match usage.as_ref().and_then(|usage| usage.model_context_window) {
+            Some(window) if window > 0 => format!(
+                "context · {} of {} tokens",
+                fmt_thousands(total),
+                fmt_thousands(window)
+            ),
+            _ => format!("context · {} tokens", fmt_thousands(total)),
+        },
+        None => "context".to_string(),
+    };
+
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    match &usage {
+        None => {
+            let mut line = Line::default();
+            push_span(
+                &mut line,
+                TEXT_COL,
+                "waiting for the session to report what its thread costs".to_string(),
+                theme.muted(),
+            );
+            rows.push(line);
+        }
+        Some(usage) => {
+            // Cached input is part of the input count and reasoning is
+            // part of the output count, so they are indented under the
+            // total they belong to. Four flat rows would invite the
+            // reader to add them up and get more than the title's total.
+            let categories: [(usize, &str, Option<u64>); 4] = [
+                (0, "input", usage.input_tokens),
+                (1, "of it cached", usage.cached_input_tokens),
+                (0, "output", usage.output_tokens),
+                (1, "of it reasoning", usage.reasoning_output_tokens),
+            ];
+            let widest = categories
+                .iter()
+                .map(|(depth, name, _)| depth * 2 + str_width(name))
+                .max()
+                .unwrap_or(0);
+            for (depth, name, tokens) in categories {
+                let indent = depth * 2;
+                let mut line = Line::default();
+                push_span(
+                    &mut line,
+                    TEXT_COL + indent,
+                    name.to_string(),
+                    if depth == 0 {
+                        theme.text()
+                    } else {
+                        theme.muted()
+                    },
+                );
+                push_span(
+                    &mut line,
+                    TEXT_COL + widest + 3,
+                    match tokens {
+                        Some(tokens) => fmt_thousands(tokens),
+                        None => "not reported".to_string(),
+                    },
+                    theme.muted(),
+                );
+                rows.push(line);
+            }
+        }
+    }
+
+    let body_h = height.saturating_sub(5).max(1);
+    rows.truncate(body_h);
+    while rows.len() < body_h {
+        rows.push(Line::default());
+    }
+
+    let footer = if chat.quit_guard.is_armed() {
+        crate::chat::claude_shared::armed_quit_line(theme)
+    } else {
+        let mut line = Line::default();
+        push_span(
+            &mut line,
+            TEXT_COL,
+            "input and output for the whole thread, not a per-tool accounting".to_string(),
+            theme.muted(),
+        );
+        line
+    };
+
+    let mut title_line = Line::default();
+    push_span(&mut title_line, GLYPH_COL, title, theme.emphasis());
+    crate::render::push_right(
+        &mut title_line,
+        "esc close".to_string(),
+        width,
+        theme.muted(),
+    );
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
+    lines.push(title_line);
+    lines.push(Line::default());
+    lines.push(reader::rule_line(width, theme));
+    lines.extend(rows);
+    lines.push(reader::rule_line(width, theme));
+    lines.push(footer);
+    lines.truncate(height);
+    lines
+}
+
+/// `128,000` — the overlay counts in full, where the meter abbreviates.
+fn fmt_thousands(count: u64) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// `31.6k` / `421` token counts (the compaction rule).
+fn fmt_tokens(count: u64) -> String {
+    if count >= 1000 {
+        format!("{:.1}k", count as f64 / 1000.0)
+    } else {
+        count.to_string()
+    }
 }
 
 fn active_phase(phase: &CodexPhase) -> bool {
@@ -811,17 +990,17 @@ fn entry_block(
             )
         }
         FeedEntryKind::Message(message) => {
-            let mut block = paint_assistant(key, &prose(&message.content), theme, width);
+            // A block still arriving carries the caret a person reads as
+            // "more is coming", in the same place the other chats put it.
+            let text = match message.finality {
+                ItemFinality::Open => format!("{}▌", prose(&message.content)),
+                _ => prose(&message.content),
+            };
+            let mut block = paint_assistant(key, &text, theme, width);
             if message.phase == MessagePhase::Commentary {
                 block = merged(
                     paint_thinking(key, "· commentary", None, theme, width),
                     block,
-                );
-            }
-            if message.finality == ItemFinality::Open {
-                block = merged(
-                    block,
-                    paint_thinking(key, "· streaming…", None, theme, width),
                 );
             }
             block

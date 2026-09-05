@@ -52,8 +52,9 @@ pub struct TuiConfig {
     /// Agent to open directly once its inventory row arrives. Used by
     /// `amux new` when the configured default mode is structured chat.
     pub initial_chat: Option<AgentId>,
-    /// Creation-time model/approval/sandbox label for that initial chat.
-    pub initial_chat_configuration: Option<String>,
+    /// Creation-time model, approval and sandbox facts for that initial
+    /// chat, in the order its header states them.
+    pub initial_chat_configuration: Option<Vec<String>>,
     /// The ring this session records into, shared with the runtime's Msg
     /// tap so folds and inputs interleave in the order they happened.
     /// The field itself is absent from builds that record nothing.
@@ -140,7 +141,7 @@ async fn chrome_session(
     chrome: &mut Chrome,
     config: &TuiConfig,
     initial_chat: &mut Option<AgentId>,
-    initial_chat_configuration: &mut Option<String>,
+    initial_chat_configuration: &mut Option<Vec<String>>,
 ) -> Result<ChromeExit> {
     let guard = TerminalGuard::enter()?;
     // The guard probed for the kitty keyboard protocol on the way in;

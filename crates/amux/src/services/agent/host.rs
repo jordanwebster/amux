@@ -122,6 +122,31 @@ impl PtyAgentHost {
         self.host_id
     }
 
+    #[cfg(all(debug_assertions, unix))]
+    pub(crate) async fn register_sdk_fixture(
+        &self,
+        record: crate::agents::AgentRecord,
+        provider: claude::sdk::Session,
+    ) -> anyhow::Result<crate::agents::MultiplexStructuredReader> {
+        let agent_id = record.id;
+        let mut session: AgentSession = Box::new(
+            crate::agents::claude::ClaudeSdkBackend::with_session(record, provider),
+        );
+        let crate::agents::Plane::Structured { log, .. } =
+            session.plane(crate::agents::Protocol::ClaudeSdkV1)?
+        else {
+            anyhow::bail!("SDK fixture needs a structured plane");
+        };
+        let reader = log.subscribe().await.expect("fresh SDK log is open");
+        let mut state = self.state.write().await;
+        let exit_handle = session.start(&self.event_tx)?;
+        state
+            .register_local_agent_context(self.host_id, agent_id, session)
+            .map_err(anyhow::Error::msg)?;
+        super::lifecycle::monitor_session_exit(exit_handle, self.event_tx.clone(), agent_id);
+        Ok(reader)
+    }
+
     #[cfg(testnet)]
     pub(crate) async fn register_scripted_claude(
         &self,

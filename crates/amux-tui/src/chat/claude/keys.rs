@@ -14,9 +14,9 @@ use amux_ui::{ClaudeCommand, Command, DiffBase, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::chat::claude::View;
-use crate::chat::claude::ask_ui::{self, AskKeyOutcome, AskStage, AskUi};
-use crate::chat::claude::reader::{self, ReaderSource, ReaderView};
+use crate::chat::claude::{View, reader_actionable, reader_context, shared_ask};
+use crate::chat::claude_shared::ask_ui::{AskKeyOutcome, AskStage, AskUi};
+use crate::chat::claude_shared::reader::{self, ReaderSource, ReaderView};
 use crate::chat::inline::{InlineAsk, InlineOutcome};
 use crate::chat::viewport::ScrollIntent;
 use crate::clipboard::ClipboardContent;
@@ -237,7 +237,7 @@ fn focus(chat: &View, model: &Model) -> Focus {
         return Focus::Review;
     }
     if chat.reader.is_some() {
-        return match reader::answer_actionable(model, chat) {
+        return match reader_actionable(model, chat) {
             true => Focus::Ask,
             false => Focus::Nothing,
         };
@@ -410,7 +410,7 @@ pub fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
         return;
     }
     if chat.reader.is_some() {
-        if reader::answer_actionable(model, chat)
+        if reader_actionable(model, chat)
             && let Some(field) = chat.ask_ui.as_mut().and_then(AskUi::active_field)
         {
             let one_line = text
@@ -671,7 +671,7 @@ fn panel_key(
     // Unverified menu shapes render read-only-style (C2): no actions to
     // route — only the read affordance and the feed scroll live.
     if answer::menu_shape_refusal(&head.kind).is_some() {
-        if key.code == KeyCode::Char('f') && ask_ui::has_readable(head) {
+        if key.code == KeyCode::Char('f') && shared_ask(head).has_readable() {
             chat.reader = Some(ReaderView::ask());
             return None;
         }
@@ -679,13 +679,18 @@ fn panel_key(
         return None;
     }
     let ask_id = head.id;
+    let shared = shared_ask(head);
     let outcome = chat
         .ask_ui
         .as_mut()
-        .map(|ui| ui.handle_key(head, &key, true))
+        .map(|ui| ui.handle_key(&shared, &key, true))
         .unwrap_or(AskKeyOutcome::NotHandled);
     match outcome {
-        AskKeyOutcome::Answer(answer) => Some(dispatch_answer(chat, ask_id, answer)),
+        // The terminal transport raises no elicitation or dialog ask, so
+        // every answer a panel collects here is one it can carry.
+        AskKeyOutcome::Answer(answer) => answer
+            .claude()
+            .map(|answer| dispatch_answer(chat, ask_id, answer)),
         AskKeyOutcome::OpenReader => {
             chat.reader = Some(ReaderView::ask());
             None
@@ -715,17 +720,22 @@ fn reader_key(
     key: KeyEvent,
     viewport: (u16, u16),
 ) -> Option<UiAction> {
-    if reader::answer_actionable(model, chat)
+    if reader_actionable(model, chat)
         && let Some(head) = chat.ask_head(model)
     {
         let ask_id = head.id;
+        let shared = shared_ask(head);
         let outcome = chat
             .ask_ui
             .as_mut()
-            .map(|ui| ui.handle_key(head, &key, false))
+            .map(|ui| ui.handle_key(&shared, &key, false))
             .unwrap_or(AskKeyOutcome::NotHandled);
         match outcome {
-            AskKeyOutcome::Answer(answer) => return Some(dispatch_answer(chat, ask_id, answer)),
+            AskKeyOutcome::Answer(answer) => {
+                return answer
+                    .claude()
+                    .map(|answer| dispatch_answer(chat, ask_id, answer));
+            }
             AskKeyOutcome::Handled | AskKeyOutcome::OpenReader => {
                 // Enter on Deny opens the one-line feedback stage, which
                 // is docked (C2): the reader closes to the panel.
@@ -751,7 +761,8 @@ fn reader_key(
         }
         // ←/→ step between accepted plans (resolved reader only).
         KeyCode::Left => {
-            if let Some(index) = reader::plans_step(model, chat, -1)
+            if let Some(index) =
+                reader_context(model, chat).and_then(|ctx| reader::plans_step(&ctx, -1))
                 && let Some(view) = chat.reader.as_mut()
             {
                 view.source = ReaderSource::Plans { index };
@@ -760,7 +771,8 @@ fn reader_key(
             None
         }
         KeyCode::Right => {
-            if let Some(index) = reader::plans_step(model, chat, 1)
+            if let Some(index) =
+                reader_context(model, chat).and_then(|ctx| reader::plans_step(&ctx, 1))
                 && let Some(view) = chat.reader.as_mut()
             {
                 view.source = ReaderSource::Plans { index };
@@ -777,7 +789,9 @@ fn reader_key(
 
 /// Pager motion over the reader body: ↑↓ j/k, PgUp/PgDn, Home/End g/G.
 fn reader_scroll(chat: &mut View, model: &Model, key: &KeyEvent, viewport: (u16, u16)) -> bool {
-    let Some((page, max_top)) = reader::scroll_metrics(model, chat, viewport) else {
+    let Some((page, max_top)) =
+        reader_context(model, chat).and_then(|ctx| reader::scroll_metrics(&ctx, viewport))
+    else {
         return false;
     };
     let Some(view) = chat.reader.as_mut() else {
@@ -832,7 +846,10 @@ fn readonly_key(
         // f opens the pending ask's diff or plan in the reader — the fact
         // panel's one read affordance.
         KeyCode::Char('f') => {
-            if chat.ask_head(model).is_some_and(ask_ui::has_readable) {
+            if chat
+                .ask_head(model)
+                .is_some_and(|ask| shared_ask(ask).has_readable())
+            {
                 chat.reader = Some(ReaderView::ask());
             }
         }
@@ -1628,7 +1645,7 @@ mod tests {
         handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT, t(0));
         assert!(matches!(
             chat.ask_ui.as_ref().expect("panel").stage,
-            crate::chat::claude::ask_ui::AskStage::Menu { cursor: 2 }
+            crate::chat::claude_shared::ask_ui::AskStage::Menu { cursor: 2 }
         ));
         handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         let answer = answer_of(handle_chat_key(
@@ -2436,7 +2453,7 @@ mod tests {
         assert!(
             matches!(
                 ui.stage,
-                crate::chat::claude::ask_ui::AskStage::Menu { cursor: 0 }
+                crate::chat::claude_shared::ask_ui::AskStage::Menu { cursor: 0 }
             ),
             "the old ask's deny stage died with it"
         );

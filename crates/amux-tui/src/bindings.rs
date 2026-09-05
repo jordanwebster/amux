@@ -9,7 +9,7 @@
 //! deliver it). The shape is palette-ready data — sections of typed
 //! rows — which is a data-shape concern, not a feature.
 
-use crate::view::OpenMode;
+use crate::view::{EntryModes, OpenMode};
 
 /// Delivery tier of a binding (`docs/CHAT.md` §Keybindings).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,28 +200,36 @@ fn mode_name(mode: OpenMode) -> &'static str {
     }
 }
 
+/// The status-line hint for the selected row's ways in. An agent with
+/// one way in names one key: a hint that offers a mode the agent does
+/// not have is a lie (P10).
+pub fn entry_hint(entry: EntryModes) -> String {
+    let default = mode_name(entry.primary());
+    match entry.secondary() {
+        Some(other) => format!("enter {default}  o {}", mode_name(other)),
+        None => format!("enter {default}"),
+    }
+}
+
 /// The fleet's effective bindings (kitty rows already filtered); the
-/// entry rows name the effective modes from the A1 default.
-pub fn fleet_sections(
-    eff: &Effective,
-    default_open_mode: OpenMode,
-    families: bool,
-) -> Vec<Section> {
-    let default = mode_name(default_open_mode);
-    let other = mode_name(default_open_mode.other());
+/// entry rows name the modes the selected agent actually has, so an
+/// agent with no terminal behind it is never offered raw attach.
+pub fn fleet_sections(eff: &Effective, entry: EntryModes, families: bool) -> Vec<Section> {
+    let default = mode_name(entry.primary());
+    let other = entry.secondary().map(mode_name);
     let mut fleet = vec![
         row("j/k or ↑/↓", "move", Tier::Plain),
         row("gg / G", "top / bottom", Tier::Plain),
         row("/ or i", "filter", Tier::Plain),
         row("enter", format!("open in {default}"), Tier::Plain),
     ];
-    if eff.kitty {
-        fleet.push(row("ctrl+enter", format!("open in {other}"), Tier::Kitty));
+    if let Some(other) = other {
+        if eff.kitty {
+            fleet.push(row("ctrl+enter", format!("open in {other}"), Tier::Kitty));
+        }
+        fleet.push(row("o", format!("open in {other}"), Tier::Plain));
     }
-    fleet.extend([
-        row("o", format!("open in {other}"), Tier::Plain),
-        row("n", "new agent", Tier::Plain),
-    ]);
+    fleet.extend([row("n", "new agent", Tier::Plain)]);
     // Nothing on this fleet has children, so nothing folds.
     if families {
         fleet.push(row("z", "open/shut a family", Tier::Plain));
@@ -358,6 +366,26 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
     ]
 }
 
+/// Claude SDK chat bindings: the shared Claude chat rows plus the one
+/// key only a session driven over stream-JSON has. The breakdown costs a
+/// round trip to the provider, so the row appears only where the session
+/// could answer it — a hint never names a dead key.
+pub fn claude_sdk_chat_sections(
+    eff: &Effective,
+    family: FamilyKeys,
+    context_breakdown: bool,
+) -> Vec<Section> {
+    let mut sections = chat_sections(eff, family);
+    if context_breakdown && let Some(chat) = sections.first_mut() {
+        chat.bindings.push(row(
+            format!("{} c", eff.leader_label),
+            "context breakdown (again refreshes)",
+            Tier::Plain,
+        ));
+    }
+    sections
+}
+
 /// Codex chat bindings. Chrome, composer, and pager conventions are shared;
 /// approval and steering rows name Codex-native actions instead of borrowing
 /// Claude's question/plan vocabulary.
@@ -387,6 +415,13 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
     ]);
     chat.extend(family_rows(eff, family));
     chat.extend(report_key_row());
+    // The thread's token report already arrived with the last turn, so
+    // this key opens what is known rather than asking for it.
+    chat.push(row(
+        format!("{} c", eff.leader_label),
+        "context breakdown",
+        Tier::Plain,
+    ));
     let mut composer = vec![
         row("enter", "send or steer", Tier::Plain),
         row("ctrl+j", "newline", Tier::Plain),
@@ -412,6 +447,11 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
         row("enter", "confirm enabled decision", Tier::Plain),
         row("ctrl+x", "interrupt instead", Tier::Plain),
     ];
+    let reader = vec![
+        row("↑/↓ j/k pgup/pgdn", "scroll", Tier::Plain),
+        row("home/end · g/G", "top / bottom", Tier::Plain),
+        row("q", "close", Tier::Plain),
+    ];
     let readonly = vec![
         row("↑/↓ j/k pgup/pgdn g/G", "scroll", Tier::Plain),
         row("q", "back to fleet", Tier::Plain),
@@ -428,6 +468,10 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
         Section {
             title: "approvals",
             bindings: approvals,
+        },
+        Section {
+            title: "reader",
+            bindings: reader,
         },
         Section {
             title: "read-only chat",
@@ -454,6 +498,41 @@ mod tests {
             kitty,
             leader_label: "C-b".to_string(),
         }
+    }
+
+    fn both(default: OpenMode) -> EntryModes {
+        EntryModes::Both { default }
+    }
+
+    /// An agent whose only way in is the chat gets no other-mode row and
+    /// no other-mode hint — on either key tier. Offering `o` there would
+    /// name a mode the agent does not have.
+    #[test]
+    fn entry_policy_chat_only_rows_and_hints_name_chat_alone() {
+        for kitty in [false, true] {
+            let sections = fleet_sections(&eff(kitty), EntryModes::ChatOnly, true);
+            let fleet = &sections[0].bindings;
+            let enter = fleet.iter().find(|b| b.keys == "enter").expect("enter row");
+            assert_eq!(enter.action, "open in chat");
+            assert!(
+                !fleet
+                    .iter()
+                    .any(|b| b.keys == "o" || b.keys == "ctrl+enter"),
+                "no other-mode row where there is no other mode"
+            );
+        }
+        assert_eq!(entry_hint(EntryModes::ChatOnly), "enter chat");
+    }
+
+    /// Where both ways in exist, the hint names each with the key that
+    /// opens it, in the order the policy resolved them.
+    #[test]
+    fn entry_policy_hint_names_both_modes_in_the_resolved_order() {
+        assert_eq!(
+            entry_hint(both(OpenMode::RawAttach)),
+            "enter raw attach  o chat"
+        );
+        assert_eq!(entry_hint(both(OpenMode::Chat)), "enter chat  o raw attach");
     }
 
     #[test]
@@ -484,7 +563,7 @@ mod tests {
     #[test]
     fn kitty_rows_are_hidden_without_the_probe_and_shown_with_it() {
         for sections in [
-            fleet_sections(&eff(false), OpenMode::RawAttach, true),
+            fleet_sections(&eff(false), both(OpenMode::RawAttach), true),
             chat_sections(&eff(false), all_family()),
         ] {
             assert!(
@@ -495,7 +574,7 @@ mod tests {
                 "no kitty rows without the probe"
             );
         }
-        let fleet = fleet_sections(&eff(true), OpenMode::RawAttach, true);
+        let fleet = fleet_sections(&eff(true), both(OpenMode::RawAttach), true);
         assert!(
             fleet
                 .iter()
@@ -514,7 +593,7 @@ mod tests {
     /// name the other mode — the table derives, never hardcodes (A1).
     #[test]
     fn entry_rows_name_the_effective_modes() {
-        let sections = fleet_sections(&eff(true), OpenMode::Chat, true);
+        let sections = fleet_sections(&eff(true), both(OpenMode::Chat), true);
         let fleet = &sections[0].bindings;
         let enter = fleet.iter().find(|b| b.keys == "enter").expect("enter row");
         assert_eq!(enter.action, "open in chat");
@@ -680,7 +759,7 @@ mod tests {
     #[test]
     fn a2a_bindings_list_the_fold_key_only_with_a_family_on_screen() {
         let has = |families: bool| {
-            fleet_sections(&eff(false), OpenMode::RawAttach, families)
+            fleet_sections(&eff(false), both(OpenMode::RawAttach), families)
                 .iter()
                 .flat_map(|section| &section.bindings)
                 .any(|binding| binding.keys == "z")

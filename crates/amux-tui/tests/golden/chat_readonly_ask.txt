@@ -1,4 +1,4 @@
-  ci-triage · claude @ mbp                                                               chat · read-only · needs owner 
+  ci-triage · claude @ mbp                                claude-haiku-4-5-20251001 · default · read-only · needs owner 
                                                                                                                         
 ▎   fix the flaky teardown                                                                                              
                                                                                                                         
@@ -25,7 +25,7 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
+    ctx 31.6k                                                                                                           
                                                                                                                         
     the agent is asking permission — Edit testnet/harness.rs (+1)                                                       
                                                                                                                         

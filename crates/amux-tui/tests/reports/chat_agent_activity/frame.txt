@@ -36,5 +36,5 @@
 │                                                                                                                                          │
 │                                                                                                                                          │
 │                                                                                                                                          │
-│ ● connected · 1 host   n new  r rename  d delete  q quit  ? help                                                                         │
+│ ● connected · 1 host   enter raw attach  o chat  n new  r rename  d delete  q quit  ? help                                               │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

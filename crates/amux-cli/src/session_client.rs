@@ -62,7 +62,7 @@ pub async fn new_agent(
     args: Vec<String>,
     config: &Config,
 ) -> Result<()> {
-    let codex_configuration = codex_configuration_label(&agent_type);
+    let codex_configuration = codex_configuration_facts(&agent_type);
     let terminal_exposed = agent_type_exposes_terminal(&agent_type);
     let rpc = get_client(config).await?;
     let terminal_size = get_terminal_size();
@@ -179,7 +179,13 @@ fn created_agent_open_error(
     )
 }
 
-fn codex_configuration_label(agent_type: &AgentType) -> Option<String> {
+/// The three creation choices a Codex chat states in its header: what it
+/// runs on, whether it asks before acting, and what it may touch. An
+/// unset one is stated as `default` — Codex's own default is a fact, not
+/// an absence. They travel as separate facts because the header joins
+/// them with its own separator and drops them one at a time when the
+/// line is too narrow.
+fn codex_configuration_facts(agent_type: &AgentType) -> Option<Vec<String>> {
     let AgentType::Codex {
         model,
         approval_policy,
@@ -189,12 +195,12 @@ fn codex_configuration_label(agent_type: &AgentType) -> Option<String> {
     else {
         return None;
     };
-    Some(format!(
-        "model={} · approval={} · sandbox={}",
-        model.as_deref().unwrap_or("default"),
-        approval_policy.as_deref().unwrap_or("default"),
-        sandbox_policy.as_deref().unwrap_or("default")
-    ))
+    Some(
+        [model, approval_policy, sandbox_policy]
+            .into_iter()
+            .map(|fact| fact.clone().unwrap_or_else(|| "default".to_string()))
+            .collect(),
+    )
 }
 
 fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
@@ -210,8 +216,16 @@ fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
     }
 }
 
-fn attach_opens_chat(kind: &amux::AgentKind) -> bool {
-    matches!(kind, amux::AgentKind::Codex) || !kind.exposes(amux::Protocol::TerminalV1)
+/// The command line's half of the one entry policy the fleet keys use:
+/// a session with no terminal behind it has nothing to pass through, and
+/// an agent on another machine opens the chat rather than piping a
+/// terminal across the network. Everything else raw attaches, except a
+/// Codex agent: its own structured screen is its primary surface, and
+/// the command line — unlike the fleet, which offers Ctrl+Enter and `o`
+/// beside Enter — has only one key to spend, so it spends it on the
+/// richer surface. `docs/CHAT.md` records that difference.
+fn attach_opens_chat(kind: &amux::AgentKind, local: bool) -> bool {
+    !local || matches!(kind, amux::AgentKind::Codex) || !kind.exposes(amux::Protocol::TerminalV1)
 }
 
 /// Attach to an existing agent
@@ -229,11 +243,11 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 
     tracing::info!(agent = %agent.id, "attaching");
 
-    // Codex's primary attach surface is its native structured screen. A kind
-    // without terminal_v1 also opens its structured layer; for Claude/SDK
-    // that is the unsupported placeholder. Kinds that do expose a terminal
-    // keep raw attach here.
-    if attach_opens_chat(&agent.kind) {
+    // Unknown locality reads as local, the way the fleet's entry policy
+    // reads it: the stored identity is missing only before this machine
+    // has one, when every agent it can see is its own.
+    let local = amux::setup::local_host_id(config).is_none_or(|local| local == agent.host_id);
+    if attach_opens_chat(&agent.kind, local) {
         return crate::ui::run_for_agent(config.clone(), agent.id, None).await;
     }
 
@@ -1037,7 +1051,7 @@ mod attach {
     }
 
     #[test]
-    fn codex_configuration_label_is_explicit_about_defaults_and_overrides() {
+    fn codex_configuration_facts_are_explicit_about_defaults_and_overrides() {
         let defaults = AgentType::Codex {
             model: None,
             approval_policy: None,
@@ -1045,8 +1059,12 @@ mod attach {
             resume_thread_id: None,
         };
         assert_eq!(
-            super::codex_configuration_label(&defaults).as_deref(),
-            Some("model=default · approval=default · sandbox=default")
+            super::codex_configuration_facts(&defaults),
+            Some(vec![
+                "default".to_string(),
+                "default".to_string(),
+                "default".to_string()
+            ])
         );
 
         let selected = AgentType::Codex {
@@ -1056,11 +1074,15 @@ mod attach {
             resume_thread_id: None,
         };
         assert_eq!(
-            super::codex_configuration_label(&selected).as_deref(),
-            Some("model=gpt-5.4 · approval=never · sandbox=workspace-write")
+            super::codex_configuration_facts(&selected),
+            Some(vec![
+                "gpt-5.4".to_string(),
+                "never".to_string(),
+                "workspace-write".to_string()
+            ])
         );
         assert_eq!(
-            super::codex_configuration_label(&AgentType::Claude {
+            super::codex_configuration_facts(&AgentType::Claude {
                 driver: amux::ClaudeDriver::Pty,
             }),
             None
@@ -1068,7 +1090,7 @@ mod attach {
     }
 
     #[test]
-    fn sdk_creation_and_existing_attach_open_chat_without_a_terminal() {
+    fn entry_policy_a_session_without_a_terminal_is_created_and_attached_as_chat() {
         let sdk_type = AgentType::Claude {
             driver: amux::ClaudeDriver::Sdk,
         };
@@ -1076,7 +1098,7 @@ mod attach {
             driver: amux::ClaudeDriver::Sdk,
         };
         assert!(!super::agent_type_exposes_terminal(&sdk_type));
-        assert!(super::attach_opens_chat(&sdk_kind));
+        assert!(super::attach_opens_chat(&sdk_kind, true));
 
         let pty_type = AgentType::Claude {
             driver: amux::ClaudeDriver::Pty,
@@ -1085,10 +1107,50 @@ mod attach {
             driver: amux::ClaudeDriver::Pty,
         };
         assert!(super::agent_type_exposes_terminal(&pty_type));
-        assert!(!super::attach_opens_chat(&pty_kind));
+        assert!(!super::attach_opens_chat(&pty_kind, true));
 
-        assert!(super::attach_opens_chat(&amux::AgentKind::Codex));
-        assert!(!super::attach_opens_chat(&amux::AgentKind::TestAgent));
+        assert!(!super::attach_opens_chat(&amux::AgentKind::TestAgent, true));
+    }
+
+    /// The one place the command line parts company with the fleet: a
+    /// Codex agent on this machine opens its own structured screen here,
+    /// while the fleet's Enter still raw attaches under the shipped
+    /// default. `amux attach` has no second key to offer, so the richer
+    /// surface leads; the fleet's half is pinned by
+    /// `entry_policy_a_local_codex_agent_keeps_the_configured_default` in
+    /// `amux-tui`, and `docs/CHAT.md` names the difference and why.
+    #[test]
+    fn entry_policy_attach_leads_with_the_codex_screen_on_this_machine() {
+        assert!(super::attach_opens_chat(&amux::AgentKind::Codex, true));
+        assert!(super::attach_opens_chat(&amux::AgentKind::Codex, false));
+        assert!(!super::attach_opens_chat(
+            &amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
+            true
+        ));
+    }
+
+    /// `amux attach` follows the fleet's rule for a remote agent too: the
+    /// chat travels over the connection the daemon already has, so a
+    /// terminal-capable agent on another machine still opens the chat.
+    #[test]
+    fn entry_policy_attach_opens_chat_for_every_agent_on_another_machine() {
+        for kind in [
+            amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Pty,
+            },
+            amux::AgentKind::TestAgent,
+        ] {
+            assert!(
+                !super::attach_opens_chat(&kind, true),
+                "{kind:?} raw attaches on this machine"
+            );
+            assert!(
+                super::attach_opens_chat(&kind, false),
+                "{kind:?} opens the chat from another machine"
+            );
+        }
     }
 
     #[test]

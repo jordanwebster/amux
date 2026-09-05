@@ -36,5 +36,5 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│ ◌ connecting           n new  r rename  d delete  q quit  ? help                                                     │
+│ ◌ connecting           enter raw attach  o chat  n new  r rename  d delete  q quit  ? help                           │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

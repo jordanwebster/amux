@@ -261,21 +261,51 @@ fn open_selected(view: &mut ViewState, model: &Model, other_mode: bool) -> Optio
         view.notice = Some(Notice::problem(format!("{host} is offline: {detail}")));
         return None;
     }
-    let mut mode = view.default_open_mode;
-    if other_mode {
-        mode = mode.other();
-    }
-    // Read-only agents and kinds without terminal_v1 open in chat only —
-    // raw attach is absent, not disabled, so every entry key opens the one
-    // mode that exists. For an SDK-driven Claude this is the deliberate
-    // unsupported placeholder; opening it must not ask the daemon for a PTY.
-    if card.agent.readonly || !card.agent.kind.exposes(amux_ui::Protocol::TerminalV1) {
-        mode = OpenMode::Chat;
-    }
+    let mode = entry_modes(card, model, view.default_open_mode).resolve(other_mode);
     Some(match mode {
         OpenMode::RawAttach => UiAction::Attach(card.agent.id),
         OpenMode::Chat => UiAction::OpenChat(card.agent.id),
     })
+}
+
+/// The one entry policy, read by every affordance that offers a way into
+/// an agent (A1, A3).
+///
+/// Read-only viewers and sessions with no terminal behind them have no
+/// raw mode at all. An agent on another machine defaults to the chat
+/// even where the setting says raw: the chat travels over the same
+/// stream the fleet already has, while raw attach pipes a terminal
+/// across the network, so the safe half of the pair leads — but the
+/// other-mode key still reaches raw for anyone who wants it.
+pub fn entry_modes(
+    card: &amux_ui::AgentCard,
+    model: &Model,
+    configured: OpenMode,
+) -> crate::view::EntryModes {
+    if card.agent.readonly || !card.agent.kind.exposes(amux_ui::Protocol::TerminalV1) {
+        return crate::view::EntryModes::ChatOnly;
+    }
+    // Unknown locality reads as local: the fleet is usually one machine,
+    // and this only picks which half of a pair Enter opens.
+    let remote = model.is_local(card.agent.host_id) == Some(false);
+    crate::view::EntryModes::Both {
+        default: match remote {
+            true => OpenMode::Chat,
+            false => configured,
+        },
+    }
+}
+
+/// The entry policy for the row the fleet has selected, for the hint
+/// line and the `?` overlay. With nothing selected the configured pair
+/// stands in, so an empty fleet still describes the keys it has.
+pub(crate) fn selected_entry_modes(view: &ViewState, model: &Model) -> crate::view::EntryModes {
+    match selected_agent(view, model) {
+        Some(card) => entry_modes(card, model, view.default_open_mode),
+        None => crate::view::EntryModes::Both {
+            default: view.default_open_mode,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -439,6 +469,197 @@ mod tests {
                 driver: amux_ui::ClaudeDriver::Pty,
             },
         )
+    }
+
+    /// The same fleet seen from a second machine: the connection names a
+    /// different local host, so the one agent on it is remote.
+    fn remote_entry_model(kind: amux_ui::AgentKind) -> Model {
+        let mut model = entry_model_with_kind(false, true, kind);
+        update(
+            &mut model,
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(Uuid::from_u128(2)),
+            }),
+        );
+        model
+    }
+
+    fn selected_card(model: &Model) -> &amux_ui::AgentCard {
+        model.agent(agent_id()).expect("the one agent")
+    }
+
+    /// An agent on another machine defaults to the chat whatever the
+    /// setting says — but raw attach is still there on the other-mode
+    /// key, so nothing is taken away.
+    #[test]
+    fn entry_policy_a_remote_terminal_agent_opens_chat_on_enter_and_raw_on_o() {
+        let model = remote_entry_model(amux_ui::AgentKind::Claude {
+            driver: amux_ui::ClaudeDriver::Pty,
+        });
+        for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+            let mut view = ViewState {
+                default_open_mode,
+                ..ViewState::default()
+            };
+            assert_eq!(
+                entry_modes(selected_card(&model), &model, default_open_mode),
+                crate::view::EntryModes::Both {
+                    default: OpenMode::Chat
+                }
+            );
+            assert_eq!(
+                handle_key(&mut view, &model, enter(), 10, t(0)),
+                Some(UiAction::OpenChat(agent_id()))
+            );
+            assert_eq!(
+                handle_key(&mut view, &model, o_key(), 10, t(0)),
+                Some(UiAction::Attach(agent_id()))
+            );
+        }
+    }
+
+    /// Remoteness moves the default, never the affordances: an agent on
+    /// this machine keeps whichever pair the setting configured.
+    #[test]
+    fn entry_policy_a_local_agent_keeps_the_configured_default() {
+        let model = entry_model(false, true);
+        for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+            assert_eq!(
+                entry_modes(selected_card(&model), &model, default_open_mode),
+                crate::view::EntryModes::Both {
+                    default: default_open_mode
+                }
+            );
+        }
+    }
+
+    /// The fleet knows nothing about Codex's native screen: a local Codex
+    /// agent keeps both ways in and Enter opens whichever the setting
+    /// picked. `amux attach` deliberately differs (it has no second key to
+    /// offer); the command line's half of this pair is pinned by
+    /// `entry_policy_attach_leads_with_the_codex_screen_on_this_machine`
+    /// in `amux-cli`, and `docs/CHAT.md` names the difference.
+    #[test]
+    fn entry_policy_a_local_codex_agent_keeps_the_configured_default() {
+        let model = entry_model_with_kind(false, true, amux_ui::AgentKind::Codex);
+        for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+            let mut view = ViewState {
+                default_open_mode,
+                ..ViewState::default()
+            };
+            assert_eq!(
+                entry_modes(selected_card(&model), &model, default_open_mode),
+                crate::view::EntryModes::Both {
+                    default: default_open_mode
+                }
+            );
+            let (primary, secondary) = match default_open_mode {
+                OpenMode::RawAttach => {
+                    (UiAction::Attach(agent_id()), UiAction::OpenChat(agent_id()))
+                }
+                OpenMode::Chat => (UiAction::OpenChat(agent_id()), UiAction::Attach(agent_id())),
+            };
+            assert_eq!(
+                handle_key(&mut view, &model, enter(), 10, t(0)),
+                Some(primary)
+            );
+            assert_eq!(
+                handle_key(&mut view, &model, o_key(), 10, t(0)),
+                Some(secondary)
+            );
+        }
+    }
+
+    /// A read-only viewer and a session with no terminal behind it have
+    /// one way in. No entry key may hand either of them to raw attach.
+    #[test]
+    fn entry_policy_chat_only_agents_never_yield_an_attach() {
+        let readonly = entry_model(true, true);
+        let structured = entry_model_with_kind(
+            false,
+            true,
+            amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Sdk,
+            },
+        );
+        for model in [&readonly, &structured] {
+            for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+                assert_eq!(
+                    entry_modes(selected_card(model), model, default_open_mode),
+                    crate::view::EntryModes::ChatOnly
+                );
+                let mut view = ViewState {
+                    default_open_mode,
+                    ..ViewState::default()
+                };
+                for key in [enter(), ctrl_enter(), o_key()] {
+                    assert_eq!(
+                        handle_key(&mut view, model, key, 10, t(0)),
+                        Some(UiAction::OpenChat(agent_id()))
+                    );
+                }
+            }
+        }
+    }
+
+    /// Remoteness cannot invent a terminal: an agent with no terminal
+    /// behind it stays chat-only from another machine too.
+    #[test]
+    fn entry_policy_remoteness_does_not_give_a_structured_session_a_terminal() {
+        let model = remote_entry_model(amux_ui::AgentKind::Claude {
+            driver: amux_ui::ClaudeDriver::Sdk,
+        });
+        assert_eq!(
+            entry_modes(selected_card(&model), &model, OpenMode::RawAttach),
+            crate::view::EntryModes::ChatOnly
+        );
+    }
+
+    /// The hint line and the `?` overlay read the same policy the keys
+    /// do, so a chat-only row is never offered a key it does not have.
+    #[test]
+    fn entry_policy_hints_and_help_rows_follow_the_selected_row() {
+        let structured = entry_model_with_kind(
+            false,
+            true,
+            amux_ui::AgentKind::Claude {
+                driver: amux_ui::ClaudeDriver::Sdk,
+            },
+        );
+        let view = ViewState::default();
+        assert_eq!(
+            crate::bindings::entry_hint(selected_entry_modes(&view, &structured)),
+            "enter chat"
+        );
+        let remote = remote_entry_model(amux_ui::AgentKind::Claude {
+            driver: amux_ui::ClaudeDriver::Pty,
+        });
+        assert_eq!(
+            crate::bindings::entry_hint(selected_entry_modes(&view, &remote)),
+            "enter chat  o raw attach"
+        );
+        let local = entry_model(false, true);
+        assert_eq!(
+            crate::bindings::entry_hint(selected_entry_modes(&view, &local)),
+            "enter raw attach  o chat"
+        );
+    }
+
+    /// An empty fleet still describes the keys it has: with nothing
+    /// selected the configured pair stands in.
+    #[test]
+    fn entry_policy_an_empty_fleet_falls_back_to_the_configured_pair() {
+        let model = Model::default();
+        let view = ViewState {
+            default_open_mode: OpenMode::Chat,
+            ..ViewState::default()
+        };
+        assert_eq!(
+            selected_entry_modes(&view, &model),
+            crate::view::EntryModes::Both {
+                default: OpenMode::Chat
+            }
+        );
     }
 
     fn enter() -> KeyEvent {

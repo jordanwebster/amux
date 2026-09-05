@@ -1,0 +1,23 @@
+{
+  "source": "e2e-tests/sdk_chat_live.sh: chat-parent claude_sdk_v1 subscription",
+  "captured_at": "2026-09-05T11:49:38Z",
+  "claude_code_version": "2.1.261",
+  "source_sha256": "9ccbe2ff3b3d2501aa0299423042d73f427835dcc6055aa4e7a4b38ee47be5e0",
+  "fixture_sha256": "44b18060e1c7a87fea65cc538f301b16664962cb4c5d21fb53545cfbc4364b98",
+  "rows": 572,
+  "source_sequence": {
+    "first": 0,
+    "last": 571
+  },
+  "transformations": [
+    "Flatten each {seq,payload} envelope to its payload without dropping or reordering rows.",
+    "Replace the temporary directory suffix with sample and the messaging socket process ID with 00000. Reassemble streamed tool JSON before redacting, then split at the original chunk lengths."
+  ],
+  "preserved": [
+    "Prompt and reply text, tool arguments and results, request resolutions, protocol IDs, timestamps, usage and durations."
+  ],
+  "boundary": "The final CHILD_ACK delivery starts a follow-up turn; this capture ends at its requesting status, before a result. No final result or dialog request was inserted.",
+  "privacy_check": "No home path, current machine hostname, .local/.lan hostname or email address occurs in the fixture. Temporary directory and socket identifiers are replaced.",
+  "capture_tree": "d02832a8275641d86b726eece4e8c32f56db08f4",
+  "harness_committed_as": "7a67d844"
+}

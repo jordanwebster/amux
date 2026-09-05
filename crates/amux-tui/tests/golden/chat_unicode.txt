@@ -1,4 +1,4 @@
-  fix-auth · claude @ mbp                                                                                   chat · idle 
+  fix-auth · claude @ mbp                                                    claude-haiku-4-5-20251001 · default · idle 
                                                                                                                         
 ▎   レ ビ ュ ー コ メ ン ト を 反 映 し て 、 リ ト ラ イ 処 理 を 直 し て く だ さ い                                                             
                                                                                                                         
@@ -33,8 +33,8 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
+    ctx 31.6k                                                                                                           
                                                                                                                         
 ▎   繁 体 字 と  emoji 🚀  の ド ラ フ ト ▌                                                                                       
                                                                                                                         
-    enter send · ctrl+j newline · C-a r review diff                                                        mode default 
+    enter send · ctrl+j newline · C-a r review diff                                                      shift+tab mode 

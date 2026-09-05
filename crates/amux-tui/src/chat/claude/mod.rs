@@ -14,27 +14,95 @@
 //! and the `?` overlay are Phase 6 — [`crate::view::ViewState::open_chat`]
 //! is the seam Phase 6's fleet binding will invoke.
 
-pub(crate) mod ask_ui;
-pub mod diff;
-pub(crate) mod draft;
 pub(crate) mod keys;
-pub(crate) mod panel;
-mod reader;
 mod render;
 
+use amux_ui::claude::answer::{AskAnswer, PermissionAnswer, PlanAnswer};
 use amux_ui::claude::{Ask, AskKind, AskState, ChatPhase, ToolInvocation};
 use amux_ui::{AgentId, Attention, Command, Model, OpId, OpOutcome};
-use ask_ui::AskUi;
-use draft::ReviewDraft;
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
-use reader::{ReaderSource, ReaderView};
-pub(crate) use render::{ask_panel_lines, claude_frame_parts};
+pub(crate) use render::claude_frame_parts;
 use serde::{Deserialize, Serialize};
 
+use crate::chat::claude_shared::ask_ui::AskUi;
+use crate::chat::claude_shared::draft::{self, ReviewDraft};
+use crate::chat::claude_shared::reader::{ReaderContext, ReaderSource, ReaderView};
+use crate::chat::claude_shared::{
+    AnswerSummary, SharedAsk, SharedAskKind, SharedAskState, panel, reader,
+};
 use crate::chat::inline::InlineAsk;
 use crate::chat::viewport::ScrollIntent;
 use crate::composer::Composer;
 use crate::view::QuitGuard;
+
+/// This chat's ask, as the shared panels and reader read it.
+///
+/// The one fact that does not travel with the provider's own words is the
+/// refusal: this transport answers by typing into Claude's own terminal
+/// menu, and a menu shape no capture has confirmed has no digit table, so
+/// the panel must state that instead of offering actions the encoder
+/// would reject.
+pub(crate) fn shared_ask(ask: &Ask) -> SharedAsk<'_> {
+    SharedAsk {
+        id: ask.id,
+        kind: match &ask.kind {
+            AskKind::Permission {
+                tool_name,
+                invocation,
+                suggestions,
+            } => SharedAskKind::Permission {
+                tool_name: tool_name.as_deref(),
+                invocation,
+                suggestions,
+            },
+            AskKind::Question { questions } => SharedAskKind::Question { questions },
+        },
+        document: ask.document.as_ref().map(std::borrow::Cow::Borrowed),
+        state: match &ask.state {
+            AskState::Pending => SharedAskState::Pending,
+            AskState::AnsweredOptimistic { answer, .. } => SharedAskState::Answered {
+                summary: answer_summary(answer),
+            },
+            AskState::SendFailed { message } => SharedAskState::Failed { message },
+        },
+        refusal: amux_ui::claude::answer::menu_shape_refusal(&ask.kind)
+            .map(|refusal| refusal.to_string()),
+    }
+}
+
+/// What an in-flight answer was, in the words the collapsed marker uses.
+fn answer_summary(answer: &AskAnswer) -> AnswerSummary {
+    match answer {
+        AskAnswer::Permission(PermissionAnswer::AllowOnce) => AnswerSummary::AllowedOnce,
+        AskAnswer::Permission(PermissionAnswer::AllowScoped { .. }) => AnswerSummary::AllowedScoped,
+        AskAnswer::Permission(PermissionAnswer::Deny { .. }) => AnswerSummary::Denied,
+        AskAnswer::Plan(PlanAnswer::ApproveAuto) => AnswerSummary::PlanApprovedAuto,
+        AskAnswer::Plan(PlanAnswer::ApproveManual) => AnswerSummary::PlanApprovedManual,
+        AskAnswer::Plan(PlanAnswer::RequestChanges { .. }) => AnswerSummary::ChangesRequested,
+        AskAnswer::Question(_) => AnswerSummary::QuestionAnswered,
+    }
+}
+
+/// Everything the shared reader needs from this chat, gathered from this
+/// chat's own layer. `None` when nothing is being read.
+pub(crate) fn reader_context<'m>(model: &'m Model, chat: &'m View) -> Option<ReaderContext<'m>> {
+    let reader = chat.reader.as_ref()?;
+    let layer = model.claude(chat.agent)?;
+    Some(ReaderContext {
+        reader,
+        ask: layer.ask_head().map(shared_ask),
+        ask_ui: chat.ask_ui.as_ref(),
+        can_answer: amux_ui::claude::allows_answer(model, chat.agent),
+        accepted_plans: std::borrow::Cow::Borrowed(layer.accepted_plans()),
+        attachments: layer.attachments(),
+        quit_guard_armed: chat.quit_guard.is_armed(),
+    })
+}
+
+/// Whether the open reader's ask can be answered from here.
+pub(crate) fn reader_actionable(model: &Model, chat: &View) -> bool {
+    reader_context(model, chat).is_some_and(|ctx| reader::answer_actionable(&ctx))
+}
 
 /// A dispatched prompt send being watched for its outcome (C5): the
 /// finished op carries the failure fact, and the draft resurfaces from
@@ -339,7 +407,7 @@ impl View {
         if self.ask_ui.as_ref().map(|ui| ui.ask_id) != Some(ask.id) {
             // A new head gets a fresh panel; the old ask's typed state,
             // stated failure, and reader die with it.
-            self.ask_ui = Some(AskUi::for_ask(ask));
+            self.ask_ui = Some(AskUi::for_ask(&shared_ask(ask)));
             self.ask_failure = None;
             if self.ask_reader_open() {
                 self.reader = None;
@@ -348,7 +416,7 @@ impl View {
             // is the point. Read-only chats render the fact panel
             // instead; `f` opens the reader.
             if !self.read_only(model)
-                && ask_ui::is_plan(ask)
+                && shared_ask(ask).is_plan()
                 && matches!(ask.state, AskState::Pending)
             {
                 self.reader = Some(ReaderView::ask());
@@ -459,7 +527,7 @@ pub(crate) fn ask_detail(model: &Model, agent: AgentId) -> Option<String> {
             .and_then(|question| question.question.as_deref().or(question.header.as_deref()))
             .map(head_line)
             .unwrap_or_else(|| "a question".to_string()),
-        _ => panel::ask_identity(ask),
+        _ => panel::ask_identity(&shared_ask(ask)),
     })
 }
 

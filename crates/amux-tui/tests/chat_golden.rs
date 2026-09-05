@@ -156,6 +156,19 @@ fn prompt_row(n: u32, ts: &str, text: &str) -> Value {
     })
 }
 
+/// The model and the usage every real assistant message carries: the two
+/// session facts the header and the meter read.
+const FIXTURE_MODEL: &str = "claude-haiku-4-5-20251001";
+
+fn fixture_usage() -> Value {
+    json!({
+        "input_tokens": 1240,
+        "cache_read_input_tokens": 30000,
+        "cache_creation_input_tokens": 400,
+        "output_tokens": 512,
+    })
+}
+
 fn assistant_text_row(n: u32, ts: &str, message_id: &str, text: &str, stop: Option<&str>) -> Value {
     json!({
         "type": "assistant",
@@ -165,8 +178,10 @@ fn assistant_text_row(n: u32, ts: &str, message_id: &str, text: &str, stop: Opti
         "message": {
             "id": message_id,
             "role": "assistant",
+            "model": FIXTURE_MODEL,
             "content": [{"type": "text", "text": text}],
             "stop_reason": stop,
+            "usage": fixture_usage(),
         },
     })
 }
@@ -180,8 +195,10 @@ fn tool_use_row(n: u32, ts: &str, message_id: &str, blocks: Vec<Value>) -> Value
         "message": {
             "id": message_id,
             "role": "assistant",
+            "model": FIXTURE_MODEL,
             "content": blocks,
             "stop_reason": "tool_use",
+            "usage": fixture_usage(),
         },
     })
 }
@@ -607,6 +624,26 @@ const IDLE_NOW: &str = "2026-08-12T09:02:10Z";
 fn chat_idle() {
     let rendered = render_frame(&idle_model(), &chat_view(), 80, 20, IDLE_NOW);
     assert_golden("chat_idle", &rendered);
+}
+
+/// The two surfaces this chat takes from the shared design: the model
+/// and the permission mode stated together on the header's right, and
+/// what the newest assistant message reported its context costing, on
+/// the activity line between the feed and the composer. The meter has no
+/// denominator — no transcript row states the context window.
+///
+/// The 60-column frame is the yield rule: facts are context and the
+/// phase word is not, so a line too narrow to hold both drops the model
+/// first and keeps `needs you` readable.
+#[test]
+fn chat_golden_session_facts_and_context_meter() {
+    let rendered = render_frame(&idle_model(), &chat_view(), 120, 40, IDLE_NOW);
+    assert_golden("chat_session_facts", &rendered);
+
+    let model = fold(edit_ask_msgs());
+    let view = reconciled_view(&model);
+    let narrow = render_frame_at(&model, &view, 60, 20, WORKING_NOW);
+    assert_golden("chat_session_facts_60col", &narrow);
 }
 
 /// The `?` overlay on the standard viewport: a plain terminal has no

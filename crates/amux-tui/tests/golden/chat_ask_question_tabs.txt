@@ -1,4 +1,4 @@
-  fix-auth · claude @ mbp                                                                              chat · needs you 
+  fix-auth · claude @ mbp                                               claude-haiku-4-5-20251001 · default · needs you 
                                                                                                                         
 ▎   now make the retry count configurable                                                                               
                                                                                                                         
@@ -26,7 +26,7 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
+    ctx 31.6k                                                                                                           
                                                                                                                         
     questions                                                                                                           
                                                                                                                         

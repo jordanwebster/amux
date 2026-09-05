@@ -71,23 +71,35 @@ confined to a terminal protocol.
 | Owned ordered event stream plus control handle | Supported | Supported | Supported |
 | Structured prompt and interrupt | Semantic PTY intents | Stream-JSON controls | App-server turn controls |
 | Raw terminal plane | Supported | Not exposed | Supported through `codex resume` |
-| Permission or approval decisions | Semantic answers to named asks | Typed permission rows and input decisions | Typed app-server approvals |
+| Permission or approval decisions | Semantic answers to named asks | Typed permission, question and plan decisions | Typed app-server approvals |
+| Elicitation and dialog decisions | Answered in the provider terminal | Pending requests exposed to the chat; typed answers return through the control handle | Native obligations, with unsupported inputs visibly blocked |
+| Session details | Transcript model/usage and hook permission mode | Streaming, tasks, model/mode controls, passive context meter, requested breakdown and MCP status | Native app-server facts and controls |
 | Suspend and resume | Claude session id and transcript relink | Claude session id, with a gap row before resumed ready | Codex thread id across server restart |
 | A2A delivery | Supported by Claude socket with PTY fallback | Supported by stream input | Supported by item injection with turn fallback |
 | Recipient-owned A2A record | Transcript confirmation | `amux.claude_sdk.message` with `delivery: "stream"` | `amux.codex_message` with the accepted carrier |
 | Executable-specification corpus | Claude PTY recordings | Claude SDK recordings | Codex recordings |
 | Opt-in live backend suite | `claude_pty_live` | `claude_sdk_live` | `codex_live` |
-| Current gaps | No terminal screen model; unforeseen dialogs require raw attach | No chat UI; streaming partials, model/mode switching, context usage and MCP status are parked UI controls. Hook callbacks receive the neutral continue default; elicitation is declined and user dialogs are cancelled by default. | No provider-specific gap introduced by this boundary |
+| Current gaps | No terminal screen model; unforeseen dialogs require raw attach | No raw terminal; nested elicitation schemas are blocked; the dialog recognizer has no live frame behind it (see `CLAUDE_SDK.md`). | No provider-specific gap introduced by this boundary |
 
 SDK-driven Claude is a full A2A recipient, not a reduced messaging mode. The
 daemon formats the ordinary amux envelope, sends it as a stream user message,
 and writes `amux.claude_sdk.message` only after Claude accepts it.
 
-The SDK event boundary nevertheless preserves hook, elicitation and user-dialog
-requests as typed crate events. The current daemon driver deliberately applies
-the defaults in the table rather than exposing those controls in a UI. Those
-defaults and the parked SDK UI controls are product gaps, not missing provider
-crate capabilities.
+The SDK daemon keeps permission, elicitation and user-dialog requests pending
+until a client answers or the session exits. It never auto-declines an
+elicitation or auto-cancels a dialog. Each request and resolution becomes a
+typed row; an answer to an unknown request returns an input error.
+
+Managed SDK launches enable partial messages and register no amux hook
+callbacks. Ordinary user hooks remain owned by Claude settings, with no
+setting-source restriction; an unexpected callback receives the neutral continue
+response. The SDK chat renders the native rows through its own client layer.
+`CLAUDE_SDK.md` describes its controls and the source-known but unrecorded dialog
+paths in Claude Code 2.1.261.
+
+New Claude agents resolve `--driver` first, then `claude.driver`, then the
+shipped `pty` default. CLI creation, TUI creation and MCP spawn use the same
+resolver. Changing configuration never converts an existing agent.
 
 ## Executable specifications and derived rows
 

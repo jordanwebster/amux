@@ -8,7 +8,7 @@
 use crate::effect::{DumpReason, Effect, InputPayload};
 use crate::model::{
     AgentCard, AgentLayer, AgentPhase, Attention, Connection, FINISHED_OPS_RETAINED, FinishedOp,
-    HostState, Model, PendingOp, StreamPhase, StreamState, StructuredProtocol,
+    HostState, Model, PendingOp, StreamPhase, StreamState,
 };
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
 
@@ -71,14 +71,7 @@ fn ensure_stream(
     if card.agent.readonly && wanted == StreamWanted::InventoryPolicy {
         return None;
     }
-    let protocol = match AgentLayer::from_kind(&card.agent.kind)? {
-        AgentLayer::Claude(_) => StructuredProtocol::Claude,
-        AgentLayer::Codex(_) => StructuredProtocol::Codex,
-        // The SDK driver's rows have no client-side fold yet. Holding a
-        // stream open for a layer that observes nothing would buy nothing
-        // but bandwidth, so the subscription waits for the fold.
-        AgentLayer::ClaudeSdk(_) => return None,
-    };
+    let protocol = AgentLayer::from_kind(&card.agent.kind)?.protocol();
     let reopen = match model.streams.get(&agent_id) {
         None => true,
         Some(state) => match &state.phase {
@@ -171,6 +164,9 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
             Effect::Diff { op, agent, base },
         ),
         Command::Claude(command) => crate::claude::update::update_command(model, op, seq, command),
+        Command::ClaudeSdk(command) => {
+            crate::claude_sdk::update::update_command(model, op, seq, command)
+        }
         Command::Codex(command) => crate::codex::update::update_command(model, op, seq, command),
         command @ (Command::SetModel { .. }
         | Command::SetEffort { .. }
@@ -242,9 +238,13 @@ pub(crate) fn update_attachment_prompt(
         ),
         Some(amux::AgentKind::Claude {
             driver: amux::ClaudeDriver::Sdk,
-        })
-        | Some(amux::AgentKind::TestAgent)
-        | None => {
+        }) => crate::claude_sdk::update::update_command(
+            model,
+            op,
+            seq,
+            crate::claude_sdk::ClaudeSdkCommand::SendPrompt { agent, text },
+        ),
+        Some(amux::AgentKind::TestAgent) | None => {
             return refuse(
                 model,
                 op,
@@ -370,6 +370,11 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
         }
     }
     if let OpOutcome::Error { error } = &outcome
+        && let Command::ClaudeSdk(command) = &pending.command
+    {
+        crate::claude_sdk::update::update_failed_command(model, op, command, error)
+    }
+    if let OpOutcome::Error { error } = &outcome
         && let Command::Codex(command) = &pending.command
     {
         crate::codex::update::update_failed_command(model, op, command, error)
@@ -384,6 +389,17 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
                 model,
                 op,
                 &crate::claude::ClaudeCommand::SendPrompt {
+                    agent: *agent,
+                    text: text.clone(),
+                },
+                error,
+            ),
+            Some(amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Sdk,
+            }) => crate::claude_sdk::update::update_failed_command(
+                model,
+                op,
+                &crate::claude_sdk::ClaudeSdkCommand::SendPrompt {
                     agent: *agent,
                     text: text.clone(),
                 },
@@ -415,7 +431,11 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
                     .attachments_mut()
                     .insert_diff(id.clone(), patch.clone());
             }
-            AgentLayer::ClaudeSdk(_) => {}
+            AgentLayer::ClaudeSdk(layer) => {
+                layer
+                    .attachments_mut()
+                    .insert_diff(id.clone(), patch.clone());
+            }
         });
     }
     if crate::queue::observe_result(model, &pending, &outcome) {

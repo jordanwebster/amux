@@ -1,4 +1,4 @@
-  fix-auth · claude @ mbp                                                                                   chat · idle 
+  fix-auth · claude @ mbp                                                    claude-haiku-4-5-20251001 · default · idle 
                                                                                                                         
 ▎   add retry with backoff to the sync client                                                                           
                                                                                                                         
@@ -31,10 +31,10 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
+    ctx 31.6k                                                                                                           
                                                                                                                         
 ▎   first line of the draft                                                                                             
 ▎   second line                                                                                                         
 ▎   third line▌                                                                                                         
                                                                                                                         
-    enter send · ctrl+j newline · C-a r review diff                                                        mode default 
+    enter send · ctrl+j newline · C-a r review diff                                                      shift+tab mode 

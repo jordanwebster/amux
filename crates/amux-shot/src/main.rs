@@ -21,6 +21,7 @@ const SET_NAMES: &[&str] = &[
     "review",
     "themes",
     "fleet",
+    "parity",
     "all",
 ];
 
@@ -81,6 +82,7 @@ enum ColorArg {
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum AgentArg {
     Claude,
+    ClaudeSdk,
     Codex,
 }
 
@@ -88,6 +90,7 @@ impl From<AgentArg> for StructuredProtocol {
     fn from(value: AgentArg) -> Self {
         match value {
             AgentArg::Claude => Self::Claude,
+            AgentArg::ClaudeSdk => Self::ClaudeSdk,
             AgentArg::Codex => Self::Codex,
         }
     }
@@ -126,6 +129,22 @@ const CHAT: &[SetMember] = &[
         "claude-working-light.png",
         ThemeSpec::Light,
     ),
+    member("claude-sdk-idle", "claude-sdk-idle.png", ThemeSpec::Dark),
+    member(
+        "claude-sdk-idle",
+        "claude-sdk-idle-light.png",
+        ThemeSpec::Light,
+    ),
+    member(
+        "claude-sdk-streaming",
+        "claude-sdk-streaming.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-streaming",
+        "claude-sdk-streaming-light.png",
+        ThemeSpec::Light,
+    ),
     member("codex-idle", "codex-idle-dark.png", ThemeSpec::Dark),
     member("codex-idle", "codex-idle-light.png", ThemeSpec::Light),
     member("codex-working", "codex-working-dark.png", ThemeSpec::Dark),
@@ -146,6 +165,42 @@ const AGENT_SPECIFIC: &[SetMember] = &[
     member(
         "claude-diff-reader",
         "claude-diff-reader-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-permission-ask",
+        "claude-sdk-permission-ask.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-plan-reader",
+        "claude-sdk-plan-reader.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-question-ask",
+        "claude-sdk-question-ask.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-elicitation",
+        "claude-sdk-elicitation.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-dialog",
+        "claude-sdk-dialog.png",
+        ThemeSpec::Dark,
+    ),
+    member("claude-sdk-tasks", "claude-sdk-tasks.png", ThemeSpec::Dark),
+    member(
+        "claude-sdk-context",
+        "claude-sdk-context.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-context-breakdown",
+        "claude-sdk-context-breakdown.png",
         ThemeSpec::Dark,
     ),
     member("codex-approval", "codex-approval-dark.png", ThemeSpec::Dark),
@@ -196,6 +251,16 @@ const SCROLL: &[SetMember] = &[
         ThemeSpec::Dark,
     ),
     member(
+        "claude-sdk-long-feed",
+        "claude-sdk-following-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-scrolled-back",
+        "claude-sdk-scrolled-back-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member(
         "codex-long-feed",
         "codex-following-dark.png",
         ThemeSpec::Dark,
@@ -222,6 +287,16 @@ const COLLAPSE: &[SetMember] = &[
     member(
         "exploration-expanded",
         "exploration-expanded-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-exploration",
+        "claude-sdk-exploration.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-exploration-expanded",
+        "claude-sdk-exploration-expanded.png",
         ThemeSpec::Dark,
     ),
 ];
@@ -313,8 +388,79 @@ const THEMES: &[SetMember] = &[
 
 const FLEET: &[SetMember] = &[
     member("fleet", "fleet-dark.png", ThemeSpec::Dark),
+    member("fleet-mixed", "fleet-mixed.png", ThemeSpec::Dark),
+    member("fleet-mixed", "fleet-mixed-light.png", ThemeSpec::Light),
     member("fleet", "fleet-light.png", ThemeSpec::Light),
+    member("fleet-sdk-help", "fleet-sdk-help.png", ThemeSpec::Dark),
+    member("a2a-sdk-family", "a2a-sdk-family.png", ThemeSpec::Dark),
     member("claude-idle", "claude-idle-dark.png", ThemeSpec::Dark),
+];
+
+/// The same surface across all three chats, one file per chat, named so
+/// that a directory listing puts each triple together. This is the set a
+/// person walks to judge whether the three read as one design.
+const PARITY: &[SetMember] = &[
+    member("claude-idle", "idle-claude.png", ThemeSpec::Dark),
+    member("claude-sdk-idle", "idle-claude-sdk.png", ThemeSpec::Dark),
+    member("codex-idle", "idle-codex.png", ThemeSpec::Dark),
+    member("claude-working", "working-claude.png", ThemeSpec::Dark),
+    member(
+        "claude-sdk-streaming",
+        "working-claude-sdk.png",
+        ThemeSpec::Dark,
+    ),
+    member("codex-working", "working-codex.png", ThemeSpec::Dark),
+    member(
+        "claude-permission-ask",
+        "permission-claude.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-permission-ask",
+        "permission-claude-sdk.png",
+        ThemeSpec::Dark,
+    ),
+    member("codex-approval", "permission-codex.png", ThemeSpec::Dark),
+    member("claude-plan-reader", "plan-claude.png", ThemeSpec::Dark),
+    member(
+        "claude-sdk-plan-reader",
+        "plan-claude-sdk.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-question-ask",
+        "question-claude.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-question-ask",
+        "question-claude-sdk.png",
+        ThemeSpec::Dark,
+    ),
+    // Collapsed exploration is the newest shared shape, so the walk
+    // compares both chats closed and both chats open: a fold that reads
+    // differently on either side is the kind of drift this set exists
+    // to catch. Codex has no counterpart — it never folds a run.
+    member(
+        "exploration-collapsed",
+        "exploration-claude.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-exploration",
+        "exploration-claude-sdk.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "exploration-expanded",
+        "exploration-open-claude.png",
+        ThemeSpec::Dark,
+    ),
+    member(
+        "claude-sdk-exploration-expanded",
+        "exploration-open-claude-sdk.png",
+        ThemeSpec::Dark,
+    ),
 ];
 
 const fn member(state: &'static str, file: &'static str, theme: ThemeSpec) -> SetMember {
@@ -441,6 +587,7 @@ fn set_members(name: &str) -> Result<Vec<SetMember>, ShotError> {
         "review" => REVIEW,
         "themes" => THEMES,
         "fleet" => FLEET,
+        "parity" => PARITY,
         "all" => {
             let mut members = Vec::new();
             let mut files = BTreeSet::new();
@@ -455,6 +602,7 @@ fn set_members(name: &str) -> Result<Vec<SetMember>, ShotError> {
                 REVIEW,
                 THEMES,
                 FLEET,
+                PARITY,
             ] {
                 for member in set {
                     if files.insert(member.file) {
@@ -526,10 +674,47 @@ mod tests {
     }
 
     #[test]
-    fn the_gallery_and_collapse_sets_name_states_that_exist() {
-        for set in ["gallery", "collapse"] {
+    fn the_gallery_collapse_and_parity_sets_name_states_that_exist() {
+        for set in ["gallery", "collapse", "parity"] {
             for member in set_members(set).unwrap() {
                 super::parse_state(member.state).unwrap_or_else(|error| panic!("{set}: {error:?}"));
+            }
+        }
+    }
+
+    /// A capture record is read by a person hunting for the screenshot
+    /// they need, so its `state` and `file` are the fixture registry's own
+    /// handles and must name the surface they show — `claude-sdk-idle` is
+    /// how somebody finds that PNG. Everything else a manifest carries is
+    /// vocabulary this tool chose: a set name, a theme label. None of it
+    /// may name how an agent is driven, because those names travel with
+    /// the captures into whatever a reviewer reads next.
+    #[test]
+    fn backend_vocabulary_stays_out_of_screenshot_manifests() {
+        const MACHINERY_WORDS: &[&str] = &["sdk", "pty", "driver", "backend", "unsupported"];
+        let says_machinery = |text: &str| -> Vec<String> {
+            text.split(|character: char| !character.is_ascii_alphanumeric())
+                .map(str::to_ascii_lowercase)
+                .filter(|word| MACHINERY_WORDS.contains(&word.as_str()))
+                .collect()
+        };
+
+        for set in SET_NAMES {
+            assert!(
+                says_machinery(set).is_empty(),
+                "the render set {set} is named after how an agent is driven"
+            );
+            for member in set_members(set).unwrap() {
+                let (_, label) = super::resolve_theme_spec(member.theme, member.color).unwrap();
+                assert!(
+                    says_machinery(&label).is_empty(),
+                    "the theme {label} in set {set} is named after how an agent is driven"
+                );
+                let color = match member.color {
+                    amux_tui::ColorMode::TrueColor => "truecolor",
+                    amux_tui::ColorMode::Ansi => "ansi",
+                };
+                assert!(says_machinery(color).is_empty(), "{color}");
             }
         }
     }

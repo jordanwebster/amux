@@ -105,6 +105,10 @@ impl DaemonApi for Client {
 #[async_trait]
 trait ClientConnector: Send + Sync {
     async fn connect(&self) -> Result<Arc<dyn DaemonApi>>;
+
+    fn claude_driver(&self) -> amux::ClaudeDriver {
+        amux::resolve_claude_driver(None, &Config::default())
+    }
 }
 
 struct ConfigConnector {
@@ -115,6 +119,10 @@ struct ConfigConnector {
 impl ClientConnector for ConfigConnector {
     async fn connect(&self) -> Result<Arc<dyn DaemonApi>> {
         Ok(Arc::new(require_running_client(&self.config, None).await?))
+    }
+
+    fn claude_driver(&self) -> amux::ClaudeDriver {
+        amux::resolve_claude_driver(None, &self.config)
     }
 }
 
@@ -333,12 +341,12 @@ fn caller_parent(
 
 fn send_request(
     caller: Option<Uuid>,
-    to: String,
+    to: AgentIdentifier,
     text: String,
     context: Option<Uuid>,
 ) -> SendMessageRequest {
     SendMessageRequest {
-        to: AgentIdentifier::from(to),
+        to,
         text,
         context,
         from_agent_id: caller,
@@ -389,7 +397,7 @@ impl ToolBackend for ClientBackend {
             ToolRequest::Agents => self.list_agents(client.as_ref()).await,
             ToolRequest::Send { to, text, context } => {
                 let id = client
-                    .send_message(send_request(caller, to, text, context))
+                    .send_message(send_request(caller, to.into(), text, context))
                     .await?;
                 Ok(json!({ "id": id }))
             }
@@ -418,7 +426,7 @@ impl ToolBackend for ClientBackend {
                 let (agent_type, args) = match kind {
                     SpawnKind::Claude => (
                         AgentType::Claude {
-                            driver: amux::ClaudeDriver::Pty,
+                            driver: self.connector.claude_driver(),
                         },
                         Vec::new(),
                     ),
@@ -452,7 +460,12 @@ impl ToolBackend for ClientBackend {
                 });
                 if caller.is_none()
                     && let Err(error) = client
-                        .send_message(send_request(None, agent.id.to_string(), prompt, None))
+                        .send_message(send_request(
+                            None,
+                            AgentIdentifier::Id(agent.id),
+                            prompt,
+                            None,
+                        ))
                         .await
                 {
                     result["initial_prompt_delivery"] = json!({
@@ -622,8 +635,12 @@ mod attach_tests {
         hosts: Vec<amux::HostEntry>,
         fail_send: AtomicBool,
         send_calls: AtomicUsize,
+        last_send: Mutex<Option<SendMessageRequest>>,
         create_calls: AtomicUsize,
         standalone_spawn_shape: Mutex<Option<(Option<AgentParent>, Option<String>)>>,
+        /// What the last create asked for. A spawned child's kind is the
+        /// only place the driver decision becomes visible.
+        created_type: Mutex<Option<amux::AgentType>>,
         attach_calls: Mutex<Vec<AttachCall>>,
     }
 
@@ -646,8 +663,10 @@ mod attach_tests {
                 hosts,
                 fail_send: AtomicBool::new(false),
                 send_calls: AtomicUsize::new(0),
+                last_send: Mutex::new(None),
                 create_calls: AtomicUsize::new(0),
                 standalone_spawn_shape: Mutex::new(None),
+                created_type: Mutex::new(None),
                 attach_calls: Mutex::new(Vec::new()),
             }
         }
@@ -663,8 +682,9 @@ mod attach_tests {
             Ok(self.hosts.clone())
         }
 
-        async fn send_message(&self, _request: SendMessageRequest) -> Result<Uuid> {
+        async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid> {
             self.send_calls.fetch_add(1, Ordering::SeqCst);
+            *self.last_send.lock().unwrap() = Some(request);
             if self.fail_send.load(Ordering::SeqCst) {
                 Err(anyhow!("response lost after mutation"))
             } else {
@@ -676,6 +696,7 @@ mod attach_tests {
             self.create_calls.fetch_add(1, Ordering::SeqCst);
             *self.standalone_spawn_shape.lock().unwrap() =
                 Some((request.parent, request.initial_prompt));
+            *self.created_type.lock().unwrap() = Some(request.agent_type);
             Ok(test_agent(
                 request.agent_id,
                 Uuid::from_u128(302),
@@ -724,14 +745,26 @@ mod attach_tests {
         daemon: Arc<FakeDaemon>,
         fail_first: usize,
         connects: AtomicUsize,
+        /// The driver this connector's configuration resolves to, as the
+        /// real one reads it from the config file.
+        driver: amux::ClaudeDriver,
     }
 
     impl FakeConnector {
         fn new(daemon: Arc<FakeDaemon>, fail_first: usize) -> Self {
+            Self::driven(
+                daemon,
+                fail_first,
+                amux::resolve_claude_driver(None, &Config::default()),
+            )
+        }
+
+        fn driven(daemon: Arc<FakeDaemon>, fail_first: usize, driver: amux::ClaudeDriver) -> Self {
             Self {
                 daemon,
                 fail_first,
                 connects: AtomicUsize::new(0),
+                driver,
             }
         }
     }
@@ -746,10 +779,87 @@ mod attach_tests {
                 Ok(self.daemon.clone())
             }
         }
+
+        fn claude_driver(&self) -> amux::ClaudeDriver {
+            self.driver
+        }
     }
 
     fn test_agent(id: Uuid, host_id: Uuid, name: &str) -> Agent {
         agent_with_kind(id, host_id, name, amux::AgentKind::TestAgent)
+    }
+
+    /// The spawn tool asks the same question `amux new` and the TUI ask:
+    /// which driver does a new Claude agent get. The configured answer is
+    /// the child's kind, and the shipped default is the other one — a
+    /// spawned child must never be an exception to the setting.
+    #[tokio::test]
+    async fn a2a_mcp_spawn_gives_a_claude_child_the_configured_driver() {
+        for driver in [amux::ClaudeDriver::Sdk, amux::ClaudeDriver::Pty] {
+            let daemon = Arc::new(FakeDaemon::new(Vec::new()));
+            let backend = ClientBackend {
+                connector: Arc::new(FakeConnector::driven(daemon.clone(), 0, driver)),
+                identity: None,
+            };
+
+            backend
+                .call(ToolRequest::Spawn {
+                    kind: SpawnKind::Claude,
+                    prompt: "inspect the lifecycle".to_string(),
+                    name: Some("probe".to_string()),
+                    cwd: Some(PathBuf::from("/work")),
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(
+                daemon.created_type.lock().unwrap().clone(),
+                Some(amux::AgentType::Claude { driver }),
+                "a spawned Claude child follows the resolved driver"
+            );
+        }
+    }
+
+    /// A spawned Codex child is unaffected by the Claude setting: the
+    /// question does not apply to it, and answering it anyway would be a
+    /// silent second meaning for one config key.
+    #[tokio::test]
+    async fn a2a_mcp_spawn_leaves_a_codex_child_alone() {
+        let daemon = Arc::new(FakeDaemon::new(Vec::new()));
+        let backend = ClientBackend {
+            connector: Arc::new(FakeConnector::driven(
+                daemon.clone(),
+                0,
+                amux::ClaudeDriver::Sdk,
+            )),
+            identity: None,
+        };
+
+        backend
+            .call(ToolRequest::Spawn {
+                kind: SpawnKind::Codex,
+                prompt: "hunt the flake".to_string(),
+                name: None,
+                cwd: Some(PathBuf::from("/work")),
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            matches!(
+                daemon.created_type.lock().unwrap().as_ref(),
+                Some(amux::AgentType::Codex { .. })
+            ),
+            "the Claude setting has nothing to say about a Codex child"
+        );
+    }
+
+    #[test]
+    fn claude_driver_mcp_spawn_connector_uses_config() {
+        let config: Config = serde_yaml::from_str("claude:\n  driver: sdk\n").unwrap();
+        let connector = ConfigConnector { config };
+
+        assert_eq!(connector.claude_driver(), amux::ClaudeDriver::Sdk);
     }
 
     fn agent_with_kind(id: Uuid, host_id: Uuid, name: &str, kind: amux::AgentKind) -> Agent {
@@ -1026,7 +1136,7 @@ mod attach_tests {
 
         let send = send_request(
             Some(caller),
-            "reviewer".to_string(),
+            "reviewer".into(),
             "please inspect".to_string(),
             Some(context),
         );
@@ -1184,6 +1294,14 @@ mod attach_tests {
             *daemon.standalone_spawn_shape.lock().unwrap(),
             Some((None, None))
         );
+        let sent = daemon.last_send.lock().unwrap();
+        let sent = sent.as_ref().unwrap();
+        assert_eq!(
+            sent.to,
+            AgentIdentifier::Id(Uuid::parse_str(result["id"].as_str().unwrap()).unwrap())
+        );
+        assert_eq!(sent.text, "inspect this");
+        assert_eq!(sent.from_agent_id, None);
     }
 
     #[tokio::test]

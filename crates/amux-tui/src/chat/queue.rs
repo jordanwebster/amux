@@ -154,6 +154,10 @@ mod tests {
             }
             assert!(text.contains("queued · tab edit or replace · run the tests next"));
             assert!(text.contains("interrupt"));
+            assert!(
+                text.contains("ctx "),
+                "queue keeps the context activity row"
+            );
             println!("{} queued terminal frame:\n{text}", state.name());
             let chat = fixture.view.chat.as_mut().unwrap();
             let Some(UiAction::Dispatch(command)) = handle_chat_key(

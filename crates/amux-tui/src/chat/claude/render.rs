@@ -12,27 +12,27 @@ use std::collections::HashMap;
 
 use amux_ui::Model;
 use amux_ui::claude::{
-    Ask, AskDocument, ChatPhase, FeedEntry, FeedEntryKind, FeedItem, InterruptionKind,
-    SuccessFacts, ToolEntry, ToolInvocation, ToolOutcome, TurnDuration,
+    ChatPhase, FeedEntry, FeedEntryKind, FeedItem, InterruptionKind, SuccessFacts, ToolEntry,
+    ToolInvocation, ToolOutcome, TurnDuration,
 };
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
 use crate::chat::blocks::{
-    self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant, paint_attachment,
+    self, paint_agent_message, paint_ask_fact, paint_assistant, paint_attachment,
     paint_compaction_rule, paint_composer_block, paint_error, paint_exploration_run,
     paint_file_change, paint_header, paint_plan, paint_subagent, paint_thinking, paint_tool_line,
     paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
-use crate::chat::claude::{View, ask_ui, panel, reader};
+use crate::chat::claude::{View, reader_context, shared_ask};
+use crate::chat::claude_shared::{armed_quit_line, panel, reader};
 use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{
     FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph, subagent_marker,
 };
-use crate::render::{FrameContext, Theme, line_len, push_span, str_width};
-use crate::view::QuitGuard;
+use crate::render::{FrameContext, Theme, line_len, push_span};
 
 /// One 1 Hz Tick drives the spinner and the elapsed text together (D5);
 /// the frame index derives from elapsed seconds — no renderer state.
@@ -44,9 +44,6 @@ const PLAN_PREVIEW_LINES: usize = 6;
 
 /// Screen rows a diff preview may occupy, including its remainder row.
 const DIFF_PREVIEW_BUDGET: usize = 8;
-
-/// Paths are a dense hint, not the run's full retained content.
-const RUN_PATH_PREVIEW: usize = 2;
 
 /// Synthetic keys for the blocks no entry owns. Pending echoes count
 /// down from the top of the space so they can never collide with an
@@ -81,11 +78,20 @@ pub(crate) fn claude_frame_parts(
     // frame while open (any key closes the overlay; the reader falls back
     // to the chat when its source no longer resolves).
     let overlay = if chat.help {
-        Some(help_overlay(model, chat, theme, width, height))
+        Some(crate::chat::claude_shared::help_overlay(
+            crate::bindings::chat_sections(
+                &effective(chat),
+                crate::chat::family_keys(model, chat.agent),
+            ),
+            chat.quit_guard.is_armed(),
+            theme,
+            width,
+            height,
+        ))
     } else if let Some(draft) = chat.review.as_ref().filter(|draft| draft.open) {
         Some(draft.view.frame(theme, ctx.viewport.0, ctx.viewport.1))
     } else if chat.reader.is_some() {
-        reader::reader_frame(model, chat, theme, width, height)
+        reader_context(model, chat).and_then(|ctx| reader::reader_frame(&ctx, theme, width, height))
     } else {
         None
     };
@@ -112,7 +118,7 @@ pub(crate) fn claude_frame_parts(
         activity: crate::chat::queue::strip(
             model,
             chat.agent,
-            working.then(|| working_row(model, chat, ctx, readonly)),
+            activity_row(model, chat, ctx, readonly, working),
             theme,
             width,
             chat.inline_ask.is_none(),
@@ -150,12 +156,34 @@ fn header_row(
     } else {
         word
     };
-    let right = if readonly {
-        "chat · read-only · "
-    } else {
-        "chat · "
+    let mut facts = session_facts(model, chat);
+    if readonly {
+        facts.push("read-only".to_string());
+    }
+    // Facts are context and the phase word is not, so a line too narrow
+    // to hold both drops facts from the least important end — the model
+    // first, then the mode; that a chat is read-only survives longest.
+    let mut right = blocks::fit_header_facts(&name, facts, &word, width);
+    if right.is_empty() {
+        right.push_str("chat · ");
+    }
+    paint_header(&name, (&word, style), &right, theme, width)
+}
+
+/// The two session facts the header states: what the turn will run on and
+/// what it is allowed to do without asking. Each is shown only once a row
+/// has stated it — an empty right side is honest about a session that has
+/// not said yet.
+fn session_facts(model: &Model, chat: &View) -> Vec<String> {
+    let Some(session) = model.claude(chat.agent).map(|layer| layer.session()) else {
+        return Vec::new();
     };
-    paint_header(&name, (&word, style), right, theme, width)
+    session
+        .model
+        .iter()
+        .chain(session.permission_mode.iter())
+        .cloned()
+        .collect()
 }
 
 /// Whether this banner's chord would do anything from here: the child
@@ -185,42 +213,65 @@ fn phase_word(phase: ChatPhase, theme: Theme) -> (String, Style) {
     }
 }
 
-/// `◐ working · 24s · ctrl+x interrupt` (D5). Elapsed ticks locally from
-/// the prompt row's timestamp; the authoritative duration replaces it in
-/// the turn marker at close. Read-only chats show the same liveness
-/// without the interrupt hint — interrupt is a write affordance, absent
-/// not disabled (F1).
-fn working_row(model: &Model, chat: &View, ctx: &FrameContext, readonly: bool) -> Line<'static> {
+/// `◐ working · 24s · ctx 31.6k · ctrl+x interrupt` (D5). Elapsed ticks
+/// locally from the prompt row's timestamp; the authoritative duration
+/// replaces it in the turn marker at close. Read-only chats show the same
+/// liveness without the interrupt hint — interrupt is a write affordance,
+/// absent not disabled (F1).
+///
+/// The meter is a passive fact — whatever the last message's own usage
+/// reported — so it is stated whenever this session has a layer at all,
+/// working or not, and says `unknown` rather than a guess before any
+/// message has arrived.
+fn activity_row(
+    model: &Model,
+    chat: &View,
+    ctx: &FrameContext,
+    readonly: bool,
+    working: bool,
+) -> Option<Line<'static>> {
+    let layer = model.claude(chat.agent)?;
     let theme = ctx.theme;
-    let elapsed = model
-        .claude(chat.agent)
-        .and_then(|layer| layer.prompt_at())
-        .map(|at| (ctx.now - at).num_seconds().max(0) as u64);
-    let spinner = SPINNER[elapsed.unwrap_or(0) as usize % SPINNER.len()];
-    let mut label = format!("{spinner} working");
-    if let Some(secs) = elapsed {
-        label.push_str(&format!(" · {}", fmt_secs(secs)));
-    }
     let mut line = Line::default();
-    push_span(&mut line, blocks::GLYPH_COL, label, theme.text());
-    // A docked child ask owns Ctrl+X while it is on screen — it
-    // interrupts the agent whose ask that is — so the working line stops
-    // claiming it here: a hint that would do something else than it says
-    // is worse than no hint (P10).
-    if !readonly && chat.inline_ask.is_none() {
-        line.spans
-            .push(Span::styled(" · ctrl+x interrupt", theme.muted()));
+    if working {
+        let elapsed = layer
+            .prompt_at()
+            .map(|at| (ctx.now - at).num_seconds().max(0) as u64);
+        let spinner = SPINNER[elapsed.unwrap_or(0) as usize % SPINNER.len()];
+        let mut label = format!("{spinner} working");
+        if let Some(secs) = elapsed {
+            label.push_str(&format!(" · {}", fmt_secs(secs)));
+        }
+        push_span(&mut line, blocks::GLYPH_COL, label, theme.text());
+    } else {
+        push_span(&mut line, blocks::TEXT_COL, "", theme.muted());
     }
-    line
+
+    let mut facts = vec![meter_text(layer.session().context_used_tokens)];
+    // A docked child ask owns Ctrl+X while it is on screen — it
+    // interrupts the agent whose ask that is — so this line stops
+    // claiming it: a hint that would do something else than it says is
+    // worse than no hint (P10).
+    if working && !readonly && chat.inline_ask.is_none() {
+        facts.push("ctrl+x interrupt".to_string());
+    }
+    let joined = facts.join(" · ");
+    if working {
+        line.spans
+            .push(Span::styled(format!(" · {joined}"), theme.muted()));
+    } else {
+        line.spans.push(Span::styled(joined, theme.muted()));
+    }
+    Some(line)
 }
 
-/// The armed quit guard's replacement hint row (`docs/CHAT.md`
-/// §Keybindings): it replaces the hint line — wherever that line lives —
-/// in warning color.
-pub(crate) fn armed_quit_line(theme: Theme) -> Line<'static> {
-    let mut line = Line::default();
-    push_span(&mut line, blocks::TEXT_COL, QuitGuard::HINT, theme.warn());
-    line
+/// `ctx 31.6k`, and `ctx unknown` before any message has stated a usage.
+/// There is no denominator: no transcript row states the context window.
+fn meter_text(used_tokens: Option<u64>) -> String {
+    match used_tokens {
+        None => "ctx unknown".to_string(),
+        Some(used) => format!("ctx {}", fmt_tokens(used)),
+    }
 }
 
 // --- the bottom block -------------------------------------------------------
@@ -249,10 +300,11 @@ fn bottom_block(
             .claude(chat.agent)
             .map(|layer| layer.ask_count())
             .unwrap_or(1);
-        ask_panel_lines(
-            ask,
+        let shared = shared_ask(ask);
+        panel::paint(
+            &shared,
             panel::ask_panel(
-                ask,
+                &shared,
                 count,
                 chat.ask_ui.as_ref(),
                 chat.ask_failure.as_deref(),
@@ -276,51 +328,6 @@ fn bottom_block(
     lines
 }
 
-/// One docked ask, painted: its diff document leads the body through the
-/// shared diff rows, then the ask's own words, answers and keys.
-pub(crate) fn ask_panel_lines(
-    ask: &Ask,
-    mut parts: panel::AskPanel,
-    theme: Theme,
-    width: usize,
-) -> Vec<Line<'static>> {
-    if let Some(AskDocument::Diff(document)) = &ask.document {
-        let body_width = blocks::panel_body_width(width);
-        let preview =
-            diff_painter::paint_rows(&document.document.rows(), theme, body_width, 0, true)
-                .into_preview(DIFF_PREVIEW_BUDGET);
-        let mut body = preview.lines;
-        if preview.hidden > 0 {
-            body.push(remainder_row(preview.hidden, "f full document", theme));
-        }
-        body.append(&mut parts.body);
-        parts.body = body;
-    }
-    paint_ask_panel(
-        BlockKey(ask.id),
-        &parts.title,
-        parts.body,
-        parts.actions,
-        &parts.hints,
-        theme,
-        width,
-    )
-    .lines
-}
-
-/// `⋮ +K more lines · f full document` — a preview always states its own
-/// arithmetic and names what shows the rest.
-fn remainder_row(hidden: usize, affordance: &str, theme: Theme) -> Line<'static> {
-    let mut line = Line::default();
-    push_span(
-        &mut line,
-        blocks::TEXT_COL - 2,
-        format!("⋮ +{hidden} more lines · {affordance}"),
-        theme.muted(),
-    );
-    line
-}
-
 /// The read-only chat's bottom block (F1): the ask fact panel when one
 /// pends, the `⊘ read-only` statement where the composer would be, and
 /// the pager hints.
@@ -331,9 +338,10 @@ fn readonly_bottom(model: &Model, chat: &View, theme: Theme, width: usize) -> Ve
             .claude(chat.agent)
             .map(|layer| layer.ask_count())
             .unwrap_or(1);
-        lines.extend(ask_panel_lines(
-            ask,
-            panel::readonly_ask_panel(ask, count, blocks::panel_body_width(width), theme),
+        let shared = shared_ask(ask);
+        lines.extend(panel::paint(
+            &shared,
+            panel::readonly_ask_panel(&shared, count, blocks::panel_body_width(width), theme),
             theme,
             width,
         ));
@@ -350,7 +358,7 @@ fn readonly_bottom(model: &Model, chat: &View, theme: Theme, width: usize) -> Ve
     lines.push(Line::default());
     let mut hints = String::from("pgup/pgdn scroll");
     if let Some(ask) = chat.ask_head(model)
-        && ask_ui::has_readable(ask)
+        && shared_ask(ask).has_readable()
     {
         hints.push_str(" · f view document");
     }
@@ -440,8 +448,9 @@ fn review_hint(chat: &View) -> String {
 }
 
 /// One hint line, at most four items, derived purely from Model +
-/// ViewState (no stored footer mode); permission mode on the right (D4,
-/// hook-fact sourced).
+/// ViewState (no stored footer mode); the key that cycles permission mode
+/// on the right, where the mode itself used to sit before the header
+/// took over stating it (D4).
 fn footer_line(
     model: &Model,
     chat: &View,
@@ -452,7 +461,7 @@ fn footer_line(
     let mut line = Line::default();
     if chat.quit_guard.is_armed() {
         // The armed quit guard replaces the hints (warning color); the
-        // mode segment on the right stays.
+        // right-hand key hint stays.
         line = armed_quit_line(theme);
     } else if let Some(message) = chat.send_failure() {
         push_span(&mut line, blocks::GLYPH_COL, "✗", theme.error());
@@ -498,11 +507,8 @@ fn footer_line(
             theme.muted(),
         );
     }
-    if let Some(mode) = model
-        .claude(chat.agent)
-        .and_then(|layer| layer.session().permission_mode.as_deref())
-    {
-        let label = format!("mode {mode}");
+    if amux_ui::claude::mode_cycle_gate(model, chat.agent).is_none() {
+        let label = "shift+tab mode".to_string();
         let col = width.saturating_sub(1 + label.chars().count());
         if col > line_len(&line) {
             push_span(&mut line, col, label, theme.muted());
@@ -569,17 +575,7 @@ fn feed_blocks(
                 read_paths,
             } => {
                 let key = blocks::RunKey(id);
-                let first_paths = read_paths
-                    .iter()
-                    .take(RUN_PATH_PREVIEW)
-                    .map(|path| (*path).to_string())
-                    .collect::<Vec<_>>();
-                let summary = blocks::RunSummary {
-                    reads,
-                    searches,
-                    hidden: reads.saturating_sub(first_paths.len()),
-                    first_paths,
-                };
+                let summary = blocks::run_summary(reads, searches, &read_paths);
                 let member_entries: Vec<FeedEntry> = member_ids
                     .iter()
                     .filter_map(|id| entries.get(id))
@@ -1070,102 +1066,6 @@ fn tool_continuation(tool: &ToolEntry) -> Option<String> {
 
 // --- the overlays -----------------------------------------------------------
 
-/// The `?` overlay: the chat's full effective key list with tier
-/// annotations, from the one binding table (`crate::bindings`) — kitty
-/// rows appear only when probed, ext rows are marked terminal-dependent.
-/// Fullscreen like the reader; any key closes. On short viewports the
-/// tail gives way and a `⋮` row states the cut honestly.
-fn help_overlay(
-    model: &Model,
-    chat: &View,
-    theme: Theme,
-    width: usize,
-    height: usize,
-) -> Vec<Line<'static>> {
-    let sections = crate::bindings::chat_sections(
-        &crate::bindings::Effective::new(chat.kitty, chat.leader),
-        crate::chat::family_keys(model, chat.agent),
-    );
-    // One aligned action column across every section.
-    let key_col = blocks::TEXT_COL
-        + 2
-        + sections
-            .iter()
-            .flat_map(|section| &section.bindings)
-            .map(|binding| str_width(&binding.keys))
-            .max()
-            .unwrap_or(0)
-        + 3;
-
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    for (index, section) in sections.iter().enumerate() {
-        if index > 0 {
-            rows.push(Line::default());
-        }
-        let mut title = Line::default();
-        push_span(&mut title, blocks::GLYPH_COL, section.title, theme.muted());
-        rows.push(title);
-        for binding in &section.bindings {
-            let mut line = Line::default();
-            push_span(
-                &mut line,
-                blocks::TEXT_COL + 2,
-                binding.keys.clone(),
-                theme.text(),
-            );
-            push_span(&mut line, key_col, binding.action.clone(), theme.muted());
-            if let Some(mark) = crate::render::tier_mark(binding.tier) {
-                line.spans
-                    .push(Span::styled(format!(" · {mark}"), theme.muted()));
-            }
-            rows.push(line);
-        }
-    }
-
-    // Fixed chrome is five rows: the title, the gap under it, two rules
-    // and the hint. The body consumes every remaining viewport row.
-    let body_h = height.saturating_sub(5).max(1);
-    if rows.len() > body_h {
-        rows.truncate(body_h.saturating_sub(1));
-        let mut more = Line::default();
-        push_span(
-            &mut more,
-            blocks::GLYPH_COL,
-            "⋮ more — a taller terminal shows the full list",
-            theme.muted(),
-        );
-        rows.push(more);
-    }
-    while rows.len() < body_h {
-        rows.push(Line::default());
-    }
-
-    let mut title = Line::default();
-    push_span(&mut title, blocks::GLYPH_COL, "keys", theme.emphasis());
-    let hint = if chat.quit_guard.is_armed() {
-        armed_quit_line(theme)
-    } else {
-        let mut line = Line::default();
-        push_span(
-            &mut line,
-            blocks::TEXT_COL,
-            "any key to close",
-            theme.muted(),
-        );
-        line
-    };
-
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
-    lines.push(title);
-    lines.push(Line::default());
-    lines.push(reader::rule_line(width, theme));
-    lines.extend(rows);
-    lines.push(reader::rule_line(width, theme));
-    lines.push(hint);
-    lines.truncate(height);
-    lines
-}
-
 // --- formatting -------------------------------------------------------------
 
 /// `24s`, `1m 42s`, `1h 2m` — durations floor to whole units.
@@ -1206,7 +1106,17 @@ mod tests {
             .map(|section| 1 + section.bindings.len())
             .sum::<usize>()
             + sections.len().saturating_sub(1);
-        let lines = help_overlay(&model, &chat, Theme::default(), 120, body_rows + 5);
+        let _ = &model;
+        let lines = crate::chat::claude_shared::help_overlay(
+            crate::bindings::chat_sections(
+                &crate::bindings::Effective::new(chat.kitty, chat.leader),
+                crate::bindings::FamilyKeys::default(),
+            ),
+            chat.quit_guard.is_armed(),
+            Theme::default(),
+            120,
+            body_rows + 5,
+        );
         let rendered: Vec<String> = lines
             .iter()
             .map(|line| {

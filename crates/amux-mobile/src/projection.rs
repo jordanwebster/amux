@@ -181,7 +181,7 @@ pub enum Event {
         /// Remove all positions below this absolute prefix before applying ranges.
         evicted: u64,
     },
-    Session(SessionDto),
+    Session(Box<SessionDto>),
     OpResult {
         op: OpId,
         outcome: OpOutcomeDto,
@@ -410,7 +410,7 @@ impl Projection {
             let session = session(model, *agent);
             if self.sessions.get(agent) != Some(&session) {
                 self.sessions.insert(*agent, session.clone());
-                events.push(Event::Session(session));
+                events.push(Event::Session(Box::new(session)));
             }
             let state = self.feeds.entry(*agent).or_default();
             let feed = if let Some(layer) = model.claude(*agent) {

@@ -144,6 +144,50 @@ impl OpenMode {
     }
 }
 
+/// Which modes an entry key can open one agent in. Every entry
+/// affordance — the fleet's Enter, Ctrl+Enter and `o`, the status-line
+/// hint and the `?` overlay — derives from this one answer, so a key,
+/// its hint and its help row can never disagree.
+///
+/// Raw attach is *absent* rather than disabled where a session has no
+/// terminal behind it: a session driven over a structured protocol has
+/// no bytes to pass through, and a read-only viewer must not take one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryModes {
+    /// The chat is the only way in; every entry key opens it.
+    ChatOnly,
+    /// Both ways in exist; `default` is what Enter opens and the other
+    /// is a Ctrl+Enter or `o` away.
+    Both { default: OpenMode },
+}
+
+impl EntryModes {
+    /// What Enter opens.
+    pub fn primary(self) -> OpenMode {
+        match self {
+            EntryModes::ChatOnly => OpenMode::Chat,
+            EntryModes::Both { default } => default,
+        }
+    }
+
+    /// What Ctrl+Enter and `o` open, when a second mode exists at all.
+    pub fn secondary(self) -> Option<OpenMode> {
+        match self {
+            EntryModes::ChatOnly => None,
+            EntryModes::Both { default } => Some(default.other()),
+        }
+    }
+
+    /// The mode an entry key opens; `other_mode` is set for Ctrl+Enter
+    /// and `o`, which fall back to the only mode there is.
+    pub fn resolve(self, other_mode: bool) -> OpenMode {
+        match other_mode {
+            true => self.secondary().unwrap_or_else(|| self.primary()),
+            false => self.primary(),
+        }
+    }
+}
+
 /// Interaction mode of the fleet screen.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mode {

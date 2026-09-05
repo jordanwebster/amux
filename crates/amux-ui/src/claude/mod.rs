@@ -18,17 +18,19 @@
 //! randomness may be imported here.
 
 pub mod answer;
-pub mod document;
-mod envelope;
+pub mod facts;
 mod fold;
+pub mod runs;
 pub mod todos;
 pub(crate) mod update;
 
 use std::collections::{BTreeSet, VecDeque};
-use std::iter::Peekable;
 
 use chrono::{DateTime, TimeDelta, Utc};
-pub use document::{AskDocument, DiffDocument, DiffMagnitude};
+pub use facts::{
+    AcceptedPlan, AskDocument, DiffDocument, DiffMagnitude, QuestionFact, QuestionOption,
+    SuggestionDestination, SuggestionFact, SuggestionKind, ToolInvocation,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -47,11 +49,6 @@ pub const PROTOCOL: &str = "claude_pty_transcript_v1";
 /// folds it; the name exists so screens can say which protocol they are
 /// declining to render.
 pub const SDK_PROTOCOL: &str = "claude_sdk_v1";
-
-/// The tool name Claude records for an amux message send. amux registers
-/// its tools with the MCP server named `amux`, and Claude prefixes every
-/// MCP tool the same way, so this is the name the transcript carries.
-pub(crate) const MCP_SEND_TOOL: &str = "mcp__amux__send";
 
 /// Claude-native client writes. This vocabulary stays deliberately
 /// asymmetric with every other agent layer.
@@ -317,186 +314,26 @@ pub struct ToolEntry {
     pub message_id: Option<String>,
 }
 
-/// Typed invocation facts per tool family, extracted tolerantly from
-/// `tool_use.input` — absent fields are `None`, never an error.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "tool", rename_all = "snake_case")]
-pub enum ToolInvocation {
-    Edit {
-        file_path: Option<String>,
-        replace_all: bool,
-    },
-    Write {
-        file_path: Option<String>,
-    },
-    Bash {
-        command: Option<String>,
-        description: Option<String>,
-    },
-    Read {
-        file_path: Option<String>,
-    },
-    /// The read/search family beyond `Read`: Grep, Glob, WebSearch,
-    /// WebFetch, ToolSearch — one line, one query-ish string.
-    Query {
-        text: Option<String>,
-    },
-    /// An amux message sent to another agent (`mcp__amux__send`). The
-    /// only amux tool with its own row shape: the rest are ordinary tool
-    /// calls, but a message leaving for a named agent is the outbound half
-    /// of a conversation and reads as one.
-    AmuxSend {
-        to: Option<String>,
-        text: Option<String>,
-    },
-    /// Subagent spawn (`Task` / `Agent`), B7.
-    Task {
-        description: Option<String>,
-        subagent_type: Option<String>,
-        background: bool,
-    },
-    /// `AskUserQuestion` (B5/C4 facts; options are `{label, description}`
-    /// objects — Phase 0 capture).
-    Question {
-        questions: Vec<QuestionFact>,
-    },
-    /// `ExitPlanMode` (B6): the plan payload rides `input.plan`.
-    Plan {
-        plan: Option<String>,
-        plan_file_path: Option<String>,
-    },
-    /// A tool this build does not know: name-only rendering.
-    Other,
-}
+/// This feed's exploration runs, projected over its native entries.
+pub type FeedItem<'a> = runs::FeedItem<'a, FeedEntry>;
+/// The lazy walk that yields them.
+pub type FeedItems<'a> = runs::FeedItems<'a, FeedEntry>;
 
-impl ToolInvocation {
-    fn is_exploration(&self) -> bool {
-        matches!(self, Self::Read { .. } | Self::Query { .. })
+impl runs::RunEntry for FeedEntry {
+    fn run_id(&self) -> u64 {
+        self.id
     }
-}
 
-/// One native Claude entry, or a consecutive run of read-only exploration.
-/// Raw entries remain available through [`ClaudeLayer::entries`]; this
-/// projection states Claude's grouping semantics without imposing a shared
-/// feed vocabulary on other agent layers.
-#[derive(Clone, Debug, PartialEq)]
-pub enum FeedItem<'a> {
-    Entry(&'a FeedEntry),
-    ExplorationRun {
-        /// Stable identity of the run: its first retained entry.
-        id: u64,
-        /// Entry identities in feed order.
-        member_ids: Vec<u64>,
-        reads: usize,
-        searches: usize,
-        /// Every path stated by a Read invocation, without a presentation cap.
-        read_paths: Vec<&'a str>,
-    },
-}
-
-/// Lazy projection over one Claude feed's declared exploration runs.
-pub struct FeedItems<'a> {
-    entries: Peekable<std::collections::vec_deque::Iter<'a, FeedEntry>>,
-}
-
-impl<'a> FeedItems<'a> {
-    fn new(entries: &'a VecDeque<FeedEntry>) -> Self {
-        Self {
-            entries: entries.iter().peekable(),
-        }
-    }
-}
-
-impl<'a> Iterator for FeedItems<'a> {
-    type Item = FeedItem<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let first = self.entries.next()?;
-        let Some(first_invocation) = exploration_invocation(first) else {
-            return Some(FeedItem::Entry(first));
+    fn exploration(&self) -> Option<&ToolInvocation> {
+        let FeedEntryKind::Tool(tool) = &self.kind else {
+            return None;
         };
-
-        let mut member_ids = vec![first.id];
-        let mut reads = 0;
-        let mut searches = 0;
-        let mut read_paths = Vec::new();
-        count_exploration(first_invocation, &mut reads, &mut searches, &mut read_paths);
-
-        while self.entries.peek().is_some_and(|entry| {
-            matches!(
-                &entry.kind,
-                FeedEntryKind::Tool(tool)
-                    if tool.group_with_previous && tool.invocation.is_exploration()
-            )
-        }) {
-            let entry = self
-                .entries
-                .next()
-                .expect("a peeked exploration entry remains available");
-            let invocation = exploration_invocation(entry)
-                .expect("grouped exploration entries retain their classification");
-            member_ids.push(entry.id);
-            count_exploration(invocation, &mut reads, &mut searches, &mut read_paths);
-        }
-
-        if member_ids.len() == 1 {
-            Some(FeedItem::Entry(first))
-        } else {
-            Some(FeedItem::ExplorationRun {
-                id: first.id,
-                member_ids,
-                reads,
-                searches,
-                read_paths,
-            })
-        }
+        runs::groupable(&tool.invocation).then_some(&tool.invocation)
     }
-}
 
-fn exploration_invocation(entry: &FeedEntry) -> Option<&ToolInvocation> {
-    let FeedEntryKind::Tool(tool) = &entry.kind else {
-        return None;
-    };
-    tool.invocation.is_exploration().then_some(&tool.invocation)
-}
-
-fn count_exploration<'a>(
-    invocation: &'a ToolInvocation,
-    reads: &mut usize,
-    searches: &mut usize,
-    read_paths: &mut Vec<&'a str>,
-) {
-    match invocation {
-        ToolInvocation::Read { file_path } => {
-            *reads += 1;
-            if let Some(path) = file_path {
-                read_paths.push(path);
-            }
-        }
-        ToolInvocation::Query { .. } => *searches += 1,
-        ToolInvocation::Edit { .. }
-        | ToolInvocation::Write { .. }
-        | ToolInvocation::Bash { .. }
-        | ToolInvocation::AmuxSend { .. }
-        | ToolInvocation::Task { .. }
-        | ToolInvocation::Question { .. }
-        | ToolInvocation::Plan { .. }
-        | ToolInvocation::Other => {}
+    fn groups_with_previous(&self) -> bool {
+        matches!(&self.kind, FeedEntryKind::Tool(tool) if tool.group_with_previous)
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuestionFact {
-    pub header: Option<String>,
-    pub question: Option<String>,
-    pub multi_select: bool,
-    pub options: Vec<QuestionOption>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuestionOption {
-    pub label: String,
-    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -598,16 +435,16 @@ pub struct UnrecognizedEntry {
 pub struct SessionFacts {
     /// D4's source of truth (FACT at emission).
     pub permission_mode: Option<String>,
+    /// The model the last main-session assistant message ran on
+    /// (`message.model`), which is what the next turn will run on until a
+    /// row says otherwise.
+    pub model: Option<String>,
+    /// What the last assistant message reported its context costing:
+    /// fresh input plus both cache halves. No transcript row states the
+    /// context window, so there is no denominator to pair it with.
+    pub context_used_tokens: Option<u64>,
     pub ai_title: Option<String>,
     pub agent_name: Option<String>,
-}
-
-/// An accepted plan retained as session state (B6): keyed by tool_use id,
-/// outside feed windowing, bounded by count.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AcceptedPlan {
-    pub tool_use_id: String,
-    pub plan: String,
 }
 
 /// An agent-initiated blocking request (`docs/CHAT.md` §Asks) — the
@@ -675,48 +512,6 @@ pub enum AskKind {
     },
     /// `AskUserQuestion` (C4 facts).
     Question { questions: Vec<QuestionFact> },
-}
-
-/// One `permission_suggestions` entry, extracted tolerantly (unknown
-/// suggestion kinds keep their tag and render generically).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SuggestionFact {
-    pub kind: Option<SuggestionKind>,
-    pub destination: Option<SuggestionDestination>,
-    /// Directories for directory-grant suggestions.
-    pub directories: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SuggestionKind {
-    AddDirectories,
-    Unknown(String),
-}
-
-impl SuggestionKind {
-    fn from_wire(kind: &str) -> Self {
-        match kind {
-            "addDirectories" => Self::AddDirectories,
-            unknown => Self::Unknown(unknown.to_string()),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SuggestionDestination {
-    Session,
-    Unknown(String),
-}
-
-impl SuggestionDestination {
-    fn from_wire(destination: &str) -> Self {
-        match destination {
-            "session" => Self::Session,
-            unknown => Self::Unknown(unknown.to_string()),
-        }
-    }
 }
 
 /// Why an ask needs the user — the phase's needs-you discriminator.
