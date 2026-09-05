@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Hold one message for the next turn across Claude PTY and Codex.**
+The shared UI reducer now owns a queue per agent. Hold waits for a newer
+turn-end fact, Replace swaps the draft, Cancel returns it, and Interrupt leaves
+it in place. Native send gates protect delivery and failed sends retry after a
+fresh stream window. The terminal exposes Tab to hold, replace or return a
+queued draft, with a separate strip row beside the interrupt action; mobile
+session callbacks expose the same queue. Runtime-owned attachment bytes survive
+holding and cancellation without entering recorded state. Reducer, replay,
+attachment-resource, terminal-render and mobile-callback tests cover the paths.
+
 2026-09-05 — **Prune unpaired cached hosts when local synchronization completes offline.**
 The mobile projection now emits a Fleet callback when local synchronization
 changes, even if the live rows and relay-qualified reconciliation flag stay the

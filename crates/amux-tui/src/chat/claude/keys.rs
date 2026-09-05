@@ -327,9 +327,14 @@ fn composer_key(
                 )));
             }
         }
-        // Tab is reserved for the future queueing door (D2) — a no-op
-        // until that lands deliberately.
-        KeyCode::Tab => {}
+        KeyCode::Tab => {
+            return crate::chat::queue::key(
+                model,
+                chat.agent,
+                &mut chat.composer,
+                chat.review.as_ref().map(|draft| draft.view.review()),
+            );
+        }
         KeyCode::PageUp => page_up(chat, model, viewport),
         KeyCode::PageDown => page_down(chat, model, viewport),
         // Ctrl+Home / Ctrl+End: feed oldest / newest (ext tier —

@@ -121,7 +121,7 @@ pub(crate) fn frame_parts(model: &Model, chat: &View, ctx: &FrameContext) -> Cha
             history_truncated: false,
             loading: false,
         },
-        activity: None,
+        activity: Vec::new(),
         bottom: vec![hint_row(chat, theme)],
         overlay: None,
     }

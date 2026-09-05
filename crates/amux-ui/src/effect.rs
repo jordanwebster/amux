@@ -49,7 +49,7 @@ pub enum Effect {
     CloseStream { agent: AgentId },
     /// Send one layer-native input and MUST answer with a `Msg::OpResult`
     /// for `op`. Disconnected executions fail fast with an error outcome —
-    /// no offline queue.
+    /// explicitly held messages retain the failed delivery in queue state.
     SendInput {
         op: OpId,
         agent: AgentId,

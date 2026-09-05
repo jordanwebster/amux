@@ -18,6 +18,8 @@ mod diff; // Neutral unified patch facts shared by every client
 
 mod attachments; // Attachment rows, mention folds, and replay
 
+mod queue;
+
 mod draft; // Drafts: what a message's attachments become when it is sent
 
 // Declared in reading order (blank lines keep rustfmt from re-sorting).

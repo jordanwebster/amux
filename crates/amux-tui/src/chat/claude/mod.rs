@@ -69,6 +69,7 @@ pub struct View {
     pub composer: Composer,
     pub(crate) scroll_intent: Option<ScrollIntent>,
     pending_send: Option<PendingSend>,
+    pending_queue: Option<OpId>,
     pending_answer: Option<PendingAnswer>,
     /// A failed send, stated until the next keypress dismisses it (the
     /// Model keeps the outcome; dismissal is view state).
@@ -122,6 +123,7 @@ impl View {
             composer: Composer::default(),
             scroll_intent: None,
             pending_send: None,
+            pending_queue: None,
             pending_answer: None,
             send_failure: None,
             ask_failure: None,
@@ -173,6 +175,9 @@ impl View {
     /// run loop right after dispatch (the key handler returns the
     /// Command; the shell owns op identity).
     pub fn note_dispatched(&mut self, op: OpId, command: &Command) {
+        if matches!(command, Command::Queue(_)) {
+            self.pending_queue = Some(op);
+        }
         match command {
             Command::Claude(amux_ui::ClaudeCommand::SendPrompt { agent, text })
                 if *agent == self.agent =>
@@ -207,6 +212,12 @@ impl View {
     /// remote resolution dismisses, a new head gets a fresh panel, plan
     /// review opens the reader directly (C3).
     pub fn reconcile(&mut self, model: &Model) {
+        super::queue::reconcile(
+            model,
+            &mut self.pending_queue,
+            &mut self.composer,
+            &mut self.send_failure,
+        );
         if let Some(pending) = &self.pending_send
             && let Some(finished) = model.finished_op(pending.op)
         {

@@ -413,3 +413,52 @@ fn mobile_projection_op_results_and_diff_are_delivered_once() {
     projection.outcomes(&model, &mut events);
     assert_eq!(events.len(), 2);
 }
+
+/// Queue changes cross the same session callback boundary as provider facts.
+#[test]
+fn queue_mobile_projection_exposes_hold_and_cancellation() {
+    let mut model = claude_model();
+    row(&mut model, 1, json!({"type":"amux.transcript_ready"}));
+    row(
+        &mut model,
+        2,
+        json!({"type":"user", "uuid":"00000000-0000-0000-0000-000000000001", "origin":{"kind":"human"}, "message":{"role":"user", "content":"work"}}),
+    );
+    let mut projection = subscribed();
+    collect(&mut projection, &model);
+    update(
+        &mut model,
+        Msg::Command {
+            op: OpId(Uuid::from_u128(1)),
+            command: Command::Queue(amux_ui::QueueCommand::Hold {
+                agent: AGENT,
+                draft: amux_ui::Draft {
+                    text: "next step".into(),
+                    attachments: vec![],
+                },
+            }),
+        },
+    );
+    let held = collect(&mut projection, &model);
+    assert!(held.iter().any(|event| matches!(event, Event::Session(session) if session.queue.as_ref().is_some_and(|queue| queue.draft.text == "next step"))));
+    println!(
+        "mobile held queue callback:\n{}",
+        serde_json::to_string_pretty(&held).unwrap()
+    );
+    update(
+        &mut model,
+        Msg::Command {
+            op: OpId(Uuid::from_u128(2)),
+            command: Command::Queue(amux_ui::QueueCommand::Cancel { agent: AGENT }),
+        },
+    );
+    let mut cancelled = Vec::new();
+    projection.outcomes(&model, &mut cancelled);
+    cancelled.extend(collect(&mut projection, &model));
+    assert!(
+        cancelled
+            .iter()
+            .any(|event| matches!(event, Event::Session(session) if session.queue.is_none()))
+    );
+    assert!(cancelled.iter().any(|event| matches!(event, Event::OpResult { outcome: OpOutcomeDto::Shared(outcome), .. } if matches!(&**outcome, OpOutcome::QueueCancelled { draft } if draft.text == "next step"))));
+}

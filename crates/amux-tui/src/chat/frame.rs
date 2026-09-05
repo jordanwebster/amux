@@ -46,7 +46,7 @@ pub(crate) struct ChatFrameParts {
     pub(crate) header: Line<'static>,
     pub(crate) banner: Option<Line<'static>>,
     pub(crate) feed: FeedBlocks,
-    pub(crate) activity: Option<Line<'static>>,
+    pub(crate) activity: Vec<Line<'static>>,
     pub(crate) bottom: Vec<Line<'static>>,
     pub(crate) overlay: Option<Vec<Line<'static>>>,
 }
@@ -62,7 +62,7 @@ impl ChatFrameParts {
             viewport,
             FrameSpacing::DEFAULT,
             self.banner.is_some(),
-            self.activity.is_some(),
+            self.activity.len(),
             target_paused,
             self.bottom.len(),
         )
@@ -129,7 +129,7 @@ fn chat_geometry(
     viewport: (u16, u16),
     spacing: FrameSpacing,
     banner: bool,
-    activity: bool,
+    activity: usize,
     paused: bool,
     bottom_rows: usize,
 ) -> ChatGeometry {
@@ -138,7 +138,7 @@ fn chat_geometry(
     let feed_top = (1 + usize::from(banner) + spacing.header_gap).min(height);
     let bottom_top = height.saturating_sub(bottom_rows.min(height));
     let feed_bottom =
-        bottom_top.saturating_sub(spacing.bottom_gap + usize::from(activity) + usize::from(paused));
+        bottom_top.saturating_sub(spacing.bottom_gap + activity + usize::from(paused));
     let feed_rows = feed_bottom.saturating_sub(feed_top);
     ChatGeometry {
         width,
@@ -273,9 +273,7 @@ pub(crate) fn compose_chat_frame(
             theme,
         ));
     }
-    if let Some(activity) = parts.activity {
-        lines.push(activity);
-    }
+    lines.extend(parts.activity);
     lines.extend((0..spacing.bottom_gap).map(|_| Line::default()));
     lines.extend(parts.bottom);
     fit_frame(lines, geometry.width, geometry.height, theme)
@@ -500,7 +498,7 @@ mod tests {
                 history_truncated: false,
                 loading: false,
             },
-            activity: None,
+            activity: Vec::new(),
             bottom: vec![Line::from("bottom")],
             overlay: None,
         }
@@ -525,7 +523,7 @@ mod tests {
     fn geometry_at_120_by_40_accounts_for_every_optional_row() {
         let mut parts = parts(Vec::new());
         parts.banner = Some(Line::from("banner"));
-        parts.activity = Some(Line::from("activity"));
+        parts.activity = vec![Line::from("activity")];
         parts.bottom = vec![Line::default(); 4];
         let geometry = parts.geometry((120, 40), true);
         assert_eq!(
@@ -542,7 +540,7 @@ mod tests {
 
     #[test]
     fn minimum_geometry_saturates_under_two_spacing_values() {
-        let roomy = chat_geometry((24, 10), FrameSpacing::DEFAULT, true, true, true, 4);
+        let roomy = chat_geometry((24, 10), FrameSpacing::DEFAULT, true, 1, true, 4);
         assert_eq!(roomy.feed_top, 3);
         assert_eq!(roomy.feed_rows, 0);
         assert_eq!(roomy.bottom_top, 6);
@@ -555,7 +553,7 @@ mod tests {
                 bottom_gap: 0,
             },
             true,
-            true,
+            1,
             true,
             4,
         );
@@ -575,7 +573,7 @@ mod tests {
                 bottom_gap: 0,
             },
             false,
-            false,
+            0,
             false,
             1,
         );
@@ -618,7 +616,7 @@ mod tests {
                 bottom_gap: 0,
             },
             false,
-            false,
+            0,
             false,
             1,
         );
@@ -710,7 +708,7 @@ mod tests {
             block(2, &["  second block"]),
         ]);
         parts.banner = Some(Line::from("  a child is waiting"));
-        parts.activity = Some(Line::from("  working · 4s"));
+        parts.activity = vec![Line::from("  working · 4s")];
         parts.feed.history_truncated = true;
         parts.feed.loading = true;
         let mut viewport = FeedViewport::following();

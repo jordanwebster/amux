@@ -82,6 +82,7 @@ impl Msg {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
+    Queue(crate::QueueCommand),
     CreateAgent {
         /// Target host; `None` means the local daemon picks (its own host).
         host: Option<HostId>,
@@ -192,6 +193,12 @@ pub enum DisconnectReason {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum OpOutcome {
+    /// A held draft was replaced or removed before delivery.
+    QueueRemoved,
+    /// Cancel returns the entire held draft to its caller.
+    QueueCancelled {
+        draft: crate::Draft,
+    },
     AgentCreated {
         agent: Agent,
     },

@@ -153,7 +153,10 @@ pub(crate) fn handle_chat_key(
         KeyCode::Char('v') if ctrl => {
             attach_clipboard(chat, model, crate::clipboard::read_clipboard());
         }
-        KeyCode::Tab | KeyCode::BackTab => {}
+        KeyCode::Tab => {
+            return crate::chat::queue::key(model, chat.agent, &mut chat.composer, None);
+        }
+        KeyCode::BackTab => {}
         _ => {
             composer::readline_key(&mut chat.composer, &key);
         }

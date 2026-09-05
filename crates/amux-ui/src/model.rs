@@ -653,6 +653,7 @@ pub struct Model {
     /// Last authoritative remote membership; disconnection does not mean deletion.
     pub(crate) remote_inventories: BTreeMap<HostId, BTreeSet<AgentId>>,
     pub(crate) streams: BTreeMap<AgentId, StreamState>,
+    pub(crate) queues: BTreeMap<AgentId, crate::QueuedMessage>,
     pub(crate) pending_ops: BTreeMap<OpId, PendingOp>,
     pub(crate) finished_ops: Vec<FinishedOp>,
     pub(crate) op_seq: u64,
@@ -673,6 +674,7 @@ impl Default for Model {
             agents: BTreeMap::new(),
             remote_inventories: BTreeMap::new(),
             streams: BTreeMap::new(),
+            queues: BTreeMap::new(),
             pending_ops: BTreeMap::new(),
             finished_ops: Vec::new(),
             op_seq: 0,
@@ -682,6 +684,10 @@ impl Default for Model {
 }
 
 impl Model {
+    pub fn queued(&self, agent: AgentId) -> Option<&crate::QueuedMessage> {
+        self.queues.get(&agent)
+    }
+
     pub fn connection(&self) -> &Connection {
         &self.connection
     }

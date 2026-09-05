@@ -517,9 +517,14 @@ clears text and all tokens as one recoverable kill.
 
 The draft is always editable; send is gated on phase (D2): while the
 agent works, Enter is a no-op and the footer states the gate plainly
-("draft kept — send gated while working"). Queueing while working is
-deferred; Tab and the preview row above the composer are explicitly
-reserved for it so the Codex queue-preview pattern can land additively.
+("draft kept — send gated while working"). Tab holds one message while a turn runs, on Claude PTY and Codex. The strip
+above the composer shows the queued words while keeping Interrupt available.
+With a new draft, Tab replaces the held message; with an empty field, Tab
+cancels the hold and returns its text and tokens to the composer. Delivery
+starts at the first observed turn end after the hold, once the native send
+gate allows it. A disconnect keeps the queue; a failed delivery remains visible
+and retries after the stream reconnects. A message already being sent cannot
+be replaced or cancelled.
 
 Interrupt is a distinct, deliberate binding: **Ctrl+X**, allowed in
 every focus state including open ask panels, even while send is gated
@@ -656,8 +661,8 @@ text cursor.
     draft kept — send gated while working                                                                  mode default
 ```
 
-The blank row above the working line is reserved for the queued-input
-preview when queueing lands (deferred, door open).
+A held message adds a queue row beside the working line. The row remains
+visible through disconnect and states any delivery failure.
 
 ### Permission ask
 
@@ -830,7 +835,7 @@ bytes must be drawn before its keys are handled.
 | From | Event / key | To | Notes |
 |---|---|---|---|
 | COMPOSER (idle) | Enter, non-empty draft | COMPOSER (working) | optimistic echo + `sending…` (B1) |
-| COMPOSER (working) | Enter | — | no-op; footer states the gate (D2); Tab reserved |
+| COMPOSER (working) | Enter | — | no-op; footer states the gate (D2); Tab holds or replaces a message |
 | any | Ctrl+X | same | interrupt sent (D3); interruption entry lands (B8) |
 | COMPOSER | ask head appears | ASK | panel takes the composer area; draft preserved (C1, D1) |
 | ASK | 1–9 / ↑↓ | ASK | select option |
@@ -947,7 +952,7 @@ excepted, as today.
 | f | ask menu, read-only ask fact | open document in the reader | plain |
 | Ctrl+T | chat, accepted plan exists | plan reader; ←/→ steps between plans | plain |
 | Shift+Tab | composer | cycle permission mode (D4) | plain (CSI Z) |
-| Tab | composer | reserved (future queueing) | — |
+| Tab | composer | hold/replace while working; empty field unqueues for editing | plain |
 | PgUp / PgDn | chat | scroll feed; reaching bottom resumes following | plain |
 | Ctrl+Home / Ctrl+End | chat | feed oldest / newest + follow | ext |
 | wheel | chat feed | scroll three feed rows per notch; reaching bottom resumes following | plain |
@@ -1253,10 +1258,7 @@ above.
 
 - **Per-agent last-used-mode memory** (A2) — a client setting refinement
   over A1's default.
-- **Message queueing while working** (D2) and steering: Tab and the
-  preview row above the working line are reserved; the Codex `↳` queue
-  preview with pop-to-edit is the pattern to adopt. Steering is a
-  protocol question before it is a UX one.
+- **Claude steering** is a protocol question before it is a UX one.
 - **Fork-into-writable** from a read-only chat (F2).
 - **Attachment extensions** — terminal thumbnails, A2A attachment delivery,
   another diff base, model fetching, comment re-anchoring, a side pane, and

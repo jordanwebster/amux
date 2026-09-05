@@ -18,6 +18,7 @@ pub mod diff;
 mod effect;
 mod model;
 mod msg;
+pub mod queue;
 mod recorder;
 pub mod report;
 pub mod review;
@@ -48,6 +49,7 @@ pub use msg::{
     Command, DisconnectReason, Ephemeral, FlowClass, Msg, OpError, OpId, OpOutcome, ServerMsg,
     StreamCloseReason, StreamEntry, StreamMsg,
 };
+pub use queue::{Draft, QueueCommand, QueueDelivery, QueuedMessage};
 pub use recorder::{
     DEFAULT_RECORDER_CAPACITY, MSGS_SCHEMA_VERSION, Recorder, RecorderSnapshot, ReplayError,
     replay_msgs,

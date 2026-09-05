@@ -79,6 +79,7 @@
         "accepted_plans": [],
         "echoes": []
       },
+      "queue": null,
       "family": []
     }
   },
@@ -267,6 +268,7 @@
         "layer": "codex",
         "active_turn_id": null
       },
+      "queue": null,
       "family": []
     }
   },
@@ -363,6 +365,7 @@
         "layer": "claude_sdk",
         "supported": false
       },
+      "queue": null,
       "family": []
     }
   },

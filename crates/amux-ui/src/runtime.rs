@@ -205,6 +205,7 @@ pub struct Runtime {
     msg_tap: Option<MsgTap>,
     artifact_cache: Option<Result<Arc<Cache>, String>>,
     attachment_opener: AttachmentOpener,
+    queued_bytes: HashMap<ArtifactId, Arc<[u8]>>,
     /// Violation kinds already reported this session: invariant logs and
     /// reports are throttled to once per kind so a persistent incoherence
     /// cannot fill the report directory.
@@ -252,6 +253,7 @@ impl Runtime {
             msg_tap: options.msg_tap,
             artifact_cache,
             attachment_opener: options.attachment_opener,
+            queued_bytes: HashMap::new(),
             reported_violations: HashSet::new(),
         }
     }
@@ -263,6 +265,12 @@ impl Runtime {
             Box::pin(async move { Ok(client) })
         });
         Self::start(connector, options)
+    }
+
+    /// Live attachment resources for a caller restoring a cancelled queue draft.
+    /// Copy them into the local composer before its bounded outcome ages out.
+    pub fn queued_attachment_bytes(&self, id: &ArtifactId) -> Option<Arc<[u8]>> {
+        self.queued_bytes.get(id).cloned()
     }
 
     pub fn model(&self) -> &Model {
@@ -384,6 +392,23 @@ impl Runtime {
     }
 
     fn process(&mut self, msg: Msg) {
+        if let Msg::Command {
+            command:
+                Command::Queue(
+                    crate::QueueCommand::Hold { draft, .. }
+                    | crate::QueueCommand::Replace { draft, .. },
+                ),
+            ..
+        } = &msg
+        {
+            for attachment in &draft.attachments {
+                if let Some(bytes) = &attachment.bytes {
+                    self.queued_bytes
+                        .insert(attachment.id.clone(), bytes.clone());
+                }
+            }
+        }
+
         lock_recorder(&self.recorder).record(&msg);
         if let Some(tap) = self.msg_tap.as_mut() {
             tap(&msg);
@@ -411,6 +436,21 @@ impl Runtime {
             self.run_effect(effect);
         }
         self.enforce_invariants();
+        // Binary payloads are shell resources, absent from reducer state and reports.
+        // Cancellation keeps them through the bounded returned-draft outcome so a
+        // caller can resend metadata while restoring its own composer assets.
+        if !self.queued_bytes.is_empty() {
+            let mut retained = HashSet::new();
+            for queue in self.model.queues.values() {
+                retained.extend(queue.draft.attachments.iter().map(|a| a.id.clone()));
+            }
+            for finished in self.model.finished_ops() {
+                if let OpOutcome::QueueCancelled { draft } = &finished.outcome {
+                    retained.extend(draft.attachments.iter().map(|a| a.id.clone()));
+                }
+            }
+            self.queued_bytes.retain(|id, _| retained.contains(id));
+        }
         // Shell companion invariant: every live stream task is known to the
         // Model (the inverse does not hold — a Closed stream keeps its Model
         // entry with no task behind it). Checked AFTER the effects loop
@@ -491,10 +531,15 @@ impl Runtime {
             Effect::PutThenSend {
                 op,
                 agent,
-                puts,
+                mut puts,
                 input,
                 pin,
             } => {
+                for attachment in &mut puts {
+                    if attachment.bytes.is_none() {
+                        attachment.bytes = self.queued_bytes.get(&attachment.id).cloned();
+                    }
+                }
                 let client = self.client.lock().expect("client mutex poisoned").clone();
                 let tx = self.msg_tx.clone();
                 tokio::spawn(async move {
@@ -767,7 +812,8 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
         },
         // Input commands never ride Effect::Rpc — the reducer emits
         // Effect::SendInput for them (typed input + seq guard).
-        Command::Claude(_)
+        Command::Queue(_)
+        | Command::Claude(_)
         | Command::Codex(_)
         | Command::SendPromptWithAttachments { .. }
         | Command::FetchDiff { .. }
@@ -1667,8 +1713,99 @@ mod tests {
             msg_tap: None,
             artifact_cache: None,
             attachment_opener: Arc::new(open_with_platform_viewer),
+            queued_bytes: HashMap::new(),
             reported_violations: HashSet::new(),
         }
+    }
+
+    /// Binary queue resources survive holding and cancellation, while the Model
+    /// and its serialized replay agree. The caller takes ownership before the
+    /// bounded cancellation outcome ages out of runtime retention.
+    #[test]
+    fn queue_runtime_restores_attachment_bytes_without_recording_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        let agent = Uuid::from_u128(57);
+        let host = Uuid::from_u128(58);
+        let now = Utc::now();
+        for msg in [
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(host),
+            }),
+            Msg::Server(ServerMsg::AgentUpserted {
+                agent: claude_agent(agent, host),
+            }),
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Opened { truncated: false },
+            },
+            Msg::Stream {
+                agent,
+                event: StreamMsg::ReplayComplete,
+            },
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Batch {
+                    at: now,
+                    entries: vec![
+                        crate::StreamEntry {
+                            seq: 1,
+                            payload: serde_json::json!({"type":"amux.transcript_ready"}),
+                        },
+                        crate::StreamEntry {
+                            seq: 2,
+                            payload: serde_json::json!({"type":"user", "uuid":"00000000-0000-0000-0000-000000000001", "origin":{"kind":"human"}, "timestamp":now, "message":{"role":"user", "content":"work"}}),
+                        },
+                    ],
+                },
+            },
+        ] {
+            update(&mut runtime.model, msg);
+        }
+        let attachment = crate::DraftAttachment::from_bytes(
+            amux::ArtifactKind::File,
+            "notes.txt",
+            "text/plain",
+            b"private queue bytes".to_vec(),
+        );
+        let id = attachment.id.clone();
+        runtime.dispatch(Command::Queue(crate::QueueCommand::Hold {
+            agent,
+            draft: crate::Draft {
+                text: "read the attachment".into(),
+                attachments: vec![attachment],
+            },
+        }));
+        assert!(
+            runtime.model().queued(agent).unwrap().draft.attachments[0]
+                .bytes
+                .is_none()
+        );
+        assert_eq!(
+            serde_json::from_value::<Model>(serde_json::to_value(runtime.model()).unwrap())
+                .unwrap(),
+            *runtime.model()
+        );
+        let cancel = runtime.dispatch(Command::Queue(crate::QueueCommand::Cancel { agent }));
+        assert!(matches!(
+            runtime.model().finished_op(cancel).unwrap().outcome,
+            OpOutcome::QueueCancelled { .. }
+        ));
+        let restored = runtime
+            .queued_attachment_bytes(&id)
+            .expect("caller restores the cancelled attachment");
+        assert_eq!(&*restored, b"private queue bytes");
+        for _ in 0..70 {
+            runtime.dispatch(Command::Queue(crate::QueueCommand::Cancel { agent }));
+        }
+        assert!(
+            runtime.queued_attachment_bytes(&id).is_none(),
+            "unreferenced runtime resources are released"
+        );
+        assert_eq!(
+            &*restored, b"private queue bytes",
+            "the restored composer still owns its bytes"
+        );
     }
 
     const INVARIANT_POLICY_CHILD: &str = "AMUX_INVARIANT_POLICY_CHILD";

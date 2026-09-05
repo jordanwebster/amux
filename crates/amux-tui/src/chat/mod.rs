@@ -10,6 +10,7 @@ mod codex;
 pub mod diff;
 pub(crate) mod frame;
 pub(crate) mod inline;
+mod queue;
 mod unsupported;
 pub(crate) mod viewport;
 

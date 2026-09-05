@@ -13,7 +13,7 @@ use crate::model::{
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
 
 /// Error message for commands dispatched while the daemon link is down.
-/// Commands fail fast — there is no offline queue.
+/// Immediate writes fail fast; explicitly held drafts remain local.
 pub const NOT_CONNECTED_ERROR: &str = "not connected — daemon unreachable";
 
 /// Structured-stream catch-up window (`Tail{count}`): the one place this
@@ -22,7 +22,7 @@ pub const NOT_CONNECTED_ERROR: &str = "not connected — daemon unreachable";
 pub const REPLAY_TAIL: u64 = 1000;
 
 pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
-    match msg {
+    let mut effects = match msg {
         Msg::Command { op, command } => update_command(model, op, command),
         Msg::Server(server) => update_server(model, server),
         Msg::OpResult { op, outcome } => update_op_result(model, op, outcome),
@@ -40,7 +40,9 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
             model.now = Some(now);
             Vec::new()
         }
-    }
+    };
+    effects.extend(crate::queue::deliver_ready(model));
+    effects
 }
 
 /// Why a stream is being ensured: kernel inventory policy subscribes
@@ -110,12 +112,17 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
     model.op_seq += 1;
     let seq = model.op_seq;
 
+    if let Command::Queue(command) = command {
+        return crate::queue::update_command(model, op, seq, command);
+    }
+
     if !model.is_connected() {
         // Commands fail fast while disconnected — no offline queue.
         return refuse(model, op, seq, redact_command(command), NOT_CONNECTED_ERROR);
     }
 
     match command {
+        Command::Queue(_) => unreachable!("queue commands handled above"),
         Command::CreateAgent { .. } | Command::RenameAgent { .. } | Command::DeleteAgent { .. } => {
             model.pending_ops.insert(
                 op,
@@ -187,7 +194,7 @@ fn dispatch_operation(
     vec![effect]
 }
 
-fn update_attachment_prompt(
+pub(crate) fn update_attachment_prompt(
     model: &mut Model,
     op: OpId,
     seq: u64,
@@ -391,6 +398,9 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
             AgentLayer::ClaudeSdk(_) => {}
         });
     }
+    if crate::queue::observe_result(model, &pending, &outcome) {
+        return Vec::new();
+    }
     // Entity payloads riding on the outcome resolve the op only —
     // subscriptions are the sole writer of entity state.
     push_finished(
@@ -501,6 +511,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             if !model.is_connected() {
                 return tripwire("agent removal while not connected");
             }
+            crate::queue::remove(model, id);
             model.agents.remove(&id);
             if let Some(stream) = model.streams.remove(&id)
                 && !matches!(stream.phase, StreamPhase::Closed { .. })
@@ -543,6 +554,7 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
     }
     match event {
         StreamMsg::Opened { truncated } => {
+            crate::queue::reopened(model, agent);
             model.streams.insert(
                 agent,
                 StreamState {
@@ -658,6 +670,15 @@ fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
     }
     let epoch = model.epoch;
     model.hosts.retain(|_, host| host.epoch == epoch);
+    let removed: Vec<_> = model
+        .agents
+        .iter()
+        .filter(|(_, card)| card.epoch != epoch)
+        .map(|(id, _)| *id)
+        .collect();
+    for id in removed {
+        crate::queue::remove(model, id);
+    }
     model.agents.retain(|_, card| card.epoch == epoch);
     let stale: Vec<amux::AgentId> = model
         .streams
@@ -676,7 +697,7 @@ fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
     effects
 }
 
-fn push_finished(model: &mut Model, finished: FinishedOp) {
+pub(crate) fn push_finished(model: &mut Model, finished: FinishedOp) {
     model.finished_ops.push(finished);
     if model.finished_ops.len() > FINISHED_OPS_RETAINED {
         let excess = model.finished_ops.len() - FINISHED_OPS_RETAINED;

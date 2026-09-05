@@ -100,6 +100,7 @@ pub struct SessionDto {
     pub stream: Option<StreamPhase>,
     pub asks: Vec<AskDto>,
     pub facts: FactsDto,
+    pub queue: Option<Box<amux_ui::QueuedMessage>>,
     pub family: Vec<FamilyMemberDto>,
 }
 
@@ -463,6 +464,7 @@ fn session(model: &Model, agent: AgentId) -> SessionDto {
         stream: model.stream(agent).map(|s| s.phase.clone()),
         asks,
         facts,
+        queue: model.queued(agent).cloned().map(Box::new),
         family: model
             .family_of(agent)
             .into_iter()

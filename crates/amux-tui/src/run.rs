@@ -329,6 +329,10 @@ fn perform(
                 let event = TraceEvent::Dispatched { op, command };
                 record(config, &event);
                 chrome.step(runtime.model(), &event);
+                if let Some(chat) = chrome.view.chat.as_mut() {
+                    chat.composer_mut()
+                        .hydrate_queued_attachments(|id| runtime.queued_attachment_bytes(id));
+                }
             }
             ShellEffect::Create { host } => {
                 let name = next_agent_name(runtime.model(), &config.default_agent_type);

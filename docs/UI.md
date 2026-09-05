@@ -73,9 +73,14 @@ in, state folds, deltas out.
 - **`Command`** — client → reducer. The only write surface. Dispatch
   returns an `OpId`; outcomes return as state (`OpFinished` deltas),
   because a lost outcome must not leave a spinner lying. While
-  disconnected, Commands fail fast with an error outcome — there is no
-  offline queue. (A future mobile client may add one with idempotency
-  receipts; that is additive shell work, not a reducer change.)
+  disconnected, immediate writes fail fast. `Queue(Hold)` deliberately holds
+  one draft for a working agent; Replace and Cancel remain local operations,
+  including while disconnected. The hold stays pending until delivered,
+  replaced or cancelled. The shared reducer waits for a newer turn-end fact
+  and the native send gate before emitting input. Failed delivery keeps the
+  draft and retries after stream reconnect, preserving its correlation id.
+  Cancellation returns the draft; queued attachment bytes live in the runtime,
+  with only metadata in the reducer and its recordings.
 - **`Delta`** — reducer → clients. Entity-keyed, idempotent, upsert-shaped
   (`AgentUpserted`, `HostRemoved`, `Connection(..)`). A delta says "the
   state IS this", never "this happened"; applying one takes a keyed store
@@ -412,8 +417,9 @@ constraint.
 - **Content windowing.** Transcript-scale entities are windowed when the
   chat milestone arrives — deltas apply within a window, an epoch guards
   snapshot/live reconciliation. Nothing in V1 touches content.
-- **Offline command queueing** (mobile): additive shell work with
-  idempotency receipts; the reducer's fail-fast contract is unchanged.
+- **General offline command queueing** remains separate from explicit held
+  drafts. Replaying arbitrary writes requires host-side idempotency receipts;
+  immediate commands still fail fast.
 - **New agent kinds and protocols.** Agent identity and session protocols are
   now closed wire types. Adding a provider means adding typed kind and protocol
   variants, then satisfying every exhaustive backend, client-layer, and

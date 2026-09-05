@@ -62,8 +62,15 @@ pub struct Token {
 #[serde(tag = "token", rename_all = "snake_case")]
 pub enum TokenAttachment {
     Artifact(DraftAttachment),
-    Text { body: String, lines: u32 },
+    Text {
+        body: String,
+        lines: u32,
+    },
     Review,
+    FrozenReview {
+        mention: Box<Mention>,
+        diff: Option<DraftAttachment>,
+    },
 }
 
 /// The label a token of this kind carries at this per-kind ordinal.
@@ -91,6 +98,7 @@ pub fn token_label(
             });
             format!("[Pasted #{ordinal} \u{b7} {detail}]")
         }
+        TokenAttachment::FrozenReview { .. } => "[Review]".to_string(),
         TokenAttachment::Review => match detail {
             Some(detail) => format!("[Review \u{b7} {detail}]"),
             None => "[Review]".to_string(),
@@ -570,6 +578,66 @@ impl Composer {
         }
     }
 
+    /// Restore live binary resources after the pure draft restoration step.
+    /// Resource bytes do not affect rendering and never enter the UI trace.
+    pub(crate) fn hydrate_queued_attachments(
+        &mut self,
+        get: impl Fn(&amux_ui::ArtifactId) -> Option<std::sync::Arc<[u8]>>,
+    ) {
+        for token in self.tokens.live.values_mut() {
+            let attachment = match &mut token.attachment {
+                TokenAttachment::Artifact(attachment) => Some(attachment),
+                TokenAttachment::FrozenReview { diff, .. } => diff.as_mut(),
+                _ => None,
+            };
+            if let Some(attachment) = attachment
+                && attachment.bytes.is_none()
+            {
+                attachment.bytes = get(&attachment.id);
+            }
+        }
+    }
+
+    pub fn restore_queued(&mut self, draft: &amux_ui::Draft) {
+        for segment in amux_ui::split_mentions(&draft.text) {
+            match segment {
+                amux_ui::Segment::Prose(text) => self.insert_str(&text),
+                amux_ui::Segment::Mention(mention) => match &mention.kind {
+                    MentionKind::Image { id } | MentionKind::File { id } => {
+                        if let Some(attachment) = draft.attachments.iter().find(|a| &a.id == id) {
+                            self.attach(attachment.clone());
+                        } else {
+                            self.insert_str(&format_mention(&mention));
+                        }
+                    }
+                    MentionKind::Text { body, lines } => {
+                        self.insert_token(
+                            String::new(),
+                            TokenAttachment::Text {
+                                body: body.clone(),
+                                lines: *lines,
+                            },
+                        );
+                    }
+                    MentionKind::Review { header, .. } => {
+                        let diff = draft
+                            .attachments
+                            .iter()
+                            .find(|a| a.id == header.diff)
+                            .cloned();
+                        self.insert_token(
+                            "[Review]".into(),
+                            TokenAttachment::FrozenReview {
+                                mention: Box::new(mention),
+                                diff,
+                            },
+                        );
+                    }
+                },
+            }
+        }
+    }
+
     /// The sendable draft: canonical elements in place of the tokens, plus
     /// the artifacts to store and pin, in draft order.
     ///
@@ -608,6 +676,10 @@ impl Composer {
                         size: None,
                         path: None,
                     }));
+                }
+                TokenAttachment::FrozenReview { mention, diff } => {
+                    text.push_str(&format_mention(mention));
+                    attachments.extend(diff.clone());
                 }
                 TokenAttachment::Review => {
                     let Some(review) = review else {
@@ -699,7 +771,7 @@ impl Composer {
                     (pastes, PASTED_NAME.to_string())
                 }
                 // The review label counts comments, which only the chat knows.
-                TokenAttachment::Review => continue,
+                TokenAttachment::Review | TokenAttachment::FrozenReview { .. } => continue,
             };
             let label = token_label(&token.attachment, ordinal, &name, None);
             if let Some(token) = self.tokens.live.get_mut(&slot) {

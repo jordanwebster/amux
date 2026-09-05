@@ -34,6 +34,7 @@ pub(crate) struct View {
     pub composer: Composer,
     pub(crate) scroll_intent: Option<ScrollIntent>,
     pending_send: Option<PendingSend>,
+    pending_queue: Option<OpId>,
     pending_answer: Option<PendingAnswer>,
     pub(crate) send_failure: Option<String>,
     pub(crate) answer_failure: Option<String>,
@@ -64,6 +65,7 @@ impl View {
             composer: Composer::default(),
             scroll_intent: None,
             pending_send: None,
+            pending_queue: None,
             pending_answer: None,
             send_failure: None,
             answer_failure: None,
@@ -91,6 +93,12 @@ impl View {
     }
 
     pub(crate) fn reconcile(&mut self, model: &Model) {
+        super::queue::reconcile(
+            model,
+            &mut self.pending_queue,
+            &mut self.composer,
+            &mut self.send_failure,
+        );
         if let Some(pending) = &self.pending_send
             && let Some(finished) = model.finished_op(pending.op)
         {
@@ -139,6 +147,9 @@ impl View {
     }
 
     pub(crate) fn note_dispatched(&mut self, op: OpId, command: &Command) {
+        if matches!(command, Command::Queue(_)) {
+            self.pending_queue = Some(op);
+        }
         match command {
             Command::Codex(
                 CodexCommand::Prompt { agent, text } | CodexCommand::Steer { agent, text },
