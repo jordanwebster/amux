@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Convert complete report transcripts into host playback scripts.**
+The testnet runner converts a report's retained Claude PTY rows into one raw-row
+reaction. It refuses folded checkpoint history with EvictedHistory and
+mid-session, gapped, reopened or mixed streams with PartialSession. Unsupported
+protocols and semantic hook rows fail explicitly instead of inventing provider
+history. Synthetic committed recorder fixtures cover complete and incomplete
+windows; a real provider session reproduces the converted transcript exactly.
+
 2026-09-05 — **Drive scripted agents through the relay and runner controls.**
 Topologies now load Claude reaction scripts and register their live providers
 in the daemon. The control socket emits rows, raises asks, ends turns, exits,

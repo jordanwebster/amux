@@ -1,5 +1,7 @@
 //! A loopback process boundary around the same TestNet used by the Rust specs.
 
+mod report_script;
+
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::net::SocketAddr;
@@ -21,6 +23,8 @@ use uuid::Uuid;
 
 #[derive(clap::Subcommand)]
 pub enum Command {
+    /// Convert a complete Claude report transcript into a playback script.
+    ScriptFromReport { msgs: PathBuf },
     /// Start a topology and print one readiness JSON line.
     Serve {
         #[arg(long)]
@@ -639,6 +643,12 @@ async fn serve_net(
 
 pub fn run(command: Command) -> Result<()> {
     match command {
+        Command::ScriptFromReport { msgs } => {
+            let snapshot = report_script::read_snapshot(&msgs)?;
+            let script = report_script::script_from_report(&snapshot)?;
+            println!("{}", serde_json::to_string_pretty(&script)?);
+            Ok(())
+        }
         Command::Serve { topology } => {
             let topology = Topology::load(&topology)?;
             // Drop the executor before returning: detached transport tasks cannot

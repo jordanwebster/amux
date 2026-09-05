@@ -16,6 +16,8 @@ shell-words = { workspace = true }
 chrono = { workspace = true }
 jsonwebtoken = { workspace = true }
 amux = { workspace = true }
+amux-ui = { workspace = true }
+thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
@@ -23,4 +25,4 @@ sha2 = { workspace = true }
 futures-util = { workspace = true }
 
 [dev-dependencies]
-amux-ui = { workspace = true }
+claude = { workspace = true }

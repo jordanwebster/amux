@@ -141,3 +141,24 @@ Run `timeout 900 wt test -- testnet_agents -- --nocapture` to see the control
 requests, exact host observations and projected transcript from a production
 `amux_ui::Runtime` using that connection. The test also checks account isolation,
 child asks, invalid controls, exit and restart cleanup.
+
+## Convert a report transcript
+
+`timeout 900 wt run testnet -- script-from-report PATH/msgs.jsonl` prints a
+Script JSON value. The input uses the normal recorder header and retained Msg
+lines. Conversion requires one uninterrupted Claude PTY stream beginning at
+sequence 1 and a checkpoint without folded feed history. Lost checkpoint rows
+return `EvictedHistory`; a partial, gapped, reopened or mixed-session stream
+returns `PartialSession`. Other protocols return `UnsupportedLayer`.
+
+The generated script has one `Any` reaction containing raw `Rows`. Its steps
+can be passed directly to `Provider::play`, or its trigger can be replaced in
+an authored script. A prompt trigger also produces the scripted provider's
+normal prompt echo. Transport keymap and ready markers are regenerated;
+semantic `amux.*` rows return `UnsupportedRow` because transcript playback
+cannot reconstruct hook decisions. This converter preserves transcript
+content; interactive asks and answers need an authored script.
+
+`timeout 900 wt test -- script_from_report -- --nocapture` checks the committed
+synthetic recorder fixtures and compares the converted rows with output from
+a real Claude provider session.
