@@ -15,7 +15,7 @@ pub enum OAuthError {
     Config(String),
     #[error("OAuth request error: {0}")]
     Request(String),
-    #[error("Refresh token expired or revoked - run 'amux init' to re-authenticate")]
+    #[error("Refresh token expired or revoked - run 'amux login' to re-authenticate")]
     RefreshTokenExpired,
     #[error("No refresh token returned")]
     NoRefreshToken,

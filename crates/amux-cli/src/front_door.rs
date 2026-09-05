@@ -11,7 +11,7 @@ use anyhow::{Context, Result, anyhow};
 /// AMUX_CONFIG identifies a profile; the default path identifies the installation.
 pub fn configuration(profile_path: Option<&Path>) -> Result<InstallationConfig> {
     match profile_path {
-        Some(path) => Ok(amux::load_profile_config(path)?.installation),
+        Some(path) => Ok(amux::load_profile_config(&std::fs::canonicalize(path)?)?.installation),
         None => InstallationConfig::from_file(&InstallationConfig::default_path())
             .context("cannot load installation; run `amux init` first"),
     }
@@ -36,6 +36,19 @@ pub async fn existing(config: &InstallationConfig) -> Result<Option<FrontDoorCli
             Ok(None)
         }
         Err(error) => Err(error.into()),
+    }
+}
+
+pub async fn connect(
+    config: &InstallationConfig,
+    spawn_if_missing: bool,
+) -> Result<FrontDoorClient> {
+    match existing(config).await? {
+        Some(front) => Ok(front),
+        None if spawn_if_missing => spawn(config, &std::env::current_exe()?).await,
+        None => Err(anyhow!(
+            "No server running. Start it with `amux server start`."
+        )),
     }
 }
 
@@ -156,17 +169,16 @@ pub async fn list(config: &InstallationConfig) -> Result<()> {
         .into_inner()
         .profiles;
     println!("Profiles:");
-    for profile in profiles {
-        let status = if !profile.startup_error.is_empty() {
-            profile.startup_error.as_str()
-        } else if profile.available {
-            "ready"
-        } else {
-            "unavailable"
-        };
+    if profiles.is_empty() {
+        println!("  No profiles. Run `amux profile create` or `amux login`.");
+    }
+    for profile in &profiles {
         println!(
             "  {}  {}  {}  {}",
-            profile.id, profile.label, profile.email, status
+            profile.id,
+            crate::profiles::display_label(profile, &profiles),
+            profile.email,
+            crate::profiles::status(profile)
         );
     }
     Ok(())

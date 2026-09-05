@@ -5,6 +5,7 @@ mod hooks;
 mod init;
 mod keymap;
 mod mcp;
+mod profiles;
 mod server_client;
 mod session_client;
 mod ui;
@@ -49,6 +50,10 @@ struct Cli {
     /// instance without adding a config flag to their command.
     #[arg(long, global = true, env = "AMUX_CONFIG")]
     config: Option<PathBuf>,
+
+    /// Select a profile by label or UUID
+    #[arg(long, global = true)]
+    profile: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -118,6 +123,22 @@ enum Commands {
 
     /// List profiles through the installation front door
     Profiles,
+
+    /// Connect a cloud account, optionally to an explicit profile
+    Login {
+        /// Override the account label locally
+        #[arg(long)]
+        name: Option<String>,
+    },
+
+    /// Forget a profile's credential, preserving its device and local agents
+    Logout,
+
+    /// Manage profiles in this installation (select with --profile)
+    Profile {
+        #[command(subcommand)]
+        command: profiles::ProfileCommands,
+    },
 
     /// Manage the amux server lifecycle
     Server {
@@ -379,7 +400,10 @@ async fn main() -> Result<ExitCode> {
             Cli::command().print_help()?;
             return Ok(ExitCode::SUCCESS);
         }
-        let config = load_config(cli.config)?;
+        if cli.config.is_none() && !amux::InstallationConfig::default_path().exists() {
+            init::initialize(None, false).await?;
+        }
+        let config = profiles::configuration(cli.config.as_deref(), cli.profile.as_deref()).await?;
         config
             .validate()
             .map_err(|e| anyhow!("invalid config: {e}"))?;
@@ -391,7 +415,46 @@ async fn main() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    if let Commands::Login { name } = command {
+        if cli.config.is_none() && !amux::InstallationConfig::default_path().exists() {
+            init::initialize(None, false).await?;
+        }
+        let installation = front_door::configuration(cli.config.as_deref())?;
+        let cloud_url = match cli.config.as_deref() {
+            Some(path) => profiles::load(path)?.cloud_url,
+            None => Config::default().cloud_url,
+        };
+        profiles::login(&installation, &cloud_url, cli.profile.as_deref(), name).await?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    if let Commands::Profile { command } = command {
+        let installation = front_door::configuration(cli.config.as_deref())?;
+        let configured = configured_profile(cli.config.as_deref())?;
+        profiles::administer(
+            &installation,
+            cli.profile.as_deref().or(configured.as_deref()),
+            command,
+        )
+        .await?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
     match &command {
+        Commands::Logout => {
+            let installation = front_door::configuration(cli.config.as_deref())?;
+            let configured = configured_profile(cli.config.as_deref())?;
+            profiles::logout(
+                &installation,
+                cli.profile.as_deref().or(configured.as_deref()),
+            )
+            .await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Init { reset } => {
+            init::initialize(cli.config.as_deref(), *reset).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
         Commands::Profiles => {
             let config = front_door::configuration(cli.config.as_deref())?;
             front_door::list(&config).await?;
@@ -438,7 +501,20 @@ async fn main() -> Result<ExitCode> {
         }
         _ => {}
     }
-    let config = load_validated_config(cli.config)?;
+    let config = if matches!(command, Commands::Hooks { .. } | Commands::Mcp { .. })
+        && cli.config.is_some()
+        && cli.profile.is_none()
+    {
+        profiles::load(cli.config.as_deref().unwrap())?
+    } else {
+        if matches!(command, Commands::Ui)
+            && cli.config.is_none()
+            && !amux::InstallationConfig::default_path().exists()
+        {
+            init::initialize(None, false).await?;
+        }
+        profiles::configuration(cli.config.as_deref(), cli.profile.as_deref()).await?
+    };
     run_command(command, config).await
 }
 
@@ -483,17 +559,21 @@ async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
     Ok(true)
 }
 
-fn load_validated_config(path: Option<PathBuf>) -> Result<Config> {
-    let config = load_config(path)?;
-    config
-        .validate()
-        .map_err(|e| anyhow!("invalid config: {e}"))?;
-    Ok(config)
+fn configured_profile(path: Option<&std::path::Path>) -> Result<Option<String>> {
+    path.map(|path| {
+        Ok(amux::load_profile_config(&std::fs::canonicalize(path)?)?
+            .profile_id
+            .to_string())
+    })
+    .transpose()
 }
 
 async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> {
     match command {
-        Commands::Profiles => unreachable!("profiles dispatches before profile configuration"),
+        Commands::Profiles
+        | Commands::Profile { .. }
+        | Commands::Login { .. }
+        | Commands::Logout => unreachable!("profiles dispatches before profile configuration"),
         Commands::Ui => ui::run(config).await?,
         Commands::New {
             agent_type,
@@ -550,17 +630,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             ServerCommands::Suspend => server_client::suspend_server(&config).await?,
             ServerCommands::Resume => server_client::resume_server(&config).await?,
         },
-        Commands::Init { reset } => {
-            let was_running = server_client::server_is_running(&config).await;
-            init::run_init(&mut config, init::InitContext::explicit(), reset).await?;
-            if was_running {
-                println!();
-                println!(
-                    "Note: a server is running with the previous configuration. \
-                     Restart it (`amux server stop` then `amux server start`) to apply any changes."
-                );
-            }
-        }
+        Commands::Init { .. } => unreachable!("init dispatches before profile configuration"),
         Commands::Pair {
             qr,
             link,
@@ -1248,45 +1318,6 @@ fn check_update_required(config: &Config) {
     }
 }
 
-fn load_config(input_path: Option<PathBuf>) -> Result<Config> {
-    // Resolve config path: explicit --config flag, or default path if it exists
-    let config_path: Option<PathBuf> = match &input_path {
-        Some(path) => Some(path.clone()),
-        None => {
-            let default_path = Config::default_path();
-            if default_path.exists() {
-                Some(default_path)
-            } else {
-                None
-            }
-        }
-    };
-
-    // Load config from file or use defaults
-    Ok(match &config_path {
-        Some(path) => {
-            let path = normalize_config_path(path)?;
-            let resolved = amux::load_profile_config(&path)
-                .map_err(|e| anyhow!("failed to load profile config from {:?}: {}", path, e))?;
-            Config {
-                host_name: resolved.installation.host_name,
-                cloud_url: resolved.profile.cloud_url,
-                socket_path: resolved.profile.socket_path,
-                tcp_port: resolved.profile.tcp_port,
-                state_path: resolved.profile.state_path,
-                data_dir: resolved.profile.data_dir,
-                reports_dir: resolved.installation.reports_dir,
-                prevent_idle_sleep: resolved.installation.prevent_idle_sleep,
-                minimum_client_versions: resolved.installation.minimum_client_versions,
-                keybinds: resolved.installation.keybinds,
-                ui: resolved.installation.ui,
-                path: Some(path),
-            }
-        }
-        None => Config::new(),
-    })
-}
-
 fn normalize_config_path(path: &std::path::Path) -> Result<PathBuf> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -1306,6 +1337,21 @@ fn normalize_config_path(path: &std::path::Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_selector_is_global_for_ui_relay_and_administration() {
+        for args in [
+            vec!["amux", "ui", "--profile", "Work"],
+            vec!["amux", "relay", "--profile", "Work"],
+            vec!["amux", "--profile", "Work", "profile", "rename", "Office"],
+            vec!["amux", "login", "--profile", "Work", "--name", "Office"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert_eq!(cli.profile.as_deref(), Some("Work"));
+        }
+        assert!(Cli::try_parse_from(["amux", "profile", "rename"]).is_err());
+        assert!(Cli::try_parse_from(["amux", "profile", "rename", "Office", "--clear"]).is_err());
+    }
 
     #[test]
     fn top_level_help_mentions_debug_exactly_in_debug_builds() {

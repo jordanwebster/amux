@@ -16,29 +16,52 @@ pub(super) async fn require_running_client(
     config: &Config,
     retry_command: Option<&str>,
 ) -> Result<Client> {
-    match open_daemon(config).await {
-        Ok(client) => Ok(client),
-        Err(error) if server_unavailable_error(config, &error) => {
-            remove_stale_socket(config, &error);
-            Err(anyhow!(server_not_running_message(retry_command)))
-        }
-        Err(error) => Err(error.into()),
-    }
+    let installation = crate::front_door::configuration(config.path.as_deref())?;
+    let mut front = crate::front_door::existing(&installation)
+        .await?
+        .ok_or_else(|| anyhow!(server_not_running_message(retry_command)))?;
+    connect_profile(config, &installation, &mut front).await
 }
 
 pub(super) async fn get_client_with_executable(
     config: &Config,
     executable: &Path,
 ) -> Result<Client> {
-    match open_daemon(config).await {
-        Ok(client) => return Ok(client),
-        Err(error) if server_unavailable_error(config, &error) => {
-            remove_stale_socket(config, &error);
-        }
-        Err(error) => return Err(error.into()),
-    }
+    let installation = crate::front_door::configuration(config.path.as_deref())?;
+    let mut front = match crate::front_door::existing(&installation).await? {
+        Some(front) => front,
+        None => crate::front_door::spawn(&installation, executable).await?,
+    };
+    connect_profile(config, &installation, &mut front).await
+}
 
-    spawn_daemon_and_connect(config, executable, false).await
+async fn connect_profile(
+    config: &Config,
+    installation: &amux::InstallationConfig,
+    front: &mut amux::installation::FrontDoorClient,
+) -> Result<Client> {
+    let path = config
+        .path
+        .as_deref()
+        .context("selected profile config is missing")?;
+    let resolved = amux::load_profile_config(&std::fs::canonicalize(path)?)?;
+    let id = resolved.profile_id.to_string();
+    let info =
+        crate::profiles::resolve(front, Some(&id), &crate::profiles::last_used(installation))
+            .await?;
+    if !info.available || info.socket_path.is_empty() {
+        return Err(anyhow!(
+            "Profile {} ({}) is unavailable: {}",
+            info.label,
+            id,
+            info.startup_error
+        ));
+    }
+    let mut selected = config.clone();
+    selected.socket_path = info.socket_path.into();
+    let client = open_daemon(&selected).await?;
+    crate::profiles::remember(&crate::profiles::last_used(installation), &id)?;
+    Ok(client)
 }
 
 pub(super) async fn spawn_daemon(config: &Config, cloud: bool) -> Result<Client> {

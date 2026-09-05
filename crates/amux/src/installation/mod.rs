@@ -5,9 +5,11 @@ pub use crate::services::front_door::{FrontDoor, FrontDoorClient, FrontDoorListe
 /// Generated messages and clients for the installation's local gRPC boundary.
 pub mod rpc {
     pub use crate::protocol::amux::v1::{
-        GetInfoRequest, InstallationInfo, InstallationShutdownRequest, ListProfilesRequest,
-        ListProfilesResponse, ProfileInfo, ResumeAllRequest, SuspendAllRequest, SuspendReason,
-        installation_service_client, profile_service_client,
+        BindProfileRequest, CreateProfileRequest, DeleteProfileRequest, GetInfoRequest,
+        InstallationInfo, InstallationShutdownRequest, Intent, ListProfilesRequest,
+        ListProfilesResponse, Observed, ProfileInfo, ProfileOperation, RenameProfileRequest,
+        ResumeAllRequest, SuspendAllRequest, SuspendReason, installation_service_client,
+        profile_service_client,
     };
 }
 

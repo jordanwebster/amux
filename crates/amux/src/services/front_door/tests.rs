@@ -818,3 +818,54 @@ async fn suspend_resume_wire_reports_agents_and_replays_across_connections() {
         .stop(crate::server::ShutdownReason::UserRequested)
         .await;
 }
+
+#[tokio::test]
+async fn front_door_adoption_response_identifies_confirmation_and_retries_staged_token() {
+    use crate::test_fixtures::{IdentityServer, TestAccount};
+    let identity = IdentityServer::start(
+        vec![TestAccount {
+            sub: "alice".into(),
+            name: Some("Alice Example".into()),
+            email: Some("alice@example.test".into()),
+        }],
+        None,
+    )
+    .await;
+    let front = front(Listeners::InProcessOnly).await;
+    let mut client = client(&front);
+    let profile = create(&mut client, "local").await;
+    let retained = front
+        .installation
+        .root()
+        .join("profiles")
+        .join(&profile.id)
+        .join("data/cache/artifacts/retained");
+    std::fs::write(retained, b"existing local artifact").unwrap();
+    let mut request = wire::BindProfileRequest {
+        operation_id: op(),
+        profile_id: Some(profile.id.clone()),
+        cloud_url: identity.url(),
+        staged_refresh_token: identity.refresh_token_for("alice"),
+        adopt_non_pristine: false,
+    };
+    let error = client.bind_profile(request.clone()).await.unwrap_err();
+    assert_eq!(error.code(), Code::FailedPrecondition);
+    assert_eq!(
+        error.metadata().get("amux-bind-error").unwrap(),
+        "adoption-needs-confirmation"
+    );
+    assert_eq!(
+        error.metadata().get("amux-profile-id").unwrap(),
+        profile.id.as_str()
+    );
+    assert!(front.installation.profiles()[0].record.binding.is_none());
+    request.operation_id = op();
+    request.adopt_non_pristine = true;
+    let bound = client.bind_profile(request).await.unwrap().into_inner();
+    assert_eq!(bound.id, profile.id);
+    assert_eq!(bound.email, "alice@example.test");
+    front
+        .installation
+        .stop(crate::server::ShutdownReason::UserRequested)
+        .await;
+}

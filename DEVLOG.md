@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Select and administer profiles through the front door.**
+The CLI resolves a global `--profile` label or UUID from the installation
+before connecting to the returned ClientService socket. Explicit profile
+configurations retain their device selection; default invocations remember
+successful selections by UUID, including across renames. Duplicate labels show
+distinguishing UUID suffixes and ambiguous selectors list candidates. Fresh
+`amux init` writes installation preferences and creates an unbound profile,
+asking only about keep-awake. Login stages its token in memory for the daemon,
+uses account identity to choose a profile unless explicitly targeted, and asks
+before adopting retained local state. Logout and profile create, delete, rename,
+pause and resume use the front door and report identity and connection status.
+Deletion requires confirmation or `--yes`. Real-binary tests exercise fresh
+initialization, account labels from an offline identity server, local identity
+surviving logout, lifecycle commands and independent selections. A gRPC test
+covers adoption confirmation and retrying a single-use staged token.
+
 2026-09-05 — **Boot the desktop daemon as an installation.**
 Daemon startup loads installation preferences through the selected profile file,
 starts every registered profile, and serves administration on the front door.

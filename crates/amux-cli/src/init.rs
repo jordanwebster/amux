@@ -58,6 +58,7 @@ pub struct InitContext {
 }
 
 impl InitContext {
+    #[cfg(test)]
     pub fn explicit() -> Self {
         Self { explicit: true }
     }
@@ -110,6 +111,61 @@ pub async fn run_init(config: &mut Config, ctx: InitContext, reset: bool) -> Res
             InitStep::Done => return Ok(()),
         }
     }
+}
+
+/// Create the installation preferences and its first unbound profile. The
+/// supervisor owns identity creation; setup only asks about a shared preference.
+pub async fn initialize(profile_path: Option<&std::path::Path>, reset: bool) -> anyhow::Result<()> {
+    use amux::InstallationConfig;
+    use amux::installation::rpc;
+
+    let mut installation = match profile_path {
+        Some(_) => crate::front_door::configuration(profile_path)?,
+        None => {
+            let path = InstallationConfig::default_path();
+            if !path.exists() {
+                let config = InstallationConfig::default();
+                std::fs::create_dir_all(path.parent().unwrap())?;
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)?;
+                file.write_all(serde_yaml::to_string(&config)?.as_bytes())?;
+                file.sync_all()?;
+            }
+            InstallationConfig::from_file(&path)?
+        }
+    };
+    let was_running = crate::front_door::existing(&installation).await?.is_some();
+    let mut preferences = Config {
+        path: installation.path.clone(),
+        prevent_idle_sleep: installation.prevent_idle_sleep,
+        ..Config::default()
+    };
+    if reset {
+        setup::clear_prevent_idle_sleep(&mut preferences)?;
+    }
+    if setup::prevent_idle_sleep_supported() && preferences.prevent_idle_sleep.is_none() {
+        prompt_idle_sleep(&mut preferences)?;
+    }
+    installation.prevent_idle_sleep = preferences.prevent_idle_sleep;
+    let mut front = crate::front_door::connect(&installation, true).await?;
+    if crate::profiles::directory(&mut front).await?.is_empty() {
+        let profile = front
+            .profiles
+            .create_profile(rpc::CreateProfileRequest {
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                label: None,
+            })
+            .await?
+            .into_inner();
+        println!("Created unbound profile {}.", profile.id);
+    }
+    println!("Installation ready. Run `amux login` to connect a cloud account.");
+    if was_running {
+        println!("Restart the server to apply changed keep-awake preferences.");
+    }
+    Ok(())
 }
 
 fn prompt_idle_sleep(config: &mut Config) -> Result<(), InitError> {

@@ -38,9 +38,31 @@ pub(super) fn bind_error(error: BindError) -> Status {
     let message = error.to_string();
     match error {
         BindError::Installation(error) => installation_error(error),
-        BindError::AccountAlreadyBound { .. } => Status::already_exists(message),
-        BindError::ProfileBoundToOtherAccount { .. }
-        | BindError::AdoptionNeedsConfirmation { .. } => Status::failed_precondition(message),
+        BindError::AccountAlreadyBound { profile } => {
+            let mut status = Status::already_exists(message);
+            status
+                .metadata_mut()
+                .insert("amux-profile-id", profile.to_string().parse().unwrap());
+            status
+        }
+        BindError::ProfileBoundToOtherAccount { profile } => {
+            let mut status = Status::failed_precondition(message);
+            status
+                .metadata_mut()
+                .insert("amux-profile-id", profile.to_string().parse().unwrap());
+            status
+        }
+        BindError::AdoptionNeedsConfirmation { profile, .. } => {
+            let mut status = Status::failed_precondition(message);
+            status.metadata_mut().insert(
+                "amux-bind-error",
+                "adoption-needs-confirmation".parse().unwrap(),
+            );
+            status
+                .metadata_mut()
+                .insert("amux-profile-id", profile.to_string().parse().unwrap());
+            status
+        }
         BindError::UserinfoUnavailable(_) => Status::unavailable(message),
         BindError::MissingSubject | BindError::TokenRejected(_) => Status::unauthenticated(message),
         BindError::Persist(_) => Status::internal(message),
