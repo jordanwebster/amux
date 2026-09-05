@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Keep the simulator relay smoke valid before pairing.**
+The Swift smoke now reads relay-discovered daemon identities through the public
+snapshot API and verifies that those unpaired peers stay outside Fleet callbacks.
+Its previous expectation that discovery populated Fleet became invalid when
+Fleet was restricted to trusted hosts. The smoke still requires real online
+daemon names, a connected relay, reconciled Fleet callbacks and complete teardown;
+timeout failures now include the last connection state. Snapshot reads happen
+outside the callback lock to avoid blocking the worker that answers them.
+
 2026-09-05 — **Prune cached mobile agents from authoritative host inventories.**
 The client service now carries each remote host's completed inventory through
 its ordered agent stream and replays that membership to late subscribers.

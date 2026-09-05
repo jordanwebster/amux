@@ -54,7 +54,8 @@ def validate_output(output: str, expected: dict[str, str]) -> None:
     if len(lines) != 1 or not expected:
         raise RuntimeError(f"Expected one nonempty daemon inventory: {output}")
     observed = json.loads(lines[0])
-    if not observed or observed != expected or "mobile worker stopped" not in output.splitlines():
+    markers = {"mobile worker stopped", "unpaired relay hosts excluded from Fleet; discovery verified through snapshot"}
+    if not observed or observed != expected or not markers.issubset(output.splitlines()):
         raise RuntimeError(f"Simulator inventory or teardown mismatch: {output}")
 
 

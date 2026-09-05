@@ -10,13 +10,19 @@ from loopback_smoke import released, validate_output
 class LoopbackGuards(unittest.TestCase):
     def test_requires_real_nonempty_inventory_and_worker_stop(self):
         expected = {"host-id": "laptop"}
-        for output in ("", "daemon_names={}\nmobile worker stopped", 'daemon_names={"host-id":"laptop"}',
-                       'daemon_names={"host-id":"another-host"}\nmobile worker stopped'):
+        discovery = "unpaired relay hosts excluded from Fleet; discovery verified through snapshot"
+        inventory = "daemon_names=" + json.dumps(expected)
+        teardown = "\nmobile worker stopped\n" + discovery
+        for output in ("", "daemon_names={}" + teardown,
+                       'daemon_names={"host-id":"another-host"}' + teardown,
+                       inventory + "\n" + inventory + teardown,
+                       inventory + "\nmobile worker stopped",
+                       inventory + "\n" + discovery):
             with self.subTest(output=output), self.assertRaises(RuntimeError):
                 validate_output(output, expected)
-        validate_output("daemon_names=" + json.dumps(expected) + "\nmobile worker stopped", expected)
+        validate_output(inventory + teardown, expected)
         with self.assertRaises(RuntimeError):
-            validate_output("daemon_names={}\nmobile worker stopped", {})
+            validate_output("daemon_names={}" + teardown, {})
 
     def test_rejects_live_runner_listener_and_accepts_released_listener(self):
         listener = socket.socket()

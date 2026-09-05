@@ -155,7 +155,9 @@ library under the mobile profile, stages it separately in `target/ios/loopback`,
 and compiles `ios/Tools/LoopbackSmoke.swift`. The recipe starts the testnet
 runner with two real Mac daemons and passes its relay address and temporary
 bearer token to Swift on the pinned simulator. Swift prints the online daemon
-names and identities received in Fleet callbacks, then stops its Rust worker.
+names and identities from the shared reducer snapshot, verifies that these
+unpaired relay hosts stay outside Fleet callbacks, then stops its Rust worker.
+Snapshot reads run outside callbacks so they cannot deadlock the Rust worker.
 The recipe compares those identities with runner readiness, requires a
 nonempty inventory, shuts the runner down, and verifies successful process
 exit, released relay/control listeners and removal of temporary state. It
