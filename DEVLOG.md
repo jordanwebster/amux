@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Keep report fixtures replayable with profile-switch chords.**
+Both committed report traces now record `pending_leader: false` in their initial
+view snapshot, matching the inactive chord state added for profile switching.
+Their captured frames and styles are unchanged. The replay regression still
+requires exact reproduction and checks every fixture file for private text.
+
 2026-09-05 — **Include account switching in the fleet help golden.**
 The plain help-frame expectation now includes the implemented `C-a p` shortcut
 for switching profiles. It had retained the help text from before the switcher,
