@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Keep ephemeral installation files inside the platform temp directory.**
+The test-only `InstallationRoot::Ephemeral` replaces the misleading `InMemory`
+name: its registry is unpersisted, while profile files live beneath
+`std::env::temp_dir()` and are removed when the installation drops. Embedded
+hosts use a durable directory in their app data container so identity, trust
+and bindings survive relaunch. A no-local-agents subprocess regression supplies
+a TMPDIR longer than the Unix socket limit, creates a profile, reopens its
+client with the same identity, checks configuration, cache, reports and socket
+paths stay beneath the canonical root, and verifies cleanup. Desktop fixtures
+explicitly retain short on-disk roots so socket limits remain enforced without
+redirecting embedded storage to `/tmp`.
+
 2026-09-05 — **Match the descriptor assertion to the profile client API.**
 The protocol test now expects the exact ClientService method set declared in
 the proto, excluding the pairing, peer administration and lifecycle RPCs moved

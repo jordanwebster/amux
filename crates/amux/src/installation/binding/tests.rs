@@ -315,7 +315,8 @@ async fn explicit_target_never_substitutes_and_refusals_keep_credential_and_labe
 #[tokio::test]
 async fn by_account_chooses_sole_pristine_then_bound_and_concurrent_logins_share_one_profile() {
     let identity = identity().await;
-    let installation = Installation::open(options(InstallationRoot::InMemory))
+    let root = crate::test_fixtures::short_installation_root();
+    let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
         .await
         .unwrap();
     let initial = create(&installation).await;
@@ -398,8 +399,9 @@ async fn logout_reserves_account_across_restart_and_relogin_preserves_device() {
 async fn logout_and_delete_cancel_pending_login_before_it_can_commit_or_connect() {
     for delete in [false, true] {
         let identity = identity().await;
+        let root = crate::test_fixtures::short_installation_root();
         let installation = Arc::new(
-            Installation::open(options(InstallationRoot::InMemory))
+            Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
                 .await
                 .unwrap(),
         );

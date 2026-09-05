@@ -114,9 +114,9 @@ fn persisted_records_round_trip_with_independent_revisions() {
 }
 
 #[test]
-fn in_memory_registries_are_independent() {
-    let mut a = Registry::open(InstallationRoot::InMemory).unwrap();
-    let b = Registry::open(InstallationRoot::InMemory).unwrap();
+fn ephemeral_registries_are_independent() {
+    let mut a = Registry::open(InstallationRoot::Ephemeral).unwrap();
+    let b = Registry::open(InstallationRoot::Ephemeral).unwrap();
     a.create(ProfileId::new(), label("Personal")).unwrap();
     assert!(a.path().is_none());
     assert_eq!(a.profiles().count(), 1);

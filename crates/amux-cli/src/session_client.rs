@@ -1229,9 +1229,10 @@ mod attach {
         }
     }
 
-    async fn embedded_client() -> (amux::Installation, Client) {
+    async fn embedded_client() -> (amux::Installation, Client, tempfile::TempDir) {
+        let root = amux::test_fixtures::short_installation_root();
         let installation = amux::Installation::open(amux::InstallationOptions {
-            root: amux::InstallationRoot::InMemory,
+            root: amux::InstallationRoot::OnDisk(root.path().into()),
             settings: amux::InstallationSettings {
                 host_name: "session-test".into(),
                 prevent_idle_sleep: Some(false),
@@ -1255,7 +1256,7 @@ mod attach {
             .record
             .id;
         let client = installation.client(id).unwrap();
-        (installation, client)
+        (installation, client, root)
     }
 
     async fn create_cat_agent(client: &Client, name: &str) -> AgentId {
@@ -1582,7 +1583,7 @@ mod attach {
         ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
     )]
     async fn round_trip_repaints_fleet() {
-        let (installation, client) = embedded_client().await;
+        let (installation, client, _root) = embedded_client().await;
         let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
         wait_model(&mut runtime, "snapshot", |model| model.is_synchronized()).await;
 
@@ -1683,7 +1684,7 @@ mod attach {
         ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
     )]
     async fn kill_during_attach_still_restores_the_terminal() {
-        let (installation, client) = embedded_client().await;
+        let (installation, client, _root) = embedded_client().await;
         let agent = create_cat_agent(&client, "doomed").await;
 
         let attached = open_attach(&client, agent).await;

@@ -62,9 +62,10 @@ async fn create_test_agent(client: &amux::Client, working_dir: &Path) -> amux::A
         .expect("create attachment stub agent")
 }
 
-async fn installation_client() -> (amux::Installation, amux::Client, PathBuf) {
+async fn installation_client() -> (amux::Installation, amux::Client, PathBuf, tempfile::TempDir) {
+    let disk_root = amux::test_fixtures::short_installation_root();
     let installation = amux::Installation::open(amux::InstallationOptions {
-        root: amux::InstallationRoot::InMemory,
+        root: amux::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: amux::InstallationSettings {
             host_name: "ui-test".into(),
             prevent_idle_sleep: Some(false),
@@ -89,7 +90,7 @@ async fn installation_client() -> (amux::Installation, amux::Client, PathBuf) {
         .id;
     let client = installation.client(id).unwrap();
     let root = installation.root().join("profiles").join(id.to_string());
-    (installation, client, root)
+    (installation, client, root, disk_root)
 }
 
 fn claude_input(text: &str) -> InputPayload {
@@ -163,7 +164,7 @@ impl AttachmentClient for AttachmentStub {
 )]
 async fn runtime_reflects_daemon_state_in_the_model() {
     let _guard = embedded_server_test_guard().await;
-    let (installation, client, _) = installation_client().await;
+    let (installation, client, _, _root) = installation_client().await;
 
     let mut runtime = Runtime::start_with_client(client, RuntimeOptions::default());
 
@@ -289,7 +290,7 @@ async fn attachments_puts_finish_before_one_send_and_a_failed_put_stops_the_oper
 async fn attachments_open_uses_one_persistent_cache_and_refetches_tampering() {
     let _guard = embedded_server_test_guard().await;
     let dir = tempdir().unwrap();
-    let (installation, client, profile_root) = installation_client().await;
+    let (installation, client, profile_root, _root) = installation_client().await;
     let agent = create_test_agent(&client, dir.path()).await;
     let bytes = b"cache me once".to_vec();
     let artifact = client
@@ -403,7 +404,7 @@ async fn attachments_open_uses_one_persistent_cache_and_refetches_tampering() {
 async fn attachments_fetch_and_diff_preserve_typed_runtime_outcomes() {
     let _guard = embedded_server_test_guard().await;
     let dir = tempdir().unwrap();
-    let (installation, client, _) = installation_client().await;
+    let (installation, client, _, _root) = installation_client().await;
     let agent = create_test_agent(&client, dir.path()).await;
     let patch = "diff --git a/a b/a\n+new\n";
     let artifact = client
@@ -479,7 +480,8 @@ async fn switcher_rejects_late_results() {
     // The artifact cache reports canonical paths; on macOS the temporary root
     // is reached through a symlink, so compare against the resolved root.
     let root = dir.path().canonicalize().unwrap();
-    let installation = Arc::new(socketed_installation().await);
+    let (installation, _root) = socketed_installation().await;
+    let installation = Arc::new(installation);
     let personal = new_profile(&installation, "Personal").await;
     let work = new_profile(&installation, "Work").await;
 
@@ -735,9 +737,10 @@ fn socket_connector(socket: &Path) -> amux_ui::Connector {
 }
 
 #[cfg(unix)]
-async fn socketed_installation() -> amux::Installation {
-    amux::Installation::open(amux::InstallationOptions {
-        root: amux::InstallationRoot::InMemory,
+async fn socketed_installation() -> (amux::Installation, tempfile::TempDir) {
+    let disk_root = amux::test_fixtures::short_installation_root();
+    let installation = amux::Installation::open(amux::InstallationOptions {
+        root: amux::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: amux::InstallationSettings {
             host_name: "ui-switcher-test".into(),
             prevent_idle_sleep: Some(false),
@@ -753,7 +756,8 @@ async fn socketed_installation() -> amux::Installation {
         identity_http: Default::default(),
     })
     .await
-    .unwrap()
+    .unwrap();
+    (installation, disk_root)
 }
 
 #[cfg(unix)]

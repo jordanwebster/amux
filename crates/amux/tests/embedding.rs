@@ -43,9 +43,9 @@ impl CredentialProvider for HostCredentials {
 
 type Providers = Arc<Mutex<HashMap<ProfileId, Arc<HostCredentials>>>>;
 
-fn options(name: &str, providers: Providers) -> InstallationOptions {
+fn options(name: &str, providers: Providers, root: InstallationRoot) -> InstallationOptions {
     InstallationOptions {
-        root: InstallationRoot::InMemory,
+        root,
         settings: InstallationSettings {
             host_name: name.into(),
             prevent_idle_sleep: Some(false),
@@ -200,10 +200,21 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         );
     }
     let providers = Providers::default();
-    let installation = Installation::open(options("phone", providers.clone()))
+    #[cfg(feature = "local-agents")]
+    let roots = [
+        amux::test_fixtures::short_installation_root(),
+        amux::test_fixtures::short_installation_root(),
+    ];
+    #[cfg(feature = "local-agents")]
+    let [phone_root, peer_root] = roots
+        .each_ref()
+        .map(|root| InstallationRoot::OnDisk(root.path().into()));
+    #[cfg(not(feature = "local-agents"))]
+    let [phone_root, peer_root] = [InstallationRoot::Ephemeral, InstallationRoot::Ephemeral];
+    let installation = Installation::open(options("phone", providers.clone(), phone_root))
         .await
         .unwrap();
-    let witnesses = Installation::open(options("peer", providers.clone()))
+    let witnesses = Installation::open(options("peer", providers.clone(), peer_root))
         .await
         .unwrap();
     let mut profiles = Vec::new();
@@ -412,6 +423,149 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
 }
 
 #[cfg(all(unix, not(feature = "local-agents")))]
+#[test]
+fn embedded_ephemeral_storage_stays_in_container_tmpdir() {
+    use std::os::unix::ffi::OsStrExt;
+
+    const CHILD: &str = "AMUX_EPHEMERAL_ROOT_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let temporary = tempfile::tempdir().unwrap();
+        let container_tmp = temporary.path().join("app-container-tmp-".repeat(8));
+        std::fs::create_dir(&container_tmp).unwrap();
+        // Give only this child a container-shaped TMPDIR; other tests may be
+        // allocating temporary files concurrently in the parent process.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "embedded_ephemeral_storage_stays_in_container_tmpdir",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("TMPDIR", &container_tmp)
+            .output()
+            .unwrap();
+        println!("{}", String::from_utf8_lossy(&output.stdout));
+        assert!(
+            output.status.success(),
+            "ephemeral storage child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(std::fs::read_dir(container_tmp).unwrap().count(), 0);
+        return;
+    }
+
+    let container_tmp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+    assert!(container_tmp.as_os_str().as_bytes().len() > 104);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let installation = Installation::open(options(
+                "phone",
+                Providers::default(),
+                InstallationRoot::Ephemeral,
+            ))
+            .await
+            .unwrap();
+            let root = installation.root().to_owned();
+            assert_eq!(root.parent(), Some(container_tmp.as_path()));
+            let profile = installation
+                .create(OperationId::new(), Some("personal".into()))
+                .await
+                .unwrap();
+            assert!(profile.available, "{profile:?}");
+            assert!(profile.socket_path.is_none());
+            let client = installation.client(profile.record.id).unwrap();
+            assert!(client.list_agents().await.unwrap().is_empty());
+            let identity = installation
+                .admin(profile.record.id)
+                .await
+                .unwrap()
+                .start_pin_pairing()
+                .await
+                .unwrap()
+                .identity;
+            installation
+                .admin(profile.record.id)
+                .await
+                .unwrap()
+                .cancel_pairing()
+                .await
+                .unwrap();
+            drop(client);
+
+            // Reopen the profile as a new screen would, keeping its device
+            // identity while the ephemeral installation owner remains alive.
+            let reopened = installation.client(profile.record.id).unwrap();
+            assert!(reopened.list_agents().await.unwrap().is_empty());
+            assert_eq!(installation.profiles(), vec![profile.clone()]);
+            assert_eq!(
+                installation
+                    .admin(profile.record.id)
+                    .await
+                    .unwrap()
+                    .start_pin_pairing()
+                    .await
+                    .unwrap()
+                    .identity,
+                identity
+            );
+            drop(reopened);
+
+            let profile_root = root.join("profiles").join(profile.record.id.to_string());
+            let config_path = profile_root.join("config.yaml");
+            let config = amux::load_profile_config(&config_path).unwrap();
+            let paths = amux::installation::ProfilePaths::for_id(&root, profile.record.id)
+                .unwrap();
+            let cache = config.artifact_cache_dir();
+            let reports = config.reports_dir();
+            for path in [
+                &profile_root,
+                &config_path,
+                &config.installation.root,
+                &config.installation.front_door_socket,
+                &config.installation.keymaps_dir,
+                config.installation.path.as_ref().unwrap(),
+                &config.profile.installation_config,
+                &config.profile.socket_path,
+                &config.profile.data_dir,
+                &config.profile.state_path,
+                &cache,
+                &reports,
+                paths.config_path.as_ref().unwrap(),
+                &paths.socket_path,
+                &paths.state_path,
+                &paths.data_dir,
+                &paths.reports_dir,
+                &paths.credentials_path().unwrap(),
+            ] {
+                assert!(path.starts_with(&root), "path escaped root: {path:?}");
+                if path.exists() {
+                    assert!(std::fs::canonicalize(path).unwrap().starts_with(&root));
+                }
+                println!("Container-owned path: {}", path.display());
+            }
+            assert!(cache.is_dir());
+            assert!(reports.is_dir());
+            assert!(config.profile.data_dir.join("device.key").is_file());
+            assert!(!root.join("registry.yaml").exists());
+            assert!(!config.installation.front_door_socket.exists());
+            assert!(!config.profile.socket_path.exists());
+            println!(
+                "Created and reopened embedded profile {} under {}-byte TMPDIR {}; registry is unpersisted, profile files stay on disk beneath {}",
+                profile.record.id,
+                container_tmp.as_os_str().as_bytes().len(),
+                container_tmp.display(),
+                root.display()
+            );
+            installation.shutdown(ShutdownReason::UserRequested).await;
+            assert!(!root.exists(), "ephemeral root must be removed on drop");
+            println!("Ephemeral installation shutdown and drop removed its root and all profile files.");
+        });
+}
+
+#[cfg(all(unix, not(feature = "local-agents")))]
 #[tokio::test]
 async fn embedded_storage_reopens_long_roots_and_refuses_symlink_redirection() {
     use std::os::unix::ffi::OsStrExt;
@@ -419,12 +573,14 @@ async fn embedded_storage_reopens_long_roots_and_refuses_symlink_redirection() {
 
     use amux::installation::{InstallationError, ProfilePaths};
 
-    let temporary = tempfile::tempdir_in("/tmp").unwrap();
+    let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("embedded-app-storage-".repeat(8));
     let make_options = || {
-        let mut options = options("phone", Providers::default());
-        options.root = InstallationRoot::OnDisk(root.clone());
-        options
+        options(
+            "phone",
+            Providers::default(),
+            InstallationRoot::OnDisk(root.clone()),
+        )
     };
     let installation = Installation::open(make_options()).await.unwrap();
     let address: libc::sockaddr_un = unsafe { std::mem::zeroed() };

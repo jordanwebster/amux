@@ -19,9 +19,9 @@ impl CredentialProvider for NoCredentials {
     fn invalidate(&self, _: &AccessToken) {}
 }
 
-fn options() -> InstallationOptions {
+fn options(root: &std::path::Path) -> InstallationOptions {
     InstallationOptions {
-        root: InstallationRoot::InMemory,
+        root: InstallationRoot::OnDisk(root.into()),
         settings: InstallationSettings {
             host_name: "embedded-host".into(),
             prevent_idle_sleep: Some(false),
@@ -40,7 +40,8 @@ fn options() -> InstallationOptions {
 
 #[tokio::test]
 async fn background_profiles_outlive_every_screen_client() {
-    let installation = Installation::open(options()).await.unwrap();
+    let root = crate::test_fixtures::short_installation_root();
+    let installation = Installation::open(options(root.path())).await.unwrap();
     let saved =
         crate::InstallationConfig::from_file(&installation.root().join("config.yaml")).unwrap();
     assert_eq!(
@@ -92,7 +93,8 @@ async fn background_profiles_outlive_every_screen_client() {
 #[cfg(testnet)]
 #[tokio::test]
 async fn shutdown_yields_and_finishes_after_its_caller_is_cancelled() {
-    let installation = Installation::open(options()).await.unwrap();
+    let root = crate::test_fixtures::short_installation_root();
+    let installation = Installation::open(options(root.path())).await.unwrap();
     let profile = installation.create(OperationId::new(), None).await.unwrap();
     let client = installation.client(profile.record.id).unwrap();
     let mut watch = installation.watch();
@@ -139,7 +141,8 @@ async fn login_and_profile_resume_cannot_wake_a_suspended_host() {
         None,
     )
     .await;
-    let installation = Installation::open(options()).await.unwrap();
+    let root = crate::test_fixtures::short_installation_root();
+    let installation = Installation::open(options(root.path())).await.unwrap();
     installation.host_suspend().await;
     let profile = installation.create(OperationId::new(), None).await.unwrap();
     let id = profile.record.id;

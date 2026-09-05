@@ -21,13 +21,15 @@ fn options(root: InstallationRoot, listeners: Listeners) -> InstallationOptions 
         },
     }
 }
-async fn installation() -> Installation {
-    Installation::open(options(
-        InstallationRoot::InMemory,
+async fn installation() -> (Installation, tempfile::TempDir) {
+    let root = crate::test_fixtures::short_installation_root();
+    let installation = Installation::open(options(
+        InstallationRoot::OnDisk(root.path().into()),
         Listeners::InProcessOnly,
     ))
     .await
-    .unwrap()
+    .unwrap();
+    (installation, root)
 }
 async fn create(installation: &Installation, label: &str) -> ProfileStatus {
     let profile = installation
@@ -46,7 +48,7 @@ async fn event(watch: &mut ProfileWatch) -> ProfileEvent {
 
 #[tokio::test]
 async fn replayed_create_returns_the_original_result_even_after_rename() {
-    let installation = installation().await;
+    let (installation, _root) = installation().await;
     let op = OperationId::new();
     let (first, replay) = tokio::join!(
         installation.create(op, Some("work".into())),
@@ -80,7 +82,7 @@ async fn replayed_create_returns_the_original_result_even_after_rename() {
 
 #[tokio::test]
 async fn stale_revision_rename_and_replayed_error_leave_newer_name_intact() {
-    let installation = installation().await;
+    let (installation, _root) = installation().await;
     let first = create(&installation, "work").await;
     let renamed = installation
         .rename(
@@ -116,7 +118,7 @@ async fn stale_revision_rename_and_replayed_error_leave_newer_name_intact() {
 
 #[tokio::test]
 async fn delete_closes_open_clients_and_rejects_late_mutations() {
-    let installation = installation().await;
+    let (installation, _root) = installation().await;
     let first = create(&installation, "personal").await;
     let second = create(&installation, "work").await;
     let client = installation.client(first.record.id).unwrap();
@@ -163,7 +165,7 @@ async fn delete_closes_open_clients_and_rejects_late_mutations() {
 
 #[tokio::test]
 async fn watch_snapshot_ordered_changes_removed_and_lagged() {
-    let installation = installation().await;
+    let (installation, _root) = installation().await;
     let profile = create(&installation, "work").await;
     let mut watch = installation.watch();
     let sequence = match event(&mut watch).await {
@@ -334,7 +336,7 @@ async fn startup_failure_leaves_other_profile_serving_and_delete_closes_socket_c
 
 #[tokio::test]
 async fn cancelling_a_caller_does_not_cancel_or_duplicate_its_mutation() {
-    let installation = installation().await;
+    let (installation, _root) = installation().await;
     let profile = create(&installation, "work").await;
     let slot = installation.inner.state.lock().unwrap().profiles[&profile.record.id]
         .slot
@@ -437,7 +439,7 @@ async fn failed_delete_remains_unavailable_after_restart_and_cleanup_is_retryabl
 
 #[tokio::test]
 async fn lifecycle_waits_for_profile_mutations_and_closed_gate_rejects_late_agent_work() {
-    let installation = installation().await;
+    let (installation, _root) = installation().await;
     let profile = create(&installation, "work").await;
     let slot = installation.inner.state.lock().unwrap().profiles[&profile.record.id]
         .slot
@@ -585,7 +587,7 @@ async fn bound_profiles_start_independently_and_pause_cancels_only_its_connector
 
 #[tokio::test]
 async fn deletion_that_wins_startup_cannot_be_undone_by_the_late_start() {
-    let installation = installation().await;
+    let (installation, _root) = installation().await;
     let id = ProfileId::new();
     let record = installation
         .inner

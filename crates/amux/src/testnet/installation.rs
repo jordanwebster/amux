@@ -531,13 +531,8 @@ pub(super) async fn start(
     identity: Arc<IdentityServer>,
     cloud: Option<&super::net::CloudRelay>,
 ) -> InstallationHandle {
-    let disk_root = spec
-        .persistent
-        .then(|| tempfile::tempdir_in("/tmp").unwrap());
-    let root = disk_root
-        .as_ref()
-        .map(|root| InstallationRoot::OnDisk(root.path().into()))
-        .unwrap_or(InstallationRoot::InMemory);
+    let disk_root = crate::test_fixtures::short_installation_root();
+    let root = InstallationRoot::OnDisk(disk_root.path().into());
     let fixtures = Arc::new(Mutex::new(FixturePlan {
         profiles: BTreeMap::new(),
         cloud_only: spec
@@ -619,7 +614,7 @@ pub(super) async fn start(
         cloud_addr: cloud.map(|cloud| cloud.addr),
         root,
         persistent: spec.persistent,
-        _disk_root: disk_root,
+        _disk_root: Some(disk_root),
         lifecycle: tokio::sync::Mutex::new(()),
     });
     InstallationHandle {

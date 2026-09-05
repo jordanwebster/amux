@@ -14,10 +14,11 @@ use crate::protocol::wire::profile_service_server::ProfileService;
 fn op() -> String {
     OperationId::new().0.to_string()
 }
-async fn front(listeners: Listeners) -> FrontDoor {
+async fn front(listeners: Listeners) -> (FrontDoor, tempfile::TempDir) {
+    let root = crate::test_fixtures::short_installation_root();
     let installation = Arc::new(
         Installation::open(InstallationOptions {
-            root: InstallationRoot::InMemory,
+            root: InstallationRoot::OnDisk(root.path().into()),
             listeners,
             credentials: CredentialSource::ProfileFiles,
             identity_http: reqwest::Client::new(),
@@ -36,7 +37,7 @@ async fn front(listeners: Listeners) -> FrontDoor {
         .unwrap(),
     );
     let path = installation.root().join("amux.sock");
-    FrontDoor::new(installation, Some(path))
+    (FrontDoor::new(installation, Some(path)), root)
 }
 fn client(front: &FrontDoor) -> wire::profile_service_client::ProfileServiceClient<Channel> {
     wire::profile_service_client::ProfileServiceClient::new(front.channel())
@@ -57,7 +58,7 @@ async fn create(
 
 #[tokio::test]
 async fn lifecycle_replays_original_results_and_rejects_stale_and_deleted_ids() {
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut first = client(&front);
     let mut second = client(&front);
     let request = wire::CreateProfileRequest {
@@ -208,7 +209,7 @@ async fn lifecycle_replays_original_results_and_rejects_stale_and_deleted_ids() 
 #[tokio::test]
 async fn watch_delivers_snapshot_boundary_ordered_changes_and_removal() {
     use wire::watch_profiles_response::Event;
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut client = client(&front);
     let profile = create(&mut client, "personal").await;
     let mut watch = client
@@ -261,7 +262,7 @@ async fn watch_delivers_snapshot_boundary_ordered_changes_and_removal() {
 
 #[tokio::test]
 async fn lag_ends_the_service_stream_with_aborted_and_resubscription_recovers() {
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut client = client(&front);
     let mut profile = create(&mut client, "work").await;
     // Read the actual handler stream without tonic's eager HTTP/2 buffering so
@@ -310,7 +311,7 @@ async fn lag_ends_the_service_stream_with_aborted_and_resubscription_recovers() 
 
 #[tokio::test]
 async fn pairing_targets_one_profile_and_replays_its_original_secret() {
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut client = client(&front);
     let a = create(&mut client, "personal").await;
     let b = create(&mut client, "work").await;
@@ -386,7 +387,7 @@ async fn pairing_targets_one_profile_and_replays_its_original_secret() {
 
 #[tokio::test]
 async fn rejects_invalid_ids_and_operation_reuse_across_methods() {
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut client = client(&front);
     assert_eq!(
         client
@@ -438,7 +439,7 @@ async fn rejects_invalid_ids_and_operation_reuse_across_methods() {
 
 #[tokio::test]
 async fn installation_info_debug_and_shutdown_are_separate_from_client_service() {
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let profile = create(&mut client(&front), "personal").await;
     let retained = front
         .installation
@@ -492,7 +493,7 @@ async fn installation_info_debug_and_shutdown_are_separate_from_client_service()
 #[tokio::test]
 async fn unix_front_door_discovers_profile_socket_and_refuses_socket_theft() {
     use std::os::unix::fs::PermissionsExt;
-    let front = front(Listeners::Sockets).await;
+    let (front, _root) = front(Listeners::Sockets).await;
     let listener = front.listen().unwrap();
     let path = front.path.as_ref().unwrap();
     assert_eq!(
@@ -603,7 +604,7 @@ async fn binding_reports_identity_labels_and_named_account_refusals_over_grpc() 
         None,
     )
     .await;
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut client = client(&front);
     let request = wire::BindProfileRequest {
         operation_id: op(),
@@ -698,7 +699,7 @@ async fn accepted_mutation_survives_the_request_future_being_dropped() {
 #[tokio::test]
 async fn stopping_old_front_door_preserves_a_replacement_socket() {
     use std::os::unix::fs::MetadataExt;
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let listener = front.listen().unwrap();
     let path = front.path.as_ref().unwrap();
     std::fs::remove_file(path).unwrap();
@@ -717,7 +718,7 @@ async fn stopping_old_front_door_preserves_a_replacement_socket() {
 #[tokio::test]
 async fn suspend_resume_wire_reports_agents_and_replays_across_connections() {
     use crate::agents::{AgentType, CreateAgentRequest, TEST_ECHO_COMMAND};
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut profiles = client(&front);
     let mut hosted = Vec::new();
     for name in ["personal", "work"] {
@@ -831,7 +832,7 @@ async fn front_door_adoption_response_identifies_confirmation_and_retries_staged
         None,
     )
     .await;
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut client = client(&front);
     let profile = create(&mut client, "local").await;
     let retained = front
@@ -873,7 +874,7 @@ async fn front_door_adoption_response_identifies_confirmation_and_retries_staged
 #[tokio::test]
 async fn front_door_admin_client_ssh_exchange_keeps_trust_and_windows_independent() {
     use crate::installation::{ProfileId, ProfilePaths};
-    let front = front(Listeners::InProcessOnly).await;
+    let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut directory = client(&front);
     let personal = create(&mut directory, "personal").await;
     let work = create(&mut directory, "work").await;

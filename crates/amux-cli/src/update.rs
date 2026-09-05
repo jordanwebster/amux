@@ -267,8 +267,9 @@ mod tests {
             reporter.dismiss_update_required("99.0.0");
             reporter.report_subscription_required(true);
 
+            let root = amux::test_fixtures::short_installation_root();
             let installation = amux::Installation::open(amux::InstallationOptions {
-                root: amux::InstallationRoot::InMemory,
+                root: amux::InstallationRoot::OnDisk(root.path().into()),
                 settings: amux::InstallationSettings {
                     host_name: config.host_name,
                     prevent_idle_sleep: Some(false),

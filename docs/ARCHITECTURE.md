@@ -24,13 +24,20 @@ and process access. Desktop profiles share one daemon process, so a process
 crash or binary replacement affects the whole installation.
 
 An **embedded installation** runs the same supervisor inside its host app.
-The host opens `Installation` with an on-disk root or temporary in-memory
-configuration, `Listeners::InProcessOnly`, and a `CredentialSource::HostProvided`
-provider for each profile. It retains the installation, obtains independent
-`Client` handles for screens and `ProfileAdmin` handles for pairing and trust,
+The host opens `Installation` on a durable directory it owns, such as the app's
+data container, using `InstallationRoot::OnDisk`, `Listeners::InProcessOnly`,
+and a `CredentialSource::HostProvided` provider for each profile. That directory
+must survive relaunch so device identity, trust and account bindings persist.
+It retains the installation, obtains independent `Client` handles for screens
+and `ProfileAdmin` handles for pairing and trust,
 and awaits `shutdown` when finished. Dropping the last screen client leaves
 every profile and cloud connector running. Without the `local-agents` feature,
 local listeners and process hosting are compiled out.
+
+`InstallationRoot::Ephemeral` exists only for tests (`cfg(test_fixtures)`). Only
+its registry is unpersisted: profile files live in a temporary directory under
+`std::env::temp_dir()` — the app container's tmp on iOS, `TMPDIR` on macOS — and
+are deleted when the installation is dropped. It is unsuitable for host storage.
 
 The app calls `host_suspend` to tear down every cloud link while retaining
 identities, trust and local API access. `host_resume` requests fresh host

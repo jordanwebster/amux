@@ -54,8 +54,14 @@ pub struct ProfileRecord {
 
 #[derive(Clone, Debug)]
 pub enum InstallationRoot {
+    /// Durable storage owned by the host, retained across application launches.
     OnDisk(PathBuf),
-    InMemory,
+    /// Test affordance with an unpersisted registry. Profile files still live on
+    /// disk, in a fresh directory under [`std::env::temp_dir()`] (the app
+    /// container's tmp on iOS, TMPDIR on macOS), deleted when the installation
+    /// is dropped. Hosts must supply a durable [`Self::OnDisk`] root instead.
+    #[cfg(test_fixtures)]
+    Ephemeral,
 }
 
 /// Owns the lock descriptor; never unlink the lock file, which would let a new
@@ -148,14 +154,18 @@ pub struct Registry {
 
 impl Registry {
     pub fn open(root: InstallationRoot) -> Result<Self, InstallationError> {
-        let InstallationRoot::OnDisk(path) = root else {
-            return Ok(Self {
-                root: None,
-                records: BTreeMap::new(),
-                deleting: BTreeSet::new(),
-                credentials: BTreeMap::new(),
-                logged_out: BTreeSet::new(),
-            });
+        let path = match root {
+            InstallationRoot::OnDisk(path) => path,
+            #[cfg(test_fixtures)]
+            InstallationRoot::Ephemeral => {
+                return Ok(Self {
+                    root: None,
+                    records: BTreeMap::new(),
+                    deleting: BTreeSet::new(),
+                    credentials: BTreeMap::new(),
+                    logged_out: BTreeSet::new(),
+                });
+            }
         };
         let root = LockedRoot::open(&path)?;
         let path = root.path.join("registry.yaml");

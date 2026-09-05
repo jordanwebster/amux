@@ -366,9 +366,6 @@ impl Installation {
     ) -> Result<Self, InstallationError> {
         let registry = Registry::open(options.root)?;
         let temporary_root = if registry.path().is_none() {
-            #[cfg(unix)]
-            let parent = PathBuf::from("/tmp");
-            #[cfg(not(unix))]
             let parent = std::env::temp_dir();
             Some(tempfile::Builder::new().prefix("ai").tempdir_in(parent)?)
         } else {
