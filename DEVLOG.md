@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Include account switching in the fleet help golden.**
+The plain help-frame expectation now includes the implemented `C-a p` shortcut
+for switching profiles. It had retained the help text from before the switcher,
+while the renderer and key handling already exposed the command. The exact
+frame comparison remains unchanged; the new row uses one formerly blank line.
+
 2026-09-05 — **Release installation ownership when the registry closes.**
 The root lock now unlocks explicitly before its file closes. A concurrently
 forked child can retain the same open-file description until exec, so closing
