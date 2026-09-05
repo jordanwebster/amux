@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Fresh Codex agents resume before becoming ready.** With
+codex-cli 0.153.4, naming a paginated thread updates metadata without writing
+its rollout, so the vanilla TUI's first resume failed before any message was
+sent. Startup now explicitly requests a history-inclusive resume of the same
+thread and adopts its replacement SDK event registration before publishing
+readiness. Failed resume requests retry the same id; naming remains separately
+reconciled metadata. This relies on the current provider's persistence behavior
+and is documented as a compatibility workaround, not a durable-creation API.
+Regression coverage checks naming success followed by resume failure, events
+arriving during resume, failed naming, and transport loss during bootstrap.
+The opt-in `wt run codex-live -- raw_unnamed raw_named unnamed_reconnect`
+scenarios verify actual `/status` responses before any model turn, including
+detach/reattach and recovery of the same thread after server restart. The
+previous ANSI-only check could accept the startup screen of a failing TUI.
+
 2026-09-05 — **The attachment guide is a byte contract on Windows too.** The
 guide's canonical review example is compiled into a test that compares it
 against the formatter's LF-joined output, and a Windows checkout translated

@@ -210,9 +210,8 @@ impl Harness {
     }
 
     /// `scenario: None` creates an agent with no name — the product default
-    /// for `amux new codex`, and the case a hardcoded `Some(..)` here hid:
-    /// naming a thread is what persists it, so an unnamed agent exercised a
-    /// materially different path that nothing covered.
+    /// for `amux new codex`. Both named and unnamed agents must be resumable
+    /// before their first turn; metadata alone does not guarantee persistence.
     pub async fn create_agent(
         &self,
         scenario: Option<&str>,
@@ -319,6 +318,10 @@ async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                if let Ok(log) = std::fs::read_to_string(scratch.root.join("amux.log")) {
+                    let log = super::redact::redact_log(&log, &scratch.root)?;
+                    std::fs::write(scratch.out.join("amux.log"), log)?;
+                }
                 bail!("scratch amux daemon did not come up: {error}");
             }
         }

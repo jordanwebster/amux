@@ -5,9 +5,7 @@
 //! then run every invocation under an outer timeout:
 //!
 //! ```text
-//! cargo build -p amux-cli
-//! AMUX_LIVE_OUT=target/codex-live timeout 1800 \
-//!   cargo test -p amux --test codex_live -- all
+//! AMUX_LIVE_OUT=target/codex-live wt run codex-live -- all
 //! ```
 //!
 //! The suite drives the prebuilt `target/debug/amux`, which this target does
@@ -59,6 +57,7 @@ fn main() -> anyhow::Result<()> {
         RawCoexistence,
         RawFanout,
         RawUnnamed,
+        RawNamed,
         UnnamedReconnect,
         Roundtrip,
         AttachTool,
@@ -118,8 +117,14 @@ fn main() -> anyhow::Result<()> {
             Scenario::RawUnnamed,
         ),
         scenario(
+            "raw_named",
+            "zero-turn raw attach and reattach on a named agent",
+            300,
+            Scenario::RawNamed,
+        ),
+        scenario(
             "unnamed_reconnect",
-            "name materialization and zero-turn resume",
+            "zero-turn persistence and resume across server restart",
             300,
             Scenario::UnnamedReconnect,
         ),
@@ -699,20 +704,66 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    /// The product default: `amux new codex` with no `--name`. Raw attach goes
-    /// through `codex resume`, which refuses a thread that was never
-    /// persisted, and naming is what persists one — so an unnamed agent must
-    /// still reach a live raw screen. No turn is taken; this costs no quota.
-    async fn raw_unnamed(harness: &mut Harness, model: &str) -> Result<Value> {
-        let (agent, mut capture, _) = open_named(harness, None, model).await?;
-        let mut first_raw = subscribe_raw(harness, agent).await?;
-        let first_raw_bytes = raw_until(&mut first_raw, RAW_TIMEOUT, b"\x1b").await?;
+    fn recorded_thread_id(harness: &Harness) -> Result<String> {
+        let io = std::fs::read_to_string(harness.scratch.out.join("io.jsonl"))?;
+        for line in io.lines().rev() {
+            let record: Value = serde_json::from_str(line)?;
+            let message: Value =
+                serde_json::from_str(record["line"].as_str().context("provider IO has no line")?)?;
+            if let Some(id) = message.pointer("/result/thread/id").and_then(Value::as_str) {
+                return Ok(id.to_string());
+            }
+        }
+        bail!("provider IO has no successful thread response")
+    }
+
+    /// Startup draws ANSI before resume has succeeded. A local /status command
+    /// must display the expected session identity to prove the TUI is usable.
+    /// It does not send a prompt or invoke the model.
+    async fn raw_status(
+        harness: &Harness,
+        agent: uuid::Uuid,
+        model: &str,
+        thread_id: &str,
+    ) -> Result<(amux::SessionStream, Vec<u8>)> {
+        let mut raw = subscribe_raw(harness, agent).await?;
+        let mut bytes = raw_until(&mut raw, RAW_TIMEOUT, model.as_bytes()).await?;
+        harness
+            .client()
+            .send_input(amux::SendInputRequest {
+                agent: amux::AgentIdentifier::Id(agent),
+                input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
+                io_protocol: amux::terminal_io::TERMINAL_V1.into(),
+                payload: bytes::Bytes::from_static(b"/status"),
+                pin: Vec::new(),
+            })
+            .await?;
+        // Wait for the composer to echo the command before submitting it;
+        // a command and Enter in one write can be classified as a paste.
+        bytes.extend(raw_until(&mut raw, RAW_TIMEOUT, b"/status").await?);
+        harness
+            .client()
+            .send_input(amux::SendInputRequest {
+                agent: amux::AgentIdentifier::Id(agent),
+                input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
+                io_protocol: amux::terminal_io::TERMINAL_V1.into(),
+                payload: bytes::Bytes::from_static(b"\r"),
+                pin: Vec::new(),
+            })
+            .await?;
+        bytes.extend(raw_until(&mut raw, RAW_TIMEOUT, thread_id.as_bytes()).await?);
+        Ok((raw, bytes))
+    }
+
+    async fn raw_reattach(harness: &mut Harness, model: &str, name: Option<&str>) -> Result<Value> {
+        let (agent, mut capture, _) = open_named(harness, name, model).await?;
+        let thread_id = recorded_thread_id(harness)?;
+        let (first_raw, first_raw_bytes) = raw_status(harness, agent, model, &thread_id).await?;
         let first_pgid = raw_pty_process_group(&harness.scratch.root)?;
         drop(first_raw);
         wait_for_process_group_exit(first_pgid, Duration::from_secs(10)).await?;
 
-        let mut second_raw = subscribe_raw(harness, agent).await?;
-        let second_raw_bytes = raw_until(&mut second_raw, RAW_TIMEOUT, b"\x1b").await?;
+        let (_second_raw, second_raw_bytes) = raw_status(harness, agent, model, &thread_id).await?;
         std::fs::write(
             harness.scratch.out.join("raw.log"),
             [first_raw_bytes.as_slice(), second_raw_bytes.as_slice()].concat(),
@@ -745,13 +796,14 @@ fn main() -> anyhow::Result<()> {
         harness.client().delete_agent(agent).await?;
         Ok(json!({
             "raw_bytes": first_raw_bytes.len() + second_raw_bytes.len(),
-            "agent_named": false,
+            "agent_named": name.is_some(),
+            "thread_id": thread_id,
             "turns_sent": 0,
             "zero_model_turns": true,
             "assertions": {
-                "raw_ansi_screen_without_agent_name": true,
+                "raw_status_identified_thread": true,
                 "final_detach_tore_down_process_group": true,
-                "reattach_reached_second_raw_ansi_screen": true,
+                "reattach_status_identified_same_thread": true,
                 "structured_subscription_held_through_reattach": structured_subscription_held_through_reattach
             },
             "observed": {
@@ -772,6 +824,8 @@ fn main() -> anyhow::Result<()> {
     /// original in-memory attachment worked and no turn ever created history.
     async fn unnamed_reconnect(harness: &mut Harness, model: &str) -> Result<Value> {
         let (agent, capture, _) = open_named(harness, None, model).await?;
+        let thread_id = recorded_thread_id(harness)?;
+        let server_pgid = app_server_process_group(&harness.scratch)?;
         drop(capture);
         let summary = harness.client().suspend().await?;
         if summary.suspended_count != 1 {
@@ -781,6 +835,7 @@ fn main() -> anyhow::Result<()> {
             );
         }
         harness.stop_for_suspend().await?;
+        wait_for_process_group_exit(server_pgid, Duration::from_secs(10)).await?;
         harness.restart().await?;
         let resume = harness.client().resume().await?;
         if resume.resumed_count != 1 || resume.failed_count != 0 {
@@ -788,15 +843,24 @@ fn main() -> anyhow::Result<()> {
         }
         let mut reconnected = StructuredCapture::open(harness, agent).await?;
         reconnected.wait_ready().await?;
+        if recorded_thread_id(harness)? != thread_id {
+            bail!("zero-turn restart changed the Codex thread identity");
+        }
+        let (_raw, raw_bytes) = raw_status(harness, agent, model, &thread_id).await?;
+        std::fs::write(harness.scratch.out.join("raw.log"), raw_bytes)?;
         harness.client().delete_agent(agent).await?;
         Ok(json!({
             "agent_named": false,
+            "thread_id": thread_id,
             "turns_sent": 0,
             "assertions": {
                 "suspended": true,
                 "resumed": true,
                 "structured_reconnected": true,
-                "same_agent": true
+                "same_agent": true,
+                "same_thread": true,
+                "app_server_restarted": true,
+                "raw_status_identified_thread": true
             }
         }))
     }
@@ -868,7 +932,8 @@ fn main() -> anyhow::Result<()> {
             Scenario::DaemonRecovery => daemon_recovery(harness, model).await,
             Scenario::RawCoexistence => raw_coexistence(harness, model).await,
             Scenario::RawFanout => raw_fanout(harness, model).await,
-            Scenario::RawUnnamed => raw_unnamed(harness, model).await,
+            Scenario::RawUnnamed => raw_reattach(harness, model, None).await,
+            Scenario::RawNamed => raw_reattach(harness, model, Some("raw-named")).await,
             Scenario::UnnamedReconnect => unnamed_reconnect(harness, model).await,
             Scenario::Roundtrip => roundtrip(harness, model).await,
             Scenario::AttachTool => attach_tool(harness, model).await,
@@ -909,8 +974,8 @@ fn main() -> anyhow::Result<()> {
             "codex_version": version,
             "model": model,
             "timeout_seconds": spec.timeout.as_secs(),
-            "harness": format!("timeout 600 cargo test -p amux --test codex_live -- {}", spec.id),
-            "synthetic_prompts": !matches!(spec.runner, Scenario::RawUnnamed | Scenario::UnnamedReconnect),
+            "harness": format!("wt run codex-live -- {}", spec.id),
+            "synthetic_prompts": !matches!(spec.runner, Scenario::RawUnnamed | Scenario::RawNamed | Scenario::UnnamedReconnect),
             "isolated_codex_home": true,
             "notes": notes,
             "failure": failure,
@@ -941,8 +1006,8 @@ fn main() -> anyhow::Result<()> {
             &mut transcript,
             format!("codex_live: version={version} model={model}"),
         )?;
-        if version != "0.153.0" {
-            bail!("Codex live suite requires codex-cli 0.153.0, found {version}");
+        if version != "0.153.4" {
+            bail!("Codex live suite requires codex-cli 0.153.4, found {version}");
         }
         let mut failures = Vec::new();
 
