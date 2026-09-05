@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Derive Claude SDK phase, attention and input readiness together.**
+One session classification now drives chat phase, fleet attention and the prompt
+gate from authoritative turn results and stream lifecycle. Working does not
+expire with time. Permission, plan, question, elicitation and dialog requests
+queue independently of retained content, preserving their full answer payloads.
+Flat elicitation schemas expose typed fields; unsupported schemas retain the
+request with an explicit reason. Reducer specs check projection agreement after
+every message, reconnect and exit behavior, content eviction, and checkpoint
+replay of recorded requests.
+
 2026-09-05 — **Fold Claude SDK rows into a bounded typed chat feed.**
 Streaming text, thinking and tool input reconcile with final assistant blocks
 by message and block identity. Tool results and subagent task updates retain

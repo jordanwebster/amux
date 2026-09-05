@@ -73,3 +73,5 @@ mod a2a_family_needs; // Chapter 23 — Family needs: a child's ask, composed in
 mod a2a_completed_row; // Chapter 24 — Completions and exits: what each kind makes of itself
 
 mod claude_sdk_feed; // Claude stream-JSON messages, tools, tasks and boundaries
+
+mod claude_sdk_agreement; // Claude session classification and public projection agreement

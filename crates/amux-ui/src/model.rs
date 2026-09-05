@@ -188,7 +188,7 @@ impl AgentLayer {
     pub(crate) fn observe_exit(&mut self) {
         match self {
             Self::Claude(layer) => layer.observe_exit(),
-            Self::ClaudeSdk(layer) => layer.interrupt_streams(),
+            Self::ClaudeSdk(layer) => layer.observe_exit(),
             Self::Codex(layer) => layer.observe_exit(),
         }
     }
@@ -196,7 +196,7 @@ impl AgentLayer {
     pub(crate) fn invalidate(&mut self) {
         match self {
             Self::Claude(layer) => layer.invalidate(),
-            Self::ClaudeSdk(layer) => layer.interrupt_streams(),
+            Self::ClaudeSdk(layer) => layer.invalidate(),
             Self::Codex(layer) => layer.invalidate(),
         }
     }
@@ -207,8 +207,7 @@ impl AgentLayer {
     pub(crate) fn attention(&self, stream_phase: Option<&StreamPhase>) -> Attention {
         match self {
             Self::Claude(layer) => crate::claude::cached_attention(layer, stream_phase),
-            // Feed facts alone do not establish a write/attention classification.
-            Self::ClaudeSdk(_) => Attention::Unknown,
+            Self::ClaudeSdk(layer) => layer.attention(stream_phase),
             Self::Codex(layer) => crate::codex::projected_attention(layer, stream_phase),
         }
     }
@@ -1141,6 +1140,12 @@ pub enum Violation {
         derived: Attention,
     },
     /// A typed layer's own structural invariant failed.
+    ClaudeSdkProjection {
+        agent: AgentId,
+        phase: crate::claude_sdk::SdkPhase,
+        attention: Attention,
+        gate: crate::claude_sdk::SendGate,
+    },
     Claude(ClaudeViolation),
     Codex(CodexViolation),
 }
@@ -1158,6 +1163,7 @@ impl Violation {
             Violation::FinishedOpsOverflow { .. } => "finished-ops-overflow",
             Violation::ParentCycle { .. } => "parent-cycle",
             Violation::AttentionMismatch { .. } => "attention-mismatch",
+            Violation::ClaudeSdkProjection { .. } => "claude-sdk-projection-disagreement",
             Violation::Claude(violation) => violation.kind(),
             Violation::Codex(violation) => violation.kind(),
         }
@@ -1220,6 +1226,15 @@ impl std::fmt::Display for Violation {
                 f,
                 "agent {agent} attention {card:?} disagrees with its layer's {derived:?}"
             ),
+            Violation::ClaudeSdkProjection {
+                agent,
+                phase,
+                attention,
+                gate,
+            } => write!(
+                f,
+                "agent {agent} Claude projections disagree: {phase:?}, {attention:?}, {gate:?}"
+            ),
             Violation::Claude(violation) => violation.fmt(f),
             Violation::Codex(violation) => violation.fmt(f),
         }
@@ -1277,7 +1292,9 @@ impl Model {
                     AgentLayer::Claude(_) => {
                         crate::claude::check_projection_invariant(self, *id, &mut violations);
                     }
-                    AgentLayer::ClaudeSdk(_) => {}
+                    AgentLayer::ClaudeSdk(_) => {
+                        crate::claude_sdk::check_projection_invariant(self, *id, &mut violations);
+                    }
                     AgentLayer::Codex(_) => {
                         crate::codex::check_projection_invariant(
                             self,
