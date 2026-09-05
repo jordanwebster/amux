@@ -194,7 +194,9 @@ report rather than a flat dump.
 ## Updating every profile
 
 `amux update` reads `update_manifest_url` from the installation configuration.
-It downloads and verifies the binary before suspending agents. The front door
+Periodic available-update banners use that same URL for every profile; cloud
+required-version and subscription warnings remain specific to each profile.
+The updater downloads and verifies the binary before suspending agents. The front door
 prepares every profile durably, stops only active agents, and shuts down the
 installation before replacement. After restart it resumes exactly those agents;
 older suspended sessions remain suspended. If replacement fails, the updater

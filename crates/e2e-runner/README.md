@@ -26,7 +26,9 @@ The runner copies the executable into a disposable directory before running
 such a test, so `amux update` never replaces the shared build output. An optional
 `suspended_agent: already-parked` on a device seeds a valid retained session in
 its first profile and checks that record is unchanged after the test. The CLI
-fleet assertions separately prove it was not resumed.
+fleet assertions separately prove it was not resumed. The downloaded executable
+retains its original version, so the fixture still advertises an available
+update after replacement.
 
 A config with `worktree: true` renders the checked-in `.wt.toml` installation
 template and invokes `scripts/worktree-profile.py` in a fresh temporary
@@ -46,7 +48,8 @@ Output lines compare exactly. Additional directives:
 
 Variables include `$config.id`, `$config.front_door`, `$config.socket_path`,
 `$config.profile.id`, `$config.profile.socket_path`, `$directory.path`, and
-captured names. For example, `e2e-runner client list-profiles <front-door>` and
+captured names. Update fixtures also provide `$amux.version` for the running
+executable version. For example, `e2e-runner client list-profiles <front-door>` and
 `e2e-runner client list-agents <front-door> <label-or-uuid>` use a tonic client
 generated directly from the public proto. This client has no dependency on
 the amux crate: it discovers sockets over ProfileService, then calls

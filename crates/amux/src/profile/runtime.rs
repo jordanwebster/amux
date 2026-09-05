@@ -47,6 +47,7 @@ pub struct InstallationSettings {
     pub ui: UiSettings,
     pub keymaps_dir: PathBuf,
     pub minimum_client_versions: HashMap<String, String>,
+    pub update_manifest_url: String,
     pub status_reporters: crate::update::StatusReporters,
 }
 
@@ -111,6 +112,7 @@ impl ProfileRuntimeOptions {
             ui: config.ui,
             keymaps_dir: crate::keymap_dir(&config.data_dir),
             minimum_client_versions: config.minimum_client_versions,
+            update_manifest_url: crate::InstallationConfig::default().update_manifest_url,
             status_reporters: crate::update::StatusReporters::Host {
                 update: update_reporter,
                 subscription: subscription_reporter,
@@ -337,7 +339,7 @@ async fn build(
         background_tasks.extend(services.spawn_reachability_links());
         if let Some(task) = crate::server::spawn_periodic_update_check(
             reporters.update.clone(),
-            options.config.cloud_url.clone(),
+            options.shared.update_manifest_url.clone(),
             env!("CARGO_PKG_VERSION").to_string(),
             Duration::from_secs(3600),
         ) {
@@ -725,6 +727,7 @@ mod tests {
                 ui: UiSettings::default(),
                 keymaps_dir: root.join("installation-keymaps"),
                 minimum_client_versions: HashMap::new(),
+                update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
                 status_reporters: Default::default(),
             }),
             credentials: None,

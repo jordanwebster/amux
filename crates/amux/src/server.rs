@@ -510,14 +510,14 @@ impl ServerBuilder {
 
 pub(crate) fn spawn_periodic_update_check(
     reporter: Option<Arc<dyn UpdateReporter>>,
-    cloud_url: String,
+    manifest_url: String,
     current_version: String,
     interval: Duration,
 ) -> Option<JoinHandle<()>> {
     let reporter = reporter?;
     Some(tokio::spawn(async move {
         loop {
-            match crate::update::check_for_update(&cloud_url, &current_version).await {
+            match crate::update::check_for_update(&manifest_url, &current_version).await {
                 Some(info) => {
                     tracing::info!(
                         current = %info.current_version,

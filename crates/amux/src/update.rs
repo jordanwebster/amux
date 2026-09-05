@@ -78,10 +78,8 @@ async fn fetch_manifest(url: &str) -> Result<Manifest, reqwest::Error> {
 
 /// Check the remote manifest for a newer version. Returns `Some(UpdateInfo)` if
 /// the manifest version is strictly greater than `current_version`.
-pub async fn check_for_update(cloud_url: &str, current_version: &str) -> Option<UpdateInfo> {
-    let manifest_url = format!("{}/manifest.json", cloud_url.trim_end_matches('/'));
-
-    let manifest = match fetch_manifest(&manifest_url).await {
+pub async fn check_for_update(manifest_url: &str, current_version: &str) -> Option<UpdateInfo> {
+    let manifest = match fetch_manifest(manifest_url).await {
         Ok(m) => m,
         Err(e) => {
             tracing::debug!(error = %e, "update check failed");

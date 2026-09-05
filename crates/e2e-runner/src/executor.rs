@@ -815,6 +815,23 @@ impl Executor {
 
         // Build variable context
         let mut var_ctx = VariableContext::new();
+        if configs.iter().any(|config| config.update_version.is_some()) {
+            let version = Command::new(&self.config.amux_binary)
+                .arg("--version")
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !version.status.success() {
+                return Err("failed to read executable version".into());
+            }
+            let version = String::from_utf8_lossy(&version.stdout);
+            let version = version
+                .trim()
+                .strip_prefix("amux ")
+                .ok_or("unexpected executable version output")?;
+            var_ctx
+                .captures
+                .insert("amux.version".into(), version.into());
+        }
 
         // Create temp directories and populate variable context
         let mut dir_temp_dirs: Vec<TempDir> = Vec::new();
@@ -979,7 +996,9 @@ impl Executor {
                                 "cloud_url": cloud_url, "tcp_port": if profile_index == 0 { tcp_port } else { None },
                             }),
                         )?;
-                        if profile_index == 0 && let Some(name) = &cfg.suspended_agent {
+                        if profile_index == 0
+                            && let Some(name) = &cfg.suspended_agent
+                        {
                             let session = serde_json::json!({
                                 "agent_id": uuid::Uuid::new_v4(), "name": name,
                                 "command": self.config.test_agent_binary,

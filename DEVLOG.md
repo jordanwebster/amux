@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Read periodic update banners from the installation release source.**
+Shared runtime settings now carry the exact installation manifest URL into
+periodic checks. Profiles keep independent available, required-version and
+subscription markers. The desktop regression uses separate cloud and release
+servers advertising different versions, checks both CLI banners select the
+installation release, and retains the warning-isolation and cleanup assertions.
+
 2026-09-05 — **Exercise executable updates across two profiles.**
 The end-to-end cloud fixture serves an installation manifest with a higher
 version and the current binary. Update tests replace a disposable executable,

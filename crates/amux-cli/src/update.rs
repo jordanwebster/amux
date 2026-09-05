@@ -18,6 +18,49 @@ mod tests {
 
     use super::*;
 
+    async fn manifest_fixture(
+        route: &'static str,
+        version: &'static str,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                let request = String::from_utf8_lossy(&request);
+                let path = request.split_whitespace().nth(1).unwrap_or("");
+                let (status, version) = if path == route {
+                    ("200 OK", version)
+                } else if path == "/current.json" {
+                    ("200 OK", env!("CARGO_PKG_VERSION"))
+                } else {
+                    ("404 Not Found", "0.0.0")
+                };
+                let body =
+                    format!(r#"{{"version":"{version}","release_notes":"","platforms":{{}}}}"#);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        (url, server)
+    }
+
     #[tokio::test]
     async fn desktop_installation_markers_reach_cli_and_clear_on_update() {
         use amux::installation::{
@@ -25,35 +68,19 @@ mod tests {
             Registry,
         };
         use amux::test_fixtures::report_profile_status;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
             let temp = tempfile::Builder::new().prefix("am").tempdir_in("/tmp").unwrap();
             let root = std::fs::canonicalize(temp.path()).unwrap();
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-            let url = format!("http://{}", listener.local_addr().unwrap());
-            let manifest_server = tokio::spawn(async move {
-                loop {
-                    let (mut socket, _) = listener.accept().await.unwrap();
-                    let mut request = Vec::new();
-                    let mut buffer = [0; 1024];
-                    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                        let count = socket.read(&mut buffer).await.unwrap();
-                        if count == 0 { break; }
-                        request.extend_from_slice(&buffer[..count]);
-                    }
-                    let body = format!(r#"{{"version":"{}","release_notes":"","platforms":{{}}}}"#, env!("CARGO_PKG_VERSION"));
-                    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
-                    let _ = socket.write_all(response.as_bytes()).await;
-                }
-            });
-            let config = InstallationConfig {
+            let (cloud_url, cloud_server) = manifest_fixture("/manifest.json", "100.0.0").await;
+            let (update_url, manifest_server) = manifest_fixture("/releases/desktop.json", "99.0.0").await;
+            let mut config = InstallationConfig {
                 root: root.clone(),
                 path: Some(root.join("config.yaml")),
                 front_door_socket: root.join("amux.sock"),
                 keymaps_dir: root.join("keymaps"),
                 prevent_idle_sleep: Some(false),
-                update_manifest_url: format!("{url}/manifest.json"),
+                update_manifest_url: format!("{update_url}/releases/desktop.json"),
                 ..InstallationConfig::default()
             };
             std::fs::write(config.path.as_ref().unwrap(), serde_yaml::to_string(&config).unwrap()).unwrap();
@@ -68,7 +95,7 @@ mod tests {
                     socket_path: paths.socket_path,
                     data_dir: paths.data_dir,
                     state_path: paths.state_path,
-                    cloud_url: url.clone(),
+                    cloud_url: cloud_url.clone(),
                     tcp_port: None,
                 };
                 let path = paths.config_path.unwrap();
@@ -82,6 +109,19 @@ mod tests {
             for id in ids {
                 owner.client(id).unwrap().list_agents().await.unwrap();
             }
+            while readers.iter().any(|reader| reader.read_update_marker().is_none()) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            for (id, reader) in ids.iter().zip(&readers) {
+                let marker = reader.read_update_marker().unwrap();
+                assert_eq!(marker.update_version, "99.0.0", "profile {id} used its cloud URL instead of the installation update source");
+                assert_eq!(marker.current_version, env!("CARGO_PKG_VERSION"));
+                let selected = amux::load_profile_config(
+                    &root.join("profiles").join(id.to_string()).join("config.yaml"),
+                ).unwrap();
+                crate::client_common::print_update_banner(&selected.profile.state_path);
+            }
+            println!("Both desktop profiles show installation release 99.0.0; the separate cloud server advertises 100.0.0.");
             report_profile_status(&owner, ids[0], Observed::UpdateRequired { minimum_version: Some("99.0.0".into()) }).await;
             report_profile_status(&owner, ids[0], Observed::SubscriptionRequired).await;
             report_profile_status(&owner, ids[1], Observed::Connected).await;
@@ -100,6 +140,8 @@ mod tests {
             for (reader, version) in readers.iter().zip(["99.0.0", "98.0.0"]) {
                 reader.dismiss_update_required(version);
             }
+            // Serve the current version to exercise cleanup without replacing this test executable.
+            config.update_manifest_url = format!("{update_url}/current.json");
             run_update(&config).await.unwrap();
             for (reader, version) in readers.iter().zip(["99.0.0", "98.0.0"]) {
                 assert!(reader.read_update_marker().is_none());
@@ -122,6 +164,7 @@ mod tests {
             println!("amux update also clears both profiles while the installation is stopped.");
             assert!(!root.join("state/state.yaml").exists());
             manifest_server.abort();
+            cloud_server.abort();
         }).await.expect("desktop marker regression timed out");
     }
 
