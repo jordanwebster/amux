@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Every state the app can be in, named.** AmuxTestSupport now
+carries the design's scenario in the core's own vocabulary — the same ten
+agents on the same four machines, one conversation open — and 47 named states
+built on it: one for every screen the design catalogue describes, plus the
+drawer, plus the states a screenshot of a good morning never shows. Both
+providers ask for permission in their own words with their own choices, a
+machine on the network that has not been paired is an offer rather than a
+host, a host lost mid-turn leaves the feed readable and says so, an agent this
+build cannot read says that outright instead of looking idle, a refused send
+carries the core's own sentence, an upload fails without losing the draft, and
+the home and a conversation are both named at an accessibility type size. A
+fixture only ever fills stores by applying events, so it cannot put the app
+into a state the bridge could never produce, and a test loads every one of
+them into fresh stores.
+
+The scripted cloud answers exactly what a test declares, including the
+waiting: latency is a state, because a screen that only exists while a request
+is in flight cannot be captured unless the test can hold the request open. It
+records what it was asked, so a screen that asks for a connect token on every
+frame is a test failure rather than a bill.
+
 2026-09-05 — **The phone's state, read from the shared core.** AmuxCore now
 holds the Swift side of the bridge: BridgeClient starts the Rust runtime,
 copies each callback batch out of the worker's borrowed buffer, decodes it as

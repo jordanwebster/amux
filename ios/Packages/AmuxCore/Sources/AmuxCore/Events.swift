@@ -171,6 +171,11 @@ public struct AgentParent: Codable, Sendable, Equatable {
         case agentId = "agent_id"
         case hostId = "host_id"
     }
+
+    public init(agentId: AgentId, hostId: HostId) {
+        self.agentId = agentId
+        self.hostId = hostId
+    }
 }
 
 public struct WorkingOn: Codable, Sendable, Equatable {
@@ -180,6 +185,11 @@ public struct WorkingOn: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case text
         case updatedAt = "updated_at"
+    }
+
+    public init(text: String, updatedAt: Date) {
+        self.text = text
+        self.updatedAt = updatedAt
     }
 }
 
@@ -716,6 +726,13 @@ public struct ModelInfo: Codable, Sendable, Equatable {
         case id, name, efforts
         case defaultEffort = "default_effort"
     }
+
+    public init(id: String, name: String, efforts: [String] = [], defaultEffort: String? = nil) {
+        self.id = id
+        self.name = name
+        self.efforts = efforts
+        self.defaultEffort = defaultEffort
+    }
 }
 
 public struct ProviderCommand: Codable, Sendable, Equatable {
@@ -726,6 +743,12 @@ public struct ProviderCommand: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case name, source
         case terminalOnly = "terminal_only"
+    }
+
+    public init(name: String, source: JSONValue, terminalOnly: Bool = false) {
+        self.name = name
+        self.source = source
+        self.terminalOnly = terminalOnly
     }
 }
 
@@ -816,6 +839,12 @@ public struct QueuedMessage: Codable, Sendable, Equatable {
         case draft
         case heldAt = "held_at"
         case delivery
+    }
+
+    public init(draft: JSONValue, heldAt: Date, delivery: JSONValue) {
+        self.draft = draft
+        self.heldAt = heldAt
+        self.delivery = delivery
     }
 }
 
