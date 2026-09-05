@@ -134,6 +134,7 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
             );
             vec![Effect::Rpc { op, command }]
         }
+        Command::Send { agent, draft } => crate::queue::update_draft(model, op, seq, agent, draft),
         Command::SendPromptWithAttachments {
             agent,
             text,
@@ -178,7 +179,12 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
 }
 
 fn redact_command(mut command: Command) -> Command {
-    if let Command::SendPromptWithAttachments { attachments, .. } = &mut command {
+    if let Command::SendPromptWithAttachments { attachments, .. }
+    | Command::Send {
+        draft: crate::Draft { attachments, .. },
+        ..
+    } = &mut command
+    {
         for attachment in attachments {
             attachment.bytes = None;
         }
@@ -354,7 +360,8 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
     }
     if matches!(&outcome, OpOutcome::Error { .. }) {
         match &pending.command {
-            Command::SetModel { agent, .. }
+            Command::Send { agent, .. }
+            | Command::SetModel { agent, .. }
             | Command::SetEffort { agent, .. }
             | Command::SetPreset { agent, .. } => {
                 crate::codex::update::note_send_failed(model, op, *agent)

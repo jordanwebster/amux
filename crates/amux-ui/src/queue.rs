@@ -11,8 +11,53 @@ use crate::{AgentLayer, Command, DraftAttachment, Effect, Model, OpError, OpId, 
 /// Canonical prompt text (including inline elements) and its artifact payloads.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Draft {
-    pub text: String,
+    pub segments: Vec<DraftSegment>,
     pub attachments: Vec<DraftAttachment>,
+}
+
+/// Inline draft content. A selected command remains typed through queue and replay.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "segment", rename_all = "snake_case")]
+pub enum DraftSegment {
+    Text { text: String },
+    CommandToken { name: String },
+}
+
+impl Draft {
+    pub fn plain(text: impl Into<String>, attachments: Vec<DraftAttachment>) -> Self {
+        Self {
+            segments: vec![DraftSegment::Text { text: text.into() }],
+            attachments,
+        }
+    }
+
+    /// Human-readable draft preview, never used to dispatch a command token.
+    pub fn text(&self) -> String {
+        self.segments
+            .iter()
+            .map(|segment| match segment {
+                DraftSegment::Text { text } => text.clone(),
+                DraftSegment::CommandToken { name } => format!("/{name}"),
+            })
+            .collect()
+    }
+
+    pub fn command(&self) -> Result<Option<(String, String)>, &'static str> {
+        let mut name = None;
+        let mut args = String::new();
+        for (index, segment) in self.segments.iter().enumerate() {
+            match segment {
+                DraftSegment::Text { text } => args.push_str(text),
+                DraftSegment::CommandToken { name: value } if index == 0 && !value.is_empty() => {
+                    name = Some(value.clone());
+                }
+                DraftSegment::CommandToken { .. } => {
+                    return Err("a command token must be first and unique");
+                }
+            }
+        }
+        Ok(name.map(|name| (name, args)))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -126,7 +171,7 @@ pub(crate) fn update_command(
             Some("no queued message")
         }
         QueueCommand::Hold { draft, .. } | QueueCommand::Replace { draft, .. }
-            if draft.text.trim().is_empty() =>
+            if draft.text().trim().is_empty() =>
         {
             Some("queued message is empty")
         }
@@ -243,36 +288,7 @@ pub(crate) fn deliver_ready(model: &mut Model) -> Vec<Effect> {
         queue.delivery = QueueDelivery::Sending { op };
         queue.retry = false;
         let seq = model.pending_ops.get(&op).expect("held operation").seq;
-        let sent = if !draft.attachments.is_empty() {
-            crate::update::update_attachment_prompt(
-                model,
-                op,
-                seq,
-                agent,
-                draft.text,
-                draft.attachments,
-            )
-        } else if model.claude(agent).is_some() {
-            crate::claude::update::update_command(
-                model,
-                op,
-                seq,
-                crate::ClaudeCommand::SendPrompt {
-                    agent,
-                    text: draft.text,
-                },
-            )
-        } else {
-            crate::codex::update::update_command(
-                model,
-                op,
-                seq,
-                crate::CodexCommand::Prompt {
-                    agent,
-                    text: draft.text,
-                },
-            )
-        };
+        let sent = update_draft(model, op, seq, agent, draft);
         if sent.is_empty() {
             // Native validation can refuse a draft even when the session gate is ready.
             if let Some(index) = model
@@ -293,4 +309,91 @@ pub(crate) fn deliver_ready(model: &mut Model) -> Vec<Effect> {
         effects.extend(sent);
     }
     effects
+}
+
+/// Immediate and queued drafts share native gates and token validation.
+pub(crate) fn update_draft(
+    model: &mut Model,
+    op: OpId,
+    seq: u64,
+    agent: AgentId,
+    draft: Draft,
+) -> Vec<Effect> {
+    let mut state_draft = draft.clone();
+    for attachment in &mut state_draft.attachments {
+        attachment.bytes = None;
+    }
+    let command = Command::Send {
+        agent,
+        draft: state_draft,
+    };
+    let selected = match draft.command() {
+        Ok(selected) => selected,
+        Err(reason) => return refuse(model, op, seq, command, reason),
+    };
+    if let Some((name, args)) = selected {
+        if !draft.attachments.is_empty() {
+            return refuse(
+                model,
+                op,
+                seq,
+                command,
+                "command attachments are unavailable",
+            );
+        }
+        if model.codex(agent).is_none() {
+            return refuse(
+                model,
+                op,
+                seq,
+                command,
+                "provider commands are unavailable for this agent",
+            );
+        }
+        if let crate::codex::WritePermission::Refused(reason) =
+            crate::codex::write_permission(model, agent, crate::codex::WriteAction::Prompt)
+        {
+            return refuse(model, op, seq, command, reason);
+        }
+        if !crate::provider::facts(model, agent)
+            .commands
+            .iter()
+            .any(|item| item.name == name && !item.terminal_only)
+        {
+            return refuse(
+                model,
+                op,
+                seq,
+                command,
+                "command is not offered by this session",
+            );
+        }
+        return crate::codex::update::dispatch_codex_input(
+            model,
+            op,
+            seq,
+            command,
+            agent,
+            crate::codex::CodexInput::Command { name, args },
+            crate::codex::InFlightKind::Prompt,
+        );
+    }
+    let text = draft.text();
+    if !draft.attachments.is_empty() {
+        crate::update::update_attachment_prompt(model, op, seq, agent, text, draft.attachments)
+    } else if model.claude(agent).is_some() {
+        crate::claude::update::update_command(
+            model,
+            op,
+            seq,
+            crate::ClaudeCommand::SendPrompt { agent, text },
+        )
+    } else {
+        crate::codex::update::update_command(
+            model,
+            op,
+            seq,
+            crate::CodexCommand::Prompt { agent, text },
+        )
+    }
 }

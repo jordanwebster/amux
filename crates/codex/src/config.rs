@@ -141,11 +141,21 @@ impl From<Vec<InputItem>> for TurnInput {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum InputItem {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+    },
     #[serde(rename = "image")]
-    Image { url: String },
+    Image {
+        url: String,
+    },
     #[serde(rename = "localImage")]
-    LocalImage { path: PathBuf },
+    LocalImage {
+        path: PathBuf,
+    },
+    Skill {
+        name: String,
+        path: PathBuf,
+    },
 }
 
 impl InputItem {

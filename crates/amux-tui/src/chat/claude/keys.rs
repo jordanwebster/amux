@@ -595,11 +595,22 @@ fn send(chat: &mut View, model: &Model) -> Option<UiAction> {
     // A draft with no tokens sends exactly as it always did: the
     // attachment command exists for drafts that actually carry one.
     let attached = !chat.composer.tokens().is_empty();
-    let (text, attachments) = chat
+    let draft = chat
         .composer
-        .export(chat.review.as_ref().map(|draft| draft.view.review()));
+        .export_draft(chat.review.as_ref().map(|draft| draft.view.review()));
+    let selected = draft
+        .segments
+        .iter()
+        .any(|segment| matches!(segment, amux_ui::DraftSegment::CommandToken { .. }));
+    let text = draft.text();
     chat.composer.clear_for_send();
-    Some(UiAction::Dispatch(if attached {
+    Some(UiAction::Dispatch(if selected {
+        Command::Send {
+            agent: chat.agent,
+            draft,
+        }
+    } else if attached {
+        let attachments = draft.attachments;
         Command::SendPromptWithAttachments {
             agent: chat.agent,
             text,

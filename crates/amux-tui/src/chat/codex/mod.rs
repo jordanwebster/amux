@@ -159,6 +159,12 @@ impl View {
                     text: text.clone(),
                 });
             }
+            Command::Send { agent, draft } if *agent == self.agent => {
+                self.pending_send = Some(PendingSend {
+                    op,
+                    text: draft.text(),
+                });
+            }
             Command::SendPromptWithAttachments { agent, text, .. } if *agent == self.agent => {
                 self.pending_send = Some(PendingSend {
                     op,

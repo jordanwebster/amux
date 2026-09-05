@@ -13,7 +13,7 @@ const AGENT: &str = "queue-agent";
 
 fn draft(text: &str) -> Draft {
     Draft {
-        text: text.into(),
+        segments: vec![amux_ui::DraftSegment::Text { text: text.into() }],
         attachments: vec![],
     }
 }
@@ -173,7 +173,7 @@ fn queue_replace_and_cancel_return_the_latest_draft() {
         ]));
         assert!(model.finished_op(op(2)).unwrap().outcome.is_error());
         update(&mut model, replace(3, "new"));
-        assert_eq!(model.queued(agent_id(AGENT)).unwrap().draft.text, "new");
+        assert_eq!(model.queued(agent_id(AGENT)).unwrap().draft.text(), "new");
         assert_eq!(
             model.finished_op(op(1)).unwrap().outcome,
             OpOutcome::QueueRemoved
@@ -321,7 +321,10 @@ fn queue_sending_refuses_replace_and_cancel() {
         ]));
         assert!(model.finished_op(op(2)).unwrap().outcome.is_error());
         assert!(model.finished_op(op(3)).unwrap().outcome.is_error());
-        assert_eq!(model.queued(agent_id(AGENT)).unwrap().draft.text, "sending");
+        assert_eq!(
+            model.queued(agent_id(AGENT)).unwrap().draft.text(),
+            "sending"
+        );
     }
 }
 
@@ -434,10 +437,7 @@ fn queue_attachments_replay_and_cancel_losslessly() {
         size: Some(attachment.size),
         path: None,
     });
-    let original = Draft {
-        text,
-        attachments: vec![attachment],
-    };
+    let original = Draft::plain(text, vec![attachment]);
     let msg = command(
         op(1),
         Command::Queue(QueueCommand::Hold {

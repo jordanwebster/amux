@@ -1109,6 +1109,16 @@ async fn run_ingest_supervisor(
                 }
             }
         }
+        tokio::select! {
+            _ = stop_rx.changed() => break,
+            result = tokio::time::timeout(Duration::from_secs(10), control.discover_commands()) => {
+                match result {
+                    Ok(Ok(())) => {},
+                    Ok(Err(error)) => tracing::warn!(%error, "Codex command discovery unavailable"),
+                    Err(_) => tracing::warn!("Codex command discovery timed out"),
+                }
+            }
+        }
         let facts = control.session_facts();
         {
             let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -1698,6 +1708,14 @@ impl CodexInputTarget {
 
     async fn execute(&self, input: CodexSdkV1Input) -> Result<()> {
         match input {
+            CodexSdkV1Input::Command { name, args } => {
+                let live = self.live()?;
+                let turn_id = live.control.command(name, args).await?;
+                update_attached(&self.runtime, |attached| {
+                    attached.active_turn_id = Some(turn_id);
+                });
+                Ok(())
+            }
             CodexSdkV1Input::SetModel { model } => {
                 let live = self.live()?;
                 live.control.set_model(model)?;
@@ -3529,6 +3547,10 @@ mod tests {
             json!({"data":[], "nextCursor":null}),
         )
         .await;
+
+        let commands = read_request(&mut fresh_reader).await;
+        assert_eq!(commands["method"], "skills/list");
+        write_response(&mut fresh_writer, &commands, json!({"data":[]})).await;
 
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {

@@ -5,6 +5,20 @@ use serde_json::Value;
 
 use crate::{AgentId, AgentKind, ClaudeDriver, Command, Effect, Model, OpId, codex};
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderCommand {
+    pub name: String,
+    pub source: CommandSource,
+    pub terminal_only: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandSource {
+    Claude,
+    Codex,
+    Plugin(String),
+}
+
 pub type ModelId = String;
 pub type Effort = String;
 
@@ -14,6 +28,7 @@ pub struct ProviderFacts {
     pub effort: Option<Effort>,
     pub models: Vec<ModelInfo>,
     pub efforts: Vec<Effort>,
+    pub commands: Vec<ProviderCommand>,
     pub permission: PermissionFacts,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +139,13 @@ impl ProviderFacts {
             .find(|item| Some(&item.id) == self.model.as_ref())
             .map(|item| item.efforts.clone())
             .unwrap_or_default();
+        self.commands = session
+            .get("commands")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|command| serde_json::from_value(command.clone()).ok())
+            .collect();
         self.permission = PermissionFacts::Codex {
             approval: session["approvalPolicy"].clone(),
             sandbox: session["sandbox"].clone(),

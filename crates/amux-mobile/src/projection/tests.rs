@@ -433,14 +433,16 @@ fn queue_mobile_projection_exposes_hold_and_cancellation() {
             command: Command::Queue(amux_ui::QueueCommand::Hold {
                 agent: AGENT,
                 draft: amux_ui::Draft {
-                    text: "next step".into(),
+                    segments: vec![amux_ui::DraftSegment::Text {
+                        text: "next step".into(),
+                    }],
                     attachments: vec![],
                 },
             }),
         },
     );
     let held = collect(&mut projection, &model);
-    assert!(held.iter().any(|event| matches!(event, Event::Session(session) if session.queue.as_ref().is_some_and(|queue| queue.draft.text == "next step"))));
+    assert!(held.iter().any(|event| matches!(event, Event::Session(session) if session.queue.as_ref().is_some_and(|queue| queue.draft.text() == "next step"))));
     println!(
         "mobile held queue callback:\n{}",
         serde_json::to_string_pretty(&held).unwrap()
@@ -460,7 +462,7 @@ fn queue_mobile_projection_exposes_hold_and_cancellation() {
             .iter()
             .any(|event| matches!(event, Event::Session(session) if session.queue.is_none()))
     );
-    assert!(cancelled.iter().any(|event| matches!(event, Event::OpResult { outcome: OpOutcomeDto::Shared(outcome), .. } if matches!(&**outcome, OpOutcome::QueueCancelled { draft } if draft.text == "next step"))));
+    assert!(cancelled.iter().any(|event| matches!(event, Event::OpResult { outcome: OpOutcomeDto::Shared(outcome), .. } if matches!(&**outcome, OpOutcome::QueueCancelled { draft } if draft.text() == "next step"))));
 }
 
 #[test]
@@ -504,4 +506,36 @@ fn model_effort_mobile_session_projects_recorded_choices_and_pty_gate() {
         amux_ui::provider::SettingsGate::PtySettingsUnavailable
     );
     assert!(pty.provider.models.is_empty());
+}
+
+#[test]
+fn provider_commands_mobile_callback_exposes_reported_list() {
+    let mut model = model(amux::AgentKind::Codex);
+    let mut projection = subscribed();
+    for (index, line) in include_str!("../../../amux/tests/fixtures/provider-commands/rows.jsonl")
+        .lines()
+        .enumerate()
+    {
+        row(
+            &mut model,
+            index as u64 + 1,
+            serde_json::from_str(line).unwrap(),
+        );
+    }
+    let events = collect(&mut projection, &model);
+    let selected = events
+        .iter()
+        .find_map(|event| match event {
+            Event::Session(session) => Some(session),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(selected.provider.commands.len(), 1);
+    assert_eq!(selected.provider.commands[0].name, "review");
+    assert!(!selected.provider.commands[0].terminal_only);
+    assert!(session(&claude_model(), AGENT).provider.commands.is_empty());
+    println!(
+        "Mobile command session callback: {}",
+        serde_json::to_string_pretty(&events).unwrap()
+    );
 }

@@ -1,6 +1,6 @@
 //! Terminal gestures and strip text over the shared queue.
 
-use amux_ui::{AgentId, Command, Draft, Model, OpId, OpOutcome, QueueCommand, QueueDelivery};
+use amux_ui::{AgentId, Command, Model, OpId, OpOutcome, QueueCommand, QueueDelivery};
 use ratatui::text::Line;
 
 use crate::composer::Composer;
@@ -23,8 +23,7 @@ pub(super) fn key(
     if queued.is_none() && !amux_ui::queue::can_hold(model, agent) {
         return None;
     }
-    let (text, attachments) = composer.export(review);
-    let draft = Draft { text, attachments };
+    let draft = composer.export_draft(review);
     let command = if queued.is_some() {
         QueueCommand::Replace { agent, draft }
     } else {
@@ -82,7 +81,7 @@ pub(super) fn strip(
         };
         let text = queue
             .draft
-            .text
+            .text()
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
@@ -134,7 +133,7 @@ mod tests {
                 );
                 chat.reconcile(&fixture.model);
                 assert!(chat.composer_mut().is_empty());
-                assert_eq!(fixture.model.queued(agent).unwrap().draft.text, words);
+                assert_eq!(fixture.model.queued(agent).unwrap().draft.text(), words);
             }
             let ctx = FrameContext {
                 viewport: (120, 40),

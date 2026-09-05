@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Discover provider commands and preserve typed command drafts.**
+Codex discovers enabled, uniquely named skills in the thread's working directory
+through the app-server. Shared session facts carry their names, source and
+terminal-only flag; Claude PTY exposes an empty list. Typed command inputs
+resolve the skill path on the host and start a turn with the provider's skill
+item and exact argument text. Unknown, disabled, ambiguous and stale choices
+refuse delivery. The shared draft uses text and command-token segments, retained
+through queue cancellation and delivery at turn end. The terminal restores the
+same token and removes it atomically. Strict scripted wire replay, reducer
+replay and mobile callback tests cover discovery and delivery. Command drafts
+with binary attachments currently refuse explicitly.
+
 2026-09-05 — **Expose Codex model, effort and permission selections as session facts.**
 Typed settings inputs now reach the host's provider control. Model choices and
 per-model effort levels come from paginated app-server discovery; model changes

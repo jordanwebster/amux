@@ -325,7 +325,7 @@ pub struct CodexSdkV1Output {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CodexSdkV1Input {
-    #[prost(oneof = "codex_sdk_v1_input::Input", tags = "1, 2, 3, 4, 5, 6, 7")]
+    #[prost(oneof = "codex_sdk_v1_input::Input", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
     pub input: ::core::option::Option<codex_sdk_v1_input::Input>,
 }
 /// Nested message and enum types in `CodexSdkV1Input`.
@@ -346,6 +346,8 @@ pub mod codex_sdk_v1_input {
         SetEffort(super::CodexSdkV1SetEffort),
         #[prost(message, tag = "7")]
         SetPreset(super::CodexSdkV1SetPreset),
+        #[prost(message, tag = "8")]
+        Command(super::CodexSdkV1Command),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -391,6 +393,13 @@ pub struct CodexSdkV1SetPreset {
     pub approval: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub sandbox: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1Command {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub args: ::prost::alloc::string::String,
 }
 /// Dev/test-only agent creation config and echo protocol payloads.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

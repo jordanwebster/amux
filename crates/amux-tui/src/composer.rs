@@ -61,6 +61,9 @@ pub struct Token {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "token", rename_all = "snake_case")]
 pub enum TokenAttachment {
+    Command {
+        name: String,
+    },
     Artifact(DraftAttachment),
     Text {
         body: String,
@@ -84,6 +87,7 @@ pub fn token_label(
     detail: Option<&str>,
 ) -> String {
     match kind {
+        TokenAttachment::Command { name } => format!("[/{name}]"),
         TokenAttachment::Artifact(attachment) => match attachment.kind {
             ArtifactKind::Image => match detail {
                 Some(detail) => format!("[Image #{ordinal} \u{b7} {detail}]"),
@@ -599,12 +603,28 @@ impl Composer {
     }
 
     pub fn restore_queued(&mut self, draft: &amux_ui::Draft) {
-        for segment in amux_ui::split_mentions(&draft.text) {
+        for segment in &draft.segments {
+            match segment {
+                amux_ui::DraftSegment::CommandToken { name } => {
+                    self.insert_token(
+                        format!("[/{name}]"),
+                        TokenAttachment::Command { name: name.clone() },
+                    );
+                }
+                amux_ui::DraftSegment::Text { text } => {
+                    self.restore_queued_text(text, &draft.attachments)
+                }
+            }
+        }
+    }
+
+    fn restore_queued_text(&mut self, text: &str, attachments: &[DraftAttachment]) {
+        for segment in amux_ui::split_mentions(text) {
             match segment {
                 amux_ui::Segment::Prose(text) => self.insert_str(&text),
                 amux_ui::Segment::Mention(mention) => match &mention.kind {
                     MentionKind::Image { id } | MentionKind::File { id } => {
-                        if let Some(attachment) = draft.attachments.iter().find(|a| &a.id == id) {
+                        if let Some(attachment) = attachments.iter().find(|a| &a.id == id) {
                             self.attach(attachment.clone());
                         } else {
                             self.insert_str(&format_mention(&mention));
@@ -620,11 +640,7 @@ impl Composer {
                         );
                     }
                     MentionKind::Review { header, .. } => {
-                        let diff = draft
-                            .attachments
-                            .iter()
-                            .find(|a| a.id == header.diff)
-                            .cloned();
+                        let diff = attachments.iter().find(|a| a.id == header.diff).cloned();
                         self.insert_token(
                             "[Review]".into(),
                             TokenAttachment::FrozenReview {
@@ -644,6 +660,12 @@ impl Composer {
     /// The review element is rendered from the live draft review, so a
     /// review token with no review behind it exports nothing.
     pub fn export(&self, review: Option<&Review>) -> (String, Vec<DraftAttachment>) {
+        let draft = self.export_draft(review);
+        (draft.text(), draft.attachments)
+    }
+
+    pub fn export_draft(&self, review: Option<&Review>) -> amux_ui::Draft {
+        let mut segments = Vec::new();
         let mut text = String::new();
         let mut attachments = Vec::new();
         for c in &self.chars {
@@ -652,6 +674,14 @@ impl Composer {
                 continue;
             };
             match &token.attachment {
+                TokenAttachment::Command { name } => {
+                    if !text.is_empty() {
+                        segments.push(amux_ui::DraftSegment::Text {
+                            text: std::mem::take(&mut text),
+                        });
+                    }
+                    segments.push(amux_ui::DraftSegment::CommandToken { name: name.clone() });
+                }
                 TokenAttachment::Artifact(attachment) => {
                     let id = attachment.id.clone();
                     let kind = match attachment.kind {
@@ -709,7 +739,13 @@ impl Composer {
                 }
             }
         }
-        (text, attachments)
+        if !text.is_empty() {
+            segments.push(amux_ui::DraftSegment::Text { text });
+        }
+        amux_ui::Draft {
+            segments,
+            attachments,
+        }
     }
 
     /// The lowest slot not spoken for by the draft or the send stash.
@@ -771,7 +807,9 @@ impl Composer {
                     (pastes, PASTED_NAME.to_string())
                 }
                 // The review label counts comments, which only the chat knows.
-                TokenAttachment::Review | TokenAttachment::FrozenReview { .. } => continue,
+                TokenAttachment::Command { .. }
+                | TokenAttachment::Review
+                | TokenAttachment::FrozenReview { .. } => continue,
             };
             let label = token_label(&token.attachment, ordinal, &name, None);
             if let Some(token) = self.tokens.live.get_mut(&slot) {
@@ -1400,4 +1438,34 @@ index 1111111..2222222 100644
         assert_eq!(rows, vec!["look [Ima", "ge #1]▌"]);
         assert_eq!(cursor_row, 1, "the cursor row follows the painted label");
     }
+}
+
+#[cfg(test)]
+#[test]
+fn provider_commands_composer_preserves_and_atomically_removes_restored_token() {
+    let draft = amux_ui::Draft {
+        segments: vec![
+            amux_ui::DraftSegment::CommandToken {
+                name: "review".into(),
+            },
+            amux_ui::DraftSegment::Text {
+                text: " changes".into(),
+            },
+        ],
+        attachments: vec![],
+    };
+    let mut composer = Composer::default();
+    composer.restore_queued(&draft);
+    assert_eq!(composer.export_draft(None), draft);
+    let token = composer.tokens()[0];
+    assert_eq!(token.label, "[/review]");
+    for _ in 0.." changes".len() {
+        composer.left();
+    }
+    composer.backspace();
+    assert_eq!(
+        composer.export_draft(None),
+        amux_ui::Draft::plain(" changes", vec![])
+    );
+    assert!(composer.tokens().is_empty());
 }

@@ -92,6 +92,10 @@ impl CodexDecision {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "codex_input", rename_all = "snake_case")]
 pub enum CodexInput {
+    Command {
+        name: String,
+        args: String,
+    },
     SetModel {
         model: String,
     },

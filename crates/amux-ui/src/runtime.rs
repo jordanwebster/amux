@@ -812,7 +812,8 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
         },
         // Input commands never ride Effect::Rpc — the reducer emits
         // Effect::SendInput for them (typed input + seq guard).
-        Command::Queue(_)
+        Command::Send { .. }
+        | Command::Queue(_)
         | Command::SetModel { .. }
         | Command::SetEffort { .. }
         | Command::SetPreset { .. }
@@ -950,6 +951,7 @@ pub async fn execute_put_then_send<C: AttachmentClient + ?Sized>(
 
 fn codex_wire_input(input: CodexInput) -> codex_io::CodexSdkV1Input {
     match input {
+        CodexInput::Command { name, args } => codex_io::CodexSdkV1Input::Command { name, args },
         CodexInput::SetModel { model } => codex_io::CodexSdkV1Input::SetModel { model },
         CodexInput::SetEffort { effort } => codex_io::CodexSdkV1Input::SetEffort { effort },
         CodexInput::SetPreset { approval, sandbox } => {
@@ -1780,7 +1782,9 @@ mod tests {
         runtime.dispatch(Command::Queue(crate::QueueCommand::Hold {
             agent,
             draft: crate::Draft {
-                text: "read the attachment".into(),
+                segments: vec![crate::DraftSegment::Text {
+                    text: "read the attachment".into(),
+                }],
                 attachments: vec![attachment],
             },
         }));

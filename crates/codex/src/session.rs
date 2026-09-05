@@ -23,10 +23,18 @@ pub struct EffortInfo {
     pub description: String,
 }
 
+/// An enabled skill reported for this thread's working directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillCommand {
+    pub name: String,
+    pub path: std::path::PathBuf,
+}
+
 #[derive(Default)]
 struct Settings {
     config: TurnConfig,
     models: Vec<ModelInfo>,
+    commands: Vec<SkillCommand>,
 }
 
 /// Host-owned next-turn selections, retained when a thread's transport reconnects.
@@ -121,6 +129,86 @@ impl ThreadControl {
         Ok(())
     }
 
+    /// Discover provider commands in the thread's directory. Terminal slash menus
+    /// are client-local and are not part of the app-server's skill catalogue.
+    pub async fn discover_commands(&self) -> Result<(), Error> {
+        #[derive(Deserialize)]
+        struct Skill {
+            name: String,
+            path: std::path::PathBuf,
+            enabled: bool,
+        }
+        #[derive(Deserialize)]
+        struct Entry {
+            cwd: std::path::PathBuf,
+            skills: Vec<Skill>,
+        }
+        #[derive(Deserialize)]
+        struct Response {
+            data: Vec<Entry>,
+        }
+        // A failed refresh must not leave stale commands sendable.
+        self.settings
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .commands
+            .clear();
+        let cwd = &self.thread.session_info().cwd;
+        let response: Response = self
+            .thread
+            .inner
+            .server
+            .request("skills/list", serde_json::json!({"cwds":[cwd]}))
+            .await?;
+        let mut commands: Vec<_> = response
+            .data
+            .into_iter()
+            .filter(|entry| &entry.cwd == cwd)
+            .flat_map(|entry| entry.skills)
+            .filter(|skill| skill.enabled && !skill.name.is_empty() && skill.path.is_absolute())
+            .map(|skill| SkillCommand {
+                name: skill.name,
+                path: skill.path,
+            })
+            .collect();
+        commands.sort_by(|a, b| (&a.name, &a.path).cmp(&(&b.name, &b.path)));
+        commands.dedup();
+        let mut counts = std::collections::BTreeMap::new();
+        for command in &commands {
+            *counts.entry(command.name.clone()).or_insert(0) += 1;
+        }
+        commands.retain(|command| counts[&command.name] == 1);
+        self.settings
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .commands = commands;
+        Ok(())
+    }
+
+    /// Resolve the selected token on the host; clients never supply filesystem paths.
+    pub async fn command(&self, name: String, args: String) -> Result<TurnId, Error> {
+        let skill = self
+            .settings
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .commands
+            .iter()
+            .find(|command| command.name == name)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("command is not offered by this session"))?;
+        self.user_turn(TurnInput::Items(vec![
+            crate::InputItem::Skill {
+                name: skill.name,
+                path: skill.path,
+            },
+            crate::InputItem::text(args),
+        ]))
+        .await
+    }
+
     /// Snapshot the selected next-turn configuration alongside provider metadata.
     pub fn session_facts(&self) -> serde_json::Value {
         let settings = self.settings.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -131,6 +219,9 @@ impl ThreadControl {
             "approvalPolicy":settings.config.approval_policy.as_ref().unwrap_or(&initial.approval_policy),
             "sandbox":settings.config.sandbox_policy.as_ref().unwrap_or(&initial.sandbox),
             "models":settings.models,
+            "commands":settings.commands.iter().map(|command| serde_json::json!({
+                "name":command.name, "source":"codex", "terminal_only":false
+            })).collect::<Vec<_>>(),
         })
     }
 

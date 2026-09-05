@@ -34,6 +34,10 @@ pub struct CodexSdkV1Output {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodexSdkV1Input {
+    Command {
+        name: String,
+        args: String,
+    },
     SetModel {
         model: String,
     },
@@ -136,6 +140,10 @@ pub(crate) fn decode_codex_sdk_v1_input(payload: &[u8]) -> Result<CodexSdkV1Inpu
     match input.input.ok_or_else(|| ProtocolError::InvalidArgument {
         message: format!("`{CODEX_SDK_V1}` input payload missing input"),
     })? {
+        wire::codex_sdk_v1_input::Input::Command(input) => Ok(CodexSdkV1Input::Command {
+            name: input.name,
+            args: input.args,
+        }),
         wire::codex_sdk_v1_input::Input::SetModel(input) => {
             Ok(CodexSdkV1Input::SetModel { model: input.model })
         }
@@ -175,6 +183,9 @@ pub(crate) fn decode_codex_sdk_v1_input(payload: &[u8]) -> Result<CodexSdkV1Inpu
 pub fn encode_codex_sdk_v1_input(input: CodexSdkV1Input) -> Vec<u8> {
     wire::CodexSdkV1Input {
         input: Some(match input {
+            CodexSdkV1Input::Command { name, args } => {
+                wire::codex_sdk_v1_input::Input::Command(wire::CodexSdkV1Command { name, args })
+            }
             CodexSdkV1Input::SetModel { model } => {
                 wire::codex_sdk_v1_input::Input::SetModel(wire::CodexSdkV1SetModel { model })
             }
@@ -321,4 +332,17 @@ mod tests {
             );
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn provider_commands_input_roundtrip_preserves_token_and_arguments() {
+    let command = CodexSdkV1Input::Command {
+        name: "review".into(),
+        args: "changes\nwith tests".into(),
+    };
+    assert_eq!(
+        decode_codex_sdk_v1_input(&encode_codex_sdk_v1_input(command.clone())).unwrap(),
+        command
+    );
 }

@@ -82,6 +82,10 @@ impl Msg {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
+    Send {
+        agent: AgentId,
+        draft: crate::Draft,
+    },
     SetModel {
         agent: AgentId,
         model: crate::provider::ModelId,

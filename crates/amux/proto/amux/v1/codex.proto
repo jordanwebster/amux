@@ -38,6 +38,7 @@ message CodexSdkV1Input {
     CodexSdkV1SetModel set_model = 5;
     CodexSdkV1SetEffort set_effort = 6;
     CodexSdkV1SetPreset set_preset = 7;
+    CodexSdkV1Command command = 8;
   }
 }
 
@@ -67,4 +68,9 @@ message CodexSdkV1SetEffort { string effort = 1; }
 message CodexSdkV1SetPreset {
   string approval = 1;
   string sandbox = 2;
+}
+
+message CodexSdkV1Command {
+  string name = 1;
+  string args = 2;
 }
