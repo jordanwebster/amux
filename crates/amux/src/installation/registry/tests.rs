@@ -416,7 +416,7 @@ fn symlinks_cannot_redirect_profile_or_registry_writes() {
     assert_eq!(fs::read_to_string(target).unwrap(), "foreign");
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "local-agents"))]
 #[test]
 fn socket_allocation_checks_platform_byte_limit_without_truncation() {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};

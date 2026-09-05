@@ -177,7 +177,10 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         std::env::var_os("AMUX_EMBED_TEST").is_none(),
         "embedding recipe must compile out local agents"
     );
-    println!("Local agents compiled out: {}", !cfg!(feature = "local-agents"));
+    println!(
+        "Local agents compiled out: {}",
+        !cfg!(feature = "local-agents")
+    );
     let relay = TestRelay::start().await;
     let personal_user = relay.register_user("personal");
     let work_user = relay.register_user("work");
@@ -406,4 +409,107 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         .await;
     }
     witnesses.shutdown(ShutdownReason::UserRequested).await;
+}
+
+#[cfg(all(unix, not(feature = "local-agents")))]
+#[tokio::test]
+async fn embedded_storage_reopens_long_roots_and_refuses_symlink_redirection() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::symlink;
+
+    use amux::installation::{InstallationError, ProfilePaths};
+
+    let temporary = tempfile::tempdir_in("/tmp").unwrap();
+    let root = temporary.path().join("embedded-app-storage-".repeat(8));
+    let make_options = || {
+        let mut options = options("phone", Providers::default());
+        options.root = InstallationRoot::OnDisk(root.clone());
+        options
+    };
+    let installation = Installation::open(make_options()).await.unwrap();
+    let address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    assert!(installation.root().as_os_str().as_bytes().len() > address.sun_path.len());
+    let profile = installation
+        .create(OperationId::new(), Some("personal".into()))
+        .await
+        .unwrap();
+    assert!(profile.available, "{profile:?}");
+    assert!(profile.socket_path.is_none());
+    let paths = ProfilePaths::for_id(installation.root(), profile.record.id).unwrap();
+    let namespace = installation
+        .root()
+        .join("profiles")
+        .join(profile.record.id.to_string());
+    assert!(paths.data_dir.starts_with(&namespace));
+    assert!(paths.state_path.starts_with(&namespace));
+    assert!(!paths.socket_path.exists());
+    let identity = installation
+        .admin(profile.record.id)
+        .await
+        .unwrap()
+        .start_pin_pairing()
+        .await
+        .unwrap()
+        .identity;
+    installation.shutdown(ShutdownReason::UserRequested).await;
+
+    let installation = Installation::open(make_options()).await.unwrap();
+    let reopened = installation.profiles();
+    assert_eq!(reopened.len(), 1);
+    assert_eq!(reopened[0].record, profile.record);
+    assert_eq!(reopened[0].host_id, profile.host_id);
+    assert!(reopened[0].available, "{reopened:?}");
+    assert!(reopened[0].socket_path.is_none());
+    assert_eq!(
+        installation
+            .admin(profile.record.id)
+            .await
+            .unwrap()
+            .start_pin_pairing()
+            .await
+            .unwrap()
+            .identity,
+        identity
+    );
+    assert!(
+        installation
+            .client(profile.record.id)
+            .unwrap()
+            .list_agents()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    println!(
+        "Reopened embedded profile beneath a {}-byte root (Unix socket buffer: {} bytes): {:?}",
+        installation.root().as_os_str().as_bytes().len(),
+        address.sun_path.len(),
+        reopened[0]
+    );
+    installation.shutdown(ShutdownReason::UserRequested).await;
+
+    let foreign = temporary.path().join("foreign-trust.json");
+    std::fs::write(&foreign, "foreign data must stay untouched").unwrap();
+    let trust = paths.data_dir.join("trust.json");
+    if trust.exists() {
+        std::fs::remove_file(&trust).unwrap();
+    }
+    symlink(&foreign, &trust).unwrap();
+    assert!(
+        matches!(ProfilePaths::for_id(&root, profile.record.id), Err(InstallationError::InvalidPath(path)) if path == trust)
+    );
+    let installation = Installation::open(make_options()).await.unwrap();
+    let rejected = installation.profiles();
+    assert_eq!(rejected.len(), 1);
+    assert!(!rejected[0].available);
+    assert_eq!(rejected[0].observed, Observed::StartupFailed);
+    assert_eq!(
+        std::fs::read_to_string(&foreign).unwrap(),
+        "foreign data must stay untouched"
+    );
+    println!(
+        "Symlink redirection remains refused on the long root: {:?}",
+        rejected[0]
+    );
+    installation.shutdown(ShutdownReason::UserRequested).await;
 }

@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Allow embedded profile storage beneath long app roots.**
+Profile allocation enforces Unix and Codex socket lengths only when local
+agents are compiled in. UUID namespaces, private directories and symlink
+protections remain in both builds. The no-local-agents integration regression
+creates and reopens a profile below a root longer than the Unix socket buffer,
+verifies its identity survives, and refuses a redirected trust file without
+touching the foreign data. Desktop socket-boundary tests retain their limits.
+
 2026-09-05 — **Prove embedded account isolation without local agents.**
 The embedding integration target opens two profiles under distinct relay users,
 binds through the identity fixture, and pairs independent peer profiles after

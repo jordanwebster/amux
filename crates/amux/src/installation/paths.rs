@@ -33,9 +33,12 @@ impl ProfilePaths {
         let paths = Self::allocated(&root, id);
         let profiles = root.join("profiles");
         let directory = profiles.join(id.to_string());
+        // Embedded builds cannot create local sockets, so their storage roots
+        // need only satisfy filesystem limits. Keep the namespace checks below.
+        #[cfg(feature = "local-agents")]
         validate_socket_path(&paths.socket_path)?;
         // Keep the agent host's Codex socket out of the shared /tmp fallback.
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "local-agents"))]
         {
             let codex = adjacent_codex_socket_path(&paths.socket_path);
             use std::os::unix::ffi::OsStrExt;
