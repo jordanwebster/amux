@@ -168,7 +168,7 @@ mod tests {
     #[tokio::test]
     async fn probe_parses_semantic_version_from_cli_banner() {
         let dir = tempfile::tempdir().unwrap();
-        let command = dir.path().join("fake-claude.sh");
+        let command = dir.path().join("claude");
         write_command(&command, "printf '%s\\n' '2.1.251 (Claude Code)'");
         assert_eq!(
             probe_version(&command).await.unwrap().to_string(),
@@ -179,7 +179,7 @@ mod tests {
     #[tokio::test]
     async fn cache_probes_once_and_accepts_newer_transcript_fact() {
         let dir = tempfile::tempdir().unwrap();
-        let command = dir.path().join("fake-claude.sh");
+        let command = dir.path().join("claude");
         let count = dir.path().join("count");
         write_command(
             &command,
