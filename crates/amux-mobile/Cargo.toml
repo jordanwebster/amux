@@ -8,9 +8,21 @@ publish = false
 [lib]
 crate-type = ["staticlib", "rlib"]
 
+[features]
+default = []
+debug-tools = ["amux/debug-tools"]
+
 [dependencies]
 amux = { workspace = true, default-features = false }
 amux-ui = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+amux-mobile = { path = ".", features = ["debug-tools"] }
+tempfile = { workspace = true }
 
 [build-dependencies]
 cbindgen = { version = "0.29", default-features = false }

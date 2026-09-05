@@ -125,8 +125,14 @@ name = "amux-mobile"
 version = "0.1.0"
 dependencies = [
  "amux",
+ "amux-mobile",
  "amux-ui",
+ "async-trait",
  "cbindgen",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

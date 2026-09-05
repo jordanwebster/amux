@@ -172,6 +172,7 @@ pub struct ServerBuilder {
 
 pub struct EmbeddedBuilder {
     inner: ServerBuilder,
+    relay: Option<crate::EmbeddedRelay>,
 }
 
 pub struct DaemonBuilder {
@@ -485,7 +486,10 @@ impl ServerBuilder {
     }
 
     pub fn embedded(self) -> EmbeddedBuilder {
-        EmbeddedBuilder { inner: self }
+        EmbeddedBuilder {
+            inner: self,
+            relay: None,
+        }
     }
 
     pub fn daemon(self) -> DaemonBuilder {
@@ -507,6 +511,13 @@ impl ServerBuilder {
 }
 
 impl EmbeddedBuilder {
+    /// Use an already-resolved relay and routing-token provider. The embedding
+    /// application owns its account API; the server owns the relay connection.
+    pub fn relay(mut self, relay: crate::EmbeddedRelay) -> Self {
+        self.relay = Some(relay);
+        self
+    }
+
     pub async fn open(self) -> Result<Client> {
         let (config, credentials, as_cloud_relay, update_reporter, subscription_reporter) =
             self.inner.into_parts()?;
@@ -517,6 +528,11 @@ impl EmbeddedBuilder {
             )));
         }
         config.validate(as_cloud_relay)?;
+        if self.relay.is_some() && crate::setup::cloud_enabled(&config) {
+            return Err(ServerError::State(
+                "choose either a supplied relay or cloud discovery".into(),
+            ));
+        }
         let mut server = Server::with_config_and_credentials(
             config,
             credentials,
@@ -537,6 +553,9 @@ impl EmbeddedBuilder {
 
         for task in spawn_local_background_tasks(server.state.clone(), &started_services).await {
             push_embedded_task(&tasks, task);
+        }
+        if let Some(relay) = self.relay {
+            push_embedded_task(&tasks, relay.spawn(started_services.link_connector_ctx()));
         }
 
         let (client_channel, client_service_task) =

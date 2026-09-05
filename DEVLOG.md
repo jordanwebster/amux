@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Connect the native bridge to an authenticated relay.**
+The C lifecycle now starts one embedded runtime on a dedicated Rust worker,
+feeds the shared UI reducer, and emits ordered connection and fleet events.
+The embedded builder accepts a resolved relay and routing-token provider so
+native account code can own the cloud API while Rust retains transport,
+refresh and reconnection. Token requests round-trip through the C callback;
+stop cancels pending requests, joins the worker and closes its relay link.
+Cleartext endpoints require explicit debug tools and a literal loopback
+address. The host test pairs through testnet, reopens saved trust through the
+C ABI, observes the real host's agent before and after a relay outage, and
+checks remote offline state and callback quiescence after stop. It also checks
+invalid configuration and cancellation of unanswered or malformed token replies.
+
 2026-09-05 — **Build a native Rust bridge for iOS.**
 The new `amux-mobile` crate produces a static library and a C header generated
 from its exported Rust API. UI dependencies disable local-agent hosting;

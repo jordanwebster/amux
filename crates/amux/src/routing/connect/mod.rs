@@ -231,7 +231,6 @@ impl LinkConnectorCtx {
         self
     }
 
-    #[cfg(any(test, testnet))]
     pub(crate) fn with_link_role(mut self, link_role: LinkRole) -> Self {
         self.link_role = link_role;
         self

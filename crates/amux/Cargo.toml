@@ -6,6 +6,7 @@ description = "Agent multiplexer - library for building amux clients and servers
 
 [features]
 default = ["local-agents"]
+debug-tools = []
 # Local agent hosting: provider-backed Claude/test-agent PTY sessions and the Codex app-server client
 # (`codex`, which brings its WebSocket stack). Default-on for the desktop daemon;
 # embedded mobile clients build with `default-features = false`. The daemonish

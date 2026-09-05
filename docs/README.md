@@ -36,6 +36,8 @@ subject; when two overlap, the owner named here wins.
 - `../crates/amux/tests/spec/` — the executable spec. The suite reads as
   documentation and locks the protocol's guarantees; run it with
   `timeout 600 cargo test --workspace --test spec`.
+- [Native runtime bridge](../crates/amux-mobile/README.md) — C lifecycle, routing
+  tokens, callback ownership and the debug loopback boundary.
 - `CI.md` — native iOS verification recipes, pinned runner and commit-specific
   CI status.
 - [TESTNET.md](TESTNET.md) — isolated relay and daemon topologies, readiness and the

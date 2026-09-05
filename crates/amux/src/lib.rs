@@ -24,6 +24,7 @@ mod config;
 mod connection;
 mod debug;
 mod dispatcher;
+mod embedded_relay;
 #[path = "agents/envelope.rs"]
 pub mod envelope;
 mod identity;
@@ -66,6 +67,7 @@ pub use config::{
     ColorSetting, Config, ConfigError, Keybinds, LeaderKey, OpenMode, ThemeSetting, UiSettings,
 };
 pub use debug::DebugFormat;
+pub use embedded_relay::{EmbeddedRelay, RelayConnection, RelayEndpoint};
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
     QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,
