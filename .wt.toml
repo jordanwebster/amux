@@ -44,6 +44,12 @@ run = 'scripts/spec-test.sh "$@"'
 [task.mobile-check]
 run = "timeout 900 sh scripts/mobile-check.sh"
 
+# The rules the screens package is written to: SwiftUI only outside a
+# registered leaf, no platform conditionals, no spinners. Pure text, so it runs
+# before anything is compiled and says which line is wrong.
+[task.ios-lint]
+run = "timeout 300 sh ios/Tools/feature-lint.sh"
+
 [task.ios-rust]
 run = "timeout 1800 python3 scripts/ios-rust.py"
 

@@ -8,6 +8,7 @@ const RECIPES: &[&str] = &[
     "test",
     "spec",
     "mobile-check",
+    "ios-lint",
     "ios-rust",
     "ios-simulator",
     "ios-build",
@@ -174,6 +175,17 @@ mod tests {
         for recipe in RECIPES.iter().filter(|name| **name != "ios-goldens") {
             assert!(arguments(recipe).is_empty(), "{recipe} was given arguments");
         }
+    }
+
+    /// The screens package's own rules — no UIKit outside a registered leaf,
+    /// no platform conditionals, no spinners — are only rules if a check runs
+    /// them, so this branch's verification has to name the recipe that does.
+    #[test]
+    fn verification_runs_the_screens_lint() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let config = std::fs::read_to_string(root.join(".wt.toml")).expect("the checkout's tasks");
+        let selected = recipes(&config).expect("a verification selection");
+        assert!(selected.contains(&"ios-lint"), "{selected:?}");
     }
 
     #[test]

@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **The screens' own rules are a check now.** `ios/Tools/feature-lint.sh`
+has refused UIKit outside a registered leaf, a platform conditional and a
+spinner since the screens package was written, but nothing ran it, so all three
+were rules only as long as somebody remembered them. It is now `wt run
+ios-lint`, and iOS verification runs it before anything is compiled: a spinner
+added anywhere under the screens package fails a check, naming the file and the
+line. It costs a second, because it is text.
+
 2026-09-05 — **The home at a text size somebody actually uses.** The Agents
 home now has baselines at an accessibility text size and on the narrowest
 supported display. Taking the first one showed the state line under each row
@@ -115,7 +123,7 @@ its own cache file straight off disk — no runtime, no network, no wait — and
 every row arrives marked as remembered: dimmed, with a slow highlight passing
 over it. Nothing spins. A spinner would cover rows a person can already read
 and act on with a symbol that says only "wait", so the screens refuse one
-outright and `ios/Tools/feature-lint.sh` now fails a build that draws one.
+outright and `ios/Tools/feature-lint.sh` refuses one.
 
 A row stops shimmering when the machine that owns it answers, not when the
 whole fleet does. The card the bridge projects carries that fact — a card the
