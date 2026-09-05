@@ -1,5 +1,6 @@
 //! A loopback process boundary around the same TestNet used by the Rust specs.
 
+mod codex_recording;
 mod report_script;
 
 use std::collections::{HashMap, HashSet};
@@ -41,6 +42,8 @@ pub struct Topology {
     pub agents: Vec<AgentDecl>,
     #[serde(skip)]
     scripts: HashMap<String, Script>,
+    #[serde(skip)]
+    recordings: HashMap<String, codex_recording::Prepared>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +154,9 @@ pub enum Control {
         agent: String,
         child: String,
     },
+    AgentVerifyReplay {
+        agent: String,
+    },
     AgentObserve {
         agent: String,
     },
@@ -259,10 +265,13 @@ impl Topology {
                     .context("parse Claude script")?;
                     topology.scripts.insert(agent.name.clone(), script);
                 }
-                ScriptedProvider::Codex { recording } => bail!(
-                    "Codex recording playback is not installed yet: {}",
-                    recording.display()
-                ),
+                ScriptedProvider::Codex { recording } => {
+                    *recording = base.join(&*recording);
+                    topology.recordings.insert(
+                        agent.name.clone(),
+                        codex_recording::Prepared::load(recording)?,
+                    );
+                }
             }
         }
         Ok(topology)
@@ -290,7 +299,32 @@ fn resolve_directory(base: &Path, path: &Path) -> Result<PathBuf> {
 struct ScriptedAgent {
     daemon: String,
     agent: amux::Agent,
-    provider: Provider,
+    provider: AgentProvider,
+}
+
+enum AgentProvider {
+    Claude(Provider),
+    Codex(codex_recording::Recorded),
+}
+
+impl AgentProvider {
+    fn claude(&self) -> Result<&Provider> {
+        match self {
+            Self::Claude(provider) => Ok(provider),
+            Self::Codex(_) => bail!("Codex recordings accept only recorded client interactions"),
+        }
+    }
+
+    async fn play(&self, steps: Vec<Step>) -> Result<()> {
+        self.claude()?.play(steps).await?;
+        Ok(())
+    }
+
+    async fn close(&mut self) {
+        if let Self::Codex(recorded) = self {
+            recorded.close().await;
+        }
+    }
 }
 
 type Agents = HashMap<String, ScriptedAgent>;
@@ -339,15 +373,27 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
     let mut agents = Vec::new();
     let mut scripted = HashMap::new();
     for decl in &topology.agents {
-        let (agent, provider) = net
-            .daemon(&decl.daemon)
-            .spawn_scripted_agent(
-                &decl.name,
-                &decl.working_dir,
-                topology.scripts[&decl.name].clone(),
-                None,
-            )
-            .await?;
+        let daemon = net.daemon(&decl.daemon);
+        let (agent, provider) = match &decl.provider {
+            ScriptedProvider::Claude { .. } => {
+                let (agent, provider) = daemon
+                    .spawn_scripted_agent(
+                        &decl.name,
+                        &decl.working_dir,
+                        topology.scripts[&decl.name].clone(),
+                        None,
+                    )
+                    .await?;
+                (agent, AgentProvider::Claude(provider))
+            }
+            ScriptedProvider::Codex { .. } => {
+                let (session, recorded) = topology.recordings[&decl.name].open().await?;
+                let agent = daemon
+                    .spawn_recorded_codex(&decl.name, &decl.working_dir, session)
+                    .await?;
+                (agent, AgentProvider::Codex(recorded))
+            }
+        };
         agents.push(AgentIdentity {
             name: decl.name.clone(),
             daemon: decl.daemon.clone(),
@@ -411,6 +457,9 @@ async fn apply(
         }
         Control::RestartDaemon { name } => {
             net.restart_daemon(&daemon(&name)?).await;
+            for agent in agents.values_mut().filter(|agent| agent.daemon == name) {
+                agent.provider.close().await;
+            }
             agents.retain(|_, agent| agent.daemon != name);
         }
         Control::Unpair { daemon, peer } => {
@@ -474,9 +523,15 @@ async fn apply(
                 .play(vec![Step::Exit { code }])
                 .await?;
         }
+        Control::AgentVerifyReplay { agent } => match &scripted(&agent)?.provider {
+            AgentProvider::Codex(recorded) => {
+                recorded.verify()?;
+            }
+            AgentProvider::Claude(_) => bail!("agent has no Codex recording"),
+        },
         Control::AgentObserve { agent } => {
             if let Reply::Ack { observed, .. } = &mut reply {
-                *observed = scripted(&agent)?.provider.observed();
+                *observed = scripted(&agent)?.provider.claude()?.observed();
             }
         }
         Control::AgentSpawnChild { agent, child } => {
@@ -486,7 +541,7 @@ async fn apply(
             );
             let parent = scripted(&agent)?;
             ensure!(
-                parent.provider.error().is_none(),
+                parent.provider.claude()?.error().is_none(),
                 "parent provider has stopped"
             );
             let host = daemon(&parent.daemon)?;
@@ -506,7 +561,7 @@ async fn apply(
                 ScriptedAgent {
                     daemon: parent.daemon.clone(),
                     agent,
-                    provider,
+                    provider: AgentProvider::Claude(provider),
                 },
             );
         }
@@ -627,6 +682,9 @@ async fn serve_net(
     };
     drop(listener);
     net.shutdown().await;
+    for agent in agents.values_mut() {
+        agent.provider.close().await;
+    }
     drop(agents);
     let outcome = match outcome {
         Ok(Some(request)) => {
@@ -664,6 +722,8 @@ pub fn run(command: Command) -> Result<()> {
 
 #[cfg(test)]
 mod agents_tests;
+#[cfg(test)]
+mod codex_tests;
 
 #[cfg(test)]
 mod tests {

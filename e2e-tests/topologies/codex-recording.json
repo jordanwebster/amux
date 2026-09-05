@@ -1,0 +1,6 @@
+{
+  "users": ["alice"],
+  "daemons": [{"name":"host","user":"alice","repository_roots":["."]}],
+  "paired": [],
+  "agents": [{"name":"codex","daemon":"host","working_dir":".","provider":{"Codex":{"recording":"../../crates/codex/fixtures/approval_allow"}}}]
+}

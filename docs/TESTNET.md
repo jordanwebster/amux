@@ -114,7 +114,7 @@ turn boundaries and cleanup.
 Use `e2e-tests/topologies/scripted-agents.json` for a runnable scripted topology.
 Claude script paths, working directories and repository roots resolve relative
 to the topology file. Scripts are parsed before any network resources start.
-Codex recording playback is not available yet.
+Codex recording directories resolve relative to the topology file as well.
 
 | Request | Effect |
 | --- | --- |
@@ -162,3 +162,35 @@ content; interactive asks and answers need an authored script.
 `timeout 900 wt test -- script_from_report -- --nocapture` checks the committed
 synthetic recorder fixtures and compares the converted rows with output from
 a real Claude provider session.
+
+## Strict Codex recordings
+
+`e2e-tests/topologies/codex-recording.json` declares a Codex agent backed by
+`crates/codex/fixtures/approval_allow`. Recording manifests and content hashes
+are checked before startup. The runner uses the recorded client handshake and
+thread-start parameters, then hands the real Codex session to the daemon's
+normal backend. Subsequent prompts and approval answers come from the attached
+client and must match the recording. No provider binary or live service runs.
+
+Pair and attach through the relay as for Claude. This fixture expects the prompt
+`Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE.`
+and an Accept decision on its command approval. The recorded command is data;
+playback does not execute it. Its response is `DONE`, followed by turn completion.
+
+Send `{"AgentVerifyReplay":{"agent":"codex"}}` over the control socket after
+the recorded turn. An Ack proves that every recorded read was delivered and
+every expected write matched, with no extras. Before completion it returns
+`replay incomplete`; an unrecorded write returns `ReplayWriteMismatch` with
+the expected and actual write. A transport write failure also ends the Codex
+connection so requests cannot hang waiting for an impossible response.
+
+Claude-specific controls (emit, ask, turn end, exit, child spawn and decoded
+input observation) refuse Codex recordings. Verification is the Codex host
+observation boundary. Restart and shutdown close its replay transport and driver.
+Only single-transport recordings beginning with initialize, initialized and
+thread/start are supported; other recording shapes are refused.
+
+`timeout 900 wt test -- testnet_codex_recording -- --nocapture` drives the
+production UI runtime over the relay, prints the approval and projected feed,
+verifies all five recorded writes, and checks that an unrecorded prompt or
+answer produces a named mismatch and settles its input without hanging.

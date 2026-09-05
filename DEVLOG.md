@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Run Codex recordings through the relay and real daemon backend.**
+Topologies now accept verified Codex recordings. Recorded initialization and
+thread creation use the existing SDK transport; attached clients supply all
+later prompts and answers through the production backend and UI reducer.
+The control socket verifies strict replay completeness and names mismatched
+writes. A failed SDK transport write now cancels its connection, resolving
+pending requests that otherwise could wait forever. Relay tests exercise the
+recorded approval and response plus unrecorded prompts and approval answers.
+
 2026-09-05 — **Convert complete report transcripts into host playback scripts.**
 The testnet runner converts a report's retained Claude PTY rows into one raw-row
 reaction. It refuses folded checkpoint history with EvictedHistory and

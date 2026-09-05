@@ -17,6 +17,8 @@ chrono = { workspace = true }
 jsonwebtoken = { workspace = true }
 amux = { workspace = true }
 amux-ui = { workspace = true }
+codex = { path = "../codex" }
+replay-support = { path = "../replay-support" }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }

@@ -5,7 +5,11 @@ use serde_json::json;
 
 use super::*;
 
-async fn wait_for(runtime: &mut Runtime, what: &str, predicate: impl Fn(&Model) -> bool) {
+pub(super) async fn wait_for(
+    runtime: &mut Runtime,
+    what: &str,
+    predicate: impl Fn(&Model) -> bool,
+) {
     tokio::time::timeout(Duration::from_secs(15), async {
         while !predicate(runtime.model()) {
             assert!(runtime.next().await, "runtime closed waiting for {what}");
@@ -21,7 +25,7 @@ fn has_text(model: &Model, agent: Uuid, text: &str) -> bool {
     }))
 }
 
-async fn succeeded(runtime: &mut Runtime, command: UiCommand) {
+pub(super) async fn succeeded(runtime: &mut Runtime, command: UiCommand) {
     let op = runtime.dispatch(command);
     wait_for(runtime, "input outcome", |model| {
         model.finished_op(op).is_some()

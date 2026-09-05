@@ -34,6 +34,26 @@ fn assert_permission_denied(rpc: &str, result: Result<(), ClientError>) {
 }
 
 impl Daemon {
+    /// Register a recorded Codex thread through the normal backend ingest and
+    /// input paths. The caller keeps the recording transport alive.
+    pub async fn spawn_recorded_codex(
+        &self,
+        name: &str,
+        working_dir: impl AsRef<Path>,
+        session: codex::Session,
+    ) -> Result<Agent, ProtocolError> {
+        let parts = self
+            .try_parts()
+            .await
+            .ok_or_else(|| ProtocolError::ServerError {
+                message: format!("daemon '{}' is not running", self.name()),
+            })?;
+        parts
+            .agent_host
+            .register_recorded_codex(name.into(), working_dir.as_ref().to_owned(), session)
+            .await
+    }
+
     /// Spawns a local echo (test) agent named `name` through this daemon's
     /// local-admin `ClientService`, exactly as the CLI would. The agent
     /// echoes session input back as output. Returns once the agent is in the

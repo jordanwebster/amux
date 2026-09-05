@@ -248,6 +248,9 @@ pub(crate) fn spawn_writer_task(
             }
         }
         drop(stdin);
+        // A failed write cannot receive its RPC response. Wake the reader's
+        // shutdown path so it resolves pending requests and closes sessions.
+        cancel.cancel();
     })
 }
 

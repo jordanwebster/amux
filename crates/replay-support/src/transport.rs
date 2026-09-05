@@ -352,6 +352,12 @@ fn event_transport_id(event: &IoEvent) -> String {
 }
 
 impl ReplayController {
+    /// Deliver recorded reads as matching writes unlock them, sleeping while
+    /// waiting for the next write. The caller owns cancellation of this future.
+    pub async fn run(&self) {
+        drive_replay(self.clone()).await;
+    }
+
     pub fn peek_next(&self) -> ReplayPeek {
         let state = self.state.lock().expect("replay state lock");
         peek_next_locked(&state)
@@ -647,7 +653,7 @@ impl AsyncWrite for ReplayWriter {
                 return std::task::Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "unexpected replay write at index {}: {line}",
+                        "ReplayWriteMismatch: unexpected replay write at index {}: {line}",
                         state.validated_writes
                     ),
                 )));
@@ -672,7 +678,7 @@ impl AsyncWrite for ReplayWriter {
                 });
                 return std::task::Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("replay write mismatch at index {expected_idx}"),
+                    format!("ReplayWriteMismatch: replay write mismatch at index {expected_idx}"),
                 )));
             };
 

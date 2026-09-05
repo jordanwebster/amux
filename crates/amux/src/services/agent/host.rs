@@ -153,6 +153,45 @@ impl PtyAgentHost {
     }
 
     #[cfg(testnet)]
+    pub(crate) async fn register_recorded_codex(
+        &self,
+        name: String,
+        working_dir: std::path::PathBuf,
+        provider: codex::Session,
+    ) -> Result<Agent, ProtocolError> {
+        use crate::agents::codex::CodexBackend;
+        use crate::agents::{AgentBackend, AgentKind, AgentRecord};
+        let record = AgentRecord {
+            id: Uuid::new_v4(),
+            host_id: self.host_id,
+            name: Some(name),
+            command: "codex".into(),
+            working_dir,
+            kind: AgentKind::Codex,
+            readonly: false,
+            args: Vec::new(),
+            created_at: chrono::Utc::now(),
+            parent: None,
+            working_on: None,
+        };
+        let mut backend = CodexBackend::with_session(record, provider);
+        backend
+            .start(&self.event_tx)
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })?;
+        let agent_id = backend.agent_id();
+        let session: AgentSession = Box::new(backend);
+        let agent = session.to_agent(self.host_id).into();
+        let mut state = self.state.write().await;
+        let announce = state
+            .register_local_agent_context(self.host_id, agent_id, session)
+            .map_err(|message| ProtocolError::ServerError { message })?;
+        state.local_agent_events.emit(announce);
+        Ok(agent)
+    }
+
+    #[cfg(testnet)]
     pub(crate) async fn end_scripted_session(&self, agent_id: Uuid) {
         self.event_tx
             .send(SessionEvent::Ended { agent_id })
