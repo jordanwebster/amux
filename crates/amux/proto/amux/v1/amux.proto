@@ -511,6 +511,7 @@ service AgentService {
   rpc PutArtifact(PutArtifactRequest) returns (PutArtifactResponse);
   rpc GetArtifact(GetArtifactRequest) returns (GetArtifactResponse);
   rpc Diff(DiffRequest) returns (DiffResponse);
+  rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse);
 }
 
 message SubscribeAgentEventsRequest {}
@@ -706,6 +707,7 @@ service ClientService {
   rpc PutArtifact(ClientPutArtifactRequest) returns (PutArtifactResponse);
   rpc GetArtifact(ClientGetArtifactRequest) returns (GetArtifactResponse);
   rpc Diff(ClientDiffRequest) returns (DiffResponse);
+  rpc ListRepositories(ClientListRepositoriesRequest) returns (ListRepositoriesResponse);
 
   rpc Debug(DebugRequest) returns (DebugResponse);
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
@@ -1002,3 +1004,24 @@ message GetPairingStatusResponse {
 
 message CancelPairingRequest {}
 message CancelPairingResponse {}
+
+// Host-owned discovery; the client chooses a host, never a search root.
+message ListRepositoriesRequest {
+  optional string query = 1;
+  uint32 limit = 2;
+}
+message ClientListRepositoriesRequest {
+  bytes host_id = 1;
+  optional string query = 2;
+  uint32 limit = 3;
+}
+message ListRepositoriesResponse {
+  repeated ProjectEntry recent = 1;
+  repeated ProjectEntry repositories = 2;
+  repeated string roots = 3;
+}
+message ProjectEntry {
+  string path = 1;
+  string name = 2;
+  optional int64 last_used_unix_ms = 3;
+}

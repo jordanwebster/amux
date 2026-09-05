@@ -275,6 +275,10 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub minimum_client_versions: HashMap<String, String>,
 
+    /// Directories searched for Git repositories when clients create agents. Empty by default.
+    #[serde(default)]
+    pub repository_roots: Vec<PathBuf>,
+
     /// Keybind configuration
     #[serde(default)]
     pub keybinds: Keybinds,
@@ -300,6 +304,7 @@ impl Default for Config {
             enable_cloud_mode: None,
             prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
+            repository_roots: Vec::new(),
             keybinds: Keybinds::default(),
             ui: UiSettings::default(),
             path: None,

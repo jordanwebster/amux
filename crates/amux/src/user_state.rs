@@ -54,6 +54,7 @@ fn new_local_agent_host(
             route,
             crate::keymap_dir(&config.data_dir),
             config.data_dir.clone(),
+            config.repository_roots.clone(),
         )
         .map(|host| Some(host as Arc<dyn LocalAgentHost>))
     }

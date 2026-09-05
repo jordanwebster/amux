@@ -49,6 +49,7 @@ pub(crate) struct DaemonInner {
     pub(crate) name: String,
     pub(crate) host_id: HostId,
     pub(crate) data_dir: PathBuf,
+    pub(crate) repository_roots: Vec<PathBuf>,
     pub(crate) artifact_clock: Arc<TestArtifactClock>,
     /// Direct-TCP listener address; stable across restarts so stored
     /// reachabilities keep working. `None` for cloud-only daemons.
@@ -257,6 +258,7 @@ pub(crate) async fn start_daemon_runtime(
         route,
         crate::keymap_dir(&inner.data_dir),
         inner.data_dir.clone(),
+        inner.repository_roots.clone(),
     )
     .expect("testnet Codex private socket path should be usable");
     let mut services = start_user_services_with_artifact_clock(

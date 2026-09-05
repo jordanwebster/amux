@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **List host repositories and recent project directories.**
+Clients can query a selected host through the existing authenticated direct or
+relay agent RPC route. Hosts search only configured repository_roots, recognize
+Git checkouts and worktrees, and do not follow directory symlinks or descend
+inside repositories. Successful agent registrations retain up to 200 recent
+project directories in an atomic private file across deletion and restart.
+Case-insensitive search and a combined recent-first limit apply on the host.
+Testnet topologies pass their declared roots to the host; relay and direct specs
+cover confinement, search, limits, untrusted callers and durable recent entries.
+
 2026-09-05 — **Fold Claude task lists into shared session facts.**
 Successful TodoWrite results now replace ProviderFacts.todos with the done and
 total counts, current activity and ordered items. Pending writes leave the last

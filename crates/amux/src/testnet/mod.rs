@@ -401,6 +401,7 @@ impl std::fmt::Debug for TestNet {
 
 struct DaemonSpec {
     name: String,
+    repository_roots: Vec<std::path::PathBuf>,
     cloud_only: bool,
     no_cloud: bool,
     cloud_user: Option<String>,
@@ -434,10 +435,17 @@ impl TestNetBuilder {
         );
         self.daemons.push(DaemonSpec {
             name,
+            repository_roots: Vec::new(),
             cloud_only: false,
             no_cloud: false,
             cloud_user: None,
         });
+        self
+    }
+
+    /// Declares the directories searched for repositories by the most recent daemon.
+    pub fn repository_roots(mut self, roots: Vec<std::path::PathBuf>) -> Self {
+        self.last_daemon("repository_roots").repository_roots = roots;
         self
     }
 
@@ -594,6 +602,7 @@ impl TestNetBuilder {
                 name: spec.name.clone(),
                 host_id: prep.identity.host_id,
                 data_dir: prep.data_dir,
+                repository_roots: spec.repository_roots.clone(),
                 artifact_clock: Arc::new(daemon::TestArtifactClock::new()),
                 tcp_addr: prep.tcp_addr,
                 cloud: prep.attaches_to_cloud.then(|| {

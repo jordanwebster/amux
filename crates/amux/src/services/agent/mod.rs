@@ -61,6 +61,11 @@ pub(crate) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
 #[async_trait]
 pub(crate) trait LocalAgentHost: Send + Sync {
     async fn agent(&self, agent_id: Uuid) -> Result<Agent, ProtocolError>;
+    async fn list_repositories(
+        &self,
+        query: Option<String>,
+        limit: u32,
+    ) -> Result<crate::ListRepositoriesResponse, ProtocolError>;
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError>;
     async fn spawn_inheritance(&self, agent_id: Uuid) -> Result<SpawnInheritance, ProtocolError>;
     async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError>;
@@ -468,6 +473,20 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         let request = decode_send_input_request(request.into_inner())?;
         self.send_input(request).await.map_err(protocol_status)?;
         Ok(tonic::Response::new(wire::SendInputResponse {}))
+    }
+
+    async fn list_repositories(
+        &self,
+        request: tonic::Request<wire::ListRepositoriesRequest>,
+    ) -> TonicResult<wire::ListRepositoriesResponse> {
+        let request = request.into_inner();
+        let result = self
+            .require_host()
+            .map_err(protocol_status)?
+            .list_repositories(request.query, request.limit)
+            .await
+            .map_err(protocol_status)?;
+        Ok(tonic::Response::new(result.into()))
     }
 
     async fn put_artifact(

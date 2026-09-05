@@ -42,17 +42,34 @@ pub(crate) struct PtyAgentHost {
     state: SharedAgentServiceState,
     event_tx: mpsc::Sender<SessionEvent>,
     host_id: Uuid,
+    repository_roots: Vec<PathBuf>,
+    #[cfg(test)]
+    _test_data_dir: Option<tempfile::TempDir>,
 }
 
 impl PtyAgentHost {
     /// Build a host against the default configured socket path.
     #[cfg(test)]
     pub(crate) fn new(host_id: Uuid) -> Arc<Self> {
-        let config = crate::config::Config::default();
+        let data_dir = tempfile::tempdir().expect("test host data directory");
+        let config = crate::config::Config {
+            data_dir: data_dir.path().to_path_buf(),
+            ..Default::default()
+        };
         let route = McpLaunchRoute::for_current_process(&config, host_id)
             .expect("default managed MCP route should be usable");
-        Self::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir), config.data_dir)
-            .expect("default agent host resources should be usable")
+        let mut host = Self::new_with_mcp_launch_route(
+            route,
+            crate::keymap_dir(&config.data_dir),
+            config.data_dir,
+            config.repository_roots,
+        )
+        .expect("default agent host resources should be usable");
+        // Test agent registrations must never update the operator's recent projects.
+        Arc::get_mut(&mut host)
+            .expect("new test host is unshared")
+            ._test_data_dir = Some(data_dir);
+        host
     }
 
     /// Build the host and spawn its session-event loop. Cloud-vs-device is
@@ -64,6 +81,7 @@ impl PtyAgentHost {
         route: McpLaunchRoute,
         claude_user_keymap_dir: PathBuf,
         data_dir: PathBuf,
+        repository_roots: Vec<PathBuf>,
     ) -> io::Result<Arc<Self>> {
         let server_socket_path = route.socket_path().to_path_buf();
         let runtime_dir = server_socket_path
@@ -86,6 +104,9 @@ impl PtyAgentHost {
             state,
             event_tx,
             host_id,
+            repository_roots,
+            #[cfg(test)]
+            _test_data_dir: None,
         }))
     }
 
@@ -352,6 +373,22 @@ impl LocalAgentHost for PtyAgentHost {
             .get(&agent_id)
             .map(|context| context.record(self.host_id()).into())
             .ok_or(ProtocolError::NoAgentFound)
+    }
+
+    async fn list_repositories(
+        &self,
+        query: Option<String>,
+        limit: u32,
+    ) -> Result<crate::ListRepositoriesResponse, ProtocolError> {
+        let roots = self.repository_roots.clone();
+        let recent = self.state.read().await.recent_projects.snapshot();
+        tokio::task::spawn_blocking(move || {
+            crate::repositories::host::list(roots, recent, query, limit)
+        })
+        .await
+        .map_err(|error| ProtocolError::ServerError {
+            message: error.to_string(),
+        })
     }
 
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError> {
@@ -864,6 +901,7 @@ mod socket_tests {
             route.clone(),
             keymap_dir.clone(),
             temp.path().to_path_buf(),
+            Vec::new(),
         )
         .unwrap();
 

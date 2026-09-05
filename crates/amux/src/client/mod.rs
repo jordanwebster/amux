@@ -664,6 +664,30 @@ impl Client {
         Ok((artifact, response.bytes))
     }
 
+    /// List recent projects and Git repositories declared by the selected host.
+    pub async fn list_repositories(
+        &self,
+        request: crate::ListRepositoriesRequest,
+    ) -> Result<crate::ListRepositoriesResponse, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .list_repositories(wire::ClientListRepositoriesRequest {
+                host_id: request.host.as_bytes().to_vec(),
+                query: request.query,
+                limit: request.limit,
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        response.try_into().map_err(|message| ClientError::Decode {
+            method: "/amux.v1.ClientService/ListRepositories",
+            message,
+        })
+    }
+
     pub async fn diff(
         &self,
         agent: AgentIdentifier,

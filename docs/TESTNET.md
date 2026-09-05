@@ -47,6 +47,10 @@ User labels are unique and each daemon names a declared user. Pairings name
 two distinct daemons and use `Cloud` or `Tcp`; cloud pairings must share a
 user. Daemon and agent names are unique within their lists and may contain
 ASCII letters, digits, hyphens, underscores and periods, except `.` or `..`.
+Each daemon's `repository_roots` configures its host repository enumeration; an
+empty list exposes no enumerated repositories. Successfully created agent
+directories also appear as recent projects.
+
 Each agent names its daemon and either a Claude script or a Codex recording.
 All directory, script and recording paths resolve relative to the topology
 file; directories must

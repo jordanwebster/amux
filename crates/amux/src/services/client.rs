@@ -1259,6 +1259,29 @@ impl wire::client_service_server::ClientService for ClientService {
         .await
     }
 
+    async fn list_repositories(
+        &self,
+        request: tonic::Request<wire::ClientListRepositoriesRequest>,
+    ) -> TonicResult<wire::ListRepositoriesResponse> {
+        let request = request.into_inner();
+        let host_id = uuid_from_bytes("ClientListRepositoriesRequest.host_id", &request.host_id)?;
+        let request = wire::ListRepositoriesRequest {
+            query: request.query,
+            limit: request.limit,
+        };
+        if !self.is_local_host(host_id) {
+            let mut client = self
+                .remote_agent_client("ClientService.ListRepositories", host_id)
+                .await?;
+            return client.list_repositories(request).await;
+        }
+        wire::agent_service_server::AgentService::list_repositories(
+            &self.local_agents,
+            tonic::Request::new(request),
+        )
+        .await
+    }
+
     async fn debug(
         &self,
         request: tonic::Request<wire::DebugRequest>,

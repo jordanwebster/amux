@@ -1835,6 +1835,41 @@ pub struct GetPairingStatusResponse {
 pub struct CancelPairingRequest {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CancelPairingResponse {}
+/// Host-owned discovery; the client chooses a host, never a search root.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListRepositoriesRequest {
+    #[prost(string, optional, tag = "1")]
+    pub query: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, tag = "2")]
+    pub limit: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClientListRepositoriesRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, optional, tag = "2")]
+    pub query: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, tag = "3")]
+    pub limit: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListRepositoriesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub recent: ::prost::alloc::vec::Vec<ProjectEntry>,
+    #[prost(message, repeated, tag = "2")]
+    pub repositories: ::prost::alloc::vec::Vec<ProjectEntry>,
+    #[prost(string, repeated, tag = "3")]
+    pub roots: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProjectEntry {
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(int64, optional, tag = "3")]
+    pub last_used_unix_ms: ::core::option::Option<i64>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum AgentProtocol {
@@ -3079,6 +3114,30 @@ pub mod agent_service_client {
             req.extensions_mut().insert(GrpcMethod::new("amux.v1.AgentService", "Diff"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn list_repositories(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.AgentService/ListRepositories",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.AgentService", "ListRepositories"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -3192,6 +3251,13 @@ pub mod agent_service_server {
             &self,
             request: tonic::Request<super::DiffRequest>,
         ) -> std::result::Result<tonic::Response<super::DiffResponse>, tonic::Status>;
+        async fn list_repositories(
+            &self,
+            request: tonic::Request<super::ListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        >;
     }
     #[derive(Debug)]
     pub struct AgentServiceServer<T> {
@@ -3766,6 +3832,52 @@ pub mod agent_service_server {
                     };
                     Box::pin(fut)
                 }
+                "/amux.v1.AgentService/ListRepositories" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListRepositoriesSvc<T: AgentService>(pub Arc<T>);
+                    impl<
+                        T: AgentService,
+                    > tonic::server::UnaryService<super::ListRepositoriesRequest>
+                    for ListRepositoriesSvc<T> {
+                        type Response = super::ListRepositoriesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListRepositoriesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AgentService>::list_repositories(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListRepositoriesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 _ => {
                     Box::pin(async move {
                         let mut response = http::Response::new(
@@ -4218,6 +4330,30 @@ pub mod client_service_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("amux.v1.ClientService", "Diff"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_repositories(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ClientListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ClientService/ListRepositories",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ClientService", "ListRepositories"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn debug(
@@ -4678,6 +4814,13 @@ pub mod client_service_server {
             &self,
             request: tonic::Request<super::ClientDiffRequest>,
         ) -> std::result::Result<tonic::Response<super::DiffResponse>, tonic::Status>;
+        async fn list_repositories(
+            &self,
+            request: tonic::Request<super::ClientListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        >;
         async fn debug(
             &self,
             request: tonic::Request<super::DebugRequest>,
@@ -5462,6 +5605,52 @@ pub mod client_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DiffSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.ClientService/ListRepositories" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListRepositoriesSvc<T: ClientService>(pub Arc<T>);
+                    impl<
+                        T: ClientService,
+                    > tonic::server::UnaryService<super::ClientListRepositoriesRequest>
+                    for ListRepositoriesSvc<T> {
+                        type Response = super::ListRepositoriesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ClientListRepositoriesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ClientService>::list_repositories(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListRepositoriesSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

@@ -342,7 +342,10 @@ type Agents = HashMap<String, ScriptedAgent>;
 async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Readiness, Agents)> {
     let mut builder = TestNet::builder().cloud();
     for daemon in &topology.daemons {
-        builder = builder.daemon(&daemon.name).cloud_user(&daemon.user);
+        builder = builder
+            .daemon(&daemon.name)
+            .cloud_user(&daemon.user)
+            .repository_roots(daemon.repository_roots.clone());
     }
     for (a, b, via) in &topology.paired {
         builder = builder.paired(

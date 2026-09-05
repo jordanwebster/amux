@@ -27,6 +27,7 @@ pub(crate) struct AgentServiceState {
     pub(crate) local_shutdown_events: EventSource<ShutdownReason>,
     pub(crate) outbound_envelopes: EventSource<Envelope>,
     pub(crate) deps: AgentDeps,
+    pub(crate) recent_projects: crate::repositories::host::RecentProjects,
 }
 
 pub(crate) struct LocalAgentContext {
@@ -50,6 +51,7 @@ impl AgentServiceState {
             local_session_close_events: EventSource::default(),
             local_shutdown_events: EventSource::default(),
             outbound_envelopes: EventSource::default(),
+            recent_projects: crate::repositories::host::RecentProjects::load(&deps.data_dir),
             deps,
         }
     }
@@ -107,6 +109,8 @@ impl AgentServiceState {
 
         let mut record = session.to_agent(host_id);
         record.working_on.clone_from(&working_on);
+        self.recent_projects
+            .record(&record.working_dir, record.created_at);
         let event = record.agent_event();
         self.local_agents.insert(
             agent_id,

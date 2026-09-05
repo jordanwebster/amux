@@ -31,6 +31,7 @@ mod identity;
 mod pairing;
 mod paths;
 mod protocol;
+mod repositories;
 mod resource_limits;
 mod routing;
 mod server;
@@ -233,3 +234,5 @@ pub struct SubscribeSessionRequest {
     pub io_protocol: String,
     pub args: Option<bytes::Bytes>,
 }
+
+pub use repositories::{ListRepositoriesRequest, ListRepositoriesResponse, ProjectEntry};

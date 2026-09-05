@@ -202,7 +202,7 @@ timed out after 10 seconds (`resource_limits.rs`, `dispatcher.rs`).
 
 `ClientService` is the client API: host and agent inventory and
 subscriptions, agent CRUD, message delivery and work status, session
-attach/input, artifact put/get and diff, hooks, debug,
+attach/input, repository discovery, artifact put/get and diff, hooks, debug,
 shutdown/suspend/resume, and the pairing/trust administration RPCs.
 Pairing is the trust boundary — a paired peer has full runtime authority,
 including disruptive operations — with exactly one carve-out:
@@ -225,10 +225,42 @@ recent failed dial, cleared when a route comes up); nothing probes, so
 `AgentService` is what tunnels exist for: a peer lists another daemon's
 agents, creates or deletes them, delivers daemon-authored message envelopes,
 updates work status, attaches to a session, round-trips terminal I/O, and
-serves artifact put/get and repository diff requests on the agent's owning
+serves repository discovery, artifact put/get and diff requests on the owning
 host — through the cloud relay if that is the only shared path, with the relay
 seeing ciphertext. Parent edges and the provider-specific carriers are
 described in [`A2A.md`](./A2A.md).
+
+## Project discovery
+
+`Client::list_repositories` selects a host by identity and sends an optional
+case-insensitive path/name query and a total result limit. `ClientService` routes
+it to that host's `AgentService` over the same authenticated direct connection or
+relay tunnel used for agent operations. The host owns the search roots; callers
+cannot supply a directory to scan.
+
+Configure `repository_roots` as a list of directories in the host's YAML config.
+The default is empty. The host canonicalizes and deduplicates existing roots,
+searches directories in path order, recognizes both `.git` directories and
+worktree `.git` files, and stops descending at each repository. Directory
+symlinks are not followed; a symlink deliberately configured as a root resolves
+to its canonical directory. Missing or unreadable directories are skipped.
+Only paths representable by the text protocol are offered.
+
+The response separates recent projects, repositories and canonical roots.
+Recent projects come first, newest creation first, with each directory appearing
+once across both lists. The requested limit caps their combined count, up to
+200; zero returns only roots. Each project has a path, display name and optional
+last-use time (the newest successful agent registration in that directory).
+Recent directories may be outside search roots: creating an agent with a typed
+path adds that project to the history. This does not restrict which typed paths
+agent creation accepts.
+
+The host retains its latest 200 recent directories in
+`data_dir/recent-projects.json`, written atomically with private permissions.
+Deleting agents and restarting the daemon preserve history; directories that no
+longer exist are omitted from results. Resuming an older session cannot move a
+project's timestamp backward. A history write failure is logged without failing
+an otherwise successful agent creation.
 
 ## Attachment storage and routing
 

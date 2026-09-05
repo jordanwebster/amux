@@ -926,6 +926,7 @@ pub(super) async fn open_in_process_protocol_plane(
         route,
         crate::keymap_dir(&config.data_dir),
         config.data_dir.clone(),
+        config.repository_roots.clone(),
     )
     .map_err(|error| ProtocolError::ServerError {
         message: error.to_string(),
@@ -1020,6 +1021,7 @@ pub(super) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
         route,
         crate::keymap_dir(&config.data_dir),
         config.data_dir.clone(),
+        config.repository_roots.clone(),
     )
     .map_err(|error| ProtocolError::ServerError {
         message: error.to_string(),
