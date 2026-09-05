@@ -16,8 +16,12 @@ pub(crate) mod draft;
 pub(crate) mod panel;
 pub(crate) mod reader;
 
+use std::borrow::Cow;
+
 use amux_ui::claude::{AskDocument, QuestionFact, SuggestionFact, ToolInvocation};
+use amux_ui::claude_sdk::ElicitationForm;
 use ratatui::text::{Line, Span};
+use serde_json::Value;
 
 use crate::chat::blocks;
 use crate::render::{Theme, push_span, str_width};
@@ -43,8 +47,10 @@ pub(crate) struct SharedAsk<'m> {
     pub id: u64,
     pub kind: SharedAskKind<'m>,
     /// The ask-time document the reader opens: an estimated diff, a
-    /// proposed new file. Plans travel on the invocation instead.
-    pub document: Option<&'m AskDocument>,
+    /// proposed new file. Borrowed where the layer retains one and owned
+    /// where the chat derives it from the request's own input, so neither
+    /// transport pays for the other's shape. Plans travel separately.
+    pub document: Option<Cow<'m, AskDocument>>,
     pub state: SharedAskState<'m>,
     /// Why this ask cannot be answered from here, when it cannot be: the
     /// panel states the reason read-only rather than offering actions the
@@ -65,6 +71,25 @@ pub(crate) enum SharedAskKind<'m> {
     },
     /// `AskUserQuestion`.
     Question { questions: &'m [QuestionFact] },
+    /// Plan review as a session names it outright. The terminal transport
+    /// has no such row — there, plan review is a permission ask carrying
+    /// a [`ToolInvocation::Plan`] — so the two arms exist side by side and
+    /// [`SharedAsk::plan`] reads whichever arrived.
+    Plan { plan: Option<&'m str> },
+    /// An MCP server asking its own question of the person, as a form over
+    /// the schema it sent.
+    Elicitation {
+        server: Option<&'m str>,
+        message: &'m str,
+        form: &'m ElicitationForm,
+    },
+    /// A dialog the provider raised. The kind is an open string and the
+    /// payload is opaque, so the panel renders by kind and answers only
+    /// the shapes the encoder can express.
+    Dialog {
+        dialog_kind: &'m str,
+        payload: &'m Value,
+    },
 }
 
 /// Where the ask stands, in the terms the panel renders.
@@ -93,12 +118,19 @@ pub(crate) enum AnswerSummary {
     PlanApprovedManual,
     ChangesRequested,
     QuestionAnswered,
+    FormSent,
+    FormDeclined,
+    Cancelled,
+    DialogChosen,
 }
 
 impl AnswerSummary {
     pub(crate) fn glyph(self) -> &'static str {
         match self {
-            AnswerSummary::Denied | AnswerSummary::ChangesRequested => "✗",
+            AnswerSummary::Denied
+            | AnswerSummary::ChangesRequested
+            | AnswerSummary::FormDeclined
+            | AnswerSummary::Cancelled => "✗",
             AnswerSummary::QuestionAnswered => "?",
             _ => "✔",
         }
@@ -113,6 +145,10 @@ impl AnswerSummary {
             AnswerSummary::PlanApprovedManual => "plan approved (manual)",
             AnswerSummary::ChangesRequested => "changes requested",
             AnswerSummary::QuestionAnswered => "answered",
+            AnswerSummary::FormSent => "form sent",
+            AnswerSummary::FormDeclined => "declined",
+            AnswerSummary::Cancelled => "cancelled",
+            AnswerSummary::DialogChosen => "answered",
         }
     }
 }
@@ -123,10 +159,11 @@ impl SharedAsk<'_> {
     pub(crate) fn is_plan(&self) -> bool {
         matches!(
             &self.kind,
-            SharedAskKind::Permission {
-                invocation: ToolInvocation::Plan { .. },
-                ..
-            }
+            SharedAskKind::Plan { .. }
+                | SharedAskKind::Permission {
+                    invocation: ToolInvocation::Plan { .. },
+                    ..
+                }
         )
     }
 
@@ -137,8 +174,14 @@ impl SharedAsk<'_> {
                 invocation: ToolInvocation::Plan { plan, .. },
                 ..
             } => plan.as_deref(),
+            SharedAskKind::Plan { plan, .. } => *plan,
             _ => None,
         }
+    }
+
+    /// The ask-time document, however this chat came by it.
+    pub(crate) fn document(&self) -> Option<&AskDocument> {
+        self.document.as_deref()
     }
 
     /// Whether the ask carries anything the reader can show (`f`'s

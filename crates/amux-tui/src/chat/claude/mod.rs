@@ -57,7 +57,7 @@ pub(crate) fn shared_ask(ask: &Ask) -> SharedAsk<'_> {
             },
             AskKind::Question { questions } => SharedAskKind::Question { questions },
         },
-        document: ask.document.as_ref(),
+        document: ask.document.as_ref().map(std::borrow::Cow::Borrowed),
         state: match &ask.state {
             AskState::Pending => SharedAskState::Pending,
             AskState::AnsweredOptimistic { answer, .. } => SharedAskState::Answered {

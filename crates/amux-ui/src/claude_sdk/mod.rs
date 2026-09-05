@@ -12,7 +12,8 @@ pub(crate) mod update;
 use std::collections::VecDeque;
 
 pub use asks::{
-    Ask, AskKind, AskState, AskWhy, ElicitationField, ElicitationFieldKind, ElicitationForm,
+    Ask, AskKind, AskState, AskWhy, DialogChoice, DialogChoices, ElicitationField,
+    ElicitationFieldKind, ElicitationForm, dialog_choices, dialog_payload_summary,
 };
 use chrono::{DateTime, Utc};
 pub(crate) use condition::check_projection_invariant;

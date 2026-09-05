@@ -17,15 +17,21 @@ mod render;
 
 use std::borrow::Cow;
 
+use amux_ui::claude::facts::ask_document;
 use amux_ui::claude::{AcceptedPlan, ToolInvocation};
-use amux_ui::claude_sdk::{FeedEntryKind, Finality, SdkPhase};
+use amux_ui::claude_sdk::{
+    Ask, AskKind, AskState, FeedEntryKind, Finality, PermissionAnswer, PlanAnswer, SdkAnswer,
+    SdkPhase, SendGate,
+};
 use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 pub(crate) use render::claude_sdk_frame_parts;
 use serde::{Deserialize, Serialize};
 
+use crate::chat::claude_shared::ask_ui::AskUi;
 use crate::chat::claude_shared::draft::{self, ReviewDraft};
 use crate::chat::claude_shared::reader::{ReaderContext, ReaderSource, ReaderView};
+use crate::chat::claude_shared::{AnswerSummary, SharedAsk, SharedAskKind, SharedAskState};
 use crate::chat::inline::InlineAsk;
 use crate::chat::viewport::ScrollIntent;
 use crate::composer::Composer;
@@ -40,12 +46,110 @@ struct PendingSend {
     text: String,
 }
 
+/// A dispatched ask answer being watched for a SYNCHRONOUS refusal: the
+/// asynchronous path flips the ask's own state in the Model, but a
+/// reducer refusal never touches the ask, so the view states it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PendingAnswer {
+    op: OpId,
+    ask: u64,
+}
+
 /// A dispatched diff request being watched for the frozen patch it will
 /// return. The review page opens over the result, so nothing about it
 /// exists until the op finishes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct PendingDiff {
     op: OpId,
+}
+
+/// This session's ask, as the shared panels and reader read it.
+///
+/// The session names each obligation outright — a plan is a plan row, not
+/// a tool use to recognize — so the only thing derived here is the
+/// ask-time document: this layer keeps the request's own input rather
+/// than a second copy of the diff computed from it.
+pub(crate) fn shared_ask(ask: &Ask) -> SharedAsk<'_> {
+    let mut document = None;
+    let kind = match &ask.kind {
+        AskKind::Permission {
+            tool_name,
+            invocation,
+            suggestions,
+        } => {
+            document = ask_document(Some(tool_name), &ask.input).map(Cow::Owned);
+            SharedAskKind::Permission {
+                tool_name: Some(tool_name),
+                invocation,
+                suggestions,
+            }
+        }
+        // The plan's own file path travels with the answer, not on
+        // screen: a person reviews the plan, not where it was written.
+        AskKind::Plan { plan, .. } => SharedAskKind::Plan {
+            plan: plan.as_deref(),
+        },
+        AskKind::Question { questions } => SharedAskKind::Question { questions },
+        AskKind::Elicitation {
+            server,
+            message,
+            form,
+        } => SharedAskKind::Elicitation {
+            server: server.as_deref(),
+            message,
+            form,
+        },
+        AskKind::Dialog {
+            dialog_kind,
+            payload,
+        } => SharedAskKind::Dialog {
+            dialog_kind,
+            payload,
+        },
+    };
+    SharedAsk {
+        id: ask.id,
+        kind,
+        document,
+        state: match &ask.state {
+            AskState::Pending => SharedAskState::Pending,
+            AskState::AnsweredOptimistic { answer, .. } => SharedAskState::Answered {
+                summary: answer_summary(answer),
+            },
+            AskState::SendFailed { message } => SharedAskState::Failed { message },
+        },
+        // Every ask this session raises can be answered from here: the
+        // provider takes a typed decision, so there is no menu shape to
+        // recognize and no refusal to state.
+        refusal: None,
+    }
+}
+
+/// What an in-flight answer was, in the words the collapsed marker uses.
+fn answer_summary(answer: &SdkAnswer) -> AnswerSummary {
+    use amux_ui::claude_sdk::{DialogAnswer, ElicitationAnswer};
+    match answer {
+        SdkAnswer::Permission(PermissionAnswer::AllowOnce) => AnswerSummary::AllowedOnce,
+        SdkAnswer::Permission(PermissionAnswer::AllowScoped { .. }) => AnswerSummary::AllowedScoped,
+        SdkAnswer::Permission(PermissionAnswer::Deny { .. }) => AnswerSummary::Denied,
+        SdkAnswer::Plan(PlanAnswer::ApproveAuto) => AnswerSummary::PlanApprovedAuto,
+        SdkAnswer::Plan(PlanAnswer::ApproveManual) => AnswerSummary::PlanApprovedManual,
+        SdkAnswer::Plan(PlanAnswer::RequestChanges { .. }) => AnswerSummary::ChangesRequested,
+        SdkAnswer::Question(_) => AnswerSummary::QuestionAnswered,
+        SdkAnswer::Elicitation(ElicitationAnswer::Accept { .. }) => AnswerSummary::FormSent,
+        SdkAnswer::Elicitation(ElicitationAnswer::Decline) => AnswerSummary::FormDeclined,
+        SdkAnswer::Elicitation(ElicitationAnswer::Cancel) => AnswerSummary::Cancelled,
+        SdkAnswer::Dialog(DialogAnswer::Choose { .. }) => AnswerSummary::DialogChosen,
+        SdkAnswer::Dialog(DialogAnswer::Cancel) => AnswerSummary::Cancelled,
+    }
+}
+
+/// Whether this client may answer the ask on screen at all: the session
+/// takes an answer only while it is waiting for one, and a read-only
+/// observer never answers.
+pub(crate) fn allows_answer(model: &Model, chat: &View) -> bool {
+    !chat.read_only(model)
+        && amux_ui::claude_sdk::send_gate(model, chat.agent) == SendGate::NeedsYou
 }
 
 /// Renderer-local chat state. Never persisted, never authoritative.
@@ -55,9 +159,15 @@ pub struct View {
     pub composer: Composer,
     pub(crate) scroll_intent: Option<ScrollIntent>,
     pending_send: Option<PendingSend>,
+    pending_answer: Option<PendingAnswer>,
     /// A failed send or a diff that could not be read, stated until the
     /// next keypress dismisses it.
     pub(crate) send_failure: Option<String>,
+    /// A refused answer dispatch, stated in the panel until dismissed.
+    pub(crate) ask_failure: Option<String>,
+    /// Panel state for the current ask head; `None` when nothing is
+    /// docked.
+    pub(crate) ask_ui: Option<AskUi>,
     /// The fullscreen reader, when open.
     pub(crate) reader: Option<ReaderView>,
     /// The chrome-wide two-press quit guard.
@@ -87,7 +197,10 @@ impl View {
             composer: Composer::default(),
             scroll_intent: None,
             pending_send: None,
+            pending_answer: None,
             send_failure: None,
+            ask_failure: None,
+            ask_ui: None,
             reader: None,
             quit_guard: QuitGuard::default(),
             leader,
@@ -177,6 +290,13 @@ impl View {
                     text: text.clone(),
                 });
             }
+            Command::ClaudeSdk(amux_ui::claude_sdk::ClaudeSdkCommand::AnswerAsk {
+                agent,
+                ask,
+                ..
+            }) if *agent == self.agent => {
+                self.pending_answer = Some(PendingAnswer { op, ask: *ask });
+            }
             Command::RequestDiff { agent, .. } if *agent == self.agent => {
                 self.pending_diff = Some(PendingDiff { op });
             }
@@ -207,8 +327,100 @@ impl View {
             }
             self.pending_send = None;
         }
+        self.reconcile_answer(model);
         self.reconcile_diff(model);
+        self.sync_ask(model);
         crate::chat::inline::reconcile(model, self.agent, &mut self.inline_ask);
+    }
+
+    /// A dispatched answer the reducer refused outright: the panel states
+    /// why, while the ask it was for is still the one on screen.
+    fn reconcile_answer(&mut self, model: &Model) {
+        let Some(pending) = self.pending_answer.clone() else {
+            return;
+        };
+        let Some(finished) = model.finished_op(pending.op) else {
+            return;
+        };
+        self.pending_answer = None;
+        if let OpOutcome::Error { error } = &finished.outcome {
+            let still_pending = model
+                .claude_sdk(self.agent)
+                .and_then(|layer| layer.ask_head())
+                .is_some_and(|head| {
+                    head.id == pending.ask && matches!(head.state, AskState::Pending)
+                });
+            if still_pending {
+                self.ask_failure = Some(error.message());
+                // A refusal collected from the reader has to land
+                // somewhere visible: the reader closes to the docked
+                // panel, which states it.
+                if self.ask_reader_open() {
+                    self.reader = None;
+                }
+            }
+        }
+    }
+
+    /// Sync panel and reader to the session's ask head. Idempotent; also
+    /// called at key time, because a chat may render before its first
+    /// reconcile.
+    pub(crate) fn sync_ask(&mut self, model: &Model) {
+        let Some(ask) = model
+            .claude_sdk(self.agent)
+            .and_then(|layer| layer.ask_head())
+        else {
+            // The ask resolved — here or on another client; the feed
+            // carries what became of it.
+            self.ask_ui = None;
+            self.ask_failure = None;
+            if self.ask_reader_open() {
+                self.reader = None;
+            }
+            return;
+        };
+        if self.ask_ui.as_ref().map(|ui| ui.ask_id) != Some(ask.id) {
+            // A new head gets a fresh panel; the old ask's typed state,
+            // stated failure and reader die with it.
+            self.ask_ui = Some(AskUi::for_ask(&shared_ask(ask)));
+            self.ask_failure = None;
+            if self.ask_reader_open() {
+                self.reader = None;
+            }
+            // A plan is read before it is approved, so it opens the
+            // reader directly. Read-only chats get the fact panel, with
+            // `f` to read it.
+            if !self.read_only(model)
+                && matches!(ask.kind, AskKind::Plan { .. })
+                && matches!(ask.state, AskState::Pending)
+            {
+                self.reader = Some(ReaderView::ask());
+            }
+        }
+        // Once the answer is in flight the reader closes: the collapsed
+        // pending marker renders docked.
+        if !matches!(ask.state, AskState::Pending) && self.ask_reader_open() {
+            self.reader = None;
+        }
+    }
+
+    /// The ask this session is waiting on, when it is waiting on one.
+    pub(crate) fn ask_head<'m>(&self, model: &'m Model) -> Option<&'m Ask> {
+        model
+            .claude_sdk(self.agent)
+            .and_then(|layer| layer.ask_head())
+    }
+
+    /// The reader is open on the pending ask's document, as opposed to a
+    /// plan this session already got through.
+    pub(crate) fn ask_reader_open(&self) -> bool {
+        matches!(
+            self.reader,
+            Some(ReaderView {
+                source: ReaderSource::Ask,
+                ..
+            })
+        )
     }
 
     /// A requested diff came back: freeze it into a review and put the
@@ -270,22 +482,24 @@ impl View {
 
 /// Everything the shared reader needs from this chat. `None` when
 /// nothing is being read.
-///
-/// Asks do not reach the reader from here yet: this session's obligations
-/// carry kinds the shared panel does not describe, and half a panel would
-/// offer actions it cannot take.
 pub(crate) fn reader_context<'m>(model: &'m Model, chat: &'m View) -> Option<ReaderContext<'m>> {
     let reader = chat.reader.as_ref()?;
     let layer = model.claude_sdk(chat.agent)?;
     Some(ReaderContext {
         reader,
-        ask: None,
-        ask_ui: None,
-        can_answer: false,
+        ask: layer.ask_head().map(shared_ask),
+        ask_ui: chat.ask_ui.as_ref(),
+        can_answer: allows_answer(model, chat),
         accepted_plans: Cow::Owned(accepted_plans(model, chat.agent)),
         attachments: layer.attachments(),
         quit_guard_armed: chat.quit_guard.is_armed(),
     })
+}
+
+/// Whether the open reader's ask can be answered from here.
+pub(crate) fn reader_actionable(model: &Model, chat: &View) -> bool {
+    reader_context(model, chat)
+        .is_some_and(|ctx| crate::chat::claude_shared::reader::answer_actionable(&ctx))
 }
 
 /// The plans this session put up for review and got through, oldest

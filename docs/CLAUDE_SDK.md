@@ -297,13 +297,18 @@ object with `properties` and `required`. Answered
     Confirm the word PELICAN.
 
     › confirmed   PELICAN▌
-      required · text
+                  required · text
 
-    › 1. Send
-      2. Decline — the server is told you declined
+      1. Send
+      2. Decline     the server is told you declined
       3. Cancel
-    tab next field · enter confirm · esc back (never answers)
+    tab/↑↓ move · enter next field · esc back (never answers)
 ```
+
+One cursor moves over the fields and then the action list: a field is
+edited where it sits, Enter steps to the next one, and on the action list
+Enter answers. A required field left empty keeps Send from being offered,
+with what is missing stated where Send is.
 
 The form is derived from the schema, not authored: one field per property, in
 schema order, typed as text, number, boolean or a choice list from `enum`,

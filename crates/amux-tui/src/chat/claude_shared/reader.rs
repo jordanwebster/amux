@@ -117,7 +117,7 @@ fn resolve<'m>(ctx: &'m ReaderContext<'m>) -> Option<Resolved<'m>> {
     match &ctx.reader.source {
         ReaderSource::Ask => {
             let ask = ctx.ask.as_ref()?;
-            let resolved = match (ask.document, ask.plan()) {
+            let resolved = match (ask.document(), ask.plan()) {
                 (Some(AskDocument::Diff(document)), _) => Resolved {
                     title: format!(
                         "diff — {}  {}",

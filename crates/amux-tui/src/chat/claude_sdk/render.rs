@@ -22,8 +22,8 @@ use crate::chat::blocks::{
     paint_composer_block, paint_header, paint_plan, paint_thinking, paint_tool_line,
     paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
-use crate::chat::claude_sdk::{View, is_open, reader_context};
-use crate::chat::claude_shared::{armed_quit_line, reader};
+use crate::chat::claude_sdk::{View, is_open, reader_context, shared_ask};
+use crate::chat::claude_shared::{armed_quit_line, panel, reader};
 use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, family_banner, message_glyph, subagent_marker};
@@ -231,10 +231,29 @@ fn bottom_block(
     height: usize,
     paused: bool,
 ) -> Vec<Line<'static>> {
+    let head = chat.ask_head(model);
     let mut lines = if chat.read_only(model) {
-        readonly_bottom(chat, theme)
-    } else if let Some(inline) = chat.inline_ask.as_ref() {
+        readonly_bottom(model, chat, theme, width)
+    } else if let Some(inline) = chat.inline_ask.as_ref().filter(|_| head.is_none()) {
+        // A child's ask docks where the composer is, exactly as this
+        // session's own would; this session's own comes first.
         crate::chat::inline::panel_lines(model, inline, width, theme, chat.quit_guard.is_armed())
+    } else if let Some(ask) = head {
+        let shared = shared_ask(ask);
+        panel::paint(
+            &shared,
+            panel::ask_panel(
+                &shared,
+                ask_count(model, chat),
+                chat.ask_ui.as_ref(),
+                chat.ask_failure.as_deref(),
+                blocks::panel_body_width(width),
+                theme,
+                chat.quit_guard.is_armed(),
+            ),
+            theme,
+            width,
+        )
     } else {
         return composer_bottom(model, chat, theme, width, height, paused);
     };
@@ -247,9 +266,34 @@ fn bottom_block(
     lines
 }
 
-/// The read-only chat's bottom block: the statement where the composer
-/// would be, and the pager hints.
-fn readonly_bottom(chat: &View, theme: Theme) -> Vec<Line<'static>> {
+/// How many obligations this session is waiting on: the panel says so in
+/// its title when the head is one of several.
+fn ask_count(model: &Model, chat: &View) -> usize {
+    model
+        .claude_sdk(chat.agent)
+        .map(|layer| layer.ask_count())
+        .unwrap_or(1)
+}
+
+/// The read-only chat's bottom block: the ask fact panel when one pends,
+/// the statement where the composer would be, and the pager hints.
+fn readonly_bottom(model: &Model, chat: &View, theme: Theme, width: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if let Some(ask) = chat.ask_head(model) {
+        let shared = shared_ask(ask);
+        lines.extend(panel::paint(
+            &shared,
+            panel::readonly_ask_panel(
+                &shared,
+                ask_count(model, chat),
+                blocks::panel_body_width(width),
+                theme,
+            ),
+            theme,
+            width,
+        ));
+        lines.push(Line::default());
+    }
     let mut marker = Line::default();
     push_span(
         &mut marker,
@@ -257,19 +301,24 @@ fn readonly_bottom(chat: &View, theme: Theme) -> Vec<Line<'static>> {
         "⊘ read-only — you are observing this session",
         theme.muted(),
     );
-    let footer = if chat.quit_guard.is_armed() {
+    lines.push(marker);
+    lines.push(Line::default());
+    let mut hints = String::from("pgup/pgdn scroll");
+    if chat
+        .ask_head(model)
+        .is_some_and(|ask| shared_ask(ask).has_readable())
+    {
+        hints.push_str(" · f view document");
+    }
+    hints.push_str(" · q back to fleet");
+    lines.push(if chat.quit_guard.is_armed() {
         armed_quit_line(theme)
     } else {
-        let mut line = Line::default();
-        push_span(
-            &mut line,
-            blocks::TEXT_COL,
-            "pgup/pgdn scroll · q back to fleet",
-            theme.muted(),
-        );
-        line
-    };
-    vec![marker, Line::default(), footer]
+        let mut footer = Line::default();
+        push_span(&mut footer, blocks::TEXT_COL, hints, theme.muted());
+        footer
+    });
+    lines
 }
 
 /// The composer as the person's own surface, with one hint row under it.

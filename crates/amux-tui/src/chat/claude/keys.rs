@@ -670,7 +670,11 @@ fn panel_key(
         .map(|ui| ui.handle_key(&shared, &key, true))
         .unwrap_or(AskKeyOutcome::NotHandled);
     match outcome {
-        AskKeyOutcome::Answer(answer) => Some(dispatch_answer(chat, ask_id, answer)),
+        // The terminal transport raises no elicitation or dialog ask, so
+        // every answer a panel collects here is one it can carry.
+        AskKeyOutcome::Answer(answer) => answer
+            .claude()
+            .map(|answer| dispatch_answer(chat, ask_id, answer)),
         AskKeyOutcome::OpenReader => {
             chat.reader = Some(ReaderView::ask());
             None
@@ -711,7 +715,11 @@ fn reader_key(
             .map(|ui| ui.handle_key(&shared, &key, false))
             .unwrap_or(AskKeyOutcome::NotHandled);
         match outcome {
-            AskKeyOutcome::Answer(answer) => return Some(dispatch_answer(chat, ask_id, answer)),
+            AskKeyOutcome::Answer(answer) => {
+                return answer
+                    .claude()
+                    .map(|answer| dispatch_answer(chat, ask_id, answer));
+            }
             AskKeyOutcome::Handled | AskKeyOutcome::OpenReader => {
                 // Enter on Deny opens the one-line feedback stage, which
                 // is docked (C2): the reader closes to the panel.

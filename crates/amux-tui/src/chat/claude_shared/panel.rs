@@ -12,10 +12,17 @@ use amux_ui::claude::{
     AskDocument, QuestionFact, SuggestionDestination, SuggestionFact, SuggestionKind,
     ToolInvocation,
 };
+use amux_ui::claude_sdk::{
+    ElicitationField, ElicitationFieldKind, ElicitationForm, dialog_choices, dialog_payload_summary,
+};
 use ratatui::text::{Line, Span};
+use serde_json::Value;
 
 use crate::chat::blocks::{self, paint_ask_panel};
-use crate::chat::claude_shared::ask_ui::{self, AskStage, AskUi, QuestionDraft, QuestionUi};
+use crate::chat::claude_shared::ask_ui::{
+    self, AskStage, AskUi, ElicitationUi, FormAction, QuestionDraft, QuestionUi, form_actions,
+    form_fields,
+};
 use crate::chat::claude_shared::{SharedAsk, SharedAskKind, SharedAskState, diff};
 use crate::chat::frame::BlockKey;
 use crate::composer::Composer;
@@ -119,7 +126,15 @@ pub(crate) fn ask_identity(ask: &SharedAsk<'_>) -> String {
         ..
     } = &ask.kind
     else {
-        return "question".to_string();
+        return match &ask.kind {
+            SharedAskKind::Plan { .. } => "plan review".to_string(),
+            SharedAskKind::Elicitation { server, .. } => match server {
+                Some(server) => format!("{server} asks"),
+                None => "external asks".to_string(),
+            },
+            SharedAskKind::Dialog { dialog_kind, .. } => (*dialog_kind).to_string(),
+            _ => "question".to_string(),
+        };
     };
     let name = tool_name.unwrap_or("tool");
     let mut identity = match invocation {
@@ -141,7 +156,7 @@ pub(crate) fn ask_identity(ask: &SharedAsk<'_>) -> String {
         } => format!("{name} {description}"),
         _ => name.to_string(),
     };
-    match ask.document {
+    match ask.document() {
         Some(AskDocument::Diff(diff_document)) => {
             identity.push(' ');
             identity.push_str(&diff::magnitude_text(&diff_document.magnitude));
@@ -287,8 +302,11 @@ pub(crate) fn permission_actions(
 fn body_lines(ask: &SharedAsk<'_>, width: usize, theme: Theme) -> Vec<Line<'static>> {
     // A diff document is not the panel's to place: `paint` puts its rows
     // above these, through the shared diff rows both chats use.
-    if let Some(AskDocument::NewFile { content }) = ask.document {
+    if let Some(AskDocument::NewFile { content }) = ask.document() {
         return diff::new_file_preview(content, width, theme, diff::PREVIEW_BUDGET);
+    }
+    if let Some(plan) = ask.plan() {
+        return plan_preview(plan, width, theme);
     }
     let SharedAskKind::Permission { invocation, .. } = &ask.kind else {
         return Vec::new();
@@ -315,41 +333,42 @@ fn body_lines(ask: &SharedAsk<'_>, width: usize, theme: Theme) -> Vec<Line<'stat
             }
             lines
         }
-        ToolInvocation::Plan {
-            plan: Some(plan), ..
-        } => {
-            let mut lines = Vec::new();
-            let total = plan.lines().count();
-            for text in plan.lines().take(PLAN_PREVIEW_LINES) {
-                for spans in
-                    markdown::plain_rows(text, width.saturating_sub(TEXT_COL).max(1), theme.muted())
-                {
-                    let mut line = Line::default();
-                    push_span(&mut line, TEXT_COL, "", theme.muted());
-                    line.spans.extend(spans);
-                    lines.push(line);
-                }
-            }
-            if total > PLAN_PREVIEW_LINES {
-                let mut line = Line::default();
-                push_span(
-                    &mut line,
-                    GLYPH_COL + 2,
-                    format!(
-                        "⋮  +{} more lines · f full plan",
-                        total - PLAN_PREVIEW_LINES
-                    ),
-                    theme.muted(),
-                );
-                lines.push(line);
-            }
-            lines
-        }
         // The compact typed fallback: the header already carries the
         // identity; nothing else is stated about a tool this build does
         // not know.
         _ => Vec::new(),
     }
+}
+
+/// The docked plan preview (C3): the first lines, and the arithmetic of
+/// what the reader has that this does not.
+fn plan_preview(plan: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let total = plan.lines().count();
+    for text in plan.lines().take(PLAN_PREVIEW_LINES) {
+        for spans in
+            markdown::plain_rows(text, width.saturating_sub(TEXT_COL).max(1), theme.muted())
+        {
+            let mut line = Line::default();
+            push_span(&mut line, TEXT_COL, "", theme.muted());
+            line.spans.extend(spans);
+            lines.push(line);
+        }
+    }
+    if total > PLAN_PREVIEW_LINES {
+        let mut line = Line::default();
+        push_span(
+            &mut line,
+            GLYPH_COL + 2,
+            format!(
+                "⋮  +{} more lines · f full plan",
+                total - PLAN_PREVIEW_LINES
+            ),
+            theme.muted(),
+        );
+        lines.push(line);
+    }
+    lines
 }
 
 // --- the panel ---------------------------------------------------------------
@@ -406,6 +425,16 @@ pub(crate) fn ask_panel(
         SharedAskKind::Question { questions } => {
             question_panel(questions, ui, failed, ask_count, ctx)
         }
+        SharedAskKind::Plan { .. } => plan_panel(ask, ui, failed, ask_count, ctx),
+        SharedAskKind::Elicitation {
+            server,
+            message,
+            form,
+        } => elicitation_panel(*server, message, form, ui, failed, ask_count, ctx),
+        SharedAskKind::Dialog {
+            dialog_kind,
+            payload,
+        } => dialog_panel(dialog_kind, payload, ui, failed, ask_count, ctx),
         SharedAskKind::Permission { suggestions, .. } => {
             if ask.is_plan() {
                 return plan_panel(ask, ui, failed, ask_count, ctx);
@@ -809,6 +838,231 @@ fn review_lines(
     lines
 }
 
+// --- the elicitation form ----------------------------------------------------
+
+/// An MCP server's own question, as a form over the schema it sent: one
+/// row per field in schema order, then the numbered answers. A schema
+/// this build cannot express states why and offers only the two answers
+/// that need no fields.
+#[allow(clippy::too_many_arguments)]
+fn elicitation_panel(
+    server: Option<&str>,
+    message: &str,
+    form: &ElicitationForm,
+    ui: &AskUi,
+    failed: Option<&str>,
+    ask_count: usize,
+    ctx: PanelContext,
+) -> AskPanel {
+    let PanelContext {
+        width,
+        theme,
+        quit_guard_armed,
+    } = ctx;
+    let title = match server {
+        Some(server) => format!("{server} asks"),
+        None => "external asks".to_string(),
+    };
+    let mut panel = AskPanel::titled(title, ask_count);
+    if let Some(message) = failed {
+        panel.body.extend(failure_line(message, width, theme));
+    }
+    for spans in markdown::plain_rows(message, width.saturating_sub(TEXT_COL).max(1), theme.text())
+    {
+        let mut line = Line::default();
+        push_span(&mut line, TEXT_COL, "", theme.text());
+        line.spans.extend(spans);
+        panel.body.push(line);
+    }
+
+    let fresh = ElicitationUi::new(form);
+    let state = match &ui.stage {
+        AskStage::Elicitation(state) if state.drafts.len() == form_fields(form).len() => state,
+        _ => &fresh,
+    };
+    let fields = form_fields(form);
+    let actions = form_actions(form);
+
+    if let ElicitationForm::Unsupported { reason } = form {
+        panel.body.push(blank());
+        panel.body.extend(failure_line(
+            &format!("{reason} — this form cannot be filled in from the chat"),
+            width,
+            theme,
+        ));
+    }
+    for (index, field) in fields.iter().enumerate() {
+        panel
+            .actions
+            .extend(field_rows(field, index, state, width, theme));
+    }
+    if !fields.is_empty() {
+        panel.actions.push(blank());
+    }
+    // The reason Send is not on offer belongs where Send is, not in a
+    // footnote: a person reading the action list learns what is missing.
+    let blocked = state.content(form).err();
+    panel.actions.extend(action_lines(
+        &actions
+            .iter()
+            .map(|action| match action {
+                FormAction::Send => ("Send", blocked.as_deref()),
+                FormAction::Decline => ("Decline", Some("the server is told you declined")),
+                FormAction::Cancel => ("Cancel", None),
+            })
+            .collect::<Vec<_>>(),
+        state.on_actions().then(|| state.action(form)),
+        width,
+        theme,
+    ));
+
+    let hint = if state.on_actions() {
+        format!(
+            "1-{}/↑↓ select · enter confirm · esc back (never answers)",
+            actions.len()
+        )
+    } else {
+        "tab/↑↓ move · enter next field · esc back (never answers)".to_string()
+    };
+    panel.hinted(&hint, quit_guard_armed, theme)
+}
+
+/// One schema field: its name and value on one row, what it is and
+/// whether it must be filled on the dim row beneath.
+fn field_rows(
+    field: &ElicitationField,
+    index: usize,
+    state: &ElicitationUi,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let focused = !state.on_actions() && state.cursor == index;
+    let label = field.title.clone().unwrap_or_else(|| field.name.clone());
+    let value_col = TEXT_COL + str_width(&label).max(12) + 3;
+    let mut line = Line::default();
+    if focused {
+        push_span(&mut line, GLYPH_COL, "›", theme.text());
+    }
+    push_span(&mut line, TEXT_COL, label, theme.text());
+    let value = state
+        .drafts
+        .get(index)
+        .map(|draft| draft.display(field, focused))
+        .unwrap_or_default();
+    push_span(&mut line, value_col, value, theme.text());
+    let mut rows = vec![line];
+
+    let mut meta = String::new();
+    if field.required {
+        meta.push_str("required · ");
+    }
+    meta.push_str(match &field.kind {
+        ElicitationFieldKind::String => "text",
+        ElicitationFieldKind::Number => "number",
+        ElicitationFieldKind::Integer => "whole number",
+        ElicitationFieldKind::Boolean => "space toggles",
+        ElicitationFieldKind::Enum(_) => "←/→ choose",
+    });
+    if let Some(description) = &field.description {
+        meta.push_str(" · ");
+        meta.push_str(description);
+    }
+    // The same rule the option descriptions follow: a note that would
+    // not fit is left off rather than wrapped under its own value.
+    if value_col + str_width(&meta) < width {
+        let mut note = Line::default();
+        push_span(&mut note, value_col, meta, theme.muted());
+        rows.push(note);
+    }
+    rows
+}
+
+// --- dialogs -----------------------------------------------------------------
+
+/// A dialog the provider raised. A payload carrying a message and
+/// labelled choices is answerable; anything else states the kind, what
+/// the payload holds and offers only Cancel — which is labelled as what
+/// it is, so nobody reads it as agreement.
+fn dialog_panel(
+    dialog_kind: &str,
+    payload: &Value,
+    ui: &AskUi,
+    failed: Option<&str>,
+    ask_count: usize,
+    ctx: PanelContext,
+) -> AskPanel {
+    let PanelContext {
+        width,
+        theme,
+        quit_guard_armed,
+    } = ctx;
+    let mut panel = AskPanel::titled(format!("dialog — {dialog_kind}"), ask_count);
+    if let Some(message) = failed {
+        panel.body.extend(failure_line(message, width, theme));
+    }
+    let cursor = Some(ui.menu_cursor());
+    match dialog_choices(payload) {
+        Some(choices) => {
+            for spans in markdown::plain_rows(
+                &choices.message,
+                width.saturating_sub(TEXT_COL).max(1),
+                theme.text(),
+            ) {
+                let mut line = Line::default();
+                push_span(&mut line, TEXT_COL, "", theme.text());
+                line.spans.extend(spans);
+                panel.body.push(line);
+            }
+            let mut rows: Vec<(&str, Option<&str>)> = choices
+                .options
+                .iter()
+                .map(|option| (option.label.as_str(), option.description.as_deref()))
+                .collect();
+            rows.push((CANCEL_LABEL, None));
+            panel
+                .actions
+                .extend(action_lines(&rows, cursor, width, theme));
+            panel.hinted(
+                &format!(
+                    "1-{}/↑↓ select · enter confirm · esc back (never answers)",
+                    rows.len()
+                ),
+                quit_guard_armed,
+                theme,
+            )
+        }
+        None => {
+            panel.body.extend(failure_line(
+                "This request cannot be answered from the chat.",
+                width,
+                theme,
+            ));
+            let mut line = Line::default();
+            push_span(
+                &mut line,
+                TEXT_COL,
+                format!(
+                    "kind {dialog_kind} · payload: {}",
+                    dialog_payload_summary(payload)
+                ),
+                theme.muted(),
+            );
+            panel.body.push(line);
+            panel
+                .actions
+                .extend(action_lines(&[(CANCEL_LABEL, None)], cursor, width, theme));
+            panel.hinted(
+                "enter confirm · esc back (never answers)",
+                quit_guard_armed,
+                theme,
+            )
+        }
+    }
+}
+
+/// Cancel says what it does to the agent, wherever it appears.
+const CANCEL_LABEL: &str = "Cancel — the agent is told the dialog was dismissed";
+
 // --- read-only fact panels (F1) ----------------------------------------------
 
 /// The read-only ask fact panel: what the agent is asking, the identical
@@ -832,13 +1086,36 @@ pub(crate) fn readonly_ask_panel(
                 .unwrap_or_default();
             (format!("the agent is asking a question — {text}"), None)
         }
+        SharedAskKind::Plan { .. } => (
+            "the agent is asking for plan approval".to_string(),
+            Some("f read document"),
+        ),
         SharedAskKind::Permission { .. } if ask.is_plan() => (
             "the agent is asking for plan approval".to_string(),
             Some("f read document"),
         ),
+        SharedAskKind::Elicitation {
+            server, message, ..
+        } => (
+            match server {
+                Some(server) => format!("{server} is asking — {message}"),
+                None => format!("a server is asking — {message}"),
+            },
+            None,
+        ),
+        SharedAskKind::Dialog {
+            dialog_kind,
+            payload,
+        } => (
+            match dialog_choices(payload) {
+                Some(choices) => format!("the agent is asking — {}", choices.message),
+                None => format!("the agent raised a {dialog_kind} dialog"),
+            },
+            None,
+        ),
         SharedAskKind::Permission { .. } => (
             format!("the agent is asking permission — {}", ask_identity(ask)),
-            ask.document.map(|_| "f read document"),
+            ask.document().map(|_| "f read document"),
         ),
     };
     let mut panel = AskPanel::titled(title, ask_count);
@@ -866,7 +1143,7 @@ pub(crate) fn paint(
     theme: Theme,
     width: usize,
 ) -> Vec<Line<'static>> {
-    if let Some(AskDocument::Diff(document)) = ask.document {
+    if let Some(AskDocument::Diff(document)) = ask.document() {
         let body_width = blocks::panel_body_width(width);
         let preview =
             crate::chat::diff::paint_rows(&document.document.rows(), theme, body_width, 0, true)

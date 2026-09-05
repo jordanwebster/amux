@@ -7,12 +7,13 @@
 //! session fact this screen can change directly — Shift+Tab cycles it —
 //! rather than a menu somewhere inside the agent's own terminal.
 
-use amux_ui::claude_sdk::{ClaudeSdkCommand, SdkPhase, SendGate};
+use amux_ui::claude_sdk::{AskState, ClaudeSdkCommand, SdkAnswer, SdkPhase, SendGate};
 use amux_ui::{AgentId, Command, DiffBase, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use super::View;
+use super::{View, reader_actionable, shared_ask};
+use crate::chat::claude_shared::ask_ui::{AskKeyOutcome, AskStage, AskUi, PanelAnswer};
 use crate::chat::claude_shared::reader::{self, ReaderSource, ReaderView};
 use crate::chat::inline::{InlineAsk, InlineOutcome};
 use crate::chat::viewport::ScrollIntent;
@@ -85,7 +86,10 @@ pub(crate) fn handle_chat_key(
         return None;
     }
     chat.quit_guard.disarm();
+    // Any keypress dismisses a stated failure; the Model keeps the
+    // outcome either way.
     chat.send_failure = None;
+    chat.ask_failure = None;
 
     // The `?` overlay: any other key closes it and is consumed.
     if chat.help {
@@ -96,6 +100,12 @@ pub(crate) fn handle_chat_key(
     if chat.review_open() {
         return review_key(chat, model, key, viewport);
     }
+
+    // A pending ask owns the surface, so the panel has to exist before a
+    // key is routed: a chat may take a keystroke before its first
+    // reconcile.
+    chat.sync_ask(model);
+
     if chat.reader.is_some() {
         return reader_key(chat, model, key, viewport);
     }
@@ -115,12 +125,25 @@ pub(crate) fn handle_chat_key(
         return interrupt(chat, model);
     }
 
-    match key.code {
-        KeyCode::Esc => {
-            if chat.composer.is_empty() {
-                follow(chat);
-            }
+    // The view-only Esc chain: it steps back through what is open and
+    // never answers an ask.
+    if key.code == KeyCode::Esc {
+        esc_chain(chat);
+        return None;
+    }
+
+    // This session's own ask owns the composer area and its keys.
+    if let Some(head) = chat.ask_head(model) {
+        if matches!(head.state, AskState::AnsweredOptimistic { .. }) {
+            // The collapsed marker holds the panel while the answer is in
+            // flight: there is nothing to select, so only the feed moves.
+            scroll_keys(chat, &key);
+            return None;
         }
+        return panel_key(chat, model, key);
+    }
+
+    match key.code {
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             chat.composer.insert_newline();
         }
@@ -170,14 +193,27 @@ pub(crate) fn handle_chat_key(
 
 pub(crate) fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
     chat.send_failure = None;
+    chat.ask_failure = None;
     chat.quit_guard.disarm();
     chat.reconcile(model);
+    // An open answer field takes the paste as one line; the draft behind
+    // a docked panel is not what the person is typing into.
+    if chat.reader.is_some() {
+        if reader_actionable(model, chat)
+            && let Some(field) = chat.ask_ui.as_mut().and_then(AskUi::active_field)
+        {
+            field.paste(&one_line(text));
+        }
+        return;
+    }
+    if let Some(ui) = chat.ask_ui.as_mut() {
+        if let Some(field) = ui.active_field() {
+            field.paste(&one_line(text));
+        }
+        return;
+    }
     if let Some(inline) = chat.inline_ask.as_mut() {
-        let one_line = text
-            .replace("\r\n", "\n")
-            .replace('\r', "\n")
-            .replace('\n', " ");
-        crate::chat::inline::handle_paste(inline, &one_line);
+        crate::chat::inline::handle_paste(inline, &one_line(text));
         return;
     }
     // Every surface that covers the composer drops the paste rather than
@@ -186,6 +222,13 @@ pub(crate) fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
         return;
     }
     chat.composer.paste_or_attach(text);
+}
+
+/// Pasted text as a one-line answer field takes it.
+fn one_line(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\n', " ")
 }
 
 /// Ctrl+V: attach what the clipboard holds.
@@ -207,6 +250,7 @@ pub(crate) fn attach_clipboard(chat: &mut View, model: &Model, content: Clipboar
         || chat.reader.is_some()
         || chat.review_open()
         || chat.read_only(model)
+        || chat.ask_ui.is_some()
         || chat.inline_ask.is_some()
     {
         return;
@@ -340,10 +384,45 @@ fn reader_key(
     if key.code == KeyCode::Char('x') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return interrupt(chat, model);
     }
+    // Esc steps back through the ask's own stages before it closes the
+    // reader, so a half-typed request for changes survives one press.
+    if key.code == KeyCode::Esc {
+        esc_chain(chat);
+        return None;
+    }
+    // The plan's action row lives in the reader while a writable ask is
+    // open: ↑↓ scroll the plan there, so the panel does not take them.
+    if reader_actionable(model, chat)
+        && let Some(head) = chat.ask_head(model)
+    {
+        let ask_id = head.id;
+        let shared = shared_ask(head);
+        let outcome = chat
+            .ask_ui
+            .as_mut()
+            .map(|ui| ui.handle_key(&shared, &key, false))
+            .unwrap_or(AskKeyOutcome::NotHandled);
+        match outcome {
+            AskKeyOutcome::Answer(answer) => return dispatch_answer(chat, ask_id, answer),
+            AskKeyOutcome::Handled | AskKeyOutcome::OpenReader => {
+                // The deny stage is docked, not read: the reader closes to
+                // the panel that owns the field.
+                if chat
+                    .ask_ui
+                    .as_ref()
+                    .is_some_and(|ui| ui.stage == AskStage::DenyFeedback)
+                {
+                    chat.reader = None;
+                }
+                return None;
+            }
+            AskKeyOutcome::NotHandled => {}
+        }
+    }
     match key.code {
-        // Esc and q both leave a read surface; nothing here is a text
-        // field, so a bare letter is safe.
-        KeyCode::Esc | KeyCode::Char('q') => chat.reader = None,
+        // q leaves a read surface; nothing here is a text field, so a bare
+        // letter is safe.
+        KeyCode::Char('q') => chat.reader = None,
         // ←/→ step between accepted plans.
         KeyCode::Left | KeyCode::Right => {
             let delta = if key.code == KeyCode::Left { -1 } else { 1 };
@@ -382,6 +461,82 @@ fn reader_scroll(chat: &mut View, model: &Model, key: &KeyEvent, viewport: (u16,
         _ => return false,
     }
     true
+}
+
+/// The view-only Esc chain, checked in order — first hit wins. Esc never
+/// answers an ask and never interrupts.
+fn esc_chain(chat: &mut View) {
+    // An open text field inside the reader closes first, then the reader
+    // itself; a plan reader drops to its docked panel form.
+    if chat.reader.is_some() {
+        if chat.ask_reader_open()
+            && let Some(ui) = chat.ask_ui.as_mut()
+            && ui.step_back()
+        {
+            return;
+        }
+        chat.reader = None;
+        return;
+    }
+    // Ask stages step back toward their menu; the panel itself stays
+    // while its ask pends.
+    if let Some(ui) = chat.ask_ui.as_mut()
+        && ui.step_back()
+    {
+        return;
+    }
+    if chat.composer.is_empty() {
+        follow(chat);
+    }
+}
+
+/// Keys while this session's ask is docked and interactive: the stage
+/// machine first, the feed's scroll keys as the fallback — the feed stays
+/// readable behind the panel a decision is made from.
+fn panel_key(chat: &mut View, model: &Model, key: KeyEvent) -> Option<UiAction> {
+    let head = chat.ask_head(model)?;
+    let ask_id = head.id;
+    let shared = shared_ask(head);
+    let outcome = chat
+        .ask_ui
+        .as_mut()
+        .map(|ui| ui.handle_key(&shared, &key, true))
+        .unwrap_or(AskKeyOutcome::NotHandled);
+    match outcome {
+        AskKeyOutcome::Answer(answer) => dispatch_answer(chat, ask_id, answer),
+        AskKeyOutcome::OpenReader => {
+            chat.reader = Some(ReaderView::ask());
+            None
+        }
+        AskKeyOutcome::Handled => None,
+        AskKeyOutcome::NotHandled => {
+            scroll_keys(chat, &key);
+            None
+        }
+    }
+}
+
+/// Send a collected answer to the session. Every kind this panel can
+/// collect is one this transport carries, so nothing is dropped here.
+fn dispatch_answer(chat: &View, ask: u64, answer: PanelAnswer) -> Option<UiAction> {
+    let answer = match answer {
+        PanelAnswer::Elicitation(answer) => SdkAnswer::Elicitation(answer),
+        PanelAnswer::Dialog(answer) => SdkAnswer::Dialog(answer),
+        PanelAnswer::Claude(answer) => match answer {
+            amux_ui::claude::answer::AskAnswer::Permission(answer) => SdkAnswer::Permission(answer),
+            amux_ui::claude::answer::AskAnswer::Plan(answer) => SdkAnswer::Plan(answer),
+            amux_ui::claude::answer::AskAnswer::Question(response) => {
+                SdkAnswer::Question(response.answers)
+            }
+        },
+    };
+    Some(UiAction::Dispatch(Command::ClaudeSdk(
+        ClaudeSdkCommand::AnswerAsk {
+            agent: chat.agent,
+            ask,
+            answer,
+        },
+    )))
 }
 
 /// `<leader> a`: dock the ask the banner names, or send it back. Nothing
@@ -429,9 +584,19 @@ fn readonly_key(
     key: KeyEvent,
     viewport: (u16, u16),
 ) -> Option<UiAction> {
-    let _ = (model, viewport);
+    let _ = viewport;
     match key.code {
         KeyCode::Char('q') => return Some(UiAction::CloseChat),
+        // An observer reads the document an ask is about; the fact panel
+        // offers `f` only while there is one.
+        KeyCode::Char('f') => {
+            if chat
+                .ask_head(model)
+                .is_some_and(|ask| shared_ask(ask).has_readable())
+            {
+                chat.reader = Some(ReaderView::ask());
+            }
+        }
         KeyCode::Esc => follow(chat),
         KeyCode::PageUp => page_up(chat),
         KeyCode::PageDown => page_down(chat),
@@ -451,8 +616,18 @@ fn focused_field<'v>(
     chat: &'v mut View,
     model: &Model,
 ) -> Option<&'v mut crate::composer::Composer> {
-    if chat.help || chat.reader.is_some() || chat.review_open() || chat.read_only(model) {
+    if chat.help || chat.review_open() || chat.read_only(model) {
         return None;
+    }
+    if chat.reader.is_some() {
+        return reader_actionable(model, chat)
+            .then(|| chat.ask_ui.as_mut().and_then(AskUi::active_field))
+            .flatten();
+    }
+    if chat.ask_ui.is_some() {
+        // A docked panel covers the composer: its open text stage is the
+        // field, and its menu stages have none.
+        return chat.ask_ui.as_mut().and_then(AskUi::active_field);
     }
     if chat.inline_ask.is_some() {
         return None;

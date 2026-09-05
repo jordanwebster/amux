@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Answer every kind of Claude SDK ask from the chat.**
+A session driven over stream-JSON now docks whatever it is waiting on where
+the composer sits, in the numbered-list idiom both Claude chats already use:
+a permission with the document it would write, a plan opening the reader with
+the three-way review, the question form with its tabs and free-text row, an
+MCP server's elicitation as a form derived from the schema it sent, and a
+dialog rendered by kind. A schema of nested objects and a dialog payload in no
+answerable shape both render blocked, stating the reason and offering only the
+answers that need no fields — nothing that reads as agreement, and never the
+payload's own JSON. The panel and the answer encoder read one derivation of
+what a dialog offers, so a choice on screen is always a choice that encodes.
+Esc steps back a stage without answering and never dismisses a pending ask;
+read-only chats state the fact and wait. Eleven tests over recorded permission
+and elicitation sessions, with plan, question and dialog requests appended in
+the shapes the protocol documents, lock both themes.
+
 2026-09-05 — **Give a Claude session over stream-JSON its own chat screen.**
 The placeholder that named a protocol it could not read is gone; a Claude
 session driven over stream-JSON now opens a real chat inside the shared frame.

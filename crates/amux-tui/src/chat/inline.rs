@@ -291,9 +291,12 @@ pub(crate) fn handle_key(model: &Model, inline: &mut InlineAsk, key: &KeyEvent) 
                 return InlineOutcome::NotHandled;
             }
             match ui.handle_key(&shared_ask(ask), key, true) {
-                AskKeyOutcome::Answer(answer) => {
-                    InlineOutcome::Dispatch(answer_command(child, ask.id, answer))
-                }
+                AskKeyOutcome::Answer(answer) => match answer.claude() {
+                    // A docked guest is a Claude PTY child's ask, which
+                    // carries none of the kinds only a session can raise.
+                    Some(answer) => InlineOutcome::Dispatch(answer_command(child, ask.id, answer)),
+                    None => InlineOutcome::Handled,
+                },
                 AskKeyOutcome::Handled => InlineOutcome::Handled,
                 // The fullscreen reader belongs to the chat whose agent
                 // the document is from; a guest panel does not take the

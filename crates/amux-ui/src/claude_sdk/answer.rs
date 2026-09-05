@@ -102,18 +102,14 @@ pub(super) fn encode(ask: &Ask, answer: &SdkAnswer) -> Result<ClaudeSdkInput, St
             let result = match answer {
                 DialogAnswer::Cancel => json!({"behavior":"cancelled"}),
                 DialogAnswer::Choose { option } => {
-                    let options = payload["options"].as_array().filter(|options| {
-                        !options.is_empty()
-                            && options
-                                .iter()
-                                .all(|o| o["label"].as_str().is_some_and(|s| !s.is_empty()))
-                    });
-                    if !payload["message"].is_string() {
-                        return Err("dialog payload cannot be answered from chat".into());
+                    // The panel offers exactly the choices this derivation
+                    // finds, so an offered option always encodes.
+                    let choices = super::dialog_choices(payload)
+                        .ok_or("dialog payload cannot be answered from chat")?;
+                    if *option >= choices.options.len() {
+                        return Err("dialog option is unavailable".into());
                     }
-                    let chosen = options
-                        .and_then(|o| o.get(*option))
-                        .ok_or("dialog option is unavailable")?;
+                    let chosen = &payload["options"][*option];
                     json!({"behavior":"completed", "result":chosen})
                 }
             };
