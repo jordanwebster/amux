@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The fleet cannot tell one kind of Claude session from the
+other, and there are now frames and specs that say so.**
+Two Claude agents stopped on the same permission request at the same
+moment — one reached over a terminal, one over stream-JSON — draw one row
+each, and blanking out their names makes the two lines identical: same
+badge, same command, same host, same age, same state word. A style
+comparison backs the text up, because a badge painted from a different
+token would still pass a text diff.
+
+The ranking is proved by observation rather than by reading the sort. The
+same fleet is built twice with the two agents' machinery swapped, and the
+ranked order does not move — under equal attention, under a recency
+difference inside one band, and as a family whose members are driven
+different ways and whose loudest member is a child. The key is attention,
+then recency, then identity; nothing about how a session is driven is in
+it.
+
+The one place the two do differ is the way in, and it is the agent's own
+capability speaking: a session with no terminal behind it offers the chat
+alone, so its `?` overlay names one entry key where its neighbour's names
+two. The mixed-fleet screenshot state now folds real rows instead of three
+agents in an unknown state, so the capture shows the badges the claim is
+about.
+
 2026-09-05 — **A Claude session driven over stream-JSON now takes part in
 a family in both directions.**
 Docking a child's ask at the parent's composer knew two kinds of child and

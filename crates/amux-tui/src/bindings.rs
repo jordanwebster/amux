@@ -506,10 +506,7 @@ mod tests {
             entry_hint(both(OpenMode::RawAttach)),
             "enter raw attach  o chat"
         );
-        assert_eq!(
-            entry_hint(both(OpenMode::Chat)),
-            "enter chat  o raw attach"
-        );
+        assert_eq!(entry_hint(both(OpenMode::Chat)), "enter chat  o raw attach");
     }
 
     #[test]

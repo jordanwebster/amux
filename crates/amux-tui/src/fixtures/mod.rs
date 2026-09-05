@@ -1033,6 +1033,10 @@ fn fleet_fixture(empty: bool) -> Fixture {
 /// A fleet holding a Claude session on each driver beside a Codex one.
 /// The point of the capture is that the two Claude rows are the same
 /// row: nothing here tells them apart, and nothing on screen should.
+/// One fleet holding both kinds of Claude session beside a Codex agent.
+/// The two Claude agents are stopped on the same thing at the same
+/// moment, so their rows are the claim: whichever way a session is
+/// driven, the fleet reads it the same and ranks it the same.
 fn mixed_fleet_fixture() -> Fixture {
     let mut messages = vec![
         Msg::Server(ServerMsg::Connected {
@@ -1040,19 +1044,66 @@ fn mixed_fleet_fixture() -> Fixture {
         }),
         Msg::Server(ServerMsg::HostUpserted { host: host() }),
     ];
-    for (protocol, name) in [
-        (StructuredProtocol::Claude, "fix-auth"),
-        (StructuredProtocol::ClaudeSdk, "fix-sync"),
-        (StructuredProtocol::Codex, "codex-retry"),
-    ] {
+    let members = [
+        (
+            StructuredProtocol::Claude,
+            "fix-auth",
+            vec![
+                claude_ready(),
+                claude_prompt(1, "Add retry with backoff to the sync client."),
+                permission_hook(),
+            ],
+        ),
+        (
+            StructuredProtocol::ClaudeSdk,
+            "fix-sync",
+            vec![
+                sdk_ready(),
+                sdk_prompt(1, "Add retry with backoff to the sync client."),
+                sdk_permission_request(),
+            ],
+        ),
+        (
+            StructuredProtocol::Codex,
+            "codex-retry",
+            codex_working_rows(),
+        ),
+    ];
+    for (protocol, name, _) in &members {
         messages.push(Msg::Server(ServerMsg::AgentUpserted {
-            agent: agent(protocol, name),
+            agent: agent(*protocol, name),
         }));
     }
     messages.extend([
         Msg::Server(ServerMsg::HostsSynchronized),
         Msg::Server(ServerMsg::AgentsSynchronized),
     ]);
+    for (protocol, _, rows) in members {
+        messages.extend([
+            Msg::Stream {
+                agent: agent_id(protocol),
+                event: StreamMsg::Opened { truncated: false },
+            },
+            Msg::Stream {
+                agent: agent_id(protocol),
+                event: StreamMsg::ReplayComplete,
+            },
+            Msg::Stream {
+                agent: agent_id(protocol),
+                event: StreamMsg::Batch {
+                    at: at("2026-08-12T09:12:20Z"),
+                    entries: rows
+                        .into_iter()
+                        .enumerate()
+                        .map(|(offset, payload)| StreamEntry {
+                            seq: offset as u64 + 1,
+                            payload,
+                        })
+                        .collect(),
+                },
+            },
+        ]);
+    }
     Fixture {
         model: fold(messages),
         view: ViewState::default(),

@@ -1,0 +1,40 @@
+┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ /                                                                                                        4 agents    │
+│                                                                                                                      │
+│   j/k or ↑/↓    move                                                                                                 │
+│   gg / G        top / bottom                                                                                         │
+│   / or i        filter                                                                                               │
+│   enter         open in raw attach                                                                                   │
+│   o             open in chat                                                                                         │
+│   n             new agent                                                                                            │
+│   r             rename selected                                                                                      │
+│   d             delete selected                                                                                      │
+│   q             quit                                                                                                 │
+│   ctrl+c ctrl+c quit (guarded: two presses)                                                                          │
+│   C-g           capture a report                                                                                     │
+│                                                                                                                      │
+│   C-a d         detach to shell                                                                                      │
+│   C-a s         back to fleet                                                                                        │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ● connected · 1 host   any key to close                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

@@ -20,8 +20,8 @@ use std::borrow::Cow;
 use amux_ui::claude::facts::ask_document;
 use amux_ui::claude::{AcceptedPlan, ToolInvocation};
 use amux_ui::claude_sdk::{
-    Ask, AskKind, AskState, ClaudeSdkCommand, FeedEntryKind, Finality, PermissionAnswer, PlanAnswer,
-    SdkAnswer, SdkPhase, SendGate,
+    Ask, AskKind, AskState, ClaudeSdkCommand, FeedEntryKind, Finality, PermissionAnswer,
+    PlanAnswer, SdkAnswer, SdkPhase, SendGate,
 };
 use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
 use chrono::{DateTime, Utc};
@@ -168,11 +168,7 @@ pub(crate) fn answer_command(agent: AgentId, ask: u64, answer: PanelAnswer) -> C
             }
         },
     };
-    Command::ClaudeSdk(ClaudeSdkCommand::AnswerAsk {
-        agent,
-        ask,
-        answer,
-    })
+    Command::ClaudeSdk(ClaudeSdkCommand::AnswerAsk { agent, ask, answer })
 }
 
 /// Whether this client may answer the ask on screen at all: the session

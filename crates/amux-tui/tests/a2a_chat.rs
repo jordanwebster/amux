@@ -1690,7 +1690,12 @@ fn session_parent_family() -> Model {
         Msg::Server(ServerMsg::AgentUpserted {
             agent: a_session_agent(SESSION_LEAD, None),
         }),
-        agent_up(&an_agent(PROOFER, "claude", CLAUDE_PROTOCOL, Some(SESSION_LEAD))),
+        agent_up(&an_agent(
+            PROOFER,
+            "claude",
+            CLAUDE_PROTOCOL,
+            Some(SESSION_LEAD),
+        )),
         Msg::Server(ServerMsg::HostsSynchronized),
         Msg::Server(ServerMsg::AgentsSynchronized),
     ];
