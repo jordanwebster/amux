@@ -160,7 +160,7 @@ fn update_answer(
     )
 }
 
-fn dispatch_codex_input(
+pub(crate) fn dispatch_codex_input(
     model: &mut Model,
     op: OpId,
     seq: u64,
@@ -203,6 +203,10 @@ pub(crate) fn update_failed_command(
         | CodexCommand::Answer { agent, .. }
         | CodexCommand::Interrupt { agent } => *agent,
     };
+    note_send_failed(model, op, agent);
+}
+
+pub(crate) fn note_send_failed(model: &mut Model, op: OpId, agent: amux::AgentId) {
     with_existing_layer(model, agent, |layer| {
         layer.note_input_send_failed(op);
     });

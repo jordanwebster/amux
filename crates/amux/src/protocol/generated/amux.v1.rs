@@ -325,7 +325,7 @@ pub struct CodexSdkV1Output {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CodexSdkV1Input {
-    #[prost(oneof = "codex_sdk_v1_input::Input", tags = "1, 2, 3, 4")]
+    #[prost(oneof = "codex_sdk_v1_input::Input", tags = "1, 2, 3, 4, 5, 6, 7")]
     pub input: ::core::option::Option<codex_sdk_v1_input::Input>,
 }
 /// Nested message and enum types in `CodexSdkV1Input`.
@@ -340,6 +340,12 @@ pub mod codex_sdk_v1_input {
         Interrupt(super::CodexSdkV1Interrupt),
         #[prost(message, tag = "4")]
         ApprovalDecision(super::CodexSdkV1ApprovalDecision),
+        #[prost(message, tag = "5")]
+        SetModel(super::CodexSdkV1SetModel),
+        #[prost(message, tag = "6")]
+        SetEffort(super::CodexSdkV1SetEffort),
+        #[prost(message, tag = "7")]
+        SetPreset(super::CodexSdkV1SetPreset),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -368,6 +374,23 @@ pub struct CodexSdkV1ApprovalDecision {
     pub request_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "2")]
     pub decision: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1SetModel {
+    #[prost(string, tag = "1")]
+    pub model: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1SetEffort {
+    #[prost(string, tag = "1")]
+    pub effort: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1SetPreset {
+    #[prost(string, tag = "1")]
+    pub approval: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub sandbox: ::prost::alloc::string::String,
 }
 /// Dev/test-only agent creation config and echo protocol payloads.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

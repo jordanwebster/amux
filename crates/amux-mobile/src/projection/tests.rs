@@ -462,3 +462,46 @@ fn queue_mobile_projection_exposes_hold_and_cancellation() {
     );
     assert!(cancelled.iter().any(|event| matches!(event, Event::OpResult { outcome: OpOutcomeDto::Shared(outcome), .. } if matches!(&**outcome, OpOutcome::QueueCancelled { draft } if draft.text == "next step"))));
 }
+
+#[test]
+fn model_effort_mobile_session_projects_recorded_choices_and_pty_gate() {
+    let mut model = model(amux::AgentKind::Codex);
+    let mut projection = subscribed();
+    let rows: Vec<Value> = include_str!("../../../amux/tests/fixtures/model-effort/rows.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let mut sessions = Vec::new();
+    for (index, payload) in rows.into_iter().enumerate() {
+        row(&mut model, index as u64 + 1, payload);
+        for event in collect(&mut projection, &model) {
+            if let Event::Session(session) = event {
+                sessions.push(session);
+            }
+        }
+    }
+    assert_eq!(
+        sessions.len(),
+        4,
+        "each changed host selection reaches the callback"
+    );
+    assert_eq!(sessions[0].provider.model.as_deref(), Some("model-a"));
+    let selected = sessions.last().unwrap();
+    assert_eq!(selected.provider.model.as_deref(), Some("model-b"));
+    assert_eq!(selected.provider.effort.as_deref(), Some("high"));
+    assert_eq!(selected.provider.efforts, ["medium", "high"]);
+    assert_eq!(
+        selected.settings_gate,
+        amux_ui::provider::SettingsGate::Ready
+    );
+    println!(
+        "Mobile session callback: {}",
+        serde_json::to_string_pretty(&Event::Session(selected.clone())).unwrap()
+    );
+    let pty = session(&claude_model(), AGENT);
+    assert_eq!(
+        pty.settings_gate,
+        amux_ui::provider::SettingsGate::PtySettingsUnavailable
+    );
+    assert!(pty.provider.models.is_empty());
+}

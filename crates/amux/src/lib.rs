@@ -134,8 +134,9 @@ pub mod claude_sdk_io {
 pub mod codex_io {
     pub use crate::agents::codex::CODEX_RAW_THREAD_NOT_READY;
     pub use crate::agents::codex::io::{
-        CODEX_SDK_V1, CodexSdkV1Args, CodexSdkV1Input, CodexSdkV1Output, CodexSdkV1ReplayQuery,
-        decode_codex_sdk_v1_output, encode_codex_sdk_v1_args, encode_codex_sdk_v1_input,
+        ApprovalPolicy, CODEX_SDK_V1, CodexSdkV1Args, CodexSdkV1Input, CodexSdkV1Output,
+        CodexSdkV1ReplayQuery, SandboxPolicy, decode_codex_sdk_v1_output, encode_codex_sdk_v1_args,
+        encode_codex_sdk_v1_input,
     };
 }
 

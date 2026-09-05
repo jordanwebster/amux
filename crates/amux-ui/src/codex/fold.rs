@@ -32,7 +32,17 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
 
     match method {
         // Six frozen synthesized rows.
-        "amux.codex_ready" => fold_ready(layer, seq, row),
+        "amux.codex_ready" => {
+            if let Some(session) = row.get("session") {
+                layer.provider.observe_codex(session);
+            }
+            fold_ready(layer, seq, row);
+        }
+        "amux.codex_settings" => {
+            if let Some(session) = row.get("session") {
+                layer.provider.observe_codex(session);
+            }
+        }
         "amux.codex_gap" => fold_gap(layer, seq, row),
         "amux.codex_reconnect_error" => fold_reconnect_error(layer, seq, row),
         "amux.codex_approval_required" => fold_approval_required(layer, seq, row),
@@ -84,6 +94,14 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
             );
         }
         "model/rerouted" => {
+            layer.provider.model = string(row, "toModel");
+            layer.provider.efforts = layer
+                .provider
+                .models
+                .iter()
+                .find(|item| Some(&item.id) == layer.provider.model.as_ref())
+                .map(|item| item.efforts.clone())
+                .unwrap_or_default();
             push(
                 layer,
                 seq,

@@ -79,6 +79,19 @@
         "accepted_plans": [],
         "echoes": []
       },
+      "provider": {
+        "model": null,
+        "effort": null,
+        "models": [],
+        "efforts": [],
+        "permission": {
+          "provider": "claude",
+          "mode": null
+        }
+      },
+      "settings_gate": {
+        "gate": "pty_settings_unavailable"
+      },
       "queue": null,
       "family": []
     }
@@ -268,6 +281,18 @@
         "layer": "codex",
         "active_turn_id": null
       },
+      "provider": {
+        "model": null,
+        "effort": null,
+        "models": [],
+        "efforts": [],
+        "permission": {
+          "provider": "unavailable"
+        }
+      },
+      "settings_gate": {
+        "gate": "ready"
+      },
       "queue": null,
       "family": []
     }
@@ -364,6 +389,18 @@
       "facts": {
         "layer": "claude_sdk",
         "supported": false
+      },
+      "provider": {
+        "model": null,
+        "effort": null,
+        "models": [],
+        "efforts": [],
+        "permission": {
+          "provider": "unavailable"
+        }
+      },
+      "settings_gate": {
+        "gate": "unavailable"
       },
       "queue": null,
       "family": []

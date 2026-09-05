@@ -1,4 +1,4 @@
-{"type":"amux.codex_ready"}
+{"session":{"approvalPolicy":"on-request","effort":null,"model":"gpt-5.6-luna","models":[],"sandbox":{"networkAccess":false,"type":"readOnly"}},"type":"amux.codex_ready"}
 {"thread":{"agentNickname":null,"agentRole":null,"canAcceptDirectInput":true,"cliVersion":"0.150.1","createdAt":1788037174,"cwd":"<MACHINE_PATH>","ephemeral":false,"extra":null,"forkedFromId":null,"gitInfo":null,"historyMode":"legacy","id":"01a04f52-152b-71a0-a023-161853ed3fdf","modelProvider":"openai","name":null,"parentThreadId":null,"path":"<MACHINE_PATH>","preview":"","projectId":null,"recencyAt":1788037174,"section":null,"sectionEnteredAt":null,"sessionId":"01a04f52-152b-71a0-a023-161853ed3fdf","source":"vscode","status":{"type":"idle"},"threadSource":null,"turns":[],"updatedAt":1788037174},"type":"thread/started"}
 {"error":null,"failureReason":null,"name":"codex_apps","status":"starting","threadId":"01a04f52-152b-71a0-a023-161853ed3fdf","type":"mcpServer/startupStatus/updated"}
 {"input_id":[97,112,112,114,111,118,97,108,45,116,117,114,110],"ok":{},"type":"amux.input_result"}

@@ -82,6 +82,19 @@ impl Msg {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
+    SetModel {
+        agent: AgentId,
+        model: crate::provider::ModelId,
+    },
+    SetEffort {
+        agent: AgentId,
+        effort: crate::provider::Effort,
+    },
+    SetPreset {
+        agent: AgentId,
+        approval: crate::provider::ApprovalPolicy,
+        sandbox: crate::provider::SandboxPolicy,
+    },
     Queue(crate::QueueCommand),
     CreateAgent {
         /// Target host; `None` means the local daemon picks (its own host).

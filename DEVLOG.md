@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Expose Codex model, effort and permission selections as session facts.**
+Typed settings inputs now reach the host's provider control. Model choices and
+per-model effort levels come from paginated app-server discovery; model changes
+select the reported default effort, and invalid choices leave settings intact.
+The selected configuration survives transport reconnects and applies to
+subsequent prompt and empty turns. Host
+readiness and settings rows feed one shared ProviderFacts projection without
+adding transcript entries. Mobile callbacks include those facts and the settings
+gate; Claude PTY explicitly refuses settings changes. A scripted strict wire
+recording verifies the exact turn overrides, and reducer replay and mobile
+projection tests verify the same derived host rows.
+
 2026-09-05 — **Hold one message for the next turn across Claude PTY and Codex.**
 The shared UI reducer now owns a queue per agent. Hold waits for a newer
 turn-end fact, Replace swaps the draft, Cancel returns it, and Interrupt leaves

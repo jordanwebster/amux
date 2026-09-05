@@ -100,6 +100,8 @@ pub struct SessionDto {
     pub stream: Option<StreamPhase>,
     pub asks: Vec<AskDto>,
     pub facts: FactsDto,
+    pub provider: Box<amux_ui::ProviderFacts>,
+    pub settings_gate: amux_ui::provider::SettingsGate,
     pub queue: Option<Box<amux_ui::QueuedMessage>>,
     pub family: Vec<FamilyMemberDto>,
 }
@@ -464,6 +466,8 @@ fn session(model: &Model, agent: AgentId) -> SessionDto {
         stream: model.stream(agent).map(|s| s.phase.clone()),
         asks,
         facts,
+        provider: Box::new(amux_ui::provider::facts(model, agent)),
+        settings_gate: amux_ui::provider::settings_gate(model, agent),
         queue: model.queued(agent).cloned().map(Box::new),
         family: model
             .family_of(agent)

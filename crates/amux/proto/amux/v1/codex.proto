@@ -35,6 +35,9 @@ message CodexSdkV1Input {
     CodexSdkV1Steer steer = 2;
     CodexSdkV1Interrupt interrupt = 3;
     CodexSdkV1ApprovalDecision approval_decision = 4;
+    CodexSdkV1SetModel set_model = 5;
+    CodexSdkV1SetEffort set_effort = 6;
+    CodexSdkV1SetPreset set_preset = 7;
   }
 }
 
@@ -57,4 +60,11 @@ message CodexSdkV1ApprovalDecision {
   // JSON-encoded upstream RequestId (string or integer).
   bytes request_id = 1;
   string decision = 2;
+}
+
+message CodexSdkV1SetModel { string model = 1; }
+message CodexSdkV1SetEffort { string effort = 1; }
+message CodexSdkV1SetPreset {
+  string approval = 1;
+  string sandbox = 2;
 }

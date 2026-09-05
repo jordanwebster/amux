@@ -171,6 +171,9 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
         ),
         Command::Claude(command) => crate::claude::update::update_command(model, op, seq, command),
         Command::Codex(command) => crate::codex::update::update_command(model, op, seq, command),
+        command @ (Command::SetModel { .. }
+        | Command::SetEffort { .. }
+        | Command::SetPreset { .. }) => crate::provider::update_settings(model, op, seq, command),
     }
 }
 
@@ -348,6 +351,16 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
         && let Command::Claude(command) = &pending.command
     {
         crate::claude::update::update_failed_command(model, op, command, error)
+    }
+    if matches!(&outcome, OpOutcome::Error { .. }) {
+        match &pending.command {
+            Command::SetModel { agent, .. }
+            | Command::SetEffort { agent, .. }
+            | Command::SetPreset { agent, .. } => {
+                crate::codex::update::note_send_failed(model, op, *agent)
+            }
+            _ => {}
+        }
     }
     if let OpOutcome::Error { error } = &outcome
         && let Command::Codex(command) = &pending.command

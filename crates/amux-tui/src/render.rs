@@ -631,6 +631,9 @@ fn active_failure(model: &Model, view: &ViewState) -> Option<(String, String)> {
 fn command_verb(command: &Command) -> &'static str {
     match command {
         Command::Queue(_) => "queue",
+        Command::SetModel { .. } => "change model",
+        Command::SetEffort { .. } => "change effort",
+        Command::SetPreset { .. } => "change permissions",
         Command::CreateAgent { .. } => "create",
         Command::RenameAgent { .. } => "rename",
         Command::DeleteAgent { .. } => "delete",

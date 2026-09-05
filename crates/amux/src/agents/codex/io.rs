@@ -4,6 +4,7 @@
 //! cursors as opaque bytes. This module owns the first-party Codex schemas.
 
 use prost::Message as ProstMessage;
+use serde::{Deserialize, Serialize};
 
 use crate::protocol::{ProtocolError, wire};
 
@@ -33,6 +34,16 @@ pub struct CodexSdkV1Output {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodexSdkV1Input {
+    SetModel {
+        model: String,
+    },
+    SetEffort {
+        effort: String,
+    },
+    SetPreset {
+        approval: ApprovalPolicy,
+        sandbox: SandboxPolicy,
+    },
     UserTurn {
         input: Vec<u8>,
     },
@@ -47,6 +58,22 @@ pub enum CodexSdkV1Input {
         request_id: Vec<u8>,
         decision: String,
     },
+}
+
+/// The approval and sandbox choices exposed by the native permission presets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApprovalPolicy {
+    Untrusted,
+    OnRequest,
+    Never,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SandboxPolicy {
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
 }
 
 pub(crate) fn decode_codex_sdk_v1_args(
@@ -109,6 +136,23 @@ pub(crate) fn decode_codex_sdk_v1_input(payload: &[u8]) -> Result<CodexSdkV1Inpu
     match input.input.ok_or_else(|| ProtocolError::InvalidArgument {
         message: format!("`{CODEX_SDK_V1}` input payload missing input"),
     })? {
+        wire::codex_sdk_v1_input::Input::SetModel(input) => {
+            Ok(CodexSdkV1Input::SetModel { model: input.model })
+        }
+        wire::codex_sdk_v1_input::Input::SetEffort(input) => Ok(CodexSdkV1Input::SetEffort {
+            effort: input.effort,
+        }),
+        wire::codex_sdk_v1_input::Input::SetPreset(input) => {
+            let parse_error = |error| ProtocolError::InvalidArgument {
+                message: format!("invalid Codex preset: {error}"),
+            };
+            Ok(CodexSdkV1Input::SetPreset {
+                approval: serde_json::from_value(serde_json::Value::String(input.approval))
+                    .map_err(parse_error)?,
+                sandbox: serde_json::from_value(serde_json::Value::String(input.sandbox))
+                    .map_err(parse_error)?,
+            })
+        }
         wire::codex_sdk_v1_input::Input::UserTurn(input) => {
             Ok(CodexSdkV1Input::UserTurn { input: input.input })
         }
@@ -131,6 +175,26 @@ pub(crate) fn decode_codex_sdk_v1_input(payload: &[u8]) -> Result<CodexSdkV1Inpu
 pub fn encode_codex_sdk_v1_input(input: CodexSdkV1Input) -> Vec<u8> {
     wire::CodexSdkV1Input {
         input: Some(match input {
+            CodexSdkV1Input::SetModel { model } => {
+                wire::codex_sdk_v1_input::Input::SetModel(wire::CodexSdkV1SetModel { model })
+            }
+            CodexSdkV1Input::SetEffort { effort } => {
+                wire::codex_sdk_v1_input::Input::SetEffort(wire::CodexSdkV1SetEffort { effort })
+            }
+            CodexSdkV1Input::SetPreset { approval, sandbox } => {
+                wire::codex_sdk_v1_input::Input::SetPreset(wire::CodexSdkV1SetPreset {
+                    approval: serde_json::to_value(approval)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                    sandbox: serde_json::to_value(sandbox)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                })
+            }
             CodexSdkV1Input::UserTurn { input } => {
                 wire::codex_sdk_v1_input::Input::UserTurn(wire::CodexSdkV1UserTurn { input })
             }
@@ -223,8 +287,18 @@ mod tests {
     }
 
     #[test]
-    fn input_roundtrip_preserves_all_variants() {
+    fn model_effort_input_roundtrip_preserves_all_variants() {
         let inputs = [
+            CodexSdkV1Input::SetModel {
+                model: "reported-model".into(),
+            },
+            CodexSdkV1Input::SetEffort {
+                effort: "high".into(),
+            },
+            CodexSdkV1Input::SetPreset {
+                approval: ApprovalPolicy::OnRequest,
+                sandbox: SandboxPolicy::WorkspaceWrite,
+            },
             CodexSdkV1Input::UserTurn {
                 input: br#"[{"type":"text","text":"PONG"}]"#.to_vec(),
             },

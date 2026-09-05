@@ -813,6 +813,9 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
         // Input commands never ride Effect::Rpc — the reducer emits
         // Effect::SendInput for them (typed input + seq guard).
         Command::Queue(_)
+        | Command::SetModel { .. }
+        | Command::SetEffort { .. }
+        | Command::SetPreset { .. }
         | Command::Claude(_)
         | Command::Codex(_)
         | Command::SendPromptWithAttachments { .. }
@@ -947,6 +950,11 @@ pub async fn execute_put_then_send<C: AttachmentClient + ?Sized>(
 
 fn codex_wire_input(input: CodexInput) -> codex_io::CodexSdkV1Input {
     match input {
+        CodexInput::SetModel { model } => codex_io::CodexSdkV1Input::SetModel { model },
+        CodexInput::SetEffort { effort } => codex_io::CodexSdkV1Input::SetEffort { effort },
+        CodexInput::SetPreset { approval, sandbox } => {
+            codex_io::CodexSdkV1Input::SetPreset { approval, sandbox }
+        }
         CodexInput::UserTurn { input } => codex_io::CodexSdkV1Input::UserTurn { input },
         CodexInput::Steer { turn_id, input } => codex_io::CodexSdkV1Input::Steer { turn_id, input },
         CodexInput::Interrupt { turn_id } => codex_io::CodexSdkV1Input::Interrupt { turn_id },

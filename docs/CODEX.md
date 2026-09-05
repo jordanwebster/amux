@@ -16,6 +16,27 @@ recorded specifications, the amux backend derivation tests, the
 `codex_write`, `codex_agreement`), and the opt-in `codex_live` suite. Where
 prose and a passing specification disagree, the specification wins.
 
+## Model, effort and permissions
+
+The host asks the session's app-server for every `model/list` page. Native
+clients receive the selected model and effort, available models and each
+model's effort levels through `amux_ui::provider::facts`. Missing discovery
+leaves the choice lists empty. The UI never supplies a built-in catalogue.
+
+`SetModel`, `SetEffort` and `SetPreset` are typed structured inputs. A model
+change selects that model's reported default effort. Unreported models and
+unsupported efforts fail without changing the selection. Settings use the
+ordinary idle send gate, including replay, observation-only and input-in-flight
+refusals. Claude PTY returns `PtySettingsUnavailable`.
+
+Codex accepts these overrides on `turn/start`. The provider control retains the
+selection across transport reconnects and for subsequent prompt and empty turns;
+it does not start a turn just
+to change settings. An acknowledgement means the host selected the next-turn
+configuration. `amux.codex_ready.session` carries initial metadata and
+`amux.codex_settings.session` replaces it after a selection. These rows update
+session facts in place, with no transcript row or optimistic model label.
+
 ## What a codex agent is
 
 `amux new codex` creates an agent whose backend is a **thread on a Codex
@@ -163,13 +184,14 @@ is the supported boundary.
 ## The row vocabulary (frozen)
 
 The structured plane carries **verbatim upstream rows** —
-`{"type": "<upstream method>", ...params}`, unmodified — plus exactly seven
+`{"type": "<upstream method>", ...params}`, unmodified — plus exactly eight
 rows amux synthesizes. The synthesized set is closed; adding to it is a
 protocol change.
 
 | row | means |
 |---|---|
-| `amux.codex_ready{resumed?:true}` | the session is connected and its stream is authoritative; `resumed:true` marks only the first successful attachment from an initially persisted thread id |
+| `amux.codex_ready{resumed?:true, session}` | the session is connected and its stream is authoritative; `resumed:true` marks only the first successful attachment from an initially persisted thread id |
+| `amux.codex_settings{session}` | the host selected a new next-turn configuration; replaces session facts in place |
 | `amux.codex_gap{reason}` | continuity was lost; what follows is not contiguous |
 | `amux.codex_reconnect_error{error}` | a recovery attempt failed |
 | `amux.codex_approval_required{request_id, availableDecisions}` | an approval is outstanding — `availableDecisions` is wire-verbatim |
@@ -192,7 +214,7 @@ server is presented as amux fleet work; calls from another MCP server and every
 that vanishes because another client answered it is a different fact
 from one that vanished because the connection died, and the UI says so.
 
-Bare `amux.codex_ready` remains the shape for fresh attachment and later
+`amux.codex_ready` carries session metadata on fresh attachment and later
 same-process reconnects. `resumed:true` does not report a gap: earlier feed
 rows are not re-rendered, while the persisted Codex thread keeps its context.
 The marker is one-shot. The first successful ready-producing attachment
