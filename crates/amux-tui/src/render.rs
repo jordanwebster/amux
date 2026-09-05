@@ -637,9 +637,14 @@ fn command_verb(command: &Command) -> &'static str {
         Command::FetchDiff { .. } => "fetch review",
         Command::OpenAttachment { .. } => "open attachment",
         Command::RequestDiff { .. } => "request diff",
-        // Chat write-path commands (`docs/CHAT.md` C5/D3/D4); the chat
-        // screen itself arrives in Phase 4 — until then a failure still
-        // states its verb honestly in the chrome status line.
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::SendPrompt { .. }) => "send",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::AnswerAsk { .. }) => "answer",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::Interrupt { .. }) => "interrupt",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::CyclePermissionMode { .. }) => "mode cycle",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::SetModel { .. }) => "set model",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::RequestContextBreakdown { .. }) => {
+            "request context"
+        }
         Command::Claude(amux_ui::ClaudeCommand::SendPrompt { .. }) => "send",
         Command::Claude(amux_ui::ClaudeCommand::AnswerAsk { .. }) => "answer",
         Command::Claude(amux_ui::ClaudeCommand::Interrupt { .. }) => "interrupt",

@@ -17,6 +17,20 @@ pub struct Ask {
     pub input: Value,
     /// Preserve provider updates in full; display facts omit opaque rule data.
     pub suggestions: Vec<Value>,
+    pub state: AskState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum AskState {
+    Pending,
+    AnsweredOptimistic {
+        op: crate::OpId,
+        answer: super::SdkAnswer,
+    },
+    SendFailed {
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -66,7 +80,7 @@ impl Ask {
         }
     }
 
-    fn channel(&self) -> &'static str {
+    pub(super) fn channel(&self) -> &'static str {
         match self.kind {
             AskKind::Permission { .. } | AskKind::Plan { .. } | AskKind::Question { .. } => {
                 "permission"
@@ -296,6 +310,7 @@ pub(super) fn observe(layer: &mut ClaudeSdkLayer, row: &Value) {
         kind,
         input,
         suggestions,
+        state: AskState::Pending,
     });
     layer.next_ask_id += 1;
 }

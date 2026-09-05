@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Send typed Claude SDK commands and keep pending answers honest.**
+Prompts, all five answer kinds, interruption, permission-mode cycling, model
+selection and deliberate context requests now reduce to SDK-native input
+effects. Writes share the session gate and finish local refusals immediately.
+Plan approvals send explicit session mode updates; questions preserve tool
+input and forms validate required fields and types. Prompt echoes and answered
+asks await authoritative rows, while correlated failures make drafts retryable.
+Accepted rows take precedence over late transport errors. The write specs cover
+encodings, gates, attachment dispatch, retries and checkpoint replay.
+
 2026-09-05 — **Derive Claude SDK phase, attention and input readiness together.**
 One session classification now drives chat phase, fleet attention and the prompt
 gate from authoritative turn results and stream lifecycle. Working does not

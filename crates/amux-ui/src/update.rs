@@ -163,6 +163,9 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
             Effect::Diff { op, agent, base },
         ),
         Command::Claude(command) => crate::claude::update::update_command(model, op, seq, command),
+        Command::ClaudeSdk(command) => {
+            crate::claude_sdk::update::update_command(model, op, seq, command)
+        }
         Command::Codex(command) => crate::codex::update::update_command(model, op, seq, command),
     }
 }
@@ -226,9 +229,13 @@ fn update_attachment_prompt(
         ),
         Some(amux::AgentKind::Claude {
             driver: amux::ClaudeDriver::Sdk,
-        })
-        | Some(amux::AgentKind::TestAgent)
-        | None => {
+        }) => crate::claude_sdk::update::update_command(
+            model,
+            op,
+            seq,
+            crate::claude_sdk::ClaudeSdkCommand::SendPrompt { agent, text },
+        ),
+        Some(amux::AgentKind::TestAgent) | None => {
             return refuse(
                 model,
                 op,
@@ -343,6 +350,11 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
         crate::claude::update::update_failed_command(model, op, command, error)
     }
     if let OpOutcome::Error { error } = &outcome
+        && let Command::ClaudeSdk(command) = &pending.command
+    {
+        crate::claude_sdk::update::update_failed_command(model, op, command, error)
+    }
+    if let OpOutcome::Error { error } = &outcome
         && let Command::Codex(command) = &pending.command
     {
         crate::codex::update::update_failed_command(model, op, command, error)
@@ -357,6 +369,17 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
                 model,
                 op,
                 &crate::claude::ClaudeCommand::SendPrompt {
+                    agent: *agent,
+                    text: text.clone(),
+                },
+                error,
+            ),
+            Some(amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Sdk,
+            }) => crate::claude_sdk::update::update_failed_command(
+                model,
+                op,
+                &crate::claude_sdk::ClaudeSdkCommand::SendPrompt {
                     agent: *agent,
                     text: text.clone(),
                 },

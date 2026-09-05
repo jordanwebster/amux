@@ -753,7 +753,8 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
         },
         // Input commands never ride Effect::Rpc — the reducer emits
         // Effect::SendInput for them (typed input + seq guard).
-        Command::Claude(_)
+        Command::ClaudeSdk(_)
+        | Command::Claude(_)
         | Command::Codex(_)
         | Command::SendPromptWithAttachments { .. }
         | Command::FetchDiff { .. }
@@ -862,6 +863,17 @@ pub async fn execute_put_then_send<C: AttachmentClient + ?Sized>(
                 intent,
             })
             .into(),
+        ),
+        InputPayload::ClaudeSdk { payload } => (
+            crate::claude_sdk::PROTOCOL.to_string(),
+            match encode_claude_sdk_input(payload) {
+                Ok(bytes) => bytes.into(),
+                Err(message) => {
+                    return OpOutcome::Error {
+                        error: OpError::general(message),
+                    };
+                }
+            },
         ),
         InputPayload::Codex { payload } => (
             crate::codex::PROTOCOL.to_string(),
@@ -1043,10 +1055,38 @@ async fn execute_send_input_with_pin(
             )
             .await
         }
+        InputPayload::ClaudeSdk { payload } => {
+            let payload = match encode_claude_sdk_input(payload) {
+                Ok(bytes) => bytes,
+                Err(message) => {
+                    return OpOutcome::Error {
+                        error: OpError::general(message),
+                    };
+                }
+            };
+            match client
+                .send_input(SendInputRequest {
+                    agent: AgentIdentifier::Id(agent),
+                    input_id,
+                    io_protocol: crate::claude_sdk::PROTOCOL.to_string(),
+                    payload: payload.into(),
+                    pin,
+                })
+                .await
+            {
+                Ok(()) => OpOutcome::InputSent,
+                Err(error) => op_error_outcome(&error),
+            }
+        }
         InputPayload::Codex { payload } => {
             execute_codex_input(client, agent, input_id, payload, pin).await
         }
     }
+}
+
+fn encode_claude_sdk_input(input: crate::claude_sdk::ClaudeSdkInput) -> Result<Vec<u8>, String> {
+    let native = input.into_native().map_err(|error| error.to_string())?;
+    amux::claude_sdk_io::encode_claude_sdk_v1_input(native).map_err(|error| error.to_string())
 }
 
 async fn execute_codex_input(

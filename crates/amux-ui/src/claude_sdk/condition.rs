@@ -152,7 +152,7 @@ fn classify(
     let Some(layer) = layer else {
         return condition;
     };
-    condition.input_in_flight = layer.input_in_flight;
+    condition.input_in_flight = layer.in_flight.is_some() || layer.echo.is_some();
     condition.state = if layer.exited || matches!(agent, Some(AgentPhase::Exited { .. })) {
         SdkConditionState::Exited
     } else if matches!(stream, Some(StreamPhase::Opening | StreamPhase::Replaying)) {
@@ -220,7 +220,8 @@ pub(super) fn observe(layer: &mut ClaudeSdkLayer, row: &Value) {
             layer.stale = false;
             layer.interrupted = false;
             layer.asks.clear();
-            layer.input_in_flight = false;
+            layer.clear_inputs("session reset");
+            layer.permission_mode = None;
         }
         "amux.claude_sdk.gap" => {
             layer.gap = true;
@@ -315,7 +316,9 @@ pub(crate) fn check_projection_invariant(model: &Model, agent: AgentId, out: &mu
         } else if !matches!(
             phase,
             SdkPhase::Unavailable | SdkPhase::Exited | SdkPhase::Unknown | SdkPhase::Replaying
-        ) && card.claude_sdk().is_some_and(|l| l.input_in_flight)
+        ) && card
+            .claude_sdk()
+            .is_some_and(|l| l.in_flight.is_some() || l.echo.is_some())
         {
             SendGate::InputInFlight
         } else {

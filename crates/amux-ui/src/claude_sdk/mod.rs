@@ -1,18 +1,28 @@
 //! Claude's stream-JSON feed. Provider block identity and task lifecycle are
 //! preserved independently of the terminal transcript's inferred turns.
 
+mod answer;
 mod asks;
 mod condition;
 mod fold;
+mod input;
+pub(crate) mod update;
 
 use std::collections::VecDeque;
 
-pub use asks::{Ask, AskKind, AskWhy, ElicitationField, ElicitationFieldKind, ElicitationForm};
+pub use asks::{
+    Ask, AskKind, AskState, AskWhy, ElicitationField, ElicitationFieldKind, ElicitationForm,
+};
 use chrono::{DateTime, Utc};
 pub(crate) use condition::check_projection_invariant;
 pub use condition::{SdkPhase, SendGate, phase, send_gate};
+pub use input::{
+    ClaudeSdkCommand, ClaudeSdkInput, DialogAnswer, ElicitationAnswer, PermissionAnswer,
+    PlanAnswer, QuestionAnswer, SdkAnswer,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use update::{InFlightInput, InputFailure, PromptEcho};
 
 use crate::AgentMessageKind;
 use crate::claude::facts::ToolInvocation;
@@ -228,7 +238,10 @@ pub struct ClaudeSdkLayer {
     stale: bool,
     exited: bool,
     interrupted: bool,
-    input_in_flight: bool,
+    in_flight: Option<InFlightInput>,
+    echo: Option<PromptEcho>,
+    last_input_failure: Option<InputFailure>,
+    permission_mode: Option<String>,
 }
 
 impl ClaudeSdkLayer {
@@ -248,13 +261,13 @@ impl ClaudeSdkLayer {
         self.interrupt_streams();
         self.exited = true;
         self.asks.clear();
-        self.input_in_flight = false;
+        self.clear_inputs("session stream closed");
     }
 
     pub(crate) fn invalidate(&mut self) {
         self.interrupt_streams();
         self.stale = true;
-        self.input_in_flight = false;
+        self.clear_inputs("session stream closed");
     }
 
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
@@ -290,6 +303,7 @@ impl ClaudeSdkLayer {
     }
 
     pub(crate) fn observe(&mut self, seq: u64, _at: DateTime<Utc>, row: &Value) {
+        self.observe_input(row);
         condition::observe(self, row);
         asks::observe(self, row);
         fold::observe(self, seq, row);
