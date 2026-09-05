@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Package the Rust bridge as a Swift-importable XCFramework.**
+`wt run ios-rust` assembles the exact mobile-profile device and simulator
+archives with their generated headers and Clang module maps. A Swift consumer
+imports the packaged simulator slice, prints the Rust version and checks that
+the shipping library rejects plaintext relay configuration. It runs on the
+pinned iPhone 17 Pro with iOS 26.5, creating the dedicated simulator when
+needed and restoring its previous boot state. Rust and native dependency
+builds explicitly target iOS 26.0 with the matching SDK; archive assembly
+bypasses compiler wrappers that can retain stale native objects, and linker
+warnings fail the smoke. The recipe records simulator stdout and archive sizes
+only after successful assembly and execution.
+
 2026-09-05 — **Connect the native bridge to an authenticated relay.**
 The C lifecycle now starts one embedded runtime on a dedicated Rust worker,
 feeds the shared UI reducer, and emits ordered connection and fleet events.

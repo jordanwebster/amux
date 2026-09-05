@@ -58,3 +58,20 @@ connection events. The generated header documents pointer lifetimes.
 Run `timeout 900 wt test -- mobile_lifecycle` for the C-boundary relay,
 reconnection, token and teardown tests. `timeout 900 wt run mobile-check`
 checks device and simulator builds without local agent providers.
+
+`timeout 1800 wt run ios-rust` builds the ARM64 device and simulator libraries
+under the workspace mobile profile with an explicit iOS 26.0 deployment target
+and packages their generated headers and
+Clang module maps as `target/ios/AmuxMobile.xcframework`. It then compiles
+`ios/Tools/LinkageSmoke.swift` against the packaged simulator slice and runs
+that executable on `amux-golden` (iPhone 17 Pro, iOS 26.5), creating the
+simulator if it is absent. A simulator booted by this invocation is shut down
+afterward; an already running one is left running.
+
+The smoke prints `amux_mobile_version` and checks that the shipping library
+rejects `PlainLoopback`. Its output is saved in `target/ios/simulator-linkage.txt`.
+`target/ios/size.txt` records archive sizes and the mobile profile settings;
+these are library sizes, not installed application size. Cargo caches these builds;
+archive assembly bypasses compiler wrappers so native object changes cannot
+be lost behind cached Rust metadata. The Swift smoke treats linker warnings
+as failures.
