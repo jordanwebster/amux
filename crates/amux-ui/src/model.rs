@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::claude::{ClaudeLayer, ClaudeViolation};
+pub use crate::claude_sdk::ClaudeSdkLayer;
 use crate::codex::{CodexLayer, CodexViolation};
 use crate::msg::{Command, DisconnectReason, OpId, OpOutcome, StreamCloseReason};
 
@@ -101,13 +102,6 @@ pub enum AgentLayer {
     Codex(CodexLayer),
 }
 
-/// The layer of an agent whose protocol this build carries no fold for: it
-/// holds no state, observes nothing, and reports Unknown forever. Its one
-/// job is to make the gap a typed arm every screen must answer for, rather
-/// than an agent that silently has no chat at all.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaudeSdkLayer;
-
 impl AgentLayer {
     /// The layer an agent's kind determines. A kind with no native chat in
     /// this build has none; nothing is inferred from what a stream carries.
@@ -118,7 +112,7 @@ impl AgentLayer {
             } => Some(Self::Claude(ClaudeLayer::default())),
             amux::AgentKind::Claude {
                 driver: amux::ClaudeDriver::Sdk,
-            } => Some(Self::ClaudeSdk(ClaudeSdkLayer)),
+            } => Some(Self::ClaudeSdk(ClaudeSdkLayer::default())),
             amux::AgentKind::Codex => Some(Self::Codex(CodexLayer::default())),
             amux::AgentKind::TestAgent => None,
         }
@@ -146,6 +140,13 @@ impl AgentLayer {
         }
     }
 
+    pub fn claude_sdk(&self) -> Option<&ClaudeSdkLayer> {
+        match self {
+            Self::ClaudeSdk(layer) => Some(layer),
+            Self::Claude(_) | Self::Codex(_) => None,
+        }
+    }
+
     pub fn codex(&self) -> Option<&CodexLayer> {
         match self {
             Self::Claude(_) | Self::ClaudeSdk(_) => None,
@@ -163,7 +164,7 @@ impl AgentLayer {
     pub(crate) fn begin_window(&mut self, truncated: bool) {
         match self {
             Self::Claude(layer) => layer.begin_window(truncated),
-            Self::ClaudeSdk(_) => {}
+            Self::ClaudeSdk(layer) => layer.begin_window(truncated),
             Self::Codex(layer) => layer.begin_window(truncated),
         }
     }
@@ -171,7 +172,7 @@ impl AgentLayer {
     pub(crate) fn observe(&mut self, seq: u64, at: DateTime<Utc>, payload: &serde_json::Value) {
         match self {
             Self::Claude(layer) => layer.observe(seq, at, payload),
-            Self::ClaudeSdk(_) => {}
+            Self::ClaudeSdk(layer) => layer.observe(seq, at, payload),
             Self::Codex(layer) => layer.observe(seq, at, payload),
         }
     }
@@ -187,7 +188,7 @@ impl AgentLayer {
     pub(crate) fn observe_exit(&mut self) {
         match self {
             Self::Claude(layer) => layer.observe_exit(),
-            Self::ClaudeSdk(_) => {}
+            Self::ClaudeSdk(layer) => layer.interrupt_streams(),
             Self::Codex(layer) => layer.observe_exit(),
         }
     }
@@ -195,7 +196,7 @@ impl AgentLayer {
     pub(crate) fn invalidate(&mut self) {
         match self {
             Self::Claude(layer) => layer.invalidate(),
-            Self::ClaudeSdk(_) => {}
+            Self::ClaudeSdk(layer) => layer.interrupt_streams(),
             Self::Codex(layer) => layer.invalidate(),
         }
     }
@@ -206,8 +207,7 @@ impl AgentLayer {
     pub(crate) fn attention(&self, stream_phase: Option<&StreamPhase>) -> Attention {
         match self {
             Self::Claude(layer) => crate::claude::cached_attention(layer, stream_phase),
-            // Nothing is folded, so nothing is known: an unrendered layer
-            // reports Unknown rather than inventing a calm badge.
+            // Feed facts alone do not establish a write/attention classification.
             Self::ClaudeSdk(_) => Attention::Unknown,
             Self::Codex(layer) => crate::codex::projected_attention(layer, stream_phase),
         }
@@ -262,6 +262,10 @@ impl AgentCard {
     /// stream has produced any.
     pub fn claude(&self) -> Option<&ClaudeLayer> {
         self.layer.as_ref().and_then(AgentLayer::claude)
+    }
+
+    pub fn claude_sdk(&self) -> Option<&ClaudeSdkLayer> {
+        self.layer.as_ref().and_then(AgentLayer::claude_sdk)
     }
 
     /// The Codex chat layer's native view state, when available.
@@ -788,6 +792,10 @@ impl Model {
     /// The Claude chat layer for an agent (the chat view's read surface).
     pub fn claude(&self, id: AgentId) -> Option<&ClaudeLayer> {
         self.agents.get(&id).and_then(AgentCard::claude)
+    }
+
+    pub fn claude_sdk(&self, id: AgentId) -> Option<&ClaudeSdkLayer> {
+        self.agents.get(&id).and_then(AgentCard::claude_sdk)
     }
 
     pub fn codex(&self, id: AgentId) -> Option<&CodexLayer> {

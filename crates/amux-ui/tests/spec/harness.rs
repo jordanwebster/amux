@@ -502,6 +502,27 @@ pub fn codex_layer<'m>(model: &'m Model, agent: &str) -> &'m CodexLayer {
     model.codex(agent_id(agent)).expect("Codex layer folded")
 }
 
+pub fn claude_sdk_base(agent: &str) -> Vec<Msg> {
+    let mut sdk = an_agent(agent, "nova");
+    sdk.kind = amux::AgentKind::Claude {
+        driver: amux::ClaudeDriver::Sdk,
+    };
+    seq([
+        vec![connected("nova"), host_up(&a_host("nova")), agent_up(&sdk)],
+        synced(),
+        vec![
+            stream(agent, StreamMsg::Opened { truncated: false }),
+            stream(agent, StreamMsg::ReplayComplete),
+        ],
+    ])
+}
+
+pub fn claude_sdk_layer<'m>(model: &'m Model, agent: &str) -> &'m amux_ui::ClaudeSdkLayer {
+    model
+        .claude_sdk(agent_id(agent))
+        .expect("Claude SDK layer folded")
+}
+
 // --- Folding --------------------------------------------------------------
 
 /// Fold a sequence into a Model, discarding effects (replay semantics).
@@ -544,6 +565,7 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::phase::sequences());
     sequences.extend(crate::write::sequences());
     sequences.extend(crate::codex_feed::sequences());
+    sequences.extend(crate::claude_sdk_feed::sequences());
     sequences.extend(crate::codex_asks::sequences());
     sequences.extend(crate::codex_write::sequences());
     sequences.extend(crate::codex_agreement::sequences());

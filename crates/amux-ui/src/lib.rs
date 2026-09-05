@@ -13,6 +13,7 @@
 
 pub mod attachments;
 pub mod claude;
+pub mod claude_sdk;
 pub mod codex;
 pub mod diff;
 mod effect;

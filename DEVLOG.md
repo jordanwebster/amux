@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Fold Claude SDK rows into a bounded typed chat feed.**
+Streaming text, thinking and tool input reconcile with final assistant blocks
+by message and block identity. Tool results and subagent task updates retain
+their original positions; turn results expose usage and cost. Agent messages,
+compaction, reset, status and unknown rows have distinct feed entries. Stream
+closure stops unfinished blocks, while retained history and clipped content
+report their losses separately. Recorded-row specs cover the public feed and
+checkpoint replay, including interleaved parent and child streams.
+
 2026-09-05 — **Reset Claude SDK context usage after compaction and clearing.**
 Compaction now publishes the provider's post-compaction token count with the
 known model window. If that count is absent, or the conversation is cleared,

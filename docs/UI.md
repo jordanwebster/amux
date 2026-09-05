@@ -156,9 +156,11 @@ card without falling through to another provider's layer.
 The registry as built: `AgentLayer` is an exhaustive enum over
 `Claude`, `ClaudeSdk`, and `Codex`; the test agent has no structured layer.
 `AgentLayer::from_kind` exhaustively selects among them. `ClaudeSdkLayer` is
-currently a deliberate typed hole: it holds no folded state, observes no SDK
-rows, reports unknown attention, accepts no composer input, and makes the TUI
-render “this chat is unsupported in this build.” Opening it does not subscribe
+a separate fold over SDK rows: typed streaming blocks, tools, tasks, turn
+results and boundaries. Feed entries and streaming cursors are bounded; payload
+clipping is distinguished from unavailable earlier history. Its attention,
+composer and runtime subscription remain unimplemented, so the TUI still
+renders “this chat is unsupported in this build.” Opening it does not subscribe
 to a PTY or silently reuse the Claude PTY fold. Exhaustive `match` is the
 mechanism —
 adding a layer is a compile error at every site that must decide something,
