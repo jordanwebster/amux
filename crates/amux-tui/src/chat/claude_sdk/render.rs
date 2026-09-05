@@ -20,7 +20,7 @@ use ratatui::text::{Line, Span};
 use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
 use crate::chat::blocks::{
     self, paint_agent_message, paint_assistant, paint_attachment, paint_compaction_rule,
-    paint_composer_block, paint_file_change, paint_header, paint_plan, paint_thinking,
+    paint_composer_block, paint_error, paint_file_change, paint_header, paint_plan, paint_thinking,
     paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude_sdk::{View, is_open, reader_context, shared_ask};
@@ -909,7 +909,21 @@ fn entry_block(
             if let Some(cost) = turn.total_cost_usd {
                 label.push_str(&format!(" · {}", fmt_cost(cost)));
             }
-            paint_turn_rule(key, &label, theme, width)
+            let mut block = paint_turn_rule(key, &label, theme, width);
+            // A turn that failed says what failed. The session states it
+            // — as the error strings it collected, or failing those as
+            // the result text — so the rule alone would be withholding.
+            if turn.is_error
+                && let Some(said) = turn_error_text(turn)
+            {
+                let tail = paint_error(key, &said, false, theme, width);
+                block.lines.extend(tail.lines);
+                if !tail.copy_text.is_empty() {
+                    block.copy_text.push('\n');
+                    block.copy_text.push_str(&tail.copy_text);
+                }
+            }
+            block
         }
         FeedEntryKind::Compaction(compaction) => {
             let mut label = String::from("compacted");
@@ -969,6 +983,24 @@ fn entry_block(
             paint_unrecognized(key, "unrecognized row", Some(&detail), theme, width)
         }
     }
+}
+
+/// What an errored turn said: the error strings the session collected,
+/// or the result text when it collected none. Its own outcome word
+/// (`error_max_turns` and friends) is the last resort, because a person
+/// reading `errored` learns nothing from it alone.
+fn turn_error_text(turn: &amux_ui::claude_sdk::TurnEntry) -> Option<String> {
+    if !turn.errors.is_empty() {
+        return Some(turn.errors.join("\n"));
+    }
+    turn.result
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            (turn.outcome != "unknown" && turn.outcome != "success").then(|| turn.outcome.clone())
+        })
 }
 
 /// A dim row under a block, in the words the continuation column uses.

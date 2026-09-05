@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **An errored turn now says what went wrong.**
+The chat driven over stream-JSON closed a failed turn with the word
+"errored" and nothing else, although the session had already told it what
+happened. The rule is now followed by the session's own words — the error
+strings it collected, or the result text when it collected none — because a
+person who has just watched a turn fail needs the reason, not the fact.
+
 2026-09-05 — **A landed edit reads as a file change in the stream-JSON
 Claude chat too, not as another tool line.**
 `✎ Edit src/lib.rs · +2 −1` with the patch hanging under it, the same block

@@ -410,7 +410,7 @@ admission, because a parity list that hides unbuilt work is worth nothing.
 | Subagent line | Better: a subagent is a task with a lifecycle, so the SDK chat states what each one was asked to do, whether it is running, and what it last used. |
 | Agent-to-agent message and family banners | Adopted unchanged — the kernel gives both chats the message. |
 | Interruption marker | Adopted in a different shape: the interrupted message itself is marked, rather than a separate marker row. |
-| API error row | **Partly absent, and buildable.** An errored turn closes with `turn · errored`, but what the error said is folded and never painted. The SDK's result row carries the error strings. |
+| API error row | Adopted in a different shape: the rule that closes an errored turn is followed by what the session said went wrong — the error strings it collected, or the result text when it collected none. |
 | Turn rule with its duration | Adopted, plus what the turn cost, which the SDK prices and the transcript does not. |
 | Compaction rule | Adopted, with the tokens before and after. The transcript's post-compaction summary row has no SDK equivalent: it is an artifact of the file, not a fact of the session. |
 | Unrecognized row, retained and painted | Adopted, and additionally a stated ready, resumed, history-gap or conversation-reset boundary. |
@@ -432,8 +432,8 @@ admission, because a parity list that hides unbuilt work is worth nothing.
 | Help overlay and the shared keybinding tiers | Adopted unchanged. |
 | Raw attach | Absent, permanently: the process has no terminal UI to attach to. This chat is the only way in, which is why every request reaches the screen. |
 
-Two rows above say "buildable". They are the only capabilities in this
-inventory that the SDK could express today and does not, and each is
+One row above says "buildable": it is the only capability in this
+inventory that the SDK could express today and does not, and it is
 tracked as work rather than excused as a gap.
 
 ## What the three chats share

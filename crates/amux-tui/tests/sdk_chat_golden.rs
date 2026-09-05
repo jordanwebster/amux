@@ -280,6 +280,29 @@ fn landed_edit() -> Model {
     fold(msgs)
 }
 
+/// A session whose turn ended in an error, with the strings the session
+/// collected. Synthetic, because no recording in the corpus fails.
+fn errored_turn() -> Model {
+    let mut msgs = base();
+    for (index, row) in recorded("text").into_iter().enumerate() {
+        msgs.push(batch(index as u64, vec![row]));
+    }
+    msgs.push(batch(
+        900,
+        vec![json!({
+            "type": "result",
+            "subtype": "error_during_execution",
+            "is_error": true,
+            "uuid": "result-error",
+            "duration_ms": 4200,
+            "result": "the session stopped",
+            "errors": ["API Error 529: the upstream model is overloaded"],
+            "usage": {"input_tokens": 120, "output_tokens": 18}
+        })],
+    ));
+    fold(msgs)
+}
+
 /// The recorded session with a Codex child stopped on an approval, so the
 /// family banner reaches a parent whose own rows this chat folds.
 fn asking_child() -> Model {
@@ -491,6 +514,22 @@ fn sdk_chat_paints_a_landed_edit_as_a_file_change() {
     assert!(
         text.contains("+mod attachments;") && text.contains("-mod store;"),
         "and the patch preview shows the rows that moved: {text}"
+    );
+}
+
+/// A turn that failed says what failed: the rule marks it errored and
+/// the session's own words follow, because "errored" alone tells a
+/// person nothing they can act on.
+#[test]
+fn sdk_chat_states_what_an_errored_turn_said() {
+    let text = assert_surface("sdk_chat_errored_turn", &errored_turn());
+    assert!(
+        text.contains("turn · errored"),
+        "the rule marks the turn errored: {text}"
+    );
+    assert!(
+        text.contains("API Error 529"),
+        "and the error the session collected is on screen: {text}"
     );
 }
 
