@@ -726,6 +726,7 @@ service ClientService {
   rpc BeginPair(BeginPairRequest) returns (PendingPairResponse);
   rpc ConfirmPair(PendingPairRequest) returns (GetPeerResponse);
   rpc AbandonPair(PendingPairRequest) returns (PairingAbandoned);
+  rpc GetDeviceIdentity(GetDeviceIdentityRequest) returns (DeviceIdentity);
   rpc ListPeers(ListPeersRequest) returns (ListPeersResponse);
   rpc GetPeer(GetPeerRequest) returns (GetPeerResponse);
   rpc Unpair(UnpairRequest) returns (UnpairResponse);
@@ -933,6 +934,13 @@ message PeerEntry {
   bytes pubkey = 3;
   int64 paired_at_unix_ms = 4;
   repeated PeerReachability reachabilities = 5;
+}
+
+message GetDeviceIdentityRequest {}
+message DeviceIdentity {
+  bytes host_id = 1;
+  string name = 2;
+  bytes pubkey = 3;
 }
 
 message ListPeersRequest {}

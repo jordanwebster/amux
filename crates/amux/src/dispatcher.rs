@@ -50,12 +50,72 @@ fn take_mtls_audit_emitted() -> bool {
 /// [`TunnelDispatcher::serve_tcp_listener_tracked`]).
 pub(crate) type TrackedTcpConnections = std::sync::Arc<std::sync::Mutex<Vec<std::net::TcpStream>>>;
 
+/// Tracking duplicates must not keep a closed connection alive: a revoked
+/// transport must deliver EOF even while the harness retains its sever handle.
+pub(crate) struct TrackedTcpStream {
+    inner: tokio::net::TcpStream,
+    tracked: bool,
+}
+
+impl std::ops::Deref for TrackedTcpStream {
+    type Target = tokio::net::TcpStream;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl Drop for TrackedTcpStream {
+    fn drop(&mut self) {
+        if self.tracked {
+            let _ = socket2::SockRef::from(&self.inner).shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+impl AsyncRead for TrackedTcpStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TrackedTcpStream {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 pub(crate) fn track_tcp_stream(
     stream: tokio::net::TcpStream,
     track: Option<&TrackedTcpConnections>,
-) -> std::io::Result<tokio::net::TcpStream> {
+) -> std::io::Result<TrackedTcpStream> {
     let Some(connections) = track else {
-        return Ok(stream);
+        return Ok(TrackedTcpStream {
+            inner: stream,
+            tracked: false,
+        });
     };
     let std_stream = stream.into_std()?;
     let duplicate = std_stream.try_clone()?;
@@ -63,7 +123,10 @@ pub(crate) fn track_tcp_stream(
         .lock()
         .expect("tracked TCP connection registry poisoned")
         .push(duplicate);
-    tokio::net::TcpStream::from_std(std_stream)
+    Ok(TrackedTcpStream {
+        inner: tokio::net::TcpStream::from_std(std_stream)?,
+        tracked: true,
+    })
 }
 
 #[derive(Clone)]
@@ -452,6 +515,32 @@ mod tests {
         let server = dispatcher.dispatch(server_io, reachability).await;
         let _ = client.await.unwrap();
         server
+    }
+
+    #[tokio::test]
+    async fn revocation_tracked_socket_drop_delivers_eof_with_sever_handle_retained() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut peer = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let registry = TrackedTcpConnections::default();
+        let mut tracked = track_tcp_stream(stream, Some(&registry)).unwrap();
+        tracked.write_all(b"x").await.unwrap();
+        let mut byte = [0];
+        peer.read_exact(&mut byte).await.unwrap();
+        assert_eq!(&byte, b"x");
+        drop(tracked);
+        assert_eq!(registry.lock().unwrap().len(), 1);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), peer.read(&mut byte))
+                .await
+                .expect("tracking must not retain a closed socket")
+                .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]

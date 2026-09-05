@@ -1087,6 +1087,10 @@ impl Daemon {
     /// rejects before the handler body runs.
     pub async fn rejects_remote_trust_admin_from(&self, peer: &Daemon) {
         let client = peer.routed_admin_client_to(self).await;
+        assert_permission_denied(
+            "GetDeviceIdentity",
+            client.device_identity().await.map(|_| ()),
+        );
         assert_permission_denied("ListPeers", client.list_peers().await.map(|_| ()));
         assert_permission_denied("GetPeer", client.get_peer(self.host_id()).await.map(|_| ()));
         assert_permission_denied(

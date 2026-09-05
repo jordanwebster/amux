@@ -203,13 +203,17 @@ mod tests {
         assert_eq!(
             service_methods.get("ClientService").cloned(),
             Some(std::collections::BTreeSet::from([
+                "AbandonPair",
+                "BeginPair",
                 "CancelPairing",
+                "ConfirmPair",
                 "CreateAgent",
                 "Debug",
                 "DeleteAgent",
                 "Diff",
                 "GetArtifact",
                 "ListRepositories",
+                "GetDeviceIdentity",
                 "GetPairingStatus",
                 "GetPeer",
                 "HandleHook",

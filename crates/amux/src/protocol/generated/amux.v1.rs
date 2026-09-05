@@ -1715,6 +1715,17 @@ pub struct PeerEntry {
     pub reachabilities: ::prost::alloc::vec::Vec<PeerReachability>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetDeviceIdentityRequest {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeviceIdentity {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub pubkey: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListPeersRequest {}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListPeersResponse {
@@ -4700,6 +4711,27 @@ pub mod client_service_client {
                 .insert(GrpcMethod::new("amux.v1.ClientService", "AbandonPair"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn get_device_identity(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetDeviceIdentityRequest>,
+        ) -> std::result::Result<tonic::Response<super::DeviceIdentity>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ClientService/GetDeviceIdentity",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ClientService", "GetDeviceIdentity"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn list_peers(
             &mut self,
             request: impl tonic::IntoRequest<super::ListPeersRequest>,
@@ -5010,6 +5042,10 @@ pub mod client_service_server {
             tonic::Response<super::PairingAbandoned>,
             tonic::Status,
         >;
+        async fn get_device_identity(
+            &self,
+            request: tonic::Request<super::GetDeviceIdentityRequest>,
+        ) -> std::result::Result<tonic::Response<super::DeviceIdentity>, tonic::Status>;
         async fn list_peers(
             &self,
             request: tonic::Request<super::ListPeersRequest>,
@@ -6366,6 +6402,52 @@ pub mod client_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = AbandonPairSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.ClientService/GetDeviceIdentity" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetDeviceIdentitySvc<T: ClientService>(pub Arc<T>);
+                    impl<
+                        T: ClientService,
+                    > tonic::server::UnaryService<super::GetDeviceIdentityRequest>
+                    for GetDeviceIdentitySvc<T> {
+                        type Response = super::DeviceIdentity;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetDeviceIdentityRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ClientService>::get_device_identity(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetDeviceIdentitySvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

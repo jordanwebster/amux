@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Expose device identities and verify live session revocation.**
+The shared client reads its own device name, host ID and SHA256 fingerprint
+without entering pair-mode. Paired-device listings expose the same fingerprint
+format as pairing confirmation. Identity inspection stays local-admin only.
+Revocation specs exercise the existing synchronous trust and transport teardown
+through both relay-only and direct-with-relay routes: the revoked phone loses
+its open agent session and its first subsequent send fails. The owner retains
+access, and identity fingerprints remain stable across restart. Testnet's
+retained socket duplicates no longer keep dropped direct connections alive:
+tracked streams shut down the socket on drop, so revocation delivers EOF just
+as it does without the harness's duplicate handles.
+
 2026-09-05 — **Review a pairing identity before granting trust.**
 PIN and QR clients can authenticate through the relay and inspect the sealed
 host name, public-key fingerprint and expiry while both trust stores remain

@@ -54,6 +54,7 @@ mod method {
         "/amux.v1.ClientService/PairPinCloudPeer";
     pub(super) const CLIENT_PAIR_QR_CLOUD_PEER_NAME: &str =
         "/amux.v1.ClientService/PairQrCloudPeer";
+    pub(super) const CLIENT_DEVICE_IDENTITY_NAME: &str = "/amux.v1.ClientService/GetDeviceIdentity";
     pub(super) const CLIENT_LIST_PEERS_NAME: &str = "/amux.v1.ClientService/ListPeers";
     pub(super) const CLIENT_GET_PEER_NAME: &str = "/amux.v1.ClientService/GetPeer";
     pub(super) const CLIENT_UNPAIR_NAME: &str = "/amux.v1.ClientService/Unpair";
@@ -185,11 +186,21 @@ fn status_to_pairing_error(error: tonic::Status) -> PairingError {
     }
 }
 
+/// This device's public identity, read without entering pairing mode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceIdentity {
+    pub host_id: crate::HostId,
+    pub name: String,
+    /// SHA256 of the device public key, encoded as lowercase hexadecimal.
+    pub fingerprint: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeerEntry {
     pub host_id: uuid::Uuid,
     pub name: String,
     pub pubkey: Vec<u8>,
+    pub fingerprint: String,
     pub paired_at: DateTime<Utc>,
     pub reachabilities: Vec<PeerReachability>,
 }
@@ -1083,12 +1094,7 @@ impl Client {
         let expires_at = DateTime::from_timestamp_millis(peer.expires_at_unix_ms)
             .ok_or(PairingError::InvalidPin)?;
         let (host_id, pubkey, name) = pairing_identity_from_wire("BeginPair", peer)?;
-        let hash = ring::digest::digest(&ring::digest::SHA256, &pubkey);
-        let fingerprint = hash
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+        let fingerprint = public_key_fingerprint(&pubkey);
         Ok(PendingPeer {
             host_id,
             name,
@@ -1188,6 +1194,32 @@ impl Client {
             host_id,
             pubkey,
             name,
+        })
+    }
+
+    /// Reads the identity of the local daemon or embedded client runtime.
+    pub async fn device_identity(&self) -> Result<DeviceIdentity, ClientError> {
+        self.ensure_open()?;
+        let identity = self
+            .inner
+            .lock()
+            .await
+            .get_device_identity(wire::GetDeviceIdentityRequest {})
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let method = method::CLIENT_DEVICE_IDENTITY_NAME;
+        let host_id = uuid_from_wire_bytes(method, "DeviceIdentity.host_id", identity.host_id)?;
+        if identity.pubkey.len() != PAIRING_PUBKEY_LEN {
+            return Err(ClientError::Decode {
+                method,
+                message: "DeviceIdentity.pubkey must be 32 bytes".to_string(),
+            });
+        }
+        Ok(DeviceIdentity {
+            host_id,
+            name: identity.name,
+            fingerprint: public_key_fingerprint(&identity.pubkey),
         })
     }
 
@@ -1462,6 +1494,14 @@ fn wire_agent_to_agent(method: &'static str, agent: wire::Agent) -> Result<Agent
     })
 }
 
+fn public_key_fingerprint(pubkey: &[u8]) -> String {
+    ring::digest::digest(&ring::digest::SHA256, pubkey)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn peer_entry_from_wire(
     method: &'static str,
     peer: wire::PeerEntry,
@@ -1494,6 +1534,7 @@ fn peer_entry_from_wire(
     Ok(PeerEntry {
         host_id,
         name: peer.name,
+        fingerprint: public_key_fingerprint(&peer.pubkey),
         pubkey: peer.pubkey,
         paired_at,
         reachabilities,

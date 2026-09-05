@@ -1872,6 +1872,8 @@ mod tests {
             host_id: uuid::Uuid::from_u128(id),
             name: name.to_string(),
             pubkey: vec![7; 32],
+            fingerprint: "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0"
+                .to_string(),
             paired_at: chrono::DateTime::from_timestamp(200, 0).unwrap(),
             reachabilities: vec![amux::PeerReachability::Cloud],
         }

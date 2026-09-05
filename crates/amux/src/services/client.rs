@@ -1661,6 +1661,18 @@ impl wire::client_service_server::ClientService for ClientService {
         Ok(tonic::Response::new(wire::PairingAbandoned {}))
     }
 
+    async fn get_device_identity(
+        &self,
+        request: tonic::Request<wire::GetDeviceIdentityRequest>,
+    ) -> TonicResult<wire::DeviceIdentity> {
+        require_local_admin_client(&request)?;
+        Ok(tonic::Response::new(wire::DeviceIdentity {
+            host_id: self.local_agents.host_id().as_bytes().to_vec(),
+            name: self.server_state.read().await.config.host_name.clone(),
+            pubkey: self.pairing_trust.local_pubkey.clone(),
+        }))
+    }
+
     async fn list_peers(
         &self,
         request: tonic::Request<wire::ListPeersRequest>,

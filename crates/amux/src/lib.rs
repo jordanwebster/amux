@@ -60,9 +60,9 @@ pub use amux_artifacts::{ArtifactId, ArtifactKind};
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
-    AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, HostEventStream,
-    PairingError, PairingSecret, PairingStart, PeerEntry, PeerReachability, PendingPeer,
-    ResumeSummary, SessionStream, SuspendSummary,
+    AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, DeviceIdentity,
+    HostEventStream, PairingError, PairingSecret, PairingStart, PeerEntry, PeerReachability,
+    PendingPeer, ResumeSummary, SessionStream, SuspendSummary,
 };
 pub use config::{
     ColorSetting, Config, ConfigError, Keybinds, LeaderKey, OpenMode, ThemeSetting, UiSettings,

@@ -208,7 +208,7 @@ Pairing is the trust boundary — a paired peer has full runtime authority,
 including disruptive operations — with exactly one carve-out:
 **trust mutation and pairing administration are local-only**.
 `StartPairing`, `GetPairingStatus`, `CancelPairing`, `PairPeer`,
-`PairPinCloudPeer`, `PairQrCloudPeer`, `ListPeers`, `GetPeer`, and
+`PairPinCloudPeer`, `PairQrCloudPeer`, `GetDeviceIdentity`, `ListPeers`, `GetPeer`, and
 `Unpair` check the connection's admission class
 (`require_local_admin_client` in `services/client.rs`) and refuse anything
 that is not `LocalTrusted`. A remote peer can use your agents; it cannot
