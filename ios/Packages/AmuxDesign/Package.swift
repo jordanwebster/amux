@@ -8,8 +8,15 @@ let package = Package(
         .library(name: "AmuxDesign", targets: ["AmuxDesign"]),
     ],
     targets: [
-        .target(name: "AmuxDesign"),
-        .testTarget(name: "AmuxDesignTests", dependencies: ["AmuxDesign"]),
+        .target(
+            name: "AmuxDesign",
+            resources: [.copy("Resources/Fonts")]
+        ),
+        .testTarget(
+            name: "AmuxDesignTests",
+            dependencies: ["AmuxDesign"],
+            resources: [.copy("TokenTable.txt")]
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

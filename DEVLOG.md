@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The design as values.** AmuxDesign now carries the app's whole
+visual language: one perceptually even neutral ramp with every surface role
+stated as a distance along it rather than as its own colour, so light and dark
+separate by the same apparent amount instead of drifting apart whenever a
+value is nudged; a single petrol accent, because colour in this app means
+attention and nothing else; the metrics; and the glass treatment, which washes
+the ground in under the material so a transcript behind a floating surface
+cannot resolve back into readable words. Instrument Sans and Geist Mono are
+bundled and registered with Core Text at first use — they travel in the
+package's own resource bundle, where an app-level font list could not reach
+them. Every type role names the text style it scales with, so nothing is set
+at a fixed point size and the reader's chosen type size is honoured
+throughout. The whole resolved table — colours in both appearances, metrics
+and type roles — is pinned by a test, so a change to the design arrives as a
+reviewable diff rather than as a pixel difference in a screenshot.
+
 2026-09-05 — **An Xcode project for the iPhone app.** `ios/project.yml`
 generates Amux.xcodeproj: an iPhone-only app targeting iOS 26.0, a UI test
 bundle, and four local Swift packages — AmuxCore over the Rust bridge

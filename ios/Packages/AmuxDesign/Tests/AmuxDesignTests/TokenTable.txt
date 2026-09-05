@@ -1,0 +1,38 @@
+design Studio
+separation rule graduated false
+
+colour           light    dark
+ground          #EFF1F5  #0D1015
+raised          #FFFFFF  #272D37
+sunken          #E4E7ED  #181C23
+hairline        #D3D8E1  #3C4350
+ink             #06080B  #F7F8FA
+inkMuted        #575F6E  #949CAB
+inkFaint        #949CAB  #747D8D
+accent          #0E5F6E  #4FBACD
+onAccent        #FFFFFF  #06080B
+
+metric           value
+cardRadius      16
+controlRadius   12
+floatRadius     26
+rowPadding      14
+gutter          18
+rowGap          1
+feedGap         16
+hairline        0.5
+glassWash       0.78
+glassOpenWash   0.88
+
+role             face                size  weight    scales with
+display         Instrument Sans     38    bold      largeTitle  tracking -0.4
+screenTitle     Instrument Sans     26    semibold  title  tracking -0.4
+sectionTitle    Geist Mono          11    medium    caption2  tracking 0.4
+identifier      Geist Mono          15.5  medium    subheadline
+identifierUnread Geist Mono          15.5  bold      subheadline
+body            Instrument Sans     16    regular   callout
+bodyEmphasis    Instrument Sans     16    semibold  callout
+detail          Instrument Sans     15    regular   subheadline
+caption         Geist Mono          11.5  medium    caption2
+mono            Geist Mono          14    regular   footnote
+monoSmall       Geist Mono          12.5  regular   caption
