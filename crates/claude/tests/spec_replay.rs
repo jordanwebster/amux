@@ -72,6 +72,31 @@ mod pty_replays {
         assert_eq!(started.elapsed(), Duration::ZERO);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn cleanup_drains_a_recorded_tail_larger_than_the_transport_buffers() {
+        let entry = pty_registry()
+            .iter()
+            .find(|entry| entry.name == "prompt")
+            .unwrap();
+        let mut recording =
+            load_recording(&claude::specs::pty::fixtures_root().join(entry.recording)).unwrap();
+        let us = recording.io.last().unwrap().us;
+        let line = serde_json::json!({
+            "row": {"type": "system", "content": "x".repeat(8192)}
+        })
+        .to_string();
+        for index in 1..=1024 {
+            recording.io.push(replay_support::IoEvent {
+                us: us + index,
+                direction: replay_support::IoDirection::Read,
+                line: line.clone(),
+                transport_id: Some("transcript".to_owned()),
+                session_id: None,
+            });
+        }
+        replay_pty_recording(entry, recording).await;
+    }
+
     #[test]
     fn every_registered_scenario_has_a_test() {
         assert_eq!(
@@ -90,6 +115,14 @@ async fn replay_pty(entry: &replay_support::SpecEntry) {
     eprintln!("replaying PTY {}", entry.name);
     let recording = load_recording(&root.join(entry.recording))
         .unwrap_or_else(|error| panic!("load {}: {error}", entry.name));
+    replay_pty_recording(entry, recording).await;
+}
+
+#[cfg(feature = "pty")]
+async fn replay_pty_recording(
+    entry: &replay_support::SpecEntry,
+    recording: replay_support::Recording,
+) {
     assert!(
         entry
             .allowed_models

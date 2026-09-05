@@ -218,28 +218,41 @@ pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFai
     // Keep the driver in this future so failed or cancelled specifications
     // cannot leave a detached replay task waiting for a write.
     let (claim, driver_result) = {
-        let claim = tokio::time::timeout(wait, async {
-            session.prepare_for_prompt().await?;
-            (definition.run)(&mut session).await
-        });
         let driver = async {
             if let Some(controller) = &controller {
                 controller.drive().await;
             }
         };
-        tokio::pin!(claim, driver);
+        tokio::pin!(driver);
         let mut driver_finished = false;
-        let claim = tokio::select! {
-            result = &mut claim => result,
-            () = &mut driver => {
-                driver_finished = true;
-                claim.await
+        let claim = {
+            let claim = tokio::time::timeout(wait, async {
+                session.prepare_for_prompt().await?;
+                (definition.run)(&mut session).await
+            });
+            tokio::pin!(claim);
+            tokio::select! {
+                result = &mut claim => result,
+                () = &mut driver => {
+                    driver_finished = true;
+                    claim.await
+                }
             }
         };
         let driver_result = if matches!(claim, Ok(Ok(()))) && !driver_finished {
-            tokio::time::timeout(Duration::from_secs(5), driver)
-                .await
-                .map_err(|_| failure(entry, "strict replay driver did not finish"))
+            // Trailing recorded events can fill the session channels after the
+            // last assertion. Drain them until replay completion, not until an
+            // arbitrary period of wall-clock silence.
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    tokio::select! {
+                        () = &mut driver => break,
+                        Some(_) = session.events.recv() => {}
+                    }
+                }
+            })
+            .await
+            .map_err(|_| failure(entry, "strict replay driver did not finish"))
         } else {
             Ok(())
         };

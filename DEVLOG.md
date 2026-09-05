@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Replay cleanup drains trailing events until delivery completes.**
+A recorded tail larger than the transport buffers must still drain after the
+scenario's assertions finish. Cleanup now consumes pending events while the
+replay driver delivers the remainder, keeping backpressure from turning into
+a shutdown timeout without reintroducing a quiet-period sleep. A virtual-clock
+regression appends an eight-megabyte transcript tail; it fails before this
+correction and checks complete replay accounting after it. All 29 provider
+replay checks and workspace lint pass; the 21 PTY checks finish in 0.27 seconds
+with one test thread.
+
 2026-09-06 — **Recorded PTY tests complete without live terminal waits.**
 Replays now wait for screen updates, explicitly close their recorded streams,
 and require shutdown to finish. The previous runner silently spent five
