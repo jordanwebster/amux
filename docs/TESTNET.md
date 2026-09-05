@@ -41,3 +41,73 @@ An acknowledgement always has the same shape; unused fields are null or empty:
 Replay the control protocol and its independent daemon observations with
 `timeout 900 wt test -- testnet_control -- --nocapture`. Process teardown is
 covered by `timeout 900 wt test -- testnet_serve`.
+
+## Scripted Claude sessions
+
+Rust harnesses can create a process-free Claude PTY session with
+`amux::testnet::script::session(script).await`. Keep its returned `Provider`
+handle alive while consuming the returned `claude::pty::Session`. The provider
+writes a temporary JSONL transcript and sends real Claude hooks; the session's
+normal tailer, parser and semantic ask handling produce the events.
+
+Scripts use externally tagged JSON variants. For example:
+
+```json
+{
+  "reactions": [
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {"Markdown": {"text": "Checking the workspace."}},
+        {"Ask": {"Permission": {
+          "tool": "Bash",
+          "invocation": {"command": "pwd"},
+          "scoped_directories": ["/workspace"]
+        }}}
+      ]
+    },
+    {
+      "on": {"Answer": "Permission"},
+      "play": [
+        {"Tool": {"name": "Bash", "input": {"command": "pwd"}, "output": "/workspace", "denied": false}},
+        "EndTurn",
+        {"Exit": {"code": 0}}
+      ]
+    }
+  ],
+  "commands": [],
+  "models": [],
+  "efforts": []
+}
+```
+
+`Provider::feed` records decoded inputs in arrival order and selects the first
+matching reaction at or after the cursor, consuming through that reaction.
+Triggers are `AnyPrompt`, `PromptContains`, `Command`, `Answer`, `Interrupt`
+and `Any`. Command triggers match the first slash-command word of a prompt;
+answer triggers distinguish permission, question and plan responses. The
+capability lists are script metadata. Unknown ask IDs return `UnknownAsk`
+without consuming a reaction; unmatched inputs return `Exhausted`.
+
+A prompt received during a turn is observed immediately and played after the
+current reaction reaches `EndTurn` and finishes its remaining steps. Deferred
+prompts keep arrival order. EndTurn writes one duration row and Stop hook per
+prompt, even if repeated. Reactions without EndTurn stay open for answers or
+control operations. `Provider::play` accepts additional steps and waits for
+their transcript and hook ingestion; consume the session concurrently to keep
+its bounded event stream moving.
+
+Steps support raw JSONL rows, Markdown, tool calls and results, permission,
+question and plan asks, todos, provider child notifications, agent messages,
+working time, turn end, compaction, API errors, exit and unknown raw values.
+Todo states are `pending`, `in_progress` and `completed`. Child notifications
+describe provider-internal work; they do not create a separate daemon agent.
+Exit reports its code and closes the event stream, including when the control
+handle remains held. Dropping the provider removes its temporary transcript
+and ends playback. Asynchronous playback errors are available from
+`Provider::error`.
+
+Run `timeout 900 wt test -- testnet_script -- --nocapture` to see the parsed
+transcript and hook capture along with checks for asks, deferred prompts,
+turn boundaries and cleanup. Runner control-socket integration is separate
+from this session-level API.

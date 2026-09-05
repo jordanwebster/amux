@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Play scripted Claude sessions through real provider sources.**
+The testnet script format now covers prompt, command, answer and interrupt
+reactions, every transcript step, semantic asks and controlled process exit.
+A process-free PTY session tails actual temporary JSONL files and parses
+normal hooks. Playback waits for source ingestion before turn end and exit;
+the public stream closes even while its control handle remains held. Inputs
+are observed before validation, queued prompts retain arrival order, unknown
+asks fail explicitly, and repeated EndTurn steps emit one Stop per prompt.
+Six focused tests cover the format, every step and trigger, real ask facts,
+queued turns, exit ordering and temporary-resource cleanup. The session API
+is ready for daemon and runner integration.
+
 2026-09-05 — **Control network outages, restart and pairing from the runner.**
 The loopback JSON protocol now drives relay outages, direct-link changes,
 daemon restart, revocation, PIN pairing with expiry and QR pairing. Replies

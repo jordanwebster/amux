@@ -47,6 +47,7 @@ mod daemon;
 mod latency;
 mod net;
 mod pairing;
+pub mod script;
 mod session;
 mod wire;
 
