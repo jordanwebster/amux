@@ -12,6 +12,57 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 
 use crate::audit;
 
+/// Stores the trust established by an SSH or direct PIN identity exchange.
+#[async_trait::async_trait]
+pub trait PairingAdmin: Sync {
+    async fn pair_ssh_peer(
+        &self,
+        peer: ssh::SshPairingPeer,
+        target: Option<String>,
+    ) -> Result<(), crate::ClientError>;
+    async fn pair_direct_peer(
+        &self,
+        peer: ssh::SshPairingPeer,
+        address: std::net::SocketAddr,
+    ) -> Result<(), crate::ClientError>;
+}
+
+#[async_trait::async_trait]
+impl PairingAdmin for crate::Client {
+    async fn pair_ssh_peer(
+        &self,
+        peer: ssh::SshPairingPeer,
+        target: Option<String>,
+    ) -> Result<(), crate::ClientError> {
+        self.pair_ssh_peer(peer, target).await
+    }
+    async fn pair_direct_peer(
+        &self,
+        peer: ssh::SshPairingPeer,
+        address: std::net::SocketAddr,
+    ) -> Result<(), crate::ClientError> {
+        self.pair_direct_peer(peer, address).await
+    }
+}
+
+#[async_trait::async_trait]
+impl PairingAdmin for crate::installation::ProfileAdminClient {
+    async fn pair_ssh_peer(
+        &self,
+        peer: ssh::SshPairingPeer,
+        target: Option<String>,
+    ) -> Result<(), crate::ClientError> {
+        self.pair_ssh_peer(peer, target).await
+    }
+    async fn pair_direct_peer(
+        &self,
+        peer: ssh::SshPairingPeer,
+        address: std::net::SocketAddr,
+    ) -> Result<(), crate::ClientError> {
+        self.pair_direct_peer(peer, address).await
+    }
+}
+
 pub(crate) const QR_SECRET_LEN: usize = 32;
 pub(crate) const PAIR_MODE_TTL: Duration = Duration::from_secs(5 * 60);
 pub(crate) const PAIR_ATTEMPT_LIMIT: u8 = 5;

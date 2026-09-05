@@ -869,3 +869,70 @@ async fn front_door_adoption_response_identifies_confirmation_and_retries_staged
         .stop(crate::server::ShutdownReason::UserRequested)
         .await;
 }
+
+#[tokio::test]
+async fn front_door_admin_client_ssh_exchange_keeps_trust_and_windows_independent() {
+    use crate::installation::{ProfileId, ProfilePaths};
+    let front = front(Listeners::InProcessOnly).await;
+    let mut directory = client(&front);
+    let personal = create(&mut directory, "personal").await;
+    let work = create(&mut directory, "work").await;
+    let third = create(&mut directory, "third").await;
+    let admin = |profile: &wire::ProfileInfo| {
+        ProfileAdminClient::new(ProfileId(profile.id.parse().unwrap()), directory.clone())
+    };
+    let personal_admin = admin(&personal);
+    let work_admin = admin(&work);
+    let third_admin = admin(&third);
+    personal_admin.start_qr_pairing().await.unwrap();
+    work_admin.start_pin_pairing().await.unwrap();
+    work_admin.cancel_pairing().await.unwrap();
+    assert!(personal_admin.pairing_is_active().await.unwrap());
+    assert!(!work_admin.pairing_is_active().await.unwrap());
+    assert!(
+        personal_admin
+            .list_pairing_hosts()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let paths = |profile: &wire::ProfileInfo| {
+        ProfilePaths::for_id(
+            front.installation.root(),
+            ProfileId(profile.id.parse().unwrap()),
+        )
+        .unwrap()
+        .data_dir
+    };
+    let (initiator, responder) = tokio::io::duplex(64 * 1024);
+    let (paired_third, paired_work) = tokio::join!(
+        crate::pair_via_ssh_initiator(
+            initiator,
+            paths(&work),
+            "work",
+            "third.example",
+            &work_admin
+        ),
+        crate::pair_via_ssh_responder(responder, paths(&third), "third", &third_admin),
+    );
+    let third_identity = paired_third.unwrap();
+    let work_identity = paired_work.unwrap();
+    assert!(personal_admin.list_peers().await.unwrap().is_empty());
+    let peer = work_admin.get_peer(third_identity.host_id).await.unwrap();
+    assert_eq!(peer.name, "third");
+    assert_eq!(
+        peer.reachabilities,
+        vec![crate::PeerReachability::Ssh {
+            target: "third.example".into()
+        }]
+    );
+    let responder_peer = third_admin.get_peer(work_identity.host_id).await.unwrap();
+    assert!(responder_peer.reachabilities.is_empty());
+    work_admin
+        .unpair(third_identity.host_id, "user")
+        .await
+        .unwrap();
+    assert!(work_admin.list_peers().await.unwrap().is_empty());
+    assert!(personal_admin.pairing_is_active().await.unwrap());
+    personal_admin.cancel_pairing().await.unwrap();
+}

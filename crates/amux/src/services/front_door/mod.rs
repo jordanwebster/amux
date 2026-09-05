@@ -21,6 +21,10 @@ pub struct FrontDoorClient {
 }
 
 impl FrontDoorClient {
+    pub fn admin(&self, id: crate::installation::ProfileId) -> ProfileAdminClient {
+        ProfileAdminClient::new(id, self.profiles.clone())
+    }
+
     #[cfg(not(unix))]
     pub async fn connect(_path: &std::path::Path) -> std::io::Result<Self> {
         Err(std::io::Error::new(
@@ -45,6 +49,9 @@ impl FrontDoorClient {
         })
     }
 }
+
+mod client;
+pub use client::ProfileAdminClient;
 
 mod handlers;
 mod ledger;

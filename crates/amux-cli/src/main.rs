@@ -1,4 +1,3 @@
-mod auth;
 mod client_common;
 mod front_door;
 mod hooks;
@@ -455,6 +454,17 @@ async fn main() -> Result<ExitCode> {
             init::initialize(cli.config.as_deref(), *reset).await?;
             return Ok(ExitCode::SUCCESS);
         }
+        Commands::Keymap { .. } | Commands::Update => {
+            let installation = front_door::configuration(cli.config.as_deref())?;
+            match command {
+                Commands::Keymap { command } => {
+                    keymap::run(command, &installation.keymaps_dir).await?
+                }
+                Commands::Update => update::run_update(&installation).await?,
+                _ => unreachable!(),
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
         Commands::Profiles => {
             let config = front_door::configuration(cli.config.as_deref())?;
             front_door::list(&config).await?;
@@ -555,7 +565,7 @@ async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
     config
         .validate()
         .map_err(|e| anyhow!("invalid config: {e}"))?;
-    server_client::run_server_foreground(config, *cloud).await?;
+    server_client::run_relay_foreground(config).await?;
     Ok(true)
 }
 
@@ -612,23 +622,14 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             session_client::remove_agent(&target, force, &config).await?
         }
         Commands::List { all } => session_client::list_agents(all, &config).await?,
-        Commands::Keymap { command } => keymap::run(command, &config.data_dir).await?,
+        Commands::Keymap { .. } => unreachable!("keymaps dispatches before profile configuration"),
         Commands::Server { command } => match command {
             ServerCommands::Start {
-                cloud, foreground, ..
-            } => {
-                // Cloud servers run non-interactively (e.g. under systemd) and
-                // have no user-facing prompts to answer; the defaults via
-                // `unwrap_or(...)` at consumption sites are sufficient.
-                if !cloud {
-                    ensure_initialized(&mut config).await?;
-                }
-                let options = server_client::StartOptions::from_flags(cloud, foreground);
-                server_client::start_server(&config, options).await?
-            }
-            ServerCommands::Stop => server_client::stop_server(&config).await?,
-            ServerCommands::Suspend => server_client::suspend_server(&config).await?,
-            ServerCommands::Resume => server_client::resume_server(&config).await?,
+                cloud: true,
+                foreground,
+                ..
+            } => server_client::start_relay(&config, foreground).await?,
+            _ => unreachable!("installation lifecycle dispatches before profile configuration"),
         },
         Commands::Init { .. } => unreachable!("init dispatches before profile configuration"),
         Commands::Pair {
@@ -646,7 +647,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             validate_pair_qr_link_usage(link, cfg!(debug_assertions))?;
             if cancel {
                 ensure_initialized(&mut config).await?;
-                let client = client_common::require_running_client(&config, None).await?;
+                let client = front_door::profile_admin(&config, None).await?;
                 client.cancel_pairing().await?;
                 println!("Pairing mode cancelled.");
                 return Ok(ExitCode::SUCCESS);
@@ -656,7 +657,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                     unreachable!("clap enforces --pin and --for with --demo");
                 };
                 ensure_initialized(&mut config).await?;
-                let client = client_common::require_running_client(
+                let client = front_door::profile_admin(
                     &config,
                     Some("amux pair --demo --pin <DIGITS> --for <DURATION>"),
                 )
@@ -673,11 +674,8 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                 match parse_pair_connect_target(connect_target) {
                     PairConnectTarget::Picker => {
                         ensure_initialized(&mut config).await?;
-                        let client = client_common::require_running_client(
-                            &config,
-                            Some("amux pair --connect"),
-                        )
-                        .await?;
+                        let client =
+                            front_door::profile_admin(&config, Some("amux pair --connect")).await?;
                         let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
                         let host = prompt_pairing_host(&hosts)?;
                         let peer = pair_cloud_host(&client, &host).await?;
@@ -688,8 +686,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                         ensure_initialized(&mut config).await?;
                         let retry_command = format!("amux pair --connect {target}");
                         let client =
-                            client_common::require_running_client(&config, Some(&retry_command))
-                                .await?;
+                            front_door::profile_admin(&config, Some(&retry_command)).await?;
                         let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
                         let host = resolve_pairing_host_by_name(&hosts, &target)?;
                         let peer = pair_cloud_host(&client, &host).await?;
@@ -700,8 +697,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                         ensure_initialized(&mut config).await?;
                         let retry_command = format!("amux pair --connect {addr}");
                         let client =
-                            client_common::require_running_client(&config, Some(&retry_command))
-                                .await?;
+                            front_door::profile_admin(&config, Some(&retry_command)).await?;
                         let pin = prompt_pairing_pin()?;
                         let peer = amux::pair_via_pin_direct_tcp(
                             config.data_dir.clone(),
@@ -724,8 +720,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             #[cfg(unix)]
             if let Some(target) = via_ssh {
                 let retry_command = format!("amux pair --via-ssh {target}");
-                let client =
-                    client_common::require_running_client(&config, Some(&retry_command)).await?;
+                let client = front_door::profile_admin(&config, Some(&retry_command)).await?;
                 let peer = amux::pair_via_ssh_target(
                     config.data_dir.clone(),
                     &config.host_name,
@@ -738,8 +733,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             }
 
             let retry_command = pair_start_retry_command(qr, listen);
-            let client =
-                client_common::require_running_client(&config, Some(retry_command)).await?;
+            let client = front_door::profile_admin(&config, Some(retry_command)).await?;
             if listen && config.tcp_port.is_none() {
                 return Err(anyhow!(
                     "set `tcp_port` in your config, or use cloud / SSH pairing"
@@ -760,7 +754,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         }
         Commands::Peer { command } => {
             ensure_initialized(&mut config).await?;
-            let client = client_common::require_running_client(&config, None).await?;
+            let client = front_door::profile_admin(&config, None).await?;
             match command {
                 PeerCommands::List => {
                     let peers = client.list_peers().await?;
@@ -774,7 +768,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         }
         Commands::Unpair { peer, force } => {
             ensure_initialized(&mut config).await?;
-            let client = client_common::require_running_client(&config, None).await?;
+            let client = front_door::profile_admin(&config, None).await?;
             let entry = client.get_peer(peer.as_str()).await?;
             if !force && !confirm_unpair(&entry)? {
                 println!("Unpair cancelled.");
@@ -785,7 +779,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         }
         #[cfg(unix)]
         Commands::PairRecv => {
-            let client = client_common::require_running_client(&config, None).await?;
+            let client = front_door::profile_admin(&config, None).await?;
             amux::pair_via_ssh_responder_stdio(config.data_dir.clone(), &config.host_name, &client)
                 .await?;
         }
@@ -793,7 +787,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         Commands::Relay => {
             amux::relay_stdio_to_unix_socket(&config.socket_path).await?;
         }
-        Commands::Update => update::run_update(&config).await?,
+        Commands::Update => unreachable!("update dispatches before profile configuration"),
         #[cfg(debug_assertions)]
         Commands::Debug { command } => match command {
             DebugCommands::Daemon { verbose, format } => {
@@ -999,7 +993,7 @@ fn validate_pair_qr_link_usage(link: bool, debug_build: bool) -> Result<()> {
 }
 
 async fn pair_cloud_host(
-    client: &amux::Client,
+    client: &amux::installation::ProfileAdminClient,
     host: &amux::HostEntry,
 ) -> Result<amux::SshPairingPeer> {
     let pin = prompt_pairing_pin()?;
@@ -1115,7 +1109,10 @@ fn terminal_qr_code(payload: &str) -> Result<String> {
     Ok(code.render::<unicode::Dense1x2>().quiet_zone(true).build())
 }
 
-async fn wait_for_pairing_mode_to_end(client: &amux::Client, ttl_seconds: u64) -> Result<()> {
+async fn wait_for_pairing_mode_to_end(
+    client: &amux::installation::ProfileAdminClient,
+    ttl_seconds: u64,
+) -> Result<()> {
     let ttl = Duration::from_secs(ttl_seconds);
     let poll_interval = Duration::from_secs(1);
     let started_at = tokio::time::Instant::now();

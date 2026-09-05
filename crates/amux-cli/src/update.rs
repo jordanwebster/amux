@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use amux::{Config, SubscriptionReporter, UpdateInfo, UpdateReporter, UpdateStatus};
+use amux::{InstallationConfig, SubscriptionReporter, UpdateInfo, UpdateReporter, UpdateStatus};
 use anyhow::{Context, Result, bail};
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::server_client;
+use crate::front_door;
 
 #[derive(Debug, Clone)]
 pub(crate) struct MarkerFileReporter {
@@ -219,13 +219,13 @@ mod tests {
 
         tokio::time::timeout(Duration::from_secs(5), async {
             let temp = tempfile::tempdir().unwrap();
-            let config = Config {
+            let config = amux::Config {
                 state_path: temp.path().join("state.yaml"),
                 data_dir: temp.path().join("data"),
                 socket_path: temp.path().join("amux.sock"),
 
                 prevent_idle_sleep: Some(false),
-                ..Config::default()
+                ..amux::Config::default()
             };
             let reporter = Arc::new(MarkerFileReporter::from_state_path(&config.state_path));
             reporter.report(UpdateStatus::Required(Some("99.0.0".into())));
@@ -389,20 +389,21 @@ fn replace_binary(temp: &Path, target: &Path) -> Result<()> {
     std::fs::rename(temp, target).context("failed to replace binary")
 }
 
-pub async fn run_update(config: &Config) -> Result<()> {
+pub async fn run_update(config: &InstallationConfig) -> Result<()> {
     let current =
         Version::parse(env!("CARGO_PKG_VERSION")).context("failed to parse current version")?;
 
-    let manifest_url = format!("{}/manifest.json", config.cloud_url.trim_end_matches('/'));
+    let manifest_url = &config.update_manifest_url;
+    let state_path = config.root.join("state/state.yaml");
     println!("Checking for updates...");
-    let manifest = fetch_manifest(&manifest_url).await?;
+    let manifest = fetch_manifest(manifest_url).await?;
 
     let latest = Version::parse(&manifest.version)
         .with_context(|| format!("invalid version in manifest: {}", manifest.version))?;
 
     if latest <= current {
         println!("Already up to date (v{current}).");
-        MarkerFileReporter::from_state_path(&config.state_path).clear_all();
+        MarkerFileReporter::from_state_path(&state_path).clear_all();
         return Ok(());
     }
 
@@ -427,17 +428,24 @@ pub async fn run_update(config: &Config) -> Result<()> {
     println!("Downloading...");
     let tmp_path = download_and_verify(&binary.url, &binary.sha256, &exe_dir).await?;
 
-    let was_running = server_client::suspend_server_for_update_if_running(config).await?;
+    let was_running = front_door::suspend_for_update_if_running(config).await?;
 
-    replace_binary(&tmp_path, &current_exe)?;
+    if let Err(error) = replace_binary(&tmp_path, &current_exe) {
+        if was_running {
+            front_door::resume_with_executable(config, &current_exe)
+                .await
+                .context("binary replacement failed and the previous server could not resume")?;
+        }
+        return Err(error);
+    }
     println!("Updated to v{latest}.");
 
     // Clear update markers so stale banners don't persist.
-    MarkerFileReporter::from_state_path(&config.state_path).clear_all();
+    MarkerFileReporter::from_state_path(&state_path).clear_all();
 
     if was_running {
         println!("Restarting server...");
-        server_client::resume_server_with_executable(config, &current_exe).await?;
+        front_door::resume_with_executable(config, &current_exe).await?;
     }
 
     Ok(())

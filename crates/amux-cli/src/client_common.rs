@@ -64,10 +64,10 @@ async fn connect_profile(
     Ok(client)
 }
 
-pub(super) async fn spawn_daemon(config: &Config, cloud: bool) -> Result<Client> {
+pub(super) async fn spawn_relay(config: &Config) -> Result<Client> {
     let executable =
         std::env::current_exe().context("failed to determine current executable path")?;
-    spawn_daemon_and_connect(config, executable.as_path(), cloud).await
+    spawn_relay_and_connect(config, executable.as_path()).await
 }
 
 pub(super) async fn open_daemon(config: &Config) -> std::result::Result<Client, ConnectError> {
@@ -78,28 +78,14 @@ pub(super) async fn open_daemon(config: &Config) -> std::result::Result<Client, 
         .await
 }
 
-async fn spawn_daemon_and_connect(
-    config: &Config,
-    executable: &Path,
-    cloud: bool,
-) -> Result<Client> {
+async fn spawn_relay_and_connect(config: &Config, executable: &Path) -> Result<Client> {
     config.validate()?;
-    if !cloud {
-        let installation = crate::front_door::configuration(config.path.as_deref())?;
-        if crate::front_door::existing(&installation).await?.is_none() {
-            crate::front_door::spawn(&installation, executable).await?;
-        }
-        return open_daemon(config).await.map_err(Into::into);
-    }
-
-    tracing::info!(cloud, "starting server");
-
     let config_yaml =
         serde_yaml::to_string(config).context("failed to serialize config for daemon")?;
     let startup_stderr_path = startup_stderr_path(config);
     let mut cmd = daemon_command(
         executable,
-        cloud,
+        true,
         config.path.as_deref(),
         Some(&startup_stderr_path),
     );
@@ -229,7 +215,7 @@ fn is_server_unavailable(error: &io::Error) -> bool {
     )
 }
 
-fn server_not_running_message(retry_command: Option<&str>) -> String {
+pub(super) fn server_not_running_message(retry_command: Option<&str>) -> String {
     let mut message =
         "amux server is not running.\n\nStart it with:\n  amux server start".to_string();
     if let Some(command) = retry_command {

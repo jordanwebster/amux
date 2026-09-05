@@ -1,6 +1,8 @@
 //! Installation ownership, isolated profile storage, and supervised lifecycles.
 
-pub use crate::services::front_door::{FrontDoor, FrontDoorClient, FrontDoorListener};
+pub use crate::services::front_door::{
+    FrontDoor, FrontDoorClient, FrontDoorListener, ProfileAdminClient,
+};
 
 /// Generated messages and clients for the installation's local gRPC boundary.
 pub mod rpc {

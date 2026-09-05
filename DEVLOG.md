@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Keep CLI trust administration with the selected profile.**
+Pairing windows, cloud pairing, peer inspection and unpairing now use a
+front-door client pinned to a profile UUID. Direct PIN and SSH identity
+exchanges store trust through that same administration client, including the
+hidden SSH receiver. Profile diagnostics use the front door too. The CLI no
+longer owns a credential refresher or carries a ClientService lifecycle
+fallback. Update reads the installation manifest URL, suspends every profile,
+shuts down before replacement, then restarts and resumes through the front
+door; replacement failure attempts to restore the previous server. Keymap
+commands use the installation's configured directory and work without any
+profiles or a running daemon. Tests exercise real-binary direct pairing,
+profile-specific SSH reception, independent trust and pairing windows, and
+shared keymap installation and removal. Keymap unit tests now accept the
+configured directory directly and keep uninstalled inputs outside it, so
+validation sees only installed overrides.
+
 2026-09-05 — **Select and administer profiles through the front door.**
 The CLI resolves a global `--profile` label or UUID from the installation
 before connecting to the returned ClientService socket. Explicit profile

@@ -72,6 +72,7 @@ pub use config::{
     ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
 };
 pub use debug::DebugFormat;
+pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
     QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,

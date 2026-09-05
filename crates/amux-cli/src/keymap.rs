@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use amux::keymap_dir;
 use anyhow::{Context, Result, anyhow};
 use claude::pty::keymap::{
     KeymapError, KeymapFile, KeymapSource, KeymapSources, available, load_str, resolve,
@@ -9,31 +8,31 @@ use claude::version::{ClaudeVersion, probe_version};
 
 use crate::KeymapCommands;
 
-pub async fn run(command: KeymapCommands, data_dir: &Path) -> Result<()> {
+pub async fn run(command: KeymapCommands, directory: &Path) -> Result<()> {
     match command {
         KeymapCommands::List => {
             let version = probe_version(Path::new("claude"))
                 .await
                 .context("failed to determine the installed Claude version")?;
-            print!("{}", list_output(data_dir, &version)?);
+            print!("{}", list_output(directory, &version)?);
         }
-        KeymapCommands::Show { name } => print!("{}", show_keymap(data_dir, &name)?),
-        KeymapCommands::Add { file } => println!("{}", add_keymap(data_dir, &file)?),
-        KeymapCommands::Remove { name } => println!("{}", remove_keymap(data_dir, &name)?),
-        KeymapCommands::Dir => println!("{}", keymap_dir(data_dir).display()),
+        KeymapCommands::Show { name } => print!("{}", show_keymap(directory, &name)?),
+        KeymapCommands::Add { file } => println!("{}", add_keymap(directory, &file)?),
+        KeymapCommands::Remove { name } => println!("{}", remove_keymap(directory, &name)?),
+        KeymapCommands::Dir => println!("{}", directory.display()),
     }
     Ok(())
 }
 
-fn sources(data_dir: &Path) -> KeymapSources {
+fn sources(directory: &Path) -> KeymapSources {
     KeymapSources {
         baked: claude::pty::keymap::BAKED_KEYMAPS,
-        user_dir: Some(keymap_dir(data_dir)),
+        user_dir: Some(directory.to_path_buf()),
     }
 }
 
-fn list_output(data_dir: &Path, version: &ClaudeVersion) -> Result<String> {
-    let sources = sources(data_dir);
+fn list_output(directory: &Path, version: &ClaudeVersion) -> Result<String> {
+    let sources = sources(directory);
     let selected = resolve(&sources, version).map_err(keymap_error)?;
     let mut output = format!("Claude {version}\nNAME\tSOURCE\tAPPLICABLE RANGE\tBASIS\n");
     for file in available(&sources).map_err(keymap_error)? {
@@ -53,12 +52,12 @@ fn list_output(data_dir: &Path, version: &ClaudeVersion) -> Result<String> {
     Ok(output)
 }
 
-fn show_keymap(data_dir: &Path, name: &str) -> Result<String> {
-    let file = named_keymap(data_dir, name)?;
+fn show_keymap(directory: &Path, name: &str) -> Result<String> {
+    let file = named_keymap(directory, name)?;
     Ok(file.contents)
 }
 
-fn add_keymap(data_dir: &Path, input: &Path) -> Result<String> {
+fn add_keymap(directory: &Path, input: &Path) -> Result<String> {
     let contents = std::fs::read_to_string(input)
         .with_context(|| format!("failed to read keymap {}", input.display()))?;
     let origin = input.display().to_string();
@@ -84,8 +83,7 @@ fn add_keymap(data_dir: &Path, input: &Path) -> Result<String> {
     let source = KeymapSource::User(input.to_path_buf());
     let keymap = load_str(&installed_contents, &origin, source).map_err(keymap_error)?;
     validate_install_name(&keymap.name)?;
-    let directory = keymap_dir(data_dir);
-    std::fs::create_dir_all(&directory)
+    std::fs::create_dir_all(directory)
         .with_context(|| format!("failed to create keymap directory {}", directory.display()))?;
     let destination = directory.join(format!("{}.toml", keymap.name));
     std::fs::write(&destination, installed_contents).with_context(|| {
@@ -129,8 +127,8 @@ fn strip_inherited_verification(contents: &str) -> Option<String> {
     None
 }
 
-fn remove_keymap(data_dir: &Path, name: &str) -> Result<String> {
-    let file = named_keymap(data_dir, name)?;
+fn remove_keymap(directory: &Path, name: &str) -> Result<String> {
+    let file = named_keymap(directory, name)?;
     let KeymapSource::User(path) = file.id.source else {
         return Err(anyhow!("baked keymap '{name}' cannot be removed"));
     };
@@ -139,8 +137,8 @@ fn remove_keymap(data_dir: &Path, name: &str) -> Result<String> {
     Ok(format!("Removed keymap {name}"))
 }
 
-fn named_keymap(data_dir: &Path, name: &str) -> Result<KeymapFile> {
-    available(&sources(data_dir))
+fn named_keymap(directory: &Path, name: &str) -> Result<KeymapFile> {
+    available(&sources(directory))
         .map_err(keymap_error)?
         .into_iter()
         .find(|file| file.id.name == name)
@@ -175,6 +173,8 @@ fn keymap_error(error: claude::pty::keymap::KeymapError) -> anyhow::Error {
 mod tests {
     use std::path::PathBuf;
 
+    use amux::keymap_dir;
+
     use super::*;
 
     const BAKED: &str = claude::pty::keymap::BAKED_KEYMAPS[0].1;
@@ -182,7 +182,8 @@ mod tests {
     #[test]
     fn keymap_list_names_source_range_and_installed_basis() {
         let dir = tempfile::tempdir().unwrap();
-        let output = list_output(dir.path(), &"2.1.251".parse().unwrap()).unwrap();
+        let directory = dir.path().join("keymaps");
+        let output = list_output(&directory, &"2.1.251".parse().unwrap()).unwrap();
         assert!(output.contains("Claude 2.1.251"));
         assert!(output.contains("claude-2.1\tbaked"));
         assert!(output.contains(">=2.1.228, <2.2.0"));
@@ -192,9 +193,10 @@ mod tests {
     #[test]
     fn keymap_show_prints_the_effective_file() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(show_keymap(dir.path(), "claude-2.1").unwrap(), BAKED);
+        let directory = dir.path().join("keymaps");
+        assert_eq!(show_keymap(&directory, "claude-2.1").unwrap(), BAKED);
         assert!(
-            show_keymap(dir.path(), "missing")
+            show_keymap(&directory, "missing")
                 .unwrap_err()
                 .to_string()
                 .contains("unknown")
@@ -204,6 +206,7 @@ mod tests {
     #[test]
     fn keymap_add_installs_a_validated_user_file_and_remove_deletes_it() {
         let dir = tempfile::tempdir().unwrap();
+        let directory = dir.path().join("keymaps");
         let input = dir.path().join("override.toml");
         std::fs::write(
             &input,
@@ -211,8 +214,8 @@ mod tests {
         )
         .unwrap();
 
-        let added = add_keymap(dir.path(), &input).unwrap();
-        let installed = keymap_dir(dir.path()).join("claude-2.1.toml");
+        let added = add_keymap(&directory, &input).unwrap();
+        let installed = directory.join("claude-2.1.toml");
         assert!(added.contains(&installed.display().to_string()));
         assert!(installed.is_file());
         assert!(
@@ -220,19 +223,19 @@ mod tests {
                 .unwrap()
                 .contains("verified = []")
         );
-        let output = list_output(dir.path(), &"2.1.251".parse().unwrap()).unwrap();
+        let output = list_output(&directory, &"2.1.251".parse().unwrap()).unwrap();
         assert!(output.contains(&format!(
             "claude-2.1\tuser:{}\t>=2.1.228, <2.2.0\tInRange",
             installed.display()
         )));
         assert!(
-            show_keymap(dir.path(), "claude-2.1")
+            show_keymap(&directory, "claude-2.1")
                 .unwrap()
                 .contains("after_paste = 401")
         );
 
         assert_eq!(
-            remove_keymap(dir.path(), "claude-2.1").unwrap(),
+            remove_keymap(&directory, "claude-2.1").unwrap(),
             "Removed keymap claude-2.1"
         );
         assert!(!installed.exists());
@@ -243,6 +246,7 @@ mod tests {
         // Windows checkouts and editors hand us CRLF. The ledger must still be
         // replaced in place, leaving exactly one `verified` key in the root.
         let dir = tempfile::tempdir().unwrap();
+        let directory = dir.path().join("keymaps");
         let input = dir.path().join("override.toml");
         // The baked file's own terminators follow the checkout, so normalize to
         // LF before converting; doubling them would author a file no editor
@@ -251,10 +255,9 @@ mod tests {
         assert!(!crlf.contains("\r\r"));
         std::fs::write(&input, &crlf).unwrap();
 
-        add_keymap(dir.path(), &input).unwrap();
+        add_keymap(&directory, &input).unwrap();
 
-        let installed =
-            std::fs::read_to_string(keymap_dir(dir.path()).join("claude-2.1.toml")).unwrap();
+        let installed = std::fs::read_to_string(directory.join("claude-2.1.toml")).unwrap();
         assert!(installed.contains("verified = []"));
         assert_eq!(installed.matches("verified =").count(), 1);
     }
@@ -262,9 +265,10 @@ mod tests {
     #[test]
     fn keymap_add_rejects_malformed_and_hand_verified_files() {
         let dir = tempfile::tempdir().unwrap();
+        let directory = dir.path().join("keymaps");
         let malformed = dir.path().join("malformed.toml");
         std::fs::write(&malformed, "name = [").unwrap();
-        let malformed_error = add_keymap(dir.path(), &malformed).unwrap_err().to_string();
+        let malformed_error = add_keymap(&directory, &malformed).unwrap_err().to_string();
         assert!(malformed_error.contains("Parse"));
         assert!(malformed_error.contains("malformed.toml"));
 
@@ -275,7 +279,7 @@ mod tests {
             1,
         );
         std::fs::write(&hand_verified, claimed).unwrap();
-        let error = add_keymap(dir.path(), &hand_verified)
+        let error = add_keymap(&directory, &hand_verified)
             .unwrap_err()
             .to_string();
         assert!(error.contains("HandVerified"));

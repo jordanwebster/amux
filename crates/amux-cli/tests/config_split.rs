@@ -365,3 +365,191 @@ fn profile_selector_cli_fresh_init_and_default_last_used() {
     assert!(!empty.status.success());
     assert!(String::from_utf8_lossy(&empty.stderr).contains("No profiles"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    use amux::installation::FrontDoorClient;
+
+    let local = Fixture::new();
+    let remote = Fixture::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut config = amux::load_profile_config(&remote.profile).unwrap().profile;
+    config.tcp_port = Some(address.port());
+    write(&remote.profile, &config);
+    drop(listener);
+    local.run(&["server", "start"]);
+    remote.run(&["server", "start"]);
+    local.run(&["profile", "create", "work"]);
+    let front = FrontDoorClient::connect(&local.installation.front_door_socket)
+        .await
+        .unwrap();
+    let personal = front.admin(local.id);
+    local.run(&[
+        "pair",
+        "--profile",
+        "personal",
+        "--demo",
+        "--pin",
+        "123456",
+        "--for",
+        "5m",
+    ]);
+    remote.run(&["pair", "--demo", "--pin", "654321", "--for", "5m"]);
+    assert!(personal.pairing_is_active().await.unwrap());
+
+    let mut pair = local
+        .command(&[
+            "pair",
+            "--profile",
+            "work",
+            "--connect",
+            &address.to_string(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    pair.stdin.take().unwrap().write_all(b"654321\n").unwrap();
+    let output = pair.wait_with_output().unwrap();
+    println!(
+        "$ amux pair --profile work --connect {address}\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("via direct TCP"));
+    assert!(personal.list_peers().await.unwrap().is_empty());
+    assert!(
+        personal.pairing_is_active().await.unwrap(),
+        "pairing another profile does not close this window"
+    );
+    let peers = local.run(&["peer", "list", "--profile", "work"]);
+    assert!(String::from_utf8_lossy(&peers.stdout).contains("cli-installation"));
+    let info = local.run(&["peer", "info", "cli-installation", "--profile", "work"]);
+    assert!(String::from_utf8_lossy(&info.stdout).contains(&format!("direct-tcp:{address}")));
+    local.run(&["unpair", "cli-installation", "--profile", "work", "--force"]);
+    let peers = local.run(&["peer", "list", "--profile", "work"]);
+    assert!(String::from_utf8_lossy(&peers.stdout).contains("No trusted peers"));
+    local.run(&["pair", "--profile", "personal", "--cancel"]);
+    assert!(!personal.pairing_is_active().await.unwrap());
+}
+
+#[test]
+fn front_door_cli_keymaps_use_installation_preferences_without_profiles() {
+    let fixture = Fixture::new();
+    let mut installation = fixture.installation.clone();
+    installation.keymaps_dir = installation.root.join("shared/custom-keymaps");
+    write(installation.path.as_ref().unwrap(), &installation);
+    let directory = fixture.run(&["keymap", "dir"]);
+    assert_eq!(
+        String::from_utf8(directory.stdout).unwrap().trim(),
+        installation.keymaps_dir.to_str().unwrap()
+    );
+    assert!(
+        !installation.front_door_socket.exists(),
+        "keymaps need no daemon"
+    );
+    fixture.run(&["server", "start"]);
+    fixture.run(&["profile", "create", "work"]);
+    let input = installation.root.join("keymap.toml");
+    std::fs::write(&input, claude::pty::keymap::BAKED_KEYMAPS[0].1).unwrap();
+    fixture.run(&[
+        "keymap",
+        "add",
+        input.to_str().unwrap(),
+        "--profile",
+        "work",
+    ]);
+    assert!(installation.keymaps_dir.join("claude-2.1.toml").exists());
+    fixture.run(&["keymap", "show", "claude-2.1", "--profile", "personal"]);
+    let config_home = installation.root.join("config");
+    std::fs::create_dir_all(config_home.join("amux")).unwrap();
+    write(&config_home.join("amux/config.yaml"), &installation);
+    let default_command = |args: &[&str]| {
+        let mut command = fixture.command(args);
+        command
+            .env_remove("AMUX_CONFIG")
+            .env("XDG_CONFIG_HOME", &config_home);
+        command
+    };
+    struct Stop(Command);
+    impl Drop for Stop {
+        fn drop(&mut self) {
+            let _ = self.0.output();
+        }
+    }
+    let _stop = Stop(default_command(&["server", "stop"]));
+    fixture.run(&["profile", "delete", "--profile", "work", "--yes"]);
+    fixture.run(&["profile", "delete", "--yes"]);
+    let output = default_command(&["keymap", "remove", "claude-2.1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(!installation.keymaps_dir.join("claude-2.1.toml").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn front_door_cli_ssh_pair_receiver_uses_its_explicit_profile() {
+    use std::process::Stdio;
+    use std::time::Duration;
+
+    use amux::installation::FrontDoorClient;
+    let local = Fixture::new();
+    let remote = Fixture::new();
+    local.run(&["server", "start"]);
+    remote.run(&["server", "start"]);
+    let created = remote.run(&["profile", "create", "work"]);
+    let created = String::from_utf8(created.stdout).unwrap();
+    let work_id = ProfileId(created.split_whitespace().next().unwrap().parse().unwrap());
+    let local_front = FrontDoorClient::connect(&local.installation.front_door_socket)
+        .await
+        .unwrap();
+    let remote_front = FrontDoorClient::connect(&remote.installation.front_door_socket)
+        .await
+        .unwrap();
+    let local_admin = local_front.admin(local.id);
+    let remote_personal = remote_front.admin(remote.id);
+    let remote_work = remote_front.admin(work_id);
+    let local_data = amux::load_profile_config(&local.profile)
+        .unwrap()
+        .profile
+        .data_dir;
+    let mut receiver =
+        tokio::process::Command::from(remote.command(&["pair-recv", "--profile", "work"]))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+    let io = tokio::io::join(
+        receiver.stdout.take().unwrap(),
+        receiver.stdin.take().unwrap(),
+    );
+    let peer = tokio::time::timeout(
+        Duration::from_secs(10),
+        amux::pair_via_ssh_initiator(io, local_data, "local", "remote.example", &local_admin),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let output = tokio::time::timeout(Duration::from_secs(5), receiver.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(remote_personal.list_peers().await.unwrap().is_empty());
+    assert_eq!(remote_work.list_peers().await.unwrap().len(), 1);
+    assert_eq!(
+        local_admin.get_peer(peer.host_id).await.unwrap().name,
+        "cli-installation"
+    );
+    println!(
+        "SSH pair-recv --profile work completes the framed identity exchange and stores trust only in work."
+    );
+}

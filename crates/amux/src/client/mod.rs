@@ -924,7 +924,7 @@ impl Client {
             .await
             .map_err(status_to_client_error)?
             .into_inner();
-        pairing_start_from_wire(response)
+        pairing_start_from_wire(method::CLIENT_START_PAIRING_NAME, response)
     }
 
     pub async fn cancel_pairing(&self) -> Result<(), ClientError> {
@@ -1274,7 +1274,7 @@ pub(crate) fn agent_ref(identifier: AgentIdentifier) -> wire::AgentRef {
     }
 }
 
-fn peer_ref(identifier: PeerIdentifier) -> wire::PeerRef {
+pub(crate) fn peer_ref(identifier: PeerIdentifier) -> wire::PeerRef {
     let identifier = match identifier {
         PeerIdentifier::Id(host_id) => {
             wire::peer_ref::Identifier::HostId(host_id.as_bytes().to_vec())
@@ -1304,7 +1304,7 @@ fn wire_agent_to_agent(method: &'static str, agent: wire::Agent) -> Result<Agent
     })
 }
 
-fn peer_entry_from_wire(
+pub(crate) fn peer_entry_from_wire(
     method: &'static str,
     peer: wire::PeerEntry,
 ) -> Result<PeerEntry, ClientError> {
@@ -1414,7 +1414,7 @@ fn client_service_session_close_reason(
     }
 }
 
-fn host_entry_from_wire(
+pub(crate) fn host_entry_from_wire(
     method: &'static str,
     host: wire::HostEntry,
 ) -> Result<HostEntry, ClientError> {
@@ -1551,29 +1551,30 @@ fn required_wire_agent(
     })
 }
 
-fn pairing_start_from_wire(
+pub(crate) fn pairing_start_from_wire(
+    method: &'static str,
     response: wire::StartPairingResponse,
 ) -> Result<PairingStart, ClientError> {
     let identity = response.identity.ok_or_else(|| ClientError::Decode {
-        method: method::CLIENT_START_PAIRING_NAME,
+        method,
         message: "missing StartPairingResponse.identity".to_string(),
     })?;
     let secret = match response.secret.ok_or_else(|| ClientError::Decode {
-        method: method::CLIENT_START_PAIRING_NAME,
+        method,
         message: "missing StartPairingResponse.secret".to_string(),
     })? {
         wire::start_pairing_response::Secret::Pin(pin) => PairingSecret::Pin(pin),
         wire::start_pairing_response::Secret::QrSecret(secret) => PairingSecret::QrSecret(secret),
     };
     Ok(PairingStart {
-        identity: pairing_identity_to_peer(method::CLIENT_START_PAIRING_NAME, identity)?,
+        identity: pairing_identity_to_peer(method, identity)?,
         ttl_seconds: response.ttl_seconds,
         tcp_port: response
             .tcp_port
             .map(u16::try_from)
             .transpose()
             .map_err(|_| ClientError::Decode {
-                method: method::CLIENT_START_PAIRING_NAME,
+                method,
                 message: "StartPairingResponse.tcp_port exceeds u16".to_string(),
             })?,
         cloud_url: response.cloud_url,
@@ -1581,7 +1582,7 @@ fn pairing_start_from_wire(
     })
 }
 
-fn pairing_identity_from_wire(
+pub(crate) fn pairing_identity_from_wire(
     method: &'static str,
     identity: wire::PairingIdentity,
 ) -> Result<(Uuid, Vec<u8>, String), ClientError> {
@@ -1626,7 +1627,7 @@ fn uuid_from_wire_bytes(
     })
 }
 
-fn status_to_client_error(status: tonic::Status) -> ClientError {
+pub(crate) fn status_to_client_error(status: tonic::Status) -> ClientError {
     let message = status.message().to_string();
     if status.code() == tonic::Code::Unavailable
         && let Some(reason) = shutdown_reason_from_status_metadata(&status)
@@ -1694,7 +1695,7 @@ fn hook_target_from_payload(payload: &[u8]) -> Result<(Uuid, bool), ClientError>
         .map(|agent_id| (agent_id, true))
 }
 
-fn debug_format_to_wire(format: DebugFormat) -> i32 {
+pub(crate) fn debug_format_to_wire(format: DebugFormat) -> i32 {
     match format {
         DebugFormat::Yaml => wire::DebugFormat::Yaml as i32,
         DebugFormat::Json => wire::DebugFormat::Json as i32,
@@ -1834,19 +1835,22 @@ mod tests {
     #[test]
     fn pairing_start_response_decodes_identity_transport_metadata_and_secret() {
         let host_id = Uuid::from_u128(42);
-        let start = pairing_start_from_wire(wire::StartPairingResponse {
-            identity: Some(wire::PairingIdentity {
-                host_id: host_id.as_bytes().to_vec(),
-                pubkey: vec![7; 32],
-                name: "laptop".to_string(),
-            }),
-            ttl_seconds: 300,
-            tcp_port: Some(4242),
-            cloud_url: "https://cloud.example".to_string(),
-            secret: Some(wire::start_pairing_response::Secret::Pin(
-                "123456".to_string(),
-            )),
-        })
+        let start = pairing_start_from_wire(
+            method::CLIENT_START_PAIRING_NAME,
+            wire::StartPairingResponse {
+                identity: Some(wire::PairingIdentity {
+                    host_id: host_id.as_bytes().to_vec(),
+                    pubkey: vec![7; 32],
+                    name: "laptop".to_string(),
+                }),
+                ttl_seconds: 300,
+                tcp_port: Some(4242),
+                cloud_url: "https://cloud.example".to_string(),
+                secret: Some(wire::start_pairing_response::Secret::Pin(
+                    "123456".to_string(),
+                )),
+            },
+        )
         .unwrap();
 
         assert_eq!(start.identity.host_id, host_id);
@@ -1860,17 +1864,20 @@ mod tests {
 
     #[test]
     fn pairing_start_response_rejects_invalid_tcp_port() {
-        let error = pairing_start_from_wire(wire::StartPairingResponse {
-            identity: Some(wire::PairingIdentity {
-                host_id: Uuid::from_u128(42).as_bytes().to_vec(),
-                pubkey: vec![7; 32],
-                name: "laptop".to_string(),
-            }),
-            ttl_seconds: 300,
-            tcp_port: Some(u32::from(u16::MAX) + 1),
-            cloud_url: "https://cloud.example".to_string(),
-            secret: Some(wire::start_pairing_response::Secret::QrSecret(vec![1; 32])),
-        })
+        let error = pairing_start_from_wire(
+            method::CLIENT_START_PAIRING_NAME,
+            wire::StartPairingResponse {
+                identity: Some(wire::PairingIdentity {
+                    host_id: Uuid::from_u128(42).as_bytes().to_vec(),
+                    pubkey: vec![7; 32],
+                    name: "laptop".to_string(),
+                }),
+                ttl_seconds: 300,
+                tcp_port: Some(u32::from(u16::MAX) + 1),
+                cloud_url: "https://cloud.example".to_string(),
+                secret: Some(wire::start_pairing_response::Secret::QrSecret(vec![1; 32])),
+            },
+        )
         .unwrap_err();
 
         assert!(error.to_string().contains("tcp_port"));

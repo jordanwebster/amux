@@ -9,7 +9,7 @@ use tokio::io::{
     AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf, copy_bidirectional,
 };
 
-use crate::client::Client;
+use super::PairingAdmin;
 use crate::identity::{DeviceIdentity, IdentityError, load_or_create_device_identity_in};
 use crate::protocol::wire;
 use crate::{HostId, audit};
@@ -52,7 +52,7 @@ pub async fn pair_via_ssh_target<P, N, T>(
     data_dir: P,
     local_name: N,
     target: T,
-    client: &Client,
+    client: &dyn PairingAdmin,
 ) -> Result<SshPairingPeer, SshPairingError>
 where
     P: AsRef<Path>,
@@ -74,7 +74,7 @@ pub async fn pair_via_ssh_initiator<IO, P, N, T>(
     data_dir: P,
     local_name: N,
     target: T,
-    client: &Client,
+    client: &dyn PairingAdmin,
 ) -> Result<SshPairingPeer, SshPairingError>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
@@ -105,7 +105,7 @@ pub async fn pair_via_ssh_responder<IO, P, N>(
     mut io: IO,
     data_dir: P,
     local_name: N,
-    client: &Client,
+    client: &dyn PairingAdmin,
 ) -> Result<SshPairingPeer, SshPairingError>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
@@ -139,7 +139,7 @@ where
 pub async fn pair_via_ssh_responder_stdio<P, N>(
     data_dir: P,
     local_name: N,
-    client: &Client,
+    client: &dyn PairingAdmin,
 ) -> Result<SshPairingPeer, SshPairingError>
 where
     P: AsRef<Path>,

@@ -209,9 +209,13 @@ pub async fn suspend(config: &InstallationConfig) -> Result<()> {
 }
 
 pub async fn resume(config: &InstallationConfig) -> Result<()> {
+    resume_with_executable(config, &std::env::current_exe()?).await
+}
+
+pub async fn resume_with_executable(config: &InstallationConfig, executable: &Path) -> Result<()> {
     let mut front = match existing(config).await? {
         Some(front) => front,
-        None => spawn(config, &std::env::current_exe()?).await?,
+        None => spawn(config, executable).await?,
     };
     let report = front
         .installation
@@ -228,4 +232,46 @@ pub async fn resume(config: &InstallationConfig) -> Result<()> {
     }
     println!();
     Ok(())
+}
+
+/// Resolve trust administration independently of the profile's client socket.
+pub async fn profile_admin(
+    config: &amux::Config,
+    retry_command: Option<&str>,
+) -> Result<amux::installation::ProfileAdminClient> {
+    let path = config
+        .path
+        .as_deref()
+        .context("selected profile config is missing")?;
+    let resolved = amux::load_profile_config(&std::fs::canonicalize(path)?)?;
+    let front = existing(&resolved.installation).await?.ok_or_else(|| {
+        anyhow!(crate::client_common::server_not_running_message(
+            retry_command
+        ))
+    })?;
+    Ok(front.admin(resolved.profile_id))
+}
+
+pub async fn suspend_for_update_if_running(config: &InstallationConfig) -> Result<bool> {
+    let Some(mut front) = existing(config).await? else {
+        return Ok(false);
+    };
+    let report = front
+        .installation
+        .suspend_all(rpc::SuspendAllRequest {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            reason: rpc::SuspendReason::Update as i32,
+        })
+        .await?
+        .into_inner();
+    println!(
+        "Suspended {} agent(s).",
+        report
+            .profiles
+            .iter()
+            .map(|p| p.suspended_count)
+            .sum::<u64>()
+    );
+    stop(config).await?;
+    Ok(true)
 }
