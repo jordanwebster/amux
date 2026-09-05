@@ -25,17 +25,23 @@ before capturing an agent's screen.
 
 ## Find the report
 
-By default reports live at `<data_dir>/reports`. A config can select one
-canonical location instead:
+Reports belong to the selected profile. By default they live at that profile's
+`<data_dir>/reports`, allocated beneath the installation root as
+`profiles/<UUID>/data/reports`. Renaming a profile does not move its reports.
+The **installation configuration** can override this with one shared location
+for all profiles:
 
 ```yaml
 reports_dir: /absolute/path/to/amux-reports
 ```
 
-Use the same config as the daemon when inspecting the default location:
+Use `amux profiles` to find the profile, then select it when inspecting reports,
+or set `AMUX_CONFIG` to its profile configuration (which points to the
+installation configuration):
 
 ```console
-$ AMUX_CONFIG=/path/to/config.yaml amux debug report list
+$ amux --profile Work debug report list
+$ AMUX_CONFIG=/path/to/root/profiles/UUID/config.yaml amux debug report list
 ```
 
 The list is newest first and gives the stamp, kind, status, replay verdict and
@@ -75,11 +81,27 @@ A full user capture contains these files:
 | `frame.styles` | One theme-class character per captured cell |
 | `trace.jsonl` | Starting Model/view/theme snapshot, then ordered chrome events |
 | `msgs.jsonl` | Recorder checkpoint and retained daemon messages |
-| `daemon.json` | Hosts, routes, links, tunnels and session diagnostics |
-| `log.txt` | A line-aligned tail of the local log, capped at 64 KiB |
+| `daemon.json` | Selected profile's hosts, routes, links, tunnels and session diagnostics |
+| `log.txt` | Installation-wide log tail, line-aligned and capped at 64 KiB |
 
 The text and style map are the screenshot. A report contains no OS screenshot
 or image file.
+
+The log tail is **installation-wide**, not filtered to the selected profile.
+It can include activity from other profiles and local clients even when the
+report lives in one profile's directory. Logging uses `AMUX_LOG` when set,
+otherwise `$XDG_STATE_HOME/amux/amux.log` (fallback
+`~/.local/state/amux/amux.log`). Use the same `AMUX_LOG` for daemon startup and
+the capturing client; `amux init` also starts the installation. Distinct
+worktree installations need distinct log paths if their tails should stay
+separate.
+
+For a profile's live diagnostics, use
+`amux --profile Work debug daemon --format json`. The front door's
+`ProfileService.DebugProfile` returns that profile's diagnostics;
+`InstallationService.DebugInstallation` reports the installation and profile
+directory, including startup failures. A profile's `daemon.json` is not a
+snapshot of every account in the installation.
 
 ## Replay before changing code
 
@@ -154,7 +176,7 @@ the redacted report files beside it.
 Run every committed fixture through the current renderer and privacy checks:
 
 ```console
-$ timeout 600 cargo test -p amux-tui --test reports
+$ timeout 600 wt test -- every_committed_report_fixture_reproduces
 ```
 
 ## Retention and build gating

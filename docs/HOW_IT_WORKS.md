@@ -6,12 +6,25 @@ workstation is running, your laptop picking up a session you started at
 your desk. This page explains the model behind that, and why you can
 trust it with a door into your machines.
 
-## Devices, not accounts
+## Devices and accounts
 
-Every device running amux mints its own cryptographic identity on first
-run: a private key that never leaves the device, ever. There is no
-account that owns your devices and no server that holds your keys. Two
-devices can talk if — and only if — you have **paired** them.
+An amux installation can hold several **profiles**, such as Personal and
+Work. Each profile is a complete device: its own private key, trusted peers,
+agents and cloud connection. Its key stays on your machine; no server holds
+it. A cloud account provides relay access, while **pairing** decides which
+devices may use each other's agents. Joining the same account never grants
+that trust by itself.
+
+Use `amux profiles` to see your profiles and `--profile <name|UUID>` to choose
+one for a command. Each cloud account has at most one profile per installation;
+you can also keep profiles without any cloud account. All eligible profiles
+stay connected while the installation runs, even when you are viewing another
+one. A failed login or cloud connection in Work leaves Personal running.
+Logging out keeps the profile's identity, trust and agents; logging back into
+the same account needs no re-pairing. Pause keeps the credential too, and stays
+paused across restarts. Deleting a profile explicitly destroys its keys, trust
+and agents. Profiles isolate amux state and routing, but do not sandbox code
+running as the same OS user.
 
 ## Pairing: trust is something you do once, in person
 
@@ -44,6 +57,12 @@ What pairing produces is small and local: each device **pins the other's
 public key** in its own trust store, like remembering a face. From then
 on, all trust decisions are made against that pinned key — on your
 device, by your device.
+
+Pairing belongs to the selected profile. If two machines use both Personal
+and Work, pair them once for each account. A key trusted by Personal grants
+no access to Work. Paired peers can operate agents, including creating and
+deleting them, but cannot administer your trust store or stop, suspend or
+resume your installation.
 
 ## Talking: links and tunnels
 
@@ -87,10 +106,11 @@ and nothing else.
 
 ## Leaving: revocation is local and immediate
 
-Unpair a device and your machine simply deletes its pinned key. From
+Unpair a device in a profile and that profile deletes its pinned key. From
 that moment every connection and in-flight session from that device is
 cut, and new attempts fail their handshake. You don't ask a server's
 permission to stop trusting someone; you just stop.
+Other profiles keep their own trust decisions.
 
 ## Why this is trustworthy
 

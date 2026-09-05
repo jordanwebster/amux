@@ -1,6 +1,6 @@
 # The amux system architecture
 
-**Status**: current (2026-09-04). This document describes the system —
+**Status**: current (2026-09-05). This document describes the system —
 processes, servers, trust machinery, service surfaces, and internal
 layering. Its companion, [`PROTOCOL.md`](./PROTOCOL.md), owns the wire:
 links, frames, tunnels, the routing rules, and the pairing flow. When this
@@ -9,41 +9,128 @@ document and the code disagree, the code and the spec suite
 
 ## Processes and deployment shapes
 
-Everything is one binary. `amux server start` runs a **device daemon**;
-`amux server start --cloud` runs the same `Server` as a **cloud relay**
-(`ServerMode::CloudRelay` in `server.rs`). The split is constructed, not
-configured at runtime: a device daemon loads its identity and trust store
-from disk and starts the full user-services stack; a cloud relay mints a
-throwaway `host_id`, loads no device identity, and starts only the
-JWT-gated `LinkService` — it structurally has nothing else to serve.
+`amux server start` runs an **installation**: one daemon process supervising
+any number of **profiles**. A profile is a complete amux device, with its own
+key, `host_id`, trust store, agents, artifacts, routing, tunnels, local socket
+and at most one cloud link. `Installation` (`installation/`) owns the registry,
+exclusive root lock and profile lifecycle; each `ProfileRuntime` (`profile/`)
+owns that device's services. Startup attempts every profile independently and
+reports a failed profile while the others keep serving. Dropping clients does
+not stop their profiles.
+
+Profiles isolate amux identity, trust, state and routing; they do not sandbox
+code running as the same OS user. Agent processes retain that user's filesystem
+and process access. Desktop profiles share one daemon process, so a process
+crash or binary replacement affects the whole installation.
+
+`amux server start --cloud` instead runs a **cloud relay**
+(`ServerMode::CloudRelay` in `server.rs`). It mints a throwaway `host_id`, loads
+no device identity, and starts only the JWT-gated `LinkService`. Its per-user
+routing instances are forwarding infrastructure, not device profiles.
 
 Around the daemon sit its clients and consumers:
 
-- **CLI** (`crates/amux-cli`): every user-facing command talks
-  `ClientService` over the daemon's local Unix socket. Hidden subcommands
-  are protocol plumbing rather than user surface: `amux relay` bridges its
-  stdin/stdout to the local socket (the receiving end of an SSH link),
+- **CLI** (`crates/amux-cli`): discovers and administers profiles through the
+  installation's front door, then uses the selected profile's `ClientService`
+  for agent operations. Hidden subcommands are protocol plumbing:
+  `amux relay --profile <UUID>` bridges stdin/stdout to that profile's socket
+  (the receiving end of an SSH link),
   `amux pair-recv` runs the responder side of an SSH pairing identity
   exchange, and `amux mcp agent` serves the agent tools over stdio MCP.
   [`A2A.md`](./A2A.md) owns that tool contract.
 - **UI runtime** (`crates/amux-ui`): a reactive client library over the
   same `ClientService` surface, for embedding in apps. It joins attachment
   puts before a send, folds stream refs, fetches opened artifacts through the
-  viewing-host cache, and leaves presentation to its client.
+  viewing-profile cache, and leaves presentation to its client.
 - **Artifact library** (`crates/amux-artifacts`): dependency-light
   content-addressed storage with an authoritative per-agent Owner role and a
-  disposable per-viewing-host Cache role. It depends on neither the daemon nor
-  the UI, so another client can reuse the storage contract directly.
+  disposable per-viewing-profile Cache role. It depends on neither the daemon
+  nor the UI, so another client can reuse the storage contract directly.
 - **Test harnesses**: debug builds compile an in-process harness
-  (`amux::testnet`) that builds whole daemons — real identities, real
-  trust stores, real localhost TCP with device mTLS, an optional
-  in-process cloud relay — for the spec suite, plus `WirePeer`, a scripted
+  (`amux::testnet`) that builds production profile runtimes and installations —
+  real identities, real trust stores, real localhost TCP with device mTLS, an
+  optional in-process cloud relay — for the spec suite, plus `WirePeer`, a scripted
   protocol actor for wire-conformance tests. `crates/e2e-runner` drives
   real compiled binaries end to end.
 
 > **Compatibility note:** amuxapp is not updated for the typed agent wire on
 > this branch. Its runtime bridge is broken until the app adopts closed agent
 > kinds and the per-protocol protobuf payloads described below.
+
+## Accounts, configuration and local entry points
+
+A profile can remain unbound for local, LAN or SSH use, or bind to one cloud
+account. An account is identified by cloud service and subject and can bind at
+most one profile in an installation. The daemon validates staged login
+credentials and obtains the account name and email from userinfo; only the
+daemon refreshes credentials. A local rename overrides the account label.
+Logging into another account cannot rebind an existing profile. First login
+can adopt a pristine unbound profile silently; retained trust, agents or
+artifacts require confirmation before adoption.
+
+Every eligible bound profile maintains its cloud link regardless of which
+profile a client views. Logout removes its credential and cloud link but
+preserves its account reservation, key, trust and agents. Logging back into
+the same account reconnects the same device. Pause retains the credential and
+survives restart; resume reconnects it. Both leave local and direct peer
+operation intact. Explicit, confirmed deletion destroys the profile's data
+and closes its clients. `amux server stop` stops the installation and kills
+its agents; startup does not automatically resume suspended agents. Internal
+installation suspend/resume operations support binary updates.
+
+The installation configuration defaults to `$XDG_CONFIG_HOME/amux/config.yaml`
+(fallback `~/.config/amux/config.yaml`). It owns `root`, `front_door_socket`,
+device name, keep-awake, keybindings, UI preferences, keymaps directory, update
+manifest URL and an optional shared reports directory. The root defaults to
+`$XDG_DATA_HOME/amux` (fallback `~/.local/share/amux`). A UUID, independent of
+the account or label, names each profile's directory and socket:
+
+| Path beneath the installation root | Owner and contents |
+|---|---|
+| `registry.yaml`, `lock` | Installation registry and exclusive ownership |
+| `state/last-profile` | Client-side last-used UUID; never a server-wide selection |
+| `profiles/<UUID>/config.yaml` | Profile paths, cloud URL, optional LAN `tcp_port`, absolute `installation_config` reference |
+| `profiles/<UUID>/credentials.yaml` | Profile credential, mode `600` |
+| `profiles/<UUID>/data/` | Identity, trust, agents, artifact cache and default reports |
+| `profiles/<UUID>/state/state.yaml` | Profile runtime state |
+| `profiles/<UUID>.sock` | Profile's plain gRPC socket, mode `600` |
+
+`AMUX_CONFIG` (or `--config`) names a profile configuration, which explicitly
+locates its installation. Unknown config fields, a missing installation file
+or disagreement with the profile's allocated paths are errors. Cloud
+connectivity follows binding, credentials and pause intent; it is not a
+configuration mode. Worktree tooling generates both configuration files and
+probes the installation with `amux profiles`. Existing single-device layouts
+are not migrated: re-initialise and pair devices again for each account.
+
+The **front door** is `InstallationConfig.front_door_socket`, normally
+`amux.sock` in the per-user runtime directory. It serves only `ProfileService`
+and `InstallationService`, as plain gRPC with owner-only socket permissions.
+A third-party client uses the following contract:
+
+1. Connect to the front door and call `ProfileService.ListProfiles` or
+   `WatchProfiles` to discover UUIDs, labels, account email, intent, observed
+   connection status, availability and socket paths.
+2. Choose an available profile and open a second plain gRPC connection to its
+   returned `socket_path`; use `ClientService` there to list or operate agents.
+3. Keep that connection bound to the chosen profile. Another client's selection
+   cannot retarget it. A deleted profile closes its clients; rediscover before
+   connecting again.
+
+There is no selection preface or client-readable registry contract. Watch
+starts with a snapshot and `SnapshotComplete`, then ordered changes; a lagged
+stream ends with `ABORTED` and the client resubscribes for a fresh snapshot.
+Mutating administration requests carry operation UUIDs for retry deduplication;
+rename and delete also carry the revision the caller observed.
+
+`amux init` creates the installation and an unbound profile, asking about
+keep-awake. `amux profiles` lists profiles; `--profile <name|UUID>` selects one
+for commands such as `amux --profile Work list` or
+`amux --profile Work profile pause`. Successful client selections remember the
+UUID, so renaming does not change the default device. An explicit unknown or
+ambiguous selector fails instead of falling back. Managed agent hooks and MCP
+servers use their launching profile's exact route regardless of ambient
+configuration or the last-used selection.
 
 ## Provider crates and daemon adapters
 
@@ -93,18 +180,18 @@ otherwise it terminates the unpublished process and refuses the subscription.
 A Codex-session preparation mutex preserves one-spawn fanout, while the Codex
 runtime mutex is held only to snapshot or publish cache state.
 
-A daemon owns two listeners. The **local Unix socket**
-(`Config.socket_path`, mode `600`) is always on and carries local
-clients. The **external TCP listener** (`tcp_port`) is off by default —
-the user opts in for LAN-direct reachability — and feeds the dispatcher
-described below. Outbound, the daemon dials the cloud (TCP + WebPKI TLS +
-JWT) and re-dials the direct reachabilities recorded in its trust store.
+Each desktop profile owns a **local Unix socket** (`ProfileConfig.socket_path`,
+mode `600`) for its clients. Its **external TCP listener** (`tcp_port`) is off
+by default; LAN-direct reachability requires a separate opt-in port for each
+profile and feeds that profile's dispatcher. Outbound, each profile dials its
+cloud service (TCP + WebPKI TLS + JWT) when eligible and re-dials the direct
+reachabilities in its own trust store.
 
 ## Identity and the trust store
 
-Each device generates, on first run, an Ed25519 keypair and a random
-128-bit `host_id`, persisted in the data directory (`Config.data_dir`;
-default `$XDG_DATA_HOME/amux`, falling back to `~/.local/share/amux`):
+Each profile generates an Ed25519 keypair and a random 128-bit `host_id`,
+persisted in its own data directory (`ProfileConfig.data_dir`, allocated at
+`<root>/profiles/<UUID>/data`):
 
 - `device.key` — the private key, PKCS#8 v1 DER, mode `600`. It never
   leaves the device.
@@ -112,9 +199,11 @@ default `$XDG_DATA_HOME/amux`, falling back to `~/.local/share/amux`):
   future key rotation can preserve the device's stable identifier.
 - `trust.json` — the trust store, mode `600`.
 
-All three are written atomically (write-temp-then-rename). The daemon's
-non-secret runtime state lives separately under
-`$XDG_STATE_HOME/amux/state.yaml`.
+All three are written atomically (write-temp-then-rename). The profile's
+non-secret runtime state lives separately at its `state_path`.
+Pairing windows and pinned keys belong to this profile alone. Two devices
+using two accounts pair once per account; a key pinned by one profile grants
+no authority in another profile on the same installation.
 
 The trust store (`trust.rs`) maps
 `host_id → { pubkey, name, paired_at, reachabilities }`. It is the entire
@@ -126,9 +215,12 @@ to the cloud, never synchronized between devices.
 
 `reachabilities` is not trust; it is the list of **dialer-responsibility
 markers** this device learned as an initiator: `Cloud`, `DirectTcp { addr }`
-(the listener address it dialed), or `Ssh { target }` (the verbatim string
-handed to `ssh`). Re-establishment is always the dialer's job: on startup
-the `ReachabilityLinkConnector` (`services/reachability.rs`) walks the
+(the listener address it dialed), or `Ssh { target, profile }` (the SSH
+destination and remote profile UUID). SSH pairing exchanges that UUID alongside
+the device identity, so reconnecting runs `amux relay --profile <UUID>` even
+after a remote rename or default-selection change. Re-establishment is always
+the dialer's job: on startup the `ReachabilityLinkConnector`
+(`services/reachability.rs`) walks the
 store and dials every `DirectTcp`/`Ssh` entry; `Cloud` entries need no
 action because the cloud connector brings up that link separately. The
 acceptor side of a pairing records no reachability it didn't dial — an
@@ -136,25 +228,25 @@ accepted socket's source port is not a reusable address. A trusted peer
 with an empty list is a peer we trust but have no stored way to reach;
 it shows up offline until it dials us.
 
-## The two-server model
+## Servers and connection admission
 
-A device daemon runs two long-lived tonic servers
+Each profile runs two long-lived tonic servers
 (`services/startup/mod.rs`), each fed an mpsc stream of accepted
-connections:
+connections. The installation serves administration separately:
 
 | Server | Hosts | Fed by |
 |---|---|---|
+| **Installation front door** | `ProfileService`, `InstallationService` | Installation Unix socket; in-process owner channels |
 | **Trusted Server** | `ClientService`, `AgentService`, `LinkService` | Local Unix socket; pinned-mTLS streams from the dispatcher |
 | **Pairing Server** | `PairingService` | Anonymous-TLS streams from the dispatcher, only while a pairing window is open |
 
-The split exists so that authorization is decided **once, at connection
-admission**, in one place. A connection lands on a server with a fixed
+The front door is separate from both profile servers. The split exists so
+that authorization is decided **once, at connection admission**, in one place.
+A connection lands on a server with a fixed
 service set; the services it cannot reach do not exist on its connection,
 so an unauthenticated peer cannot even probe for them. Per-RPC
 interceptors were considered and rejected (auth scattered across N
 services), as was a server-per-connection (needless lifecycle churn).
-The one deliberate exception to "admission decides everything" is the
-local-admin gate inside `ClientService` (below).
 
 ## The dispatcher
 
@@ -177,12 +269,12 @@ The `host_id` bound at the handshake is load-bearing: a `Hello` whose
 peer cannot impersonate another peer at the link layer, and tunnel-borne
 calls carry the authenticated peer identity into the services.
 
-The local Unix socket bypasses the dispatcher entirely: arrivals there
+The profile's local Unix socket bypasses the dispatcher entirely: arrivals there
 are classified `LocalTrusted` and feed the Trusted Server directly, with
 OS file permissions as the gate. SSH is deliberately **local-equivalent**:
-`amux relay` bridges the SSH stream into that same socket, so anyone who
-can SSH into the daemon's account already has what the socket grants —
-that is the existing OS trust boundary, not a new one. Peer *calls* still
+`amux relay --profile <UUID>` bridges the SSH stream into that profile's socket,
+so anyone who can SSH into the daemon's account already has what the socket
+grants — that is the existing OS trust boundary, not a new one. Peer *calls* still
 authenticate uniformly: every call rides a tunnel, and every tunnel runs
 a pinned mTLS handshake at its terminating dispatcher, whatever transport
 its frames crossed (an SSH link confers no call authority by itself).
@@ -195,29 +287,30 @@ timed out after 10 seconds (`resource_limits.rs`, `dispatcher.rs`).
 
 | Service | Where it lives | Who may call it |
 |---|---|---|
-| `ClientService` | Trusted Server | Local clients over the Unix socket / in-process; paired peers over tunnels, **minus the local-admin RPCs** |
+| `ProfileService` | Installation front door | Local installation owners over the front-door socket / in-process |
+| `InstallationService` | Installation front door | Local installation owners over the front-door socket / in-process |
+| `ClientService` | Profile's Trusted Server | Local clients over its Unix socket / in-process; paired peers over tunnels, with the same API |
 | `AgentService` | Trusted Server | Local clients and paired peers (this is what remote sessions ride) |
 | `LinkService.Connect` | Trusted Server, and the cloud relay | Adjacent nodes establishing a link, over any link transport |
 | `PairingService.Pair` | Pairing Server | Anonymous-TLS callers during an open pairing window |
 
-`ClientService` is the client API: host and agent inventory and
-subscriptions, agent CRUD, message delivery and work status, session
-attach/input, artifact put/get and diff, hooks, debug,
-shutdown/suspend/resume, and the pairing/trust administration RPCs.
-Pairing is the trust boundary — a paired peer has full runtime authority,
-including disruptive operations — with exactly one carve-out:
-**trust mutation and pairing administration are local-only**.
-`StartPairing`, `GetPairingStatus`, `CancelPairing`, `PairPeer`,
-`PairPinCloudPeer`, `PairQrCloudPeer`, `ListPeers`, `GetPeer`, and
-`Unpair` check the connection's admission class
-(`require_local_admin_client` in `services/client.rs`) and refuse anything
-that is not `LocalTrusted`. A remote peer can use your agents; it cannot
-grow or shrink your trust store.
+`ProfileService` lists and watches profiles, manages their lifecycle and
+binding, and carries all pairing-window and trust administration, including
+peer inspection, revocation, pairing candidates and profile diagnostics. Each
+profile-specific request names its UUID. `InstallationService` provides
+installation info and diagnostics, shutdown, and suspend/resume across profiles
+for update. Neither service is registered on profile sockets, LAN connections
+or tunnels: a paired peer cannot shut down, suspend or resume the installation
+or administer trust.
 
-Host inventory is similarly scoped. `ListHosts(PAIRING_CANDIDATES)` —
-untrusted-but-online cloud hosts the user might want to pair — is served
-to local callers only; remote callers are refused the scope and never see
-untrusted hosts in normal inventory either. Each `HostEntry` carries
+`ClientService` is the client API: host and agent inventory and subscriptions,
+agent CRUD, message delivery and work status, session attach/input, artifact
+put/get and diff, hooks and debug. Pairing grants authority to operate agents,
+including creating and deleting them. It grants no installation administration.
+
+Host inventory contains the profile's local host and trusted peers, identically
+for local and remote callers. Untrusted-but-online cloud hosts appear only in
+`ProfileService.ListPairingCandidates` on the front door. Each `HostEntry` carries
 `online` (routing-derived presence) and `last_dial_error` (the most
 recent failed dial, cleared when a route comes up); nothing probes, so
 "unknown" is simply `!online` with no recorded error.
@@ -248,11 +341,11 @@ the provider input; it replays all pinned refs when a session subscription
 opens. Diff computation also happens there, in the agent's working directory,
 and stores the returned patch as a Diff artifact.
 
-Every viewing host uses one `amux_artifacts::Cache` shared across agents. It
-fetches through `GetArtifact`, verifies content identities, persists recency,
+Every viewing profile uses one `amux_artifacts::Cache` shared across its agents.
+It fetches through `GetArtifact`, verifies content identities, persists recency,
 and uses only byte-bounded LRU eviction. Its root is
-`<cache_dir>/amux/artifacts`; `ui.artifact_cache_mib` sets the bound and
-defaults to 256. [`ATTACHMENTS.md`](./ATTACHMENTS.md) owns the element syntax,
+`<data_dir>/cache/artifacts`; the shared `ui.artifact_cache_mib` preference sets
+the bound and defaults to 256. [`ATTACHMENTS.md`](./ATTACHMENTS.md) owns the element syntax,
 provider materialisation, complete lifetime rules, and deferred attachment
 surfaces.
 
@@ -299,8 +392,8 @@ can do, so an always-on paired peer is a relay with a pinned key.
 
 ## Internal layering
 
-The daemon's networking internals are four components under the services,
-each with one job:
+Each profile owns four networking components under its services, each with
+one job. No profile shares their link, route or tunnel state with another:
 
 **`LinkRegistry`** (`routing/link_registry.rs`) — the daemon's live links:
 `LinkId → writer` for every established link, each writer feeding frames
@@ -349,6 +442,6 @@ the cloud link connector.
 ## What is deliberately deferred
 
 Key rotation and identity recovery (today: re-pair from a surviving
-peer), per-peer or per-method authorization beyond the local-admin split,
+peer), finer per-peer or per-method authorization for agent operations,
 LAN auto-discovery, and OS-keychain storage for the device key. Pairing
 remains the trust boundary for all of them.

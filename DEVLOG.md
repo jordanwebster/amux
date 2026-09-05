@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Document installations, account profiles and local discovery.**
+The architecture now distinguishes the installation supervisor from each
+profile's complete device identity and runtime, describes split configuration
+and UUID paths, and gives third-party clients the two-connection gRPC discovery
+contract. The service map places lifecycle and trust administration solely on
+the front door and describes identical agent APIs for local and paired callers.
+The user and protocol guides explain per-profile pairing and account behavior;
+the debugging guide distinguishes profile reports from shared installation log
+tails. The isolation scope explicitly excludes sandboxing code under the same
+OS user. Documentation checks verify the scope statement and removal of the
+obsolete administration exception.
+
 2026-09-05 — **Reconnect SSH peers to their immutable profile.**
 SSH pairing exchanges the selected profile UUID alongside its device identity
 and persists it with the SSH destination. Relay launches pass that UUID as a
