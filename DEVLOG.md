@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **An interrupted turn no longer prints the provider's own
+diagnostic.**
+Alongside sentences a person can read, the session files error strings
+written for its authors — a bracketed tag and a row of key/value pairs that
+say nothing about the turn that just stopped. The chat printed them verbatim.
+It now recognizes that shape and drops it, and spells the remaining outcome
+word out in plain language, while an error the session wrote as prose is
+still shown exactly as it arrived.
+
 2026-09-05 — **The Codex context meter states what the context holds, not
 what the thread has spent.**
 The session reports two figures with every update: what the context held at

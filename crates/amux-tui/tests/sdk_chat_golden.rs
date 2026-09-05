@@ -77,6 +77,12 @@ fn recorded(name: &str) -> Vec<Value> {
         "introspection" => {
             include_str!("../../amux/tests/fixtures/rows/claude-sdk/introspection.rows.jsonl")
         }
+        "interrupted" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/interrupted.rows.jsonl")
+        }
+        "max_turns" => {
+            include_str!("../../amux/tests/fixtures/rows/claude-sdk/max_turns.rows.jsonl")
+        }
         other => panic!("unknown recording {other}"),
     };
     raw.lines()
@@ -565,6 +571,34 @@ fn sdk_chat_states_what_an_errored_turn_said() {
     assert!(
         text.contains("API Error 529"),
         "and the error the session collected is on screen: {text}"
+    );
+}
+
+/// A turn someone interrupted says so in words. The session also files
+/// a diagnostic for its own authors — a tag and a row of key/value pairs
+/// — and that is not an explanation anyone at the keyboard can use, so
+/// it never reaches the screen. An error the session wrote as a sentence
+/// still does.
+#[test]
+fn sdk_chat_states_an_interrupted_turn_without_the_provider_diagnostic() {
+    let text = assert_surface("sdk_chat_interrupted_turn", &session("interrupted"));
+    assert!(
+        text.contains("turn · errored"),
+        "the rule still marks the turn errored: {text}"
+    );
+    assert!(
+        !text.contains("ede_diagnostic") && !text.contains("result_type="),
+        "and the session's internal diagnostic stays off screen: {text}"
+    );
+    assert!(
+        text.contains("error during execution"),
+        "what is left says how the turn ended, in words: {text}"
+    );
+
+    let prose = assert_surface("sdk_chat_max_turns_turn", &session("max_turns"));
+    assert!(
+        prose.contains("Reached maximum number of turns"),
+        "an error the session wrote as a sentence is still shown: {prose}"
     );
 }
 

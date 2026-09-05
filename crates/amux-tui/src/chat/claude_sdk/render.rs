@@ -1048,8 +1048,9 @@ fn entry_block(
 
 /// What an errored turn said: the error strings the session collected,
 /// or the result text when it collected none. Its own outcome word
-/// (`error_max_turns` and friends) is the last resort, because a person
-/// reading `errored` learns nothing from it alone.
+/// (`error_max_turns` and friends) is the last resort, spelled out in
+/// words, because a person reading `errored` learns nothing from it
+/// alone.
 fn turn_error_text(turn: &amux_ui::claude_sdk::TurnEntry) -> Option<String> {
     if !turn.errors.is_empty() {
         return Some(turn.errors.join("\n"));
@@ -1060,7 +1061,8 @@ fn turn_error_text(turn: &amux_ui::claude_sdk::TurnEntry) -> Option<String> {
         .filter(|text| !text.is_empty())
         .map(str::to_string)
         .or_else(|| {
-            (turn.outcome != "unknown" && turn.outcome != "success").then(|| turn.outcome.clone())
+            (turn.outcome != "unknown" && turn.outcome != "success")
+                .then(|| turn.outcome.replace('_', " "))
         })
 }
 

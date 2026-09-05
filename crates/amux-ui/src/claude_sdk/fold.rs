@@ -30,6 +30,7 @@ pub(super) fn observe(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
                         .flatten()
                         .take(64)
                         .filter_map(Value::as_str)
+                        .filter(|error| !is_internal_diagnostic(error))
                         .map(clipped)
                         .collect(),
                     usage: TokenUsage {
@@ -761,6 +762,33 @@ fn id(value: &Value, field: &str) -> Option<String> {
 
 fn string(value: &Value, field: &str) -> Option<String> {
     value[field].as_str().map(clipped)
+}
+
+/// Whether an error string the session collected is a diagnostic it
+/// wrote for its own authors rather than a sentence for the person at
+/// the keyboard.
+///
+/// The provider mixes both into one list: `Reached maximum number of
+/// turns (1)` explains itself, while `[ede_diagnostic] result_type=user
+/// last_content_type=n/a stop_reason=null` is a tag followed by internal
+/// key/value pairs and tells a reader nothing about their own turn. The
+/// shape is the tell — every token after an optional bracketed tag is a
+/// `key=value` pair with no spaces — so prose is never mistaken for one.
+fn is_internal_diagnostic(error: &str) -> bool {
+    let rest = match error.trim().strip_prefix('[') {
+        Some(tagged) => match tagged.split_once(']') {
+            Some((_, rest)) => rest,
+            None => return false,
+        },
+        None => error.trim(),
+    };
+    let mut tokens = rest.split_whitespace().peekable();
+    tokens.peek().is_some()
+        && tokens.all(|token| {
+            token
+                .split_once('=')
+                .is_some_and(|(key, _)| !key.is_empty() && !key.contains(':'))
+        })
 }
 
 fn clipped(text: &str) -> String {
