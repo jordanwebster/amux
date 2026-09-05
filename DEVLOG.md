@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Live captures verify driver selection and fleet entry across
+paired hosts.**
+Two opt-in shell harnesses use isolated daemon identities and a private
+120×40 tmux server. The inventory capture creates Claude agents before and
+after changing the configured driver, then with an explicit override, checking
+that the earlier agents keep their drivers. The remote capture pairs two
+daemons by LAN PIN and checks Enter and `o` on both Claude and Codex, remotely
+and locally. Each entry saves plain and styled terminal frames, with a
+transcript and diagnostic logs retained on failure. Codex gets a short seed
+conversation first because its terminal cannot resume an unused thread; chat
+checks use the shared composer hint, since a fresh Codex chat need not yet
+offer a review action.
+
 2026-09-05 — **The side-by-side capture set compares collapsed exploration
 too.**
 The set a person walks to judge whether the three chats read as one design
