@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A live TUI harness checks Claude conversations, asks and family
+messages through the daemon.**
+The opt-in capture uses an isolated daemon configured for the SDK driver and
+a 120×40 tmux chat. It verifies partial text, interruption, a one-time Write
+approval, plan approval followed by the edit, a selected question answer and
+an MCP form whose typed answer returns through the real provider. A child
+created through the agent's spawn tool asks for a Write approval in the
+parent chat, then exchanges messages with its parent. Named plain and styled
+frames accompany the retained daemon rows and transcript. The row observer
+only subscribes; prompts and decisions go through the TUI. Checks correlate
+request resolutions, require submitted prompt echoes, and distinguish exact
+messages from initial instructions and completion summaries. Existing capture
+directories are refused so stale frames cannot mask an incomplete replay.
+Validation: live capture against Claude Code 2.1.261, shell syntax, six row
+predicate tests, `wt build` and `wt lint` pass.
+
 2026-09-05 — **Live captures verify driver selection and fleet entry across
 paired hosts.**
 Two opt-in shell harnesses use isolated daemon identities and a private
