@@ -40,20 +40,20 @@ pub(crate) struct ProfileConfig {
 
 /// Installation-owned settings shared by every profile runtime.
 #[derive(Clone)]
-pub(crate) struct InstallationSettings {
-    pub(crate) host_name: String,
-    pub(crate) prevent_idle_sleep: Option<bool>,
-    pub(crate) keybinds: Keybinds,
-    pub(crate) ui: UiSettings,
-    pub(crate) keymaps_dir: PathBuf,
-    pub(crate) minimum_client_versions: HashMap<String, String>,
-    pub(crate) update_reporter: Option<Arc<dyn UpdateReporter>>,
-    pub(crate) subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
+pub struct InstallationSettings {
+    pub host_name: String,
+    pub prevent_idle_sleep: Option<bool>,
+    pub keybinds: Keybinds,
+    pub ui: UiSettings,
+    pub keymaps_dir: PathBuf,
+    pub minimum_client_versions: HashMap<String, String>,
+    pub update_reporter: Option<Arc<dyn UpdateReporter>>,
+    pub subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
 }
 
 /// Which externally reachable listeners a runtime owns.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Listeners {
+pub enum Listeners {
     InProcessOnly,
     Sockets,
 }
@@ -126,7 +126,7 @@ impl ProfileRuntimeOptions {
         }
     }
 
-    fn service_config(&self) -> Config {
+    pub(crate) fn service_config(&self) -> Config {
         Config {
             host_name: self.shared.host_name.clone(),
             cloud_url: self.config.cloud_url.clone(),
@@ -163,6 +163,7 @@ pub(crate) enum CloudStartError {
 
 /// All state and tasks owned by one complete device profile.
 pub(crate) struct ProfileRuntime {
+    pub(crate) host_id: crate::HostId,
     paths: ProfilePaths,
     state: Arc<RwLock<ServerState>>,
     shutdown_rx: Option<mpsc::Receiver<ShutdownRequest>>,
@@ -204,6 +205,14 @@ pub(crate) async fn start_observed(
     options: ProfileRuntimeOptions,
     status: RuntimeStatus,
 ) -> Result<ProfileRuntime, ProfileStartError> {
+    start_supervised(options, status, Arc::default()).await
+}
+
+pub(crate) async fn start_supervised(
+    options: ProfileRuntimeOptions,
+    status: RuntimeStatus,
+    operations: Arc<crate::installation::OperationGate>,
+) -> Result<ProfileRuntime, ProfileStartError> {
     let result = async {
         let device_files = identity::ensure_device_files_with_trust_in(&options.paths.data_dir)
             .map_err(|error| ProfileStartError::State(error.to_string()))?;
@@ -212,7 +221,12 @@ pub(crate) async fn start_observed(
             device_files.trust_store,
             options.paths.data_dir.clone(),
         );
-        build(options, security, status.clone()).await
+        build(
+            options,
+            security.with_operations(operations),
+            status.clone(),
+        )
+        .await
     }
     .await;
     if result.is_err() {
@@ -338,6 +352,7 @@ async fn build(
     status.report(Observed::Local);
 
     Ok(ProfileRuntime {
+        host_id,
         paths: options.paths,
         state,
         shutdown_rx: Some(shutdown_rx),

@@ -9,7 +9,7 @@ use crate::update::{UpdateReporter, UpdateStatus};
 
 /// Connectivity observed by startup and the cloud connector, apart from intent.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Observed {
+pub enum Observed {
     Local,
     Connecting,
     Connected,
@@ -25,6 +25,7 @@ pub(crate) enum Observed {
 #[derive(Clone)]
 pub(crate) struct RuntimeStatus {
     tx: watch::Sender<Observed>,
+    observer: Option<Arc<dyn Fn(Observed) + Send + Sync>>,
     update_reporter: Option<Arc<dyn UpdateReporter>>,
     subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
 }
@@ -37,9 +38,18 @@ impl RuntimeStatus {
         let (tx, _) = watch::channel(Observed::Local);
         Self {
             tx,
+            observer: None,
             update_reporter,
             subscription_reporter,
         }
+    }
+
+    pub(crate) fn with_observer(
+        mut self,
+        observer: impl Fn(Observed) + Send + Sync + 'static,
+    ) -> Self {
+        self.observer = Some(Arc::new(observer));
+        self
     }
 
     pub(crate) fn subscribe(&self) -> watch::Receiver<Observed> {
@@ -49,6 +59,9 @@ impl RuntimeStatus {
     pub(crate) fn report(&self, observed: Observed) {
         // Retain state even when no screen or supervisor is currently watching.
         self.tx.send_replace(observed.clone());
+        if let Some(observer) = &self.observer {
+            observer(observed.clone());
+        }
         // Adapt synchronously: a terminal connector can finish immediately
         // after publishing, and teardown must not discard its marker update.
         match observed {

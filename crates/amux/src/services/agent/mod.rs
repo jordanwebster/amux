@@ -140,6 +140,7 @@ pub(crate) struct AgentServiceCtx {
     host_id: Uuid,
     is_cloud_server: bool,
     artifact_owners: Option<Arc<ArtifactOwners>>,
+    operations: Arc<crate::installation::OperationGate>,
 }
 
 impl AgentServiceCtx {
@@ -153,7 +154,16 @@ impl AgentServiceCtx {
             host_id,
             is_cloud_server,
             artifact_owners: None,
+            operations: Arc::default(),
         }
+    }
+
+    pub(crate) fn with_operations(
+        mut self,
+        operations: Arc<crate::installation::OperationGate>,
+    ) -> Self {
+        self.operations = operations;
+        self
     }
 
     pub(crate) fn with_artifact_owners(mut self, owners: Arc<ArtifactOwners>) -> Self {
@@ -223,6 +233,8 @@ impl AgentServiceCtx {
         &self,
         request: CreateAgentRpcRequest,
     ) -> Result<Agent, ProtocolError> {
+        let _operation = self.operations.lock().await;
+        self.operations.check()?;
         if self.is_cloud_server() || !self.has_supported_agent_types() {
             return Err(no_supported_agent_types());
         }
@@ -237,10 +249,14 @@ impl AgentServiceCtx {
     }
 
     pub(crate) async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {
+        let _operation = self.operations.lock().await;
+        self.operations.check()?;
         self.require_host()?.rename(request).await
     }
 
     pub(crate) async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError> {
+        let _operation = self.operations.lock().await;
+        self.operations.check()?;
         let result = match self.host() {
             Some(host) => host.delete(agent_id).await,
             None => Err(ProtocolError::NoAgentFound),

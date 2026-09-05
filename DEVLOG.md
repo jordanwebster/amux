@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Supervise independent profile lifecycles and ordered status watches.**
+The installation starts each profile independently, keeps runtimes alive without
+clients, and serializes lifecycle operations with agent mutations and trust
+commits. Completed operations replay their original results; cancelling a caller
+does not cancel its accepted mutation. Watches deliver a snapshot followed by
+ordered changes, removal events, and an explicit terminal overflow indication.
+Deletion records durable intent before teardown, closes accepted gRPC connections,
+and leaves failed cleanup unavailable and retryable across restart. Tests cover
+replayed operations, stale revisions, startup failure, persistent pause, independent
+cloud preparation, late startup and pairing, and clients surviving other profiles.
+
 2026-09-05 — **Add exclusive installation storage and UUID profile paths.**
 An installation registry holds its root lock until drop, persists profile
 records with atomic file replacement, and rejects stale per-profile revisions.

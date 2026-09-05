@@ -15,7 +15,7 @@ pub(crate) use cloud::{CloudConnector, establish_cloud_connection};
 use futures_util::{Stream, StreamExt, stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, RwLock, Semaphore, mpsc};
+use tokio::sync::{RwLock, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tonic::codegen::http;
@@ -504,6 +504,7 @@ pub(crate) struct StartedUserServices {
     pub(crate) pair_mode: Arc<PairMode>,
     reachability_links: ReachabilityLinkConnector,
     dispatcher: TunnelDispatcher,
+    connections_closed: tokio_util::sync::CancellationToken,
 }
 
 #[derive(Clone)]
@@ -511,6 +512,7 @@ pub(crate) struct DeviceRuntimeSecurity {
     identity: DeviceIdentity,
     trust_store: SharedTrustStore,
     data_dir: PathBuf,
+    operations: Arc<crate::installation::OperationGate>,
 }
 
 impl DeviceRuntimeSecurity {
@@ -523,7 +525,16 @@ impl DeviceRuntimeSecurity {
             identity,
             trust_store: Arc::new(std::sync::RwLock::new(trust_store)),
             data_dir,
+            operations: Arc::default(),
         }
+    }
+
+    pub(crate) fn with_operations(
+        mut self,
+        operations: Arc<crate::installation::OperationGate>,
+    ) -> Self {
+        self.operations = operations;
+        self
     }
 
     pub(crate) fn host_id(&self) -> HostId {
@@ -583,8 +594,9 @@ async fn start_user_services_with_clock(
             .map_err(|error| IdentityError::Io(std::io::Error::other(error)))?,
     );
     let agent = AgentServiceCtx::new(agent_host.clone(), host_id, is_cloud_server)
-        .with_artifact_owners(artifact_owners.clone());
-    let trust_commit_lock = Arc::new(Mutex::new(()));
+        .with_artifact_owners(artifact_owners.clone())
+        .with_operations(device_security.operations.clone());
+    let trust_commit_lock = device_security.operations.clone();
     let pair_mode = Arc::new(PairMode::new());
     let reachability_links = ReachabilityLinkConnector::new(
         device_security.identity.clone(),
@@ -616,11 +628,13 @@ async fn start_user_services_with_clock(
     let (trusted_incoming_tx, trusted_incoming_rx) = mpsc::channel(64);
     let (pairing_incoming_tx, pairing_incoming_rx) = mpsc::channel(64);
 
+    let connections_closed = tokio_util::sync::CancellationToken::new();
     parts.runtime.tasks.push(spawn_trusted_service_server(
         client.clone(),
         agent.clone(),
         parts.runtime.link_service_ctx(),
         trusted_incoming_rx,
+        connections_closed.clone(),
     ));
     parts.runtime.tasks.push(spawn_pairing_service_server(
         PairingService::new(
@@ -633,6 +647,7 @@ async fn start_user_services_with_clock(
             device_security.data_dir.clone(),
         ),
         pairing_incoming_rx,
+        connections_closed.clone(),
     ));
     let dispatcher = TunnelDispatcher::new(
         &device_security.identity,
@@ -674,6 +689,7 @@ async fn start_user_services_with_clock(
     }
 
     Ok(StartedUserServices {
+        connections_closed,
         runtime: parts.runtime,
         artifact_owners,
         #[cfg(test)]
@@ -778,6 +794,7 @@ impl StartedUserServices {
     }
 
     pub(crate) async fn stop_tasks(&mut self) {
+        self.connections_closed.cancel();
         let tasks = std::mem::take(&mut self.tasks);
         for task in &tasks {
             task.abort();
@@ -830,12 +847,17 @@ fn spawn_trusted_service_server(
     agent: AgentServiceCtx,
     routing: LinkServiceCtx,
     incoming_rx: mpsc::Receiver<BoxedGrpcIo>,
+    connections_closed: tokio_util::sync::CancellationToken,
 ) -> JoinHandle<()> {
-    let incoming = stream::unfold(incoming_rx, |mut rx| async {
-        rx.recv()
-            .await
-            .map(|transport| (Ok::<_, std::io::Error>(transport), rx))
-    });
+    let incoming = stream::unfold(
+        (incoming_rx, connections_closed),
+        |(mut rx, closed)| async move {
+            rx.recv().await.map(|transport| {
+                let transport = crate::transport::ShutdownIo::new(transport, closed.clone());
+                (Ok::<_, std::io::Error>(transport), (rx, closed))
+            })
+        },
+    );
 
     tokio::spawn(async move {
         if let Err(error) = crate::transport::tonic_server_builder()
@@ -853,12 +875,17 @@ fn spawn_trusted_service_server(
 fn spawn_pairing_service_server(
     pairing: PairingService,
     incoming_rx: mpsc::Receiver<BoxedGrpcIo>,
+    connections_closed: tokio_util::sync::CancellationToken,
 ) -> JoinHandle<()> {
-    let incoming = stream::unfold(incoming_rx, |mut rx| async {
-        rx.recv()
-            .await
-            .map(|transport| (Ok::<_, std::io::Error>(transport), rx))
-    });
+    let incoming = stream::unfold(
+        (incoming_rx, connections_closed),
+        |(mut rx, closed)| async move {
+            rx.recv().await.map(|transport| {
+                let transport = crate::transport::ShutdownIo::new(transport, closed.clone());
+                (Ok::<_, std::io::Error>(transport), (rx, closed))
+            })
+        },
+    );
 
     tokio::spawn(async move {
         if let Err(error) = crate::transport::tonic_server_builder()

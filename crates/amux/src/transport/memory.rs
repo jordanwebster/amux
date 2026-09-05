@@ -53,9 +53,25 @@ pub(crate) fn managed_in_process_transport_pair() -> (
     )
 }
 
-struct ShutdownIo<T> {
+pub(crate) struct ShutdownIo<T> {
     inner: T,
     cancelled: Pin<Box<dyn Future<Output = ()> + Send>>,
+}
+
+impl<T> ShutdownIo<T> {
+    pub(crate) fn new(inner: T, cancellation: CancellationToken) -> Self {
+        Self {
+            inner,
+            cancelled: Box::pin(cancellation.cancelled_owned()),
+        }
+    }
+}
+
+impl<T: tonic::transport::server::Connected> tonic::transport::server::Connected for ShutdownIo<T> {
+    type ConnectInfo = T::ConnectInfo;
+    fn connect_info(&self) -> Self::ConnectInfo {
+        self.inner.connect_info()
+    }
 }
 
 impl<T: AsyncRead + Unpin> AsyncRead for ShutdownIo<T> {
@@ -80,7 +96,7 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for ShutdownIo<T> {
         if self.cancelled.as_mut().poll(cx).is_ready() {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
-                "in-process connection closed",
+                "profile connection closed",
             )));
         }
         Pin::new(&mut self.inner).poll_write(cx, buf)
@@ -90,7 +106,7 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for ShutdownIo<T> {
         if self.cancelled.as_mut().poll(cx).is_ready() {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
-                "in-process connection closed",
+                "profile connection closed",
             )));
         }
         Pin::new(&mut self.inner).poll_flush(cx)

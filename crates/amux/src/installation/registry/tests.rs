@@ -184,12 +184,14 @@ fn invalid_registry_is_never_silently_reset() {
         revision: 1,
     };
     let duplicate = serde_yaml::to_string(&RegistryFile {
+        deleting: Default::default(),
         profiles: vec![record.clone(), record.clone()],
     })
     .unwrap();
     let mut zero = record;
     zero.revision = 0;
     let zero = serde_yaml::to_string(&RegistryFile {
+        deleting: Default::default(),
         profiles: vec![zero],
     })
     .unwrap();
@@ -221,6 +223,7 @@ fn revision_exhaustion_does_not_wrap() {
         revision: u64::MAX,
     };
     let bytes = serde_yaml::to_string(&RegistryFile {
+        deleting: Default::default(),
         profiles: vec![record.clone()],
     })
     .unwrap();

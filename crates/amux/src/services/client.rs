@@ -494,6 +494,10 @@ impl ClientService {
     ) -> Result<(Uuid, TrustEntry), tonic::Status> {
         let reason = normalized_unpair_reason(reason);
         let trust_commit_lock = self.pairing_trust.trust_commit_lock.lock().await;
+        self.pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(protocol_status)?;
         let (host_id, removed_entry, staged) = {
             let store =
                 self.pairing_trust.trust_store.read().map_err(|_| {
@@ -1274,6 +1278,11 @@ impl wire::client_service_server::ClientService for ClientService {
         &self,
         request: tonic::Request<wire::StartPairingRequest>,
     ) -> TonicResult<wire::StartPairingResponse> {
+        let _operation = self.pairing_trust.trust_commit_lock.lock().await;
+        self.pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(protocol_status)?;
         require_local_admin_client(&request)?;
         let request = request.into_inner();
         let mode = wire::start_pairing_request::Mode::try_from(request.mode).map_err(|_| {
@@ -1372,6 +1381,11 @@ impl wire::client_service_server::ClientService for ClientService {
         &self,
         request: tonic::Request<wire::CancelPairingRequest>,
     ) -> TonicResult<wire::CancelPairingResponse> {
+        let _operation = self.pairing_trust.trust_commit_lock.lock().await;
+        self.pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(protocol_status)?;
         require_local_admin_client(&request)?;
         if self.pair_mode.cancel() {
             audit::pairing_cancel("admin");
@@ -2174,6 +2188,8 @@ impl ClientService {
     }
 
     async fn resume_local_agents(&self) -> Result<(u64, u64), ProtocolError> {
+        let _operation = self.pairing_trust.trust_commit_lock.lock().await;
+        self.pairing_trust.trust_commit_lock.check()?;
         let (state_path, is_cloud_server) = {
             let state = self.server_state.read().await;
             (state.state_path(), state.is_cloud_server())
@@ -3139,7 +3155,7 @@ mod tests {
             PairingTrustAccess::new(
                 identity.public_key().to_vec(),
                 Arc::new(std::sync::RwLock::new(TrustStore::default())),
-                Arc::new(tokio::sync::Mutex::new(())),
+                Arc::default(),
                 std::env::temp_dir().join(format!("amux-client-service-{}", Uuid::new_v4())),
             ),
             Arc::new(PairMode::new()),
@@ -3173,7 +3189,7 @@ mod tests {
             PairingTrustAccess::new(
                 local_identity.public_key().to_vec(),
                 trust_store,
-                Arc::new(tokio::sync::Mutex::new(())),
+                Arc::default(),
                 data_dir.to_path_buf(),
             ),
             Arc::new(PairMode::new()),
@@ -6105,7 +6121,7 @@ mod tests {
             PairingTrustAccess::new(
                 local.public_key().to_vec(),
                 trust_store.clone(),
-                Arc::new(tokio::sync::Mutex::new(())),
+                Arc::default(),
                 data_dir.path().to_path_buf(),
             ),
             Arc::new(PairMode::new()),

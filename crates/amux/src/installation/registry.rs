@@ -1,6 +1,6 @@
 //! Durable profile intent. Runtime observations and credentials are stored elsewhere.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -141,6 +141,8 @@ impl LockedRoot {
 #[serde(deny_unknown_fields)]
 struct RegistryFile {
     profiles: Vec<ProfileRecord>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    deleting: BTreeSet<ProfileId>,
 }
 
 /// A single writer under the installation root lock. Mutations persist a full
@@ -149,6 +151,7 @@ struct RegistryFile {
 pub struct Registry {
     root: Option<LockedRoot>,
     records: BTreeMap<ProfileId, ProfileRecord>,
+    deleting: BTreeSet<ProfileId>,
 }
 
 impl Registry {
@@ -157,6 +160,7 @@ impl Registry {
             return Ok(Self {
                 root: None,
                 records: BTreeMap::new(),
+                deleting: BTreeSet::new(),
             });
         };
         let root = LockedRoot::open(&path)?;
@@ -179,9 +183,15 @@ impl Registry {
                 return Err(InstallationError::Registry("duplicate profile id".into()));
             }
         }
+        if data.deleting.iter().any(|id| !records.contains_key(id)) {
+            return Err(InstallationError::Registry(
+                "deletion intent names an unknown profile".into(),
+            ));
+        }
         Ok(Self {
             root: Some(root),
             records,
+            deleting: data.deleting,
         })
     }
 
@@ -219,7 +229,7 @@ impl Registry {
         };
         let mut candidate = self.records.clone();
         candidate.insert(id, record.clone());
-        self.commit(candidate)?;
+        self.commit(candidate, self.deleting.clone())?;
         Ok(record)
     }
 
@@ -235,7 +245,7 @@ impl Registry {
             .ok_or_else(|| InstallationError::Registry("profile revision exhausted".into()))?;
         let mut candidate = self.records.clone();
         candidate.insert(record.id, record.clone());
-        self.commit(candidate)?;
+        self.commit(candidate, self.deleting.clone())?;
         Ok(record)
     }
 
@@ -247,7 +257,26 @@ impl Registry {
         self.check_revision(id, expected_revision)?;
         let mut candidate = self.records.clone();
         candidate.remove(&id);
-        self.commit(candidate)
+        let mut deleting = self.deleting.clone();
+        deleting.remove(&id);
+        self.commit(candidate, deleting)
+    }
+
+    pub(crate) fn is_deleting(&self, id: ProfileId) -> bool {
+        self.deleting.contains(&id)
+    }
+
+    /// Persist unavailability before stopping services or removing any files.
+    /// An interrupted cleanup must never restart as a fresh device identity.
+    pub(crate) fn mark_deleting(
+        &mut self,
+        id: ProfileId,
+        revision: u64,
+    ) -> Result<(), InstallationError> {
+        self.check_revision(id, revision)?;
+        let mut deleting = self.deleting.clone();
+        deleting.insert(id);
+        self.commit(self.records.clone(), deleting)
     }
 
     fn check_revision(&self, id: ProfileId, expected: u64) -> Result<(), InstallationError> {
@@ -261,10 +290,12 @@ impl Registry {
     fn commit(
         &mut self,
         records: BTreeMap<ProfileId, ProfileRecord>,
+        deleting: BTreeSet<ProfileId>,
     ) -> Result<(), InstallationError> {
         if let Some(root) = &self.root {
             let bytes = serde_yaml::to_string(&RegistryFile {
                 profiles: records.values().cloned().collect(),
+                deleting: deleting.clone(),
             })
             .map_err(|error| InstallationError::Registry(error.to_string()))?;
             let path = root.path.join("registry.yaml");
@@ -276,12 +307,14 @@ impl Registry {
             staged.as_file().sync_all()?;
             staged.persist(&path).map_err(|error| error.error)?;
             self.records = records;
+            self.deleting = deleting;
             // A directory-sync failure follows a committed rename. Keep memory in
             // agreement with the visible file even when durability cannot be confirmed.
             #[cfg(unix)]
             File::open(&root.path)?.sync_all()?;
         } else {
             self.records = records;
+            self.deleting = deleting;
         }
         Ok(())
     }
