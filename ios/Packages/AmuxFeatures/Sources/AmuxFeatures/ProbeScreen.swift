@@ -27,7 +27,7 @@ public struct ProbeScreen: View {
                             .designFont(.identifier, design)
                             .foregroundStyle(design.ink.color)
                             .identified("probe.identifier")
-                        Text("Every token this screen draws is one the app draws.")
+                        Text("This screen uses the same design tokens as the app.")
                             .designFont(.body, design)
                             .foregroundStyle(design.inkMuted.color)
                             .identified("probe.body")

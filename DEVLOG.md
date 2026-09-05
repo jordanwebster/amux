@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Clearer probe copy.** The capture probe now says “This screen
+uses the same design tokens as the app.” Its light and dark screenshot
+baselines and the sample report's replay image reflect the new subtitle.
+Both probe goldens and the sample replay pass; the recorded projected state
+is unchanged.
+
 2026-09-05 — **Verification asks what exists.** Between milestones the branch's
 own check now runs the goldens over the screens the app can open
 (`wt run ios-goldens -- --built`): each is captured in both appearances and
