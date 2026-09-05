@@ -541,7 +541,6 @@ impl DeviceRuntimeSecurity {
         self.identity.host_id
     }
 
-    #[cfg(testnet)]
     pub(crate) fn shared_trust_store(&self) -> SharedTrustStore {
         self.trust_store.clone()
     }

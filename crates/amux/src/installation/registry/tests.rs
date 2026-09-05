@@ -73,10 +73,11 @@ fn persisted_records_round_trip_with_independent_revisions() {
     changed.label.email = Some("alice@example.test".into());
     changed.binding = Some(Binding {
         account: AccountId {
-            service: "https://cloud.example.test".into(),
+            service: super::super::CloudServiceId::canonicalize("https://cloud.example.test")
+                .unwrap(),
             subject: "opaque-subject".into(),
         },
-        bound_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+        bound_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
     });
     changed.paused = true;
     let changed = registry.replace(changed).unwrap();
@@ -185,6 +186,8 @@ fn invalid_registry_is_never_silently_reset() {
     };
     let duplicate = serde_yaml::to_string(&RegistryFile {
         deleting: Default::default(),
+        credentials: Default::default(),
+        logged_out: Default::default(),
         profiles: vec![record.clone(), record.clone()],
     })
     .unwrap();
@@ -192,6 +195,8 @@ fn invalid_registry_is_never_silently_reset() {
     zero.revision = 0;
     let zero = serde_yaml::to_string(&RegistryFile {
         deleting: Default::default(),
+        credentials: Default::default(),
+        logged_out: Default::default(),
         profiles: vec![zero],
     })
     .unwrap();
@@ -224,6 +229,8 @@ fn revision_exhaustion_does_not_wrap() {
     };
     let bytes = serde_yaml::to_string(&RegistryFile {
         deleting: Default::default(),
+        credentials: Default::default(),
+        logged_out: Default::default(),
         profiles: vec![record.clone()],
     })
     .unwrap();

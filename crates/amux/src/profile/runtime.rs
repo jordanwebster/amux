@@ -171,7 +171,6 @@ pub(crate) struct ProfileRuntime {
     pub(crate) services: StartedUserServices,
     #[cfg(testnet)]
     pub(crate) test_agent_host: Arc<crate::services::PtyAgentHost>,
-    #[cfg(testnet)]
     pub(crate) trust: crate::trust::SharedTrustStore,
     #[cfg(testnet)]
     test_cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
@@ -281,7 +280,6 @@ async fn build(
     #[cfg(testnet)]
     let test_agent_host = agent_host.clone().expect("testnet requires local agents");
     let agent_host = agent_host.map(|host| host as Arc<dyn LocalAgentHost>);
-    #[cfg(testnet)]
     let trust = security.shared_trust_store();
     #[cfg(not(testnet))]
     let mut services = start_user_services(state.clone(), agent_host.clone(), security)
@@ -360,7 +358,6 @@ async fn build(
         services,
         #[cfg(testnet)]
         test_agent_host,
-        #[cfg(testnet)]
         trust,
         #[cfg(testnet)]
         test_cloud: options.fixtures.cloud,
@@ -387,6 +384,55 @@ impl ProfileRuntime {
     #[allow(dead_code)]
     pub(crate) fn status(&self) -> watch::Receiver<Observed> {
         self.status.subscribe()
+    }
+
+    pub(crate) async fn configure_credentials(
+        &self,
+        cloud_url: String,
+        credentials: Option<Arc<dyn CredentialProvider>>,
+    ) {
+        let mut state = self.state.write().await;
+        state.config.cloud_url = cloud_url;
+        state.config.enable_cloud_mode = Some(true);
+        state.credentials = credentials;
+    }
+
+    /// Called while the supervisor holds the same gate as agent and trust mutations.
+    pub(crate) async fn non_pristine(
+        &self,
+    ) -> Result<Option<crate::installation::NonPristine>, std::io::Error> {
+        use crate::installation::NonPristine;
+        let trust = self.trust.read().unwrap().entries().count();
+        if trust > 0 {
+            return Ok(Some(NonPristine::TrustEntries(trust)));
+        }
+        if let Some(host) = &self.agent_host {
+            let count = host.agent_count().await;
+            if count > 0 {
+                return Ok(Some(NonPristine::LocalAgents(count)));
+            }
+        }
+        let suspended = crate::suspend::load_suspended(&self.paths.state_path)
+            .map_err(std::io::Error::other)?;
+        if !suspended.agents.is_empty() {
+            return Ok(Some(NonPristine::LocalAgents(suspended.agents.len())));
+        }
+        for (path, agents) in [
+            (self.paths.data_dir.join("agents"), true),
+            (self.paths.data_dir.join("cache/artifacts"), false),
+        ] {
+            let count = std::fs::read_dir(path)?
+                .collect::<Result<Vec<_>, _>>()?
+                .len();
+            if count > 0 {
+                return Ok(Some(if agents {
+                    NonPristine::LocalAgents(count)
+                } else {
+                    NonPristine::RetainedArtifacts(count)
+                }));
+            }
+        }
+        Ok(None)
     }
 
     pub(crate) async fn start_cloud(&self) -> Result<(), CloudStartError> {

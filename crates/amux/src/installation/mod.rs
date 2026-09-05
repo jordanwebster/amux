@@ -1,6 +1,11 @@
 //! Installation ownership, isolated profile storage, and supervised lifecycles.
 
+pub mod binding;
+mod credentials;
 mod operation;
+pub use binding::{
+    AccountId, BindError, BindRequest, BindTarget, CloudServiceId, NonPristine, UserInfo,
+};
 mod paths;
 pub mod supervisor;
 

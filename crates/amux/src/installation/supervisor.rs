@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, watch};
 use uuid::Uuid;
 
+use super::binding::{BindError, BindRequest};
+use super::credentials::ProfileCredentialStore;
 use super::{
     InstallationError, InstallationRoot, InstallationSettings, Listeners, Observed, OperationGate,
     ProfileId, ProfileLabel, ProfilePaths, ProfileRecord, Registry,
@@ -131,6 +133,8 @@ pub(super) struct Inner {
     settings: Arc<InstallationSettings>,
     listeners: Listeners,
     credentials: CredentialSource,
+    identity_http: reqwest::Client,
+    binding: AsyncMutex<VecDeque<binding::PendingLogin>>,
 }
 
 struct State {
@@ -142,6 +146,8 @@ struct State {
     sequence: u64,
     events: Option<broadcast::Sender<ProfileEvent>>,
     stopped: bool,
+    credential_clock: u64,
+    revoked_accounts: HashMap<super::AccountId, u64>,
 }
 
 struct Entry {
@@ -153,11 +159,15 @@ struct Entry {
 struct Slot {
     operations: Arc<OperationGate>,
     runtime: AsyncMutex<Option<ProfileRuntime>>,
+    credentials: Mutex<Option<Arc<ProfileCredentialStore>>>,
+    revoked_at: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Mutation {
     Create(Option<String>),
+    Bind(BindRequest),
+    Logout(ProfileId),
     Rename(ProfileId, u64, Option<String>),
     Pause(ProfileId),
     Resume(ProfileId),
@@ -167,6 +177,7 @@ enum Mutation {
 enum Outcome {
     Profile(Box<ProfileStatus>),
     Deleted,
+    Bound(Result<Box<ProfileStatus>, BindError>),
 }
 type OperationResult = Result<Outcome, InstallationError>;
 struct LedgerEntry {
@@ -238,6 +249,8 @@ impl Installation {
                 sequence: 0,
                 events: Some(events),
                 stopped: false,
+                credential_clock: 0,
+                revoked_accounts: HashMap::new(),
             }),
             lifecycle: RwLock::new(()),
             root,
@@ -245,6 +258,8 @@ impl Installation {
             settings: Arc::new(options.settings),
             listeners: options.listeners,
             credentials: options.credentials,
+            identity_http: options.identity_http,
+            binding: AsyncMutex::new(VecDeque::new()),
         });
         for record in records {
             inner.insert(record);
@@ -331,6 +346,25 @@ impl Installation {
     ) -> Result<ProfileStatus, InstallationError> {
         self.profile_operation(op, Mutation::Create(label)).await
     }
+    pub async fn bind(
+        &self,
+        op: OperationId,
+        request: BindRequest,
+    ) -> Result<ProfileStatus, BindError> {
+        match self.inner.operate(op, Mutation::Bind(request)).await? {
+            Outcome::Bound(result) => result.map(|status| *status),
+            _ => unreachable!(),
+        }
+    }
+
+    pub async fn logout(
+        &self,
+        op: OperationId,
+        id: ProfileId,
+    ) -> Result<ProfileStatus, InstallationError> {
+        self.profile_operation(op, Mutation::Logout(id)).await
+    }
+
     pub async fn rename(
         &self,
         op: OperationId,
@@ -367,7 +401,7 @@ impl Installation {
             .await?
         {
             Outcome::Deleted => Ok(()),
-            Outcome::Profile(_) => unreachable!(),
+            Outcome::Profile(_) | Outcome::Bound(_) => unreachable!(),
         }
     }
     async fn profile_operation(
@@ -377,7 +411,7 @@ impl Installation {
     ) -> Result<ProfileStatus, InstallationError> {
         match self.inner.operate(op, request).await? {
             Outcome::Profile(status) => Ok(*status),
-            Outcome::Deleted => unreachable!(),
+            Outcome::Deleted | Outcome::Bound(_) => unreachable!(),
         }
     }
     pub async fn shutdown(self, reason: ShutdownReason) {
@@ -407,8 +441,6 @@ impl Inner {
             Intent::Paused
         } else if record.binding.is_none() {
             Intent::Unbound
-        } else if matches!(self.credentials, CredentialSource::HostProvided(_)) {
-            Intent::Bound
         } else {
             Intent::LoggedOut
         };
@@ -425,6 +457,8 @@ impl Inner {
             slot: Arc::new(Slot {
                 operations: Arc::default(),
                 runtime: AsyncMutex::new(None),
+                credentials: Mutex::new(None),
+                revoked_at: std::sync::atomic::AtomicU64::new(0),
             }),
             client: None,
             deleting: false,
@@ -463,14 +497,30 @@ impl Inner {
         });
         let result = async {
             let paths = ProfilePaths::for_id(&self.root, id)?;
-            let credentials = match (&self.credentials, &record.binding) {
-                (CredentialSource::HostProvided(provider), Some(_)) => Some(provider(id)),
-                _ => None,
-            };
+            let version = self.state.lock().unwrap().registry.credential_version(id);
+            let store = Arc::new(ProfileCredentialStore::open(
+                matches!(self.credentials, CredentialSource::ProfileFiles)
+                    .then(|| paths.credentials_path().unwrap()),
+                self.identity_http.clone(),
+                record.binding.as_ref(),
+                if matches!(self.credentials, CredentialSource::ProfileFiles) {
+                    version
+                } else {
+                    None
+                },
+            )?);
+            if let (CredentialSource::HostProvided(provider), Some(binding)) =
+                (&self.credentials, &record.binding)
+                && !self.state.lock().unwrap().registry.is_logged_out(id)
+            {
+                store.use_host(binding, provider(id));
+            }
+            let credentials: Option<Arc<dyn CredentialProvider>> = Some(store.clone());
+            *slot.credentials.lock().unwrap() = Some(store);
             let cloud_url = record
                 .binding
                 .as_ref()
-                .map(|binding| binding.account.service.clone())
+                .map(|binding| binding.account.service.to_string())
                 .unwrap_or_else(|| crate::config::Config::default().cloud_url);
             let mut options = ProfileRuntimeOptions {
                 paths: paths.clone(),
@@ -497,7 +547,9 @@ impl Inner {
                         "profile configuration disagrees with its allocated paths".into(),
                     ));
                 }
-                options.config.cloud_url = config.cloud_url;
+                if record.binding.is_none() {
+                    options.config.cloud_url = config.cloud_url;
+                }
                 options.config.tcp_port = config.tcp_port;
             } else {
                 use std::io::Write;
@@ -527,6 +579,7 @@ impl Inner {
                 entry.client = Some(client);
                 entry.status.host_id = host_id;
                 entry.status.available = true;
+                entry.status.intent = self.intent(&entry.status.record, &slot);
                 entry.status.socket_path =
                     (self.listeners == Listeners::Sockets).then_some(paths.socket_path);
                 state.publish(id);
@@ -604,6 +657,11 @@ impl Inner {
     }
 
     async fn mutate(self: &Arc<Self>, request: Mutation) -> OperationResult {
+        if let Mutation::Bind(request) = request {
+            return Ok(Outcome::Bound(
+                self.bind_request(request).await.map(Box::new),
+            ));
+        }
         if let Mutation::Create(label) = request {
             let id = ProfileId::new();
             let (result, record) = {
@@ -630,10 +688,11 @@ impl Inner {
 
         let id = match request {
             Mutation::Rename(id, ..)
+            | Mutation::Logout(id)
             | Mutation::Pause(id)
             | Mutation::Resume(id)
             | Mutation::Delete(id, _) => id,
-            Mutation::Create(_) => unreachable!(),
+            Mutation::Create(_) | Mutation::Bind(_) => unreachable!(),
         };
         let slot = self.state.lock().unwrap().entry(id)?.slot.clone();
         let _operation = slot.operations.lock().await;
@@ -642,6 +701,12 @@ impl Inner {
                 .delete(id, revision, &slot)
                 .await
                 .map(|()| Outcome::Deleted);
+        }
+        if matches!(request, Mutation::Logout(_)) {
+            return self
+                .logout_profile(id, &slot)
+                .await
+                .map(|status| Outcome::Profile(Box::new(status)));
         }
         let persist_result = {
             let mut state = self.state.lock().unwrap();
@@ -664,15 +729,7 @@ impl Inner {
             let result = state.registry.replace(record);
             state.refresh_record(id);
             let entry = state.profiles.get_mut(&id).unwrap();
-            entry.status.intent = if entry.status.record.paused {
-                Intent::Paused
-            } else if entry.status.record.binding.is_none() {
-                Intent::Unbound
-            } else if matches!(self.credentials, CredentialSource::HostProvided(_)) {
-                Intent::Bound
-            } else {
-                Intent::LoggedOut
-            };
+            entry.status.intent = self.intent(&entry.status.record, &slot);
             state.publish(id);
             result
         };
@@ -723,11 +780,15 @@ impl Inner {
             if !state.registry.is_deleting(id) {
                 intent?;
             }
+            state.revoke_credentials(id);
             let entry = state.profiles.get_mut(&id).unwrap();
             entry.deleting = true;
             entry.client = None;
             entry.status.available = false;
             slot.operations.close();
+            if let Some(store) = slot.credentials.lock().unwrap().as_ref() {
+                store.invalidate_pending();
+            }
             state.publish(id);
         }
         if let Some(runtime) = slot.runtime.lock().await.take() {
@@ -783,6 +844,9 @@ impl Inner {
         futures_util::future::join_all(slots.into_iter().map(|slot| async move {
             let _operation = slot.operations.lock().await;
             slot.operations.close();
+            if let Some(store) = slot.credentials.lock().unwrap().as_ref() {
+                store.invalidate_pending();
+            }
             if let Some(runtime) = slot.runtime.lock().await.take() {
                 runtime.stop(reason).await;
             }
@@ -791,6 +855,8 @@ impl Inner {
         self.state.lock().unwrap().events.take();
     }
 }
+
+mod binding;
 
 #[cfg(test)]
 mod tests;

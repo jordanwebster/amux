@@ -45,6 +45,29 @@ struct IdentityState {
     access_tokens: HashMap<String, String>,
     faults: Vec<Fault>,
     relay: Option<SocketAddr>,
+    userinfo_gate: Option<UserinfoGate>,
+}
+
+struct UserinfoGate {
+    entered: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
+}
+
+/// Holds one userinfo response after its access token has been issued, allowing
+/// tests to order credential invalidation without relying on scheduler delays.
+pub struct IdentityRequestHold {
+    entered: oneshot::Receiver<()>,
+    release: oneshot::Sender<()>,
+}
+impl IdentityRequestHold {
+    pub async fn entered(&mut self) {
+        (&mut self.entered)
+            .await
+            .expect("identity request reached userinfo");
+    }
+    pub fn release(self) {
+        let _ = self.release.send(());
+    }
 }
 
 pub struct IdentityServer {
@@ -72,6 +95,7 @@ impl IdentityServer {
             access_tokens: HashMap::new(),
             faults: Vec::new(),
             relay,
+            userinfo_gate: None,
         }));
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -118,6 +142,21 @@ impl IdentityServer {
             "unknown fixture account {sub}"
         );
         issue_refresh_token(&mut state, sub)
+    }
+
+    pub fn hold_next_userinfo(&self) -> IdentityRequestHold {
+        let (entered_tx, entered) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let mut state = self.state.lock().unwrap();
+        assert!(
+            state.userinfo_gate.is_none(),
+            "a userinfo hold is already pending"
+        );
+        state.userinfo_gate = Some(UserinfoGate {
+            entered: entered_tx,
+            release: release_rx,
+        });
+        IdentityRequestHold { entered, release }
     }
 
     pub fn inject(&self, fault: Fault) {
@@ -248,6 +287,11 @@ async fn userinfo_response(
     authorization: &Option<String>,
     state: &Arc<Mutex<IdentityState>>,
 ) -> Response<Full<Bytes>> {
+    let gate = state.lock().unwrap().userinfo_gate.take();
+    if let Some(gate) = gate {
+        let _ = gate.entered.send(());
+        let _ = gate.release.await;
+    }
     let timeout = {
         let mut state = state.lock().expect("identity fixture state poisoned");
         state

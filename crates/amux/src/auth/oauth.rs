@@ -26,6 +26,7 @@ pub enum OAuthError {
 fn http_client() -> Result<reqwest::Client, OAuthError> {
     reqwest::ClientBuilder::new()
         .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| OAuthError::Config(e.to_string()))
 }

@@ -5,11 +5,11 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::InstallationError;
+pub use super::binding::{AccountId, Binding};
 use super::paths::{private_directory, reject_symlink};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -40,20 +40,6 @@ pub struct ProfileLabel {
     pub account_name: Option<String>,
     pub email: Option<String>,
     pub override_name: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AccountId {
-    pub service: String,
-    pub subject: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Binding {
-    pub account: AccountId,
-    pub bound_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +129,10 @@ struct RegistryFile {
     profiles: Vec<ProfileRecord>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     deleting: BTreeSet<ProfileId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    credentials: BTreeMap<ProfileId, Uuid>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    logged_out: BTreeSet<ProfileId>,
 }
 
 /// A single writer under the installation root lock. Mutations persist a full
@@ -152,6 +142,8 @@ pub struct Registry {
     root: Option<LockedRoot>,
     records: BTreeMap<ProfileId, ProfileRecord>,
     deleting: BTreeSet<ProfileId>,
+    credentials: BTreeMap<ProfileId, Uuid>,
+    logged_out: BTreeSet<ProfileId>,
 }
 
 impl Registry {
@@ -161,6 +153,8 @@ impl Registry {
                 root: None,
                 records: BTreeMap::new(),
                 deleting: BTreeSet::new(),
+                credentials: BTreeMap::new(),
+                logged_out: BTreeSet::new(),
             });
         };
         let root = LockedRoot::open(&path)?;
@@ -188,10 +182,13 @@ impl Registry {
                 "deletion intent names an unknown profile".into(),
             ));
         }
+        validate_accounts(&records, &data.credentials)?;
         Ok(Self {
             root: Some(root),
             records,
             deleting: data.deleting,
+            credentials: data.credentials,
+            logged_out: data.logged_out,
         })
     }
 
@@ -292,10 +289,66 @@ impl Registry {
         records: BTreeMap<ProfileId, ProfileRecord>,
         deleting: BTreeSet<ProfileId>,
     ) -> Result<(), InstallationError> {
+        let mut credentials = self.credentials.clone();
+        credentials.retain(|id, _| records.contains_key(id));
+        let mut logged_out = self.logged_out.clone();
+        logged_out.retain(|id| records.contains_key(id));
+        self.commit_with_credentials(records, deleting, credentials, logged_out)
+    }
+
+    pub(crate) fn is_logged_out(&self, id: ProfileId) -> bool {
+        self.logged_out.contains(&id)
+    }
+
+    pub(crate) fn credential_version(&self, id: ProfileId) -> Option<Uuid> {
+        self.credentials.get(&id).copied()
+    }
+
+    pub(crate) fn commit_binding(
+        &mut self,
+        mut record: ProfileRecord,
+        version: Option<Uuid>,
+    ) -> Result<ProfileRecord, InstallationError> {
+        self.check_revision(record.id, record.revision)?;
+        record.revision = record
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| InstallationError::Registry("profile revision exhausted".into()))?;
+        let mut records = self.records.clone();
+        records.insert(record.id, record.clone());
+        let mut credentials = self.credentials.clone();
+        match version {
+            Some(version) => {
+                credentials.insert(record.id, version);
+            }
+            None => {
+                credentials.remove(&record.id);
+            }
+        }
+        let mut logged_out = self.logged_out.clone();
+        if version.is_some() {
+            logged_out.remove(&record.id);
+        } else {
+            logged_out.insert(record.id);
+        }
+        self.commit_with_credentials(records, self.deleting.clone(), credentials, logged_out)?;
+        Ok(record)
+    }
+
+    fn commit_with_credentials(
+        &mut self,
+        records: BTreeMap<ProfileId, ProfileRecord>,
+        deleting: BTreeSet<ProfileId>,
+        credentials: BTreeMap<ProfileId, Uuid>,
+        logged_out: BTreeSet<ProfileId>,
+    ) -> Result<(), InstallationError> {
+        validate_accounts(&records, &credentials)?;
         if let Some(root) = &self.root {
             let bytes = serde_yaml::to_string(&RegistryFile {
                 profiles: records.values().cloned().collect(),
                 deleting: deleting.clone(),
+                credentials: credentials.clone(),
+                logged_out: logged_out.clone(),
             })
             .map_err(|error| InstallationError::Registry(error.to_string()))?;
             let path = root.path.join("registry.yaml");
@@ -308,6 +361,8 @@ impl Registry {
             staged.persist(&path).map_err(|error| error.error)?;
             self.records = records;
             self.deleting = deleting;
+            self.credentials = credentials;
+            self.logged_out = logged_out;
             // A directory-sync failure follows a committed rename. Keep memory in
             // agreement with the visible file even when durability cannot be confirmed.
             #[cfg(unix)]
@@ -315,9 +370,40 @@ impl Registry {
         } else {
             self.records = records;
             self.deleting = deleting;
+            self.credentials = credentials;
+            self.logged_out = logged_out;
         }
         Ok(())
     }
+}
+
+fn validate_accounts(
+    records: &BTreeMap<ProfileId, ProfileRecord>,
+    credentials: &BTreeMap<ProfileId, Uuid>,
+) -> Result<(), InstallationError> {
+    let mut accounts = BTreeSet::new();
+    for record in records.values() {
+        if let Some(binding) = &record.binding
+            && (binding.account.subject.trim().is_empty()
+                || !accounts.insert((
+                    binding.account.service.clone(),
+                    binding.account.subject.clone(),
+                )))
+        {
+            return Err(InstallationError::Registry(
+                "missing or duplicate account subject".into(),
+            ));
+        }
+    }
+    if credentials
+        .keys()
+        .any(|id| records.get(id).is_none_or(|r| r.binding.is_none()))
+    {
+        return Err(InstallationError::Registry(
+            "credential version has no bound profile".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

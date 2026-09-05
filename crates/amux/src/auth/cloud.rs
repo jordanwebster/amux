@@ -150,7 +150,7 @@ fn cloud_error_from_response(status: reqwest::StatusCode, body: &str) -> CloudEr
 
 fn cloud_error_from_auth(error: AuthError) -> CloudError {
     match error {
-        AuthError::Unauthenticated => CloudError::NotAuthenticated,
+        AuthError::Unauthenticated | AuthError::AccountMismatch => CloudError::NotAuthenticated,
         AuthError::Provider(message) => CloudError::Connection(message),
     }
 }

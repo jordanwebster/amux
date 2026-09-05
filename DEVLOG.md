@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Bind profiles atomically to stable cloud accounts.**
+Login validates identity-server userinfo, preserves explicit targets, adopts the
+sole pristine profile or creates a new one, and refuses account reassignment.
+The registry atomically selects a private credential version while failed or
+interrupted staging preserves the accepted credential. Confirmation retries reuse
+rotated staged tokens. Profile credential stores serialize refresh, verify the
+subject, and reject late results after logout or deletion. Logout keeps the
+account reservation and local device, including when credentials come from an
+embedding host. Tests cover concurrent login and refresh, staged-write failure,
+confirmation during concurrent state changes, subject mismatch, cancellation,
+restart, and credential-file permissions.
+
 2026-09-05 — **Supervise independent profile lifecycles and ordered status watches.**
 The installation starts each profile independently, keeps runtimes alive without
 clients, and serializes lifecycle operations with agent mutations and trust

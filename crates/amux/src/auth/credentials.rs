@@ -10,6 +10,8 @@ pub struct AccessToken {
 pub enum AuthError {
     #[error("authentication required")]
     Unauthenticated,
+    #[error("credential belongs to a different account")]
+    AccountMismatch,
     #[error("auth provider error: {0}")]
     Provider(String),
 }

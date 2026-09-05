@@ -525,7 +525,8 @@ async fn bound_profiles_start_independently_and_pause_cancels_only_its_connector
             let mut record = registry.create(id, ProfileLabel::default()).unwrap();
             record.binding = Some(super::super::Binding {
                 account: super::super::registry::AccountId {
-                    service: "http://127.0.0.1:1".into(),
+                    service: super::super::CloudServiceId::canonicalize("http://127.0.0.1:1")
+                        .unwrap(),
                     subject: subject.into(),
                 },
                 bound_at: chrono::Utc::now(),
