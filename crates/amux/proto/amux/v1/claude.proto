@@ -136,6 +136,9 @@ message ClaudeSdkV1Input {
     ClaudeSdkPermissionDecision permission_decision = 12;
     ClaudeSdkElicitationDecision elicitation_decision = 13;
     ClaudeSdkDialogDecision dialog_decision = 14;
+    ClaudeSdkSetPermissionMode set_permission_mode = 15;
+    ClaudeSdkSetModel set_model = 16;
+    ClaudeSdkRequestContextBreakdown request_context_breakdown = 17;
   }
 }
 
@@ -176,3 +179,14 @@ message ClaudeSdkPermissionDeny {
   optional bool interrupt = 2;
   optional string tool_use_id = 3;
 }
+
+message ClaudeSdkSetPermissionMode {
+  string mode = 1;
+}
+
+message ClaudeSdkSetModel {
+  // Absent restores the launch model.
+  optional string model = 1;
+}
+
+message ClaudeSdkRequestContextBreakdown {}

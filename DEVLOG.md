@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Added Claude SDK session controls and passive context facts.**
+Clients can change permission mode or model, restore the launch model, and
+request a context breakdown. Facts accompany readiness, model and mode
+acknowledgements, initialization, status changes, and assistant/result rows.
+The meter counts the latest parent assistant call's input and cache tokens;
+result rows supply the matching model's window without polling the provider.
+Bypass requires a launch grant, including when requested in a permission
+answer. Frozen protobuf shapes, strict recorded controls and MCP replays,
+and a synthetic transport check cover the new boundary and its idle silence.
+
 2026-09-05 — **Made Claude SDK elicitation and dialog asks answerable.**
 The daemon now publishes typed pending asks and waits for a client decision.
 The protobuf inputs preserve provider result payloads, including extensions;

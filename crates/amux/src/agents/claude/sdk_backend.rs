@@ -21,6 +21,7 @@ use tokio::task::AbortHandle;
 use uuid::Uuid;
 
 use super::sdk_delivery::ClaudeSdkDeliveryTarget;
+use super::sdk_facts::SessionFacts;
 use super::sdk_io::{ClaudeSdkSynthesized, ClaudeSdkV1Input, ClaudeSdkV1Row};
 use super::suspend::{ClaudeSuspendRecord, sanitize_resume_args};
 use crate::agents::{
@@ -121,6 +122,7 @@ pub(super) struct Runtime {
     pub(super) control: Option<Control>,
     pub(super) session_id: Option<Uuid>,
     pending: PendingRequests,
+    facts: SessionFacts,
     pub(super) inflight_inputs: usize,
     pub(super) ready: bool,
     pub(super) exited: bool,
@@ -170,6 +172,7 @@ impl ClaudeSdkBackend {
             launch_route: Some(launch_route),
             artifact_root: req.working_dir.join(".amux-artifacts"),
             runtime: Arc::new(Mutex::new(Runtime {
+                facts: SessionFacts::from_args(&req.args),
                 session_id: Some(req.agent_id),
                 ..Runtime::default()
             })),
@@ -212,6 +215,7 @@ impl ClaudeSdkBackend {
         );
         let session_id = session.control.session_id().parse().ok();
         let artifact_root = record.working_dir.join(".amux-artifacts");
+        let facts = SessionFacts::from_args(&record.args);
         Self {
             agent_id: record.id,
             name: record.name.clone(),
@@ -229,6 +233,7 @@ impl ClaudeSdkBackend {
             artifact_root,
             runtime: Arc::new(Mutex::new(Runtime {
                 session_id,
+                facts,
                 ..Runtime::default()
             })),
             input_done: Arc::new(Notify::new()),
@@ -473,6 +478,7 @@ async fn ingest_session(
         },
     )
     .await;
+    write_session_facts(&runtime, &log).await;
     runtime.lock().expect("Claude SDK runtime poisoned").ready = true;
 
     while let Some(event) = events.next().await {
@@ -484,11 +490,18 @@ async fn ingest_session(
                     }
                     _ => None,
                 };
+                let facts = {
+                    let mut state = runtime.lock().expect("Claude SDK runtime poisoned");
+                    state.facts.observe(&message).then(|| state.facts.row())
+                };
                 match serde_json::to_value(message) {
                     Ok(row) => log.write(row).await,
                     Err(error) => {
                         tracing::warn!(%agent_id, %error, "failed to serialize Claude SDK row")
                     }
+                }
+                if let Some(facts) = facts {
+                    write_synthesized(&log, facts).await;
                 }
                 if let Some(text) = completed {
                     let _ = event_tx
@@ -645,6 +658,15 @@ fn default_hook_output() -> HookOutput {
     })
 }
 
+async fn write_session_facts(runtime: &Mutex<Runtime>, log: &StructuredLogSource) {
+    let row = runtime
+        .lock()
+        .expect("Claude SDK runtime poisoned")
+        .facts
+        .row();
+    write_synthesized(log, row).await;
+}
+
 async fn write_synthesized(log: &StructuredLogSource, row: ClaudeSdkSynthesized) {
     log.write(ClaudeSdkV1Row::Synthesized(row).into_json())
         .await;
@@ -693,6 +715,41 @@ impl ClaudeSdkInputTarget {
                 };
                 control.prompt(message).await?;
             }
+            ClaudeSdkV1Input::SetPermissionMode { mode } => {
+                self.runtime
+                    .lock()
+                    .expect("Claude SDK runtime poisoned")
+                    .facts
+                    .check_mode(&mode)?;
+                let applied = control
+                    .set_permission_mode(mode.clone())
+                    .await?
+                    .unwrap_or(mode);
+                self.runtime
+                    .lock()
+                    .expect("Claude SDK runtime poisoned")
+                    .facts
+                    .permission_mode = Some(applied.as_str().into());
+                write_session_facts(&self.runtime, &self.log).await;
+            }
+            ClaudeSdkV1Input::SetModel { model } => {
+                control.set_model(model.as_deref()).await?;
+                {
+                    let mut state = self.runtime.lock().expect("Claude SDK runtime poisoned");
+                    state.facts.model = model.or_else(|| state.facts.launch_model.clone());
+                }
+                write_session_facts(&self.runtime, &self.log).await;
+            }
+            ClaudeSdkV1Input::RequestContextBreakdown => {
+                let usage = control.get_context_usage().await?;
+                write_synthesized(
+                    &self.log,
+                    ClaudeSdkSynthesized::ContextBreakdown {
+                        usage: Box::new(usage),
+                    },
+                )
+                .await;
+            }
             ClaudeSdkV1Input::Interrupt => {
                 control.interrupt().await?;
             }
@@ -700,6 +757,21 @@ impl ClaudeSdkInputTarget {
                 request_id,
                 decision,
             } => {
+                if let PermissionResult::Allow {
+                    updated_permissions: Some(updates),
+                    ..
+                } = &decision
+                {
+                    for update in updates {
+                        if let claude::sdk::PermissionUpdate::SetMode { mode, .. } = update {
+                            self.runtime
+                                .lock()
+                                .expect("Claude SDK runtime poisoned")
+                                .facts
+                                .check_mode(mode)?;
+                        }
+                    }
+                }
                 let decision_name = permission_decision_name(&decision);
                 self.take_pending(RequestKind::Permission, &request_id)?;
                 let result = control
@@ -1018,13 +1090,18 @@ mod tests {
     use super::*;
     use crate::agents::mcp_launch_route_for_tests;
 
-    async fn read_json_line(reader: &mut BufReader<tokio::io::DuplexStream>) -> serde_json::Value {
+    pub(super) async fn read_json_line(
+        reader: &mut BufReader<tokio::io::DuplexStream>,
+    ) -> serde_json::Value {
         let mut line = String::new();
         reader.read_line(&mut line).await.unwrap();
         serde_json::from_str(&line).unwrap()
     }
 
-    async fn write_json_line(writer: &mut tokio::io::DuplexStream, value: serde_json::Value) {
+    pub(super) async fn write_json_line(
+        writer: &mut tokio::io::DuplexStream,
+        value: serde_json::Value,
+    ) {
         writer
             .write_all(value.to_string().as_bytes())
             .await
@@ -1032,7 +1109,7 @@ mod tests {
         writer.write_all(b"\n").await.unwrap();
     }
 
-    fn record(id: Uuid) -> AgentRecord {
+    pub(super) fn record(id: Uuid) -> AgentRecord {
         AgentRecord {
             id,
             host_id: Uuid::new_v4(),
@@ -1972,3 +2049,7 @@ mod tests {
         let _ = ingest.await;
     }
 }
+
+#[cfg(test)]
+#[path = "sdk_session_tests.rs"]
+mod session_tests;

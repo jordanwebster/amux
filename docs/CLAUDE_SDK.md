@@ -138,9 +138,8 @@ size of the context that call actually saw. The window is `contextWindow` from
 the result row's `modelUsage`, retained across the turn once seen. Neither
 costs a control call; both arrive on every ordinary turn. The meter records
 which row produced it, so a client can say `ctx 34k` without a window rather
-than inventing a denominator. If a turn completes having seen no assistant
-usage at all, exactly one `get_context_usage` call may fill the gap; that is
-the only polling this design permits.
+than inventing a denominator. If no assistant usage has arrived, the meter stays unknown. The daemon never
+requests context usage automatically.
 
 **The breakdown is deliberate.** `<leader> c` issues one `get_context_usage`
 call and opens an overlay on its answer:
@@ -371,7 +370,7 @@ one binding and gives two existing ones new facts to act on.
 | Key | Context | Action | Tier |
 | --- | --- | --- | --- |
 | `<leader> c` | SDK chat | fetch and open the context breakdown; again to refresh, esc to close | plain |
-| Shift+Tab | composer | cycle permission mode — here a `set_permission_mode` control, answered by a `system.status` row | plain (CSI Z) |
+| Shift+Tab | composer | cycle permission mode — a `set_permission_mode` control publishes the acknowledged mode in session facts | plain (CSI Z) |
 | Ctrl+X | chat | interrupt — here the SDK interrupt control, which the session acknowledges | plain |
 
 The model is displayed, and settable by a typed client command, but has no key:

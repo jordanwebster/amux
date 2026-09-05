@@ -67,6 +67,20 @@ open_string_enum!(PermissionMode {
     Auto => "auto",
 });
 
+impl PermissionMode {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Default => "default",
+            Self::AcceptEdits => "acceptEdits",
+            Self::BypassPermissions => "bypassPermissions",
+            Self::Plan => "plan",
+            Self::DontAsk => "dontAsk",
+            Self::Auto => "auto",
+            Self::Unknown(value) => value,
+        }
+    }
+}
+
 // ── Role ────────────────────────────────────────────────────────────
 
 open_string_enum!(Role {

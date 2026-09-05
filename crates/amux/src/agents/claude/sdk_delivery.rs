@@ -287,6 +287,8 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(ready.payload["type"], "amux.claude_sdk.ready");
+        let facts = rows.read().await.unwrap();
+        assert_eq!(facts.payload["type"], "amux.claude_sdk.session_facts");
         assert!(matches!(target.liveness(), Ok(DeliveryLiveness::Live)));
 
         let envelope = envelope(agent_id);
@@ -343,6 +345,8 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(ready.payload["type"], "amux.claude_sdk.ready");
+        let facts = rows.read().await.unwrap();
+        assert_eq!(facts.payload["type"], "amux.claude_sdk.session_facts");
 
         let error = target.deliver(&envelope(agent_id)).await.unwrap_err();
         assert!(
