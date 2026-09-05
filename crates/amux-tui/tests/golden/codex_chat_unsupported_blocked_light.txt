@@ -1,6 +1,5 @@
 --- text ---
-  codex-retry · codex @ mbp                                                                              chat · blocked 
-  model=gpt-5.4 · approval=on-request · sandbox=workspace-write                                                         
+  codex-retry · codex @ mbp                                            gpt-5.4 · on-request · workspace-write · blocked 
                                                                                                                         
   ⚠ user input requested · blocked in structured chat V1                                                                
     └ [{"id":"target","options":["staging","production"],"question":"Which deployment target?"}]                        
@@ -33,6 +32,7 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
+    ctx unknown                                                                                                         
                                                                                                                         
     user input requested                                                                                                
                                                                                                                         
@@ -40,8 +40,7 @@
     This turn is blocked — it is not idle.                                                                              
     ctrl+x interrupt · C-a s then open raw mode                                                                         
 --- styles ---
-..eeeeeeeeeeemmmmmmmmmmmmmm..............................................................................mmmmmmmwwwwwww.
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.........................................................
+..eeeeeeeeeeemmmmmmmmmmmmmm............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmwwwwwww.
 ........................................................................................................................
 ..w.....................................................................................................................
 ....m.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm........................
@@ -74,6 +73,7 @@
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
+....mmmmmmmmmmm.........................................................................................................
 ........................................................................................................................
 .PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 .PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP

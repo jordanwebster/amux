@@ -508,7 +508,7 @@ fn geometry_identical_for_claude_and_codex_fixtures_at_120_by_40() {
         .chat
         .as_mut()
         .expect("Codex fixture opens a chat")
-        .set_codex_configuration_label(None);
+        .set_codex_configuration(None);
 
     let geometry = |fixture: &crate::fixtures::Fixture| {
         let chat = fixture.view.chat.as_ref().expect("fixture opens a chat");

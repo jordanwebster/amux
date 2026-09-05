@@ -4,6 +4,31 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The three chat screens now state the same two facts in the
+same place: what the session runs on, and what its context costs.**
+A Claude session on a terminal states its model and its permission mode on
+the header's right, where a session driven over stream-JSON already did;
+the permission mode leaves the footer, which now names the key that cycles
+it instead of repeating the value. Its activity line is always present and
+carries `ctx 31.6k` — what the newest assistant message reported its
+context costing — with no denominator, because no transcript row states the
+context window. The Codex chat states its model, how it asks and what it
+may touch in that same header slot rather than on a row of its own, and its
+activity line carries the full meter, `ctx 138/128.0k`, from the totals the
+session reports. When the terminal is too narrow to hold both the facts and
+the phase word, the facts give way one at a time — the least important
+first — because a screen that hides "needs you" to show a model name has
+its priorities backwards.
+
+The Codex chat also grew three surfaces the other two already had. A
+partly-arrived reply carries the same caret rather than a marker row of its
+own. `<leader> c` opens what the thread's context went on: four totals —
+input, cached input, output, reasoning — which is all the app-server
+reports, and the overlay says so rather than implying an accounting it
+cannot produce. `<leader> o` opens a pasted attachment or a sent review in
+the same fullscreen reader the Claude chats use; it carries no action row,
+because a Codex reader only ever shows something someone already sent.
+
 2026-09-05 — **Two fleet screens a person can now capture: the help sheet
 over a session, and a family holding one.**
 The screenshot registry gained a fleet state whose selected row is a Claude

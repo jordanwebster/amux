@@ -1,6 +1,6 @@
-  fix-auth · claude @ mbp                  chat · needs you 
+  fix-auth · claude @ mbp               default · needs you 
                                                             
-    └ running                                               
+    ctx 31.6k                                               
                                                             
     permission — Edit sync/config.rs (+4 -1)                
                                                             

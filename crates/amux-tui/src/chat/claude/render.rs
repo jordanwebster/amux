@@ -118,7 +118,7 @@ pub(crate) fn claude_frame_parts(
                 .is_some_and(|layer| layer.history_truncated()),
             loading,
         },
-        activity: working.then(|| working_row(model, chat, ctx, readonly)),
+        activity: activity_row(model, chat, ctx, readonly, working),
         bottom,
         overlay,
     }
@@ -152,12 +152,34 @@ fn header_row(
     } else {
         word
     };
-    let right = if readonly {
-        "chat · read-only · "
-    } else {
-        "chat · "
+    let mut facts = session_facts(model, chat);
+    if readonly {
+        facts.push("read-only".to_string());
+    }
+    // Facts are context and the phase word is not, so a line too narrow
+    // to hold both drops facts from the least important end — the model
+    // first, then the mode; that a chat is read-only survives longest.
+    let mut right = blocks::fit_header_facts(&name, facts, &word, width);
+    if right.is_empty() {
+        right.push_str("chat · ");
+    }
+    paint_header(&name, (&word, style), &right, theme, width)
+}
+
+/// The two session facts the header states: what the turn will run on and
+/// what it is allowed to do without asking. Each is shown only once a row
+/// has stated it — an empty right side is honest about a session that has
+/// not said yet.
+fn session_facts(model: &Model, chat: &View) -> Vec<String> {
+    let Some(session) = model.claude(chat.agent).map(|layer| layer.session()) else {
+        return Vec::new();
     };
-    paint_header(&name, (&word, style), right, theme, width)
+    session
+        .model
+        .iter()
+        .chain(session.permission_mode.iter())
+        .cloned()
+        .collect()
 }
 
 /// Whether this banner's chord would do anything from here: the child
@@ -187,33 +209,65 @@ fn phase_word(phase: ChatPhase, theme: Theme) -> (String, Style) {
     }
 }
 
-/// `◐ working · 24s · ctrl+x interrupt` (D5). Elapsed ticks locally from
-/// the prompt row's timestamp; the authoritative duration replaces it in
-/// the turn marker at close. Read-only chats show the same liveness
-/// without the interrupt hint — interrupt is a write affordance, absent
-/// not disabled (F1).
-fn working_row(model: &Model, chat: &View, ctx: &FrameContext, readonly: bool) -> Line<'static> {
+/// `◐ working · 24s · ctx 31.6k · ctrl+x interrupt` (D5). Elapsed ticks
+/// locally from the prompt row's timestamp; the authoritative duration
+/// replaces it in the turn marker at close. Read-only chats show the same
+/// liveness without the interrupt hint — interrupt is a write affordance,
+/// absent not disabled (F1).
+///
+/// The meter is a passive fact — whatever the last message's own usage
+/// reported — so it is stated whenever this session has a layer at all,
+/// working or not, and says `unknown` rather than a guess before any
+/// message has arrived.
+fn activity_row(
+    model: &Model,
+    chat: &View,
+    ctx: &FrameContext,
+    readonly: bool,
+    working: bool,
+) -> Option<Line<'static>> {
+    let layer = model.claude(chat.agent)?;
     let theme = ctx.theme;
-    let elapsed = model
-        .claude(chat.agent)
-        .and_then(|layer| layer.prompt_at())
-        .map(|at| (ctx.now - at).num_seconds().max(0) as u64);
-    let spinner = SPINNER[elapsed.unwrap_or(0) as usize % SPINNER.len()];
-    let mut label = format!("{spinner} working");
-    if let Some(secs) = elapsed {
-        label.push_str(&format!(" · {}", fmt_secs(secs)));
-    }
     let mut line = Line::default();
-    push_span(&mut line, blocks::GLYPH_COL, label, theme.text());
-    // A docked child ask owns Ctrl+X while it is on screen — it
-    // interrupts the agent whose ask that is — so the working line stops
-    // claiming it here: a hint that would do something else than it says
-    // is worse than no hint (P10).
-    if !readonly && chat.inline_ask.is_none() {
-        line.spans
-            .push(Span::styled(" · ctrl+x interrupt", theme.muted()));
+    if working {
+        let elapsed = layer
+            .prompt_at()
+            .map(|at| (ctx.now - at).num_seconds().max(0) as u64);
+        let spinner = SPINNER[elapsed.unwrap_or(0) as usize % SPINNER.len()];
+        let mut label = format!("{spinner} working");
+        if let Some(secs) = elapsed {
+            label.push_str(&format!(" · {}", fmt_secs(secs)));
+        }
+        push_span(&mut line, blocks::GLYPH_COL, label, theme.text());
+    } else {
+        push_span(&mut line, blocks::TEXT_COL, "", theme.muted());
     }
-    line
+
+    let mut facts = vec![meter_text(layer.session().context_used_tokens)];
+    // A docked child ask owns Ctrl+X while it is on screen — it
+    // interrupts the agent whose ask that is — so this line stops
+    // claiming it: a hint that would do something else than it says is
+    // worse than no hint (P10).
+    if working && !readonly && chat.inline_ask.is_none() {
+        facts.push("ctrl+x interrupt".to_string());
+    }
+    let joined = facts.join(" · ");
+    if working {
+        line.spans
+            .push(Span::styled(format!(" · {joined}"), theme.muted()));
+    } else {
+        line.spans.push(Span::styled(joined, theme.muted()));
+    }
+    Some(line)
+}
+
+/// `ctx 31.6k`, and `ctx unknown` before any message has stated a usage.
+/// There is no denominator: no transcript row states the context window.
+fn meter_text(used_tokens: Option<u64>) -> String {
+    match used_tokens {
+        None => "ctx unknown".to_string(),
+        Some(used) => format!("ctx {}", fmt_tokens(used)),
+    }
 }
 
 // --- the bottom block -------------------------------------------------------
@@ -390,8 +444,9 @@ fn review_hint(chat: &View) -> String {
 }
 
 /// One hint line, at most four items, derived purely from Model +
-/// ViewState (no stored footer mode); permission mode on the right (D4,
-/// hook-fact sourced).
+/// ViewState (no stored footer mode); the key that cycles permission mode
+/// on the right, where the mode itself used to sit before the header
+/// took over stating it (D4).
 fn footer_line(
     model: &Model,
     chat: &View,
@@ -402,7 +457,7 @@ fn footer_line(
     let mut line = Line::default();
     if chat.quit_guard.is_armed() {
         // The armed quit guard replaces the hints (warning color); the
-        // mode segment on the right stays.
+        // right-hand key hint stays.
         line = armed_quit_line(theme);
     } else if let Some(message) = chat.send_failure() {
         push_span(&mut line, blocks::GLYPH_COL, "✗", theme.error());
@@ -448,11 +503,8 @@ fn footer_line(
             theme.muted(),
         );
     }
-    if let Some(mode) = model
-        .claude(chat.agent)
-        .and_then(|layer| layer.session().permission_mode.as_deref())
-    {
-        let label = format!("mode {mode}");
+    if amux_ui::claude::mode_cycle_gate(model, chat.agent).is_none() {
+        let label = "shift+tab mode".to_string();
         let col = width.saturating_sub(1 + label.chars().count());
         if col > line_len(&line) {
             push_span(&mut line, col, label, theme.muted());

@@ -522,6 +522,14 @@ pub struct UnrecognizedEntry {
 pub struct SessionFacts {
     /// D4's source of truth (FACT at emission).
     pub permission_mode: Option<String>,
+    /// The model the last main-session assistant message ran on
+    /// (`message.model`), which is what the next turn will run on until a
+    /// row says otherwise.
+    pub model: Option<String>,
+    /// What the last assistant message reported its context costing:
+    /// fresh input plus both cache halves. No transcript row states the
+    /// context window, so there is no denominator to pair it with.
+    pub context_used_tokens: Option<u64>,
     pub ai_title: Option<String>,
     pub agent_name: Option<String>,
 }

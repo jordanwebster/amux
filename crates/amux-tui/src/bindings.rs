@@ -410,6 +410,13 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
     ]);
     chat.extend(family_rows(eff, family));
     chat.extend(report_key_row());
+    // The thread's token report already arrived with the last turn, so
+    // this key opens what is known rather than asking for it.
+    chat.push(row(
+        format!("{} c", eff.leader_label),
+        "context breakdown",
+        Tier::Plain,
+    ));
     let mut composer = vec![
         row("enter", "send or steer", Tier::Plain),
         row("ctrl+j", "newline", Tier::Plain),
@@ -430,6 +437,11 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
         row("enter", "confirm enabled decision", Tier::Plain),
         row("ctrl+x", "interrupt instead", Tier::Plain),
     ];
+    let reader = vec![
+        row("↑/↓ j/k pgup/pgdn", "scroll", Tier::Plain),
+        row("home/end · g/G", "top / bottom", Tier::Plain),
+        row("q", "close", Tier::Plain),
+    ];
     let readonly = vec![
         row("↑/↓ j/k pgup/pgdn g/G", "scroll", Tier::Plain),
         row("q", "back to fleet", Tier::Plain),
@@ -446,6 +458,10 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
         Section {
             title: "approvals",
             bindings: approvals,
+        },
+        Section {
+            title: "reader",
+            bindings: reader,
         },
         Section {
             title: "read-only chat",

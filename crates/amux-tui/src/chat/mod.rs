@@ -238,9 +238,11 @@ impl ChatView {
         &self.viewport.scroll
     }
 
-    pub fn set_codex_configuration_label(&mut self, label: Option<String>) {
+    /// The creation choices this Codex session was launched with, which
+    /// its header states beside the phase.
+    pub fn set_codex_configuration(&mut self, facts: Option<Vec<String>>) {
         if let AgentChatView::Codex(view) = &mut self.inner {
-            view.configuration_label = label;
+            view.configuration = facts.unwrap_or_default();
             self.feed_metrics.get_mut().take();
         }
     }
@@ -359,36 +361,29 @@ impl ChatView {
         }
     }
 
-    /// Read a text attachment in the fullscreen reader.
-    ///
-    /// Only Claude's chat has a reader; a Codex chat states the pasted
-    /// text's length on the feed row and leaves it there until Codex's
-    /// screen grows one of its own.
+    /// Read a text attachment in the fullscreen reader. All three chats
+    /// have one: a pasted attachment's words came with the message, so
+    /// nothing about reading them is provider-specific.
     fn open_text_reader(&mut self, name: String, body: String) {
         match &mut self.inner {
             AgentChatView::Claude(view) => view.open_text_reader(name, body),
             AgentChatView::ClaudeSdk(view) => view.open_text_reader(name, body),
-            AgentChatView::Codex(_) => {}
+            AgentChatView::Codex(view) => view.open_text_reader(name, body),
         }
     }
 
-    /// Read a sent review in the fullscreen reader, reporting whether a
-    /// reader opened — a chat without one has no use for the diff.
+    /// Read a sent review in the fullscreen reader. Every chat has one:
+    /// the comments came with the message, so reading them back is not
+    /// provider-specific either.
     fn open_review_reader(
         &mut self,
         header: amux_ui::review::ReviewHeader,
         comments: Vec<amux_ui::review::ReviewComment>,
-    ) -> bool {
+    ) {
         match &mut self.inner {
-            AgentChatView::Claude(view) => {
-                view.open_review_reader(header, comments);
-                true
-            }
-            AgentChatView::ClaudeSdk(view) => {
-                view.open_review_reader(header, comments);
-                true
-            }
-            AgentChatView::Codex(_) => false,
+            AgentChatView::Claude(view) => view.open_review_reader(header, comments),
+            AgentChatView::ClaudeSdk(view) => view.open_review_reader(header, comments),
+            AgentChatView::Codex(view) => view.open_review_reader(header, comments),
         }
     }
 
@@ -436,11 +431,11 @@ fn open_focused_attachment(chat: &mut ChatView, model: &Model) -> Option<UiActio
         }
         attachments::Opening::Review { header, comments } => {
             let id = header.diff.clone();
-            chat.open_review_reader(*header, comments)
-                .then_some(UiAction::Dispatch(Command::FetchDiff {
-                    agent: chat.agent,
-                    id,
-                }))
+            chat.open_review_reader(*header, comments);
+            Some(UiAction::Dispatch(Command::FetchDiff {
+                agent: chat.agent,
+                id,
+            }))
         }
     }
 }

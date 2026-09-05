@@ -1,4 +1,4 @@
-  fix-auth · claude @ mbp                                                                                   chat · idle 
+  fix-auth · claude @ mbp                                                    claude-haiku-4-5-20251001 · default · idle 
                                                                                                                         
 ▎   add retry with backoff to the sync client                                                                           
                                                                                                                         
@@ -33,8 +33,8 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
+    ctx 31.6k                                                                                                           
                                                                                                                         
 ▎   and please add jitter docs▌                                                                                         
                                                                                                                         
-  ✗ send failed: input raced the session — it moved on before the keys landed                              mode default 
+  ✗ send failed: input raced the session — it moved on before the keys landed                            shift+tab mode 

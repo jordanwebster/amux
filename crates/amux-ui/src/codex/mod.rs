@@ -364,6 +364,10 @@ pub enum TurnStatus {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: Option<u64>,
+    /// Input tokens the provider served from its cache. Counted inside
+    /// `input_tokens`, not beside it, so a breakdown states it as a share
+    /// rather than adding it in again.
+    pub cached_input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub reasoning_output_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
@@ -1074,6 +1078,13 @@ impl CodexLayer {
 
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
         self.entries.iter()
+    }
+
+    /// What the session last reported its thread costing, and the window
+    /// it has to spend. Latest-wins across turns: it is the size of the
+    /// context now, not a running total.
+    pub fn token_usage(&self) -> Option<&TokenUsage> {
+        self.latest_usage.as_ref()
     }
 
     /// Attachment facts observed from this agent's structured stream.

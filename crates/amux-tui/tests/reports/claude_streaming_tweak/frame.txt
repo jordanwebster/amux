@@ -1,4 +1,4 @@
-  live-claude · claude @ <REDACTED>_____________                                                                             chat · working 
+  live-claude · claude @ <REDACTED>_____________                                                          claude-fable-5-1 · auto · working 
                                                                                                                                             
     872                                                                                                                                     
     873                                                                                                                                     
@@ -33,8 +33,8 @@
   ─ turn · 15s ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                                             
 ▎   now count from 1 to 900 again, one number per line, nothing else                                                                        
-  ◑ working · 6s · ctrl+x interrupt                                                                                                         
+  ◑ working · 6s · ctx 46.7k · ctrl+x interrupt                                                                                             
                                                                                                                                             
 ▎   Type a message▌                                                                                                                         
                                                                                                                                             
-    send gated while working · ? help                                                                                             mode auto 
+    send gated while working · ? help                                                                                        shift+tab mode 

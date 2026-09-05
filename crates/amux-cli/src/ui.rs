@@ -29,7 +29,7 @@ pub async fn run(config: Config) -> Result<()> {
 pub(crate) async fn run_for_agent(
     config: Config,
     agent: amux::AgentId,
-    codex_configuration: Option<String>,
+    codex_configuration: Option<Vec<String>>,
 ) -> Result<()> {
     run_inner(config, Some(agent), codex_configuration).await
 }
@@ -37,7 +37,7 @@ pub(crate) async fn run_for_agent(
 async fn run_inner(
     mut config: Config,
     initial_chat: Option<amux::AgentId>,
-    initial_chat_configuration: Option<String>,
+    initial_chat_configuration: Option<Vec<String>>,
 ) -> Result<()> {
     if init::needs_init(&config) {
         init::run_init(&mut config, InitContext::implicit(), false).await?;

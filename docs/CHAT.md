@@ -568,24 +568,32 @@ every focus state including open ask panels, even while send is gated
 (D3). It is never on Esc, and the feed records the interruption entry
 (B8). An interrupted turn never eats the draft.
 
-Permission mode displays in the footer's right segment and cycles with
-Shift+Tab when the composer has focus (D4). The current mode is sourced
-from the hook payloads' `permission_mode` field — the live source
-(Phase 3, fixture-verified: mid-session cycling emits NO
-`permission-mode` row; that row is a launch-time/bookkeeping signal).
-Cycle order: default → acceptEdits → plan → default, with bypass
-offered only to a session launched with it.
+Permission mode displays in the header's right segment, beside the model
+the session is running, and cycles with Shift+Tab when the composer has
+focus (D4); the footer's right segment states that key rather than the
+mode. The current mode is sourced from the hook payloads'
+`permission_mode` field — the live source (Phase 3, fixture-verified:
+mid-session cycling emits NO `permission-mode` row; that row is a
+launch-time/bookkeeping signal). Cycle order: default → acceptEdits →
+plan → default, with bypass offered only to a session launched with it.
+The model comes from `message.model` on the newest assistant row. Both
+are context rather than state a person must see, so a terminal too
+narrow to hold the phase word as well drops them — the model first.
 
-The working indicator renders while phase is working: spinner, elapsed
-time, interrupt hint — `◐ working · 24s · ctrl+x interrupt` (D5).
+The activity line sits between the feed and the composer. While the
+phase is working it leads with a spinner, elapsed time and the
+interrupt hint — `◐ working · 24s · ctx 31.6k · ctrl+x interrupt` (D5).
 Elapsed starts at the prompt row's timestamp, ticks locally, and is
 replaced by the authoritative `durationMs` when the turn closes. One
 1 Hz Tick drives both the elapsed text and the spinner frame, scheduled
 only while the indicator is visible (UI.md's event-driven rule); a
-static glyph replaces the spinner when animations are off. A token
-count appears when cheaply available — usage summed with dedupe by
-`message.id`, since per-row summing overcounts by row multiplicity;
-the cost/context header is deferred.
+static glyph replaces the spinner when animations are off.
+
+The context meter on that line is a passive fact, stated working or
+idle: the newest assistant message's own usage — fresh input plus both
+cache halves — as `ctx 31.6k`, and `ctx unknown` before any message has
+reported one. It carries no denominator, because no transcript row
+states the context window.
 
 ## Phase and attention (E)
 
@@ -650,7 +658,7 @@ text cursor.
 ### Idle
 
 ```
-  fix-auth · claude @ mbp                                                                                   chat · idle
+  fix-auth · claude @ mbp                                                    claude-haiku-4-5-20251001 · default · idle
 
 ▎   add retry with backoff to the sync client
 
@@ -668,15 +676,17 @@ text cursor.
 
                                                     [feed owns the remaining rows]
 
+    ctx 31.6k
+
 ▎   Type a message▌
 
-    enter send · ctrl+j newline · ? help                                                                   mode default
+    enter send · ctrl+j newline · ? help                                                                 shift+tab mode
 ```
 
 ### Working
 
 ```
-  fix-auth · claude @ mbp                                                                                chat · working
+  fix-auth · claude @ mbp                                                 claude-haiku-4-5-20251001 · default · working
 
 ▎   now make the retry count configurable
 
@@ -691,11 +701,11 @@ text cursor.
 
                                                     [feed owns the remaining rows]
 
-  ◐ working · 24s · ctrl+x interrupt
+  ◐ working · 24s · ctx 31.6k · ctrl+x interrupt
 
 ▎   and please document it▌
 
-    draft kept — send gated while working                                                                  mode default
+    draft kept — send gated while working                                                                shift+tab mode
 ```
 
 The blank row above the working line is reserved for the queued-input
@@ -799,7 +809,7 @@ preview when queueing lands (deferred, door open).
 ### Scrolled back
 
 ```
-  fix-auth · claude @ mbp                                                                                chat · working
+  fix-auth · claude @ mbp                                                 claude-haiku-4-5-20251001 · default · working
 
 ▎   follow-up question 1
 
@@ -812,11 +822,11 @@ preview when queueing lands (deferred, door open).
                                                     [older feed rows remain above]
 
   ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest
-  ◓ working · 9s · ctrl+x interrupt
+  ◓ working · 9s · ctx 31.6k · ctrl+x interrupt
 
 ▎   draft preserved while reading▌
 
-    C-a k/j focus · C-a y copy                                                                             mode default
+    C-a k/j focus · C-a y copy                                                                           shift+tab mode
 ```
 
 Sticky-bottom until the user scrolls; the paused rule with a new-entry
@@ -826,7 +836,7 @@ stays visible so scrolling never hides that the agent is active.
 ### Read-only
 
 ```
-  ci-triage · claude @ mbp                                                               chat · read-only · needs owner
+  ci-triage · claude @ mbp                                claude-haiku-4-5-20251001 · default · read-only · needs owner
 
 ▎   fix the flaky teardown
 
@@ -836,6 +846,8 @@ stays visible so scrolling never hides that the agent is active.
     └ 2 failed: token_refresh, expired_session
 
                                                     [feed owns the remaining rows]
+
+    ctx 31.6k
 
     the agent is asking permission — Edit testnet/harness.rs (+1)
 
@@ -1309,8 +1321,8 @@ above.
 - **Shell-passthrough composer mode** (`!` prefix precedent).
 - **Thinking-text expansion** — V1 renders marker + duration only.
 - **Todo-list rendering.**
-- **Cost/context-window header** — V1's extent is the working-line
-  token count (D5).
+- **Cost accounting** — the activity line states context tokens (D5);
+  what a turn cost in money is not in the transcript.
 - **Nested subagent timelines** — requires tailing child transcript
   files; B7's one-line summaries stand until then.
 - **Message-level retry and archive.**

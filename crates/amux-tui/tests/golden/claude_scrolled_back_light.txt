@@ -1,4 +1,4 @@
-  fix-auth · claude @ mbp                                                                                chat · working 
+  fix-auth · claude @ mbp                                                                       claude-opus-5 · working 
                                                                                                                         
                                                                                                                         
 ▎   Investigate retry case 981.                                                                                         
@@ -33,8 +33,8 @@
                                                                                                                         
     Retry case 994 is covered by the focused test.                                                                      
   ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest                                                 
-  ◑ working · 30s · ctrl+x interrupt                                                                                    
+  ◑ working · 30s · ctx 31.6k · ctrl+x interrupt                                                                        
                                                                                                                         
 ▎   Type a message▌                                                                                                     
                                                                                                                         
-    C-a k/j focus · C-a y copy · ? help                                                                                 
+    C-a k/j focus · C-a y copy · ? help                                                                  shift+tab mode 

@@ -1,4 +1,4 @@
-  fix-auth · claude @ mbp                                                                              chat · needs you 
+  fix-auth · claude @ mbp                                                           claude-opus-5 · default · needs you 
                                                                                                                         
 ▎   Cap the retry backoff.                                                                                              
                                                                                                                         
@@ -27,7 +27,7 @@
   ✗ api error (server_error)                                                                                            
                                                                                                                         
   ─ turn · 1m 2s ───────────────────────────────────────────────────────────────────────────────────────────────────────
-                                                                                                                        
+    ctx 31.6k                                                                                                           
                                                                                                                         
     permission — Edit sync/config.rs (+1 -1)                                                                            
                                                                                                                         

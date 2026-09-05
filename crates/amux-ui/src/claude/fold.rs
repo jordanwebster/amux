@@ -1125,6 +1125,25 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
         .and_then(|message| str_of(message, "stop_reason"))
         .map(str::to_string);
 
+    // The session-fact line's two live facts: what the turn ran on and
+    // what it cost. Both ride every assistant message, so latest-wins is
+    // the whole rule. A tailed transcript file is one session's own
+    // messages — a subagent writes its own file — so no message here can
+    // be another context's.
+    if let Some(message) = message {
+        if let Some(name) = str_of(message, "model") {
+            layer.session.model = Some(name.to_string());
+        }
+        if let Some(usage) = message.get("usage") {
+            let tokens = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
+            layer.session.context_used_tokens = Some(
+                tokens("input_tokens")
+                    .saturating_add(tokens("cache_read_input_tokens"))
+                    .saturating_add(tokens("cache_creation_input_tokens")),
+            );
+        }
+    }
+
     // A new message id closes any OTHER still-open message as abandoned
     // (B2) — same-id rows are the normal multi-row upsert.
     close_messages(layer, MessageFinality::Abandoned, |slot| {

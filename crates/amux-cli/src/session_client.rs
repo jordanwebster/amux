@@ -62,7 +62,7 @@ pub async fn new_agent(
     args: Vec<String>,
     config: &Config,
 ) -> Result<()> {
-    let codex_configuration = codex_configuration_label(&agent_type);
+    let codex_configuration = codex_configuration_facts(&agent_type);
     let terminal_exposed = agent_type_exposes_terminal(&agent_type);
     let rpc = get_client(config).await?;
     let terminal_size = get_terminal_size();
@@ -179,7 +179,13 @@ fn created_agent_open_error(
     )
 }
 
-fn codex_configuration_label(agent_type: &AgentType) -> Option<String> {
+/// The three creation choices a Codex chat states in its header: what it
+/// runs on, whether it asks before acting, and what it may touch. An
+/// unset one is stated as `default` — Codex's own default is a fact, not
+/// an absence. They travel as separate facts because the header joins
+/// them with its own separator and drops them one at a time when the
+/// line is too narrow.
+fn codex_configuration_facts(agent_type: &AgentType) -> Option<Vec<String>> {
     let AgentType::Codex {
         model,
         approval_policy,
@@ -189,12 +195,12 @@ fn codex_configuration_label(agent_type: &AgentType) -> Option<String> {
     else {
         return None;
     };
-    Some(format!(
-        "model={} · approval={} · sandbox={}",
-        model.as_deref().unwrap_or("default"),
-        approval_policy.as_deref().unwrap_or("default"),
-        sandbox_policy.as_deref().unwrap_or("default")
-    ))
+    Some(
+        [model, approval_policy, sandbox_policy]
+            .into_iter()
+            .map(|fact| fact.clone().unwrap_or_else(|| "default".to_string()))
+            .collect(),
+    )
 }
 
 fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
@@ -1045,7 +1051,7 @@ mod attach {
     }
 
     #[test]
-    fn codex_configuration_label_is_explicit_about_defaults_and_overrides() {
+    fn codex_configuration_facts_are_explicit_about_defaults_and_overrides() {
         let defaults = AgentType::Codex {
             model: None,
             approval_policy: None,
@@ -1053,8 +1059,12 @@ mod attach {
             resume_thread_id: None,
         };
         assert_eq!(
-            super::codex_configuration_label(&defaults).as_deref(),
-            Some("model=default · approval=default · sandbox=default")
+            super::codex_configuration_facts(&defaults),
+            Some(vec![
+                "default".to_string(),
+                "default".to_string(),
+                "default".to_string()
+            ])
         );
 
         let selected = AgentType::Codex {
@@ -1064,11 +1074,15 @@ mod attach {
             resume_thread_id: None,
         };
         assert_eq!(
-            super::codex_configuration_label(&selected).as_deref(),
-            Some("model=gpt-5.4 · approval=never · sandbox=workspace-write")
+            super::codex_configuration_facts(&selected),
+            Some(vec![
+                "gpt-5.4".to_string(),
+                "never".to_string(),
+                "workspace-write".to_string()
+            ])
         );
         assert_eq!(
-            super::codex_configuration_label(&AgentType::Claude {
+            super::codex_configuration_facts(&AgentType::Claude {
                 driver: amux::ClaudeDriver::Pty,
             }),
             None

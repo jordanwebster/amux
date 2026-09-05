@@ -150,16 +150,16 @@ fn header_row(
     } else {
         word
     };
-    let mut right = String::new();
-    for fact in session_facts(model, chat) {
-        right.push_str(&fact);
-        right.push_str(" · ");
+    let mut facts = session_facts(model, chat);
+    if readonly {
+        facts.push("read-only".to_string());
     }
+    // Facts are context and the phase word is not, so a line too narrow
+    // to hold both drops facts from the least important end — the model
+    // first, then the mode; that a chat is read-only survives longest.
+    let mut right = blocks::fit_header_facts(&name, facts, &word, width);
     if right.is_empty() {
         right.push_str("chat · ");
-    }
-    if readonly {
-        right.push_str("read-only · ");
     }
     paint_header(&name, (&word, style), &right, theme, width)
 }

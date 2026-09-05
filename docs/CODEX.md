@@ -335,7 +335,14 @@ answers it properly, in band. This is a deliberate, recorded limit.
 
 `default_open_mode` (`chat` | `raw`) decides what `amux attach` opens;
 both remain available per agent. Chat mode is the native amux screen —
-composer, feed, approvals, `Ctrl+X` to interrupt. Raw mode is
+composer, feed, approvals, `Ctrl+X` to interrupt. It states the session's
+model, how it asks and what it may touch on the header's right, beside
+the phase; the row between the feed and the composer states what the
+thread costs against the window the session reported (`ctx 30.0k/272.0k`),
+and `<leader> c` opens the four totals behind that number — input, cached
+input, output and reasoning, which is all the app-server reports, and the
+overlay says so. `<leader> o` on a pasted attachment or a sent review
+opens the same fullscreen reader the Claude chats use. Raw mode is
 `codex resume` on a PTY, byte-identical for every subscriber.
 Because both current creation modes open interactively, `amux new codex`
 requires TTY stdin and stdout and refuses before creating anything when either

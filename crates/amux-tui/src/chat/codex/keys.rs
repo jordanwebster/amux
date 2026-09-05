@@ -54,6 +54,13 @@ pub(crate) fn handle_chat_key(
                 toggle_inline_ask(chat, model);
                 None
             }
+            // `<leader> c`: where the thread's context went. The session
+            // already reported it, so this opens what is known rather
+            // than asking for it; pressing it again closes.
+            KeyCode::Char('c') => {
+                chat.context_open = !chat.context_open;
+                None
+            }
             _ => None,
         };
     }
@@ -90,6 +97,20 @@ pub(crate) fn handle_chat_key(
     if chat.help {
         chat.help = false;
         return None;
+    }
+
+    // The breakdown overlay covers the frame: esc closes it, the leader
+    // chords above still compose over it, and nothing else leaks into
+    // the draft behind it.
+    if chat.context_open {
+        if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
+            chat.context_open = false;
+        }
+        return None;
+    }
+
+    if chat.reader.is_some() {
+        return reader_key(chat, model, key, viewport);
     }
 
     if chat.read_only(model) {
@@ -350,6 +371,46 @@ fn approval_key(
         }
     }
     None
+}
+
+/// The fullscreen reader owns every key while it is open: `q` and esc
+/// leave it, and the rest is pager motion. Nothing here answers
+/// anything — a Codex reader only ever shows something already sent.
+fn reader_key(
+    chat: &mut View,
+    model: &Model,
+    key: KeyEvent,
+    viewport: (u16, u16),
+) -> Option<UiAction> {
+    match key.code {
+        KeyCode::Char('q') | KeyCode::Esc => chat.reader = None,
+        _ => {
+            reader_scroll(chat, model, &key, viewport);
+        }
+    }
+    None
+}
+
+/// Pager motion over the reader body: ↑↓ j/k, PgUp/PgDn, Home/End g/G.
+fn reader_scroll(chat: &mut View, model: &Model, key: &KeyEvent, viewport: (u16, u16)) -> bool {
+    let Some((page, max_top)) = super::reader_context(model, chat)
+        .and_then(|ctx| crate::chat::claude_shared::reader::scroll_metrics(&ctx, viewport))
+    else {
+        return false;
+    };
+    let Some(view) = chat.reader.as_mut() else {
+        return false;
+    };
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => view.scroll = view.scroll.saturating_sub(1),
+        KeyCode::Down | KeyCode::Char('j') => view.scroll = (view.scroll + 1).min(max_top),
+        KeyCode::PageUp => view.scroll = view.scroll.saturating_sub(page),
+        KeyCode::PageDown => view.scroll = (view.scroll + page).min(max_top),
+        KeyCode::Home | KeyCode::Char('g') => view.scroll = 0,
+        KeyCode::End | KeyCode::Char('G') => view.scroll = max_top,
+        _ => return false,
+    }
+    true
 }
 
 fn readonly_key(

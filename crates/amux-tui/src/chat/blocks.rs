@@ -193,6 +193,27 @@ pub(crate) fn paint_header(
     line
 }
 
+/// The header's right-hand facts, joined and trimmed to what the line can
+/// actually hold. The phase word is the one thing the header must always
+/// state, so when name + facts + phase would not fit, the least important
+/// fact goes first — `facts` is given in drop order. Returns the joined
+/// text, each fact followed by its separator, ready for `paint_header`.
+pub(crate) fn fit_header_facts(
+    name: &str,
+    mut facts: Vec<String>,
+    phase: &str,
+    width: usize,
+) -> String {
+    loop {
+        let right: String = facts.iter().map(|fact| format!("{fact} · ")).collect();
+        let needed = GLYPH_COL + str_width(name) + 1 + str_width(&right) + str_width(phase) + 1;
+        if needed <= width || facts.is_empty() {
+            return right;
+        }
+        facts.remove(0);
+    }
+}
+
 // --- the user's own words ---------------------------------------------------
 
 /// What the person said, on the one tinted surface in the feed, with the

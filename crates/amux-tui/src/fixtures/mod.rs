@@ -987,9 +987,11 @@ fn chat_fixture(protocol: StructuredProtocol, name: &str, rows: Vec<Value>) -> F
     let mut chat = ChatView::open(&model, agent_id(protocol), 'a', false)
         .expect("fixture advertises a structured protocol");
     if protocol == StructuredProtocol::Codex {
-        chat.set_codex_configuration_label(Some(
-            "model=gpt-5.4 · approval=on-request · sandbox=workspace-write".to_string(),
-        ));
+        chat.set_codex_configuration(Some(vec![
+            "gpt-5.4".to_string(),
+            "on-request".to_string(),
+            "workspace-write".to_string(),
+        ]));
     }
     chat.reconcile(&model);
     Fixture {
@@ -1253,6 +1255,19 @@ fn claude_prompt(index: usize, text: &str) -> Value {
     })
 }
 
+/// The model and the usage every real assistant message carries: what
+/// the header's session-fact line and the context meter read.
+const CLAUDE_PTY_MODEL: &str = "claude-opus-5";
+
+fn claude_usage() -> Value {
+    json!({
+        "input_tokens": 1_240,
+        "cache_read_input_tokens": 30_000,
+        "cache_creation_input_tokens": 400,
+        "output_tokens": 512,
+    })
+}
+
 fn claude_assistant(index: usize, text: &str, stop: Option<&str>) -> Value {
     json!({
         "type": "assistant",
@@ -1262,8 +1277,10 @@ fn claude_assistant(index: usize, text: &str, stop: Option<&str>) -> Value {
         "message": {
             "id": format!("msg-{index}"),
             "role": "assistant",
+            "model": CLAUDE_PTY_MODEL,
             "content": [{"type": "text", "text": text}],
             "stop_reason": stop,
+            "usage": claude_usage(),
         },
     })
 }
@@ -1302,11 +1319,13 @@ fn claude_working_rows() -> Vec<Value> {
             "message": {
                 "id": "msg-working",
                 "role": "assistant",
+                "model": CLAUDE_PTY_MODEL,
                 "content": [
                     {"type": "thinking", "thinking": "Inspecting the retry policy"},
                     {"type": "text", "text": "The cap belongs in `RetryConfig`; I’ll thread it through `SyncOptions`."}
                 ],
                 "stop_reason": "tool_use",
+                "usage": claude_usage(),
             },
         }),
         json!({
@@ -1811,6 +1830,9 @@ fn codex_idle_rows() -> Vec<Value> {
         json!({"type":"item/completed","turnId":"turn-done","item":{"id":"user-idle","type":"userMessage","content":[{"type":"text","text":"Run the focused tests."}]}}),
         json!({"type":"item/completed","item":{"id":"cmd-idle","type":"commandExecution","command":"cargo test -p amux-ui","cwd":"/work/amux","status":"completed","exitCode":0,"aggregatedOutput":"42 passed"}}),
         json!({"type":"item/completed","item":{"id":"msg-idle","type":"agentMessage","text":"All focused tests pass.","phase":"final_answer"}}),
+        // What the session reports the thread costing, which the meter
+        // and the breakdown overlay both read.
+        json!({"type":"thread/tokenUsage/updated","tokenUsage":{"total":{"inputTokens":24_180,"cachedInputTokens":18_000,"outputTokens":5_640,"reasoningOutputTokens":1_200,"totalTokens":31_620},"modelContextWindow":272_000}}),
         json!({"type":"turn/completed","turn":{"id":"turn-done","status":"completed"}}),
     ]
 }
@@ -1825,6 +1847,9 @@ fn codex_working_rows() -> Vec<Value> {
         json!({"type":"item/started","item":{"id":"cmd-live","type":"commandExecution","command":"cargo test -p amux-ui","cwd":"/work/amux","status":"inProgress"}}),
         json!({"type":"item/commandExecution/outputDelta","itemId":"cmd-live","stream":"stdout","delta":"running 42 tests\n"}),
         json!({"type":"item/started","item":{"id":"msg-live","type":"agentMessage","text":"Tests are still running.","phase":"commentary"}}),
+        // What the session reports the thread costing, which the meter
+        // and the breakdown overlay both read.
+        json!({"type":"thread/tokenUsage/updated","tokenUsage":{"total":{"inputTokens":24_180,"cachedInputTokens":18_000,"outputTokens":5_640,"reasoningOutputTokens":1_200,"totalTokens":31_620},"modelContextWindow":272_000}}),
     ]
 }
 

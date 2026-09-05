@@ -62,8 +62,18 @@ fn assistant(n: u32, ts: &str, id: &str, content: Vec<Value>, stop: Option<&str>
         "message": {
             "id": id,
             "role": "assistant",
+            // The model and the usage every real assistant message
+            // carries: what the header's session-fact line and the
+            // context meter read.
+            "model": "claude-opus-5",
             "content": content,
             "stop_reason": stop,
+            "usage": {
+                "input_tokens": 1_240,
+                "cache_read_input_tokens": 30_000,
+                "cache_creation_input_tokens": 400,
+                "output_tokens": 512,
+            },
         },
     })
 }

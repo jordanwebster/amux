@@ -1263,6 +1263,7 @@ fn token_usage(row: &Value) -> TokenUsage {
     let usage = row.pointer("/tokenUsage/total").unwrap_or(&Value::Null);
     TokenUsage {
         input_tokens: usage.get("inputTokens").and_then(Value::as_u64),
+        cached_input_tokens: usage.get("cachedInputTokens").and_then(Value::as_u64),
         output_tokens: usage.get("outputTokens").and_then(Value::as_u64),
         reasoning_output_tokens: usage.get("reasoningOutputTokens").and_then(Value::as_u64),
         total_tokens: usage.get("totalTokens").and_then(Value::as_u64),
