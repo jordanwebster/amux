@@ -477,9 +477,21 @@ fn magnitude(added: u64, removed: u64) -> String {
 /// states its own length, so a viewer paints the row without fetching a
 /// byte — a feed that scrolls past a hundred attachments downloads none
 /// of them.
+/// Whose message an attachment row hangs under, which decides the surface
+/// it is drawn on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Carrier {
+    /// The person's: the row continues the user surface and its bar, so the
+    /// message and what it carried read as one block.
+    Person,
+    /// The agent's: plain on the background, like the words above it.
+    Agent,
+}
+
 pub(crate) fn paint_attachment(
     key: BlockKey,
     attachment: &AttachmentLine,
+    carrier: Carrier,
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
@@ -502,7 +514,25 @@ pub(crate) fn paint_attachment(
         line.spans
             .push(Span::styled(format!(" \u{b7} {detail}"), theme.muted()));
     }
-    block(key, BlockKind::Activity, vec![line])
+    if carrier == Carrier::Person {
+        let surface = theme.user_surface();
+        let spans = line
+            .spans
+            .into_iter()
+            .skip(1)
+            .map(|span| Span::styled(span.content, surface.patch(span.style)))
+            .collect();
+        let lines = padded_surface(
+            vec![spans],
+            Some(GLYPH_COL),
+            MESSAGE_PAD,
+            surface,
+            theme,
+            width,
+        );
+        return block(key, BlockKind::Attachment, lines);
+    }
+    block(key, BlockKind::Attachment, vec![line])
 }
 
 /// The kind, in one cell. An attachment row has no other space for its

@@ -12,9 +12,9 @@
                                                                                                                         
   ─ turn · 1m 42s ──────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
-▎   look at this · sending…                                                                                             
-                                                                                                                        
-  ▣ screenshot.png · 117.6 KiB                                                                                          
+▎   look at this                                                                                                        
+▎   [Image #1] · sending…                                                                                               
+▎ ▣ screenshot.png · 117.6 KiB                                                                                          
                                                                                                                         
                                                                                                                         
                                                                                                                         

@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Attachments stay with the message that carried them.** A
+sent message's attachment rows were painted as machinery: a blank row below
+the person's words, then rows on the bare ground chained to whatever tool
+calls followed, so a review someone attached read as the first thing the
+agent did. Attachment rows are now a block kind of their own that hangs
+directly under its message with no air, on the person's surface with the
+bar when the person sent it and plain when the agent did, and the chain
+ignores them. The message also keeps the token the person typed —
+`[Image #1]`, `[Pasted #1 · 240 lines]`, `[Review · 1 comment]` — where
+the composer had it, instead of dropping the element and leaving a hole in
+the sentence; the row underneath is still the thing that opens.
+
 2026-09-05 — **amux asks the terminal what colours it is using.** The
 derived palette needs three facts a terminal will report about itself, and
 until now nothing asked. `query_terminal_colors` sends OSC 11, 10 and 4 for

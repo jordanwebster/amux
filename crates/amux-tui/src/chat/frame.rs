@@ -46,6 +46,10 @@ pub(crate) enum BlockKind {
     /// Something the agent did: a command, a search, a file changed, an
     /// error, a thought.
     Activity,
+    /// One attachment a message carries, as a row of its own so it can be
+    /// focused and opened by itself. It belongs to the speech above it and
+    /// hangs directly under it.
+    Attachment,
     /// A rule across the feed marking a boundary rather than an event.
     Divider,
     /// A docked panel: a permission ask, a diff. Full-weight content that
@@ -123,6 +127,7 @@ pub(crate) struct FrameSpacing {
 pub(crate) fn gap_between(previous: BlockKind, next: BlockKind, spacing: FrameSpacing) -> usize {
     match (previous, next) {
         (BlockKind::Activity, BlockKind::Activity) => spacing.action_gap,
+        (BlockKind::Speech | BlockKind::Attachment, BlockKind::Attachment) => 0,
         _ => spacing.block_gap,
     }
 }

@@ -1,8 +1,8 @@
   fix-auth · claude @ mbp                                                                                   chat · idle 
                                                                                                                         
 ▎   three things before this lands                                                                                      
-                                                                                                                        
-  ⌗ review · 3 comments · 2 files                                                                                       
+▎   [Review · 3 comments]                                                                                               
+▎ ⌗ review · 3 comments · 2 files                                                                                       
                                                                                                                         
   ─ turn · 1m 42s ──────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         

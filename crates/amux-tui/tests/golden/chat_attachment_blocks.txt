@@ -1,14 +1,14 @@
   fix-auth · claude @ mbp                                                                                   chat · idle 
                                                                                                                         
 ▎   the sync panel looks wrong — here is the screen, the log, and the stack I pasted                                    
-                                                                                                                        
-│ ▣ screenshot.png · 117.6 KiB                                                                                          
-│ ▤ trace.log · 4.0 KiB                                                                                                 
-│ ¶ pasted-1 · 240 lines                                                                                                
+▎   [Image #1]                                                                                                          
+▎   [File #1 trace.log]                                                                                                 
+▎   [Pasted #1 · 240 lines]                                                                                             
+▎ ▣ screenshot.png · 117.6 KiB                                                                                          
+▎ ▤ trace.log · 4.0 KiB                                                                                                 
+▎ ¶ pasted-1 · 240 lines                                                                                                
                                                                                                                         
   ─ turn · 1m 42s ──────────────────────────────────────────────────────────────────────────────────────────────────────
-                                                                                                                        
-                                                                                                                        
                                                                                                                         
                                                                                                                         
                                                                                                                         
