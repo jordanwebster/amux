@@ -138,8 +138,10 @@ size of the context that call actually saw. The window is `contextWindow` from
 the result row's `modelUsage`, retained across the turn once seen. Neither
 costs a control call; both arrive on every ordinary turn. The meter records
 which row produced it, so a client can say `ctx 34k` without a window rather
-than inventing a denominator. If no assistant usage has arrived, the meter stays unknown. The daemon never
-requests context usage automatically.
+than inventing a denominator. Compaction replaces the count with the reported
+post-compaction tokens. An absent count or a conversation reset makes the
+meter unknown until new usage arrives. Without any usage, the meter stays
+unknown. The daemon never requests context usage automatically.
 
 **The breakdown is deliberate.** `<leader> c` issues one `get_context_usage`
 call and opens an overlay on its answer:

@@ -108,6 +108,29 @@ impl SessionFacts {
                     });
                 }
             }
+            Message::CompactBoundary(boundary) => {
+                self.context_model = boundary
+                    .compact_metadata
+                    .post_tokens
+                    .and(self.model.clone());
+                self.context =
+                    boundary
+                        .compact_metadata
+                        .post_tokens
+                        .map(|used_tokens| ContextMeter {
+                            used_tokens,
+                            window_tokens: self
+                                .context_model
+                                .as_ref()
+                                .and_then(|model| self.windows.get(model))
+                                .copied(),
+                            source: ContextMeterSource::CompactBoundary,
+                        });
+            }
+            Message::ConversationReset(_) => {
+                self.context = None;
+                self.context_model = None;
+            }
             Message::Result(result) => {
                 let common = match result {
                     ResultMessage::Success(result) => &result.common,
@@ -169,6 +192,52 @@ mod tests {
             let facts = SessionFacts::from_args(&[flag.into()]);
             assert!(facts.check_mode(&PermissionMode::BypassPermissions).is_ok());
         }
+    }
+
+    #[test]
+    fn claude_sdk_context_resets_across_compaction_and_conversation_reset() {
+        let assistant = Message::parse(json!({"type": "assistant", "uuid": uuid::Uuid::nil(),
+            "session_id": "session", "parent_tool_use_id": null,
+            "message": {"type": "message", "id": "m", "role": "assistant", "model": "parent",
+                "content": [], "usage": {"input_tokens": 28483, "output_tokens": 0}}}))
+        .unwrap();
+        let reset = Message::parse(json!({"type": "conversation_reset",
+            "uuid": uuid::Uuid::nil(), "session_id": "session",
+            "new_conversation_id": uuid::Uuid::nil()}))
+        .unwrap();
+        let mut facts = SessionFacts::default();
+        facts.windows.insert("parent".into(), 200000);
+
+        for post_tokens in [Some(2963), Some(0), None] {
+            assert!(facts.observe(&assistant));
+            assert_eq!(facts.context.as_ref().unwrap().used_tokens, 28483);
+            let mut metadata = json!({"trigger": "manual", "pre_tokens": 28483});
+            if let Some(tokens) = post_tokens {
+                metadata["post_tokens"] = json!(tokens);
+            }
+            let compact = Message::parse(json!({"type": "system", "subtype": "compact_boundary",
+                "uuid": uuid::Uuid::nil(), "session_id": "session", "compact_metadata": metadata}))
+            .unwrap();
+            assert!(facts.observe(&compact));
+            let row = serde_json::to_value(facts.row()).unwrap();
+            assert_eq!(
+                row["context"],
+                post_tokens.map_or(json!(null), |tokens| json!({
+                    "used_tokens": tokens, "window_tokens": 200000, "source": "compact_boundary"
+                }))
+            );
+            assert!(facts.observe(&reset));
+            assert!(facts.context_model.is_none());
+            assert_eq!(
+                serde_json::to_value(facts.row()).unwrap()["context"],
+                json!(null)
+            );
+        }
+
+        assert!(facts.observe(&assistant));
+        assert_eq!(facts.context.as_ref().unwrap().window_tokens, Some(200000));
+        assert!(facts.observe(&reset));
+        assert!(facts.context.is_none());
     }
 
     #[test]

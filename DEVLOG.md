@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Reset Claude SDK context usage after compaction and clearing.**
+Compaction now publishes the provider's post-compaction token count with the
+known model window. If that count is absent, or the conversation is cleared,
+the meter becomes unknown. Regression tests cover both transitions, including
+zero tokens, and recorded compaction and clearing rows pin the client output.
+
 2026-09-05 — **Pinned Claude SDK agent-message delivery and lifecycle carriers.**
 Offline subprocess fixtures now exercise a parent message reaching an SDK
 child, its successful result becoming a completion notification, and its

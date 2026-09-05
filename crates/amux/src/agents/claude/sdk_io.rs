@@ -131,7 +131,7 @@ pub enum ClaudeSdkSynthesized {
     },
 }
 
-/// Context size of the latest assistant call, with a passively observed window.
+/// Latest observed context size, with a passively observed window.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextMeter {
@@ -146,6 +146,7 @@ pub enum ContextMeterSource {
     AssistantUsage,
     ResultUsage,
     AssistantContextUsage,
+    CompactBoundary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
