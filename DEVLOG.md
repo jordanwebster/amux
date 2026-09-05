@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The attachment guide is a byte contract on Windows too.** The
+guide's canonical review example is compiled into a test that compares it
+against the formatter's LF-joined output, and a Windows checkout translated
+its line endings, so the test could not even find the example's code fence.
+`.gitattributes` pins the file to LF alongside the golden frames and replay
+recordings that are byte contracts for the same reason. The failure had been
+hiding behind an earlier job: fail-fast cancelled the Windows tests before
+they ran.
+
 2026-09-05 — **The daemon makes its data directory before asking the
 filesystem to resolve it.** Canonicalizing `data_dir`, added so managed
 Claude sees a stable artifact root, assumed the directory already existed —
