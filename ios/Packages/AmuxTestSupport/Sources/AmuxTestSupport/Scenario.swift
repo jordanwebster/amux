@@ -136,6 +136,15 @@ public enum Scenario {
              headline: "Waiting on you since Monday"),
     ]
 
+    /// The same morning as `agents`, as a launch that has reached nothing yet
+    /// sees it: every card is what this phone remembered, and no machine has
+    /// answered for any of them.
+    public static let remembered: [AgentCard] = agents.map { card in
+        var remembered = card
+        remembered.awaiting = true
+        return remembered
+    }
+
     /// The same morning, later: everything that was blocked has been answered
     /// and every finished turn has been read.
     ///

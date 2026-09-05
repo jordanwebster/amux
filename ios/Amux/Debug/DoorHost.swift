@@ -68,6 +68,7 @@ final class DoorHost {
         case .awaitReconciled(let seconds):
             return await awaitReconciled(within: seconds)
         case .bridge: return .bridge(bridgeState())
+        case .signposts: return .signposts(Signposts.marks)
         case .appearance(let appearance):
             self.appearance = appearance
             trace.append(.appearance(appearance))
@@ -105,6 +106,17 @@ final class DoorHost {
     }
 
     // MARK: - Driving
+
+    /// Points the door at the stores the app is drawing for itself.
+    ///
+    /// A driver asking what is on screen must be answered about the screen
+    /// that is on it. When nothing has been opened by name, that is the app's
+    /// own home — filled from this phone's remembered fleet — so the door reads
+    /// and connects to the same bundle rather than a spare one nobody can see.
+    func adopt(_ stores: StoreBundle) {
+        guard screen == nil else { return }
+        self.stores = stores
+    }
 
     private func open(screen name: String, fixture: String?) -> DoorReply {
         guard let screen = Screen(rawValue: name) else { return .error("no screen named \(name)") }

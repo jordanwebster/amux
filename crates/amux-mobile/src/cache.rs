@@ -28,10 +28,18 @@ impl FleetCache {
                 hosts: vec![],
                 reconciled: false,
             });
-        let Event::Fleet { reconciled, .. } = &mut fleet else {
+        let Event::Fleet {
+            reconciled, agents, ..
+        } = &mut fleet
+        else {
             unreachable!()
         };
         *reconciled = false;
+        // Nothing in a file has been confirmed by anybody: every row here is
+        // what this device remembered, until the machine that owns it says so.
+        for card in agents {
+            card.awaiting = true;
+        }
         Self { path, fleet }
     }
 
@@ -70,7 +78,9 @@ impl FleetCache {
                 .is_some_and(|ids| !ids.contains(&card.agent.id));
             if !unpaired && !removed && !agents.iter().any(|live| live.agent.id == card.agent.id) {
                 awaiting.insert(card.agent.id);
-                agents.push(card.clone());
+                let mut card = card.clone();
+                card.awaiting = true;
+                agents.push(card);
             }
         }
         agents.sort_by_key(|card| {
@@ -267,6 +277,70 @@ mod tests {
             events.is_empty(),
             "unchanged authority must not repeat callbacks"
         );
+    }
+
+    fn awaiting(fleet: &Event) -> Vec<(u128, bool)> {
+        let Event::Fleet { agents, .. } = fleet else {
+            panic!("Fleet expected")
+        };
+        agents
+            .iter()
+            .map(|card| (card.agent.id.as_u128(), card.awaiting))
+            .collect()
+    }
+
+    /// A remembered row is confirmed by the machine that owns it, not by the
+    /// slowest machine on the account: the reader stops treating one row as a
+    /// memory as soon as its own host has been heard from.
+    #[test]
+    fn mobile_cache_confirms_each_row_as_its_own_host_answers() {
+        let root = tempfile::tempdir().unwrap();
+        let mut model = Model::default();
+        for msg in [
+            ServerMsg::Connected {
+                local_host_id: Some(Uuid::from_u128(99)),
+            },
+            host(1, true),
+            host(2, true),
+            agent(11, 1),
+            agent(21, 2),
+            ServerMsg::HostsSynchronized,
+            ServerMsg::AgentsSynchronized,
+        ] {
+            update(&mut model, Msg::Server(msg));
+        }
+        let mut cache = FleetCache::open(root.path());
+        collect(&mut cache, &mut Projection::default(), &model);
+
+        // A fresh launch: nothing has been confirmed by anybody yet.
+        let mut cache = FleetCache::open(root.path());
+        assert_eq!(awaiting(&cache.initial()), [(11, true), (21, true)]);
+
+        // The first machine answers. Its row is live and confirmed; the other
+        // machine's row is still the one this device remembered.
+        let mut projection = Projection::default();
+        let mut model = Model::default();
+        for msg in [
+            ServerMsg::Connected {
+                local_host_id: Some(Uuid::from_u128(99)),
+            },
+            host(1, true),
+            host(2, true),
+            agent(11, 1),
+            ServerMsg::HostsSynchronized,
+        ] {
+            update(&mut model, Msg::Server(msg));
+        }
+        let fleet = collect(&mut cache, &mut projection, &model);
+        assert_eq!(awaiting(&fleet), [(11, false), (21, true)]);
+        check(&fleet, &[11, 21], false);
+
+        // The second machine answers and nothing is remembered any more.
+        update(&mut model, Msg::Server(agent(21, 2)));
+        update(&mut model, Msg::Server(ServerMsg::AgentsSynchronized));
+        let fleet = collect(&mut cache, &mut projection, &model);
+        assert_eq!(awaiting(&fleet), [(11, false), (21, false)]);
+        check(&fleet, &[11, 21], true);
     }
 
     #[test]

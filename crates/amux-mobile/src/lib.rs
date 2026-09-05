@@ -126,6 +126,34 @@ pub extern "C" fn amux_mobile_build() -> *const c_char {
     }
 }
 
+/// Returns the fleet this device last displayed, as an owned JSON array of one
+/// Fleet event, or NULL when the directory holds nothing readable. Free it with
+/// amux_mobile_free.
+///
+/// The application draws this before it has a connection, so the answer is the
+/// same one the running library delivers first: every card marked as awaiting
+/// its machine, and the fleet as a whole unreconciled. Reading it needs no
+/// runtime and no network, so a cold launch can put rows on screen in its first
+/// frame and start the connection afterwards.
+///
+/// # Safety
+/// cache_dir must be a readable NUL-terminated UTF-8 string for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_cached_fleet(cache_dir: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let directory = unsafe { read_string(cache_dir) }?;
+        let fleet = cache::FleetCache::open(std::path::Path::new(directory)).initial();
+        Some(
+            CString::new(serde_json::to_string(&[fleet]).ok()?)
+                .ok()?
+                .into_raw(),
+        )
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
 /// Starts asynchronously, returning NULL for invalid configuration or failure
 /// to create the worker. Later failures arrive as Connection events.
 ///

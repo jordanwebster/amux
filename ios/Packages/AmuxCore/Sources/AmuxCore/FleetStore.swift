@@ -137,7 +137,7 @@ public final class FleetStore {
     private func rebuild() {
         rows = order.compactMap { id in
             guard let card = cards[id] else { return nil }
-            return AgentRow(card: card, unread: unread.isUnread(card), confirmed: reconciled)
+            return AgentRow(card: card, unread: unread.isUnread(card))
         }
         let waiting = rows.filter { placement[$0.id] == .needsYou }
         let recent = rows.filter { placement[$0.id] == .everythingElse }

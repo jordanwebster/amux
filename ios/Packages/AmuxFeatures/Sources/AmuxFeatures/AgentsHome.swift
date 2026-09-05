@@ -52,7 +52,11 @@ public struct AgentsHome: View {
             Ground()
             VStack(alignment: .leading, spacing: 0) {
                 header
-                if accounts.gate == .ready {
+                // An account problem is only the whole screen when there is
+                // nothing else on it. A phone that is signed out but still
+                // remembers agents has a list worth reading; what it cannot do
+                // is refresh it, and that belongs on the exceptions line.
+                if accounts.gate == .ready || !model.rows.isEmpty {
                     fleet
                 } else {
                     gated
@@ -159,11 +163,16 @@ public struct AgentsHome: View {
         return letters.isEmpty ? "?" : String(letters).uppercased()
     }
 
+    /// The subtitle counts what is on the list whenever there is a list to
+    /// count. It only becomes the account's word when the account is the whole
+    /// screen, because otherwise the same fact would be said twice: once here
+    /// and once on the exceptions line above the rows.
     private var subtitle: String {
+        if accounts.gate == .ready || !model.rows.isEmpty { return model.subtitle }
         switch accounts.gate {
-        case .ready: model.subtitle
-        case .signedOut: "Not signed in"
-        case .unsubscribed: "Not subscribed"
+        case .ready: return model.subtitle
+        case .signedOut: return "Not signed in"
+        case .unsubscribed: return "Not subscribed"
         }
     }
 
@@ -172,7 +181,7 @@ public struct AgentsHome: View {
     private var fleet: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if let exceptions = model.exceptions {
+                if let exceptions {
                     exceptionsLine(exceptions)
                 }
                 ForEach(model.sections) { section in
@@ -206,12 +215,13 @@ public struct AgentsHome: View {
             actions(.open(row.id))
         } label: {
             AgentRowView(row: row, host: model.host(row.hostId)?.name, now: model.orderedAt)
+                .shimmering(!row.confirmed)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(spoken(row))
         .identified(
             "home.row.\(row.id)", label: spoken(row),
-            value: row.attention.spoken)
+            value: row.confirmed ? row.attention.spoken : "\(row.attention.spoken), remembered")
     }
 
     /// What a row says to somebody who cannot see it, in the order the row
@@ -225,6 +235,9 @@ public struct AgentsHome: View {
             .compactMap { $0 }.joined(separator: ", "))
         parts.append(row.age(at: model.orderedAt) + " ago")
         if row.unread { parts.append("unread") }
+        // Said aloud too: a row nobody has confirmed yet looks different and
+        // must sound different, or VoiceOver reports a memory as a fact.
+        if !row.confirmed { parts.append("remembered, not confirmed yet") }
         return parts.joined(separator: ", ")
     }
 
@@ -271,13 +284,27 @@ public struct AgentsHome: View {
     /// fills itself with counts nobody asked for. It is an exceptions line: it
     /// appears only when something is actually wrong, it takes one row when it
     /// does, and when everything is fine the top of the screen is the list.
+    private var exceptions: String? {
+        switch accounts.gate {
+        case .ready: model.exceptions
+        // Said once, where the one thing that is wrong goes. The rows below it
+        // are real; they are just not going to change until this is fixed.
+        case .signedOut: "Not signed in · nothing is live"
+        case .unsubscribed: "Not subscribed · nothing is live"
+        }
+    }
+
     private func exceptionsLine(_ text: String) -> some View {
         Button {
-            actions(.openExceptions)
+            switch accounts.gate {
+            case .ready: actions(.openExceptions)
+            case .signedOut: actions(.signIn)
+            case .unsubscribed: actions(.subscribe)
+            }
         } label: {
             Surface {
                 HStack(spacing: 11) {
-                    Image(systemName: "wifi.slash")
+                    Image(systemName: accounts.gate == .ready ? "wifi.slash" : "person.slash")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(design.inkMuted.color)
                         .frame(width: 18)

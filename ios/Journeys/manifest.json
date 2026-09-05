@@ -1,0 +1,10 @@
+{
+  "journeys": [
+    {
+      "id": "home-coldstart",
+      "stage": 5,
+      "topology": "e2e-tests/topologies/two-hosts.json",
+      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every row shimmering, and a real connection to a real host confirms it without moving what is on screen."
+    }
+  ]
+}

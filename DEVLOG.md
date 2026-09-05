@@ -4,6 +4,36 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A launch shows what the phone remembers.** The app draws the
+fleet it saw last time before it has reached anything. The shared library reads
+its own cache file straight off disk — no runtime, no network, no wait — and
+every row arrives marked as remembered: dimmed, with a slow highlight passing
+over it. Nothing spins. A spinner would cover rows a person can already read
+and act on with a symbol that says only "wait", so the screens refuse one
+outright and `ios/Tools/feature-lint.sh` now fails a build that draws one.
+
+A row stops shimmering when the machine that owns it answers, not when the
+whole fleet does. The card the bridge projects carries that fact — a card the
+cache is still waiting on says so, a card the connection filled does not — so
+hosts confirm their own agents on their own schedule and nothing waits for the
+slowest machine on the account. Nothing moves while it happens: the list is
+placed once and reconciled in place.
+
+A phone that is signed out but still remembers agents now shows them. An
+account problem is only the whole screen when there is nothing else on it;
+otherwise it is one line above the list saying nothing here is live, and the
+rows below it are still worth reading.
+
+`wt run ios-journey` is new: it launches the real build on the pinned simulator
+against a real relay and real daemons started from a committed topology, and
+asserts on what the screen says it is showing. Its first journey seeds a
+remembered fleet, launches, reads four shimmering rows and the mark for the
+frame that carried them, then connects for real and watches the fleet be
+confirmed. Confirming a remembered row against its own machine is not in that
+journey yet, because pairing from the phone is not built and the daemons it
+reaches disown what it remembered; that claim is proven where it happens, in
+the shared library's cache tests and the fleet store's own.
+
 2026-09-05 — **The Agents home draws the fleet.** The phone opens onto a list
 of agents rather than a placeholder. A row is a name, what the agent says it is
 doing, where it runs and how long ago it last did anything, with three marks

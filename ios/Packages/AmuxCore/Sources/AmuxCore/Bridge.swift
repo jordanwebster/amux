@@ -25,3 +25,20 @@ public enum Bridge {
     // release binary does not carry it by searching the bytes — a constant
     // here would be found by that search and the check would be worthless.
 }
+
+extension Bridge {
+    /// The fleet this device last displayed, read straight off disk.
+    ///
+    /// A cold launch has rows to draw long before it has a connection, and
+    /// starting the runtime to get them would put the network's setup in front
+    /// of the first frame. This is the same answer the running library delivers
+    /// first — every card marked as awaiting its machine, the fleet as a whole
+    /// unreconciled — read by the same code, so the screen a launch draws and
+    /// the screen a connection replaces it with cannot disagree.
+    public static func cachedFleet(in directory: URL) -> [Event] {
+        guard let json = amux_mobile_cached_fleet(directory.path) else { return [] }
+        defer { amux_mobile_free(json) }
+        let data = Data(String(cString: json).utf8)
+        return (try? AmuxJSON.decoder.decode([Event].self, from: data)) ?? []
+    }
+}

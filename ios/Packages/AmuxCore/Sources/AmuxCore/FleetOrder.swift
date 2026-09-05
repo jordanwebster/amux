@@ -33,8 +33,6 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     public var card: AgentCard
     /// Not opened since this agent last did anything.
     public var unread: Bool
-    /// This row came from a reconciled fleet rather than the cold-start cache.
-    public var confirmed: Bool
 
     public var id: AgentId { card.id }
     public var name: String { card.displayName }
@@ -49,10 +47,14 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     public var outcome: TurnOutcome? { card.outcome }
     public var why: Why? { card.attention.why }
 
-    public init(card: AgentCard, unread: Bool, confirmed: Bool) {
+    /// The machine that owns this agent has been heard from, so the row is
+    /// what is there rather than what this phone remembered. Hosts answer one
+    /// at a time, so this turns true a row at a time.
+    public var confirmed: Bool { !card.awaiting }
+
+    public init(card: AgentCard, unread: Bool) {
         self.card = card
         self.unread = unread
-        self.confirmed = confirmed
     }
 
     public var needsYou: Bool {
@@ -114,7 +116,7 @@ public struct FleetSection: Sendable, Equatable, Identifiable {
 /// anything quiet for a day folded away rather than dropped. An unread agent
 /// never folds: nobody has seen what it did yet.
 public func fleetOrder(_ cards: [AgentCard], now: Date, unread: UnreadWeights) -> [FleetSection] {
-    let rows = cards.map { AgentRow(card: $0, unread: unread.isUnread($0), confirmed: true) }
+    let rows = cards.map { AgentRow(card: $0, unread: unread.isUnread($0)) }
 
     // A tie between two identical waits still has to be an order, or the list
     // shuffles for no reason the user can see. Identity breaks it.

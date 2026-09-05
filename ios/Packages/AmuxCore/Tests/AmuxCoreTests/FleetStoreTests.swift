@@ -9,8 +9,8 @@ final class FleetStoreTests: XCTestCase {
     func testACachedHomeArrivesBeforeItIsConfirmed() {
         let store = FleetStore(now: now)
         store.apply(Made.fleet([
-            Made.card(1, name: "alpha", attention: .working, minutesAgo: 2, now: now),
-            Made.card(2, name: "beta", attention: .idle, minutesAgo: 20, now: now),
+            Made.card(1, name: "alpha", attention: .working, minutesAgo: 2, now: now, awaiting: true),
+            Made.card(2, name: "beta", attention: .idle, minutesAgo: 20, now: now, awaiting: true),
         ], reconciled: false))
 
         XCTAssertEqual(store.rows.map(\.name), ["alpha", "beta"])
@@ -23,9 +23,9 @@ final class FleetStoreTests: XCTestCase {
     func testSyncConfirmsTheRowsWithoutRegroupingThem() {
         let store = FleetStore(now: now)
         let cached = [
-            Made.card(1, name: "alpha", attention: .working, minutesAgo: 2, now: now),
-            Made.card(2, name: "beta", attention: .idle, minutesAgo: 20, now: now),
-            Made.card(3, name: "gamma", attention: .idle, minutesAgo: 40, now: now),
+            Made.card(1, name: "alpha", attention: .working, minutesAgo: 2, now: now, awaiting: true),
+            Made.card(2, name: "beta", attention: .idle, minutesAgo: 20, now: now, awaiting: true),
+            Made.card(3, name: "gamma", attention: .idle, minutesAgo: 40, now: now, awaiting: true),
         ]
         store.apply(Made.fleet(cached, reconciled: false))
         let placedFirst = store.rows.map(\.id)
@@ -49,6 +49,43 @@ final class FleetStoreTests: XCTestCase {
         store.refreshOrder(now: now)
         XCTAssertEqual(store.sections.map(\.kind), [.needsYou, .everythingElse])
         XCTAssertEqual(store.sections[0].rows.map(\.name), ["gamma"])
+    }
+
+    /// Hosts answer one at a time, so the shimmer stops one row at a time.
+    /// Nothing waits for the slowest machine on the account, and nothing moves
+    /// while the answers come in.
+    func testEachRowStopsShimmeringAsItsOwnHostAnswers() {
+        let store = FleetStore(now: now)
+        func cards(studioAwaiting: Bool, laptopAwaiting: Bool) -> [AgentCard] {
+            [
+                Made.card(1, name: "alpha", attention: .working, minutesAgo: 2, now: now,
+                          awaiting: studioAwaiting),
+                Made.card(2, name: "beta", attention: .idle, minutesAgo: 20, now: now,
+                          host: Made.other, awaiting: laptopAwaiting),
+                Made.card(3, name: "gamma", attention: .idle, minutesAgo: 40, now: now,
+                          awaiting: studioAwaiting),
+            ]
+        }
+        let hosts = [
+            Made.hostEntry(Made.host, name: "studio"),
+            Made.hostEntry(Made.other, name: "laptop"),
+        ]
+        store.apply(Made.fleet(cards(studioAwaiting: true, laptopAwaiting: true),
+                               hosts: hosts, reconciled: false))
+        let placed = store.rows.map(\.id)
+        XCTAssertEqual(store.rows.filter { !$0.confirmed }.count, 3)
+
+        // One machine has answered; the fleet as a whole has not.
+        store.apply(Made.fleet(cards(studioAwaiting: false, laptopAwaiting: true),
+                               hosts: hosts, reconciled: false))
+        XCTAssertEqual(store.rows.map(\.confirmed), [true, false, true])
+        XCTAssertFalse(store.reconciled)
+        XCTAssertEqual(store.rows.map(\.id), placed)
+
+        store.apply(Made.fleet(cards(studioAwaiting: false, laptopAwaiting: false),
+                               hosts: hosts, reconciled: true))
+        XCTAssertEqual(store.rows.filter { !$0.confirmed }.count, 0)
+        XCTAssertEqual(store.rows.map(\.id), placed)
     }
 
     func testAnArrivingAgentLandsWhereTheOrderingPutsIt() {

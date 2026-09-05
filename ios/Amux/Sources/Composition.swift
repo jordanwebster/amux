@@ -23,6 +23,20 @@ final class Composition {
 
     init() {
         router.loads(with: self)
+        rememberedFleet()
+    }
+
+    /// Puts the fleet this phone saw last time on screen before anything has
+    /// been reached.
+    ///
+    /// Read straight off disk by the shared library rather than by starting the
+    /// runtime first: a launch has rows to draw long before it has a network,
+    /// and a person opening the app to check on an agent should not watch an
+    /// empty screen while a connection is negotiated. Every row arrives marked
+    /// as remembered, and each one goes solid when the machine that owns it
+    /// answers.
+    private func rememberedFleet() {
+        stores.apply(Bridge.cachedFleet(in: AppFiles.cache))
     }
 
     /// What the shell asks for that it cannot do itself.
@@ -54,5 +68,24 @@ extension Composition: RouteLoader {
         case .newAgent, .pairByCode, .pairConfirmation, .host, .accounts, .appearance, .help:
             break
         }
+    }
+}
+
+/// Where this app keeps things between launches.
+///
+/// The fleet is a cache: losing it costs one launch its remembered rows and
+/// nothing else, so it lives where the system is allowed to reclaim it. The
+/// shared runtime is handed the same two directories, so what a launch reads
+/// and what a connection writes are one file.
+enum AppFiles {
+    static let support = directory(.applicationSupportDirectory)
+    static let cache = directory(.cachesDirectory)
+
+    private static func directory(_ search: FileManager.SearchPathDirectory) -> URL {
+        let manager = FileManager.default
+        let root = manager.urls(for: search, in: .userDomainMask)[0]
+            .appendingPathComponent("amux", isDirectory: true)
+        try? manager.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
     }
 }

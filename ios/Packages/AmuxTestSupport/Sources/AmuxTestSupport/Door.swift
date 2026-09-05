@@ -1,3 +1,4 @@
+import AmuxCore
 import AmuxDesign
 import Foundation
 import SwiftUI
@@ -22,6 +23,10 @@ public enum DoorRequest: Sendable, Equatable {
     case awaitReconciled(seconds: Double)
     /// What library this app linked and what its connection has arrived at.
     case bridge
+    /// Every moment this launch has marked, in order. A driver reads them to
+    /// tell a screen that was drawn from a frame that was shown, and to see
+    /// when the fleet stopped being a memory.
+    case signposts
     case appearance(Appearance)
     case dynamicType(String)
     /// Move one named colour token, or put it back when nothing is named.
@@ -51,6 +56,7 @@ public enum DoorReply: Sendable, Equatable {
     case ack
     case state(VisibleState)
     case bridge(BridgeState)
+    case signposts([SignpostMark])
     case captured(path: String, width: Int, height: Int, scale: Int)
     /// A bundle was written at this path, holding these files.
     case bundle(path: String, parts: [String])
@@ -216,6 +222,7 @@ extension DoorRequest: Codable {
         case "awaitReconciled":
             self = .awaitReconciled(seconds: try fields.decode(Double.self, forKey: .seconds))
         case "bridge": self = .bridge
+        case "signposts": self = .signposts
         case "appearance":
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
         case "dynamicType":
@@ -263,6 +270,8 @@ extension DoorRequest: Codable {
             try fields.encode(seconds, forKey: .seconds)
         case .bridge:
             try fields.encode("bridge", forKey: .kind)
+        case .signposts:
+            try fields.encode("signposts", forKey: .kind)
         case .appearance(let appearance):
             try fields.encode("appearance", forKey: .kind)
             try fields.encode(appearance, forKey: .appearance)
@@ -300,7 +309,7 @@ extension DoorRequest: Codable {
 
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
-        case kind, state, bridge, path, width, height, scale, message, parts, replayed
+        case kind, state, bridge, path, width, height, scale, message, parts, replayed, marks
     }
 
     public init(from decoder: any Decoder) throws {
@@ -312,6 +321,8 @@ extension DoorReply: Codable {
             self = .state(try fields.decode(VisibleState.self, forKey: .state))
         case "bridge":
             self = .bridge(try fields.decode(BridgeState.self, forKey: .bridge))
+        case "signposts":
+            self = .signposts(try fields.decode([SignpostMark].self, forKey: .marks))
         case "captured":
             self = .captured(
                 path: try fields.decode(String.self, forKey: .path),
@@ -343,6 +354,9 @@ extension DoorReply: Codable {
         case .bridge(let state):
             try fields.encode("bridge", forKey: .kind)
             try fields.encode(state, forKey: .bridge)
+        case .signposts(let marks):
+            try fields.encode("signposts", forKey: .kind)
+            try fields.encode(marks, forKey: .marks)
         case .captured(let path, let width, let height, let scale):
             try fields.encode("captured", forKey: .kind)
             try fields.encode(path, forKey: .path)

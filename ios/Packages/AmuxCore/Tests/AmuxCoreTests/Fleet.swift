@@ -17,7 +17,8 @@ enum Made {
         attention: Attention = .idle,
         minutesAgo: Double,
         now: Date,
-        host: HostId = Made.host
+        host: HostId = Made.host,
+        awaiting: Bool = false
     ) -> AgentCard {
         AgentCard(
             agent: Agent(
@@ -31,7 +32,8 @@ enum Made {
             displayName: name,
             attention: attention,
             phase: .running,
-            lastActivity: now.addingTimeInterval(-60 * minutesAgo))
+            lastActivity: now.addingTimeInterval(-60 * minutesAgo),
+            awaiting: awaiting)
     }
 
     static func hostEntry(_ id: HostId, name: String, online: Bool = true) -> HostState {

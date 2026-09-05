@@ -230,7 +230,7 @@ public enum Fixtures {
         // The cache before the network answers: rows are shown and marked
         // unconfirmed rather than replaced by a spinner.
         Fixture(id: "home-cached", screen: .home) { bundle in
-            States.open(bundle, reconciled: false)
+            States.open(bundle, agents: Scenario.remembered, reconciled: false)
         },
         // The same screens for a reader who needs larger type. Nothing is
         // dropped at this size; it wraps.

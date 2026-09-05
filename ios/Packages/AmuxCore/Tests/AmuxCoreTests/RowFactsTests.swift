@@ -11,7 +11,7 @@ final class RowFactsTests: XCTestCase {
     private func row(secondsAgo: TimeInterval) -> AgentRow {
         AgentRow(
             card: Made.card(1, name: "one", minutesAgo: secondsAgo / 60, now: now),
-            unread: false, confirmed: true)
+            unread: false)
     }
 
     func testAgeIsOneUnitAndAlwaysTheShortestTrueOne() {

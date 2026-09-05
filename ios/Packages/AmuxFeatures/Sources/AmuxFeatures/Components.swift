@@ -269,3 +269,61 @@ public struct Explain: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 }
+
+/// What a row looks like while it is still only remembered.
+///
+/// A launch draws the fleet this phone saw last time before it has reached
+/// anything, and those rows are honest but unverified: the agent may have
+/// finished, or moved on, or gone. So they are dimmed and a slow highlight
+/// passes over them, and the moment the machine that owns a row answers, that
+/// row alone goes solid. Nothing is replaced and nothing moves — the list a
+/// thumb is already travelling towards is the list that gets confirmed.
+///
+/// A spinner would be the alternative, and it would be worse: it would cover
+/// content the person can already read and act on with a symbol that says only
+/// "wait". The screen never spins for this, whatever it costs, because there is
+/// always something true to show while it waits.
+///
+/// The sweep is an implicit animation rather than a display link the app drives
+/// itself: Core Animation runs it in the render server, so a screen full of
+/// remembered rows costs the main thread nothing per frame, and it stops on its
+/// own when the last row is confirmed. Under Reduce Motion the dimming stays
+/// and the sweep does not run.
+public struct Shimmer: ViewModifier {
+    @Environment(\.design) private var design
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The row is still only remembered.
+    private let active: Bool
+    @State private var swept = false
+
+    public init(active: Bool) {
+        self.active = active
+    }
+
+    public func body(content: Content) -> some View {
+        content
+            .opacity(active ? 0.55 : 1)
+            .overlay { if active && !reduceMotion { sweep } }
+    }
+
+    private var sweep: some View {
+        GeometryReader { frame in
+            LinearGradient(
+                colors: [.clear, design.ink.color.opacity(0.09), .clear],
+                startPoint: .leading, endPoint: .trailing)
+                .frame(width: frame.size.width * 0.45)
+                .offset(x: swept ? frame.size.width : -frame.size.width * 0.45)
+                .animation(
+                    .linear(duration: 1.6).repeatForever(autoreverses: false), value: swept)
+        }
+        .allowsHitTesting(false)
+        .onAppear { swept = true }
+    }
+}
+
+extension View {
+    /// Draws this as a row that has not been confirmed yet. See ``Shimmer``.
+    public func shimmering(_ active: Bool) -> some View {
+        modifier(Shimmer(active: active))
+    }
+}

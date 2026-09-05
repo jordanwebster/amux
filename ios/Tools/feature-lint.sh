@@ -4,8 +4,8 @@
 # The screens are meant to be functions of their state: SwiftUI, no platform to
 # ask about, no view whose behaviour lives outside the state it was handed.
 # That is what lets one be captured, diffed, replayed and — when there is a Mac
-# app — drawn again without being rewritten. Two things break it quietly, and
-# both are refused here:
+# app — drawn again without being rewritten. Three things break it quietly, and
+# all three are refused here:
 #
 #   * UIKit anywhere but a registered leaf. A leaf is a deliberate exception,
 #     one file under Leaves/, named in RegisteredLeaves.swift and justified by a
@@ -13,6 +13,12 @@
 #     package is a UIKit app with SwiftUI on top.
 #   * A platform conditional. A screen that draws differently on iOS and macOS
 #     is two screens, and the second one is never the one anybody looked at.
+#   * A spinner. Nothing these screens wait for is worth covering readable
+#     content with a symbol that says only "wait": a wait under 300 ms is over
+#     before a spinner would have been noticed, and a longer one has something
+#     true to show meanwhile — the remembered fleet, shimmering until it is
+#     confirmed. If a screen ever earns one, it earns a delayed wrapper with a
+#     measured threshold, and this rule changes with it.
 #
 # It checks itself first: the rules are run against files written to be wrong,
 # so a lint that has stopped being able to fail says so instead of passing.
@@ -40,6 +46,13 @@ scan() {
                 echo "$file: imports UIKit outside Leaves/; a UIKit view is a registered leaf or it is not written"
                 complaints=$((complaints + 1))
             fi
+        fi
+
+        spinner=$(grep -nE '(ProgressView[[:space:]]*\(|UIActivityIndicatorView)' "$file" || true)
+        if [ -n "$spinner" ]; then
+            echo "$file: draws a spinner; a wait under 300 ms needs none and a longer one shows what it already knows"
+            echo "$spinner" | sed 's/^/    /'
+            complaints=$((complaints + 1))
         fi
 
         conditional=$(grep -nE '^[[:space:]]*#(if|elseif)\b.*(os\(|canImport\(|targetEnvironment\()' "$file" || true)
@@ -74,11 +87,13 @@ self_test() {
 
     printf 'import SwiftUI\nimport UIKit\n' > "$fixtures/Reaching.swift"
     printf '#if os(macOS)\nimport SwiftUI\n#endif\n' > "$fixtures/Branching.swift"
+    printf 'import SwiftUI\nstruct Waiting: View { var body: some View { ProgressView() } }\n' \
+        > "$fixtures/Waiting.swift"
     printf 'import UIKit\nstruct Unnamed {}\n' > "$fixtures/Leaves/Unnamed.swift"
     printf 'public enum RegisteredLeaves { case transcriptList }\n' > "$fixtures/RegisteredLeaves.swift"
 
     found=$(scan "$fixtures" || true)
-    for expected in Reaching.swift Branching.swift Unnamed.swift; do
+    for expected in Reaching.swift Branching.swift Waiting.swift Unnamed.swift; do
         case $found in
             *"$expected"*) ;;
             *)
@@ -90,7 +105,8 @@ self_test() {
 
     printf 'import SwiftUI\nstruct Fine: View { var body: some View { Text("fine") } }\n' \
         > "$fixtures/Fine.swift"
-    rm "$fixtures/Reaching.swift" "$fixtures/Branching.swift" "$fixtures/Leaves/Unnamed.swift"
+    rm "$fixtures/Reaching.swift" "$fixtures/Branching.swift" "$fixtures/Waiting.swift" \
+        "$fixtures/Leaves/Unnamed.swift"
     if ! scan "$fixtures" > /dev/null; then
         echo "feature-lint complains about sources that break none of its rules"
         exit 1
@@ -108,7 +124,7 @@ if [ ! -d "$package" ]; then
 fi
 
 if scan "$package"; then
-    echo "$package: SwiftUI only, no platform conditionals, every leaf registered"
+    echo "$package: SwiftUI only, no platform conditionals, no spinners, every leaf registered"
 else
     exit 1
 fi

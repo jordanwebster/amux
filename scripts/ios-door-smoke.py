@@ -60,7 +60,10 @@ DRIVING_SYMBOLS = ["amux_mobile_report_snapshot", "amux_mobile_replay_report"]
 def exchange(relay: str, token: str) -> list[tuple[dict, str]]:
     return [
         ({"kind": "open", "screen": "atlantis"}, "error"),
-        ({"kind": "open", "screen": "home"}, "error"),
+        # A screen in the catalogue that nobody has built yet. It changes as
+        # the screens land; what is being proven is that the door names an
+        # unbuilt screen instead of showing a placeholder in its place.
+        ({"kind": "open", "screen": "run"}, "error"),
         ({"kind": "dynamicType", "size": "enormous"}, "error"),
         ({"kind": "tap", "identifier": "nothing.here"}, "error"),
         # Nothing has been connected yet, so waiting for a connection is a
@@ -121,7 +124,7 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
                 f"{request} was answered {reply['kind']}, not {expected}: {reply}")
     refusals = [reply["message"] for reply in replies if reply["kind"] == "error"]
     print("refused: " + "; ".join(refusals), flush=True)
-    if not any("unimplemented: home" == message for message in refusals):
+    if not any("unimplemented: run" == message for message in refusals):
         raise SystemExit(f"a screen nobody has built was not named unimplemented: {refusals}")
 
     visible = next(reply for reply in replies if reply["kind"] == "state")["state"]

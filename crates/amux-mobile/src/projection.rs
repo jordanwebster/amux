@@ -29,6 +29,20 @@ pub struct AgentCardDto {
     /// changes", so a reader states the outcome without arithmetic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<TurnOutcome>,
+    /// Remembered from the last run and not yet confirmed by the machine that
+    /// owns it.
+    ///
+    /// The fleet as a whole is reconciled only once every host has answered,
+    /// but a host answers on its own schedule, so a card is confirmed the
+    /// moment its own machine has been heard from. A reader can then stop
+    /// treating that one row as a memory without waiting for the slowest
+    /// machine on the account.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub awaiting: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// What one finished turn changed, as the provider counted it.
@@ -368,6 +382,10 @@ impl Projection {
                     phase: card.phase.clone(),
                     last_activity: card.last_activity,
                     outcome: None,
+                    // Live rows come from the model the connection filled, so
+                    // they are confirmed by definition; only the cache adds
+                    // rows nobody has answered for yet.
+                    awaiting: false,
                 })
                 .collect(),
             hosts: model

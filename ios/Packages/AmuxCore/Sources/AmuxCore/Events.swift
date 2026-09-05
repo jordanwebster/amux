@@ -102,6 +102,14 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
     /// changed, so a row states the outcome without arithmetic rather than
     /// claiming a zero.
     public var outcome: TurnOutcome?
+    /// Remembered from the last run and not yet confirmed by the machine that
+    /// owns this agent.
+    ///
+    /// Hosts answer one at a time, so a card is confirmed when its own machine
+    /// has been heard from rather than when the whole fleet has. That is what
+    /// lets a row stop shimmering on its own instead of the list waiting for
+    /// the slowest machine on the account.
+    public var awaiting: Bool
 
     public var id: AgentId { agent.id }
 
@@ -112,11 +120,26 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
         case phase
         case lastActivity = "last_activity"
         case outcome
+        case awaiting
+    }
+
+    /// Written out rather than synthesised because the bridge leaves
+    /// `awaiting` out of a card nobody is waiting on, and a synthesised
+    /// decoder would refuse the card rather than read the absence as false.
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        agent = try fields.decode(Agent.self, forKey: .agent)
+        displayName = try fields.decode(String.self, forKey: .displayName)
+        attention = try fields.decode(Attention.self, forKey: .attention)
+        phase = try fields.decode(AgentPhase.self, forKey: .phase)
+        lastActivity = try fields.decode(Date.self, forKey: .lastActivity)
+        outcome = try fields.decodeIfPresent(TurnOutcome.self, forKey: .outcome)
+        awaiting = try fields.decodeIfPresent(Bool.self, forKey: .awaiting) ?? false
     }
 
     public init(
         agent: Agent, displayName: String, attention: Attention, phase: AgentPhase,
-        lastActivity: Date, outcome: TurnOutcome? = nil
+        lastActivity: Date, outcome: TurnOutcome? = nil, awaiting: Bool = false
     ) {
         self.agent = agent
         self.displayName = displayName
@@ -124,6 +147,7 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
         self.phase = phase
         self.lastActivity = lastActivity
         self.outcome = outcome
+        self.awaiting = awaiting
     }
 }
 
