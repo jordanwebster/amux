@@ -156,6 +156,8 @@ mod tests {
             "ClientService",
             "LinkService",
             "PairingService",
+            "ProfileService",
+            "InstallationService",
         ]);
         assert_eq!(service_names, expected_services);
 

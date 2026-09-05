@@ -495,7 +495,6 @@ pub(crate) struct StartedUserServices {
     pub(crate) artifact_owners: Arc<ArtifactOwners>,
     #[cfg(any(test, testnet))]
     pub(crate) agent: AgentServiceCtx,
-    #[cfg(any(test, testnet))]
     pub(crate) client: ClientService,
     trusted_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
     #[cfg(test)]
@@ -693,7 +692,6 @@ async fn start_user_services_with_clock(
         artifact_owners,
         #[cfg(any(test, testnet))]
         agent,
-        #[cfg(any(test, testnet))]
         client,
         trusted_incoming_tx,
         #[cfg(test)]

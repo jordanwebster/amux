@@ -1,7 +1,8 @@
 //! Shared service context for protobuf-shaped application services.
 
 mod agent;
-mod client;
+pub(crate) mod client;
+pub mod front_door;
 mod pairing;
 #[cfg(testnet)]
 pub(crate) use pairing::{PeerTrustCommitContext, PeerTrustUpdate, commit_peer_trust};

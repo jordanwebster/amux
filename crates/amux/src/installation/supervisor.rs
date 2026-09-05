@@ -121,6 +121,7 @@ pub struct InstallationOptions {
 
 pub struct Installation {
     pub(super) inner: Arc<Inner>,
+    pub(crate) front_door_operations: Arc<crate::services::front_door::FrontDoorOperations>,
 }
 
 pub(super) struct Inner {
@@ -290,7 +291,10 @@ impl Installation {
             .filter(|(_, entry)| !entry.deleting)
             .map(|(id, _)| *id)
             .collect();
-        let installation = Self { inner };
+        let installation = Self {
+            inner,
+            front_door_operations: Arc::default(),
+        };
         let starts = ids.into_iter().map(|id| {
             let inner = installation.inner.clone();
             tokio::spawn(async move {
@@ -302,6 +306,28 @@ impl Installation {
         });
         futures_util::future::join_all(starts).await;
         Ok(installation)
+    }
+
+    pub fn root(&self) -> &std::path::Path {
+        &self.inner.root
+    }
+
+    pub(crate) async fn admin_service(
+        &self,
+        id: ProfileId,
+    ) -> Result<crate::services::client::ClientService, InstallationError> {
+        let slot = self.inner.state.lock().unwrap().active(id)?.slot.clone();
+        let runtime = slot.runtime.lock().await;
+        self.inner.state.lock().unwrap().active(id)?;
+        runtime
+            .as_ref()
+            .map(|runtime| runtime.services.client.clone())
+            .ok_or_else(|| InstallationError::Unavailable("profile is not running".into()))
+    }
+
+    pub(crate) async fn stop(&self, reason: ShutdownReason) {
+        let inner = self.inner.clone();
+        let _ = tokio::spawn(async move { inner.shutdown(reason).await }).await;
     }
 
     pub fn profiles(&self) -> Vec<ProfileStatus> {

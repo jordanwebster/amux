@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Expose installation administration through a separate gRPC front door.**
+ProfileService lists and watches profiles, binds accounts, runs profile lifecycle
+operations and directs pairing and trust administration to the named device.
+InstallationService exposes installation information, diagnostics and shutdown.
+Both run in process and on a private Unix socket that serves no ClientService;
+a plain client discovers the profile socket and connects there for agent calls.
+Retries across connections retain their original result, including pairing
+secrets, and accepted mutations continue after a caller disconnects. Watches
+emit a snapshot boundary, ordered changes and an explicit resubscribe error on
+lag. Tests cover revisions, unknown/deleted ids, binding labels and refusals,
+pairing isolation, shutdown, discovery and socket ownership. Installation-wide
+suspend and resume have wire contracts but await their transaction coordinator.
+
 2026-09-05 — **Keep blocked agent input independent of profile lifecycle.**
 Profile storage work now takes shared access while lifecycle operations and trust
 commits remain exclusive. Input releases its guard after attachment preparation

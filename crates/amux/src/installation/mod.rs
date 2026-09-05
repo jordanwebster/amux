@@ -1,5 +1,7 @@
 //! Installation ownership, isolated profile storage, and supervised lifecycles.
 
+pub use crate::services::front_door::{FrontDoor, FrontDoorListener};
+
 pub mod binding;
 mod credentials;
 mod operation;
