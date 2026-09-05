@@ -763,9 +763,11 @@ impl Player {
                     let ended = std::mem::take(&mut self.turn_open);
                     if ended {
                         self.turn_ended = true;
+                        // Publish the stop pre-signal before the authoritative final row,
+                        // so observing turn completion does not race a trailing Stop hook.
+                        self.hook("Stop", json!({})).await?;
                         let row = self.row("system", json!({"subtype":"turn_duration","durationMs":self.duration_ms,"messageCount":self.message_count}));
                         self.rows(vec![row]).await?;
-                        self.hook("Stop", json!({})).await?;
                     }
                 }
                 Step::Compaction => {

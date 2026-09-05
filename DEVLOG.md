@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Settle scripted turns at their final transcript row.**
+The scripted Claude provider now emits its Stop hook before the authoritative
+turn-duration row. A client that observes that completed turn can send its
+next prompt without racing a trailing hook that advances the host's cursor.
+A parser-level regression checks the event order; positional inputs retain
+their existing stale-sequence rejection.
+
 2026-09-05 — **Retain attachment pins in host-side input observations.**
 Accepted Claude PTY inputs now carry their validated artifact IDs through to
 the scripted provider. Observations retain each input's pin order, including

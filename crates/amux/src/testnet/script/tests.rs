@@ -280,6 +280,14 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
         .position(|e| matches!(e,PtyEvent::Transcript {row,..} if row.as_value() == &raw))
         .unwrap();
     assert!(unknown < stop, "transcript ingestion must precede Stop");
+    let turn = events
+        .iter()
+        .position(|e| matches!(e, PtyEvent::Transcript { row, .. } if row.as_value()["subtype"] == "turn_duration"))
+        .unwrap();
+    assert!(
+        stop < turn,
+        "Stop must precede turn completion instead of advancing its cursor afterward"
+    );
     for event in &events {
         match event {
             PtyEvent::Transcript { row, .. } => {

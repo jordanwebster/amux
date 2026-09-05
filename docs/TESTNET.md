@@ -150,8 +150,8 @@ without consuming a reaction; unmatched inputs return `Exhausted`.
 
 A prompt received during a turn is observed immediately and played after the
 current reaction reaches `EndTurn` and finishes its remaining steps. Deferred
-prompts keep arrival order. EndTurn writes one duration row and Stop hook per
-prompt, even if repeated. Reactions without EndTurn stay open for answers or
+prompts keep arrival order. EndTurn emits a Stop hook followed by one duration
+row per prompt, even if repeated. Reactions without EndTurn stay open for answers or
 control operations. `Provider::play` accepts additional steps and waits for
 their transcript and hook ingestion; consume the session concurrently to keep
 its bounded event stream moving.
