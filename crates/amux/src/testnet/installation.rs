@@ -47,6 +47,17 @@ pub(crate) struct ProfileOwner {
 }
 
 impl ProfileOwner {
+    pub(crate) fn admin_client(&self) -> crate::installation::ProfileAdminClient {
+        use crate::installation::{FrontDoor, FrontDoorClient, rpc};
+        let owner = self.installation.upgrade().expect("installation dropped");
+        let channel = FrontDoor::new(owner.current(), None).channel();
+        FrontDoorClient {
+            profiles: rpc::profile_service_client::ProfileServiceClient::new(channel.clone()),
+            installation: rpc::installation_service_client::InstallationServiceClient::new(channel),
+        }
+        .admin(self.id)
+    }
+
     pub(crate) async fn runtime(
         &self,
     ) -> Option<tokio::sync::OwnedMutexGuard<Option<ProfileRuntime>>> {

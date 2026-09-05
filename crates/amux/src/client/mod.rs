@@ -753,27 +753,12 @@ impl Client {
     }
 
     pub async fn list_hosts(&self) -> Result<Vec<HostEntry>, ClientError> {
-        self.list_hosts_scoped(wire::list_hosts_request::Scope::All)
-            .await
-    }
-
-    pub async fn list_pairing_hosts(&self) -> Result<Vec<HostEntry>, ClientError> {
-        self.list_hosts_scoped(wire::list_hosts_request::Scope::PairingCandidates)
-            .await
-    }
-
-    async fn list_hosts_scoped(
-        &self,
-        scope: wire::list_hosts_request::Scope,
-    ) -> Result<Vec<HostEntry>, ClientError> {
         self.ensure_open()?;
         let response = self
             .inner
             .lock()
             .await
-            .list_hosts(wire::ListHostsRequest {
-                scope: scope as i32,
-            })
+            .list_hosts(wire::ListHostsRequest {})
             .await
             .map_err(status_to_client_error)?
             .into_inner();

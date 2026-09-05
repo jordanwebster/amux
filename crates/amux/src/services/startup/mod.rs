@@ -1571,9 +1571,7 @@ mod tests {
             .unwrap();
         let mut client = wire::client_service_client(channel);
         let response = client
-            .list_hosts(wire::ListHostsRequest {
-                scope: wire::list_hosts_request::Scope::All as i32,
-            })
+            .list_hosts(wire::ListHostsRequest {})
             .await
             .unwrap()
             .into_inner();
@@ -1720,9 +1718,7 @@ mod tests {
             .unwrap();
         let mut client = wire::client_service_client(channel);
         let response = client
-            .list_hosts(wire::ListHostsRequest {
-                scope: wire::list_hosts_request::Scope::All as i32,
-            })
+            .list_hosts(wire::ListHostsRequest {})
             .await
             .unwrap()
             .into_inner();

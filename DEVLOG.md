@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Keep profile host inventory consistent for every caller.**
+ClientService lists and streams the local host and trusted peers, including
+trusted devices that are offline. Pairing candidates are available through
+the installation front door; the old ListHosts scope is removed from the
+protocol and generated clients. Host subscriptions track delivered IDs so
+revoking trust removes an existing entry without disclosing arrivals or
+departures of untrusted devices. Tests replace the old local-only inventory
+expectations with identical local, remote and metadata-free results, and the
+presence spec checks front-door discovery beside a profile socket and a
+paired tunnel.
+
 2026-09-05 — **Keep CLI trust administration with the selected profile.**
 Pairing windows, cloud pairing, peer inspection and unpairing now use a
 front-door client pinned to a profile UUID. Direct PIN and SSH identity

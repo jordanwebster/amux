@@ -717,21 +717,23 @@ impl Daemon {
         .await;
     }
 
-    /// The local pairing-candidate inventory: `ClientService.ListHosts` with
-    /// `scope = PAIRING_CANDIDATES` over the local-admin surface, as the UI
-    /// would request it before prompting the user to pair.
+    /// The pairing inventory behind the installation's administrative surface.
     pub async fn pairing_candidates(&self) -> Vec<HostId> {
-        let hosts = self
-            .admin_client()
-            .await
-            .list_pairing_hosts()
-            .await
-            .unwrap_or_else(|error| {
-                panic!(
-                    "'{}' failed to list pairing candidates: {error}",
-                    self.name()
-                )
-            });
+        let hosts = match &self.inner.installation {
+            Some(owner) => owner
+                .admin_client()
+                .list_pairing_hosts()
+                .await
+                .expect("pairing inventory"),
+            None => {
+                self.try_parts()
+                    .await
+                    .expect("daemon is running")
+                    .client
+                    .list_pairing_candidates()
+                    .await
+            }
+        };
         hosts.into_iter().map(|host| host.id).collect()
     }
 
@@ -797,27 +799,8 @@ impl Daemon {
         .await;
     }
 
-    /// A routed `ClientService.ListHosts(PAIRING_CANDIDATES)` against
-    /// `other`, i.e. what a *paired remote* caller gets when it asks for
-    /// pairing-candidate inventory. The scope is reserved for local
-    /// callers (docs/ARCHITECTURE.md "Service surface map").
-    pub async fn list_pairing_candidates_on(&self, other: &Daemon) -> anyhow::Result<Vec<HostId>> {
-        self.list_hosts_on_scoped(other, wire::list_hosts_request::Scope::PairingCandidates)
-            .await
-    }
-
-    /// A routed `ClientService.ListHosts(ALL)` against `other`: the host
-    /// inventory `other` serves to a paired remote caller.
+    /// The host inventory served to a paired remote caller.
     pub async fn list_hosts_on(&self, other: &Daemon) -> anyhow::Result<Vec<HostId>> {
-        self.list_hosts_on_scoped(other, wire::list_hosts_request::Scope::All)
-            .await
-    }
-
-    async fn list_hosts_on_scoped(
-        &self,
-        other: &Daemon,
-        scope: wire::list_hosts_request::Scope,
-    ) -> anyhow::Result<Vec<HostId>> {
         let request = async {
             let Some(parts) = self.try_parts().await else {
                 anyhow::bail!("daemon '{}' is not running", self.name());
@@ -825,9 +808,7 @@ impl Daemon {
             let channel = parts.connections.channel_to(other.host_id()).await?;
             let mut client = wire::client_service_client(channel);
             let hosts = client
-                .list_hosts(wire::ListHostsRequest {
-                    scope: scope as i32,
-                })
+                .list_hosts(wire::ListHostsRequest {})
                 .await?
                 .into_inner()
                 .hosts;

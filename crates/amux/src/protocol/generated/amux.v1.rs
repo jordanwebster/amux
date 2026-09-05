@@ -865,52 +865,7 @@ pub struct PairingIdentity {
     pub name: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ListHostsRequest {
-    #[prost(enumeration = "list_hosts_request::Scope", tag = "1")]
-    pub scope: i32,
-}
-/// Nested message and enum types in `ListHostsRequest`.
-pub mod list_hosts_request {
-    #[derive(
-        Clone,
-        Copy,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash,
-        PartialOrd,
-        Ord,
-        ::prost::Enumeration
-    )]
-    #[repr(i32)]
-    pub enum Scope {
-        Unspecified = 0,
-        All = 1,
-        PairingCandidates = 2,
-    }
-    impl Scope {
-        /// String value of the enum field names used in the ProtoBuf definition.
-        ///
-        /// The values are not transformed in any way and thus are considered stable
-        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-        pub fn as_str_name(&self) -> &'static str {
-            match self {
-                Self::Unspecified => "SCOPE_UNSPECIFIED",
-                Self::All => "ALL",
-                Self::PairingCandidates => "PAIRING_CANDIDATES",
-            }
-        }
-        /// Creates an enum from field names used in the ProtoBuf definition.
-        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-            match value {
-                "SCOPE_UNSPECIFIED" => Some(Self::Unspecified),
-                "ALL" => Some(Self::All),
-                "PAIRING_CANDIDATES" => Some(Self::PairingCandidates),
-                _ => None,
-            }
-        }
-    }
-}
+pub struct ListHostsRequest {}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListHostsResponse {
     #[prost(message, repeated, tag = "1")]

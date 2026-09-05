@@ -417,15 +417,12 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
             .admin_service(profile_id(&request.into_inner().profile_id)?)
             .await
             .map_err(installation_error)?;
-        let hosts = ClientService::list_hosts(
-            &admin,
-            local(wire::ListHostsRequest {
-                scope: wire::list_hosts_request::Scope::PairingCandidates.into(),
-            }),
-        )
-        .await?
-        .into_inner()
-        .hosts;
+        let hosts = admin
+            .list_pairing_candidates()
+            .await
+            .iter()
+            .map(crate::services::client::host_entry_to_wire)
+            .collect();
         Ok(Response::new(wire::ListPairingCandidatesResponse { hosts }))
     }
 }

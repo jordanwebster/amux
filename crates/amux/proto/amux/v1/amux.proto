@@ -382,15 +382,7 @@ message PairingIdentity {
   string name = 3;
 }
 
-message ListHostsRequest {
-  enum Scope {
-    SCOPE_UNSPECIFIED = 0;
-    ALL = 1;
-    PAIRING_CANDIDATES = 2;
-  }
-
-  Scope scope = 1;
-}
+message ListHostsRequest {}
 message ListHostsResponse {
   repeated HostEntry hosts = 1;
 }
