@@ -24,28 +24,10 @@ and process access. Desktop profiles share one daemon process, so a process
 crash or binary replacement affects the whole installation.
 
 An **embedded installation** runs the same supervisor inside its host app.
-The host opens `Installation` on a durable directory it owns, such as the app's
-data container, using `InstallationRoot::OnDisk`, `Listeners::InProcessOnly`,
-and a `CredentialSource::HostProvided` provider for each profile. That directory
-must survive relaunch so device identity, trust and account bindings persist.
-It retains the installation, obtains independent `Client` handles for screens
-and `ProfileAdmin` handles for pairing and trust,
-and awaits `shutdown` when finished. Dropping the last screen client leaves
-every profile and cloud connector running. Without the `local-agents` feature,
-local listeners and process hosting are compiled out.
-
-`InstallationRoot::Ephemeral` exists only for tests (`cfg(test_fixtures)`). Only
-its registry is unpersisted: profile files live in a temporary directory under
-`std::env::temp_dir()` — the app container's tmp on iOS, `TMPDIR` on macOS — and
-are deleted when the installation is dropped. It is unsuitable for host storage.
-
-The app calls `host_suspend` to tear down every cloud link while retaining
-identities, trust and local API access. `host_resume` requests fresh host
-credentials and reconnects eligible profiles independently; rejected credentials
-in one account leave other accounts connected. These hooks follow app activity,
-separately from agent suspension for desktop updates. The library integration
-test exercises two accounts through the real relay with local agents compiled
-out; the phone app's adoption of this API and account switching is separate work.
+The host retains one `Installation` across screens and obtains a `Client` for
+each profile it displays. The [embedding entry point](#embedding-an-installation)
+below describes storage, credentials and lifecycle calls. Without the
+`local-agents` feature, local listeners and process hosting are compiled out.
 
 `amux server start --cloud` instead runs a **cloud relay**
 (`ServerMode::CloudRelay` in `server.rs`). It mints a throwaway `host_id`, loads
@@ -77,17 +59,14 @@ Around the daemon sit its clients and consumers:
   protocol actor for wire-conformance tests. `crates/e2e-runner` drives
   real compiled binaries end to end.
 
-> **Compatibility note:** amuxapp is not updated for the typed agent wire on
-> this branch. Its runtime bridge is broken until the app adopts closed agent
-> kinds and the per-protocol protobuf payloads described below.
-
 ## Accounts, configuration and local entry points
 
 A profile can remain unbound for local, LAN or SSH use, or bind to one cloud
 account. An account is identified by cloud service and subject and can bind at
-most one profile in an installation. The daemon validates staged login
-credentials and obtains the account name and email from userinfo; only the
-daemon refreshes credentials. A local rename overrides the account label.
+most one profile in an installation. On desktop, the daemon validates staged
+login credentials and obtains the account name and email from userinfo; only
+the daemon refreshes credentials. Embedded hosts supply their own credential
+providers as described below. A local rename overrides the account label.
 Logging into another account cannot rebind an existing profile. First login
 can adopt a pristine unbound profile silently; retained trust, agents or
 artifacts require confirmation before adoption.
@@ -144,8 +123,10 @@ A third-party client uses the following contract:
 There is no selection preface or client-readable registry contract. Watch
 starts with a snapshot and `SnapshotComplete`, then ordered changes; a lagged
 stream ends with `ABORTED` and the client resubscribes for a fresh snapshot.
-Mutating administration requests carry operation UUIDs for retry deduplication;
-rename and delete also carry the revision the caller observed.
+Mutating administration requests carry operation UUIDs for retry deduplication
+in a bounded in-process ledger; use the same UUID when retrying the same request,
+and a new UUID for a new operation. Rename and delete also carry the revision
+the caller observed.
 
 `amux init` creates the installation and an unbound profile, asking about
 keep-awake. `amux profiles` lists profiles; `--profile <name|UUID>` selects one
@@ -155,6 +136,87 @@ UUID, so renaming does not change the default device. An explicit unknown or
 ambiguous selector fails instead of falling back. Managed agent hooks and MCP
 servers use their launching profile's exact route regardless of ambient
 configuration or the last-used selection.
+
+In the TUI fleet, `<leader> p` opens the profile switcher. Selecting a profile
+replaces the UI runtime with an empty model connected to that profile; results
+from the previous runtime are discarded. Reports and the artifact cache follow
+the new selection. The other profiles keep running and connected.
+
+## Embedding an installation
+
+The host entry point is `Installation::open(InstallationOptions)`. Open one
+durable, host-owned root with `InstallationRoot::OnDisk`, for example a directory
+in the app's data container. Reopen that same root after relaunch to retain
+profile UUIDs, device identity, trust and account bindings. Only one installation
+can own the root at a time. Build `amux` with `default-features = false` when the
+app must not host local agent processes.
+
+With a host-supplied `root: PathBuf`, `settings: InstallationSettings` and
+`providers: Arc<dyn Fn(ProfileId) -> Arc<dyn CredentialProvider> + Send + Sync>`,
+opening looks like this (the installation and credential types are exported by
+`amux`; `PathBuf` and `Arc` come from `std`):
+
+```rust
+let installation = Installation::open(InstallationOptions {
+    root: InstallationRoot::OnDisk(root),
+    settings,
+    listeners: Listeners::InProcessOnly,
+    credentials: CredentialSource::HostProvided(providers),
+    identity_http: reqwest::Client::new(),
+}).await?;
+```
+
+`Listeners::InProcessOnly` exposes no local Unix or LAN listeners; profiles have
+no advertised socket path. Use `installation.profiles()` for the directory and
+`installation.watch()` for its initial snapshot and later changes. On
+`ProfileEvent::Lagged`, subscribe again. Check each profile's `available`,
+`observed` and `startup_error` rather than assuming that opening the installation
+made every profile ready.
+
+Create with `installation.create(OperationId::new(), label).await?`, retain the
+returned `record.id`, and register its host credential provider before calling
+`installation.bind(operation_id, request).await?`. A `BindRequest` names
+`BindTarget::Explicit(id)`, `cloud_url`, `staged_refresh_token` and
+`adopt_non_pristine`. Binding validates the login with the identity server and
+refuses an account different from the profile's existing binding. Ask the user
+before setting `adopt_non_pristine` for a profile that already holds trust,
+agents or artifacts.
+
+`CredentialSource::HostProvided` leaves secret storage and ongoing refresh to
+the host. Its factory must be ready for existing bound profiles when `open`
+starts them. Implement `CredentialProvider::access_token` and `invalidate` per
+profile; amux checks the returned token's userinfo subject against the binding.
+The initial bind still consumes its staged refresh token, so that token must
+be separate from the refresh-token chain the host provider owns. The bind
+result does not return a rotated token to the host. Host-provided credentials
+are not written to profile credential files; the host must retain its own
+credentials across relaunch and handle refresh rotation safely on cancellation.
+
+Obtain a profile's agent API with `installation.client(id)?` and its
+`ProfileAdmin` with `installation.admin(id).await?`. Use the admin handle for
+`start_pin_pairing`, `start_qr_pairing`, `pair_pin_cloud_peer`,
+`pair_qr_cloud_peer`, `list_peers` and `unpair`; pairing and trust administration
+are separate from the screen's `Client`. Keep the installation alive while
+replacing screen clients: dropping the last client stops no profile or cloud
+connector. Lifecycle calls (`logout`, `pause`, `resume`, `rename`, `delete`)
+also belong to the installation. Rename and confirmed deletion take the
+profile revision the host last observed. Logout keeps the device for later
+login; deletion removes its keys, trust and agents. Clear host-owned secrets
+in the host's storage as part of signing out.
+
+Await `installation.host_suspend()` when the host becomes inactive to tear
+down every cloud link while retaining identities, trust and local API access.
+Await `installation.host_resume()` on return to request fresh credentials and
+reconnect eligible profiles independently; rejected credentials in one account
+leave other accounts connected. Recreate remote subscriptions after resumption;
+old cloud streams do not survive. These hooks are separate from agent suspension
+for desktop updates. Finally, await
+`installation.shutdown(ShutdownReason::UserRequested)` before stopping the
+async runtime or reopening the root, so transport and runtime teardown finish.
+
+The library integration test exercises two accounts through the real relay with
+local agents compiled out. The phone app's adoption of this API and account
+switching is separate work; a suspended phone app receives no background alerts.
 
 ## Provider crates and daemon adapters
 
@@ -233,8 +295,9 @@ The trust store (`trust.rs`) maps
 `host_id → { pubkey, name, paired_at, reachabilities }`. It is the entire
 trust model: a pinned pubkey is what lets a peer's mTLS handshake
 terminate into the trusted services. Entries are added only by successful
-pairing and removed only by local revocation (`amux unpair`); no inbound
-protocol message can mutate trust. The store is local-only — never sent
+pairing and removed by local revocation (`amux unpair`) or profile deletion.
+Outside an authorized pairing exchange, inbound protocol messages cannot mutate
+trust. The store is local-only — never sent
 to the cloud, never synchronized between devices.
 
 `reachabilities` is not trust; it is the list of **dialer-responsibility

@@ -7813,3 +7813,15 @@ the slot across when the retiring runtime was the one that installed it —
 matched by recorder identity, so a host that keeps its own panic hook does not
 acquire one by switching — and clears it when the new selection has nowhere to
 write rather than leaving the retired directory registered.
+
+2026-09-05 — **Document the installation host API and account boundaries.**
+The architecture now walks an app author through opening durable storage,
+supplying per-profile credentials, obtaining clients and pairing handles, and
+awaiting host lifecycle transitions and shutdown. The user guide describes
+account switching and installation-wide stop and update. Debugging explains
+where switched-profile reports go and why a completed update journal can remain
+on disk. Trust and relay wording now distinguishes profile deletion, authorized
+pairing, paired forwarding peers and the cloud's ability to disrupt delivery.
+Checked the four documents against the implementation, both spec suites,
+embedding tests, panic-report regressions and seven real-process CLI scenarios,
+including third-party discovery and updating two profiles.

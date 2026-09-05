@@ -28,12 +28,18 @@ before capturing an agent's screen.
 Reports belong to the selected profile. By default they live at that profile's
 `<data_dir>/reports`, allocated beneath the installation root as
 `profiles/<UUID>/data/reports`. Renaming a profile does not move its reports.
+Switching profiles in the TUI changes the destination for subsequent captures
+and automatic runtime reports, including panic reports, to the profile now on
+screen.
 The **installation configuration** can override this with one shared location
 for all profiles:
 
 ```yaml
 reports_dir: /absolute/path/to/amux-reports
 ```
+
+With this override, all profiles share the report directory without UUID
+subdirectories; listing or pruning it sees reports from every profile.
 
 Use `amux profiles` to find the profile, then select it when inspecting reports,
 or set `AMUX_CONFIG` to its profile configuration (which points to the
@@ -203,8 +209,10 @@ older suspended sessions remain suspended. If replacement fails, the updater
 starts the unchanged executable and attempts the same resume before reporting
 the replacement error.
 
-The installation root's `update.json` records the pending operation. Each
-profile's `state/suspended.yaml` (beside its configured `state.yaml`) holds
+The installation root's `update.json` records the operation and its phase;
+the file also remains after completion, so its presence alone does not mean
+recovery is pending. Each profile's `state/suspended.yaml` (beside its
+configured `state.yaml`) holds
 retained sessions. Preserve these files when investigating interruption: ordinary
 server startup does not auto-resume. The internal `amux server resume` command
 retries recovery through the front door; repeated recovery does not start an

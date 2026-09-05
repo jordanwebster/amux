@@ -26,6 +26,24 @@ paused across restarts. Deleting a profile explicitly destroys its keys, trust
 and agents. Profiles isolate amux state and routing, but do not sandbox code
 running as the same OS user.
 
+Run `amux init` to create an installation with an unbound profile, then
+`amux login` to add a cloud account. Login shows the account's name and email;
+use its UUID from `amux profiles` in
+`amux --profile <UUID> profile rename Work` to give it a local label. Another
+account gets a separate profile; logging into it never changes Work's binding.
+
+In `amux ui --profile Work`, return to the fleet and press the leader key
+(Ctrl+A by default), then `p`. The switcher lists profile labels, emails and
+status. Use arrows or `j`/`k`, then Enter to switch; Esc closes it. The new fleet
+shows only the selected profile's agents, and amux remembers its UUID for later
+commands. `--profile` overrides the remembered selection.
+
+`amux server stop` stops every profile and kills their running agents.
+`amux update` instead saves active sessions across all profiles before replacing
+the binary and restores those sessions afterward. Sessions already suspended
+stay suspended. Ordinary startup does not restore suspended sessions. Profiles
+share one desktop daemon, so a process crash affects every account.
+
 ## Pairing: trust is something you do once, in person
 
 Pairing connects two devices you control (or yours and a collaborator's).
@@ -82,27 +100,29 @@ That one rule — every call is a tunnel, every tunnel is authenticated
 end-to-end — is the heart of the security model. The transport
 underneath is just plumbing; nothing about it is trusted.
 
-## The relay (and why it can't hurt you)
+## What a relay can see and do
 
 When two of your devices can't reach each other directly, a relay passes
 their messages along. The relay can be the amux cloud, or any always-on
 device you've paired (a home server works fine) — relaying is built into
 every node.
 
-A relay sees only encrypted tunnel traffic and delivery addresses. It
-cannot:
+The cloud relay sees encrypted tunnel traffic plus metadata such as device
+names, account identity, online status, delivery addresses and traffic timing.
+It cannot:
 
 - **read your sessions** — tunnel contents are encrypted end-to-end
   between your devices;
 - **impersonate a device** — it holds no pinned key, so it fails the
   handshake that guards every call;
 - **create agents or run commands** — those require a tunnel that
-  terminates inside your trusted circle, which a relay can never form.
+  terminates inside your trusted circle, which the cloud relay cannot form.
 
-The cloud relay is deliberately just a well-connected middleman with a
-subscription check at the door. If it were ever compromised, the
-attacker would inherit the ability to forward your encrypted packets —
-and nothing else.
+The cloud relay has a subscription check at the door. A compromised relay
+could drop or delay packets and disrupt connectivity, but it would gain no
+authority to read sessions or operate agents. A paired device that also relays
+traffic has the agent authority you granted when pairing; it still cannot read
+the tunnels it forwards between other devices.
 
 ## Leaving: revocation is local and immediate
 
