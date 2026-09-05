@@ -196,3 +196,16 @@ jobs:
         env:
           AMUX_PERF_MACHINE: macos-26
         run: timeout 9000 wt run ios-verify
+      - name: What a failed verification drew
+        # A golden that differs here and nowhere else can only be read by
+        # looking at what this machine drew, so the captures leave with the
+        # run. Expected, actual and diff sit side by side per screen.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-verification-captures
+          path: |
+            target/ios/goldens
+            target/ios/journeys
+          if-no-files-found: ignore
+          retention-days: 7

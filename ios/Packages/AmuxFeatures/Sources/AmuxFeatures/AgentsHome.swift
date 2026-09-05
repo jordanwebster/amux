@@ -382,6 +382,7 @@ extension FleetGate {
 /// mark would have done the job badly.
 struct AgentRowView: View {
     @Environment(\.design) private var design
+    @Environment(\.dynamicTypeSize) private var typeSize
     let row: AgentRow
     let host: String?
     let now: Date
@@ -421,18 +422,33 @@ struct AgentRowView: View {
     /// never counted the changes the word stands alone: an absent count is not
     /// a zero.
     private var third: some View {
-        HStack(spacing: 6) {
-            if let word = stateWord {
-                Text(word)
-                Text("·")
+        Group {
+            if typeSize.isAccessibilitySize {
+                // Three things competing for one line leave each of them a few
+                // characters and an ellipsis once the text is turned up —
+                // "Fini… · 1 fi… mini" says less than nothing. The same words
+                // stacked and allowed to wrap still say what happened.
+                VStack(alignment: .leading, spacing: 2) {
+                    Text([stateWord, detail].compactMap { $0 }.joined(separator: " · "))
+                    if stateWord != nil, let host { Text(host) }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(spacing: 6) {
+                    if let word = stateWord {
+                        Text(word)
+                        Text("·")
+                    }
+                    Text(detail)
+                    Spacer(minLength: 0)
+                    if stateWord != nil, let host { Text(host) }
+                }
+                .lineLimit(1)
             }
-            Text(detail)
-            Spacer(minLength: 0)
-            if stateWord != nil, let host { Text(host) }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .designFont(.monoSmall, design)
         .foregroundStyle(design.inkFaint.color)
-        .lineLimit(1)
         .padding(.top, 1)
     }
 

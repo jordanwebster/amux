@@ -101,6 +101,27 @@ against. Three things about the picture are worth knowing:
   conversation to get there. The design drew this panel for an app with no tab
   bar; this one has both, and the shorter path wins.
 
+## ax-home
+
+The same Agents home at an accessibility text size. There is no design
+reference at this size, so there is nothing to depart from; what the capture is
+for is that the screen still says what it says when someone turns the text up.
+
+- **The state line stacks instead of sharing a line.** At ordinary sizes
+  "Finished · 1 file · +21 −6" and the machine's name sit on one line with the
+  machine pushed right. Three things competing for one line at this size leave
+  each of them a few characters and an ellipsis, so the same words wrap and the
+  machine's name drops to its own line.
+- **A headline is still two lines.** Long headlines end in an ellipsis here as
+  they do at every size: a row promises the first two lines of what an agent is
+  doing, not all of it, and one tap opens the rest.
+
+## small-home
+
+The same Agents home on the narrowest display the app supports. The same
+content as `home`, so every difference between the two captures is the layout
+answering a narrower width. There is no design reference at this width either.
+
 ## probe
 
 Not a screen of the app. The capture harness's own target: the ground, a glass

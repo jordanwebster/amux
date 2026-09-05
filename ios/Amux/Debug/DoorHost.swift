@@ -139,9 +139,10 @@ final class DoorHost {
         fixture.apply(stores)
         cloud.scripted = fixture.cloud
         cloud.reset()
-        if let named = fixture.typeSize, let size = DynamicTypeSize(doorName: named) {
-            typeSize = size
-        }
+        // A fixture that names no text size means the default one, not
+        // whatever the last fixture left behind: one screen captured at an
+        // accessibility size must not silently resize every screen after it.
+        typeSize = fixture.typeSize.flatMap(DynamicTypeSize.init(doorName:)) ?? .large
         show(screen)
         return .ack
     }

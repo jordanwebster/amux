@@ -4,6 +4,24 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The home at a text size somebody actually uses.** The Agents
+home now has baselines at an accessibility text size and on the narrowest
+supported display. Taking the first one showed the state line under each row
+giving up: "Finished · 1 file · +21 −6" and the machine's name were three
+things sharing one line, and at that size each got a few characters and an
+ellipsis — "Fini… · 1 fi… mini", which says less than nothing. At accessibility
+sizes those words now wrap and the machine's name drops to its own line.
+
+Taking it also showed the capture harness leaking. A screen opened at an
+accessibility size left the app at that size, so every screen captured after it
+was drawn at the wrong size — a run that happened to put the accessibility home
+first failed eleven captures that were fine. A fixture that names no text size
+now means the default one rather than whatever the last fixture left behind.
+
+Captures from a failed verification also leave the CI run as an artifact now.
+A golden that differs on one machine and nowhere else can only be read by
+looking at what that machine drew.
+
 2026-09-05 — **Asking CoreSimulator twice.** The iOS checks find the pinned
 simulator by asking `simctl` what devices the machine has. On a shared runner
 that query queues behind whatever else is talking to CoreSimulator — a device
