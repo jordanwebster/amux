@@ -35,14 +35,21 @@ use crate::services::agent::{
     AgentServiceCtx, INITIAL_PROMPT_READINESS_TIMEOUT, INITIAL_PROMPT_WAIT_METADATA,
 };
 use crate::services::pairing::{
-    LocalPairingIdentity, PeerTrustCommitContext, PeerTrustUpdate, SharedTrustCommitLock,
-    commit_peer_trust, pair_initiator,
+    LocalPairingIdentity, PAIR_INITIATOR_TIMEOUT, PeerTrustCommitContext, PeerTrustUpdate,
+    PendingPairing, SharedTrustCommitLock, begin_pair_initiator, commit_peer_trust, pair_initiator,
 };
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
 use crate::tunnel::TunnelPoolError;
 use crate::user_state::{ServerState, ShutdownRequest};
 use crate::{AgentParent, HostId, audit, envelope};
+
+fn opaque_pairing_status(error: tonic::Status) -> tonic::Status {
+    match error.code() {
+        tonic::Code::Unavailable | tonic::Code::Internal => error,
+        _ => tonic::Status::permission_denied("INVALID_PIN"),
+    }
+}
 
 type TonicResult<T> = Result<tonic::Response<T>, tonic::Status>;
 type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, tonic::Status>> + Send + 'static>>;
@@ -81,6 +88,7 @@ struct ClientServiceState {
     agent_events: EventSource<AgentEvent>,
     remote_inventories: HashMap<Uuid, Vec<Uuid>>,
     remote_agent_subs: HashMap<Uuid, tokio::task::JoinHandle<()>>,
+    pending_pairs: HashMap<Uuid, PendingPairing>,
 }
 
 #[derive(Clone)]
@@ -1410,6 +1418,7 @@ impl wire::client_service_server::ClientService for ClientService {
         audit::pairing_start(method);
         Ok(tonic::Response::new(wire::StartPairingResponse {
             identity: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: self.local_agents.host_id().as_bytes().to_vec(),
                 pubkey: self.pairing_trust.local_pubkey.clone(),
                 name,
@@ -1512,6 +1521,144 @@ impl wire::client_service_server::ClientService for ClientService {
         Ok(tonic::Response::new(wire::PairQrCloudPeerResponse {
             peer: Some(peer),
         }))
+    }
+
+    async fn begin_pair(
+        &self,
+        request: tonic::Request<wire::BeginPairRequest>,
+    ) -> TonicResult<wire::PendingPairResponse> {
+        require_local_admin_client(&request)?;
+        let request = request.into_inner();
+        let invalid = || tonic::Status::permission_denied("INVALID_PIN");
+        let host_id =
+            uuid_from_bytes("BeginPairRequest.host_id", &request.host_id).map_err(|_| invalid())?;
+        if host_id == self.local_agents.host_id() {
+            return Err(invalid());
+        }
+        let secret = match request.secret {
+            Some(wire::begin_pair_request::Secret::Pin(pin))
+                if pin.len() == 6 && pin.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                pin.into_bytes()
+            }
+            Some(wire::begin_pair_request::Secret::QrSecret(secret))
+                if secret.len() == QR_SECRET_LEN =>
+            {
+                secret
+            }
+            _ => return Err(invalid()),
+        };
+        let local_name = {
+            let state = self.server_state.read().await;
+            if request
+                .cloud_url
+                .as_ref()
+                .is_some_and(|url| *url != state.config.cloud_url)
+            {
+                return Err(invalid());
+            }
+            state.host_name().to_string()
+        };
+        let identity = LocalPairingIdentity::new(
+            self.local_agents.host_id(),
+            self.pairing_trust.local_pubkey.clone(),
+        );
+        let channel = self
+            .remote_agent_connections
+            .cloud_pairing_channel_to(host_id)
+            .await
+            .map_err(|error| tonic::Status::unavailable(error.to_string()))?;
+        let pending = begin_pair_initiator(
+            &mut wire::pairing_service_client::PairingServiceClient::new(channel),
+            &identity,
+            &local_name,
+            &secret,
+        )
+        .await
+        .map_err(opaque_pairing_status)?;
+        if pending.peer.host_id != request.host_id
+            || pending.peer.pubkey == self.pairing_trust.local_pubkey
+        {
+            return Err(invalid());
+        }
+        let remaining_ms = pending
+            .peer
+            .expires_at_unix_ms
+            .checked_sub(Utc::now().timestamp_millis())
+            .filter(|remaining| *remaining > 0)
+            .ok_or_else(invalid)?;
+        let token = Uuid::new_v4();
+        let response = wire::PendingPairResponse {
+            token: token.as_bytes().to_vec(),
+            peer: Some(pending.peer.clone()),
+        };
+        let mut state = self.state.write().await;
+        // Bound resources held by local clients that never resolve their confirmation.
+        if state.pending_pairs.len() >= 32 {
+            return Err(tonic::Status::resource_exhausted(
+                "too many pending pairings",
+            ));
+        }
+        state.pending_pairs.insert(token, pending);
+        drop(state);
+        let state = Arc::downgrade(&self.state);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(remaining_ms as u64).min(PAIR_MODE_TTL)).await;
+            if let Some(state) = state.upgrade() {
+                state.write().await.pending_pairs.remove(&token);
+            }
+        });
+        Ok(tonic::Response::new(response))
+    }
+
+    async fn confirm_pair(
+        &self,
+        request: tonic::Request<wire::PendingPairRequest>,
+    ) -> TonicResult<wire::GetPeerResponse> {
+        require_local_admin_client(&request)?;
+        let pending = self.take_pending_pair(request.into_inner()).await?;
+        let peer = tokio::time::timeout(PAIR_INITIATOR_TIMEOUT, pending.confirm())
+            .await
+            .map_err(|_| tonic::Status::permission_denied("INVALID_PIN"))?
+            .map_err(opaque_pairing_status)?;
+        let trust = &self.pairing_trust;
+        commit_peer_trust(
+            PeerTrustCommitContext::new(
+                trust.trust_store.clone(),
+                trust.trust_commit_lock.clone(),
+                self.remote_agent_connections.clone(),
+                trust.data_dir.clone(),
+            ),
+            PeerTrustUpdate::new(
+                peer.host_id,
+                peer.pubkey,
+                peer.name,
+                Some(Reachability::Cloud),
+            ),
+        )
+        .await?;
+        self.publish_host_status_update(peer.host_id).await;
+        let entry = self
+            .peer_entries()?
+            .into_iter()
+            .find(|(host, _)| *host == peer.host_id)
+            .ok_or_else(|| tonic::Status::internal("paired peer missing"))?;
+        Ok(tonic::Response::new(wire::GetPeerResponse {
+            peer: Some(peer_entry_to_wire(entry.0, &entry.1)),
+        }))
+    }
+
+    async fn abandon_pair(
+        &self,
+        request: tonic::Request<wire::PendingPairRequest>,
+    ) -> TonicResult<wire::PairingAbandoned> {
+        require_local_admin_client(&request)?;
+        let pending = self.take_pending_pair(request.into_inner()).await?;
+        tokio::time::timeout(PAIR_INITIATOR_TIMEOUT, pending.abandon())
+            .await
+            .map_err(|_| tonic::Status::permission_denied("INVALID_PIN"))?
+            .map_err(opaque_pairing_status)?;
+        Ok(tonic::Response::new(wire::PairingAbandoned {}))
     }
 
     async fn list_peers(
@@ -2087,6 +2234,20 @@ impl ClientService {
         }))
     }
 
+    async fn take_pending_pair(
+        &self,
+        request: wire::PendingPairRequest,
+    ) -> Result<PendingPairing, tonic::Status> {
+        let token = Uuid::from_slice(&request.token)
+            .map_err(|_| tonic::Status::permission_denied("INVALID_PIN"))?;
+        self.state
+            .write()
+            .await
+            .pending_pairs
+            .remove(&token)
+            .ok_or_else(|| tonic::Status::permission_denied("INVALID_PIN"))
+    }
+
     /// Runs the one pairing wire protocol — `PairingService.Pair`, SPAKE2 —
     /// against `peer_host_id` over a cloud-routed pairing tunnel. The
     /// out-of-band `secret` is the typed PIN's digits or the QR's 256-bit
@@ -2156,6 +2317,7 @@ impl ClientService {
         audit::pairing_success(method, peer.host_id);
         self.publish_host_status_update(peer.host_id).await;
         Ok(wire::PairingIdentity {
+            expires_at_unix_ms: 0,
             host_id: peer.host_id.as_bytes().to_vec(),
             pubkey: peer.pubkey,
             name: peer.name,
@@ -6020,6 +6182,7 @@ mod tests {
 
         let mut direct_request = tonic::Request::new(wire::PairPeerRequest {
             peer: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: Uuid::from_u128(2).as_bytes().to_vec(),
                 pubkey: vec![7; 32],
                 name: "remote".to_string(),
@@ -6074,6 +6237,46 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.code(), tonic::Code::PermissionDenied);
+
+        let mut begin = tonic::Request::new(wire::BeginPairRequest {
+            host_id: remote.as_bytes().to_vec(),
+            secret: Some(wire::begin_pair_request::Secret::Pin("123456".into())),
+            cloud_url: None,
+        });
+        begin.extensions_mut().insert(BoxedGrpcConnectInfo {
+            auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
+        });
+        let error = <ClientService as wire::client_service_server::ClientService>::begin_pair(
+            &service, begin,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::PermissionDenied);
+        for confirm in [true, false] {
+            let mut request = tonic::Request::new(wire::PendingPairRequest { token: vec![1; 16] });
+            request.extensions_mut().insert(BoxedGrpcConnectInfo {
+                auth: BoxedGrpcAuth::TlsTrusted { peer: remote },
+            });
+            let error = if confirm {
+                <ClientService as wire::client_service_server::ClientService>::confirm_pair(
+                    &service, request,
+                )
+                .await
+                .unwrap_err()
+            } else {
+                <ClientService as wire::client_service_server::ClientService>::abandon_pair(
+                    &service, request,
+                )
+                .await
+                .unwrap_err()
+            };
+            assert_eq!(error.code(), tonic::Code::PermissionDenied);
+            assert_ne!(
+                error.message(),
+                "INVALID_PIN",
+                "reject remote admin access before looking up a pending token"
+            );
+        }
 
         let mut list_peers_request = tonic::Request::new(wire::ListPeersRequest {});
         list_peers_request
@@ -6223,6 +6426,7 @@ mod tests {
 
         let mut request = tonic::Request::new(wire::PairPeerRequest {
             peer: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: peer.host_id.as_bytes().to_vec(),
                 pubkey: peer.public_key().to_vec(),
                 name: "workstation".to_string(),
@@ -6265,6 +6469,7 @@ mod tests {
 
         let mut request = tonic::Request::new(wire::PairPeerRequest {
             peer: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: peer.host_id.as_bytes().to_vec(),
                 pubkey: peer.public_key().to_vec(),
                 name: "phone".to_string(),
@@ -6460,6 +6665,7 @@ mod tests {
 
         let mut request = tonic::Request::new(wire::PairPeerRequest {
             peer: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: Uuid::from_u128(2).as_bytes().to_vec(),
                 pubkey: local.public_key().to_vec(),
                 name: "self-key".to_string(),
@@ -6489,6 +6695,7 @@ mod tests {
             client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
         let mut request = tonic::Request::new(wire::PairPeerRequest {
             peer: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: peer.host_id.as_bytes().to_vec(),
                 pubkey: peer.public_key().to_vec(),
                 name: "remote".to_string(),

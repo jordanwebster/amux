@@ -137,6 +137,54 @@ pub enum PairingSecret {
     QrSecret(Vec<u8>),
 }
 
+/// Authenticated display identity awaiting an explicit trust decision.
+/// Dropping this value never grants trust; the host expires the attempt.
+pub struct PendingPeer {
+    pub host_id: crate::HostId,
+    pub name: String,
+    pub fingerprint: String,
+    pub expires_at: DateTime<Utc>,
+    token: Vec<u8>,
+}
+
+impl std::fmt::Debug for PendingPeer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingPeer")
+            .field("host_id", &self.host_id)
+            .field("name", &self.name)
+            .field("fingerprint", &self.fingerprint)
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum PairingError {
+    #[error("InvalidPin")]
+    InvalidPin,
+    #[error("Expired")]
+    Expired,
+    #[error("Abandoned")]
+    Abandoned,
+    #[error(transparent)]
+    Transport(#[from] TransportError),
+}
+
+impl From<ClientError> for PairingError {
+    fn from(error: ClientError) -> Self {
+        Self::Transport(TransportError::Config(error.to_string()))
+    }
+}
+
+fn status_to_pairing_error(error: tonic::Status) -> PairingError {
+    match error.code() {
+        tonic::Code::Unavailable | tonic::Code::Internal => {
+            PairingError::Transport(TransportError::Config(error.to_string()))
+        }
+        _ => PairingError::InvalidPin,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeerEntry {
     pub host_id: uuid::Uuid,
@@ -989,6 +1037,100 @@ impl Client {
         .await
     }
 
+    /// Authenticate a PIN through the relay without writing either trust store.
+    pub async fn begin_pair_pin(
+        &self,
+        host: crate::HostId,
+        pin: &str,
+    ) -> Result<PendingPeer, PairingError> {
+        self.begin_pair(wire::BeginPairRequest {
+            host_id: host.as_bytes().to_vec(),
+            secret: Some(wire::begin_pair_request::Secret::Pin(pin.to_string())),
+            cloud_url: None,
+        })
+        .await
+    }
+
+    /// Authenticate the scanned secret and return the sealed host identity for review.
+    pub async fn begin_pair_qr(
+        &self,
+        payload: &crate::QrPairingPayload,
+    ) -> Result<PendingPeer, PairingError> {
+        self.begin_pair(wire::BeginPairRequest {
+            host_id: payload.host_id.as_bytes().to_vec(),
+            secret: Some(wire::begin_pair_request::Secret::QrSecret(
+                payload.secret.clone(),
+            )),
+            cloud_url: Some(payload.cloud_url.clone()),
+        })
+        .await
+    }
+
+    async fn begin_pair(
+        &self,
+        request: wire::BeginPairRequest,
+    ) -> Result<PendingPeer, PairingError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .begin_pair(request)
+            .await
+            .map_err(status_to_pairing_error)?
+            .into_inner();
+        let peer = response.peer.ok_or(PairingError::InvalidPin)?;
+        let expires_at = DateTime::from_timestamp_millis(peer.expires_at_unix_ms)
+            .ok_or(PairingError::InvalidPin)?;
+        let (host_id, pubkey, name) = pairing_identity_from_wire("BeginPair", peer)?;
+        let hash = ring::digest::digest(&ring::digest::SHA256, &pubkey);
+        let fingerprint = hash
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        Ok(PendingPeer {
+            host_id,
+            name,
+            fingerprint,
+            expires_at,
+            token: response.token,
+        })
+    }
+
+    /// Grant mutual trust to the authenticated peer represented by this attempt.
+    pub async fn confirm_pair(&self, pending: PendingPeer) -> Result<PeerEntry, PairingError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .confirm_pair(wire::PendingPairRequest {
+                token: pending.token,
+            })
+            .await
+            .map_err(status_to_pairing_error)?
+            .into_inner();
+        Ok(peer_entry_from_wire(
+            "ConfirmPair",
+            response.peer.ok_or(PairingError::InvalidPin)?,
+        )?)
+    }
+
+    /// Cancel without trust writes, returning only after the responder acknowledges.
+    pub async fn abandon_pair(&self, pending: PendingPeer) -> Result<(), PairingError> {
+        self.ensure_open()?;
+        self.inner
+            .lock()
+            .await
+            .abandon_pair(wire::PendingPairRequest {
+                token: pending.token,
+            })
+            .await
+            .map_err(status_to_pairing_error)?;
+        Ok(())
+    }
+
     pub async fn pair_pin_cloud_peer(
         &self,
         host_id: uuid::Uuid,
@@ -1123,6 +1265,7 @@ impl Client {
             .await
             .pair_peer(wire::PairPeerRequest {
                 peer: Some(wire::PairingIdentity {
+                    expires_at_unix_ms: 0,
                     host_id: peer.host_id.as_bytes().to_vec(),
                     pubkey: peer.pubkey,
                     name: peer.name,
@@ -1871,6 +2014,7 @@ mod tests {
         let host_id = Uuid::from_u128(42);
         let start = pairing_start_from_wire(wire::StartPairingResponse {
             identity: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: host_id.as_bytes().to_vec(),
                 pubkey: vec![7; 32],
                 name: "laptop".to_string(),
@@ -1897,6 +2041,7 @@ mod tests {
     fn pairing_start_response_rejects_invalid_tcp_port() {
         let error = pairing_start_from_wire(wire::StartPairingResponse {
             identity: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: Uuid::from_u128(42).as_bytes().to_vec(),
                 pubkey: vec![7; 32],
                 name: "laptop".to_string(),

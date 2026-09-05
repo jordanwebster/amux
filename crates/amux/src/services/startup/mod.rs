@@ -1348,7 +1348,8 @@ mod tests {
             .pair(futures_util::stream::empty::<wire::pb::PairMessage>())
             .await
             .unwrap_err();
-        assert_eq!(pairing_error.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(pairing_error.code(), tonic::Code::PermissionDenied);
+        assert_eq!(pairing_error.message(), "INVALID_PIN");
 
         services
             .pair_mode

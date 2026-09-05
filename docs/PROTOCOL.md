@@ -48,6 +48,21 @@ carried the secret. (Pairing over SSH is simpler still: the SSH channel
 is the out-of-band trust, and the two ends exchange identities directly
 over its stdio.)
 
+Clients can pause SPAKE2 before granting trust. `begin_pair_pin` and
+`begin_pair_qr` return a `PendingPeer` with the authenticated host id, name,
+SHA-256 public-key fingerprint and expiry. The expiry travels inside the sealed
+responder identity. Neither trust store changes during this phase. The local
+client service retains the open stream behind an opaque, single-use token;
+unresolved streams expire and the number retained is bounded.
+
+`confirm_pair` sends the initiator's sealed identity, waits for the responder's
+trust commit and stores the peer locally. `abandon_pair` sends a rejection and
+waits for `PairingAbandoned`, which the responder sends after releasing the
+attempt. Cancellation leaves existing trust entries unchanged and does not
+consume a guess. Dropping a pending value grants no trust. Wrong, malformed,
+expired and inactive secrets all return `InvalidPin` through the two-phase
+client API. The begin, confirm and abandon admin RPCs reject remote callers.
+
 ## Links: who is my neighbor
 
 A **link** is an authenticated connection to an adjacent node over some

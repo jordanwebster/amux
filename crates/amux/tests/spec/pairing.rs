@@ -321,3 +321,184 @@ async fn re_pairing_a_rotated_key_replaces_the_old_entry() {
     desktop.can_call(&laptop).await;
     laptop.can_call(&desktop).await;
 }
+
+/// Sealed name, fingerprint and expiry are available before either side writes
+/// trust. Only explicit confirmation commits; that trust survives restart.
+#[tokio::test]
+async fn pairing_confirm_pin_returns_identity_before_mutual_trust() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("phone")
+        .cloud_only()
+        .daemon("host")
+        .cloud_only()
+        .start()
+        .await;
+    let [phone, host] = net.daemons(["phone", "host"]);
+    phone.sees(&host).await;
+    let client = phone.admin_client().await;
+    let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
+    let start = chrono::Utc::now();
+    let pin = host.start_pairing().await;
+    let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
+    assert_eq!(pending.host_id, host.host_id());
+    assert_eq!(pending.name, "host");
+    let hash = ring::digest::digest(&ring::digest::SHA256, &host.identity_on_disk().1);
+    assert_eq!(
+        pending.fingerprint,
+        hash.as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    assert!(pending.expires_at > start);
+    assert!(pending.expires_at <= chrono::Utc::now() + chrono::Duration::minutes(5));
+    phone.does_not_trust(&host).await;
+    host.does_not_trust(&phone).await;
+    assert_eq!(
+        before,
+        (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk())
+    );
+    println!(
+        "pairing pre-trust identity: {}",
+        serde_json::json!({
+            "host_id": pending.host_id, "name": pending.name, "fingerprint": pending.fingerprint,
+            "expires_at": pending.expires_at, "initiator_trust_unchanged": true, "responder_trust_unchanged": true,
+        })
+    );
+    let peer = client.confirm_pair(pending).await.unwrap();
+    assert_eq!(peer.host_id, host.host_id());
+    assert_eq!(peer.pubkey, host.identity_on_disk().1);
+    phone.trusts(&host).await;
+    host.trusts(&phone).await;
+    net.restart_daemon(&phone).await;
+    net.restart_daemon(&host).await;
+    phone.can_call(&host).await;
+    host.can_call(&phone).await;
+    println!("pairing confirmation: mutual trust persisted and calls succeed after restart");
+    let client = phone.admin_client().await;
+    let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
+    let pin = host.start_pairing().await;
+    let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
+    client.abandon_pair(pending).await.unwrap();
+    assert_eq!(
+        before,
+        (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk())
+    );
+    println!("pairing PIN abandonment: existing trust entries remain byte-for-byte unchanged");
+}
+
+/// Abandonment is acknowledged after the responder releases the attempt. More
+/// cancellations than the PIN guess limit still leave the correct secret usable.
+#[tokio::test]
+async fn pairing_confirm_qr_can_be_abandoned_then_confirmed() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("phone")
+        .cloud_only()
+        .daemon("host")
+        .cloud_only()
+        .start()
+        .await;
+    let [phone, host] = net.daemons(["phone", "host"]);
+    phone.sees(&host).await;
+    let client = phone.admin_client().await;
+    let start = host.admin_client().await.start_qr_pairing().await.unwrap();
+    let amux::PairingSecret::QrSecret(secret) = start.secret else {
+        panic!("expected QR")
+    };
+    let payload = amux::QrPairingPayload {
+        host_id: host.host_id(),
+        cloud_url: start.cloud_url,
+        secret,
+    };
+    let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
+    let mut wrong = payload.clone();
+    wrong.secret[0] ^= 1;
+    assert!(matches!(
+        client.begin_pair_qr(&wrong).await,
+        Err(amux::PairingError::InvalidPin)
+    ));
+    wrong.secret.pop();
+    assert!(matches!(
+        client.begin_pair_qr(&wrong).await,
+        Err(amux::PairingError::InvalidPin)
+    ));
+    for _ in 0..6 {
+        let pending = client.begin_pair_qr(&payload).await.unwrap();
+        assert_eq!(pending.name, "host");
+        assert_eq!(pending.host_id, host.host_id());
+        assert!(pending.expires_at > chrono::Utc::now());
+        assert_eq!(
+            before,
+            (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk())
+        );
+        client.abandon_pair(pending).await.unwrap();
+        phone.does_not_trust(&host).await;
+        host.does_not_trust(&phone).await;
+        assert_eq!(
+            before,
+            (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk())
+        );
+    }
+    host.pair_mode_active().await;
+    println!(
+        "pairing abandonment: responder acknowledged six cancellations; both stores byte-for-byte unchanged"
+    );
+    let pending = client.begin_pair_qr(&payload).await.unwrap();
+    client.confirm_pair(pending).await.unwrap();
+    phone.can_call(&host).await;
+    host.can_call(&phone).await;
+    println!("pairing QR confirmation: mutual trust and calls succeed after cancellation");
+}
+
+/// Wrong, malformed, expired and no-longer-active secrets share one error.
+/// Expiry while the confirmation is open also leaves both stores untouched.
+#[tokio::test]
+async fn pairing_confirm_secret_failures_are_indistinguishable() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("phone")
+        .cloud_only()
+        .daemon("host")
+        .cloud_only()
+        .start()
+        .await;
+    let [phone, host] = net.daemons(["phone", "host"]);
+    phone.sees(&host).await;
+    let client = phone.admin_client().await;
+    let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
+    let pin = host.start_pairing().await;
+    for invalid in [pin.wrong_guess().to_string(), "123".into()] {
+        let error = client
+            .begin_pair_pin(host.host_id(), &invalid)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, amux::PairingError::InvalidPin));
+        assert_eq!(error.to_string(), "InvalidPin");
+    }
+    host.cancel_pairing().await;
+    let pin = host
+        .start_pairing_with_ttl(Duration::from_millis(800))
+        .await;
+    let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
+    host.pair_mode_ends().await;
+    assert!(matches!(
+        client.confirm_pair(pending).await,
+        Err(amux::PairingError::InvalidPin)
+    ));
+    let error = client
+        .begin_pair_pin(host.host_id(), &pin)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, amux::PairingError::InvalidPin));
+    phone.does_not_trust(&host).await;
+    host.does_not_trust(&phone).await;
+    assert_eq!(
+        before,
+        (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk())
+    );
+    println!(
+        "pairing failures: wrong, malformed, expired and expired-during-confirmation all InvalidPin; no trust write"
+    );
+}

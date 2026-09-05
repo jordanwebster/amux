@@ -70,6 +70,7 @@ pub(crate) struct PairModeAttempt {
     session_id: u64,
     secret: Vec<u8>,
     active: bool,
+    expires_at: Instant,
 }
 
 pub(crate) struct PairModeCommit {
@@ -183,6 +184,7 @@ impl PairMode {
             session_id: session.id,
             secret: secret.value.clone(),
             active: true,
+            expires_at: session.expires_at,
         })
     }
 
@@ -295,6 +297,10 @@ impl PairMode {
 }
 
 impl PairModeAttempt {
+    pub(crate) fn remaining(&self) -> Duration {
+        self.expires_at.saturating_duration_since(Instant::now())
+    }
+
     /// The SPAKE2 password bytes for this attempt: the PIN's ASCII digits
     /// or the QR secret's 32 raw bytes.
     pub(crate) fn secret(&self) -> &[u8] {

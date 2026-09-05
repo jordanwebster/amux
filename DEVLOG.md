@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Review a pairing identity before granting trust.**
+PIN and QR clients can authenticate through the relay and inspect the sealed
+host name, public-key fingerprint and expiry while both trust stores remain
+unchanged. Explicit confirmation commits mutual trust; cancellation waits for
+the responder to release the attempt and acknowledge abandonment. Pending
+streams expire, their capabilities are single-use, and the admin RPCs reject
+remote callers. Inactive and invalid secrets share the same opaque failure.
+`amux pair` states the generated PIN's expiry. Relay specs check untouched
+persisted bytes before trust and after cancellation, repeat cancellation beyond
+the guess limit, exercise wrong and expired secrets, and prove confirmed trust
+survives restart. A command-boundary test checks the real CLI output.
+
 2026-09-05 — **List host repositories and recent project directories.**
 Clients can query a selected host through the existing authenticated direct or
 relay agent RPC route. Hosts search only configured repository_roots, recognize

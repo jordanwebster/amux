@@ -36,7 +36,7 @@ const AEAD_B_TO_A_INFO: &[u8] = "aead/B→A".as_bytes();
 const A_TO_B_DIRECTION: u8 = 0x01;
 const B_TO_A_DIRECTION: u8 = 0x02;
 pub(crate) const PAIR_INITIATOR_TIMEOUT: Duration = Duration::from_secs(30);
-const PAIR_RESPONDER_TIMEOUT: Duration = Duration::from_secs(30);
+const PAIR_RESPONDER_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const SPAKE2_ED25519_M: [u8; 32] = [
     0xd0, 0x48, 0x03, 0x2c, 0x6e, 0xa0, 0xb6, 0xd6, 0x97, 0xdd, 0xc2, 0xe8, 0x6b, 0xda, 0x85, 0xa3,
     0x3a, 0xda, 0xc9, 0x20, 0xf1, 0xbf, 0x18, 0xe1, 0xb0, 0xc6, 0xd1, 0x66, 0xa5, 0xce, 0xcd, 0xaf,
@@ -295,6 +295,11 @@ impl PairingService {
         .await?;
 
         let local_identity = wire::pb::PairingIdentity {
+            expires_at_unix_ms: Utc::now().timestamp_millis()
+                + attempt
+                    .remaining()
+                    .min(self.spake2_responder_timeout)
+                    .as_millis() as i64,
             host_id: self.local_identity.host_id.as_bytes().to_vec(),
             pubkey: self.local_identity.pubkey.clone(),
             name: self.host_name.clone(),
@@ -312,8 +317,20 @@ impl PairingService {
 
         let sealed_peer_identity = match read_sealed_identity(&mut inbound).await? {
             PairingRead::Expected(bytes) => bytes,
-            PairingRead::PeerError(_) => {
+            PairingRead::PeerError(error) => {
                 audit::pairing_failure("spake2", "peer rejected pairing");
+                if error.reason == wire::pb::pairing_error::Reason::UserRejected as i32 {
+                    // Release the attempt before acknowledging cancellation so callers
+                    // can immediately begin again without consuming an attempt slot.
+                    drop(attempt);
+                    send_body(
+                        &outbound,
+                        wire::pb::pair_message::Body::PairingAbandoned(
+                            wire::pb::PairingAbandoned {},
+                        ),
+                    )
+                    .await?;
+                }
                 return Ok(());
             }
             PairingRead::Eof => {
@@ -415,12 +432,83 @@ pub(crate) async fn pair_initiator(
     .await
 }
 
-async fn pair_initiator_inner(
+pub(crate) struct PendingPairing {
+    pub(crate) peer: wire::PairingIdentity,
+    tx: mpsc::Sender<wire::PairMessage>,
+    inbound: tonic::Streaming<wire::PairMessage>,
+    sealed_local_identity: Vec<u8>,
+}
+
+impl PendingPairing {
+    pub(crate) async fn confirm(mut self) -> Result<SshPairingPeer, Status> {
+        if Utc::now().timestamp_millis() >= self.peer.expires_at_unix_ms {
+            return Err(pairing_status(Code::PermissionDenied, "INVALID_PIN"));
+        }
+        send_client_pairing_body(
+            &self.tx,
+            wire::pair_message::Body::SealedIdentity(self.sealed_local_identity),
+        )
+        .await?;
+        let completion = self
+            .inbound
+            .message()
+            .await?
+            .ok_or_else(|| Status::unavailable("pairing stream closed"))?;
+        match completion.body {
+            Some(wire::pair_message::Body::PairingComplete(_)) => Ok(SshPairingPeer {
+                host_id: validate_pairing_identity(&self.peer).map_err(Status::invalid_argument)?,
+                pubkey: self.peer.pubkey,
+                name: self.peer.name,
+            }),
+            Some(wire::pair_message::Body::Error(error)) => Err(peer_pairing_error_status(error)),
+            _ => Err(Status::invalid_argument("expected pairing completion")),
+        }
+    }
+
+    pub(crate) async fn abandon(mut self) -> Result<(), Status> {
+        send_client_pairing_body(
+            &self.tx,
+            wire::pair_message::Body::Error(wire::PairingError {
+                reason: wire::pairing_error::Reason::UserRejected as i32,
+                detail: String::new(),
+            }),
+        )
+        .await?;
+        match self
+            .inbound
+            .message()
+            .await?
+            .and_then(|message| message.body)
+        {
+            Some(wire::pair_message::Body::PairingAbandoned(_)) => Ok(()),
+            Some(wire::pair_message::Body::Error(error)) => Err(peer_pairing_error_status(error)),
+            _ => Err(Status::unavailable(
+                "pairing stream closed before abandonment acknowledgement",
+            )),
+        }
+    }
+}
+
+pub(crate) async fn begin_pair_initiator(
     client: &mut wire::pairing_service_client::PairingServiceClient<tonic::transport::Channel>,
     local_identity: &LocalPairingIdentity,
     local_name: &str,
     secret: &[u8],
-) -> Result<SshPairingPeer, Status> {
+) -> Result<PendingPairing, Status> {
+    tokio::time::timeout(
+        PAIR_INITIATOR_TIMEOUT,
+        begin_pair_initiator_inner(client, local_identity, local_name, secret),
+    )
+    .await
+    .map_err(|_| pairing_status(Code::DeadlineExceeded, "PAIRING_TIMEOUT"))?
+}
+
+async fn begin_pair_initiator_inner(
+    client: &mut wire::pairing_service_client::PairingServiceClient<tonic::transport::Channel>,
+    local_identity: &LocalPairingIdentity,
+    local_name: &str,
+    secret: &[u8],
+) -> Result<PendingPairing, Status> {
     validate_name(local_name)?;
     let (tx, rx) = mpsc::channel(8);
     let outbound = stream::unfold(rx, |mut rx| async move {
@@ -510,42 +598,22 @@ async fn pair_initiator_inner(
     }
 
     let local_pairing_identity = wire::pb::PairingIdentity {
+        expires_at_unix_ms: 0,
         host_id: local_identity.host_id.as_bytes().to_vec(),
         pubkey: local_identity.pubkey.clone(),
         name: local_name.to_string(),
     };
-    send_client_pairing_body(
-        &tx,
-        wire::pb::pair_message::Body::SealedIdentity(seal_identity(
-            &keys.aead_b_to_a,
-            B_TO_A_DIRECTION,
-            &keys.transcript_hash,
-            &local_pairing_identity,
-        )?),
-    )
-    .await?;
-    drop(tx);
-    let completion = inbound
-        .message()
-        .await?
-        .ok_or_else(|| Status::unavailable("pairing stream closed"))?;
-    match completion.body {
-        Some(wire::pb::pair_message::Body::PairingComplete(_)) => {}
-        Some(wire::pb::pair_message::Body::Error(error)) => {
-            return Err(peer_pairing_error_status(error));
-        }
-        Some(_) | None => {
-            return Err(pairing_status(
-                Code::InvalidArgument,
-                "PROTOCOL_VIOLATION: expected pairing completion",
-            ));
-        }
-    }
-
-    Ok(SshPairingPeer {
-        host_id: peer_host_id,
-        pubkey: peer_identity.pubkey,
-        name: peer_identity.name,
+    let sealed_local_identity = seal_identity(
+        &keys.aead_b_to_a,
+        B_TO_A_DIRECTION,
+        &keys.transcript_hash,
+        &local_pairing_identity,
+    )?;
+    Ok(PendingPairing {
+        peer: peer_identity,
+        tx,
+        inbound,
+        sealed_local_identity,
     })
 }
 
@@ -556,10 +624,12 @@ async fn pair_initiator_with_timeout(
     secret: &[u8],
     timeout: Duration,
 ) -> Result<SshPairingPeer, Status> {
-    match tokio::time::timeout(
-        timeout,
-        pair_initiator_inner(client, local_identity, local_name, secret),
-    )
+    match tokio::time::timeout(timeout, async {
+        begin_pair_initiator_inner(client, local_identity, local_name, secret)
+            .await?
+            .confirm()
+            .await
+    })
     .await
     {
         Ok(result) => result,
@@ -781,7 +851,7 @@ impl wire::pairing_service_server::PairingService for PairingService {
             })?;
         let (tx, rx) = mpsc::channel(8);
         let service = self.clone();
-        let responder_timeout = self.spake2_responder_timeout;
+        let responder_timeout = self.spake2_responder_timeout.min(attempt.remaining());
         tokio::spawn(async move {
             let responder = service.run_spake2_responder(
                 attempt,
@@ -1206,7 +1276,7 @@ fn pair_mode_status(error: crate::pairing::PairModeError) -> Status {
     use crate::pairing::PairModeError;
 
     match error {
-        PairModeError::NotActive => pairing_status(Code::FailedPrecondition, "NOT_IN_PAIRING_MODE"),
+        PairModeError::NotActive => pairing_status(Code::PermissionDenied, "INVALID_PIN"),
         PairModeError::AlreadyActive
         | PairModeError::InvalidPinFormat
         | PairModeError::SecretGeneration => pairing_status(Code::Internal, "PAIR_MODE_ERROR"),
@@ -1227,6 +1297,9 @@ fn peer_pairing_error_status(error: wire::pb::PairingError) -> Status {
     use wire::pb::pairing_error::Reason;
 
     let reason = Reason::try_from(error.reason).unwrap_or(Reason::Unspecified);
+    if matches!(reason, Reason::InvalidPin | Reason::NotInPairingMode) {
+        return pairing_status(Code::PermissionDenied, "INVALID_PIN");
+    }
     let code = match reason {
         Reason::NotInPairingMode => Code::FailedPrecondition,
         Reason::InvalidPin => Code::PermissionDenied,
@@ -1561,8 +1634,8 @@ mod tests {
             .pair(tonic::Request::new(outbound))
             .await
             .unwrap_err();
-        assert_eq!(error.code(), Code::FailedPrecondition);
-        assert_eq!(error.message(), "NOT_IN_PAIRING_MODE");
+        assert_eq!(error.code(), Code::PermissionDenied);
+        assert_eq!(error.message(), "INVALID_PIN");
         task.abort();
     }
 
@@ -1612,6 +1685,7 @@ mod tests {
         assert_eq!(responder_identity.name, "responder");
 
         let initiator_identity = wire::pb::PairingIdentity {
+            expires_at_unix_ms: 0,
             host_id: peer.host_id.as_bytes().to_vec(),
             pubkey: peer.public_key().to_vec(),
             name: "peer".to_string(),
@@ -1807,8 +1881,8 @@ mod tests {
             .pair(tonic::Request::new(outbound))
             .await
             .unwrap_err();
-        assert_eq!(error.code(), Code::FailedPrecondition);
-        assert_eq!(error.message(), "NOT_IN_PAIRING_MODE");
+        assert_eq!(error.code(), Code::PermissionDenied);
+        assert_eq!(error.message(), "INVALID_PIN");
 
         drop(tx);
         drop(held_attempts);
@@ -1836,7 +1910,10 @@ mod tests {
                 });
                 match client.pair(tonic::Request::new(outbound)).await {
                     Ok(response) => return (tx, response.into_inner()),
-                    Err(error) if error.code() == Code::FailedPrecondition => {
+                    Err(error)
+                        if error.code() == Code::PermissionDenied
+                            && error.message() == "INVALID_PIN" =>
+                    {
                         tokio::time::sleep(Duration::from_millis(5)).await;
                     }
                     Err(error) => panic!("unexpected pairing error: {error}"),

@@ -356,10 +356,12 @@ message PairMessage {
     bytes sealed_identity = 3;
     PairingError error = 4;
     PairingComplete pairing_complete = 5;
+    PairingAbandoned pairing_abandoned = 6;
   }
 }
 
 message PairingComplete {}
+message PairingAbandoned {}
 
 message PairingError {
   enum Reason {
@@ -380,6 +382,8 @@ message PairingIdentity {
   bytes host_id = 1;
   bytes pubkey = 2;
   string name = 3;
+  // Authenticated along with the responder identity by SPAKE2 sealing.
+  int64 expires_at_unix_ms = 4;
 }
 
 message ListHostsRequest {
@@ -719,6 +723,9 @@ service ClientService {
   rpc PairPeer(PairPeerRequest) returns (PairPeerResponse);
   rpc PairPinCloudPeer(PairPinCloudPeerRequest) returns (PairPinCloudPeerResponse);
   rpc PairQrCloudPeer(PairQrCloudPeerRequest) returns (PairQrCloudPeerResponse);
+  rpc BeginPair(BeginPairRequest) returns (PendingPairResponse);
+  rpc ConfirmPair(PendingPairRequest) returns (GetPeerResponse);
+  rpc AbandonPair(PendingPairRequest) returns (PairingAbandoned);
   rpc ListPeers(ListPeersRequest) returns (ListPeersResponse);
   rpc GetPeer(GetPeerRequest) returns (GetPeerResponse);
   rpc Unpair(UnpairRequest) returns (UnpairResponse);
@@ -885,6 +892,24 @@ message PairQrCloudPeerRequest {
 
 message PairQrCloudPeerResponse {
   PairingIdentity peer = 1;
+}
+
+message BeginPairRequest {
+  bytes host_id = 1;
+  oneof secret {
+    string pin = 2;
+    bytes qr_secret = 3;
+  }
+  optional string cloud_url = 4;
+}
+
+message PendingPairResponse {
+  bytes token = 1;
+  PairingIdentity peer = 2;
+}
+
+message PendingPairRequest {
+  bytes token = 1;
 }
 
 message PeerRef {

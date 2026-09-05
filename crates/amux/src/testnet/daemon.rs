@@ -892,6 +892,12 @@ impl Daemon {
         *self.inner.runtime.lock().await = Some(runtime);
     }
 
+    /// Exact persisted trust bytes for checking that an unconfirmed attempt
+    /// makes no write, including timestamps or reachability metadata.
+    pub fn trust_bytes_on_disk(&self) -> Vec<u8> {
+        std::fs::read(self.inner.data_dir.join("trust.json")).expect("read daemon trust store")
+    }
+
     /// The daemon's persisted identity, re-read from its data dir:
     /// `(host_id, pubkey)`.
     pub fn identity_on_disk(&self) -> (HostId, Vec<u8>) {

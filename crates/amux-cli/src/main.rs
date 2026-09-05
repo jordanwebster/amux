@@ -963,6 +963,10 @@ fn print_pairing_start(pairing: &PairingStart, print_link: bool) -> Result<()> {
     match &pairing.secret {
         PairingSecret::Pin(pin) => {
             println!("Pairing PIN: {pin}");
+            println!(
+                "PIN expires in {}.",
+                format_pairing_ttl(pairing.ttl_seconds)
+            );
             if let Some(port) = pairing.tcp_port {
                 println!("LAN direct listener: tcp_port {port}");
             }

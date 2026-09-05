@@ -214,6 +214,7 @@ where
 {
     validate_peer(peer)?;
     let frame = wire::pb::PairingIdentity {
+        expires_at_unix_ms: 0,
         host_id: peer.host_id.as_bytes().to_vec(),
         pubkey: peer.pubkey.clone(),
         name: peer.name.clone(),
