@@ -1003,7 +1003,7 @@ impl Daemon {
                 .channel_to(other.host_id())
                 .await
                 .unwrap_or_else(|error| panic!("failed to route {description}: {error}"));
-            Client::from_client_service_channel(channel, None)
+            Client::from_client_service_channel(channel)
         };
         let stream = client
             .subscribe_session(crate::SubscribeSessionRequest {
@@ -1073,7 +1073,7 @@ impl Daemon {
                     peer.name()
                 )
             });
-        Client::from_client_service_channel(channel, None)
+        Client::from_client_service_channel(channel)
     }
 }
 

@@ -313,7 +313,7 @@ async fn startup_failure_leaves_other_profile_serving_and_delete_closes_socket_c
     let channel = crate::client::connect_existing_client_service(&config)
         .await
         .unwrap();
-    let client = Client::from_client_service_channel(channel, None);
+    let client = Client::from_client_service_channel(channel);
     client.list_agents().await.unwrap();
     installation
         .delete(OperationId::new(), second, 1)

@@ -5,13 +5,13 @@
 
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -22,9 +22,7 @@ use crate::client::connect_existing_client_service;
 use crate::client::{Client, ConnectError};
 use crate::config::{Config, ConfigError};
 use crate::identity;
-use crate::profile::runtime::{
-    Listeners, ProfileRuntime, ProfileRuntimeOptions, start_with_security,
-};
+use crate::profile::runtime::{Listeners, ProfileRuntimeOptions, start_with_security};
 use crate::protocol::wire;
 use crate::services::{CloudLinkService, DeviceRuntimeSecurity};
 use crate::subscription::SubscriptionReporter;
@@ -139,41 +137,8 @@ pub struct ServerBuilder {
     as_cloud_relay: bool,
 }
 
-pub struct EmbeddedBuilder {
-    inner: ServerBuilder,
-}
-
 pub struct DaemonBuilder {
     inner: ServerBuilder,
-}
-
-struct EmbeddedServerGuard {
-    stop_tx: Option<oneshot::Sender<()>>,
-    task: Mutex<Option<JoinHandle<()>>>,
-}
-
-impl EmbeddedServerGuard {
-    fn new(stop_tx: oneshot::Sender<()>, task: JoinHandle<()>) -> Self {
-        Self {
-            stop_tx: Some(stop_tx),
-            task: Mutex::new(Some(task)),
-        }
-    }
-}
-
-impl Drop for EmbeddedServerGuard {
-    fn drop(&mut self) {
-        if let Some(stop_tx) = self.stop_tx.take() {
-            let _ = stop_tx.send(());
-        }
-        // Dropping a JoinHandle detaches the task. The stop signal above owns
-        // the orderly teardown; aborting here would skip cloud-link cleanup.
-        let _ = self
-            .task
-            .lock()
-            .expect("embedded server task mutex poisoned")
-            .take();
-    }
 }
 
 impl Server {
@@ -254,6 +219,7 @@ impl Server {
     /// If this server was constructed as a cloud relay:
     /// - TCP connections use TLS
     /// - All connections require valid JWT tokens
+    #[cfg(feature = "local-agents")]
     pub(crate) async fn run(&mut self) -> Result<()> {
         let is_cloud_server = self.is_cloud_relay();
         let (tcp_port, cloud_url, prevent_idle_sleep) = {
@@ -404,14 +370,11 @@ impl ServerBuilder {
         self
     }
 
-    pub fn embedded(self) -> EmbeddedBuilder {
-        EmbeddedBuilder { inner: self }
-    }
-
     pub fn daemon(self) -> DaemonBuilder {
         DaemonBuilder { inner: self }
     }
 
+    #[cfg(feature = "local-agents")]
     pub async fn run(self) -> Result<()> {
         let (config, credentials, as_cloud_relay, update_reporter, subscription_reporter) =
             self.into_parts()?;
@@ -426,49 +389,6 @@ impl ServerBuilder {
     }
 }
 
-impl EmbeddedBuilder {
-    pub async fn open(self) -> Result<Client> {
-        let (config, credentials, as_cloud_relay, update_reporter, subscription_reporter) =
-            self.inner.into_parts()?;
-        if as_cloud_relay {
-            return Err(ServerError::Config(ConfigError::Invalid(
-                "embedded cloud relays are not supported; run a daemon cloud relay instead"
-                    .to_string(),
-            )));
-        }
-        config.validate()?;
-        let has_cloud_credentials = credentials.is_some();
-        let options = ProfileRuntimeOptions::from_legacy_config(
-            config,
-            credentials,
-            update_reporter,
-            subscription_reporter,
-            Listeners::InProcessOnly,
-        );
-        let runtime = crate::profile::runtime::start(options)
-            .await
-            .map_err(|error| ServerError::State(error.to_string()))?;
-        if has_cloud_credentials {
-            runtime
-                .start_cloud()
-                .await
-                .map_err(|error| ServerError::State(error.to_string()))?;
-        }
-        Ok(spawn_embedded_runtime(runtime))
-    }
-}
-
-pub(crate) fn spawn_embedded_runtime(runtime: ProfileRuntime) -> Client {
-    let client = runtime.client();
-    let (stop_tx, stop_rx) = oneshot::channel();
-    let task = tokio::spawn(async move {
-        let _ = stop_rx.await;
-        runtime.stop(ShutdownReason::UserRequested).await;
-    });
-    let guard = Arc::new(EmbeddedServerGuard::new(stop_tx, task));
-    client.with_guard(guard)
-}
-
 impl DaemonBuilder {
     pub async fn open(self) -> std::result::Result<Client, ConnectError> {
         let config = self
@@ -479,7 +399,7 @@ impl DaemonBuilder {
         #[cfg(unix)]
         {
             let channel = connect_existing_client_service(&config).await?;
-            Ok(Client::from_client_service_channel(channel, None))
+            Ok(Client::from_client_service_channel(channel))
         }
         #[cfg(not(unix))]
         Err(ConnectError::Start(

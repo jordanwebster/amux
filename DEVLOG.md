@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Expose installation ownership to embedded hosts.**
+The public library exports installation options, profiles and administration.
+Host suspension tears down cloud connectors while retaining local clients,
+identity and trust; resumption refreshes eligible profiles independently.
+Login and profile resume respect host suspension, and host-provided credentials
+remain the refresh source after binding. Desktop listener and credential-file
+modes compile out without local agents. Embedded callers now retain an
+installation owner and explicitly await shutdown; clients no longer own a
+server. API regressions cover screen-client lifetimes, cancelled asynchronous
+shutdown, suspended-host login and saved installation settings.
+
 2026-09-05 — **Release installation admission after failed agent recovery.**
 Update resume now completes after every agent has been attempted and retained
 state cleanup succeeds, even when an agent cannot start or its profile has no

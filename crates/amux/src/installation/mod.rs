@@ -95,3 +95,6 @@ impl Clone for InstallationError {
         }
     }
 }
+
+#[cfg(test)]
+mod api;

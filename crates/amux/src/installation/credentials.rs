@@ -133,6 +133,10 @@ impl ProfileCredentialStore {
         state.host = Some(provider);
     }
 
+    pub(crate) fn set_host_provider(&self, provider: Arc<dyn CredentialProvider>) {
+        self.core.state.lock().unwrap().host = Some(provider);
+    }
+
     pub(crate) fn epoch(&self) -> u64 {
         self.core.state.lock().unwrap().epoch
     }
@@ -204,6 +208,19 @@ impl ProfileCredentialStore {
             std::fs::File::open(path.parent().unwrap())?.sync_all()?;
         }
         Ok(())
+    }
+
+    pub(crate) async fn refresh_after_host_resume(&self) {
+        // A refresh may have survived connector cancellation to save a rotated
+        // single-use token. Drain it before discarding the cached access token.
+        let _refresh = self.core.refresh.lock().await;
+        let (host, token) = {
+            let mut state = self.core.state.lock().unwrap();
+            (state.host.clone(), state.cache.take())
+        };
+        if let (Some(host), Some(token)) = (host, token) {
+            host.invalidate(&token);
+        }
     }
 
     pub(crate) fn invalidate_pending(&self) {

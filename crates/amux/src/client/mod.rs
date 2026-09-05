@@ -374,32 +374,18 @@ async fn recv_client_service_agent_event(
 pub struct Client {
     inner: Arc<AsyncMutex<wire::client_service_client::ClientServiceClient<Channel>>>,
     closed: Arc<AtomicBool>,
-    guard: Option<Arc<dyn Send + Sync>>,
 }
 
 impl Client {
-    pub(crate) fn from_client_service_channel(
-        channel: Channel,
-        guard: Option<Arc<dyn Send + Sync>>,
-    ) -> Self {
+    pub(crate) fn from_client_service_channel(channel: Channel) -> Self {
         Self {
             inner: Arc::new(AsyncMutex::new(wire::client_service_client(channel))),
             closed: Arc::new(AtomicBool::new(false)),
-            guard,
         }
-    }
-
-    pub(crate) fn with_guard(mut self, guard: Arc<dyn Send + Sync>) -> Self {
-        self.guard = Some(guard);
-        self
     }
 
     pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
-    }
-
-    pub fn owns_embedded_server(&self) -> bool {
-        self.guard.is_some()
     }
 }
 

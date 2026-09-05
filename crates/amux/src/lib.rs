@@ -71,6 +71,12 @@ pub use config::{
     ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
 };
 pub use debug::DebugFormat;
+pub use installation::{
+    BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
+    InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
+    ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, ResumeReport,
+    SuspendReason, SuspendReport,
+};
 pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
@@ -86,9 +92,7 @@ pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket}
 pub use paths::{default_cache_dir, default_data_dir, default_log_path, keymap_dir};
 pub use protocol::{PROTOCOL_VERSION, ProtocolError};
 pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
-pub use server::{
-    DaemonBuilder, EmbeddedBuilder, Server, ServerBuilder, ServerError, ShutdownReason,
-};
+pub use server::{DaemonBuilder, Server, ServerBuilder, ServerError, ShutdownReason};
 pub use subscription::SubscriptionReporter;
 pub use transport::TransportError;
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};

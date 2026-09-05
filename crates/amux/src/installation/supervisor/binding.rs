@@ -307,6 +307,11 @@ impl Inner {
             store.epoch(),
         );
         let prepared = store.commit(staged, &binding).map_err(BindError::Persist)?;
+        let host_provider = match &self.credentials {
+            CredentialSource::HostProvided(provider) => Some(provider(id)),
+            #[cfg(feature = "local-agents")]
+            CredentialSource::ProfileFiles => None,
+        };
         let result = {
             let mut state = self.state.lock().unwrap();
             let result = state
@@ -317,6 +322,9 @@ impl Inner {
                 unreachable!();
             }
             store.activate(prepared);
+            if let Some(provider) = host_provider {
+                store.set_host_provider(provider);
+            }
             state.refresh_record(id);
             let entry = state.profiles.get_mut(&id).unwrap();
             entry.status.intent = self.intent(&entry.status.record, &slot);
@@ -330,11 +338,7 @@ impl Inner {
         runtime
             .configure_credentials(binding.account.service.to_string(), Some(store))
             .await;
-        if !self.state.lock().unwrap().profiles[&id]
-            .status
-            .record
-            .paused
-        {
+        if self.cloud_eligible(id) {
             let _ = runtime.start_cloud().await;
         }
         result?;

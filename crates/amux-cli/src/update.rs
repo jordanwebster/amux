@@ -267,14 +267,26 @@ mod tests {
             reporter.dismiss_update_required("99.0.0");
             reporter.report_subscription_required(true);
 
-            let client = amux::Server::builder()
-                .config(config)
-                .update_reporter(reporter.clone())
-                .subscription_reporter(reporter.clone())
-                .embedded()
-                .open()
-                .await
-                .unwrap();
+            let installation = amux::Installation::open(amux::InstallationOptions {
+                root: amux::InstallationRoot::InMemory,
+                settings: amux::InstallationSettings {
+                    host_name: config.host_name,
+                    prevent_idle_sleep: Some(false),
+                    keybinds: config.keybinds,
+                    ui: config.ui,
+                    keymaps_dir: temp.path().join("keymaps"),
+                    minimum_client_versions: Default::default(),
+                    update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
+                    status_reporters: amux::update::StatusReporters::Host {
+                        update: Some(reporter.clone()), subscription: Some(reporter.clone()),
+                    },
+                },
+                listeners: amux::Listeners::InProcessOnly,
+                credentials: amux::CredentialSource::ProfileFiles,
+                identity_http: Default::default(),
+            }).await.unwrap();
+            let id = installation.create(amux::OperationId::new(), None).await.unwrap().record.id;
+            let client = installation.client(id).unwrap();
             client.list_agents().await.unwrap();
             assert_eq!(reporter.read_update_required().as_deref(), Some("99.0.0"));
             assert!(reporter.is_update_dismissed("99.0.0"));
@@ -283,6 +295,7 @@ mod tests {
 
             reporter.report_subscription_required(true);
             drop(client);
+            installation.shutdown(amux::ShutdownReason::UserRequested).await;
             while reporter.subscription_required() {
                 tokio::task::yield_now().await;
             }

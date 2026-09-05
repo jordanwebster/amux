@@ -108,8 +108,21 @@ impl ProfileWatch {
 
 #[derive(Clone)]
 pub enum CredentialSource {
+    #[cfg(feature = "local-agents")]
     ProfileFiles,
+    /// The host owns secret storage and refresh. Tokens are checked against the
+    /// profile binding before they can establish a cloud link.
     HostProvided(Arc<dyn Fn(ProfileId) -> Arc<dyn CredentialProvider> + Send + Sync>),
+}
+
+impl CredentialSource {
+    fn uses_profile_files(&self) -> bool {
+        match self {
+            #[cfg(feature = "local-agents")]
+            Self::ProfileFiles => true,
+            Self::HostProvided(_) => false,
+        }
+    }
 }
 
 pub struct InstallationOptions {
@@ -151,6 +164,7 @@ struct State {
     sequence: u64,
     events: Option<broadcast::Sender<ProfileEvent>>,
     stopped: bool,
+    host_suspended: bool,
     update_active: bool,
     credential_clock: u64,
     revoked_accounts: HashMap<super::AccountId, u64>,
@@ -271,7 +285,7 @@ impl Installation {
     /// Serve a desktop installation until the host requests shutdown or a local
     /// administrator stops it through the front door. One sleep assertion covers
     /// every profile for the lifetime of the daemon.
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "local-agents"))]
     pub async fn serve(
         self,
         shutdown: impl std::future::Future<Output = ()>,
@@ -313,6 +327,8 @@ impl Installation {
         Ok(())
     }
 
+    /// Own an installation and start its profiles independently. Keep this owner
+    /// alive across screens; dropping clients never stops a profile.
     pub async fn open(options: InstallationOptions) -> Result<Self, InstallationError> {
         Self::open_inner(
             options,
@@ -324,6 +340,7 @@ impl Installation {
     }
 
     /// Open a desktop installation using shared preferences from its config.
+    #[cfg(feature = "local-agents")]
     pub async fn from_config(config: InstallationConfig) -> Result<Self, InstallationError> {
         config.validate()?;
         let options = InstallationOptions {
@@ -372,6 +389,7 @@ impl Installation {
             ui: options.settings.ui.clone(),
             keymaps_dir: options.settings.keymaps_dir.clone(),
             minimum_client_versions: options.settings.minimum_client_versions.clone(),
+            update_manifest_url: options.settings.update_manifest_url.clone(),
             ..InstallationConfig::default()
         });
         config.root = root.clone();
@@ -407,6 +425,7 @@ impl Installation {
                 sequence: 0,
                 events: Some(events),
                 stopped: false,
+                host_suspended: false,
                 update_active: update::Journal::load(&root)?
                     .is_some_and(|journal| journal.pending()),
                 credential_clock: 0,
@@ -609,6 +628,19 @@ impl Installation {
             _ => unreachable!(),
         }
     }
+    /// Stop all cloud connectors while retaining local profiles, trust and clients.
+    pub async fn host_suspend(&self) {
+        let inner = self.inner.clone();
+        let _ = tokio::spawn(async move { inner.set_host_suspended(true).await }).await;
+    }
+
+    /// Refresh and reconnect eligible profiles after the host becomes active.
+    pub async fn host_resume(&self) {
+        let inner = self.inner.clone();
+        let _ = tokio::spawn(async move { inner.set_host_suspended(false).await }).await;
+    }
+
+    /// Finish runtime and transport teardown asynchronously, even if this future is dropped.
     pub async fn shutdown(self, reason: ShutdownReason) {
         let inner = self.inner.clone();
         // The owned teardown continues if a host drops the shutdown future.
@@ -630,6 +662,49 @@ impl Drop for Installation {
 }
 
 impl Inner {
+    fn cloud_eligible(&self, id: ProfileId) -> bool {
+        let state = self.state.lock().unwrap();
+        !state.stopped
+            && !state.host_suspended
+            && state
+                .active(id)
+                .is_ok_and(|entry| self.intent(&entry.status.record, &entry.slot) == Intent::Bound)
+    }
+
+    async fn set_host_suspended(&self, suspended: bool) {
+        // A host transition excludes create, bind, pause, delete and shutdown.
+        // Profile connectors transition concurrently so one account cannot delay another.
+        let _lifecycle = self.lifecycle.write().await;
+        let slots = {
+            let mut state = self.state.lock().unwrap();
+            if state.stopped || state.host_suspended == suspended {
+                return;
+            }
+            state.host_suspended = suspended;
+            state
+                .profiles
+                .iter()
+                .filter(|(_, entry)| !entry.deleting)
+                .map(|(id, entry)| (*id, entry.slot.clone()))
+                .collect::<Vec<_>>()
+        };
+        futures_util::future::join_all(slots.into_iter().map(|(id, slot)| async move {
+            let runtime = slot.runtime.lock().await;
+            if let Some(runtime) = runtime.as_ref() {
+                if suspended {
+                    runtime.stop_cloud().await;
+                } else if self.cloud_eligible(id) {
+                    let store = slot.credentials.lock().unwrap().clone();
+                    if let Some(store) = store {
+                        store.refresh_after_host_resume().await;
+                    }
+                    let _ = runtime.start_cloud().await;
+                }
+            }
+        }))
+        .await;
+    }
+
     fn insert(&self, record: ProfileRecord) {
         let id = record.id;
         let intent = if record.paused {
@@ -687,11 +762,12 @@ impl Inner {
             }
             let version = self.state.lock().unwrap().registry.credential_version(id);
             let store = Arc::new(ProfileCredentialStore::open(
-                matches!(self.credentials, CredentialSource::ProfileFiles)
+                self.credentials
+                    .uses_profile_files()
                     .then(|| paths.credentials_path().unwrap()),
                 self.identity_http.clone(),
                 record.binding.as_ref(),
-                if matches!(self.credentials, CredentialSource::ProfileFiles) {
+                if self.credentials.uses_profile_files() {
                     version
                 } else {
                     None
@@ -763,7 +839,7 @@ impl Inner {
             let runtime = runtime::start_supervised(options, status, slot.operations.clone())
                 .await
                 .map_err(|error| InstallationError::Unavailable(error.to_string()))?;
-            if record.binding.is_some() && !record.paused {
+            if self.cloud_eligible(id) {
                 let _ = runtime.start_cloud().await;
             }
             Ok::<_, InstallationError>((runtime, paths))
@@ -781,7 +857,7 @@ impl Inner {
                 entry.status.available = true;
                 entry.status.intent = self.intent(&entry.status.record, &slot);
                 entry.status.socket_path =
-                    (self.listeners == Listeners::Sockets).then_some(paths.socket_path);
+                    self.listeners.has_sockets().then_some(paths.socket_path);
                 state.publish(id);
             }
             Err(error) => {
@@ -961,8 +1037,7 @@ impl Inner {
                     }
                 }
                 Mutation::Resume(_) => {
-                    let bound =
-                        self.state.lock().unwrap().profiles[&id].status.intent == Intent::Bound;
+                    let bound = self.cloud_eligible(id);
                     if bound {
                         let _ = runtime.start_cloud().await;
                     }
@@ -1078,7 +1153,7 @@ pub use update::{
     SuspendReason, SuspendReport,
 };
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agents"))]
 mod tests;
 
 #[cfg(testnet)]

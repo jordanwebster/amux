@@ -2178,7 +2178,7 @@ mod tests {
     async fn started_services_public_client_wrapper_uses_in_process_channel() {
         let services = test_started_services().await;
         let (channel, server_task) = services.open_in_process_client_channel();
-        let client = crate::Client::from_client_service_channel(channel, Some(Arc::new(())));
+        let client = crate::Client::from_client_service_channel(channel);
         let agent_id = Uuid::from_u128(43);
 
         let mut host_events = client.subscribe_hosts().await.unwrap();
@@ -2426,7 +2426,7 @@ mod tests {
             .await;
 
         let (channel, server_task) = services.open_in_process_client_channel();
-        let client = crate::Client::from_client_service_channel(channel, Some(Arc::new(())));
+        let client = crate::Client::from_client_service_channel(channel);
         let mut session = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: agent_id.into(),

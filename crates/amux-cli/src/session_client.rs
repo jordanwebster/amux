@@ -1202,7 +1202,7 @@ mod attach {
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
-    use amux::{AgentId, Config, Server};
+    use amux::AgentId;
     use amux_ui::{Model, Runtime, RuntimeOptions};
 
     use super::*;
@@ -1229,20 +1229,33 @@ mod attach {
         }
     }
 
-    async fn embedded_client(dir: &std::path::Path) -> Client {
-        let config = Config {
-            state_path: dir.join("state.yaml"),
-            socket_path: dir.join("amux.sock"),
-
-            prevent_idle_sleep: Some(false),
-            ..Config::default()
-        };
-        Server::builder()
-            .config(config)
-            .embedded()
-            .open()
+    async fn embedded_client() -> (amux::Installation, Client) {
+        let installation = amux::Installation::open(amux::InstallationOptions {
+            root: amux::InstallationRoot::InMemory,
+            settings: amux::InstallationSettings {
+                host_name: "session-test".into(),
+                prevent_idle_sleep: Some(false),
+                keybinds: Default::default(),
+                ui: Default::default(),
+                keymaps_dir: Default::default(),
+                minimum_client_versions: Default::default(),
+                update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
+                status_reporters: Default::default(),
+            },
+            listeners: amux::Listeners::InProcessOnly,
+            credentials: amux::CredentialSource::ProfileFiles,
+            identity_http: Default::default(),
+        })
+        .await
+        .unwrap();
+        let id = installation
+            .create(amux::OperationId::new(), None)
             .await
             .unwrap()
+            .record
+            .id;
+        let client = installation.client(id).unwrap();
+        (installation, client)
     }
 
     async fn create_cat_agent(client: &Client, name: &str) -> AgentId {
@@ -1569,8 +1582,7 @@ mod attach {
         ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
     )]
     async fn round_trip_repaints_fleet() {
-        let dir = tempfile::tempdir().unwrap();
-        let client = embedded_client(dir.path()).await;
+        let (installation, client) = embedded_client().await;
         let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
         wait_model(&mut runtime, "snapshot", |model| model.is_synchronized()).await;
 
@@ -1632,6 +1644,9 @@ mod attach {
             .delete_agent(agent)
             .await
             .expect("clean up PTY agent after stress cycles");
+        installation
+            .shutdown(amux::ShutdownReason::UserRequested)
+            .await;
     }
 
     /// The terminal-hygiene byte sequences, asserted through a real vt100
@@ -1668,8 +1683,7 @@ mod attach {
         ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
     )]
     async fn kill_during_attach_still_restores_the_terminal() {
-        let dir = tempfile::tempdir().unwrap();
-        let client = embedded_client(dir.path()).await;
+        let (installation, client) = embedded_client().await;
         let agent = create_cat_agent(&client, "doomed").await;
 
         let attached = open_attach(&client, agent).await;
@@ -1707,6 +1721,9 @@ mod attach {
         parser.process(&restore);
         assert!(!parser.screen().alternate_screen());
         assert!(!parser.screen().hide_cursor());
+        installation
+            .shutdown(amux::ShutdownReason::UserRequested)
+            .await;
     }
 
     /// Enter on a row whose host is offline surfaces the daemon's

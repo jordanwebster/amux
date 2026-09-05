@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use amux::{AgentIdentifier, ArtifactKind, Config, CreateAgentRequest, Server, claude_io};
+use amux::{AgentIdentifier, ArtifactKind, CreateAgentRequest, claude_io};
 use amux_artifacts::ARTIFACT_SIZE_CAP;
 use amux_ui::{
     AgentPhase, AttachmentClient, AttachmentClientFuture, Attention, Command, DraftAttachment,
@@ -61,15 +61,34 @@ async fn create_test_agent(client: &amux::Client, working_dir: &Path) -> amux::A
         .expect("create attachment stub agent")
 }
 
-fn test_config(root: &Path) -> Config {
-    Config {
-        state_path: root.join("state.yaml"),
-        socket_path: root.join("amux.sock"),
-        data_dir: root.join("data"),
-
-        prevent_idle_sleep: Some(false),
-        ..Config::default()
-    }
+async fn installation_client() -> (amux::Installation, amux::Client, PathBuf) {
+    let installation = amux::Installation::open(amux::InstallationOptions {
+        root: amux::InstallationRoot::InMemory,
+        settings: amux::InstallationSettings {
+            host_name: "ui-test".into(),
+            prevent_idle_sleep: Some(false),
+            keybinds: Default::default(),
+            ui: Default::default(),
+            keymaps_dir: PathBuf::new(),
+            minimum_client_versions: Default::default(),
+            update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
+            status_reporters: Default::default(),
+        },
+        listeners: amux::Listeners::InProcessOnly,
+        credentials: amux::CredentialSource::ProfileFiles,
+        identity_http: Default::default(),
+    })
+    .await
+    .unwrap();
+    let id = installation
+        .create(amux::OperationId::new(), None)
+        .await
+        .unwrap()
+        .record
+        .id;
+    let client = installation.client(id).unwrap();
+    let root = installation.root().join("profiles").join(id.to_string());
+    (installation, client, root)
 }
 
 fn claude_input(text: &str) -> InputPayload {
@@ -143,20 +162,7 @@ impl AttachmentClient for AttachmentStub {
 )]
 async fn runtime_reflects_daemon_state_in_the_model() {
     let _guard = embedded_server_test_guard().await;
-    let dir = tempdir().unwrap();
-    let config = Config {
-        state_path: dir.path().join("state.yaml"),
-        socket_path: dir.path().join("amux.sock"),
-
-        prevent_idle_sleep: Some(false),
-        ..Config::default()
-    };
-    let client = Server::builder()
-        .config(config)
-        .embedded()
-        .open()
-        .await
-        .unwrap();
+    let (installation, client, _) = installation_client().await;
 
     let mut runtime = Runtime::start_with_client(client, RuntimeOptions::default());
 
@@ -210,6 +216,9 @@ async fn runtime_reflects_daemon_state_in_the_model() {
         model.agent(agent_id).is_none()
     })
     .await;
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -279,13 +288,7 @@ async fn attachments_puts_finish_before_one_send_and_a_failed_put_stops_the_oper
 async fn attachments_open_uses_one_persistent_cache_and_refetches_tampering() {
     let _guard = embedded_server_test_guard().await;
     let dir = tempdir().unwrap();
-    let config = test_config(dir.path());
-    let client = Server::builder()
-        .config(config)
-        .embedded()
-        .open()
-        .await
-        .unwrap();
+    let (installation, client, profile_root) = installation_client().await;
     let agent = create_test_agent(&client, dir.path()).await;
     let bytes = b"cache me once".to_vec();
     let artifact = client
@@ -335,7 +338,7 @@ async fn attachments_open_uses_one_persistent_cache_and_refetches_tampering() {
         OpOutcome::AttachmentOpened { .. }
     ));
 
-    let owner_blob = blob_path(dir.path(), agent.id, &artifact.id);
+    let owner_blob = blob_path(&profile_root, agent.id, &artifact.id);
     let held_owner_blob = dir.path().join("held-owner-blob");
     std::fs::rename(&owner_blob, &held_owner_blob).unwrap();
     let second = runtime.dispatch(Command::OpenAttachment {
@@ -390,18 +393,16 @@ async fn attachments_open_uses_one_persistent_cache_and_refetches_tampering() {
     assert_eq!(opened.lock().unwrap().len(), 4);
     std::fs::rename(&held_owner_blob, &owner_blob).unwrap();
     client.delete_agent(agent.id).await.unwrap();
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn attachments_fetch_and_diff_preserve_typed_runtime_outcomes() {
     let _guard = embedded_server_test_guard().await;
     let dir = tempdir().unwrap();
-    let client = Server::builder()
-        .config(test_config(dir.path()))
-        .embedded()
-        .open()
-        .await
-        .unwrap();
+    let (installation, client, _) = installation_client().await;
     let agent = create_test_agent(&client, dir.path()).await;
     let patch = "diff --git a/a b/a\n+new\n";
     let artifact = client
@@ -454,4 +455,7 @@ async fn attachments_fetch_and_diff_preserve_typed_runtime_outcomes() {
         }
     ));
     client.delete_agent(agent.id).await.unwrap();
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
 }

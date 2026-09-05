@@ -55,7 +55,18 @@ pub struct InstallationSettings {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Listeners {
     InProcessOnly,
+    #[cfg(feature = "local-agents")]
     Sockets,
+}
+
+impl Listeners {
+    pub(crate) fn has_sockets(self) -> bool {
+        match self {
+            Self::InProcessOnly => false,
+            #[cfg(feature = "local-agents")]
+            Self::Sockets => true,
+        }
+    }
 }
 
 #[cfg(testnet)]
@@ -335,7 +346,7 @@ async fn build(
     let mut background_tasks = vec![crate::agents::spawn_artifact_sweeper(
         services.artifact_owners.clone(),
     )];
-    if options.listeners == Listeners::Sockets {
+    if options.listeners.has_sockets() {
         background_tasks.extend(services.spawn_reachability_links());
         if let Some(task) = crate::server::spawn_periodic_update_check(
             reporters.update.clone(),
@@ -355,7 +366,7 @@ async fn build(
     let (client_channel, client_task, in_process_connection) =
         services.open_managed_in_process_client_channel();
     services.push_task(client_task);
-    let client = Client::from_client_service_channel(client_channel.clone(), None);
+    let client = Client::from_client_service_channel(client_channel.clone());
     status.report(Observed::Local);
 
     Ok(ProfileRuntime {
@@ -697,7 +708,7 @@ impl SocketOwnership {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, feature = "local-agents"))]
 mod tests {
     use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream};
 
@@ -756,32 +767,6 @@ mod tests {
         assert!(weak_state.upgrade().is_some());
         runtime.stop(ShutdownReason::UserRequested).await;
         assert!(weak_state.upgrade().is_none());
-    }
-
-    #[tokio::test]
-    async fn profile_runtime_embedded_guard_stops_services_on_last_drop() {
-        let root = tempdir().unwrap();
-        let runtime = start(options(root.path(), Listeners::InProcessOnly))
-            .await
-            .unwrap();
-        let weak_state = runtime.weak_state();
-        // An independent transport client observes shutdown without keeping the
-        // embedding guard alive.
-        let observer = runtime.client();
-        let client = crate::server::spawn_embedded_runtime(runtime);
-        let other = client.clone();
-        drop(client);
-        other.list_agents().await.unwrap();
-        drop(other);
-
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while weak_state.upgrade().is_some() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("embedded guard did not finish runtime teardown");
-        assert!(observer.list_agents().await.is_err());
     }
 
     struct StaticCredentials;
@@ -967,20 +952,11 @@ mod tests {
         *auth.rejection.lock().unwrap() = None;
         runtime.start_cloud().await.unwrap();
         wait_for_status(&runtime, Observed::Connected).await;
-        // The same embedding owner must also tear down an established cloud
-        // link when its final guarded client is dropped.
         let weak_state = runtime.weak_state();
-        let client = crate::server::spawn_embedded_runtime(runtime);
-        drop(client);
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while weak_state.upgrade().is_some() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
+        runtime.stop(ShutdownReason::UserRequested).await;
+        assert!(weak_state.upgrade().is_none());
         wait_for_relay_detach().await;
-        println!("embedded guard dropped: service tasks released and relay link removed");
+        println!("runtime stopped: service tasks released and relay link removed");
         server.abort();
         let _ = server.await;
     }
@@ -995,7 +971,7 @@ mod tests {
             let channel = crate::client::connect_existing_client_service(&config)
                 .await
                 .unwrap();
-            let client = Client::from_client_service_channel(channel, None);
+            let client = Client::from_client_service_channel(channel);
             let dump = client
                 .debug_dump(crate::debug::DebugFormat::Json)
                 .await
@@ -1027,7 +1003,7 @@ mod tests {
             let channel = crate::client::connect_existing_client_service(&config)
                 .await
                 .unwrap();
-            let client = Client::from_client_service_channel(channel, None);
+            let client = Client::from_client_service_channel(channel);
             client.list_agents().await.unwrap();
             runtime.stop(ShutdownReason::UserRequested).await;
             assert!(client.list_agents().await.is_err());

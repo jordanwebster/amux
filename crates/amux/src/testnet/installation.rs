@@ -380,7 +380,7 @@ impl Profile {
         let channel = crate::client::connect_existing_client_service(&config)
             .await
             .unwrap();
-        crate::Client::from_client_service_channel(channel, None)
+        crate::Client::from_client_service_channel(channel)
     }
 
     pub fn status(&self) -> ProfileStatus {
