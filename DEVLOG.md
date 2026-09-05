@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Boot the desktop daemon as an installation.**
+Daemon startup loads installation preferences through the selected profile file,
+starts every registered profile, and serves administration on the front door.
+`amux profiles` probes that front door; start, stop and internal suspend/resume
+use it too. Shutdown replies drain before connections close, all profile sockets
+are removed, and the installation root is released before restart. One sleep
+assertion covers the daemon, and setup writes sleep choices to the installation.
+Worktree and e2e generators now create split YAML and UUID-v5 profiles with
+isolated state and data; AMUX_CONFIG selects the worktree profile through an
+alias. The e2e recipe reuses workspace-built binaries instead of rebuilding
+separate package configurations. Real CLI tests cover startup, probing, stop,
+restart and rejected path disagreement; the MCP fixture retains its isolation
+assertions using the new files.
+
 2026-09-05 — **Remove the cloud-mode preference.**
 Cloud attachment is controlled by profile intent and credentials, with no
 `enable_cloud_mode` field in config, setup or runtime options. Standalone runtime

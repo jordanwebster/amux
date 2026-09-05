@@ -268,6 +268,51 @@ fn write_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), Inst
 }
 
 impl Installation {
+    /// Serve a desktop installation until the host requests shutdown or a local
+    /// administrator stops it through the front door. One sleep assertion covers
+    /// every profile for the lifetime of the daemon.
+    #[cfg(unix)]
+    pub async fn serve(
+        self,
+        shutdown: impl std::future::Future<Output = ()>,
+    ) -> Result<(), InstallationError> {
+        if self.inner.listeners != Listeners::Sockets {
+            return Err(InstallationError::Unavailable(
+                "serving a desktop installation requires socket listeners".into(),
+            ));
+        }
+        let _sleep = crate::sleep_inhibitor::SleepInhibitor::new(
+            self.inner.config.prevent_idle_sleep.unwrap_or(false),
+        );
+        let installation = Arc::new(self);
+        let front = super::FrontDoor::new(
+            installation.clone(),
+            Some(installation.inner.config.front_door_socket.clone()),
+        );
+        let listener = match front.listen() {
+            Ok(listener) => listener,
+            Err(error) => {
+                installation.stop(ShutdownReason::UserRequested).await;
+                return Err(error.into());
+            }
+        };
+        let mut watch = installation.watch();
+        tokio::select! {
+            () = shutdown => installation.stop(ShutdownReason::UserRequested).await,
+            () = async {
+                while let Some(event) = watch.recv().await {
+                    if matches!(event, ProfileEvent::Lagged) {
+                        watch = installation.watch();
+                    }
+                }
+            } => {}
+        }
+        drop(front);
+        drop(installation);
+        listener.stop().await;
+        Ok(())
+    }
+
     pub async fn open(options: InstallationOptions) -> Result<Self, InstallationError> {
         Self::open_inner(
             options,

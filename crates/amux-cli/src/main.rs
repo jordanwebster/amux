@@ -1,5 +1,6 @@
 mod auth;
 mod client_common;
+mod front_door;
 mod hooks;
 mod init;
 mod keymap;
@@ -43,7 +44,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Path to config file (YAML format). Also read from `AMUX_CONFIG`, so
+    /// Path to a profile config file (YAML). Also read from `AMUX_CONFIG`, so
     /// managed Claude hooks and daemons spawned by a wrapper find the same
     /// instance without adding a config flag to their command.
     #[arg(long, global = true, env = "AMUX_CONFIG")]
@@ -114,6 +115,9 @@ enum Commands {
         #[command(subcommand)]
         command: KeymapCommands,
     },
+
+    /// List profiles through the installation front door
+    Profiles,
 
     /// Manage the amux server lifecycle
     Server {
@@ -387,8 +391,54 @@ async fn main() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    match &command {
+        Commands::Profiles => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::list(&config).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command:
+                ServerCommands::Start {
+                    cloud: false,
+                    foreground,
+                    ..
+                },
+        } => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::start(config, *foreground).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command: ServerCommands::Suspend,
+        } => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::suspend(&config).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command: ServerCommands::Resume,
+        } => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::resume(&config).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command: ServerCommands::Stop,
+        } => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::stop(&config).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command: ServerCommands::Start { cloud: true, .. },
+        } => {
+            let path = cli.config.unwrap_or_else(Config::default_path);
+            return run_command(command, Config::from_file(&path)?).await;
+        }
+        _ => {}
+    }
     let config = load_validated_config(cli.config)?;
-
     run_command(command, config).await
 }
 
@@ -410,8 +460,18 @@ async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
     std::io::stdin()
         .read_to_string(&mut input)
         .context("failed to read config from stdin")?;
+    if !cloud {
+        let mut config: amux::InstallationConfig = serde_yaml::from_str(&input)
+            .context("failed to parse installation config from stdin")?;
+        config.path = config_path
+            .as_deref()
+            .map(normalize_config_path)
+            .transpose()?;
+        front_door::run(config).await?;
+        return Ok(true);
+    }
     let mut config: Config =
-        serde_yaml::from_str(&input).context("failed to parse config from stdin")?;
+        serde_yaml::from_str(&input).context("failed to parse relay config from stdin")?;
     config.path = config_path
         .as_deref()
         .map(normalize_config_path)
@@ -433,6 +493,7 @@ fn load_validated_config(path: Option<PathBuf>) -> Result<Config> {
 
 async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> {
     match command {
+        Commands::Profiles => unreachable!("profiles dispatches before profile configuration"),
         Commands::Ui => ui::run(config).await?,
         Commands::New {
             agent_type,
@@ -1205,8 +1266,22 @@ fn load_config(input_path: Option<PathBuf>) -> Result<Config> {
     Ok(match &config_path {
         Some(path) => {
             let path = normalize_config_path(path)?;
-            Config::from_file(&path)
-                .map_err(|e| anyhow!("failed to load config from {:?}: {}", path, e))?
+            let resolved = amux::load_profile_config(&path)
+                .map_err(|e| anyhow!("failed to load profile config from {:?}: {}", path, e))?;
+            Config {
+                host_name: resolved.installation.host_name,
+                cloud_url: resolved.profile.cloud_url,
+                socket_path: resolved.profile.socket_path,
+                tcp_port: resolved.profile.tcp_port,
+                state_path: resolved.profile.state_path,
+                data_dir: resolved.profile.data_dir,
+                reports_dir: resolved.installation.reports_dir,
+                prevent_idle_sleep: resolved.installation.prevent_idle_sleep,
+                minimum_client_versions: resolved.installation.minimum_client_versions,
+                keybinds: resolved.installation.keybinds,
+                ui: resolved.installation.ui,
+                path: Some(path),
+            }
         }
         None => Config::new(),
     })

@@ -1,0 +1,35 @@
+# test: config_split
+# description: A split-config installation starts, exposes profiles, stops and restarts
+
+## Environment
+
+config:
+  name: local
+  host_name: split-device
+
+terminal:
+  name: T1
+  config: local
+
+## Test
+
+@T1
+> amux init
+> amux server start
+Server started.
+
+> amux profiles
+Profiles:
+  cd45a091-bfc8-505c-984c-25c3df220ee6  local    ready
+
+> amux list
+No agents running.
+
+> amux server stop
+Server shutting down.
+
+> amux server start
+Server started.
+
+> amux server stop
+Server shutting down.

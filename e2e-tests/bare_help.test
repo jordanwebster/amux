@@ -16,22 +16,23 @@ Terminal multiplexer for AI agents (Claude, Codex, etc.)
 Usage: amux [OPTIONS] [COMMAND]
 
 Commands:
-  ui      Open the fleet TUI (the default when run with no command)
-  new     Create a new agent session
-  attach  Attach to an existing agent session
-  rm      Remove an agent session by exact name or UUID
-  list    List running agent sessions, folding child agents into their parent
-  keymap  Manage Claude PTY keymaps
-  server  Manage the amux server lifecycle
-  init    Initialize amux (cloud mode, authentication)
-  pair    Pair this device with another amux daemon
-  peer    Show trusted peers
-  unpair  Remove trust for a peer
-  update  Update amux to the latest version
-  debug   Inspect daemon state and locally captured reports
-  help    Print this message or the help of the given subcommand(s)
+  ui        Open the fleet TUI (the default when run with no command)
+  new       Create a new agent session
+  attach    Attach to an existing agent session
+  rm        Remove an agent session by exact name or UUID
+  list      List running agent sessions, folding child agents into their parent
+  keymap    Manage Claude PTY keymaps
+  profiles  List profiles through the installation front door
+  server    Manage the amux server lifecycle
+  init      Initialize local device preferences
+  pair      Pair this device with another amux daemon
+  peer      Show trusted peers
+  unpair    Remove trust for a peer
+  update    Update amux to the latest version
+  debug     Inspect daemon state and locally captured reports
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
-      --config <CONFIG>  Path to config file (YAML format). Also read from `AMUX_CONFIG`, so managed Claude hooks and daemons spawned by a wrapper find the same instance without adding a config flag to their command [env: AMUX_CONFIG=]
+      --config <CONFIG>  Path to a profile config file (YAML). Also read from `AMUX_CONFIG`, so managed Claude hooks and daemons spawned by a wrapper find the same instance without adding a config flag to their command [env: AMUX_CONFIG=]
   -h, --help             Print help
   -V, --version          Print version

@@ -215,6 +215,8 @@ impl TestTerminal {
             cmd.env(key, value);
         }
         // Then override with test-specific vars
+        // The executor passes an explicit --config for this fixture.
+        cmd.env_remove("AMUX_CONFIG");
         for (key, value) in env {
             cmd.env(key, value);
         }

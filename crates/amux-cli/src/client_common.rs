@@ -61,6 +61,13 @@ async fn spawn_daemon_and_connect(
     cloud: bool,
 ) -> Result<Client> {
     config.validate()?;
+    if !cloud {
+        let installation = crate::front_door::configuration(config.path.as_deref())?;
+        if crate::front_door::existing(&installation).await?.is_none() {
+            crate::front_door::spawn(&installation, executable).await?;
+        }
+        return open_daemon(config).await.map_err(Into::into);
+    }
 
     tracing::info!(cloud, "starting server");
 
@@ -87,7 +94,7 @@ async fn spawn_daemon_and_connect(
     Ok(client)
 }
 
-fn daemon_command(
+pub(super) fn daemon_command(
     executable: &Path,
     cloud: bool,
     config_path: Option<&Path>,
@@ -239,7 +246,7 @@ fn open_startup_stderr_file(path: &Path) -> Option<std::fs::File> {
     }
 }
 
-fn startup_exit_error(
+pub(super) fn startup_exit_error(
     status: std::process::ExitStatus,
     startup_stderr_path: &Path,
 ) -> anyhow::Error {

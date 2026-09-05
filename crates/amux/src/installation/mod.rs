@@ -1,6 +1,15 @@
 //! Installation ownership, isolated profile storage, and supervised lifecycles.
 
-pub use crate::services::front_door::{FrontDoor, FrontDoorListener};
+pub use crate::services::front_door::{FrontDoor, FrontDoorClient, FrontDoorListener};
+
+/// Generated messages and clients for the installation's local gRPC boundary.
+pub mod rpc {
+    pub use crate::protocol::amux::v1::{
+        GetInfoRequest, InstallationInfo, InstallationShutdownRequest, ListProfilesRequest,
+        ListProfilesResponse, ProfileInfo, ResumeAllRequest, SuspendAllRequest, SuspendReason,
+        installation_service_client, profile_service_client,
+    };
+}
 
 pub mod binding;
 mod credentials;

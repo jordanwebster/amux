@@ -13,6 +13,39 @@ use crate::protocol::wire;
 use crate::transport::GrpcIo;
 use crate::transport::{self, BoxedGrpcIo, ShutdownIo};
 
+/// A plain gRPC connection to the installation's local administration socket.
+/// Connecting here does not select a profile or open its client API.
+pub struct FrontDoorClient {
+    pub profiles: wire::profile_service_client::ProfileServiceClient<Channel>,
+    pub installation: wire::installation_service_client::InstallationServiceClient<Channel>,
+}
+
+impl FrontDoorClient {
+    #[cfg(not(unix))]
+    pub async fn connect(_path: &std::path::Path) -> std::io::Result<Self> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "installation sockets are not supported on this platform",
+        ))
+    }
+
+    #[cfg(unix)]
+    pub async fn connect(path: &std::path::Path) -> std::io::Result<Self> {
+        let stream = tokio::net::UnixStream::connect(path).await?;
+        let channel = transport::channel_from_single_io(
+            tonic::transport::Endpoint::from_static("http://localhost"),
+            "front door",
+            crate::transport::GrpcIo::new(stream),
+        );
+        Ok(Self {
+            profiles: wire::profile_service_client::ProfileServiceClient::new(channel.clone()),
+            installation: wire::installation_service_client::InstallationServiceClient::new(
+                channel,
+            ),
+        })
+    }
+}
+
 mod handlers;
 mod ledger;
 pub(crate) use ledger::Ledger as FrontDoorOperations;
@@ -78,7 +111,8 @@ impl FrontDoor {
         let listener = transport::bind_unix_listener(&path)?;
         let ownership = SocketOwnership::capture(path)?;
         let cancellation = CancellationToken::new();
-        let closed = cancellation.clone();
+        let connections = CancellationToken::new();
+        let closed = connections.clone();
         let incoming = transport::unix_incoming(listener)
             .map(move |io| io.map(|io| ShutdownIo::new(io, closed.clone())));
         let router = self.router();
@@ -92,28 +126,39 @@ impl FrontDoor {
                 tracing::warn!(%error, "front-door listener failed");
             }
         });
-        Ok(FrontDoorListener { cancellation, task })
+        Ok(FrontDoorListener {
+            cancellation,
+            connections,
+            task,
+        })
     }
 }
 
 /// Owns a local front door. Closing it does not stop any profile runtime.
 pub struct FrontDoorListener {
     cancellation: CancellationToken,
+    connections: CancellationToken,
     task: tokio::task::JoinHandle<()>,
 }
 impl FrontDoorListener {
-    pub async fn stop(self) {
+    pub async fn stop(mut self) {
         self.cancellation.cancel();
-        self.task.abort();
-        // Await cancellation so the socket ownership guard has been dropped.
-        // Drop also closes active connections through their cancellation token.
-        let mut this = self;
-        let _ = (&mut this.task).await;
+        // Let the shutdown RPC finish writing its reply before closing existing
+        // channels. A stalled caller cannot hold the daemon open indefinitely.
+        if tokio::time::timeout(std::time::Duration::from_secs(1), &mut self.task)
+            .await
+            .is_err()
+        {
+            self.connections.cancel();
+            self.task.abort();
+            let _ = (&mut self.task).await;
+        }
     }
 }
 impl Drop for FrontDoorListener {
     fn drop(&mut self) {
         self.cancellation.cancel();
+        self.connections.cancel();
         self.task.abort();
     }
 }

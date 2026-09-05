@@ -15,3 +15,5 @@ tempfile = { workspace = true }
 shell-words = { workspace = true }
 chrono = { workspace = true }
 jsonwebtoken = { workspace = true }
+
+uuid = { workspace = true }

@@ -68,7 +68,17 @@ pub fn ensure_device_identity(config: &Config) -> Result<(), SetupError> {
 }
 
 fn write_config_bool(config: &Config, key: &str, value: Option<bool>) -> Result<(), SetupError> {
-    let path = config_file_path(config);
+    let selected = config_file_path(config);
+    let path = if selected.exists() {
+        let map = read_config_mapping(&selected)
+            .map_err(|error| wrap_config_persistence_error(&selected, key, error))?;
+        match map.get(Value::String("installation_config".into())) {
+            Some(Value::String(path)) => PathBuf::from(path),
+            _ => selected,
+        }
+    } else {
+        selected
+    };
     let mut map =
         read_config_mapping(&path).map_err(|e| wrap_config_persistence_error(&path, key, e))?;
 

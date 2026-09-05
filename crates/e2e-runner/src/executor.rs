@@ -40,7 +40,7 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     };
 
     match subcommand {
-        "list" | "ls" => true,
+        "list" | "ls" | "profiles" | "init" => true,
         "server" => match command.args.get(index + 1).map(String::as_str) {
             Some("stop" | "suspend" | "resume") => true,
             Some("start") => !command.args[index + 2..]
@@ -60,12 +60,19 @@ fn run_oneshot_command(
     let output = Command::new(&command.program)
         .args(&command.args)
         .current_dir(cwd)
+        .env_remove("AMUX_CONFIG")
         .envs(env)
         .output()
         .map_err(|e| format!("Failed to run oneshot command: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "Command exited with {}:\n{stdout}{stderr}",
+            output.status
+        ));
+    }
 
     Ok(if stderr.is_empty() {
         stdout
@@ -127,6 +134,14 @@ fn tail_lines(contents: &str, max_lines: usize) -> String {
         tail.push('\n');
     }
     tail
+}
+
+fn write_fixture_yaml(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+    std::fs::write(
+        path,
+        serde_yaml::to_string(value).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("Failed to write {}: {e}", path.display()))
 }
 
 fn default_socket_path(base_dir: &Path, test_name: &str, config_name: &str) -> PathBuf {
@@ -433,6 +448,13 @@ fn handle_cloud_request(mut stream: TcpStream, routing_host: &str, routing_port:
             })
             .to_string(),
         ),
+        "/connect/userinfo" => (
+            "200 OK",
+            serde_json::json!({
+                "sub": E2E_USER_ID, "name": "Test Account", "email": "account@example.test",
+            })
+            .to_string(),
+        ),
         "/api/connect" => {
             let token = routing_token(routing_host, routing_port);
             (
@@ -558,7 +580,14 @@ impl Executor {
 
     fn run_test_inner(&self, test_case: &TestCase) -> Result<(), String> {
         // Create temp directory for test artifacts
-        let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
+        let temp_dir = tempfile::Builder::new()
+            .prefix("ae")
+            .tempdir_in(if cfg!(unix) {
+                PathBuf::from("/tmp")
+            } else {
+                std::env::temp_dir()
+            })
+            .map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
         // Prepare environment by auto-injecting missing fields
         let (directories, mut configs, terminals) =
@@ -590,7 +619,7 @@ impl Executor {
         let mut config_paths: HashMap<String, PathBuf> = HashMap::new();
         let mut config_envs: HashMap<String, HashMap<String, String>> = HashMap::new();
 
-        for cfg in &configs {
+        for (index, cfg) in configs.iter().enumerate() {
             // Determine socket path
             let socket_path = match &cfg.socket_path {
                 Some(p) if p != "auto" => PathBuf::from(p),
@@ -607,55 +636,83 @@ impl Executor {
                 None => None,
             };
 
-            // Allocate a state-file path so each test has an isolated state
-            // dir. Left unwritten: init flags live in the config file below;
-            // state.yaml is seeded on first write by the binary under test.
-            let state_dir = temp_dir.path().join(format!("{}_state", cfg.name));
-            std::fs::create_dir_all(&state_dir)
-                .map_err(|e| format!("Failed to create state dir: {}", e))?;
+            let root = temp_dir.path().join(format!("c{index}"));
+            std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+            let root = root.canonicalize().map_err(|e| e.to_string())?;
+            let id = uuid::Uuid::new_v5(
+                &uuid::Uuid::NAMESPACE_URL,
+                format!("amux-e2e:{}:{}", test_case.name, cfg.name).as_bytes(),
+            )
+            .to_string();
+            let profile_dir = root.join("profiles").join(&id);
+            let state_dir = if cfg.cloud_relay {
+                root.join("state")
+            } else {
+                profile_dir.join("state")
+            };
+            std::fs::create_dir_all(&state_dir).map_err(|e| e.to_string())?;
             let state_path = state_dir.join("state.yaml");
-            let data_home = state_dir.join("data_home");
-            std::fs::create_dir_all(&data_home)
-                .map_err(|e| format!("Failed to create data home: {}", e))?;
-            let xdg_state_home = state_dir.join("xdg_state_home");
-            std::fs::create_dir_all(&xdg_state_home)
-                .map_err(|e| format!("Failed to create XDG state home: {}", e))?;
-            let log_path = state_dir.join("amux.log");
-
-            // Generate YAML config file.
-            // Use single quotes for paths: YAML double-quoted strings treat
-            // backslashes as escape characters, so Windows paths like
-            // `C:\Users` produce invalid `\U` escapes. Single-quoted YAML
-            // strings are literal (no escape processing).
-            //
-            // Local init has no authentication step. Skip its sleep prompt in tests.
+            let data_home = root.join("data_home");
+            let xdg_state_home = root.join("xdg_state_home");
+            let log_path = root.join("amux.log");
             let host_name = cfg
                 .host_name
                 .clone()
                 .unwrap_or_else(|| test_case.name.clone());
             let cloud_account = cfg.cloud_account.unwrap_or(false);
-            if cloud_account && !cfg.cloud_relay {
-                std::fs::write(
-                    state_dir.join("auth.yaml"),
-                    format!("refresh_token: '{}'\n", E2E_REFRESH_TOKEN),
-                )
-                .map_err(|e| format!("Failed to write auth file: {}", e))?;
-            }
-            let mut yaml_content = format!(
-                "host_name: '{}'\nsocket_path: '{}'\nprevent_idle_sleep: false\nstate_path: '{}'\n",
-                host_name,
-                socket_path.display(),
-                state_path.display()
-            );
-            if let Some(tcp_port) = tcp_port {
-                yaml_content.push_str(&format!("tcp_port: {}\n", tcp_port));
-            }
-            if let Some(cloud_url) = &cfg.cloud_url {
-                yaml_content.push_str(&format!("cloud_url: '{}'\n", cloud_url));
-            }
-            let config_file_path = temp_dir.path().join(format!("{}.yaml", cfg.name));
-            std::fs::write(&config_file_path, yaml_content)
-                .map_err(|e| format!("Failed to write config file: {}", e))?;
+            let cloud_url = cfg.cloud_url.as_deref().unwrap_or("https://amux.sh");
+            let (config_file_path, socket_path) = if cfg.cloud_relay {
+                let path = root.join("relay.yaml");
+                write_fixture_yaml(
+                    &path,
+                    &serde_json::json!({
+                        "host_name": host_name, "socket_path": socket_path,
+                        "state_path": state_path, "data_dir": root.join("data"),
+                        "tcp_port": tcp_port, "cloud_url": cloud_url, "prevent_idle_sleep": false,
+                    }),
+                )?;
+                (path, socket_path)
+            } else {
+                let installation_path = root.join("installation.yaml");
+                let profile_path = profile_dir.join("config.yaml");
+                let socket = root.join("profiles").join(format!("{id}.sock"));
+                write_fixture_yaml(
+                    &installation_path,
+                    &serde_json::json!({
+                        "root": root, "front_door_socket": root.join("amux.sock"),
+                        "host_name": host_name, "prevent_idle_sleep": false,
+                        "keymaps_dir": root.join("keymaps"),
+                    }),
+                )?;
+                write_fixture_yaml(
+                    &profile_path,
+                    &serde_json::json!({
+                        "installation_config": installation_path, "socket_path": socket,
+                        "state_path": state_path, "data_dir": profile_dir.join("data"),
+                        "cloud_url": cloud_url, "tcp_port": tcp_port,
+                    }),
+                )?;
+                let binding = cloud_account.then(|| serde_json::json!({
+                    "account": {"service": cloud_url.trim_end_matches('/'), "subject": E2E_USER_ID},
+                    "bound_at": "2026-01-01T00:00:00Z",
+                }));
+                let version = uuid::Uuid::new_v4().to_string();
+                let mut registry = serde_json::json!({"profiles": [{
+                    "id": id, "label": {"account_name": null, "email": null, "override_name": cfg.name},
+                    "binding": binding, "paused": false, "revision": 1,
+                }]});
+                if cloud_account {
+                    registry["credentials"] = serde_json::json!({id.clone(): version.clone()});
+                    write_fixture_yaml(
+                        &profile_dir.join("credentials.yaml"),
+                        &serde_json::json!({
+                            "versions": {version: {"binding": binding, "refresh_token": E2E_REFRESH_TOKEN}},
+                        }),
+                    )?;
+                }
+                write_fixture_yaml(&root.join("registry.yaml"), &registry)?;
+                (profile_path, socket)
+            };
 
             config_paths.insert(cfg.name.clone(), config_file_path);
             let mut env = HashMap::from([
@@ -765,6 +822,7 @@ impl Executor {
                 .arg("--config")
                 .arg(config_path)
                 .arg("init")
+                .env_remove("AMUX_CONFIG")
                 .envs(env)
                 .output()
                 .map_err(|e| format!("Failed to initialize config {}: {}", cfg.name, e))?;

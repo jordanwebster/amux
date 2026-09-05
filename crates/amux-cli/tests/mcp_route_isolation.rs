@@ -7,9 +7,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
-use amux::{AgentType, Client, Config, CreateAgentRequest, Server};
+use amux::installation::{InstallationRoot, ProfileId, ProfileLabel, ProfilePaths, Registry};
+use amux::{
+    AgentType, Client, Config, CreateAgentRequest, InstallationConfig, ProfileConfig, Server,
+};
 use serde_json::{Value, json};
-use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -34,18 +36,45 @@ impl Route {
 
         let executable = root.join("bin/amux");
         std::fs::copy(env!("CARGO_BIN_EXE_amux"), &executable).unwrap();
-        let config_path = root.join("amux.yaml");
+        let root = root.canonicalize().unwrap();
+        let id = ProfileId::new();
+        let mut registry = Registry::open(InstallationRoot::OnDisk(root.clone())).unwrap();
+        registry.create(id, ProfileLabel::default()).unwrap();
+        drop(registry);
+        let paths = ProfilePaths::for_id(&root, id).unwrap();
+        let config_path = paths.config_path.unwrap();
+        let installation_path = root.join("installation.yaml");
+        let installation = InstallationConfig {
+            root: root.clone(),
+            front_door_socket: root.join("amux.sock"),
+            host_name: name.to_string(),
+            prevent_idle_sleep: Some(false),
+            keymaps_dir: root.join("keymaps"),
+            ..InstallationConfig::default()
+        };
+        std::fs::write(
+            &installation_path,
+            serde_yaml::to_string(&installation).unwrap(),
+        )
+        .unwrap();
         let config = Config {
             host_name: name.to_string(),
-            socket_path: root.join("socket/amux.sock"),
-            state_path: root.join("state/state.yaml"),
-            data_dir: root.join("data"),
-
+            socket_path: paths.socket_path,
+            state_path: paths.state_path,
+            data_dir: paths.data_dir,
             prevent_idle_sleep: Some(false),
             path: Some(config_path.clone()),
             ..Config::default()
         };
-        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let profile = ProfileConfig {
+            installation_config: installation_path,
+            socket_path: config.socket_path.clone(),
+            state_path: config.state_path.clone(),
+            data_dir: config.data_dir.clone(),
+            cloud_url: config.cloud_url.clone(),
+            tcp_port: None,
+        };
+        std::fs::write(&config_path, serde_yaml::to_string(&profile).unwrap()).unwrap();
 
         let server_config = config.clone();
         let server = tokio::spawn(async move {
@@ -189,7 +218,10 @@ fn run_rejected_route(executable: &Path, config: &Path, socket: &Path) -> Output
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn generated_absolute_mcp_routes_are_isolated_and_fail_closed() {
-    let temporary = TempDir::new().unwrap();
+    let temporary = tempfile::Builder::new()
+        .prefix("mcp")
+        .tempdir_in("/tmp")
+        .unwrap();
     let poison = temporary.path().join("poison");
     std::fs::create_dir(&poison).unwrap();
     let poison_marker = temporary.path().join("ambient-amux-ran");

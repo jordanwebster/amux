@@ -272,3 +272,93 @@ async fn config_split_boots_from_temp_root_and_discovers_profile_over_grpc() {
     assert!(reopened.profiles().iter().all(|profile| profile.available));
     reopened.shutdown(ShutdownReason::UserRequested).await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn config_split_daemon_owner_flushes_shutdown_and_releases_all_sockets() {
+    use crate::installation::{FrontDoorClient, rpc};
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let fixture = Fixture::new();
+        for via_rpc in [true, false] {
+            let installation = Installation::from_config(fixture.installation.clone())
+                .await
+                .unwrap();
+            let (shutdown, stopped) = tokio::sync::oneshot::channel();
+            let daemon = tokio::spawn(installation.serve(async {
+                let _ = stopped.await;
+            }));
+            let mut front = loop {
+                match FrontDoorClient::connect(&fixture.installation.front_door_socket).await {
+                    Ok(front) => break front,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        tokio::task::yield_now().await;
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            let profiles = front
+                .profiles
+                .list_profiles(rpc::ListProfilesRequest {})
+                .await
+                .unwrap()
+                .into_inner()
+                .profiles;
+            assert_eq!(profiles.len(), 1);
+            assert_eq!(profiles[0].id, fixture.id.to_string());
+            assert!(profiles[0].available);
+            let client = crate::Server::builder()
+                .config(Config {
+                    socket_path: PathBuf::from(&profiles[0].socket_path),
+                    ..Config::default()
+                })
+                .daemon()
+                .open()
+                .await
+                .unwrap();
+            client.list_agents().await.unwrap();
+            if via_rpc {
+                front
+                    .installation
+                    .shutdown(rpc::InstallationShutdownRequest {
+                        operation_id: uuid::Uuid::new_v4().to_string(),
+                    })
+                    .await
+                    .unwrap();
+                drop(shutdown);
+            } else {
+                shutdown.send(()).unwrap();
+            }
+            daemon.await.unwrap().unwrap();
+            assert!(client.list_agents().await.is_err());
+            assert!(!fixture.paths.socket_path.exists());
+            assert!(!fixture.installation.front_door_socket.exists());
+            Registry::open(InstallationRoot::OnDisk(fixture.installation.root.clone())).unwrap();
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[test]
+fn config_split_setup_writes_only_installation_preferences() {
+    let fixture = Fixture::new();
+    let before = std::fs::read(fixture.paths.config_path.clone().unwrap()).unwrap();
+    let mut selected = Config {
+        path: fixture.paths.config_path.clone(),
+        ..Config::default()
+    };
+    crate::setup::set_prevent_idle_sleep(&mut selected, true).unwrap();
+    assert_eq!(
+        fixture.load().unwrap().installation.prevent_idle_sleep,
+        Some(true)
+    );
+    crate::setup::clear_prevent_idle_sleep(&mut selected).unwrap();
+    assert_eq!(
+        fixture.load().unwrap().installation.prevent_idle_sleep,
+        None
+    );
+    assert_eq!(
+        std::fs::read(fixture.paths.config_path.unwrap()).unwrap(),
+        before
+    );
+}
