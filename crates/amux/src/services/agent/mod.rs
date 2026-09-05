@@ -193,6 +193,9 @@ impl AgentServiceCtx {
         self.host.as_ref().ok_or_else(local_agents_disabled)
     }
 
+    // Opening an owner creates directories even for reads and replay. Callers
+    // must hold the operation gate through every use, so deletion drains work
+    // already accepted and closed profiles cannot recreate their storage.
     fn require_artifact_owners(&self, method: &str) -> Result<&Arc<ArtifactOwners>, ProtocolError> {
         self.artifact_owners
             .as_ref()
@@ -290,6 +293,8 @@ impl AgentServiceCtx {
     }
 
     pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
+        let _operation = self.operations.lock().await;
+        self.operations.check()?;
         let attachment_owner = if request.pin.is_empty() {
             None
         } else {
@@ -313,6 +318,8 @@ impl AgentServiceCtx {
         mime: &str,
         bytes: Vec<u8>,
     ) -> Result<ArtifactRef, ProtocolError> {
+        let _operation = self.operations.lock().await;
+        self.operations.check()?;
         let log = self.require_host()?.attachment_log(caller).await?;
         let owner = self
             .require_artifact_owners("PutArtifactByAgent")?
@@ -334,6 +341,8 @@ impl AgentServiceCtx {
         &self,
         request: SubscribeSessionRequest,
     ) -> Result<ResponseStream<wire::SubscribeSessionResponse>, ProtocolError> {
+        let _operation = self.operations.lock().await;
+        self.operations.check()?;
         let replay_attachments = self
             .artifact_owners
             .as_ref()
@@ -490,6 +499,8 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::PutArtifactRequest>,
     ) -> TonicResult<wire::PutArtifactResponse> {
+        let _operation = self.operations.lock().await;
+        self.operations.check().map_err(protocol_status)?;
         let owners = self
             .require_artifact_owners("PutArtifact")
             .map_err(protocol_status)?;
@@ -512,6 +523,8 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::GetArtifactRequest>,
     ) -> TonicResult<wire::GetArtifactResponse> {
+        let _operation = self.operations.lock().await;
+        self.operations.check().map_err(protocol_status)?;
         let owners = self
             .require_artifact_owners("GetArtifact")
             .map_err(protocol_status)?;
@@ -539,6 +552,8 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::DiffRequest>,
     ) -> TonicResult<wire::DiffResponse> {
+        let _operation = self.operations.lock().await;
+        self.operations.check().map_err(protocol_status)?;
         let owners = self
             .require_artifact_owners("Diff")
             .map_err(protocol_status)?;

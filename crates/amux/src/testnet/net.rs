@@ -57,6 +57,7 @@ pub(crate) struct CloudRelay {
     pub(crate) token: String,
     user_id: Uuid,
     tokens: TokenRegistry,
+    failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
     /// builder `cloud_user` label → that user's `(user_id, token)`.
     user_labels: std::sync::Mutex<HashMap<String, (Uuid, String)>>,
     server: Mutex<Option<RunningCloud>>,
@@ -118,6 +119,7 @@ impl CloudRelay {
             token,
             user_id,
             tokens,
+            failures: Arc::default(),
             user_labels: std::sync::Mutex::new(HashMap::new()),
             server: Mutex::new(None),
         };
@@ -132,6 +134,7 @@ impl CloudRelay {
             state,
             Arc::new(RegistryTokenAuthenticator {
                 tokens: self.tokens.clone(),
+                failures: self.failures.clone(),
             }),
         );
         let connections: TrackedConnections = Arc::default();
@@ -141,6 +144,16 @@ impl CloudRelay {
             task,
             connections,
         });
+    }
+
+    pub(crate) fn reject_user(&self, label: &str, error: Option<tonic::Status>) {
+        let (id, _) = self.credentials_for_user(label);
+        let mut failures = self.failures.write().unwrap();
+        if let Some(error) = error {
+            failures.insert(id, error);
+        } else {
+            failures.remove(&id);
+        }
     }
 
     pub(crate) fn default_user_id(&self) -> Uuid {
@@ -315,6 +328,7 @@ pub(crate) fn testnet_server_state(
 #[derive(Clone)]
 struct RegistryTokenAuthenticator {
     tokens: TokenRegistry,
+    failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
 }
 
 #[tonic::async_trait]
@@ -330,6 +344,9 @@ impl LinkTokenAuthenticator for RegistryTokenAuthenticator {
             .get(token)
             .copied()
             .ok_or_else(|| tonic::Status::unauthenticated("unknown testnet token"))?;
+        if let Some(error) = self.failures.read().unwrap().get(&registered.user_id) {
+            return Err(error.clone());
+        }
         Ok(AuthenticatedLinkUser {
             user_id: registered.user_id,
             client_id: "test-client".to_string(),

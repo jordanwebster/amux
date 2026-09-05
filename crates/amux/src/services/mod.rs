@@ -3,6 +3,8 @@
 mod agent;
 mod client;
 mod pairing;
+#[cfg(testnet)]
+pub(crate) use pairing::{PeerTrustCommitContext, PeerTrustUpdate, commit_peer_trust};
 mod reachability;
 mod startup;
 

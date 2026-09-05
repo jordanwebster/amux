@@ -1226,6 +1226,21 @@ pub struct EchoSession {
 }
 
 impl EchoSession {
+    /// The existing subscription must close; opening a fresh call is no proof
+    /// that an already accepted stream was torn down.
+    pub async fn expect_disconnect(mut self) {
+        tokio::time::timeout(DEFAULT_TIMEOUT, async {
+            loop {
+                match self.stream.recv().await {
+                    Err(_) | Ok(SubscribeSessionEvent::Closed { .. }) => return,
+                    Ok(_) => {}
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{} stayed open", self.description));
+    }
+
     /// Sends input to the agent across the route.
     pub async fn send(&self, input: &str) {
         self.client

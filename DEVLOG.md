@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Prove independent profile lifecycle and drain artifact work before deletion.**
+Lifecycle specs exercise logout, persistent pause, repeated resume, independent
+authentication/subscription/version failures, ordered directory watches and full
+client teardown against production installations. Logout and pause preserve local
+sessions, trust and artifacts while other profiles keep their original cloud
+connections. Deletion now serializes artifact access, pinned input and session
+replay with lifecycle operations, including reads that lazily create storage.
+An accepted diff must finish before deletion removes its directory; retained
+pairing and artifact service work and a held credential refresh cannot recreate
+the deleted device. The specs check already-open Unix, in-process, LAN and cloud
+streams and continued service from another profile.
+
 2026-09-05 — **Prove binding against live profile devices.**
 The profile binding specs now exercise production login, logout and credential
 refresh with a real identity fixture, relay and paired peer. They verify account

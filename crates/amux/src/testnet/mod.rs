@@ -46,7 +46,7 @@ mod assertions;
 mod daemon;
 mod installation;
 mod net;
-pub use installation::{InstallationHandle, Profile, WatchProbe};
+pub use installation::{InstallationHandle, Profile, RetainedProfileWork, WatchProbe};
 mod pairing;
 mod session;
 mod wire;
@@ -129,6 +129,12 @@ impl TestNet {
     /// `let [a, b] = net.daemons(["a", "b"]);`
     pub fn daemons<const N: usize>(&self, names: [&str; N]) -> [Daemon; N] {
         names.map(|name| self.daemon(name))
+    }
+
+    /// Rejects this account at the production relay authentication boundary.
+    pub fn reject_cloud_user(&self, user: &str, error: Option<crate::ProtocolError>) {
+        self.cloud()
+            .reject_user(user, error.map(crate::protocol::protocol_status));
     }
 
     /// Takes the cloud relay down hard: accepted sockets are severed, so

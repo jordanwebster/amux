@@ -493,7 +493,7 @@ pub(crate) async fn start_routing_services(
 pub(crate) struct StartedUserServices {
     runtime: StartedRoutingServices,
     pub(crate) artifact_owners: Arc<ArtifactOwners>,
-    #[cfg(test)]
+    #[cfg(any(test, testnet))]
     pub(crate) agent: AgentServiceCtx,
     #[cfg(any(test, testnet))]
     pub(crate) client: ClientService,
@@ -691,7 +691,7 @@ async fn start_user_services_with_clock(
         connections_closed,
         runtime: parts.runtime,
         artifact_owners,
-        #[cfg(test)]
+        #[cfg(any(test, testnet))]
         agent,
         #[cfg(any(test, testnet))]
         client,

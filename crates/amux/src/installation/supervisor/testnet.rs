@@ -6,6 +6,28 @@ pub(super) type RuntimeFixtureFactory =
     Arc<dyn Fn(ProfileId) -> runtime::RuntimeFixtures + Send + Sync>;
 
 impl Installation {
+    pub(crate) async fn retained_work_for_test(
+        &self,
+        id: ProfileId,
+    ) -> crate::testnet::RetainedProfileWork {
+        let slot = self.inner.state.lock().unwrap().profiles[&id].slot.clone();
+        let runtime = slot.runtime.lock().await;
+        let runtime = runtime.as_ref().unwrap();
+        crate::testnet::RetainedProfileWork {
+            agent: runtime.services.agent.clone(),
+            pairing: crate::services::PeerTrustCommitContext::new(
+                runtime.trust.clone(),
+                slot.operations.clone(),
+                runtime.services.connections.clone(),
+                self.inner
+                    .root
+                    .join("profiles")
+                    .join(id.to_string())
+                    .join("data"),
+            ),
+        }
+    }
+
     pub(crate) async fn refresh_for_test(
         &self,
         id: ProfileId,

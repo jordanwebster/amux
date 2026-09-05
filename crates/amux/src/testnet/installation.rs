@@ -260,6 +260,19 @@ impl std::ops::Deref for Profile {
 }
 
 impl Profile {
+    /// Retain service work that has already resolved this profile. It does not
+    /// reconnect through a client or look up the profile after deletion.
+    pub async fn retain_work(&self) -> RetainedProfileWork {
+        let owner = self.daemon.inner.installation.as_ref().unwrap();
+        owner
+            .installation
+            .upgrade()
+            .unwrap()
+            .current()
+            .retained_work_for_test(self.id)
+            .await
+    }
+
     /// Force refresh through the runtime's installed credential provider and
     /// await its commit or refusal. No credential material leaves the fixture.
     pub async fn refresh_credentials(&self) -> Result<(), crate::auth::AuthError> {
@@ -535,5 +548,114 @@ pub(super) async fn start(
     InstallationHandle {
         inner,
         net: Weak::new(),
+    }
+}
+
+/// Service contexts retained independently of their runtime and transports.
+/// Exercises late work at the commit boundary, beyond closed-client checks.
+pub struct RetainedProfileWork {
+    pub(crate) agent: crate::services::AgentServiceCtx,
+    pub(crate) pairing: crate::services::PeerTrustCommitContext,
+}
+
+impl RetainedProfileWork {
+    pub async fn diff(&self, agent: &crate::Agent) -> Result<(), tonic::Status> {
+        use wire::agent_service_server::AgentService;
+
+        use crate::protocol::wire;
+        self.agent
+            .diff(tonic::Request::new(wire::DiffRequest {
+                agent_id: agent.id.as_bytes().to_vec(),
+                base: Some(wire::DiffBase {
+                    base: Some(wire::diff_base::Base::WorkingTree(wire::Empty {})),
+                }),
+            }))
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn assert_late_writes_rejected(
+        &self,
+        agent: &crate::Agent,
+        peer: &Daemon,
+        artifact: &crate::ArtifactRef,
+    ) {
+        use wire::agent_service_server::AgentService;
+
+        use crate::protocol::wire;
+        let (id, key) = peer.identity_on_disk();
+        let error = crate::services::commit_peer_trust(
+            self.pairing.clone(),
+            crate::services::PeerTrustUpdate::new(id, key, peer.name().into(), None),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        let error = self
+            .agent
+            .put_artifact_by_agent(
+                agent.id,
+                crate::ArtifactKind::File,
+                "late.txt",
+                "text/plain",
+                b"late".to_vec(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::ProtocolError::FailedPrecondition { .. }
+        ));
+        let error = self
+            .agent
+            .put_artifact(tonic::Request::new(wire::PutArtifactRequest {
+                agent_id: agent.id.as_bytes().to_vec(),
+                kind: wire::ArtifactKind::File as i32,
+                name: "late.txt".into(),
+                mime: "text/plain".into(),
+                bytes: b"late".to_vec(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        let error = self
+            .agent
+            .get_artifact(tonic::Request::new(wire::GetArtifactRequest {
+                agent_id: agent.id.as_bytes().to_vec(),
+                id: artifact.id.to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            self.diff(agent).await.unwrap_err().code(),
+            tonic::Code::FailedPrecondition
+        );
+        let error = <crate::services::AgentServiceCtx as AgentService>::send_input(
+            &self.agent,
+            tonic::Request::new(wire::SendInputRequest {
+                agent_id: agent.id.as_bytes().to_vec(),
+                input_id: vec![1],
+                pin: vec![artifact.id.to_string()],
+                event: Some(wire::send_input_request::Event::TestEchoV1(
+                    wire::TestEchoV1Input {
+                        payload: b"late".to_vec(),
+                    },
+                )),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        let result = self
+            .agent
+            .subscribe_session(tonic::Request::new(wire::SubscribeSessionRequest {
+                agent_id: agent.id.as_bytes().to_vec(),
+                protocol: Some(wire::subscribe_session_request::Protocol::TestEchoV1(
+                    wire::TestEchoV1Args {},
+                )),
+            }))
+            .await;
+        assert!(matches!(result, Err(error) if error.code() == tonic::Code::FailedPrecondition));
     }
 }
