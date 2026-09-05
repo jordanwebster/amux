@@ -8,7 +8,9 @@ library gets its whole-package scheme named `<package>-Package`, and only that
 scheme carries the test action, so the scheme is asked for rather than assumed.
 """
 
+from contextlib import contextmanager
 from pathlib import Path
+import os
 import subprocess
 import sys
 
@@ -55,6 +57,46 @@ def scheme(package: str) -> str:
     return whole if whole in listed.split() else package
 
 
+def requested_updates() -> dict[str, str]:
+    """Deliberate baseline rewrites, named by the person asking for one.
+
+    A suite that pins a baseline rewrites it only when told to, and xcodebuild
+    hands a simulator test process none of the shell's environment, so the
+    request would otherwise never arrive. Anything named `AMUX_UPDATE_*` is
+    forwarded; nothing else is, because the rest of the environment is the
+    Mac's business and not the app's.
+    """
+    return {
+        name: value for name, value in os.environ.items()
+        if name.startswith("AMUX_UPDATE_")
+    }
+
+
+@contextmanager
+def forwarded(udid: str, variables: dict[str, str]):
+    """Put the requests where a process on the device will inherit them.
+
+    The device's own launchd is the only place a test host reads them from,
+    and it keeps them until told otherwise, so they are removed afterwards
+    rather than left to change the meaning of the next run.
+    """
+    if variables:
+        subprocess.run(
+            ["xcrun", "simctl", "bootstatus", udid, "-b"], check=True, timeout=600)
+    for name, value in variables.items():
+        subprocess.run(
+            ["xcrun", "simctl", "spawn", udid, "launchctl", "setenv", name, value],
+            check=True, timeout=120)
+        print(f"Asking for {name}={value}", flush=True)
+    try:
+        yield
+    finally:
+        for name in variables:
+            subprocess.run(
+                ["xcrun", "simctl", "spawn", udid, "launchctl", "unsetenv", name],
+                check=True, timeout=120)
+
+
 def test(package: str, udid: str, arguments: list[str]) -> None:
     print(f"Testing {package}", flush=True)
     subprocess.run([
@@ -69,8 +111,9 @@ def test(package: str, udid: str, arguments: list[str]) -> None:
 def main() -> None:
     packages, arguments = selected(sys.argv[1:])
     udid = ios_simulators.ensure("amux-golden")
-    for package in packages:
-        test(package, udid, arguments)
+    with forwarded(udid, requested_updates()):
+        for package in packages:
+            test(package, udid, arguments)
 
 
 if __name__ == "__main__":

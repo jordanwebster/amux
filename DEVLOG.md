@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **A pinned baseline does not move on its own.** The design's token
+table — every colour in both appearances, every metric, every type role — is
+compared against a committed file, and a mismatch used to rewrite that file on
+its way out. The first run failed, the second passed, and a nudge to a colour
+could reach a commit as a table nobody looked at. The rewrite now happens only
+when someone asks for it by name, with `AMUX_UPDATE_TOKEN_TABLE=1` in front of
+the unit run; otherwise the failure carries the whole new table and the one
+line explaining how to accept it, and the committed file is left alone however
+many times the suite runs. Because a simulator test process inherits none of
+the Mac's environment, the unit runner forwards anything named `AMUX_UPDATE_*`
+through the device and takes it away again afterwards.
+
 2026-09-05 — **A measured run reports only its own numbers.** The performance
 run now throws away the previous run's verdict, samples and cadence — both the
 copy inside the app and the copy on the Mac — before it launches anything, and

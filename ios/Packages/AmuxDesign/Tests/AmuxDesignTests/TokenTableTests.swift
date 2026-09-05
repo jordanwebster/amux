@@ -16,8 +16,17 @@ final class TokenTableTests: XCTestCase {
             "TokenTable.txt is missing from the test bundle")
         let table = Self.table(Design.app)
         if table != (try String(contentsOf: expected, encoding: .utf8)) {
-            Self.writeForReview(table)
-            XCTFail("The design's token table changed. The new table:\n\n\(table)")
+            if Self.updateRequested {
+                Self.write(table)
+                XCTFail(
+                    "The design's token table changed and \(Self.variable) rewrote the "
+                    + "baseline. Review the diff and commit it. The new table:\n\n\(table)")
+            } else {
+                XCTFail(
+                    "The design's token table changed. If that was the point, look at the "
+                    + "new table below and re-run with \(Self.variable)=1 to write it into "
+                    + "TokenTable.txt. The new table:\n\n\(table)")
+            }
         }
     }
 
@@ -111,9 +120,22 @@ final class TokenTableTests: XCTestCase {
         }
     }
 
+    /// The name a person types to say they meant to move the design.
+    static let variable = "AMUX_UPDATE_TOKEN_TABLE"
+
+    /// Whether this run was asked to move the baseline.
+    ///
+    /// A failing test that rewrites what it compares against is not a test:
+    /// the second run passes and nobody sees the change. The new table is in
+    /// the failure either way, so the only thing this variable buys is the
+    /// diff — and it costs the deliberate act of asking for it.
+    private static var updateRequested: Bool {
+        ProcessInfo.processInfo.environment[variable] == "1"
+    }
+
     /// Writes the new table beside this file when the source tree is reachable,
     /// so a deliberate change is reviewed as a diff rather than retyped.
-    private static func writeForReview(_ table: String) {
+    private static func write(_ table: String) {
         let destination = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .appendingPathComponent("TokenTable.txt")
