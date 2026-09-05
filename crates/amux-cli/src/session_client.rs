@@ -3,8 +3,6 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use amux::terminal_io::{self, TerminalV1Args};
 use amux::{
@@ -27,7 +25,7 @@ pub(crate) enum StdinEvent {
     /// User requested detach to the shell (<leader>d).
     Detach,
     /// User requested the fleet picker (<leader>s). From the TUI this
-    /// resumes the chrome; from CLI attach it behaves like detach.
+    /// resumes the chrome; from CLI attach it opens the fleet.
     SwitchToFleet,
 }
 
@@ -107,23 +105,12 @@ pub async fn new_agent(
                 (amux::OpenMode::Raw, true) => {
                     let identifier = AgentIdentifier::from(agent_id);
                     let outcome = if codex_configuration.is_some() {
-                        attach_new_codex_terminal(
-                            &rpc,
-                            identifier,
-                            config.keybinds.leader.clone(),
-                            StdinHandback::ProcessExits,
-                        )
-                        .await?
+                        attach_new_codex_terminal(&rpc, identifier, config.keybinds.leader.clone())
+                            .await?
                     } else {
-                        attach_terminal(
-                            &rpc,
-                            identifier,
-                            config.keybinds.leader.clone(),
-                            StdinHandback::ProcessExits,
-                        )
-                        .await?
+                        attach_terminal(&rpc, identifier, config.keybinds.leader.clone()).await?
                     };
-                    finish_cli_attach(outcome, &config.state_path)
+                    finish_cli_attach(outcome, config).await
                 }
             }
         },
@@ -241,10 +228,9 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         &rpc,
         AgentIdentifier::from(agent.id),
         config.keybinds.leader.clone(),
-        StdinHandback::ProcessExits,
     )
     .await?;
-    finish_cli_attach(outcome, &config.state_path)
+    finish_cli_attach(outcome, config).await
 }
 
 /// Remove an agent by exact name or UUID without prompting.
@@ -414,36 +400,37 @@ fn resolve_attach_agent<'a>(
     }
 }
 
-/// Attach for the fleet TUI: run the passthrough on the real terminal and
-/// come back with an optional status-line notice instead of exiting the
-/// process. Stdin is fully reclaimed before returning so the chrome's event
-/// stream is the only reader again.
+/// Attach for the fleet TUI: run the passthrough on the real terminal. Only
+/// `<leader>s` comes back to the fleet. Everything else ends exactly as it
+/// does from `amux attach`: a detach returns to the shell, and the agent
+/// exiting or the session being lost exits the process — someone who just
+/// killed their agent asked to be out, not to be somewhere else in amux.
+/// Exiting the process is also what frees stdin: the reader is parked in a
+/// blocking read that only a keypress or the process ending can finish.
 pub(crate) async fn attach_for_ui(
     config: &Config,
     agent: amux::AgentId,
 ) -> Result<amux_tui::AttachReturn> {
     let rpc = require_running_client(config, None).await?;
-    let outcome = attach_terminal(
-        &rpc,
-        AgentIdentifier::from(agent),
-        config.keybinds.leader.clone(),
-        StdinHandback::ReclaimForCaller,
-    )
-    .await?;
-    use amux_tui::AttachReturn;
-    Ok(match outcome {
-        AttachOutcome::Detached => AttachReturn::Exit,
-        AttachOutcome::SwitchedToFleet => AttachReturn::Fleet(None),
-        AttachOutcome::SessionEnded => {
-            AttachReturn::Fleet(Some(amux_tui::Notice::done("session ended")))
-        }
-        AttachOutcome::SessionClosed(reason) => {
-            AttachReturn::Fleet(Some(session_close_notice(&reason)))
-        }
-        AttachOutcome::Shutdown(reason) => {
-            AttachReturn::Fleet(Some(amux_tui::Notice::problem(format!("daemon: {reason}"))))
-        }
-    })
+    let agent = AgentIdentifier::from(agent);
+    // Failing to subscribe happens before the reader exists, so it can be a
+    // notice in the fleet. Once the passthrough has started, the reader is
+    // parked on stdin and resuming the chrome would leave it to eat the
+    // next keypress: a stream error from here on exits like any other end.
+    let session = subscribe_raw(&rpc, &agent, Some(get_terminal_size())).await?;
+    let outcome =
+        match attach_subscribed(&rpc, session, agent, config.keybinds.leader.clone()).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                eprintln!("\n[attach failed: {error:#}]");
+                std::process::exit(1);
+            }
+        };
+    if matches!(outcome, AttachOutcome::SwitchedToFleet) {
+        return Ok(amux_tui::AttachReturn::Fleet(None));
+    }
+    report_attach_end(&outcome, &config.state_path);
+    Ok(amux_tui::AttachReturn::Exit)
 }
 
 /// List running agents, folding children into their family unless requested.
@@ -664,28 +651,16 @@ pub(crate) async fn subscribe_raw(
     Ok(session)
 }
 
-/// What happens to the blocked stdin reader when the session ends without a
-/// detach: the CLI paths exit the process (the reader dies with it); the TUI
-/// path must reclaim stdin — one keypress, prompted — before the chrome's
-/// event stream may read again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StdinHandback {
-    ProcessExits,
-    ReclaimForCaller,
-}
-
 /// Attach on the real terminal: raw mode (RAII), the leader-scanning stdin
 /// reader, and the passthrough loop. Every exit path restores the terminal
-/// mode; with `ReclaimForCaller` stdin is exclusively released before
-/// returning.
+/// mode and resets what the agent may have left switched on.
 async fn attach_terminal(
     rpc: &Client,
     agent: AgentIdentifier,
     leader: LeaderKey,
-    handback: StdinHandback,
 ) -> Result<AttachOutcome> {
     let session = subscribe_raw(rpc, &agent, Some(get_terminal_size())).await?;
-    attach_subscribed(rpc, session, agent, leader, handback).await
+    attach_subscribed(rpc, session, agent, leader).await
 }
 
 /// A newly-created Codex backend learns its thread id asynchronously. Retry
@@ -695,7 +670,6 @@ async fn attach_new_codex_terminal(
     rpc: &Client,
     agent: AgentIdentifier,
     leader: LeaderKey,
-    handback: StdinHandback,
 ) -> Result<AttachOutcome> {
     let terminal_size = get_terminal_size();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
@@ -710,7 +684,7 @@ async fn attach_new_codex_terminal(
             Err(error) => return Err(error),
         }
     };
-    attach_subscribed(rpc, session, agent, leader, handback).await
+    attach_subscribed(rpc, session, agent, leader).await
 }
 
 /// Only the transient not-yet-published case is worth retrying. A thread that
@@ -727,40 +701,48 @@ async fn attach_subscribed(
     session: amux::SessionStream,
     agent: AgentIdentifier,
     leader: LeaderKey,
-    handback: StdinHandback,
 ) -> Result<AttachOutcome> {
     let raw_mode_guard = RawModeGuard::new()?;
-    let stop_reading = Arc::new(AtomicBool::new(false));
-    let (input_rx, reader) = spawn_stdin_reader(leader, stop_reading.clone());
+    let (input_rx, _reader) = spawn_stdin_reader(leader);
     let outcome = attach_loop(rpc.clone(), session, agent, input_rx, io::stdout()).await;
     drop(raw_mode_guard);
-
-    if handback == StdinHandback::ReclaimForCaller {
-        stop_reading.store(true, Ordering::SeqCst);
-        let needs_key = !matches!(
-            outcome,
-            Ok(AttachOutcome::Detached | AttachOutcome::SwitchedToFleet)
-        ) && !reader.is_finished();
-        if needs_key {
-            let label = match &outcome {
-                Ok(AttachOutcome::SessionClosed(reason)) => session_close_label(reason),
-                Ok(AttachOutcome::Shutdown(_)) => "daemon shut down",
-                _ => "session ended",
-            };
-            println!("\n[{label} — press any key to return to the fleet]");
-        }
-        let _ = reader.await;
-    }
+    reset_terminal_after_passthrough();
     outcome
 }
 
-/// Print the outcome and exit the process where today's CLI contract says
-/// so; only a detach returns.
-fn finish_cli_attach(outcome: AttachOutcome, state_path: &Path) -> Result<()> {
+/// The passthrough showed the agent's bytes verbatim, so the agent may have
+/// left the user's terminal with mouse reporting, focus reporting, bracketed
+/// paste, a hidden cursor, kitty keyboard flags, the alternate screen or a
+/// colour still switched on. Its own restore arrives on the pty, which nobody
+/// is watching once the client has detached, and it is lost entirely when
+/// the agent is killed. Undo all of it unconditionally with the same bytes
+/// the signal handler writes, so a signal mid-attach ends the same way; on a
+/// terminal that is already sane every sequence is a no-op.
+fn reset_terminal_after_passthrough() {
+    let mut out = io::stdout();
+    let _ = out.write_all(amux_tui::terminal::RESTORE_BYTES);
+    let _ = out.flush();
+}
+
+/// Finish a CLI attach: `<leader>s` opens the fleet; everything else is
+/// reported and, unless it was a detach, exits the process.
+async fn finish_cli_attach(outcome: AttachOutcome, config: &Config) -> Result<()> {
+    if matches!(outcome, AttachOutcome::SwitchedToFleet) {
+        return crate::ui::run(config.clone()).await;
+    }
+    report_attach_end(&outcome, &config.state_path);
+    Ok(())
+}
+
+/// Print how the attach ended. The session being over — the agent exited,
+/// the session was lost, the daemon shut down — exits the process here, as
+/// attach always has; only a detach returns, to the shell. `<leader>s` is
+/// the caller's to handle before calling this.
+fn report_attach_end(outcome: &AttachOutcome, state_path: &Path) {
     match outcome {
         AttachOutcome::Shutdown(reason) => {
             println!("\n[{}]", reason);
-            if reason != ShutdownReason::Updating {
+            if *reason != ShutdownReason::Updating {
                 print_update_banner(state_path);
             }
             std::process::exit(1);
@@ -774,22 +756,20 @@ fn finish_cli_attach(outcome: AttachOutcome, state_path: &Path) -> Result<()> {
             std::process::exit(0);
         }
         AttachOutcome::SessionClosed(reason) => {
-            println!("\n[{}]", session_close_label(&reason));
+            println!("\n[{}]", session_close_label(reason));
             print_update_banner(state_path);
             std::process::exit(0);
         }
     }
 
     print_update_banner(state_path);
-    Ok(())
 }
 
 /// Spawn the blocking stdin reader with the leader-key scanner. It exits on
-/// stdin EOF, on a detach chord, or — once `stop_reading` is set — after the
-/// next read returns (the reclaim keypress, which is consumed).
+/// stdin EOF or on a chord; when the session ends any other way it stays
+/// parked in `read` and dies with the process.
 fn spawn_stdin_reader(
     leader: LeaderKey,
-    stop_reading: Arc<AtomicBool>,
 ) -> (mpsc::Receiver<StdinEvent>, tokio::task::JoinHandle<()>) {
     let (input_tx, input_rx) = mpsc::channel::<StdinEvent>(256);
 
@@ -804,11 +784,6 @@ fn spawn_stdin_reader(
         loop {
             match stdin.read(&mut buffer) {
                 Ok(0) => break,
-                Ok(_) if stop_reading.load(Ordering::SeqCst) => {
-                    // Reclaim: the session is over; this keypress hands
-                    // stdin back to the caller and is deliberately consumed.
-                    return;
-                }
                 Ok(n) => {
                     let data = &buffer[..n];
 
@@ -883,9 +858,6 @@ fn spawn_stdin_reader(
                 match stdin.read_exact(&mut next) {
                     Ok(_) => {
                         pending_leader = false;
-                        if stop_reading.load(Ordering::SeqCst) {
-                            return;
-                        }
                         if let Some(event) = chord_event(next[0]) {
                             tracing::info!("leader chord");
                             let _ = input_tx.blocking_send(event);
@@ -983,21 +955,6 @@ fn session_close_label(reason: &SessionCloseReason) -> &'static str {
         }
         SessionCloseReason::HostUnreachable => "host unreachable",
         SessionCloseReason::InternalError { .. } => "session error",
-    }
-}
-
-/// The same label, for a status line that also shows whether it went
-/// well: the agent finishing or being deleted is the session doing what it
-/// was told, and only losing it is a problem.
-fn session_close_notice(reason: &SessionCloseReason) -> amux_tui::Notice {
-    let label = session_close_label(reason);
-    match reason {
-        SessionCloseReason::AgentDeleted | SessionCloseReason::AgentExited { .. } => {
-            amux_tui::Notice::done(label)
-        }
-        SessionCloseReason::HostUnreachable | SessionCloseReason::InternalError { .. } => {
-            amux_tui::Notice::problem(label)
-        }
     }
 }
 
@@ -1199,7 +1156,8 @@ mod attach {
         assert!(!error.to_string().contains("is running"));
     }
 
-    use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Duration;
 
     use amux::{AgentId, Config, Server};
