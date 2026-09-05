@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Prune unpaired cached hosts when local synchronization completes offline.**
+The mobile projection now emits a Fleet callback when local synchronization
+changes, even if the live rows and relay-qualified reconciliation flag stay the
+same. This lets the cache apply the completed trusted-host list while the relay
+is disconnected. A deterministic regression separates each synchronization
+message into its own projection frame and checks callback delivery, persisted
+pruning, unchanged reconciliation and suppression of redundant callbacks.
+
 2026-09-05 — **Make mobile projection checks independent of Windows checkout and timers.**
 Pin the byte-compared JSON schema snapshot to LF so Windows checkout preserves
 the serialized contract. The C callback regression now holds the initial

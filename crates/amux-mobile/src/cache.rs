@@ -189,6 +189,87 @@ mod tests {
     }
 
     #[test]
+    fn mobile_cache_local_sync_prunes_unpaired_host_across_disconnected_frames() {
+        let root = tempfile::tempdir().unwrap();
+        let mut model = Model::default();
+        for msg in [
+            ServerMsg::Connected {
+                local_host_id: Some(Uuid::from_u128(99)),
+            },
+            host(99, true),
+            host(1, true),
+            agent(11, 1),
+            ServerMsg::HostsSynchronized,
+            ServerMsg::AgentsSynchronized,
+        ] {
+            update(&mut model, Msg::Server(msg));
+        }
+        let mut cache = FleetCache::open(root.path());
+        collect(&mut cache, &mut Projection::default(), &model);
+
+        let mut cache = FleetCache::open(root.path());
+        let mut projection = Projection::default();
+        let mut model = Model::default();
+        let connection = RelayConnection::Disconnected {
+            reason: "offline".into(),
+        };
+        let mut previous_live_fleet = None;
+        check(&cache.initial(), &[11], false);
+        for msg in [
+            ServerMsg::Connected {
+                local_host_id: Some(Uuid::from_u128(99)),
+            },
+            host(99, true),
+            ServerMsg::HostsSynchronized,
+            ServerMsg::AgentsSynchronized,
+        ] {
+            update(&mut model, Msg::Server(msg));
+            let mut events = vec![];
+            projection.collect(&model, &connection, &mut events);
+            let fleet = events
+                .iter_mut()
+                .find(|event| matches!(event, Event::Fleet { .. }));
+            if model.is_synchronized() {
+                let fleet = fleet.expect("local synchronization must trigger a fleet callback");
+                assert_eq!(
+                    Some(&*fleet),
+                    previous_live_fleet.as_ref(),
+                    "live DTO is unchanged"
+                );
+                cache.update(fleet, &model).unwrap();
+                check(fleet, &[], false);
+                let Event::Fleet { hosts, .. } = &*fleet else {
+                    unreachable!()
+                };
+                assert_eq!(hosts.len(), 1);
+                assert_eq!(hosts[0].entry.id, Uuid::from_u128(99));
+                println!(
+                    "Offline synchronization callback: {}",
+                    serde_json::to_string(fleet).unwrap()
+                );
+            } else {
+                if let Some(fleet) = fleet {
+                    previous_live_fleet = Some(fleet.clone());
+                    cache.update(fleet, &model).unwrap();
+                }
+                check(&cache.initial(), &[11], false);
+            }
+            assert_eq!(
+                model.agent_count(),
+                0,
+                "cached rows stay outside the reducer"
+            );
+        }
+        check(&FleetCache::open(root.path()).initial(), &[], false);
+        let mut events = vec![];
+        projection.collect(&model, &connection, &mut events);
+        assert!(
+            events.is_empty(),
+            "unchanged authority must not repeat callbacks"
+        );
+    }
+
+    #[test]
     fn mobile_cache_authority_is_per_host_and_survives_frame_coalescing() {
         let root = tempfile::tempdir().unwrap();
         let mut model = Model::default();

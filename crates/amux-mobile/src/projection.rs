@@ -280,6 +280,7 @@ impl FeedState {
 #[derive(Default)]
 pub struct Projection {
     fleet: Option<Event>,
+    synchronized: bool,
     remote_inventories: BTreeMap<amux::HostId, BTreeSet<AgentId>>,
     feeds: BTreeMap<AgentId, FeedState>,
     sessions: BTreeMap<AgentId, SessionDto>,
@@ -350,9 +351,13 @@ impl Projection {
                 .collect(),
             reconciled: model.is_synchronized() && *connection == RelayConnection::Connected,
         };
+        // Cache membership also depends on local synchronization, even while a
+        // disconnected relay keeps the displayed Fleet unreconciled.
         if self.fleet.as_ref() != Some(&fleet)
+            || self.synchronized != model.is_synchronized()
             || &self.remote_inventories != model.remote_inventories()
         {
+            self.synchronized = model.is_synchronized();
             self.remote_inventories = model.remote_inventories().clone();
             self.fleet = Some(fleet.clone());
             events.push(fleet);
