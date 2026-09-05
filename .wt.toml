@@ -47,6 +47,23 @@ run = "timeout 900 sh scripts/mobile-check.sh"
 [task.ios-rust]
 run = "timeout 1800 python3 scripts/ios-rust.py"
 
+# The pinned devices every capture and measurement runs on. Creating them is
+# idempotent; they are left booted because every later recipe needs them up.
+[task.ios-simulator]
+run = "timeout 900 python3 -B scripts/ios_simulators.py"
+
+# Generates ios/Amux.xcodeproj from ios/project.yml, then builds the app. The
+# bridge XCFramework is an input, so ios-rust runs first.
+[task.ios-build]
+run = "timeout 1800 python3 -B scripts/ios-build.py"
+needs = ["ios-rust"]
+
+# The package unit suites. Arguments are xcodebuild's; a `-only-testing:`
+# selector picks the package that owns the named target.
+[task.ios-unit]
+run = 'timeout 1800 python3 -B scripts/ios-unit.py "$@"'
+needs = ["ios-rust"]
+
 [task.ios-loopback-smoke]
 run = "timeout 1800 python3 -B ios/Tools/loopback_smoke.py"
 needs = ["build"]

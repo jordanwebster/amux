@@ -1,0 +1,18 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "root.title" : {
+      "comment" : "Placeholder title on the app's root screen until the shell is built.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amux"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

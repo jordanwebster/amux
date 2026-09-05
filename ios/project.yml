@@ -1,0 +1,93 @@
+name: Amux
+
+options:
+  bundleIdPrefix: sh.amux
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "26.0"
+  minimumXcodeGenVersion: "2.46.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CODE_SIGNING_ALLOWED: NO
+
+packages:
+  AmuxCore:
+    path: Packages/AmuxCore
+  AmuxDesign:
+    path: Packages/AmuxDesign
+  AmuxFeatures:
+    path: Packages/AmuxFeatures
+  AmuxTestSupport:
+    path: Packages/AmuxTestSupport
+
+targets:
+  Amux:
+    type: application
+    platform: iOS
+    sources:
+      - path: Amux/Sources
+      - path: Amux/Resources
+        buildPhase: resources
+    info:
+      path: Amux/Info.plist
+      properties:
+        CFBundleDisplayName: Amux
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # The transcript is measured against the display's full cadence; the
+        # 120 Hz cap iOS applies by default would hide hitches behind it.
+        CADisableMinimumFrameDurationOnPhone: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: sh.amux.Amux
+        SWIFT_EMIT_LOC_STRINGS: YES
+        # XcodeGen gives an iOS target iPhone and iPad by default; this app is
+        # designed for the phone only.
+        TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG AMUX_DEBUG_TOOLS
+    dependencies:
+      - package: AmuxCore
+        product: AmuxCore
+      - package: AmuxDesign
+        product: AmuxDesign
+      - package: AmuxFeatures
+        product: AmuxFeatures
+
+  AmuxUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - AmuxUITests
+    dependencies:
+      - target: Amux
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: sh.amux.AmuxUITests
+        TEST_TARGET_NAME: Amux
+        TARGETED_DEVICE_FAMILY: "1"
+
+schemes:
+  Amux:
+    build:
+      targets:
+        Amux: all
+        AmuxUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      # The package unit suites run from their own package schemes (see
+      # scripts/ios-unit.py); this action carries the UI tests, which the
+      # journey plans select from.
+      targets:
+        - AmuxUITests

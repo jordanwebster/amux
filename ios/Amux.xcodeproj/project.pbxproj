@@ -1,0 +1,506 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31777DF351ACE50870B1C6A5 /* LaunchTests.swift */; };
+		60B54AE413844E002F4EBB19 /* AmuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = 848B7908370DBF226D9CCEF9 /* AmuxCore */; };
+		63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D140E97565E0C456B57BB601 /* DebugTools.swift */; };
+		6805234D9DC817A50B5F83BD /* AmuxDesign in Frameworks */ = {isa = PBXBuildFile; productRef = C0C0812086F76FDC86EC6F93 /* AmuxDesign */; };
+		85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBADB0CC914373F8BD52E715 /* AmuxApp.swift */; };
+		BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 7841E9EA7855115C8262F599 /* Localizable.xcstrings */; };
+		E4DF9C7A152AFAF210FB4241 /* AmuxFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */; };
+		F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BAD30E79F5FE66C97691B57 /* RootView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4A353F499577E7D8C9493874 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4B97051BF0BFB50D573975CE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8CE566509F5A43BE6BF3E256;
+			remoteInfo = Amux;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		1E66BD0F085353353B013CB1 /* AmuxCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxCore; path = Packages/AmuxCore; sourceTree = SOURCE_ROOT; };
+		31777DF351ACE50870B1C6A5 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
+		35ED0CE4A533E8878FBD1675 /* AmuxFeatures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxFeatures; path = Packages/AmuxFeatures; sourceTree = SOURCE_ROOT; };
+		6BAD30E79F5FE66C97691B57 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		7841E9EA7855115C8262F599 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		8959E3A72299B8152BE86967 /* AmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8ED8247A9E0214AD28831928 /* Amux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Amux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B4EFC5ACC5BD2F025A261F98 /* AmuxTestSupport */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxTestSupport; path = Packages/AmuxTestSupport; sourceTree = SOURCE_ROOT; };
+		D140E97565E0C456B57BB601 /* DebugTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugTools.swift; sourceTree = "<group>"; };
+		D8269D1B95602732F33C12F2 /* AmuxDesign */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxDesign; path = Packages/AmuxDesign; sourceTree = SOURCE_ROOT; };
+		EBADB0CC914373F8BD52E715 /* AmuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmuxApp.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		087ACC5288C152DE24BF20F1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				60B54AE413844E002F4EBB19 /* AmuxCore in Frameworks */,
+				6805234D9DC817A50B5F83BD /* AmuxDesign in Frameworks */,
+				E4DF9C7A152AFAF210FB4241 /* AmuxFeatures in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0F43E47BAFD6271888A5F0B5 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				EBADB0CC914373F8BD52E715 /* AmuxApp.swift */,
+				D140E97565E0C456B57BB601 /* DebugTools.swift */,
+				6BAD30E79F5FE66C97691B57 /* RootView.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		5445FBC267DE6D42E3D857C1 /* AmuxUITests */ = {
+			isa = PBXGroup;
+			children = (
+				31777DF351ACE50870B1C6A5 /* LaunchTests.swift */,
+			);
+			path = AmuxUITests;
+			sourceTree = "<group>";
+		};
+		64DAC62299FAA0DD1E9445EA /* Amux */ = {
+			isa = PBXGroup;
+			children = (
+				7C9196A3EDC8707B2657D3CD /* Resources */,
+				0F43E47BAFD6271888A5F0B5 /* Sources */,
+			);
+			path = Amux;
+			sourceTree = "<group>";
+		};
+		7C9196A3EDC8707B2657D3CD /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				7841E9EA7855115C8262F599 /* Localizable.xcstrings */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		AE5FEBD430E530D71BFD9832 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8ED8247A9E0214AD28831928 /* Amux.app */,
+				8959E3A72299B8152BE86967 /* AmuxUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D51D25E7E8B59A0F5D1EFB9F = {
+			isa = PBXGroup;
+			children = (
+				64DAC62299FAA0DD1E9445EA /* Amux */,
+				5445FBC267DE6D42E3D857C1 /* AmuxUITests */,
+				ECABC02511DE788415933245 /* Packages */,
+				AE5FEBD430E530D71BFD9832 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		ECABC02511DE788415933245 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				1E66BD0F085353353B013CB1 /* AmuxCore */,
+				D8269D1B95602732F33C12F2 /* AmuxDesign */,
+				35ED0CE4A533E8878FBD1675 /* AmuxFeatures */,
+				B4EFC5ACC5BD2F025A261F98 /* AmuxTestSupport */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3DAE7AD018B70A791E1B19D2 /* AmuxUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E6C3D05D0A216189D1246CDF /* Build configuration list for PBXNativeTarget "AmuxUITests" */;
+			buildPhases = (
+				DC0C4BC62E0C8E248FD35028 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				483807172FF3F5C5E1FB6AF0 /* PBXTargetDependency */,
+			);
+			name = AmuxUITests;
+			packageProductDependencies = (
+			);
+			productName = AmuxUITests;
+			productReference = 8959E3A72299B8152BE86967 /* AmuxUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		8CE566509F5A43BE6BF3E256 /* Amux */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 190B54AA9652906BD3C934F6 /* Build configuration list for PBXNativeTarget "Amux" */;
+			buildPhases = (
+				5E9F944893B010C181A29691 /* Sources */,
+				5948808C37D5481CF54926FA /* Resources */,
+				087ACC5288C152DE24BF20F1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Amux;
+			packageProductDependencies = (
+				848B7908370DBF226D9CCEF9 /* AmuxCore */,
+				C0C0812086F76FDC86EC6F93 /* AmuxDesign */,
+				ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */,
+			);
+			productName = Amux;
+			productReference = 8ED8247A9E0214AD28831928 /* Amux.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4B97051BF0BFB50D573975CE /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					3DAE7AD018B70A791E1B19D2 = {
+						TestTargetID = 8CE566509F5A43BE6BF3E256;
+					};
+				};
+			};
+			buildConfigurationList = EA57BA1454AB80E40B57D3E9 /* Build configuration list for PBXProject "Amux" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = D51D25E7E8B59A0F5D1EFB9F;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				6BCA3E1C4A766A300B0FD144 /* XCLocalSwiftPackageReference "Packages/AmuxCore" */,
+				87D93FCE7D2252AFAE7760EA /* XCLocalSwiftPackageReference "Packages/AmuxDesign" */,
+				0033DA7A4EFD7D0F13865D0B /* XCLocalSwiftPackageReference "Packages/AmuxFeatures" */,
+				98FC981B2E43A26E778C7AC1 /* XCLocalSwiftPackageReference "Packages/AmuxTestSupport" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = AE5FEBD430E530D71BFD9832 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8CE566509F5A43BE6BF3E256 /* Amux */,
+				3DAE7AD018B70A791E1B19D2 /* AmuxUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5948808C37D5481CF54926FA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5E9F944893B010C181A29691 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */,
+				63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */,
+				F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DC0C4BC62E0C8E248FD35028 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		483807172FF3F5C5E1FB6AF0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8CE566509F5A43BE6BF3E256 /* Amux */;
+			targetProxy = 4A353F499577E7D8C9493874 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		18AF2EFCFA6E6DA9D324BAEE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		1C6A74E2A949CE5DA9BC6C59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Amux/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.Amux;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG AMUX_DEBUG_TOOLS";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		304A2DC4DD64B8229FE6D67C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Amux;
+			};
+			name = Release;
+		};
+		43EAF82C28C6FB2A3DB797AE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Amux/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.Amux;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		62CBA0674792A649E6E61464 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Amux;
+			};
+			name = Debug;
+		};
+		B9B730C37BC23724695BE5B8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		190B54AA9652906BD3C934F6 /* Build configuration list for PBXNativeTarget "Amux" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C6A74E2A949CE5DA9BC6C59 /* Debug */,
+				43EAF82C28C6FB2A3DB797AE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E6C3D05D0A216189D1246CDF /* Build configuration list for PBXNativeTarget "AmuxUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				62CBA0674792A649E6E61464 /* Debug */,
+				304A2DC4DD64B8229FE6D67C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EA57BA1454AB80E40B57D3E9 /* Build configuration list for PBXProject "Amux" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				18AF2EFCFA6E6DA9D324BAEE /* Debug */,
+				B9B730C37BC23724695BE5B8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		0033DA7A4EFD7D0F13865D0B /* XCLocalSwiftPackageReference "Packages/AmuxFeatures" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxFeatures;
+		};
+		6BCA3E1C4A766A300B0FD144 /* XCLocalSwiftPackageReference "Packages/AmuxCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxCore;
+		};
+		87D93FCE7D2252AFAE7760EA /* XCLocalSwiftPackageReference "Packages/AmuxDesign" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxDesign;
+		};
+		98FC981B2E43A26E778C7AC1 /* XCLocalSwiftPackageReference "Packages/AmuxTestSupport" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxTestSupport;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		848B7908370DBF226D9CCEF9 /* AmuxCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AmuxCore;
+		};
+		C0C0812086F76FDC86EC6F93 /* AmuxDesign */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AmuxDesign;
+		};
+		ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AmuxFeatures;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4B97051BF0BFB50D573975CE /* Project object */;
+}

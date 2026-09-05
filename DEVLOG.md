@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **An Xcode project for the iPhone app.** `ios/project.yml`
+generates Amux.xcodeproj: an iPhone-only app targeting iOS 26.0, a UI test
+bundle, and four local Swift packages — AmuxCore over the Rust bridge
+XCFramework, AmuxDesign, AmuxFeatures and AmuxTestSupport. The generated
+project is committed so a regeneration shows up in the diff like any other
+change. Debug builds define AMUX_DEBUG_TOOLS and Release does not, which is
+what keeps the driving door and the fixture screens out of a shipping build.
+User-facing text goes through a string catalogue from the start. Three recipes
+carry it: ios-simulator creates or reuses amux-golden (iPhone 17 Pro) and
+amux-small (iPhone SE) on iOS 26.5 and pins language, region, the 9:41 status
+bar and the light appearance so a capture cannot drift; ios-build regenerates
+the project and builds the app; ios-unit runs the package suites, routing a
+`-only-testing:` selector to whichever package owns that target, because Xcode
+exposes a local package's tests through the package's own scheme rather than
+the app's.
+
 2026-09-05 — **Observe intermediate CI runs and wait for repairs to turn green.**
 The ci-observe recipe checks the branch and clean tree before pushing, then
 records the exact commit's CI state as JSON. Pending runs allow intermediate
