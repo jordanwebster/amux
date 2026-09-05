@@ -1,10 +1,8 @@
 # The amux client layer
 
 Status: normative, with full native layers for Claude PTY (`docs/CHAT.md`)
-and Codex (`docs/CODEX.md`), and a third native layer for Claude driven over
-its stream-JSON interface, whose surfaces are specified in
-`docs/CLAUDE_SDK.md` — revised after external review (see git history; review
-findings in the 2026-08 devlog entries).
+and Codex (`docs/CODEX.md`), and a full native layer and TUI chat for Claude
+driven over stream-JSON (`docs/CLAUDE_SDK.md`).
 This document owns the client side of amux: the `amux-ui` state library,
 its renderers (the TUI first, desktop and mobile clients later), and the
 rules that keep per-agent knowledge in the right place. Companions:
@@ -168,10 +166,11 @@ structurally cannot reach past the projections to raw layer state.
 one fact.** Within a layer, `phase`, `attention`, the send gate and the
 write permissions are all projections of a single private
 classification, and the kernel's stream lifecycle is folded in at that
-one point rather than at each projection. Claude's `ChatCondition` and
-Codex's `Situation` are independently exhaustive; there is no cross-layer
-trait or shared state vocabulary. Cached attention, observation-time phase and
-effective attention, gate queries, and reducer enforcement all consume those
+one point rather than at each projection. Claude PTY's `ChatCondition`,
+Claude SDK's `SdkCondition` and Codex's `Situation` are independently
+exhaustive; there is no cross-layer trait or shared state vocabulary. Cached
+attention, observation-time phase and effective attention, gate queries, and
+reducer enforcement all consume those
 classifications. Two rules follow, both bought expensively:
 
 - The classification must be **lossless with respect to every question
@@ -273,8 +272,11 @@ and one full-screen frame shell shared by the native Claude and Codex chats.
 The shell owns geometry, windowing, scrolling, the composer, block focus, and
 theme. Each per-agent TUI adapter owns its native typed feed walk, content and
 panels, and its own keys; it hands already-painted blocks and agent-specific
-surfaces to the shell. The configured `chat`/`raw` default chooses an agent's
-normal entry mode; both remain available when the agent advertises them.
+surfaces to the shell. The configured `chat`/`raw` default chooses a local
+terminal-capable agent's fleet entry mode. Agents on another machine default
+to chat; the other-mode key still opens raw attach when available. Read-only
+and SDK agents offer chat only. The hints and help read the same per-agent
+entry policy; `docs/CHAT.md` describes the command-line attach policy.
 
 Sharing this presentation shell is not content normalization. The shell never
 classifies a Claude transcript row or a Codex control-plane entry, and adding
@@ -314,18 +316,20 @@ than terminal bytes. Semantic messages are compact over the network,
 replayable, permit deliberate local echo where the layer requires it, and stay
 resize-independent. They follow the same no-scrollback constraint as chrome.
 Agent-message provenance is still folded by the recipient's own layer: Claude
-parses its delivered user row and Codex parses `amux.codex_message`. The shared
-kernel owns only presentation facts common to both envelope kinds; it does not
-invent a generic message feed.
+PTY parses its delivered user row, Claude SDK parses `amux.claude_sdk.message`,
+and Codex parses `amux.codex_message`. The shared kernel owns only presentation
+facts common to these envelopes; it does not invent a generic message feed.
 
 Claude driven over stream-JSON gets a native chat of its own rather than a
 second consumer of the transcript layer, and the two Claude layers are
 deliberately separate: two folds, two private classifications, two feeds. They
-share exactly one thing — Claude's own tool vocabulary, meaning how an `Edit`,
+share Claude's own tool vocabulary, meaning how an `Edit`,
 `Write`, `Bash`, `Task`, `AskUserQuestion` or `ExitPlanMode` input reads and
 which document an ask puts in the reader — through a facts module both consume.
-That is translation of one provider's JSON by the crate that owns it, not a
-normalized agent representation, and it stops there: no shared state
+The two TUI adapters also reuse the Claude ask panels, reader and review
+presentation, and both feeds group exploration tools through the same walk
+over these facts. This shares provider vocabulary and presentation mechanics,
+not a normalized agent representation: no shared state
 vocabulary, no shared condition, no cross-layer trait. The reason is the
 asymmetry rule above. The transcript layer infers working, streaming and turn
 ends from a burst-written file; the stream-JSON session states them as facts,

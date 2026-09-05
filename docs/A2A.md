@@ -1,12 +1,12 @@
 # Agent-to-agent messaging and families
 
-**Status**: implemented (2026-09-04). This document owns amux's
-agent-to-agent message envelope, provider carriers, model-facing tools, and
+**Status**: implemented for Claude PTY, Claude SDK and Codex. This document owns
+amux's agent-to-agent message envelope, provider carriers, model-facing tools, and
 parent/child lifecycle. [`PROTOCOL.md`](./PROTOCOL.md) owns the links and
 tunnels that carry remote calls; [`ARCHITECTURE.md`](./ARCHITECTURE.md) owns
 the daemon service boundaries; [`UI.md`](./UI.md) and [`CHAT.md`](./CHAT.md)
 own client derivation and presentation. Provider-specific row details remain
-in [`CODEX.md`](./CODEX.md) and
+in [`CODEX.md`](./CODEX.md), [`CLAUDE_SDK.md`](./CLAUDE_SDK.md) and
 [`CLAUDE_TRANSCRIPT.md`](./CLAUDE_TRANSCRIPT.md). The shared attachment
 element, artifact lifetime, and attachment delivery are specified in
 [`ATTACHMENTS.md`](./ATTACHMENTS.md).
@@ -53,12 +53,14 @@ MCP servers and allow rules remain active; amux deliberately does not use
 `--strict-mcp-config`, which would suppress the user's other configured
 servers. Neither provider path edits persistent user configuration.
 
-Claude's five lifecycle hooks arrive through an additive `--settings` object
+Claude PTY's five lifecycle hooks arrive through an additive `--settings` object
 on the managed launch. User settings supplied as JSON or a file are deep-merged
 into that object, with hook arrays concatenated. Every hook command uses the
 same absolute amux executable as the MCP route. amux installs no Claude plugin:
 sessions started outside amux therefore receive neither the amux tools nor
-amux-managed hooks.
+amux-managed hooks. Claude SDK registers no amux hooks: stream-JSON supplies
+its lifecycle facts. User-configured hooks still run inside Claude under both
+drivers.
 
 | tool | input | result | meaning |
 |---|---|---|---|
@@ -86,16 +88,19 @@ that deferred A2A extension are owned by `ATTACHMENTS.md`.
 `spawn` creates the child record with the authenticated caller as its parent,
 starts the backend, waits up to 30 seconds for its delivery target to become
 live, then sends the initial prompt through the same message carrier used
-later. For managed Claude sessions, the `SessionStart` hook marks that
+later. For managed Claude PTY sessions, the `SessionStart` hook marks that
 transition, as does transcript ingest reaching its `amux.transcript_ready`
-marker; Codex uses its shared thread-attachment state. The readiness wait
+marker. Claude SDK becomes available when its provider session is ready;
+Codex uses its shared thread-attachment state. The readiness wait
 is scoped to this initial delivery, so an ordinary send to an unavailable
 session fails immediately. The prompt arrives with parent provenance instead of
 masquerading as human input. If readiness or delivery fails, spawn removes the
 new child and reports failure rather than leaving an orphan. With no explicit
 `cwd`, the child inherits the parent's working directory. Claude children
 inherit only the parent's permission-mode arguments; Codex children inherit
-approval and sandbox policy.
+approval and sandbox policy. New Claude children use the configured
+`claude.driver`, with `pty` as the shipped default, independently of the
+parent's driver. Existing agents keep their driver.
 
 When a child turn ends, its last assistant message is sent to the parent as a
 `completed` envelope. Claude PTY supplies the text through the `Stop` hook;
@@ -266,6 +271,9 @@ Inbound message, completion, and exit rows render in the recipient's native
 chat. Outbound `send` calls remain ordinary tool rows. The TUI can cycle
 through a family, expand completion bodies, and host a child's own ask panel
 inside the parent's chat while dispatching the answer to the child's layer.
+Both Claude drivers and Codex participate on either side: an SDK parent can
+host a terminal-backed child's ask, and either other chat can host an SDK
+child's permission, plan, question or external-request panel.
 
 `amux list` shows one row per family with a descendant count and current-work
 column; `amux list --all` expands and indents every generation. `amux rm`
@@ -281,3 +289,7 @@ folds after every input, and TUI goldens cover collapsed and expanded fleets,
 message rows, child asks, and deletion confirmation. Provider behavior is
 pinned by versioned Claude and Codex captures; the real-harness round trips
 remain opt-in because they require the operator's authenticated installations.
+`e2e-tests/sdk_chat_live.sh` captures an SDK parent creating a child, answering
+its permission request and exchanging messages, including both chats and the
+family view. The redacted parent rows also replay through the client in
+`crates/amux-ui/tests/spec/fixtures/claude_sdk/converse.rows.jsonl`.

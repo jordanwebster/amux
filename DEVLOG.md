@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **The guides describe the shipped Claude SDK chat and its limits.**
+The client, chat, provider-boundary and family guides now cover the three native
+chats, creation defaults, shared entry policy, SDK controls and user-owned hooks.
+The SDK guide matches the header and activity-row layout and documents the
+known dialog routing in Claude Code 2.1.261: 37 registered kinds, two headless
+forwarding paths, and no recorded live dialog. The generic panel remains
+unvalidated against a real frame; received dialogs are never auto-cancelled.
+The capability inventory states that limitation alongside the flat-form limit.
+Validation: `wt build`, `wt lint`, `wt test`, `wt run spec` and
+`wt run mobile-check` pass together, including the iOS library without
+terminal hosting. No product code, test assertions or deadlines change.
+
 2026-09-05 — **A live comparison verifies user Stop hooks in Claude and amux.**
 The hook harness isolates settings while retaining the ordinary secure-store
 login and clears inherited Claude session identity for the direct launch.

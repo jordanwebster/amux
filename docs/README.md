@@ -18,8 +18,8 @@ subject; when two overlap, the owner named here wins.
   bindings, theme-file format, and `amux-shot` screenshot workflow.
 - `CLAUDE_SDK.md` — the chat for a Claude agent driven over its stream-JSON
   interface: session facts in the header, streaming replies, tasks, context,
-  the five kinds of ask it can answer, and which of those surfaces the other
-  two chats take up.
+  ask panels and their live-validation gaps, and the surfaces shared with the
+  other two chats.
 - `ATTACHMENTS.md` — chat attachments and diff reviews: the canonical element
   syntax, artifact lifetime and cache, RPC and stream delivery, agent tool,
   and deferred client surfaces.

@@ -1,7 +1,8 @@
 # The Claude SDK chat
 
-Status: design record, normative for the SDK-backed Claude chat; the surfaces
-below are the contract the client layer and the chat screen are built against.
+Status: implemented, normative for the SDK-backed Claude chat. The capability
+inventory and named gaps below distinguish shipped surfaces from provider
+limitations and missing live evidence.
 Companions: `docs/CHAT.md` owns the shared chat shell — frame, feed blocks,
 reader, review page, ask lifecycle, keybinding tiers and themes — and is not
 restated here; `docs/UI.md` owns the client-layer doctrine (one layer per agent
@@ -10,11 +11,12 @@ owns the Codex chat, which this one deliberately resembles; and
 `docs/CLAUDE_TRANSCRIPT.md` owns the transcript facts the other Claude chat
 folds. Where prose and a passing specification disagree, the specification wins.
 
-Every wire shape quoted below is taken from recordings of the installed Claude
-Code 2.1.260 under `crates/claude/fixtures/sdk/` — `question_asked`,
-`plan_reviewed`, `elicitation_accepted` — or from the older corpus recorded at
-2.1.247/2.1.251. The one surface with no recording behind it is the user
-dialog, and every claim about it is marked as unrecorded where it appears.
+Recorded wire shapes come from Claude Code 2.1.260 under
+`crates/claude/fixtures/sdk/` — `question_asked`, `plan_reviewed`,
+`elicitation_accepted` — and the older corpus at 2.1.247/2.1.251. The live
+conversation fixture under `crates/amux-ui/tests/spec/fixtures/claude_sdk/`
+was captured at 2.1.261. Dialog routing was inspected in that installed binary;
+those source findings are distinguished below from recorded traffic.
 
 ## What an SDK-backed Claude agent is
 
@@ -29,13 +31,29 @@ chat therefore renders far fewer `INFERRED` values than the PTY chat, and it
 never guesses at liveness.
 
 **Requests come to us instead of to a terminal UI.** Permission, question, plan,
-MCP elicitation and user-dialog requests all arrive as `control_request` frames
-that block the session until answered. There is no terminal underneath where a
-person could answer them in band, so an unanswerable request is a dead session,
-not an inconvenience. That is why all five reach the screen.
+MCP elicitation and user-dialog requests use `control_request` frames. There
+is no terminal underneath where a person could answer them in band. The daemon
+therefore exposes received requests to the chat and keeps them pending rather
+than answering for the user. Permission, question, plan and elicitation have
+live captures; dialog transport and its panel remain unvalidated against a
+real frame, as described below.
 
 There is no raw attach for an SDK agent — the process has no terminal UI to
 attach to — so this chat is the only way in, on every host.
+
+## Choosing the driver
+
+To use the SDK for newly created Claude agents, set this in the amux config:
+
+```yaml
+claude:
+  driver: sdk
+```
+
+The shipped default is `pty`. An explicit `amux new claude --driver pty` overrides
+an `sdk` configuration for that agent. CLI creation, the TUI create flow and
+MCP spawn use the same driver resolver; changing the config never converts an
+existing session. The fleet and chat identify both drivers simply as Claude.
 
 ## Vocabulary
 
@@ -62,24 +80,25 @@ chat adds five terms and widens one.
 
 ## The header
 
-The chat header is the shared one: `name · kind @ host` on the left, phase on
-the right. The SDK chat fills the second header line with session facts, in the
-place the Codex chat already uses for its model, approval and sandbox line:
+The chat header is the shared one: `name · kind @ host` on the left, model,
+permission mode and phase on the right. The activity row above the composer
+carries the passive context meter and running-task count:
 
 ```
-  fix-auth · claude @ mbp                                                                                chat · working
-  sonnet-4-5 · default · ctx 34k/200k · 2 tasks
+  fix-auth · claude @ mbp                                                       sonnet-4-5 · default · working
+  ... conversation feed ...
+  ◐ working · ctx 34.1k/200.0k · 2 tasks running · ctrl+x interrupt
 ```
 
 Every field is a stated fact. The model and permission mode come from
-`system.init` and from `system.status` rows when they change mid-session; the
-meter is derived as below; the task count is the number of tasks not yet
-finished. A field the session has not stated is omitted rather than guessed —
-an empty region is honest, a `?` is noise, and an invented default is a lie.
+`system.init`, `system.status` and acknowledged session-control rows; the meter
+is derived as below; the task count is the number of tasks still running. An
+unreported model or mode is omitted. The meter explicitly says `ctx unknown`
+until usage arrives.
 
 Nothing on this line names the backend. `claude @ mbp` is what a PTY agent
-shows too; the second line reads as ordinary session detail, and a PTY chat
-that learns to show its own model prints the same shape from its own facts.
+shows too. The PTY and Codex chats print their own session facts in the same
+header region.
 
 ## The streaming block
 
@@ -92,7 +111,7 @@ caret at the growth point:
     The cap belongs in RetryConfig; I'll thread it through SyncOptions and
     default it to six attempts▌
 
-  ◐ working · 6s · ctrl+x interrupt
+  ◐ working · ctx 34.1k/200.0k · ctrl+x interrupt
 ```
 
 Three rules keep it from lying.
@@ -113,7 +132,7 @@ marker when the message completes.
 ## Tasks
 
 Subagent runs get one block per task, in the feed where the task started, and a
-count in the header line. The block updates in place:
+count in the activity row. The block updates in place:
 
 ```
   ⣾ Explore · scan the sync client for retry paths · running · Read sync/client.rs
@@ -252,7 +271,7 @@ CLI's `planFilePath`. The plan opens the reader fullscreen, as in the PTY chat:
     # Plan: make the retry count configurable
     ...
     ## Verification
-    cargo test -p amux-sync
+    wt test -- sync
 
     › 1. Approve — auto       agent proceeds, edits apply without asking
       2. Approve — manual     agent asks before each edit
@@ -327,8 +346,7 @@ right one: a half-answer that looks like an answer is worse than a stated
 limit. Blocked schemas join the gap list below.
 
 Declining is a person's answer and travels as `decline`; the daemon never
-answers an elicitation on its own, which is what today's placeholder behaviour
-does and why it is being removed.
+answers an elicitation on its own.
 
 ### Dialog
 
@@ -336,10 +354,29 @@ does and why it is being removed.
 `dialog_kind`, an opaque `payload` and an optional `tool_use_id`. Answered
 `{"behavior": "completed", "result": …}` or `{"behavior": "cancelled"}`.
 
-**No dialog kind is recorded.** The complete corpus contains zero
-`request_user_dialog` frames, so the set of kinds is unknown, not empty, and
-the shape of a `result` is unknown per kind. The design is built for that
-honestly, in two layers.
+**No dialog kind is recorded.** The corpus contains no `request_user_dialog`
+frame. Inspection of Claude Code **2.1.261** found **37 registered dialog
+kinds**, but the headless adapter forwards exactly two as user dialogs:
+`refusal_fallback_prompt` and `fable_overage_consent_prompt`. It returns defaults
+for the other registered dialogs; MCP elicitation uses the separate
+`elicitation` control channel. Registering a kind in the provider is not proof
+that it can reach a headless client.
+
+Forwarding also requires declaring the kind at initialization and satisfying
+its runtime gates. amux currently declares no supported dialog kinds. Neither
+forwardable kind was reached in the live probes: overage consent needs a
+billing state we will not manufacture, and a benign copyright refusal ended
+the turn normally without triggering refusal fallback. The live dialog
+demonstration is therefore absent.
+
+The panel ships as the kind-and-payload recognizer with a blocked fallback,
+unvalidated against a real frame. The two source-known kinds have specialized
+payloads and string-valued choices, not the generic shape illustrated below;
+they have no typed panel here. The daemon must never auto-cancel a dialog it
+receives. It retains the request until a person answers or the session exits.
+
+The following examples are synthetic illustrations of the recognizer and
+fallback, not recorded provider dialogs.
 
 A payload carrying a `message` string and an `options` array of labelled
 choices is rendered as a choice panel and answered `completed` with the chosen
@@ -370,9 +407,8 @@ control-sanitized summary of the payload, and Cancel as the only answer:
 ```
 
 Raw JSON is never shown, and Cancel is labelled as what it is so nobody reads
-it as agreement. Blocked kinds join the gap list, and each kind we record
-afterwards can graduate to a typed panel without a protocol change, because the
-row carries the kind and payload verbatim.
+it as agreement. A recorded kind can receive a typed panel without changing
+the row protocol, which carries the kind and payload verbatim.
 
 ## Keys
 
@@ -434,45 +470,53 @@ admission, because a parity list that hides unbuilt work is worth nothing.
 
 ## What the three chats share
 
-Every surface above, and whether the other two chats take it. "Adopts" means
-the surface lands there in this work from that backend's own facts; "lacks"
+Every surface above, and whether the other two chats have it. "Adopted" means
+the surface is implemented there from that backend's own facts; "lacks"
 names the capability that is missing, which is the only acceptable reason for a
 visible difference between the three chats.
 
 | Surface | Claude PTY chat | Codex chat |
 | --- | --- | --- |
-| Header session-fact line | Adopts. `message.model` is a per-message fact in the transcript and permission mode is a hook fact; both print in the same place. The permission mode leaves the footer, which now states the key that cycles it. | Adopts. Model, approval and sandbox move from their own row to the header's right, bare-valued and joined like the other two. They are creation choices the launcher hands over, so a chat opened another way states none. |
-| Streaming assistant message | Lacks: main-session transcript files burst-write whole messages, so there is no partial text to stream. Block-level streaming exists only in subagent files. | Adopts. The layer already folds `item/agentMessage/delta`; the open block now carries the same caret instead of a marker row of its own. |
+| Header session-fact line | Adopted. `message.model` is a per-message fact in the transcript and permission mode is a hook fact; both print in the same place. The footer states the key that cycles permission mode. | Adopted. Model, approval and sandbox appear on the header's right, bare-valued and joined like the other two. They are creation choices the launcher hands over, so a chat opened another way states none. |
+| Streaming assistant message | Lacks: main-session transcript files burst-write whole messages, so there is no partial text to stream. Block-level streaming exists only in subagent files. | Adopted. The layer already folds `item/agentMessage/delta`; the open block now carries the same caret instead of a marker row of its own. |
 | Task list | Lacks a lifecycle: the transcript has `Task` tool calls and sidechain files, not task state rows, so the existing subagent line stays and no live list is synthesized. | Lacks: subagent-sourced items exist, but there is no task lifecycle vocabulary to fill a state column. |
-| Context meter | Adopts, partially: the same used-token sum is available per assistant message, but no row states the context window, so the PTY meter shows used tokens with no denominator. | Adopts fully. `thread/tokenUsage/updated` carries the totals and `modelContextWindow`. |
-| Context breakdown overlay | Lacks: no control returns a per-category accounting; Claude's own `/context` is a terminal screen, not a fact. | Adopts, coarsely: its token-usage row breaks down into input, cached input, output and reasoning — four categories, not the per-tool grid, and the overlay says so. Nothing is fetched: the numbers arrived with the last turn, so `<leader> c` never refreshes. |
+| Context meter | Adopted, partially: the same used-token sum is available per assistant message, but no row states the context window, so the PTY meter shows used tokens with no denominator. | Adopted fully. `thread/tokenUsage/updated` carries the latest turn's usage and `modelContextWindow`; the meter uses that context snapshot, not cumulative thread spend. |
+| Context breakdown overlay | Lacks: no control returns a per-category accounting; Claude's own `/context` is a terminal screen, not a fact. | Adopted, coarsely: its token-usage row breaks down the latest turn into input and output, with cached input and reasoning nested under their respective totals. It has no per-tool grid, and the overlay says so. Nothing is fetched: the numbers arrived with the last turn, so `<leader> c` never refreshes. |
 | MCP status line | Lacks: the transcript carries no server inventory or health. | Already has it — the SDK chat adopts the Codex chat's rule rather than the other way round. |
-| Permission panel | Shared. Same tool vocabulary, same suggestion-derived options; only the encoding beneath differs. | Adopts the panel shell; its options stay its own wire-verbatim decisions. |
+| Permission panel | Shared. Same tool vocabulary, same suggestion-derived options; only the encoding beneath differs. | Adopted the panel shell; its options stay its own wire-verbatim decisions. |
 | Question panel | Shared, unchanged — the same `AskUserQuestion` tool through a different transport. | Lacks: no question obligation exists in the app-server vocabulary. |
 | Plan reader and its three actions | Shared, with different encodings: the PTY path composes keystrokes, the SDK path answers the request. | Lacks an obligation: Codex streams plan items, but never asks for approval of one. |
 | Elicitation form | Lacks: Claude's own terminal answers elicitations in band and writes nothing to the transcript. | Lacks an answerable shape: `item/tool/requestUserInput` is documented as unanswerable in the frozen input vocabulary and stays visibly blocked. |
 | Dialog panel | Lacks, for the same reason: the terminal answers dialogs in band. | Lacks: no equivalent request. |
-| Reader, review page, attachments, exploration runs, family banners | Shared and already built; the SDK chat adopts them as they are. | Adopts the reader: `<leader> o` opens a pasted attachment or a sent review in the same fullscreen reader. It carries no action row — a Codex reader only ever shows something already sent. The rest was already built. |
+| Reader, review page, attachments, exploration runs, family banners | Shared and already built; the SDK chat adopts them as they are. | Adopted the reader: `<leader> o` opens a pasted attachment or a sent review in the same fullscreen reader. It carries no action row — a Codex reader only ever shows something already sent. The rest was already built. |
 
 The two Claude chats share Claude's own tool vocabulary — how an `Edit`,
 `Write`, `Bash`, `Task`, `AskUserQuestion` or `ExitPlanMode` input reads, and
 the documents an ask puts in the reader — through one facts module, because it
 is literally the same provider producing the same JSON. Built directly on that
 vocabulary, they also share the walk that folds consecutive reads and searches
-into one run, so a run reads the same whichever feed carried it. They share
-nothing else: two folds, two conditions, two feeds. `docs/UI.md` states that boundary
-normatively.
+into one run, so a run reads the same whichever feed carried it. The TUI
+adapters reuse the Claude ask panels, reader and review presentation. State
+remains separate: two folds, two conditions, two feeds. `docs/UI.md` states
+that boundary normatively.
 
 ## Named gaps
 
 Carried forward to the capability inventory, each with the capability that is
 missing rather than an apology:
 
-- **Dialog kinds are unknown.** No `request_user_dialog` frame has ever been
-  recorded, so the choice-panel recognizer is a design bet until a live kind
-  arrives. Unrecognized kinds render blocked with Cancel.
+- **Live dialogs are unvalidated.** No kind is recorded. Claude Code 2.1.261
+  registers 37 kinds, but its headless adapter forwards only
+  `refusal_fallback_prompt` and `fable_overage_consent_prompt` as dialogs and
+  returns defaults for the others (MCP elicitation uses its own channel). amux
+  declares neither kind. The overage path requires billing conditions we will
+  not manufacture; a benign copyright refusal did not trigger refusal fallback
+  and ended normally. The corpus still has no `request_user_dialog` frame. The
+  kind-and-payload recognizer and blocked Cancel fallback ship without live
+  validation; the daemon never auto-cancels a received dialog.
 - **Elicitation schemas beyond flat fields** — nested objects, arrays,
-  `oneOf` — render blocked. A person answers them by interrupting.
+  `oneOf` — render blocked with a reason and explicit Decline or Cancel.
+  The chat cannot submit content for those schemas.
 - **The PTY context meter has no denominator**, because no transcript row
   states the context window.
 - **Neither the PTY chat nor the Codex chat gets a task list**, for want of a
@@ -490,9 +534,8 @@ missing rather than an apology:
 - **Polling `get_context_usage` every turn.** The assistant row's usage and the
   result's `contextWindow` already arrive for free. A round trip per turn buys
   only the per-category breakdown, which is an overlay a person opens.
-- **Auto-answering elicitations and dialogs in the daemon**, which is today's
-  behaviour. Declining on someone's behalf is exactly the auto-answering this
-  work exists to remove.
+- **Auto-answering elicitations and dialogs in the daemon.** Declining or
+  cancelling on someone's behalf hides a decision the user must make.
 - **Rendering an unrecognized dialog payload as JSON with a free-text answer.**
   It looks answerable and is not; a stated limit is more useful than a guess
   that reaches a live agent.
