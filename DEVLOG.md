@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-05 — **Match the descriptor assertion to the profile client API.**
+The protocol test now expects the exact ClientService method set declared in
+the proto, excluding the pairing, peer administration and lifecycle RPCs moved
+to the installation front door. Exact-set equality still rejects unexpected
+methods on the profile client service. Verified with `wt test -- descriptor_set`.
+
 2026-09-05 — **Switch accounts from the fleet.**
 `<leader> p` on the fleet opens a switcher listing every account on the
 installation with its label, the address behind it and what its link is
