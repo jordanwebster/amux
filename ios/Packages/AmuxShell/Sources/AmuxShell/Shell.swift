@@ -85,6 +85,8 @@ public struct Shell: View {
         switch route {
         case .conversation(let agent):
             ConversationPage(agent: agent, router: router, stores: stores)
+        case .changes(let agent):
+            ChangesPage(agent: agent, router: router, stores: stores)
         default:
             UnbuiltPage(route: route)
         }
@@ -155,6 +157,50 @@ private struct ConversationPage: View {
             case .dismiss: break
             }
         }
+    }
+}
+
+/// The changes one turn made, and the review being written about them.
+///
+/// The page owns no state of its own: the review store holds what is folded,
+/// what a finger has hold of and everything said so far, so leaving to check
+/// something in the conversation and coming back finds the review as it was.
+private struct ChangesPage: View {
+    let agent: AgentId
+    let router: Router
+    let stores: StoreBundle
+
+    var body: some View {
+        Group {
+            if let review = stores.review(agent) {
+                DiffPage(model: review, subject: name) { action in
+                    switch action {
+                    case .back: router.pop()
+                    case .select(let range): review.select(range)
+                    case .comment(let range, let text): review.comment(range, text)
+                    case .cancelComment: review.cancel()
+                    case .toggleFile(let path): review.toggle(file: path)
+                    // Where the page has already gone within itself. Nothing
+                    // to apply: the wheel and the file list scroll, and a
+                    // scroll is not somewhere the app has been taken.
+                    case .scrubTo: break
+                    // The composer is not built yet, so the review has nowhere
+                    // to be attached to. It stays on this page rather than
+                    // being sent somewhere that cannot hold it.
+                    case .attachReview: break
+                    }
+                }
+            } else {
+                // The changes have not arrived, or this agent offered none.
+                // Said plainly rather than drawn as an empty patch.
+                UnbuiltPage(route: .changes(agent))
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var name: String {
+        stores.fleet.rows.first { $0.id == agent }?.name ?? agent.description
     }
 }
 

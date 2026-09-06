@@ -64,6 +64,8 @@ public enum Fixtures {
         Built(.askPermission, "ask-permission-codex"),
         Built(.askQuestion, "ask-question"),
         Built(.plan, "plan"),
+        Built(.diff, "diff"),
+        Built(.comment, "comment"),
         Built(.firstRun, "first-run"),
         Built(.firstRunPaid, "first-run-paid"),
     ]
@@ -117,13 +119,27 @@ public enum Fixtures {
             States.open(bundle, entries: Transcript.pairingCopy,
                         session: Sessions.claude(gate: .needsYou, asks: [Sessions.claudePlan]))
         },
+        // A review part-way through being written: two files folded away, two
+        // things already said. The comments are added through the store rather
+        // than handed to it, so the state a screenshot is taken of is a state
+        // the app can actually reach.
         Fixture(id: "diff", screen: .diff) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy,
-                        session: Sessions.claude(), changes: Transcript.changes)
+                        session: Sessions.claude(), changes: Transcript.review)
+            States.reviewed(bundle)
         },
+        // The same review with a range held and a remark half written.
         Fixture(id: "comment", screen: .comment) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy,
-                        session: Sessions.claude(), changes: Transcript.changes)
+                        session: Sessions.claude(), changes: Transcript.review)
+            States.reviewed(bundle)
+            guard let review = bundle.review(Scenario.focus) else { return }
+            review.select(LineRange(file: 3, from: 9, to: 10))
+            review.draft = """
+                The catch-all swallows Code::Internal too, which isn't a \
+                pairing failure. Match the three explicitly and let the rest \
+                bubble.
+                """
         },
 
         // 4 · Writing to it

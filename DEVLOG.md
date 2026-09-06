@@ -4,6 +4,32 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **The changes a turn made read as one scroll.** The review page
+is the whole patch top to bottom rather than a list of files you drill into:
+twelve short changes should not cost twelve taps to read. Files are
+alphabetical — by the ordering a person alphabetises with, not by byte value —
+because git's own order is not stable between two walks of the same tree, and
+every address into a review is an index into that order. Each file folds away
+from its heading, the heading opens the list of all of them, and a wheel down
+the trailing edge scrubs by file and names what it lands on. There are no hunk
+headers: the coordinates they state are already beside every line, so a break
+between hunks is a hairline and a gap. Lines wrap; nothing scrolls sideways.
+
+Holding a line and dragging takes hold of a range, which opens a sheet drawn in
+the page rather than over it — what is being written about stays on screen,
+scrolled up and highlighted, and the sheet names the range twice: in rows of
+the patch, which is what a finger selected, and in the file's own numbering,
+which is what the comment is finally addressed by. A range that ends on a hunk
+break is refused rather than anchored somewhere nobody chose. Comments
+accumulate in document order and an unfinished one can be cancelled, which
+takes the words with it.
+
+No UIKit view was needed for the selection. Rows report their own frames as
+they lay out and the drag looks a point up among them, so `diffSelection` stays
+a reserved name rather than becoming a leaf; `docs/IOS.md` records the argument
+and what would reopen it. Baselines for both states are established in light
+and dark, and `ios/Goldens/BASELINE.md` says where they part from the drawings.
+
 2026-09-06 — **A child's ask is answered where the child lives, and a plan
 verdict keeps the plan it judged.** A conversation now lists what this agent
 started as two plainly different things. An agent amux started has a

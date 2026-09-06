@@ -54,3 +54,32 @@ when you open it — at the tail, at the last thing you read, at the top — is 
 product question nobody has answered yet. The container is otherwise the
 conversation's own, and when that question is answered these numbers are taken
 again over whatever ships.
+
+## Selecting a range in a diff is SwiftUI too
+
+`RegisteredLeaves` also carries `diffSelection`, reserved for a UIKit view that
+would let a finger draw across a run of lines. The review page ships without
+one.
+
+What a leaf would be bought for is a hit test: while a finger is dragging, the
+page has to say which line it is over, on every movement, and the obvious
+worry is that a SwiftUI implementation would either walk the whole document per
+update or need a layout system of its own to know where anything is. Neither is
+what it does. Each line reports its own frame once, when it lays out, through
+`onGeometryChange` into a dictionary keyed by the row it belongs to; the drag
+looks a point up in that dictionary and nothing else. The cost per update is
+one pass over the rows that have been laid out — which, because the stack is
+lazy, is the screenful plus whatever the reader has already scrolled past, not
+the patch.
+
+The gesture is a long press sequenced before a zero-distance drag, in a named
+coordinate space over the file list. That is the system's own way of starting a
+selection, and it is what tells the scroll view to let go: a bare drag is how
+the page scrolls, and a tap has only one end where a range needs two.
+
+This is a written argument rather than a measurement. There is no performance
+workload over the review page yet — `docs/IOS_PERFORMANCE.md` pins workloads
+for the home and the transcript and nothing here — so what would settle the
+question properly has not been run. `diffSelection` therefore stays a candidate
+on the same footing as `transcriptList`: named, unbuilt, and the first thing to
+reconsider if a real patch on a real phone drops frames under a finger.

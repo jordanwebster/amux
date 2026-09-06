@@ -61,6 +61,14 @@ enum DoorScreens {
             Conversation(
                 model: host.stores.conversation(agent),
                 subject: ConversationSubject(agent: agent, in: host.stores.fleet)) { _ in }
+        // The review, and the review with a comment being written on it. One
+        // page: what is selected and what is in the draft are the review's own
+        // state, so the sheet is a state of this screen rather than a screen
+        // beside it.
+        case .diff, .comment:
+            if let review = host.stores.review(Scenario.focus) {
+                DiffPage(model: review, subject: "refactor-auth") { _ in }
+            }
         default: EmptyView()
         }
     }

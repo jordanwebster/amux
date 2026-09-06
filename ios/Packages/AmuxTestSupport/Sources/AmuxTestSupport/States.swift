@@ -56,4 +56,28 @@ public enum States {
         bundle.apply(batch)
         bundle.fleet.refreshOrder(now: Scenario.now)
     }
+
+    /// A review already part-way through: the two files nobody is reading
+    /// folded away, and two remarks written where the change is.
+    ///
+    /// File indices are into the review's own alphabetical order, which is
+    /// what every address into a review is; the patch's order is git's.
+    @MainActor
+    public static func reviewed(_ bundle: StoreBundle, agent: AgentId = Scenario.focus) {
+        guard let review = bundle.review(agent) else { return }
+        review.toggle(file: "lib.rs")
+        review.toggle(file: "PROTOCOL.md")
+        review.comment(
+            LineRange(file: 3, from: 8, to: 10),
+            """
+            The catch-all swallows Code::Internal too, which isn't a pairing \
+            failure. Match the three explicitly and let the rest bubble.
+            """)
+        review.comment(
+            LineRange(file: 2, from: 5, to: 7),
+            """
+            Worth a test that two different failures produce byte-identical \
+            output, otherwise this can regress quietly.
+            """)
+    }
 }

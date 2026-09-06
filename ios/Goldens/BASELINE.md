@@ -298,6 +298,61 @@ with it.
   both places.
 - The absent speech-bubble control carries over from `ask-permission`.
 
+## diff
+
+The changes one turn made, read as one scroll. Two of the four files are folded
+away and two remarks have already been written.
+
+- **Files are alphabetical, so they are not in the patch's order.** The
+  reference lists them the way git walked the tree; this page sorts them the
+  way a person alphabetises, which is why `PROTOCOL.md` sits between `lib.rs`
+  and `spec/pairing.rs` rather than at the end. Git's order is not stable
+  between two runs over the same tree, and every address into a review — a row,
+  a range, a comment's place — is an index into this order.
+- **No hunk headers, and no line of context text where one was.** `@@ -118,7
+  +118,6 @@` states coordinates that the number beside every line already
+  states, and the function name the reference prints in grey beside it is not
+  in what the core sends: the shared parser records a hunk break as a break,
+  with no text. So a break is a hairline and a gap, and the numbers on either
+  side of it say how big it is.
+- **Lines wrap; nothing scrolls sideways.** A horizontal scroll view inside a
+  vertical one on a phone makes both gestures unreliable, and the end of a long
+  line is usually the half of a change worth reading. The reference wraps too;
+  what it does not show is how much taller a wrapped patch is, which is why
+  fewer lines fit here than in the drawing.
+- **The chrome is opaque, where the conversation's floats.** A patch is read by
+  running down a column of numbers, and a bar you can read the lines through
+  puts two columns of numbers in the same place.
+- **The edge wheel is a dot per file, not a scrollbar.** It names the file it
+  lands on while a thumb is on it; at rest it is four dots and nothing else,
+  which is why it is nearly invisible in a still. The reference draws it as a
+  full-height track.
+- **The comment count is ink.** Everywhere else the accent means something is
+  waiting on you. A remark you wrote is not that.
+
+## comment
+
+The same review with two lines held and a remark half written.
+
+- **The sheet is drawn in the page, not presented as a system sheet.** What is
+  being written about has to stay on screen: the held range is scrolled up
+  under the chrome and highlighted, and a presentation that took the screen
+  would hide the one thing the writing is about.
+- **The held range is grey, not green or red.** A selection is the reader's and
+  it is temporary; the two diff washes belong to the patch. Making it a third
+  wash would read as a third kind of change.
+- **The range is named twice, in two vocabularies.** "2 lines in
+  src/pairing.rs" counts rows of the patch, which is what a finger selected;
+  "120–121" is the file's own numbering, which is what the comment is finally
+  addressed by. A removed row would be numbered in the old file instead, and
+  the sheet would say so.
+- **Autocorrect is off in the field.** Half of a remark about a patch is
+  identifiers, and `Code::Internal` corrected into English is worse than a
+  typo. It also empties the suggestion strip above the keyboard, which was the
+  one part of this capture that was not the same twice.
+- **The keyboard is in the capture.** It is the app's own window, so it is
+  photographed with everything else. The reference shows it too.
+
 ## codex-approval
 
 The same moment on a Codex agent. There is no design reference for it; what it

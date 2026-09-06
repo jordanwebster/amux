@@ -23,5 +23,9 @@ public enum RegisteredLeaves: String, CaseIterable, Sendable {
     /// `docs/IOS.md` has the numbers and what would reopen the question.
     case transcriptList
     case tokenTextField
+    /// Measured by argument rather than by a workload, and answered the same
+    /// way: rows report their own frames as they lay out and a drag looks a
+    /// point up among them, so nothing here needs a second layout system.
+    /// `docs/IOS.md` has the reasoning and what would reopen it.
     case diffSelection
 }

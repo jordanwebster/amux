@@ -13,6 +13,8 @@ public final class StoreBundle {
     public let fleet: FleetStore
     public let hosts: HostsStore
     public private(set) var conversations: [AgentId: ConversationStore] = [:]
+    /// One review per agent, opened the first time its changes are read.
+    private var reviews: [AgentId: ReviewStore] = [:]
     /// Batches applied, in the order they arrived.
     public private(set) var applied = 0
 
@@ -64,7 +66,26 @@ public final class StoreBundle {
         return store
     }
 
+    /// The review of one agent's frozen changes, or nothing where that agent
+    /// has offered none.
+    ///
+    /// Kept rather than rebuilt on every visit: the comments somebody has
+    /// written are the review, and leaving the page to check something in the
+    /// conversation must not throw them away. A new patch is a new review, so
+    /// the store is replaced when the artifact changes and the comments about
+    /// the old one go with it — they were written about lines that patch no
+    /// longer has.
+    public func review(_ agent: AgentId) -> ReviewStore? {
+        guard let document = conversation(agent).changes,
+              let artifact = conversation(agent).changesArtifact else { return nil }
+        if let existing = reviews[agent], existing.diff == artifact { return existing }
+        let store = ReviewStore(diff: artifact, document: document)
+        reviews[agent] = store
+        return store
+    }
+
     public func closeConversation(_ agent: AgentId) {
+        reviews.removeValue(forKey: agent)
         guard conversations.removeValue(forKey: agent) != nil else { return }
         unwatch?(agent)
     }
