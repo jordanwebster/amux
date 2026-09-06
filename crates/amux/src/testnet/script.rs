@@ -742,7 +742,8 @@ impl Player {
                 Step::Prompt { text } => {
                     self.turn_open = true;
                     self.duration_ms = 0;
-                    self.hook("UserPromptSubmit", json!({"prompt":text})).await?;
+                    self.hook("UserPromptSubmit", json!({"prompt":text}))
+                        .await?;
                     let row = self.row(
                         "user",
                         json!({
@@ -764,8 +765,15 @@ impl Player {
                     failed,
                     result,
                 } => {
-                    self.tool(name, input, output.as_deref(), *denied, *failed, result.clone())
-                        .await?
+                    self.tool(
+                        name,
+                        input,
+                        output.as_deref(),
+                        *denied,
+                        *failed,
+                        result.clone(),
+                    )
+                    .await?
                 }
                 Step::Ask(ask) => self.ask(ask).await?,
                 Step::Todo { items } => {
