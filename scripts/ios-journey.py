@@ -982,11 +982,14 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     # unreadable and never offered to open. Every provider this checkout's
     # hosts can run is one this build reads, so there is nothing for a runner
     # of the same version to put in front of it. That rule is proven where it
-    # can be: in the fleet ordering's own tests and in the unreadable state's
-    # baseline.
+    # can be: in the tests that keep an unknown provider under its own name and
+    # mark it unreadable, and in the home's unreadable-agent capture, which
+    # locks how such a row reads.
     journey.say("an agent this build cannot read is not shown here: every provider a host of "
                 "this version runs is one this build reads, so the runner cannot produce one — "
-                "the rule is proven in the fleet ordering's tests and in that state's baseline")
+                "the rule is proven by the tests that keep an unknown provider under its own "
+                "name and mark it unreadable, and by the unreadable-agent capture of the home, "
+                "where such a row is listed and says it cannot be read")
     forget_cache(udid)
 
 

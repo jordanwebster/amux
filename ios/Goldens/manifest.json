@@ -638,6 +638,19 @@
       ]
     },
     {
+      "id": "unreadable-agent",
+      "stage": 12,
+      "screen": "home",
+      "fixture": "home-unreadable",
+      "origin": "added_state",
+      "reason": "an agent run by a provider this build has no case for: listed under the host's name for it, said to be unreadable and the one row on the home that cannot be opened",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "small-home",
       "stage": 12,
       "screen": "home",

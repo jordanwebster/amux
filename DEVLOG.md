@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **The home now has a locked capture of an agent it cannot read.**
+A machine on an account can run a newer amux than the phone, and then a real
+agent arrives under a provider name this build has never heard of. The app
+already listed it under that name, wrote "Cannot be read" where the state word
+goes and left it as the one row that is not a button, but nothing locked how
+that reads: the state existed only in unit tests. It is now a fixture and a
+baseline in both appearances, described in the goldens' baseline notes. The
+conversation journey's closing account no longer points at a baseline that did
+not exist; it names the tests and the capture that actually prove the rule.
+
 2026-09-06 — **Every kind of transcript row is now told apart on screen.** The
 shared row shape named every one of them `transcript.activity`, so one denied
 row satisfied a check meant to cover refusals, failures, interruptions,

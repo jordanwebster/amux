@@ -136,6 +136,17 @@ public enum Scenario {
              headline: "Waiting on you since Monday"),
     ]
 
+    /// An agent run by a provider this build has no case for.
+    ///
+    /// One machine on an account can run a newer amux than the phone, and what
+    /// comes back then is a real agent under a provider name this build has
+    /// never heard of. It is listed under that name, said to be unreadable and
+    /// never offered to open: throwing it away would take the fleet with it.
+    public static let unreadableAgent = card(
+        "transport-shim", host: studio, directory: "~/src/amux", kind: .unknown("gemini"),
+        attention: .needsYou(why: .finished), minutesAgo: 9,
+        headline: "Ported the transport shim")
+
     /// The same morning as `agents`, as a launch that has reached nothing yet
     /// sees it: every card is what this phone remembered, and no machine has
     /// answered for any of them.

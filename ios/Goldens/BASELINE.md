@@ -312,6 +312,26 @@ for is that the screen still says what it says when someone turns the text up.
   they do at every size: a row promises the first two lines of what an agent is
   doing, not all of it, and one tap opens the rest.
 
+## unreadable-agent
+
+The Agents home with one agent this build cannot read on it. A machine on the
+account can run a newer amux than the phone, and then a real agent comes back
+under a provider name this build has never heard of. There is no design
+reference for that; what the capture locks is the answer this app gives.
+
+- **It is listed, under the name the host used.** The alternative — refusing
+  the card that would not decode — throws the whole fleet away the moment one
+  machine is ahead of the phone, which turns one unreadable agent into a screen
+  showing nothing at all.
+- **"Cannot be read" is written where the state word goes.** There is no glyph
+  for "this build has no case for what runs here", and an agent nobody can read
+  is not idle. It sits in the same place as "Finished" and "Idle" so the column
+  still reads down the list.
+- **It is the one row that is not a button.** Opening it would lead to a
+  conversation of which not a single row could be read, which is a worse answer
+  than the row saying so where it stands. Nothing marks that visually — the
+  sentence is the mark — and what the rest of the list does is unchanged.
+
 ## small-home
 
 The same Agents home on the narrowest display the app supports. The same

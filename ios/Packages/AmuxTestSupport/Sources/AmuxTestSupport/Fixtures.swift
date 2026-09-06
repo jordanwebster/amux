@@ -49,6 +49,7 @@ public enum Fixtures {
         Built(.probe, "probe"),
         Built(.home, "home"),
         Built(.home, "home-accessibility"),
+        Built(.home, "home-unreadable"),
         Built(.homeQuiet, "home-quiet"),
         Built(.drawer, "drawer"),
         Built(.run, "run"),
@@ -271,6 +272,13 @@ public enum Fixtures {
         Fixture(id: "sign-in-failed", screen: .signIn,
                 cloud: ScriptedCloudState(signIn: .refused("that address is not recognised"),
                                           entitlement: .none, token: nil)),
+        // A machine on the account running a newer amux than the phone: one of
+        // its agents arrives under a provider name this build has never heard
+        // of. It is listed under that name, said to be unreadable, and the
+        // only row on the screen that cannot be opened.
+        Fixture(id: "home-unreadable", screen: .home) { bundle in
+            States.open(bundle, agents: [Scenario.unreadableAgent] + Scenario.agents)
+        },
         // Nothing yet: one action, and no list pretending to be loading.
         Fixture(id: "home-empty", screen: .home) { bundle in
             States.open(bundle, agents: [], hosts: [], unread: UnreadWeights())
