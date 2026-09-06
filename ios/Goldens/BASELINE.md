@@ -23,16 +23,23 @@ render server does not have that problem, because it is what draws the material
 in the first place. Waiting also had to move: the app can only watch its own
 view tree, and a glass surface that has just been built keeps animating in the
 render server after the tree has stopped changing, so the display is now
-photographed repeatedly until two photographs are the same file.
+photographed repeatedly until a run of photographs are the same file. A run
+rather than a pair, because the home indicator holds still for about half a
+second at launch and then takes itself away: two photographs could both catch
+it, so whichever screen happened to be captured first in a run kept a bar the
+rest of them did not.
 
-The frame is therefore the whole screen, and two pieces of it are the system's
-rather than the app's:
+The frame is therefore the whole screen, including the parts of it the system
+draws rather than the app:
 
 - **The status bar is in the picture,** pinned to 9:41 with three bars of Wi-Fi,
   four of cellular and a full battery, so two captures a minute apart do not
   differ over the clock. The references draw a fixed bar for the same reason,
   which brings these captures closer to them rather than further.
-- **The home indicator is in the picture** too, and the references draw one.
+- **No home indicator.** It is on screen for the first moment of a launch and
+  then goes away on its own, so it says nothing about the screen underneath it
+  and every capture is taken after it has gone. The references draw one; these
+  do not.
 - **Still no tab bar.** A capture opens one screen directly rather than the
   whole shell. What the tab bar looks like is proven by the shell's own journey,
   not by a still.

@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **A golden capture waits out the home indicator.**
+The home indicator is drawn for the first moment of an app launch and then
+takes itself away. A capture waited only for two photographs of the display to
+be the same file, and the indicator holds still long enough for a pair half a
+second apart to both catch it, so whichever screen a run happened to photograph
+first kept a bar that none of the others had. Running one screen on its own made
+that screen the first one, which is why a run of the whole set passed and a run
+of a single screen from it failed on the same baseline.
+
+Rest now means a run of eight identical photographs rather than a pair, which is
+about two seconds and outlasts the indicator. The one baseline that had been
+locked with a bar in it — the probe in its light appearance — was retaken; every
+other baseline was already taken later in its run and is unchanged. Twelve
+screens in both appearances passed ten consecutive runs with no baseline
+touched, and the perturbation check still fails on purpose.
+
 2026-09-06 — **Leaving a conversation through the tab bar is proven again.**
 The home journey's drawer test could not find the Agents tab. An accessibility
 identifier put on a `Tab` names the page behind it, not the button in the tab

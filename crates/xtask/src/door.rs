@@ -261,15 +261,23 @@ fn converse(
 /// The app can only see its own view tree, and a glass surface that has just
 /// been built animates into place in the render server for a length of time
 /// nobody publishes; a tree that has stopped changing is not a screen that has
-/// stopped moving. So the display is photographed repeatedly until two
-/// consecutive photographs are the same file, which is the only evidence
-/// available that the thing being captured has come to rest.
+/// stopped moving. So the display is photographed repeatedly until it has come
+/// to rest, which is the only evidence available that the thing being captured
+/// has stopped moving.
+///
+/// Rest means a run of identical photographs rather than a pair of them,
+/// because one thing on the display holds still and then moves anyway: the
+/// home indicator is drawn when an app launches and takes itself away about a
+/// second later. A pair of photographs half a second apart can both catch it,
+/// so the first screen of a run kept a bar the twentieth screen did not, and
+/// which screen was first decided what the picture said. A run long enough to
+/// outlast that cannot be fooled by it.
 ///
 /// The app is the only thing running on the device and the door has already
 /// said the screen is built, so what is photographed is the screen under test
-/// with nothing over it. The frame includes the system's own chrome — the
-/// status bar pinned to 9:41 with a full battery, and the home indicator —
-/// which the design's own references draw too.
+/// with nothing over it. The frame includes the system's own status bar,
+/// pinned to 9:41 with a full battery, which the design's own references draw
+/// too.
 fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
     if let Some(directory) = destination.parent() {
         std::fs::create_dir_all(directory)?;
@@ -282,6 +290,7 @@ fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
     // of one still has to happen. Whatever the last photograph caught is what
     // is kept, and the comparison against the baseline is what judges it.
     let mut previous: Option<Vec<u8>> = None;
+    let mut agreed = 1;
     for _ in 0..STEADY_SHOTS {
         simctl(&[
             "io",
@@ -297,17 +306,27 @@ fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
         }
         let bytes = std::fs::read(destination)?;
         if previous.as_deref() == Some(bytes.as_slice()) {
-            return Ok(());
+            agreed += 1;
+            if agreed >= STEADY_RUN {
+                return Ok(());
+            }
+        } else {
+            agreed = 1;
         }
         previous = Some(bytes);
     }
     Ok(())
 }
 
-/// How many photographs of one screen are taken while waiting for two of them
-/// to agree. Each costs about a quarter of a second, and a screen that is
-/// going to settle does so within two or three.
+/// How many photographs of one screen are taken while waiting for a run of
+/// them to agree. Each costs about a quarter of a second.
 const STEADY_SHOTS: usize = 24;
+
+/// How many photographs in a row have to be the same file before the display
+/// counts as still. Eight of them span about two seconds, which is longer than
+/// the home indicator stays on screen after a launch, so a capture cannot lock
+/// onto a frame that still has it.
+const STEADY_RUN: usize = 8;
 
 /// A PNG's width and height, read from the header rather than decoded.
 fn png_size(path: &Path) -> Result<(u32, u32), DoorError> {
