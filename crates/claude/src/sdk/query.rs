@@ -745,7 +745,9 @@ mod tests {
         let session_id = query_session_id(&process_options);
         let process = crate::sdk::process::spawn_query(&session_id, &process_options).unwrap();
         process_options.session_id = Some(session_id);
-        let warm = Query::warm_from_process(process_options, process, Duration::from_secs(1))
+        // Process startup is setup; the one-second deadline below measures close
+        // once the bounded output channel is full.
+        let warm = Query::warm_from_process(process_options, process, Duration::from_secs(5))
             .await
             .unwrap();
         let query = warm.into_query();

@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Keep the full-output shutdown test focused on shutdown.**
+The real-subprocess SDK test could fail during its one-second initialization
+budget before it filled the output queue or exercised close. Allow five seconds
+for subprocess setup while preserving the one-second bounds on filling the
+queue and completing shutdown. The startup timeout reproduced in isolation;
+with setup separated, the full-output close regression passes. Final validation
+passes all 2006 workspace tests, 399 embedded library tests and 22 E2E
+scenarios, plus formatting and workspace lint.
+
 2026-09-06 — **Repair CI after the account-profile merge.** The E2E job now
 runs its already-built binaries explicitly, avoiding a second build through
 `wt`, which is not installed on GitHub runners. Socket test helpers and the
