@@ -230,6 +230,9 @@ final class ConversationTests: XCTestCase {
         press(app, "home.row.\(runner.agent)")
         XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
                       "reopening the running agent did not lead to its conversation")
+        // What is on screen before the machine goes, to compare against what
+        // is on screen after it has.
+        let readable = try waitForRows(app)
         try control.ask("CloudOffline")
         let gone = app.staticTexts["\(runner.host) is unreachable"]
         XCTAssertTrue(gone.waitForExistence(timeout: waiting),
@@ -239,7 +242,17 @@ final class ConversationTests: XCTestCase {
         try? app.debugDescription.write(
             to: Self.inContainer("conversation-offline-tree.txt"), atomically: true,
             encoding: .utf8)
-        record["feedWhileUnreachable"] = transcriptRows(app)
+        // The transcript is the only account of this conversation there is
+        // while the machine that owns it is away, and it is still true. A
+        // reader keeps reading it; the chrome and the panel are what say the
+        // machine has gone.
+        let stale = transcriptRows(app)
+        record["feedWhileUnreachable"] = stale
+        XCTAssertFalse(stale.isEmpty,
+                       "losing the machine emptied the transcript, which held \(readable)")
+        XCTAssertTrue(Set(stale).isSubset(of: Set(readable)),
+                      "an unreachable machine's transcript grew rows nobody sent: "
+                      + "\(Set(stale).subtracting(Set(readable)))")
         XCTAssertTrue(element(app, "conversation.retry").exists,
                       "an unreachable machine offered no way to ask again")
         photograph(app, "conversation-stale")
@@ -254,6 +267,15 @@ final class ConversationTests: XCTestCase {
         XCTAssertTrue(waitUntil { !gone.exists },
                       "the machine came back and the conversation still says it is gone")
         record["restored"] = footSays(app)
+        // What a machine that has come back puts on screen, written down
+        // rather than required: replaying a conversation into a screen that
+        // is already open is the reconnection's own claim, and this journey
+        // is about what happens while the machine is away. The tree beside it
+        // is for whoever takes that on.
+        record["feedAfterRestored"] = transcriptRows(app)
+        try? app.debugDescription.write(
+            to: Self.inContainer("conversation-restored-tree.txt"), atomically: true,
+            encoding: .utf8)
 
         for (situation, attempt) in [
             ("while catching up", whileCatchingUp),

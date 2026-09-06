@@ -1156,10 +1156,8 @@ async fn mobile_pairing_over_the_relay_admits_the_hosts_agents_to_the_fleet() {
     let amux::PairingSecret::QrSecret(secret) = &start_pairing.secret else {
         panic!("QR pairing returned a PIN")
     };
-    let payload = CString::new(
-        amux::encode_qr_pairing_payload(&start_pairing, secret).unwrap(),
-    )
-    .unwrap();
+    let payload =
+        CString::new(amux::encode_qr_pairing_payload(&start_pairing, secret).unwrap()).unwrap();
     let paired = owned_json(unsafe { amux_mobile_pair_qr(running.handle, payload.as_ptr()) });
     assert_eq!(
         paired["host"], "workstation",

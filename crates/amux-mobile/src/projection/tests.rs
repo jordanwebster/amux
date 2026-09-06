@@ -7,38 +7,44 @@ use super::*;
 const AGENT: AgentId = Uuid::from_u128(1);
 const HOST: AgentId = Uuid::from_u128(2);
 
+fn host(online: bool) -> Msg {
+    Msg::Server(ServerMsg::HostUpserted {
+        host: amux::HostEntry {
+            id: HOST,
+            name: "studio".into(),
+            online,
+            version: None,
+            capabilities: None,
+            trust_status: amux::HostTrustStatus::Trusted,
+            last_dial_error: None,
+        },
+    })
+}
+fn upsert(kind: amux::AgentKind) -> Msg {
+    Msg::Server(ServerMsg::AgentUpserted {
+        agent: Agent {
+            id: AGENT,
+            host_id: HOST,
+            name: Some("Fix login".into()),
+            command: "provider".into(),
+            working_dir: "/work".into(),
+            kind,
+            readonly: false,
+            args: vec![],
+            created_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            parent: None,
+            working_on: None,
+        },
+    })
+}
 fn model(kind: amux::AgentKind) -> Model {
     let mut model = Model::default();
     for msg in [
         Msg::Server(ServerMsg::Connected {
             local_host_id: Some(HOST),
         }),
-        Msg::Server(ServerMsg::HostUpserted {
-            host: amux::HostEntry {
-                id: HOST,
-                name: "studio".into(),
-                online: true,
-                version: None,
-                capabilities: None,
-                trust_status: amux::HostTrustStatus::Trusted,
-                last_dial_error: None,
-            },
-        }),
-        Msg::Server(ServerMsg::AgentUpserted {
-            agent: Agent {
-                id: AGENT,
-                host_id: HOST,
-                name: Some("Fix login".into()),
-                command: "provider".into(),
-                working_dir: "/work".into(),
-                kind,
-                readonly: false,
-                args: vec![],
-                created_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
-                parent: None,
-                working_on: None,
-            },
-        }),
+        host(true),
+        upsert(kind),
         Msg::Server(ServerMsg::HostsSynchronized),
         Msg::Server(ServerMsg::AgentsSynchronized),
         Msg::Stream {
@@ -284,6 +290,76 @@ fn mobile_projection_eviction_replay_and_unsubscribe_reconstruct_exactly() {
     projection.subscribe(AGENT);
     let mut fresh = PhoneFeed::default();
     assert_eq!(fresh.apply_events(&collect(&mut projection, &model)), 2);
+}
+
+/// A machine that stops answering takes its folded layer with it. What it
+/// last said is still the only account of that conversation there is, so the
+/// projected feed keeps it until the machine itself replaces it; an agent that
+/// is genuinely gone from a machine still answering loses its rows.
+#[test]
+fn mobile_projection_keeps_the_feed_of_an_agent_whose_host_has_gone_away() {
+    let mut model = claude_model();
+    let mut projection = subscribed();
+    let mut phone = PhoneFeed::default();
+    for id in 0..3 {
+        row(&mut model, id as u64 + 1, message(id, "before the outage"));
+    }
+    phone.apply_events(&collect(&mut projection, &model));
+    assert_eq!(phone.rows.len(), 3);
+    let held = phone.rows.clone();
+
+    // The machine goes away. The relay drops what it knew of that machine's
+    // agents, so the layer these rows were folded from is gone.
+    update(&mut model, host(false));
+    update(
+        &mut model,
+        Msg::Server(ServerMsg::AgentRemoved { id: AGENT }),
+    );
+    assert!(model.claude(AGENT).is_none());
+    phone.apply_events(&collect(&mut projection, &model));
+    assert_eq!(phone.rows, held, "the rows went when the machine did");
+
+    // It answers again. Between coming back and replaying what it holds it
+    // has an agent and an open stream but nothing folded, and a transcript
+    // that emptied itself for those seconds would be reporting the
+    // reconnection rather than the conversation.
+    update(&mut model, host(true));
+    for msg in [
+        upsert(amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        }),
+        Msg::Stream {
+            agent: AGENT,
+            event: StreamMsg::Opened { truncated: false },
+        },
+    ] {
+        update(&mut model, msg);
+        phone.apply_events(&collect(&mut projection, &model));
+        assert_eq!(phone.rows, held, "the rows went while the machine came back");
+    }
+
+    // The replay is what replaces them: the same rows once, never both copies.
+    update(
+        &mut model,
+        Msg::Stream {
+            agent: AGENT,
+            event: StreamMsg::ReplayComplete,
+        },
+    );
+    for id in 0..3 {
+        row(&mut model, id as u64 + 1, message(id, "before the outage"));
+    }
+    phone.apply_events(&collect(&mut projection, &model));
+    assert_eq!(phone.rows.len(), 3, "the replay doubled the transcript");
+
+    // An agent removed from a machine that is still answering is not stale,
+    // it is gone, and its rows go with it.
+    update(
+        &mut model,
+        Msg::Server(ServerMsg::AgentRemoved { id: AGENT }),
+    );
+    phone.apply_events(&collect(&mut projection, &model));
+    assert!(phone.rows.is_empty(), "a removed agent kept its rows");
 }
 
 #[tokio::test(start_paused = true)]

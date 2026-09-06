@@ -222,6 +222,10 @@ struct FeedState {
     next: u64,
     evicted: u64,
     rows: BTreeMap<u64, FeedEntryDto>,
+    /// The machine these rows came from, remembered from the last time this
+    /// agent was known, so a machine that has gone away can be told apart
+    /// from an agent that has really been removed.
+    host: Option<amux::HostId>,
 }
 
 // Compare borrowed native rows; clone only rows that will cross the callback.
@@ -413,23 +417,44 @@ impl Projection {
                 events.push(Event::Session(Box::new(session)));
             }
             let state = self.feeds.entry(*agent).or_default();
+            if let Some(card) = model.agent(*agent) {
+                state.host = Some(card.agent.host_id);
+            }
             let feed = if let Some(layer) = model.claude(*agent) {
-                state.project(
-                    *agent,
-                    (
-                        StructuredProtocol::Claude,
-                        layer.session_id().map(str::to_owned),
-                    ),
-                    layer.evicted_entries(),
-                    layer.entries().map(RowRef::Claude),
-                )
+                // A fold that has not begun replaces nothing: an agent whose
+                // machine has just come back holds an empty layer until its
+                // replay arrives, and a transcript that emptied itself for
+                // those seconds would be reporting the reconnection rather
+                // than the conversation. A session that was really cleared
+                // names a new session and evicts through the window rule
+                // below.
+                if layer.entry_count() == 0 && layer.session_id().is_none() && !state.rows.is_empty()
+                {
+                    None
+                } else {
+                    state.project(
+                        *agent,
+                        (
+                            StructuredProtocol::Claude,
+                            layer.session_id().map(str::to_owned),
+                        ),
+                        layer.evicted_entries(),
+                        layer.entries().map(RowRef::Claude),
+                    )
+                }
             } else if let Some(layer) = model.codex(*agent) {
-                state.project(
-                    *agent,
-                    (StructuredProtocol::Codex, None),
-                    layer.evicted_entries(),
-                    layer.entries().map(RowRef::Codex),
-                )
+                if layer.entry_count() == 0 && !state.rows.is_empty() {
+                    None
+                } else {
+                    state.project(
+                        *agent,
+                        (StructuredProtocol::Codex, None),
+                        layer.evicted_entries(),
+                        layer.entries().map(RowRef::Codex),
+                    )
+                }
+            } else if keeps_its_rows(model, *agent, state.host) {
+                None
             } else {
                 // Removal or a switch to an unsupported layer evicts readable rows.
                 state.project(
@@ -443,6 +468,30 @@ impl Projection {
                 events.push(feed);
             }
         }
+    }
+}
+
+/// Whether an agent with no readable layer keeps the rows it already had.
+///
+/// A transcript is the only account of a conversation there is, and losing the
+/// fold it was projected from is not evidence that the account was wrong. So
+/// the rows stay until something replaces them — the machine's own replay when
+/// it answers again — rather than emptying the screen of a reader who is being
+/// told at the same time that the machine cannot be reached. Only two things
+/// really end a transcript: an agent removed from a machine that is still
+/// answering, and an agent whose provider this build cannot read at all.
+fn keeps_its_rows(model: &Model, agent: AgentId, host: Option<amux::HostId>) -> bool {
+    match model.agent(agent) {
+        // Here, and running a provider with a transcript — it simply has not
+        // folded one yet, which is the state a machine passes through between
+        // coming back and replaying what it holds.
+        Some(card) => matches!(
+            card.structured_protocol(),
+            Some(StructuredProtocol::Claude | StructuredProtocol::Codex)
+        ),
+        // The machine that owned it has stopped answering. Nothing has said
+        // this agent is gone, only that nobody can be asked about it.
+        None => host.is_some_and(|host| !model.host_online(host)),
     }
 }
 

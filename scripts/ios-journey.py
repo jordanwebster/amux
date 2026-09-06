@@ -751,10 +751,17 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
             "conversation-stale", "conversation-send-refused", "conversation-exited")}
     read = journey.directory / "conversation.json"
     tree = journey.directory / "conversation-tree.txt"
+    # What was on screen while the machine was away and once it was back, as
+    # the system built it: a claim about which rows survived an outage is
+    # unreadable from a photograph.
+    offline = journey.directory / "conversation-offline-tree.txt"
+    restored = journey.directory / "conversation-restored-tree.txt"
     perform(
         journey, udid, "AmuxUITests/ConversationTests",
         {f"{name}.png": path for name, path in photographs.items()}
-        | {"conversation.json": read, "conversation-tree.txt": tree},
+        | {"conversation.json": read, "conversation-tree.txt": tree,
+           "conversation-offline-tree.txt": offline,
+           "conversation-restored-tree.txt": restored},
         telling={
             "AMUX_RELAY": relay,
             "AMUX_TOKEN": token,
@@ -793,12 +800,20 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     journey.say(f"with the relay down the conversation said {said!r} with Retry Now beside it; "
                 f"when it came back it said "
                 f"{' · '.join(seen.get('restored') or ['nothing at all'])!r}")
-    # Said rather than required, because what the core does with a
-    # conversation whose machine has gone is the core's claim and not this
-    # journey's: the phone draws what it is given. What it was given here is
-    # written down so a change in it is visible.
-    journey.say(f"while the machine was unreachable the feed on screen held "
-                f"{seen.get('feedWhileUnreachable') or 'no rows'}")
+    # A machine that has gone away takes nothing off the screen: what it last
+    # said is the only account of the conversation there is while it is away,
+    # and it is still true. The screen says the machine is unreachable; the
+    # transcript stays readable.
+    stale = seen.get("feedWhileUnreachable") or []
+    journey.expect(bool(stale),
+                   "losing the machine emptied the transcript on screen")
+    journey.say(f"while the machine was unreachable the feed on screen still held "
+                f"{', '.join(stale)}")
+    # Said rather than required: what a machine that has come back replays into
+    # a screen somebody already has open is the reconnection's claim, not this
+    # journey's, and it is written down so a change in it is visible.
+    journey.say(f"when the machine came back the feed on screen held "
+                f"{', '.join(seen.get('feedAfterRestored') or ['no rows'])}")
 
     # The one message that was meant to arrive, and the three that were not.
     delivered = seen.get("delivered", {})

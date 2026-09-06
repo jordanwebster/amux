@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **A transcript survives the machine that owns it going away.**
+Against a real host, losing the machine emptied the conversation: the chrome
+said "unreachable", the panel offered Retry Now, and every row vanished from
+underneath them. Nothing on the phone threw them away — the shared projection
+did. It rebuilds each subscribed agent's feed from the folded layer the model
+holds, and a machine that stops answering takes that layer with it, so the
+projection reported a feed with nothing in it and the phone dutifully emptied
+the screen.
+
+A transcript is the only account of a conversation there is, and losing the
+fold it was projected from is not evidence that the account was wrong. So the
+projection now keeps the rows until something replaces them: while the machine
+that owns an agent is not answering, and through the seconds after it comes
+back when it has an open stream but has not replayed anything yet. Two things
+still end a transcript — an agent removed from a machine that is still
+answering, and an agent whose provider this build cannot read.
+
+The conversation journey now asserts the feed is still readable while the
+machine is unreachable, instead of writing down that it was empty, and it
+collects the accessibility trees from during and after the outage. Those trees
+show the other half: a conversation left open while the machine returns stays
+empty, which the journey records rather than claims, and which is its own
+piece of work.
+
 2026-09-06 — **The drawer is photographed over the conversation now.**
 The panel's baseline was taken over the app's bare ground, because the
 conversation behind it did not exist yet, and the file beside it said so. It is
