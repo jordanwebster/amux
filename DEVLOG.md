@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Enable the message queue in Claude SDK chat.**
+Tab now holds or replaces a message while the SDK agent works; Tab with an
+empty composer returns the queued draft for editing. The SDK view tracks queue
+operations and reconciles their outcomes through the shared reducer, just as
+Claude PTY and Codex do. The queued message appears directly below the SDK
+context usage and interrupt control. Its existing help binding now works.
+
+The shared terminal round-trip regression now drives all three chat layers,
+checks hold and replace commands and restored text, and renders the queue beside
+the activity row. The SDK case failed at its first Tab before the fix. Formatting,
+lint, all 26 queue-filtered tests and all 450 prose specifications pass, including
+SDK queue delivery, disconnect recovery and the runtime/provider round trip.
+
 2026-09-06 — **Attach directly to agents without a chat view.**
 Fleet entry and `amux attach` now choose raw attach on every host for an agent
 with a terminal and no chat layer. Every fleet entry key reaches that one

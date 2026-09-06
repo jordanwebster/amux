@@ -120,9 +120,14 @@ pub(crate) fn claude_sdk_frame_parts(
                 .is_some_and(|layer| layer.history_truncated()),
             loading,
         },
-        activity: activity_row(model, chat, ctx, readonly, working)
-            .into_iter()
-            .collect(),
+        activity: crate::chat::queue::strip(
+            model,
+            chat.agent,
+            activity_row(model, chat, ctx, readonly, working),
+            theme,
+            width,
+            chat.inline_ask.is_none(),
+        ),
         bottom: bottom_block(model, chat, theme, width, height, paused),
         overlay,
     }

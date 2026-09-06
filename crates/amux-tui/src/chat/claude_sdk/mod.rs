@@ -186,6 +186,7 @@ pub struct View {
     pub composer: Composer,
     pub(crate) scroll_intent: Option<ScrollIntent>,
     pending_send: Option<PendingSend>,
+    pending_queue: Option<OpId>,
     pending_answer: Option<PendingAnswer>,
     /// A failed send or a diff that could not be read, stated until the
     /// next keypress dismisses it.
@@ -230,6 +231,7 @@ impl View {
             composer: Composer::default(),
             scroll_intent: None,
             pending_send: None,
+            pending_queue: None,
             pending_answer: None,
             send_failure: None,
             ask_failure: None,
@@ -329,6 +331,9 @@ impl View {
     /// prompt sends so the failed-op fact can resurface the draft, and
     /// diff requests so the review page can open over the patch.
     pub fn note_dispatched(&mut self, op: OpId, command: &Command) {
+        if matches!(command, Command::Queue(_)) {
+            self.pending_queue = Some(op);
+        }
         match command {
             Command::ClaudeSdk(amux_ui::claude_sdk::ClaudeSdkCommand::SendPrompt {
                 agent,
@@ -369,6 +374,12 @@ impl View {
     /// clobbering newer text), and a finished diff op freezes its patch
     /// into the review page.
     pub fn reconcile(&mut self, model: &Model) {
+        super::queue::reconcile(
+            model,
+            &mut self.pending_queue,
+            &mut self.composer,
+            &mut self.send_failure,
+        );
         if let Some(pending) = &self.pending_send
             && let Some(finished) = model.finished_op(pending.op)
         {

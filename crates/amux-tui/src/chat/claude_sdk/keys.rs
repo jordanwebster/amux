@@ -197,7 +197,14 @@ pub(crate) fn handle_chat_key(
         KeyCode::Home if ctrl => jump_top(chat),
         KeyCode::End if ctrl => follow(chat),
         KeyCode::Char('?') if !ctrl && chat.composer.is_empty() => chat.help = true,
-        KeyCode::Tab => {}
+        KeyCode::Tab => {
+            return crate::chat::queue::key(
+                model,
+                chat.agent,
+                &mut chat.composer,
+                chat.review.as_ref().map(|draft| draft.view.review()),
+            );
+        }
         _ => {
             composer::readline_key(&mut chat.composer, &key);
         }

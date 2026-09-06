@@ -109,7 +109,11 @@ mod tests {
     /// renderer shows the queued words beside the still-available interrupt.
     #[test]
     fn queue_tui_tab_roundtrip_and_rendered_strip() {
-        for state in [NamedState::ClaudeWorking, NamedState::CodexWorking] {
+        for state in [
+            NamedState::ClaudeWorking,
+            NamedState::CodexWorking,
+            NamedState::ClaudeSdkStreaming,
+        ] {
             let mut fixture = fixture(state);
             let agent = fixture.view.chat.as_ref().unwrap().agent;
             for (n, words) in [(1, "check the queue"), (2, "run the tests next")] {
@@ -125,6 +129,11 @@ mod tests {
                 let Some(UiAction::Dispatch(command)) = action else {
                     panic!("Tab dispatches the shared queue");
                 };
+                assert!(matches!(
+                    (&command, n),
+                    (Command::Queue(QueueCommand::Hold { .. }), 1)
+                        | (Command::Queue(QueueCommand::Replace { .. }), 2)
+                ));
                 let op = OpId(Uuid::from_u128(n));
                 chat.note_dispatched(op, &command);
                 assert!(
@@ -158,6 +167,13 @@ mod tests {
                 text.contains("ctx "),
                 "queue keeps the context activity row"
             );
+            let rows: Vec<_> = text.lines().collect();
+            let queued_row = rows
+                .iter()
+                .position(|row| row.contains("queued ·"))
+                .unwrap();
+            assert!(rows[queued_row - 1].contains("ctx "));
+            assert!(rows[queued_row - 1].contains("interrupt"));
             println!("{} queued terminal frame:\n{text}", state.name());
             let chat = fixture.view.chat.as_mut().unwrap();
             let Some(UiAction::Dispatch(command)) = handle_chat_key(
