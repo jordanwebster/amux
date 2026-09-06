@@ -113,12 +113,12 @@ machines are reachable along the foot.
 The design has no preserved capture of this, so there is nothing to compare it
 against. Three things about the picture are worth knowing:
 
-- **What is behind the panel is the app's ground, not a conversation.** The
-  conversation is the next milestone's screen, and photographing the drawer over
-  a stand-in would put a stand-in in a baseline. So the capture shows the panel,
-  the dimming, the card edge it uncovers and the shadow, and nothing pretending
-  to be a transcript. When the transcript lands, this baseline is retaken with
-  it behind the panel and the panel itself does not change.
+- **What is behind the panel is the conversation it was opened from.** It is
+  the real one, filled from the same state as `run`, rather than a stand-in:
+  what the panel dims, what its edge uncovers and how far its shadow reaches
+  are facts about the screen underneath, and a capture taken over bare ground
+  showed none of them. The panel itself is unchanged from the capture that was
+  taken that way.
 - **Two groups, where the home has three.** The home folds work that has been
   quiet for a day into a line naming what is in it; that fold exists to keep a
   home short enough to scan. This is a panel you are already scrolling, so the

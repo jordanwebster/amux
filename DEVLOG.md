@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **The drawer is photographed over the conversation now.**
+The panel's baseline was taken over the app's bare ground, because the
+conversation behind it did not exist yet, and the file beside it said so. It is
+now taken over the real conversation, filled from the same state the `run`
+capture is. What the panel dims, what its edge uncovers and how far its shadow
+reaches are facts about the screen underneath; over bare ground the capture
+showed none of them. The panel itself did not move.
+
 2026-09-06 — **What a conversation says when it will not take a message.**
 Three ways a conversation stops accepting messages, and they were being drawn
 as one thing or as nothing. They are now distinct, and each is read off a fact

@@ -21,11 +21,12 @@ enum DoorScreens {
         // account fact the screen already reads, not a screen of its own.
         case .home, .homeQuiet, .firstRun, .firstRunPaid:
             AgentsHome(model: host.stores.fleet, accounts: host.accounts) { _ in }
-        // The drawer is drawn over the screen it was opened from, and the
-        // conversation it is opened from is the next milestone's. Until then
-        // what is behind it is the app's own ground, so the baseline is the
-        // panel, the dimming and the card edge and nothing pretending to be a
-        // transcript. `ios/Goldens/BASELINE.md` says so beside the capture.
+        // The drawer is drawn over the screen it was opened from, which is a
+        // conversation. It is the real one, filled from the same state, rather
+        // than a stand-in: what the panel dims, what its edge uncovers and how
+        // far its shadow reaches are all facts about the screen underneath, and
+        // a baseline photographed over bare ground would be a picture of none
+        // of them.
         case .drawer:
             DrawerOverlay(
                 open: .constant(true),
@@ -33,7 +34,10 @@ enum DoorScreens {
                     model: host.stores.fleet, hosts: host.stores.hosts,
                     current: Scenario.focus) { _ in }
             ) {
-                Ground()
+                Conversation(
+                    model: host.stores.conversation(Scenario.focus),
+                    subject: ConversationSubject(
+                        agent: Scenario.focus, in: host.stores.fleet)) { _ in }
             }
         // One screen, six names. Whether a turn is still running, who else has
         // spoken in it, whether the layer will take a message and whether the
