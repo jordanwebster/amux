@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Leaving a conversation through the tab bar is proven again.**
+The home journey's drawer test could not find the Agents tab. An accessibility
+identifier put on a `Tab` names the page behind it, not the button in the tab
+bar, so the three names the shell declared for its tabs reached nothing and read
+as a contract nothing could keep. They are gone, and the test reaches the tab
+the way the system publishes it and a person sees it: by the word under the
+glyph. The whole home journey passes end to end against the test relay again.
+
 2026-09-06 — **Golden captures are photographs of the simulator's display.**
 The app used to draw its own window into an image for every baseline. That is
 where glass resolved, and it did not resolve the same way twice: the lensing

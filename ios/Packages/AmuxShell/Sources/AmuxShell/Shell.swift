@@ -45,22 +45,25 @@ public struct Shell: View {
                         .navigationDestination(for: Route.self) { page($0) }
                 }
             }
-            .accessibilityIdentifier("tab.agents")
             SwiftUI.Tab(Tab.hosts.title, systemImage: Tab.hosts.symbol, value: Tab.hosts) {
                 NavigationStack(path: $router.hostsPath) {
                     HostsTabRoot(router: self.router, stores: stores)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
             }
-            .accessibilityIdentifier("tab.hosts")
             SwiftUI.Tab(Tab.you.title, systemImage: Tab.you.symbol, value: Tab.you) {
                 NavigationStack(path: $router.youPath) {
                     YouTabRoot(router: self.router, accounts: accounts, actions: actions)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
             }
-            .accessibilityIdentifier("tab.you")
         }
+        // The tab bar carries no name of this app's. An identifier put on a
+        // `Tab` lands on the page behind it rather than on the button in the
+        // bar, so naming them here would read as a contract that nothing can
+        // keep; the bar is the system's control and is reached by its title,
+        // the way a person reads it. What the shell does state is which tab is
+        // showing.
         .identified("shell", value: router.tab.rawValue)
     }
 

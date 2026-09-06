@@ -83,7 +83,12 @@ final class DrawerTests: XCTestCase {
         // which has no navigation bar to go back from: reaching for the tab
         // already on show, which the platform reads as "take me to the top of
         // it".
-        press(app, "tab.agents")
+        //
+        // The tab bar is the system's control and carries no name of the app's:
+        // an identifier put on a `Tab` names the page behind it, not the button
+        // in the bar. So it is reached the way the system publishes it and the
+        // way a person sees it — by the word written under the glyph.
+        pressTab(app, "Agents")
         XCTAssertTrue(home.waitForExistence(timeout: waiting),
                       "going back did not return to the home")
         XCTAssertEqual(identifiers(app, startingWith: "home.row."), remembered,
@@ -116,6 +121,15 @@ final class DrawerTests: XCTestCase {
             seen.append(element.identifier)
         }
         return seen
+    }
+
+    /// Presses a tab in the system's own tab bar, by the word on it.
+    private func pressTab(_ app: XCUIApplication, _ title: String) {
+        let button = app.tabBars.buttons[title]
+        guard button.waitForExistence(timeout: waiting) else {
+            return XCTFail("the tab bar has no \(title) tab")
+        }
+        button.tap()
     }
 
     /// Presses the thing with this name where a finger would land on it.
