@@ -14,9 +14,11 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+    EnableMouseCapture, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
+use crossterm::style::ResetColor;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -62,16 +64,22 @@ pub fn write_enter_chrome(out: &mut impl Write) -> io::Result<()> {
 }
 
 /// Bytes that restore the terminal from chrome mode. Input modes are
-/// disabled before the alternate screen is left, then the cursor is shown.
-/// Every exit path — orderly, error, panic, signal — must emit these (the
-/// terminal-hygiene set, `docs/UI.md`).
+/// disabled before the alternate screen is left, the cursor is shown, and
+/// the text style is reset last, on the screen the shell will draw on.
+/// Focus reporting and the style reset are more than the chrome itself
+/// sets: the same bytes put the terminal back after a raw passthrough,
+/// where the agent may have switched on anything. Every exit path —
+/// orderly, error, panic, signal — must emit these (the terminal-hygiene
+/// set, `docs/UI.md`).
 pub fn write_restore(out: &mut impl Write) -> io::Result<()> {
     crossterm::execute!(
         out,
         DisableMouseCapture,
+        DisableFocusChange,
         DisableBracketedPaste,
         Show,
-        LeaveAlternateScreen
+        LeaveAlternateScreen,
+        ResetColor
     )
 }
 
@@ -99,6 +107,20 @@ pub fn write_osc52(out: &mut impl Write, text: &str) -> io::Result<Option<String
 
     Ok(truncated.then(|| "copied first 100 KiB to clipboard (message truncated)".to_string()))
 }
+
+/// The restore as literal bytes: pop keyboard-enhancement flags (before
+/// leaving the alternate screen — kitty keeps per-screen stacks; a pop with
+/// nothing pushed is a no-op, and unknown-CSI-tolerant terminals ignore it),
+/// disable mouse capture, focus reporting and bracketed paste, show the
+/// cursor, leave the alternate screen, then reset the text style —
+/// mirroring [`restore_now`] (locked to crossterm's actual bytes by a unit
+/// test below). Written verbatim by the async-signal-safe handler, and by
+/// the CLI's raw attach when it hands the terminal back: the agent behind
+/// the passthrough may have switched any of these on, and its own restore is
+/// lost when it dies or the client detaches while it is still running. Every
+/// sequence is a no-op on a terminal that is already sane, which is what
+/// makes writing it unconditionally safe.
+pub const RESTORE_BYTES: &[u8] = b"\x1b[<1u\x1b[?1006l\x1b[?1015l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1004l\x1b[?2004l\x1b[?25h\x1b[?1049l\x1b[0m";
 
 fn restore_now() {
     // Pop the keyboard-enhancement flags first, while still on the
@@ -206,15 +228,7 @@ mod signal_restore {
     static INSTALL: Once = Once::new();
     static SAVED_TERMIOS: OnceLock<libc::termios> = OnceLock::new();
 
-    /// Pop keyboard-enhancement flags (before leaving the alternate
-    /// screen — kitty keeps per-screen stacks; a pop with nothing pushed
-    /// is a no-op, and unknown-CSI-tolerant terminals ignore it), then
-    /// disable mouse capture and bracketed paste, show the cursor, then
-    /// leave the alternate screen,
-    /// mirroring [`super::restore_now`] (locked to crossterm's actual
-    /// bytes by a unit test below). Deliberately unconditional, like the
-    /// rest of this handler.
-    pub(super) const RESTORE_BYTES: &[u8] = b"\x1b[<1u\x1b[?1006l\x1b[?1015l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?2004l\x1b[?25h\x1b[?1049l";
+    use super::RESTORE_BYTES;
 
     pub(super) fn install() {
         INSTALL.call_once(|| {
@@ -577,7 +591,7 @@ mod tests {
         let mut out: Vec<u8> = Vec::new();
         crossterm::execute!(out, PopKeyboardEnhancementFlags).expect("write to vec");
         write_restore(&mut out).expect("write to vec");
-        assert_eq!(out, signal_restore::RESTORE_BYTES);
+        assert_eq!(out, RESTORE_BYTES);
     }
 
     #[test]

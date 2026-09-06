@@ -47,6 +47,7 @@ async fn run_inner(
     if init::needs_init(&config) {
         init::run_init(&mut config, InitContext::implicit(), false).await?;
     }
+    crate::profiles::remember_selection(&config)?;
 
     let config_dir = config
         .path
@@ -70,11 +71,6 @@ async fn run_inner(
     let theme = resolve_theme(&config.ui, &config_dir, &ColorEnv::capture(), terminal)
         .context("failed to resolve ui.theme")?;
 
-    // The local host id comes from the stored device identity — the wire
-    // does not mark the local host (see docs/UI.md, subscription policy).
-    let local_host_id = amux::setup::local_host_id(&config);
-    let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
-
     let connector: Connector = {
         let config = config.clone();
         Box::new(move || {
@@ -95,50 +91,52 @@ async fn run_inner(
     // not contain the trace module or carry its storage in TuiConfig.
     #[cfg(debug_assertions)]
     let trace = Some(amux_tui::trace::shared(amux_tui::trace::SEGMENT_LEN));
-    // The fold order is the runtime's to report. Reconstructing it from
-    // outside would mean guessing how a drain batched, and a wrong guess is
-    // a replay that diverges for no visible reason.
-    #[cfg(debug_assertions)]
-    let msg_tap: Option<amux_ui::MsgTap> = trace.clone().map(|trace| {
-        Box::new(move |msg: &amux_ui::Msg| {
-            amux_tui::trace::record_shared(&trace, &amux_tui::chrome::TraceEvent::Msg(msg.clone()));
-        }) as amux_ui::MsgTap
-    });
     let mut runtime = Runtime::start(
         connector,
-        RuntimeOptions {
-            local_host_id,
-            report_dir: Some(config.reports_dir()),
-            log_path: Some(amux_cli::diagnostics::resolved_log_path()),
-            git_sha: GIT_SHA,
-            artifact_cache: Some(amux::default_cache_dir().join("artifacts")),
-            artifact_cache_bound: config.ui.artifact_cache_mib.saturating_mul(1024 * 1024),
-            subscription_status_provider: Some(Arc::new(move || {
-                subscription_reporter.subscription_required()
-            })),
+        runtime_options(
+            &config,
             #[cfg(debug_assertions)]
-            msg_tap,
-            ..RuntimeOptions::default()
-        },
+            trace.clone(),
+        ),
     );
     // A panic anywhere in the TUI leaves a report: the terminal.rs panic
     // hook calls amux_ui::write_panic_report after restoring the
     // terminal.
     runtime.install_panic_report();
 
-    // The dump is fetched when the key is pressed, not now: a report is
-    // meant to explain the daemon's state at the moment something looked
-    // wrong. A missing daemon is a reason string, not a failed capture.
-    let dump_config = config.clone();
-    let diagnostics =
-        amux_cli::diagnostics::source(&config, GIT_SHA, cfg!(debug_assertions), move || {
-            let config = dump_config.clone();
-            async move {
-                crate::server_client::debug(&config, true, DebugFormat::Json)
-                    .await
-                    .map_err(|error| format!("{error:#}"))
-            }
-        });
+    let diagnostics = profile_diagnostics(&config);
+
+    // Switching accounts rebuilds the runtime against the selected
+    // profile's own configuration: its reports, its artifact cache, its
+    // device identity. Reusing this profile's would file a report about the
+    // account the person had just left.
+    let installation = crate::front_door::configuration(config.path.as_deref())?;
+    let profiles = Some(amux_tui::run::ProfileSwitching {
+        front_door: installation.front_door_socket.clone(),
+        current: config.socket_path.clone(),
+        options: {
+            #[cfg(debug_assertions)]
+            let trace = trace.clone();
+            Box::new(move |entry: &amux_ui::ProfileEntry| {
+                let selected = crate::profiles::load(&crate::profiles::config_path_for(
+                    &installation,
+                    entry.id.0,
+                ))?;
+                crate::profiles::remember(
+                    &crate::profiles::last_used(&installation),
+                    &entry.id.0.to_string(),
+                )?;
+                Ok(amux_tui::run::ProfileOptions {
+                    runtime: runtime_options(
+                        &selected,
+                        #[cfg(debug_assertions)]
+                        trace.clone(),
+                    ),
+                    diagnostics: profile_diagnostics(&selected),
+                })
+            })
+        },
+    });
 
     let tui_config = TuiConfig {
         working_dir: std::env::current_dir()?,
@@ -155,6 +153,7 @@ async fn run_inner(
         },
         initial_chat,
         initial_chat_configuration,
+        profiles,
         #[cfg(debug_assertions)]
         trace,
         diagnostics,
@@ -166,6 +165,59 @@ async fn run_inner(
         async move { crate::session_client::attach_for_ui(&config, agent).await }
     })
     .await
+}
+
+fn profile_diagnostics(config: &Config) -> Option<amux_tui::DiagnosticsSource> {
+    // Fetch at the capture keypress, using this selection's configuration.
+    // A missing daemon is a reason string, not a failed capture.
+    let dump_config = config.clone();
+    amux_cli::diagnostics::source(config, GIT_SHA, cfg!(debug_assertions), move || {
+        let config = dump_config.clone();
+        async move {
+            crate::server_client::debug(&config, true, DebugFormat::Json)
+                .await
+                .map_err(|error| format!("{error:#}"))
+        }
+    })
+}
+
+/// What one profile's runtime is built from.
+///
+/// The same answer for the profile the fleet opens on and for every profile
+/// the switcher moves to, so a switched account's reports, cached
+/// attachments and subscription state are its own rather than inherited
+/// from the account it replaced.
+fn runtime_options(
+    config: &Config,
+    #[cfg(debug_assertions)] trace: Option<amux_tui::trace::SharedTrace>,
+) -> RuntimeOptions {
+    // The local host id comes from the stored device identity — the wire
+    // does not mark the local host (see docs/UI.md, subscription policy).
+    let local_host_id = amux::setup::local_host_id(config);
+    let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
+    // The fold order is the runtime's to report. Reconstructing it from
+    // outside would mean guessing how a drain batched, and a wrong guess is
+    // a replay that diverges for no visible reason.
+    #[cfg(debug_assertions)]
+    let msg_tap: Option<amux_ui::MsgTap> = trace.map(|trace| {
+        Box::new(move |msg: &amux_ui::Msg| {
+            amux_tui::trace::record_shared(&trace, &amux_tui::chrome::TraceEvent::Msg(msg.clone()));
+        }) as amux_ui::MsgTap
+    });
+    RuntimeOptions {
+        local_host_id,
+        report_dir: Some(config.reports_dir()),
+        log_path: Some(amux_cli::diagnostics::resolved_log_path()),
+        git_sha: GIT_SHA,
+        artifact_cache: Some(config.artifact_cache_dir()),
+        artifact_cache_bound: config.ui.artifact_cache_mib.saturating_mul(1024 * 1024),
+        subscription_status_provider: Some(Arc::new(move || {
+            subscription_reporter.subscription_required()
+        })),
+        #[cfg(debug_assertions)]
+        msg_tap,
+        ..RuntimeOptions::default()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

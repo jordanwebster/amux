@@ -1,0 +1,59 @@
+{
+  "entries": [
+    {
+      "state": "profile-switcher",
+      "theme": "dark",
+      "color": "truecolor",
+      "viewport": [
+        120,
+        40
+      ],
+      "pixels": [
+        1200,
+        880
+      ],
+      "file": "profile-switcher-dark.png",
+      "sha256": "7554e4e76f43813b4213c93f5400c12500423df7df3e5476f68f03e45b6e160d"
+    },
+    {
+      "state": "fleet",
+      "theme": "dark",
+      "color": "truecolor",
+      "viewport": [
+        120,
+        40
+      ],
+      "pixels": [
+        1200,
+        880
+      ],
+      "file": "fleet-personal-dark.png",
+      "sha256": "ebf65c3c5695400c04363b43ee22e0f3c23f6ff6f642e588a3746e6d05baa6cf"
+    },
+    {
+      "state": "fleet-switched",
+      "theme": "dark",
+      "color": "truecolor",
+      "viewport": [
+        120,
+        40
+      ],
+      "pixels": [
+        1200,
+        880
+      ],
+      "file": "fleet-work-dark.png",
+      "sha256": "ab2fbb9544c6fee1885e358f2b9944a0a0ab7cd758203161b1ac120cece02783"
+    }
+  ],
+  "sets": [
+    {
+      "name": "profiles",
+      "files": [
+        "profile-switcher-dark.png",
+        "fleet-personal-dark.png",
+        "fleet-work-dark.png"
+      ]
+    }
+  ]
+}

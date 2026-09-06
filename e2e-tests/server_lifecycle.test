@@ -8,7 +8,11 @@ terminal:
 
 ## Test
 
+# Init leaves the installation running; test startup from a stopped state.
 @T1
+> amux server stop
+Server shutting down.
+
 > amux server start
 Server started.
 

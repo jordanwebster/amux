@@ -3,8 +3,9 @@
 use std::net::SocketAddr;
 use std::path::Path;
 
+use super::PairingAdmin;
 use crate::audit;
-use crate::client::{Client, ClientError};
+use crate::client::ClientError;
 use crate::identity::load_or_create_device_identity_in;
 use crate::pairing::ssh::SshPairingPeer;
 use crate::services::{LocalPairingIdentity, pair_initiator};
@@ -27,7 +28,7 @@ pub async fn pair_via_pin_direct_tcp<P, N>(
     local_name: N,
     addr: SocketAddr,
     pin: &str,
-    client: &Client,
+    client: &dyn PairingAdmin,
 ) -> Result<SshPairingPeer, PinPairingError>
 where
     P: AsRef<Path>,

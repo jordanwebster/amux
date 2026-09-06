@@ -1,11 +1,11 @@
 //! TCP socket helpers.
 
-#[cfg(test)]
+#[cfg(any(test, test_fixtures))]
 use std::io;
 
-#[cfg(test)]
+#[cfg(any(test, test_fixtures))]
 use futures_util::{Stream, stream};
-#[cfg(test)]
+#[cfg(any(test, test_fixtures))]
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
@@ -13,7 +13,7 @@ use super::GrpcIo;
 
 pub(crate) type TcpServerTransport<T = TcpStream> = GrpcIo<T>;
 
-#[cfg(test)]
+#[cfg(any(test, test_fixtures))]
 pub(crate) fn tcp_incoming(
     listener: TcpListener,
 ) -> impl Stream<Item = io::Result<TcpServerTransport<TcpStream>>> + Send + 'static {

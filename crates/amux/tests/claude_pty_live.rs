@@ -29,6 +29,10 @@
 mod args;
 #[path = "codex_live/depfile.rs"]
 mod depfile;
+#[allow(dead_code)]
+#[path = "support/live_installation.rs"]
+mod live_installation;
+
 #[path = "claude_pty_live/harness.rs"]
 mod harness;
 #[path = "claude_pty_live/redact.rs"]
@@ -291,7 +295,7 @@ async fn run(scenarios: Vec<&ScenarioSpec>) -> Result<()> {
         Err(error) => println!("capture: taxonomy report unavailable: {error:#}"),
     }
 
-    let _ = daemon.client.shutdown().await;
+    crate::live_installation::shutdown(&scratch.root).await?;
     if failures.is_empty() {
         println!("capture: all scenarios OK");
         Ok(())

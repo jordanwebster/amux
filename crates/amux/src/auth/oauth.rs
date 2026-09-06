@@ -15,7 +15,7 @@ pub enum OAuthError {
     Config(String),
     #[error("OAuth request error: {0}")]
     Request(String),
-    #[error("Refresh token expired or revoked - run 'amux init' to re-authenticate")]
+    #[error("Refresh token expired or revoked - run 'amux login' to re-authenticate")]
     RefreshTokenExpired,
     #[error("No refresh token returned")]
     NoRefreshToken,
@@ -26,6 +26,7 @@ pub enum OAuthError {
 fn http_client() -> Result<reqwest::Client, OAuthError> {
     reqwest::ClientBuilder::new()
         .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| OAuthError::Config(e.to_string()))
 }
@@ -49,6 +50,8 @@ pub async fn run_device_flow(cloud_url: &str) -> Result<String, OAuthError> {
     let details: StandardDeviceAuthorizationResponse = client
         .exchange_device_code()
         .add_scope(Scope::new("openid".to_string()))
+        .add_scope(Scope::new("profile".to_string()))
+        .add_scope(Scope::new("email".to_string()))
         .add_scope(Scope::new("offline_access".to_string()))
         .add_scope(Scope::new("api".to_string()))
         .request_async(&http)

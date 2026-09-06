@@ -18,12 +18,14 @@ pub(crate) use core::{RouteUpdateOutcome, RoutingCore, RoutingDebug};
 
 #[cfg(test)]
 pub(crate) use connect::spawn_connector_to_channel;
-#[cfg(any(test, testnet))]
+#[cfg(test)]
 pub(crate) use connect::spawn_connector_to_channel_with_bearer_token;
+#[cfg(testnet)]
+pub(crate) use connect::spawn_connector_to_channel_with_bearer_token_and_shutdown;
 pub(crate) use connect::{
     AuthenticatedLinkUser, LinkAuthSession, LinkConnectorAuth, LinkConnectorCtx,
     LinkConnectorToken, LinkConnectorTokenRefresher, LinkServiceCtx, LinkTokenAuthenticator,
-    spawn_connector_to_channel_with_auth_and_establishment,
+    spawn_connector_to_channel_with_auth_establishment_and_shutdown,
     spawn_connector_to_channel_with_establishment,
 };
 pub(crate) use events::{EventSource, HostReachabilityEvent, RoutingEvent};

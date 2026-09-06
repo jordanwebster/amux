@@ -1,11 +1,9 @@
 //! Chapter 5 — Remote sessions & authority.
 //!
-//! What a paired peer can do once trust exists: list another daemon's agents,
-//! attach to one and round-trip terminal I/O across the route, hold that
-//! session open through unrelated routing churn, and wield full runtime
-//! authority — while the daemon-local trust-administration RPCs stay reserved
-//! for local callers. (docs/PROTOCOL.md "Tunnels: who am I calling";
-//! docs/ARCHITECTURE.md "Service surface map")
+//! Paired peers list agents, attach and round-trip terminal I/O across routes,
+//! and keep sessions open through unrelated routing churn. Pairing and trust
+//! administration belong to the installation owner and are absent from both
+//! profile sockets and peer tunnels.
 
 use amux::testnet::{TestNet, Via};
 
@@ -87,12 +85,9 @@ async fn a_long_lived_session_survives_unrelated_routing_churn() {
     session.expect_output("after-rejoin").await;
 }
 
-/// A paired peer has full runtime authority: the laptop invokes the desktop's
-/// `Shutdown` over the route — a disruptive op no local-admin gate blocks for
-/// a trusted peer — and the desktop goes down, unreachable and offline to the
-/// laptop afterwards.
+/// Paired peers can drive sessions while lifecycle administration stays with the owner.
 #[tokio::test]
-async fn a_paired_peer_can_shut_the_daemon_down() {
+async fn a_paired_peer_cannot_shut_down_or_suspend_the_daemon() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
@@ -100,30 +95,9 @@ async fn a_paired_peer_can_shut_the_daemon_down() {
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
-
-    laptop.can_call(&desktop).await;
-
-    desktop.shutdown_via(&laptop).await;
-}
-
-/// A paired remote peer cannot reach the daemon-local trust-administration
-/// RPCs (N-S-2): `ListPeers`, `GetPeer`, and `Unpair` are permission-denied
-/// over remote mTLS, even though the same caller wields full runtime
-/// authority. The identical `ListPeers` succeeds over the local Unix socket.
-#[tokio::test]
-async fn local_admin_rpcs_are_refused_to_remote_peers() {
-    let net = TestNet::builder()
-        .daemon("laptop")
-        .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
-        .start()
-        .await;
-    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
-
-    laptop.can_call(&desktop).await; // the route is up; runtime calls work
-
-    // The laptop is the dialer, so it holds the route into the desktop and
-    // plays the remote caller against the desktop's admin surface.
-    desktop.rejects_remote_trust_admin_from(&laptop).await;
-    desktop.allows_local_trust_admin().await;
+    desktop.spawn_echo_agent("worker").await;
+    let mut session = laptop.attach(&desktop, "worker").await;
+    desktop.rejects_remote_admin_from(&laptop).await;
+    session.send("still-running").await;
+    session.expect_output("still-running").await;
 }

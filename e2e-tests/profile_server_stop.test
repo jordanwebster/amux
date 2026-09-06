@@ -1,0 +1,70 @@
+# test: profile_server_stop
+# description: Stopping the installation kills agents in every profile without resuming them on startup
+
+## Environment
+
+config:
+  name: local
+  profiles: [personal, work]
+
+terminal:
+  name: Personal
+
+terminal:
+  name: Work
+
+terminal:
+  name: Admin
+
+## Test
+
+@Personal
+> amux --profile personal new test-agent --name personal-agent
+> ready
+ready
+echo: ready
+> pid
+pid
+@@capture personal_pid pid:
+> waiting for stop
+
+@Work
+> amux --profile work new test-agent --name work-agent
+> ready
+ready
+echo: ready
+> pid
+pid
+@@capture work_pid pid:
+> waiting for stop
+
+@Admin
+> amux server stop
+Server shutting down.
+
+@Personal
+waiting for stop
+echo: waiting for stop
+
+[server shutting down]
+@@exit 1
+
+@Work
+waiting for stop
+echo: waiting for stop
+
+[server shutting down]
+@@exit 1
+
+@@process-exited $personal_pid
+@@process-exited $work_pid
+
+@Admin
+> amux server start
+Server started.
+
+> amux --profile personal list
+No agents running.
+
+> amux --profile work list
+No agents running.

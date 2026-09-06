@@ -63,6 +63,19 @@ pub(crate) enum LinkCloseRequest {
 }
 
 impl LinkRegistry {
+    #[cfg(testnet)]
+    pub(crate) async fn cloud_link_ids(&self) -> Vec<String> {
+        let state = self.state.read().await;
+        let mut ids: Vec<_> = state
+            .writers
+            .iter()
+            .filter(|(_, writer)| writer.role == LinkRole::CloudRelay)
+            .map(|(id, _)| format!("{id:?}"))
+            .collect();
+        ids.sort();
+        ids
+    }
+
     /// Registers a live link and runs the adjacency discipline atomically:
     /// other links learn `NeighborUp(peer)` if this is the first link to the
     /// peer, and this link receives the diff between `advertised_snapshot`

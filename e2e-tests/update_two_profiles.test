@@ -1,0 +1,99 @@
+# test: update_two_profiles
+# description: Replace the executable and resume both profiles while preserving an older suspended session
+
+## Environment
+
+config:
+  name: relay
+  cloud_relay: true
+  update_version: 999.0.0
+
+config:
+  name: local
+  profiles: [personal, work]
+  suspended_agent: already-parked
+
+directory:
+  name: project
+
+terminal:
+  name: Personal
+  config: local
+  cwd: project
+
+terminal:
+  name: Work
+  config: local
+  cwd: project
+
+terminal:
+  name: Admin
+  config: local
+
+## Test
+
+@Personal
+> amux --profile personal new test-agent --name personal-agent
+> before personal
+before personal
+echo: before personal
+
+@Work
+> amux --profile work new test-agent --name work-agent
+> before work
+before work
+echo: before work
+
+@Admin
+> amux --profile personal list
+@@retry 8000 100
+Running agents:
+  personal-agent [test-agent] - $project.path
+An update is available (999.0.0 vs $amux.version). Run 'amux update' to update.
+Updating will suspend and resume all running agents.
+
+> amux --profile work list
+@@retry 8000 100
+Running agents:
+  work-agent [test-agent] - $project.path
+An update is available (999.0.0 vs $amux.version). Run 'amux update' to update.
+Updating will suspend and resume all running agents.
+
+> amux update
+@@contains E2E replacement fixture
+@@contains Suspended 2 agent(s).
+@@contains Server shutting down.
+@@contains Updated to v999.0.0.
+@@contains Restarting server...
+@@contains Resumed 2 agent(s).
+
+> amux --profile personal list
+@@retry 8000 100
+Running agents:
+  personal-agent [test-agent] - $project.path
+An update is available (999.0.0 vs $amux.version). Run 'amux update' to update.
+Updating will suspend and resume all running agents.
+
+> amux --profile work list
+@@retry 8000 100
+Running agents:
+  work-agent [test-agent] - $project.path
+An update is available (999.0.0 vs $amux.version). Run 'amux update' to update.
+Updating will suspend and resume all running agents.
+
+> amux server resume
+Resumed 2 agent(s).
+
+> amux --profile personal list
+@@retry 8000 100
+Running agents:
+  personal-agent [test-agent] - $project.path
+An update is available (999.0.0 vs $amux.version). Run 'amux update' to update.
+Updating will suspend and resume all running agents.
+
+> amux --profile work list
+@@retry 8000 100
+Running agents:
+  work-agent [test-agent] - $project.path
+An update is available (999.0.0 vs $amux.version). Run 'amux update' to update.
+Updating will suspend and resume all running agents.

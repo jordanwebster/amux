@@ -752,7 +752,9 @@ read eof
 "#,
         ).await;
 
-        let warm = Query::warm_from_process(options(), process, Duration::from_secs(1))
+        // Initialization is setup; the one-second deadline below measures close
+        // once the bounded output channel is full.
+        let warm = Query::warm_from_process(options(), process, Duration::from_secs(5))
             .await
             .unwrap();
         let query = warm.into_query();

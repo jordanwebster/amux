@@ -8,14 +8,11 @@ use thiserror::Error;
 
 use crate::auth::{AccessToken, AuthError, CredentialProvider};
 use crate::config::Config;
-use crate::setup;
 
 #[derive(Debug, Error)]
 pub(crate) enum CloudError {
     #[error("Not authenticated - run 'amux init' to authenticate")]
     NotAuthenticated,
-    #[error("Cloud mode is disabled")]
-    CloudDisabled,
     #[error("Connection failed: {0}")]
     Connection(String),
     #[error("Authentication failed: {0}")]
@@ -89,9 +86,6 @@ pub(crate) async fn fetch_routing_connection_details(
     config: &Config,
     credentials: &dyn CredentialProvider,
 ) -> std::result::Result<CloudRoutingConnectionDetails, CloudError> {
-    if !setup::cloud_enabled(config) {
-        return Err(CloudError::CloudDisabled);
-    }
     refresh_and_fetch_connection(config, credentials)
         .await
         .map(Into::into)
@@ -150,7 +144,7 @@ fn cloud_error_from_response(status: reqwest::StatusCode, body: &str) -> CloudEr
 
 fn cloud_error_from_auth(error: AuthError) -> CloudError {
     match error {
-        AuthError::Unauthenticated => CloudError::NotAuthenticated,
+        AuthError::Unauthenticated | AuthError::AccountMismatch => CloudError::NotAuthenticated,
         AuthError::Provider(message) => CloudError::Connection(message),
     }
 }

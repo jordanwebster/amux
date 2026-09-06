@@ -1,8 +1,11 @@
 //! Shared service context for protobuf-shaped application services.
 
 mod agent;
-mod client;
+pub(crate) mod client;
+pub mod front_door;
 mod pairing;
+#[cfg(testnet)]
+pub(crate) use pairing::{PeerTrustCommitContext, PeerTrustUpdate, commit_peer_trust};
 mod reachability;
 mod startup;
 
@@ -18,6 +21,6 @@ pub(crate) use reachability::ReachabilityLinkConnector;
 #[cfg(testnet)]
 pub(crate) use startup::start_user_services_with_artifact_clock;
 pub(crate) use startup::{
-    CloudLinkService, DeviceRuntimeSecurity, StartedUserServices, establish_cloud_connection,
-    start_user_services,
+    CloudConnector, CloudLinkService, DeviceRuntimeSecurity, StartedUserServices,
+    establish_cloud_connection, start_user_services,
 };
