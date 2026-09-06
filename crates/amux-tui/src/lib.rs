@@ -25,6 +25,7 @@ pub mod review;
 pub mod run;
 #[cfg(test)]
 mod serde_roundtrip;
+pub mod switcher;
 pub mod terminal;
 pub mod theme;
 #[cfg(any(debug_assertions, test))]
@@ -36,11 +37,13 @@ pub use diagnostics::{DaemonDump, DiagnosticsSource};
 pub use render::{FrameContext, build_lines, render};
 pub use review::{ReviewOutcome, ReviewView};
 pub use run::{AttachReturn, TuiConfig, run_fleet};
+pub use switcher::{SwitcherOutcome, SwitcherState};
 pub use terminal::{
-    TerminalGuard, install_panic_hook, write_enter_chrome, write_osc52, write_restore,
+    TerminalGuard, install_panic_hook, query_terminal_colors, write_enter_chrome, write_osc52,
+    write_restore,
 };
 pub use theme::{
-    ColorMode, ColorPreference, Theme, ThemeError, ThemeFile, ThemeName, Token, Tokens, Variant,
-    detect_color_mode, nearest_ansi, parse_theme_file, theme_from_file,
+    ColorMode, ColorPreference, TerminalColors, Theme, ThemeError, ThemeFile, ThemeName, Token,
+    Tokens, Variant, detect_color_mode, nearest_ansi, parse_theme_file, theme_from_file,
 };
 pub use view::{Mode, Notice, NoticeTone, OpenMode, UiAction, ViewState};

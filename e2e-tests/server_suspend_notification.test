@@ -1,10 +1,14 @@
 # test: server_suspend_notification
-# description: Attached sessions are told that the server is suspending
+# description: Installation suspension notifies attached sessions and the front door resumes them
 
 ## Environment
 
+directory:
+  name: project
+
 terminal:
   name: T1
+  cwd: project
 
 terminal:
   name: T2
@@ -24,3 +28,10 @@ keepalive
 echo: keepalive
 
 [server suspending]
+
+@T2
+> amux server resume
+Resumed 1 agent(s).
+> amux list
+Running agents:
+  suspend-notify [test-agent] - $project.path

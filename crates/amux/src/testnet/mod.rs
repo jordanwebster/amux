@@ -30,11 +30,11 @@
 //!   [`assertions::eventually`] under one default timeout; on expiry it
 //!   panics with a dump of the declared topology, every daemon's host table,
 //!   and the failing daemon's routes. Tests contain no retry loops.
-//! - **Restart = process exit.** `Daemon::stop`/`restart` drop the runtime
-//!   *and* sever OS-level duplicates of every socket it held (accepted and
-//!   dialed), because detached connection tasks would otherwise keep a dead
-//!   incarnation "online". Identity, trust, and the TCP address persist in
-//!   the daemon's data dir across restarts.
+//! - **Restart = complete teardown.** `Daemon::stop`/`restart` await the cloud
+//!   connector's cleanup, then sever direct sockets whose detached dispatcher
+//!   tasks model process-owned connections. Aborting an established connector
+//!   task skips its asynchronous link cleanup and must not be used as stop.
+//!   Identity, trust, and the TCP address persist across restarts.
 //! - **Sever = real outage.** `sever_direct`/`cloud_offline` cut sockets (or
 //!   close links) hard and return only once the affected daemons have
 //!   observed the loss, so follow-up assertions start from a settled net.
@@ -44,7 +44,11 @@
 
 mod assertions;
 mod daemon;
+mod installation;
 mod net;
+pub use installation::{
+    InstallationHandle, Profile, RetainedProfileWork, UpdatePreparationHold, WatchProbe,
+};
 mod pairing;
 mod session;
 mod wire;
@@ -88,6 +92,7 @@ pub(crate) struct NetInner {
     pub(crate) topology: String,
     pub(crate) daemons: Vec<Daemon>,
     pub(crate) cloud: Option<CloudRelay>,
+    installations: Vec<InstallationHandle>,
     pairs: Vec<(String, String, Via)>,
     /// Owns every daemon's data dir; removed when the net is dropped.
     _data_root: tempfile::TempDir,
@@ -101,6 +106,15 @@ impl TestNet {
     /// Starts declaring a topology; finish with [`TestNetBuilder::start`].
     pub fn builder() -> TestNetBuilder {
         TestNetBuilder::default()
+    }
+
+    pub fn installation(&self, name: &str) -> InstallationHandle {
+        self.inner
+            .installations
+            .iter()
+            .find(|handle| handle.name() == name)
+            .unwrap_or_else(|| panic!("no installation named '{name}'"))
+            .clone()
     }
 
     /// Looks up a daemon handle by name.
@@ -117,6 +131,12 @@ impl TestNet {
     /// `let [a, b] = net.daemons(["a", "b"]);`
     pub fn daemons<const N: usize>(&self, names: [&str; N]) -> [Daemon; N] {
         names.map(|name| self.daemon(name))
+    }
+
+    /// Rejects this account at the production relay authentication boundary.
+    pub fn reject_cloud_user(&self, user: &str, error: Option<crate::ProtocolError>) {
+        self.cloud()
+            .reject_user(user, error.map(crate::protocol::protocol_status));
     }
 
     /// Takes the cloud relay down hard: accepted sockets are severed, so
@@ -248,6 +268,25 @@ impl TestNet {
         }
     }
 
+    /// Waits until the relay has removed `target` from its authenticated
+    /// tenant's live links.
+    pub async fn cloud_relay_sees_offline(&self, target: &Daemon) {
+        let cloud = self.cloud();
+        let user_id = target
+            .inner
+            .cloud
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not cloud-attached", target.name()))
+            .user_id;
+        let assertion = format!("cloud relay observes '{}' going offline", target.name());
+        eventually(
+            &assertion,
+            async || !cloud.has_link_to(user_id, target.host_id()).await,
+            target.failure_dump(),
+        )
+        .await;
+    }
+
     fn cloud(&self) -> &CloudRelay {
         self.inner
             .cloud
@@ -317,12 +356,60 @@ struct DaemonSpec {
 #[derive(Default)]
 pub struct TestNetBuilder {
     cloud: bool,
+    installations: Vec<installation::InstallationSpec>,
+    selecting_profile: bool,
     daemons: Vec<DaemonSpec>,
     pairs: Vec<(String, String, Via)>,
     trusted: Vec<(String, String)>,
 }
 
 impl TestNetBuilder {
+    pub fn installation(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        assert!(
+            !self.installations.iter().any(|spec| spec.name == name),
+            "duplicate installation '{name}'"
+        );
+        self.installations.push(installation::InstallationSpec {
+            name,
+            persistent: false,
+            profiles: Vec::new(),
+        });
+        self.selecting_profile = true;
+        self
+    }
+
+    pub fn profile(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        let installation = self
+            .installations
+            .last_mut()
+            .expect(".profile() must follow .installation()");
+        assert!(
+            !installation
+                .profiles
+                .iter()
+                .any(|profile| profile.name == name),
+            "duplicate profile '{name}'"
+        );
+        installation.profiles.push(installation::ProfileSpec {
+            name,
+            cloud_user: None,
+            cloud_only: false,
+        });
+        self.selecting_profile = true;
+        self
+    }
+
+    /// Persist the installation in a short temporary root for reopen and lock tests.
+    pub fn persistent(mut self) -> Self {
+        self.installations
+            .last_mut()
+            .expect(".persistent() must follow .installation()")
+            .persistent = true;
+        self
+    }
+
     /// Adds an in-process cloud relay; daemons attach to it by default.
     pub fn cloud(mut self) -> Self {
         self.cloud = true;
@@ -337,6 +424,7 @@ impl TestNetBuilder {
             !self.daemons.iter().any(|spec| spec.name == name),
             "duplicate daemon name '{name}'"
         );
+        self.selecting_profile = false;
         self.daemons.push(DaemonSpec {
             name,
             cloud_only: false,
@@ -349,13 +437,33 @@ impl TestNetBuilder {
     /// Marks the most recently added daemon as cloud-only: no direct
     /// transports, all traffic through the relay.
     pub fn cloud_only(mut self) -> Self {
-        self.last_daemon("cloud_only").cloud_only = true;
+        if self.selecting_profile {
+            self.installations
+                .last_mut()
+                .unwrap()
+                .profiles
+                .last_mut()
+                .expect("cloud_only requires a profile")
+                .cloud_only = true;
+        } else {
+            self.last_daemon("cloud_only").cloud_only = true;
+        }
         self
     }
 
     /// Opts the most recently added daemon out of the cloud relay.
     pub fn no_cloud(mut self) -> Self {
-        self.last_daemon("no_cloud").no_cloud = true;
+        if self.selecting_profile {
+            self.installations
+                .last_mut()
+                .unwrap()
+                .profiles
+                .last_mut()
+                .expect("no_cloud requires a profile")
+                .cloud_user = None;
+        } else {
+            self.last_daemon("no_cloud").no_cloud = true;
+        }
         self
     }
 
@@ -364,7 +472,17 @@ impl TestNetBuilder {
     /// presence is per-user, so daemons of different users meet nothing of
     /// each other at the relay.
     pub fn cloud_user(mut self, user: impl Into<String>) -> Self {
-        self.last_daemon("cloud_user").cloud_user = Some(user.into());
+        if self.selecting_profile {
+            self.installations
+                .last_mut()
+                .unwrap()
+                .profiles
+                .last_mut()
+                .expect("cloud_user requires a profile")
+                .cloud_user = Some(user.into());
+        } else {
+            self.last_daemon("cloud_user").cloud_user = Some(user.into());
+        }
         self
     }
 
@@ -391,7 +509,12 @@ impl TestNetBuilder {
     }
 
     /// Starts the declared topology and waits for its steady state.
-    pub async fn start(self) -> TestNet {
+    pub async fn start(mut self) -> TestNet {
+        let (profile_pairs, daemon_pairs): (Vec<_>, Vec<_>) = self
+            .pairs
+            .into_iter()
+            .partition(|(a, b, _)| a.contains('/') || b.contains('/'));
+        self.pairs = daemon_pairs;
         let data_root = tempfile::Builder::new()
             .prefix("amux-spec")
             .tempdir()
@@ -514,21 +637,81 @@ impl TestNetBuilder {
                     }
                 }),
                 runtime: Mutex::new(None),
+                installation: None,
                 tracked_tcp: Default::default(),
-                tracked_cloud_tcp: Default::default(),
             });
             let runtime = start_daemon_runtime(&inner, prep.listener).await;
             *inner.runtime.lock().await = Some(runtime);
             daemon_inners.push(inner);
         }
 
-        let topology = render_topology(
+        let mut installations = Vec::new();
+        if !self.installations.is_empty() {
+            let mut users = std::collections::BTreeSet::new();
+            for installation in &self.installations {
+                for profile in &installation.profiles {
+                    if let Some(user) = &profile.cloud_user {
+                        users.insert(user.clone());
+                        let cloud = cloud.as_ref().expect("cloud_user requires .cloud()");
+                        let (user_id, _) = cloud.credentials_for_user(user);
+                        cloud.register_token(
+                            &crate::test_fixtures::relay_token(user),
+                            user_id,
+                            std::time::Duration::from_secs(3600),
+                        );
+                    }
+                }
+            }
+            if users.is_empty() {
+                users.insert("default".into());
+            }
+            let identity = Arc::new(
+                crate::test_fixtures::IdentityServer::start(
+                    users
+                        .into_iter()
+                        .map(|sub| crate::test_fixtures::TestAccount {
+                            name: Some(format!("{sub} Example")),
+                            email: Some(format!("{sub}@example.test")),
+                            sub,
+                        })
+                        .collect(),
+                    cloud.as_ref().map(|relay| relay.addr),
+                )
+                .await,
+            );
+            for spec in self.installations {
+                let installation =
+                    installation::start(spec, identity.clone(), cloud.as_ref()).await;
+                daemon_inners.extend(installation.daemon_inners());
+                installations.push(installation);
+            }
+        }
+
+        let mut topology = render_topology(
             &self.daemons,
             &daemon_inners,
             cloud.as_ref(),
             &self.pairs,
             &self.trusted,
         );
+        for installation in &installations {
+            let _ = writeln!(
+                topology,
+                "  installation '{}' root={}",
+                installation.name(),
+                installation.root().display()
+            );
+            for profile in installation.daemon_inners() {
+                let _ = writeln!(
+                    topology,
+                    "    profile '{}' host={} tcp={:?} cloud_user={:?}",
+                    profile.name,
+                    profile.host_id,
+                    profile.tcp_addr,
+                    profile.cloud.as_ref().map(|cloud| cloud.user_id)
+                );
+            }
+        }
         let inner = Arc::new_cyclic(|weak| NetInner {
             topology,
             daemons: daemon_inners
@@ -539,6 +722,13 @@ impl TestNetBuilder {
                 })
                 .collect(),
             cloud,
+            installations: installations
+                .into_iter()
+                .map(|mut installation| {
+                    installation.net = weak.clone();
+                    installation
+                })
+                .collect(),
             pairs: self.pairs,
             _data_root: data_root,
         });
@@ -556,6 +746,18 @@ impl TestNetBuilder {
             daemon.reconnect_cloud().await;
         }
         net.wait_for_steady_state().await;
+        for (a, b, via) in profile_pairs {
+            let a = net.daemon(&a);
+            let b = net.daemon(&b);
+            let pin = b.start_pairing().await;
+            match via {
+                Via::Tcp => a.pair(&b).with_pin(&pin).await,
+                Via::Cloud => a.pair(&b).with_cloud_pin(&pin).await,
+            }
+            .expect("pair installation fixture profiles");
+            a.can_call(&b).await;
+            b.can_call(&a).await;
+        }
         net
     }
 }

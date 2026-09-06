@@ -1,6 +1,6 @@
 # The amux protocol
 
-**Status**: implemented (2026-08-30). This is the protocol the daemon
+**Status**: current (2026-09-05). This is the protocol each profile
 speaks; it is locked in by the prose spec suite in
 `crates/amux/tests/spec/`. The system around the wire — processes,
 servers, the dispatcher, trust storage, service surfaces — is described
@@ -16,10 +16,18 @@ Everything below is elaboration.
 
 ## Identity and trust
 
+**A profile is a device on the wire.** An installation may host several
+profiles in one process, but each has an independent key, `host_id`, trust
+store, routing table and cloud link. Peers and relays see ordinary devices;
+profile UUIDs and account selection add no fields to link frames or tunnel
+calls. Pairing windows and pinned keys are per profile, so two machines using
+two accounts pair once for each account.
+
 Every device has an Ed25519 keypair and a random 128-bit `host_id`, created
-on first run, persisted forever. **Trust is a pinned public key** in a
-local, never-shared trust store. Keys get pinned exactly one way — pairing —
-and unpinned exactly one way — local revocation (`amux unpair`).
+on first run and retained for the profile's lifetime. **Trust is a pinned public key** in a
+local, never-shared trust store. Keys get pinned through pairing; local
+revocation (`amux unpair`) removes a pin, and deleting a profile destroys its
+whole trust store.
 
 **Pairing** is one protocol: SPAKE2, with the shared secret delivered
 out-of-band. Two delivery mechanisms, same wire flow: a 6-digit PIN the user
@@ -32,6 +40,11 @@ is `{host_id, cloud_url, secret}`. The secret itself never crosses the wire
 peer, any *reachability hints* this device learned as the dialer (a TCP
 address, an SSH target); on startup the daemon re-dials them.
 Re-establishment is always the dialer's job.
+
+An explicitly opened demo PIN window is reusable until its configured expiry:
+success does not consume it and failed attempts do not exhaust it. This is
+per-profile pairing policy; it uses the same SPAKE2 wire exchange. Ordinary PIN
+and QR windows retain the one-shot and attempt limits above.
 
 The wire flow (`PairingService.Pair`, a bidi stream) and its crypto, for
 implementers: SPAKE2 per RFC 9382 over edwards25519, responder = B,
@@ -46,7 +59,10 @@ the AAD. A `PairingComplete` commits both trust stores. Every secret
 failure surfaces as the same opaque `INVALID_PIN`, whichever delivery
 carried the secret. (Pairing over SSH is simpler still: the SSH channel
 is the out-of-band trust, and the two ends exchange identities directly
-over its stdio.)
+over its stdio. That SSH-specific exchange also returns the remote profile
+UUID, stored with the SSH destination so later connections run
+`amux relay --profile <UUID>` even after a profile rename. The PIN and QR
+exchanges are unchanged.)
 
 ## Links: who is my neighbor
 
@@ -98,6 +114,13 @@ decision, made at the receiving daemon's dispatcher when a tunnel
 terminates: a pinned client cert reaches the trusted services (full peer
 authority); no cert during an active pairing window reaches the pairing
 service; anything else is closed. Relays see ciphertext.
+
+Those trusted services expose agent operations, not installation lifecycle
+or trust administration. Shutdown, installation suspend/resume, profile
+lifecycle and pairing-window administration are reachable only through the
+local installation front door or an in-process owner handle; they are absent
+from profile sockets and tunnels. The service map and local discovery contract
+are in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 Because tunnels are initiated by *sending frames*, and frames flow both
 ways on every link, **any live link is fully bidirectional at the call

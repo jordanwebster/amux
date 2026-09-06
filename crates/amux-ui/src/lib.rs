@@ -26,6 +26,10 @@ mod runtime;
 mod update;
 
 // Kernel entity vocabulary re-exported so renderers depend on amux-ui alone.
+// The profile a runtime is bound to. Renderers name accounts, so the id
+// travels with the rest of the entity vocabulary rather than making the
+// TUI depend on the kernel crate.
+pub use amux::installation::ProfileId;
 pub use amux::{
     Agent, AgentId, AgentKind, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef,
     BaseIdentity, Capabilities, ClaudeDriver, DiffBase, DiffFile, DiffResponse, HostEntry, HostId,
@@ -56,7 +60,10 @@ pub use recorder::{
 };
 pub use runtime::{
     AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ConnectFailure,
-    ConnectFuture, Connector, MsgTap, ReportExtras, ReportExtrasProvider, Runtime, RuntimeOptions,
-    execute_put_then_send, write_panic_report,
+    ConnectFuture, Connector, Generation, LateResult, MsgTap, ProfileDirectory, ProfileEntry,
+    ReportExtras, ReportExtrasProvider, Runtime, RuntimeOptions, execute_put_then_send,
+    write_panic_report,
 };
+#[cfg(debug_assertions)]
+pub use runtime::{RuntimeGone, ShellEdge};
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};

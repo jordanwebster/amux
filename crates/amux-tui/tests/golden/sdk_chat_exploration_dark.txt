@@ -4,17 +4,14 @@
                                                                                                                         
 ▎   Find every retry ceiling and raise the default.                                                                     
                                                                                                                         
-  ⌄ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o expand                                                
-                                                                                                                        
-  ✎ Edit sync/config.rs · +1 −1                                                                                         
-    sync/config.rs                                                                                                      
-          @@ -3,3 +3,3 @@                                                                                               
-     3  3  pub struct RetryConfig {                                                                                     
-     4    -    pub max_attempts: u8,                                                                                    
-        4 +    pub max_attempts: u16,                                                                                   
-     5  5  }                                                                                                            
-                                                                                                                        
-  ⌄ 1 read · 1 search · sync/tests/retry.rs · C-a o expand                                                              
+│ ⌄ 2 reads · 2 searches · sync/config.rs, sync/client.rs · C-a o expand                                                
+│ ✎ Edit sync/config.rs · +1 −1                                                                                         
+│   sync/config.rs                                                                                                      
+│    3 │  pub struct RetryConfig {                                                                                      
+│    4 │ -    pub max_attempts: u8,                                                                                     
+│    4 │ +    pub max_attempts: u16,                                                                                    
+│    5 │  }                                                                                                             
+│ ⌄ 1 read · 1 search · sync/tests/retry.rs · C-a o expand                                                              
                                                                                                                         
   ─ turn · 6s · $0.0225 ────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
@@ -34,9 +31,12 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
+                                                                                                                        
     ctx 31.4k/200.0k                                                                                                    
                                                                                                                         
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     enter send · ctrl+j newline · C-a r review diff · ? help                                             shift+tab mode 
 --- styles ---
@@ -45,17 +45,14 @@
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
-..m......................................................mmmmmmmmmmmmmmm................................................
-........................................................................................................................
-.......................mmmmmmmm.........................................................................................
-.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-.PPPPPPPPP--------------------------------------------------------------------------------------------------------------
-.PPPPPPPPP++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-........................................................................................................................
-..m........................................mmmmmmmmmmmmmmm..............................................................
+G.m......................................................mmmmmmmmmmmmmmm................................................
+G......................mmmmmmmm.........................................................................................
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+PPPPPPPPP---------------------------------------------------------------------------------------------------------------
+PPPPPPPPP+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+G.m........................................mmmmmmmmmmmmmmm..............................................................
 ........................................................................................................................
 ..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
 ........................................................................................................................
@@ -75,8 +72,11 @@ AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
+........................................................................................................................
 ....mmmmmmmmmmmmmmmm....................................................................................................
 ........................................................................................................................
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.............................................mmmmmmmmmmmmmm.

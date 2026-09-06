@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use replay_support::{IoDirection, IoEvent, Manifest, ReplayReport, SpecEntry, StrictReplay};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use super::{ALLOWED_MODELS, HAIKU, SpecFailure};
 use crate::launch::Launch;
@@ -214,32 +214,68 @@ pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFai
         }
     };
 
-    let replay_driver = controller.as_ref().map(|controller| {
-        let controller = controller.clone();
-        tokio::spawn(async move {
-            while let replay_support::ReplayAdvance::Advanced { .. }
-            | replay_support::ReplayAdvance::BlockedOnWrite = controller.advance_one().await
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-    });
     let mut session = PtySpecSession::new(session, capture.clone());
-    let claim = tokio::time::timeout(wait, async {
-        session.prepare_for_prompt().await?;
-        (definition.run)(&mut session).await
-    })
-    .await;
-    if matches!(claim, Ok(Ok(()))) {
+    // Keep the driver in this future so failed or cancelled specifications
+    // cannot leave a detached replay task waiting for a write.
+    let (claim, driver_result) = {
+        let driver = async {
+            if let Some(controller) = &controller {
+                controller.drive().await;
+            }
+        };
+        tokio::pin!(driver);
+        let mut driver_finished = false;
+        let claim = {
+            let claim = tokio::time::timeout(wait, async {
+                session.prepare_for_prompt().await?;
+                (definition.run)(&mut session).await
+            });
+            tokio::pin!(claim);
+            tokio::select! {
+                result = &mut claim => result,
+                () = &mut driver => {
+                    driver_finished = true;
+                    claim.await
+                }
+            }
+        };
+        let driver_result = if matches!(claim, Ok(Ok(()))) && !driver_finished {
+            // Trailing recorded events can fill the session channels after the
+            // last assertion. Drain them until replay completion, not until an
+            // arbitrary period of wall-clock silence.
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    tokio::select! {
+                        () = &mut driver => break,
+                        Some(_) = session.events.recv() => {}
+                    }
+                }
+            })
+            .await
+            .map_err(|_| failure(entry, "strict replay driver did not finish"))
+        } else {
+            Ok(())
+        };
+        (claim, driver_result)
+    };
+    if capture.is_some() && matches!(claim, Ok(Ok(()))) {
         session.drain_quiet().await;
     }
-    if claim.is_err() {
+    if capture.is_some() && claim.is_err() {
         // The timed-out future is gone, so drain anything already queued before
         // killing the provider and freezing the diagnostic capture.
         session.drain_quiet().await;
     }
     let timeout_tail = claim.is_err().then(|| session.screen_tail());
-    let _ = tokio::time::timeout(
+    let close_result = if let Some(controller) = &controller {
+        controller
+            .close_reads()
+            .await
+            .map_err(|error| failure(entry, format!("closing recorded streams failed: {error}")))
+    } else {
+        Ok(())
+    };
+    let shutdown = tokio::time::timeout(
         Duration::from_secs(5),
         session.control.stop(pty_host::Terminate::Kill),
     )
@@ -267,12 +303,9 @@ pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFai
             )
         })?
         .map_err(|claim| failure(entry, claim))?;
-    if let Some(driver) = replay_driver {
-        tokio::time::timeout(Duration::from_secs(5), driver)
-            .await
-            .map_err(|_| failure(entry, "strict replay driver did not finish"))?
-            .map_err(|error| failure(entry, format!("strict replay task failed: {error}")))?;
-    }
+    driver_result?;
+    close_result?;
+    shutdown.map_err(|_| failure(entry, "PTY session did not exit during cleanup"))?;
     let replay =
         controller.map(|controller| controller.finish().unwrap_or_else(|error| error.report));
     if replay.as_ref().is_some_and(|report| !report.is_complete()) {
@@ -403,6 +436,7 @@ struct PtySpecSession {
     control: crate::pty::Control,
     capture: Option<Capture>,
     screen: Arc<Mutex<String>>,
+    screen_changes: watch::Receiver<()>,
     pending: VecDeque<PtyEvent>,
     tool_use_ids: HashMap<String, String>,
 }
@@ -424,6 +458,7 @@ impl PtySpecSession {
             });
         }
         let screen = Arc::new(Mutex::new(String::new()));
+        let (screen_changed, screen_changes) = watch::channel(());
         if let Some(mut output) = session.control.terminal_output() {
             let captured = capture.clone();
             let observed_screen = Arc::clone(&screen);
@@ -442,6 +477,7 @@ impl PtySpecSession {
                         let cut = screen.len() - 128 * 1024;
                         screen.drain(..cut);
                     }
+                    screen_changed.send_replace(());
                 }
             });
         }
@@ -450,12 +486,13 @@ impl PtySpecSession {
             control: session.control,
             capture,
             screen,
+            screen_changes,
             pending: VecDeque::new(),
             tool_use_ids: HashMap::new(),
         }
     }
 
-    async fn prepare_for_prompt(&self) -> Result<(), String> {
+    async fn prepare_for_prompt(&mut self) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut trust_answered = false;
         loop {
@@ -467,7 +504,9 @@ impl PtySpecSession {
                 && screen.contains("folder")
                 && !composer_up
             {
-                tokio::time::sleep(Duration::from_millis(800)).await;
+                if self.capture.is_some() {
+                    tokio::time::sleep(Duration::from_millis(800)).await;
+                }
                 self.control
                     .send_program(vec![
                         crate::pty::PtyInput::Bytes(b"\x1b[B".to_vec()),
@@ -480,13 +519,27 @@ impl PtySpecSession {
                 continue;
             }
             if composer_up {
-                tokio::time::sleep(Duration::from_millis(800)).await;
+                if self.capture.is_some() {
+                    tokio::time::sleep(Duration::from_millis(800)).await;
+                }
                 return Ok(());
             }
             if Instant::now() > deadline {
                 return Err("Claude composer did not appear after 60s".to_owned());
             }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            if self.capture.is_some() {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            } else {
+                tokio::time::timeout(
+                    deadline.saturating_duration_since(Instant::now()),
+                    self.screen_changes.changed(),
+                )
+                .await
+                .map_err(|_| "Claude composer did not appear after 60s".to_owned())?
+                .map_err(|_| {
+                    "recorded terminal output ended before the composer appeared".to_owned()
+                })?;
+            }
         }
     }
 
@@ -739,38 +792,52 @@ async fn tools(session: &mut PtySpecSession) -> Result<(), String> {
         })
         .await?;
 
-    for tool_name in ["Read", "Edit", "Bash"] {
-        session
-            .wait_hook(|hook| {
-                matches!(hook, crate::hooks::HookPayload::PreToolUse { tool_name: observed, .. } if observed == tool_name)
-            })
-            .await?;
-        let tool_use_id = session
-            .tool_use_id(tool_name)
-            .ok_or_else(|| format!("{tool_name} PreToolUse hook omitted its tool-use id"))?
-            .to_owned();
-        match tool_name {
-            "Read" => {
-                session
-                    .wait_transcript(|row| successful_tool_result(row, &tool_use_id))
-                    .await?;
+    // Hooks and transcript rows arrive on independent streams. A result may
+    // be observed before its hook, so retain both and correlate by tool ID.
+    let expected_tools = ["Read", "Edit", "Bash"];
+    let mut tool_ids = Vec::new();
+    let mut results = Vec::new();
+    loop {
+        match session.next().await? {
+            PtyEvent::Hook(crate::hooks::HookPayload::PreToolUse {
+                tool_name, common, ..
+            }) if expected_tools.contains(&tool_name.as_str()) => {
+                if expected_tools.get(tool_ids.len()).copied() != Some(tool_name.as_str()) {
+                    return Err(format!(
+                        "expected Read, Edit, Bash in order; observed {tool_name}"
+                    ));
+                }
+                let id = common
+                    .raw
+                    .get("tool_use_id")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        format!("{tool_name} PreToolUse hook omitted its tool-use id")
+                    })?;
+                tool_ids.push(id.to_owned());
             }
-            "Edit" => {
-                session
-                    .wait_transcript(|row| {
-                        structured_patch_changes(row, &tool_use_id, "-VALUE=1", "+VALUE=2")
-                    })
-                    .await?;
+            PtyEvent::Transcript { row, .. } => results.push(row.into_value()),
+            PtyEvent::Exited(status) => {
+                return Err(format!(
+                    "Claude exited before all three tool results: {status:?}"
+                ));
             }
-            "Bash" => {
-                session
-                    .wait_transcript(|row| bash_stdout_equals(row, &tool_use_id, "VALUE=2"))
-                    .await?;
-            }
-            _ => unreachable!("fixed tool sequence"),
+            _ => {}
+        }
+        if tool_ids.len() == 3
+            && results
+                .iter()
+                .any(|row| successful_tool_result(row, &tool_ids[0]))
+            && results
+                .iter()
+                .any(|row| structured_patch_changes(row, &tool_ids[1], "-VALUE=1", "+VALUE=2"))
+            && results
+                .iter()
+                .any(|row| bash_stdout_equals(row, &tool_ids[2], "VALUE=2"))
+        {
+            return Ok(());
         }
     }
-    Ok(())
 }
 
 async fn permission_ask(session: &mut PtySpecSession, command: &str) -> Result<AskFacts, String> {

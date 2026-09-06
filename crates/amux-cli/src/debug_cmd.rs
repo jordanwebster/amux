@@ -130,6 +130,20 @@ impl ReportCommandOutput {
     }
 }
 
+/// Replay an explicit saved bundle before installation or profile discovery.
+/// A bare report name still needs the selected profile's reports directory.
+pub fn replay_from_path(command: &ReportCommands) -> Result<Option<ReportCommandOutput>> {
+    match command {
+        ReportCommands::Replay {
+            report,
+            at,
+            frame,
+            styles,
+        } if is_report_path(report) => replay_report(report, *at, *frame, *styles).map(Some),
+        _ => Ok(None),
+    }
+}
+
 /// Run a report command against the single directory selected by the config.
 ///
 /// Returning text keeps command behavior testable without redirecting the
@@ -146,7 +160,7 @@ pub fn run_report(command: ReportCommands, config: &Config) -> Result<ReportComm
             at,
             frame,
             styles,
-        } => replay_report(&reports_dir, &report, at, frame, styles),
+        } => replay_report(&resolve_report(&reports_dir, &report), at, frame, styles),
         ReportCommands::Graduate { report, name, into } => {
             let fixture = graduate(config, &reports_dir, &report, &name, into.as_deref())?;
             Ok(ReportCommandOutput::success(format!(
@@ -357,17 +371,15 @@ fn redact_json_lines(
 }
 
 fn replay_report(
-    reports_dir: &Path,
-    requested: &Path,
+    report_dir: &Path,
     at: Option<usize>,
     print_frame: bool,
     print_styles: bool,
 ) -> Result<ReportCommandOutput> {
-    let report_dir = resolve_report(reports_dir, requested);
-    let expected = read_frame(&report_dir)
+    let expected = read_frame(report_dir)
         .with_context(|| format!("failed to read captured frame in {}", report_dir.display()))?
         .ok_or_else(|| anyhow!("report {} has no captured frame", report_dir.display()))?;
-    let mut replay = Replay::load(&report_dir)
+    let mut replay = Replay::load(report_dir)
         .with_context(|| format!("failed to load report {}", report_dir.display()))?;
 
     if let Some(index) = at {
@@ -394,7 +406,7 @@ fn replay_report(
         .context("the replay produced no final frame")?;
     let diff = replay::frame_diff(&expected, &actual);
     let verdict = replay::verdict(&expected, &actual);
-    set_verdict(&report_dir, verdict.clone())
+    set_verdict(report_dir, verdict.clone())
         .with_context(|| format!("failed to update report {}", report_dir.display()))?;
 
     let mut output = String::new();
@@ -425,7 +437,7 @@ fn replay_report(
     if print_frame || print_styles {
         let (capture, position) = match at {
             Some(index) => {
-                let mut positioned = Replay::load(&report_dir)
+                let mut positioned = Replay::load(report_dir)
                     .with_context(|| format!("failed to reload report {}", report_dir.display()))?;
                 positioned
                     .step_to(index)
@@ -520,11 +532,15 @@ fn prune_reports(reports_dir: &Path) -> Result<String> {
 }
 
 fn resolve_report(reports_dir: &Path, requested: &Path) -> PathBuf {
-    if requested.is_absolute() || requested.join("report.json").exists() {
+    if is_report_path(requested) {
         requested.to_path_buf()
     } else {
         reports_dir.join(requested)
     }
+}
+
+fn is_report_path(requested: &Path) -> bool {
+    requested.is_absolute() || requested.join("report.json").exists()
 }
 
 fn format_report_row(header: &ReportHeader, path: &Path) -> String {

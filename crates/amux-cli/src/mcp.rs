@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::client_common::require_running_client;
+use crate::client_common::open_daemon;
 
 const JSONRPC_VERSION: &str = "2.0";
 const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -118,7 +118,7 @@ struct ConfigConnector {
 #[async_trait]
 impl ClientConnector for ConfigConnector {
     async fn connect(&self) -> Result<Arc<dyn DaemonApi>> {
-        Ok(Arc::new(require_running_client(&self.config, None).await?))
+        Ok(Arc::new(open_daemon(&self.config).await?))
     }
 
     fn claude_driver(&self) -> amux::ClaudeDriver {

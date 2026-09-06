@@ -1,0 +1,30 @@
+# test: profile_worktree
+# description: A fresh worktree layout uses the wt template and generator and can start and probe its daemon
+
+## Environment
+
+config:
+  name: fresh-tree
+  worktree: true
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> amux server stop
+Server shutting down.
+
+> amux server start
+Server started.
+
+> amux profiles
+Profiles:
+  $fresh-tree.id  fresh-tree    unbound / local
+
+> amux list
+No agents running.
+
+> amux server stop
+Server shutting down.

@@ -18,16 +18,18 @@ use amux_ui::claude::{
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
+use crate::chat::attachments::{attachment_key, described, echo_owner, prose, words};
 use crate::chat::blocks::{
-    self, fmt_tokens, paint_agent_message, paint_ask_fact, paint_assistant, paint_attachment,
-    paint_compaction_rule, paint_composer_block, paint_error, paint_exploration_run,
-    paint_file_change, paint_header, paint_plan, paint_subagent, paint_thinking, paint_tool_line,
-    paint_turn_rule, paint_unrecognized, paint_user_prompt,
+    self, Carrier, fmt_tokens, paint_agent_message, paint_ask_fact, paint_assistant,
+    paint_attachment, paint_compaction_rule, paint_composer_block, paint_error,
+    paint_exploration_run, paint_file_change, paint_header, paint_plan, paint_subagent,
+    paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude::{View, reader_context, shared_ask};
 use crate::chat::claude_shared::{armed_quit_line, panel, reader};
-use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
+use crate::chat::frame::{
+    BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
+};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{
     FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph, subagent_marker,
@@ -544,10 +546,21 @@ fn feed_blocks(
                         .get_or_paint(
                             BlockKey(entry.id),
                             entry,
-                            width,
-                            theme,
-                            chat.reports_open,
-                            || entry_block(entry, theme, width, plan_hint, reports),
+                            PaintInputs {
+                                width,
+                                theme,
+                                expanded: chat.reports_open,
+                            },
+                            || {
+                                entry_block(
+                                    entry,
+                                    layer.attachments(),
+                                    theme,
+                                    width,
+                                    plan_hint,
+                                    reports,
+                                )
+                            },
                         )
                         .clone(),
                 );
@@ -556,6 +569,7 @@ fn feed_blocks(
                     cache,
                     entry.id,
                     &entry_attachments(layer, entry),
+                    carrier_of(entry),
                     theme,
                     width,
                 );
@@ -587,22 +601,40 @@ fn feed_blocks(
                 );
                 blocks.push(
                     cache
-                        .get_or_paint(BlockKey(key.0), &content, width, theme, expanded, || {
-                            let painted: Vec<PaintedBlock> = member_entries
-                                .iter()
-                                .map(|entry| entry_block(entry, theme, width, plan_hint, reports))
-                                .collect();
-                            paint_exploration_run(
-                                BlockKey(key.0),
-                                key,
-                                &summary,
-                                &painted,
-                                expanded,
-                                &hint,
-                                theme,
+                        .get_or_paint(
+                            BlockKey(key.0),
+                            &content,
+                            PaintInputs {
                                 width,
-                            )
-                        })
+                                theme,
+                                expanded,
+                            },
+                            || {
+                                let painted: Vec<PaintedBlock> = member_entries
+                                    .iter()
+                                    .map(|entry| {
+                                        entry_block(
+                                            entry,
+                                            layer.attachments(),
+                                            theme,
+                                            width,
+                                            plan_hint,
+                                            reports,
+                                        )
+                                    })
+                                    .collect();
+                                paint_exploration_run(
+                                    BlockKey(key.0),
+                                    key,
+                                    &summary,
+                                    &painted,
+                                    expanded,
+                                    &hint,
+                                    theme,
+                                    width,
+                                )
+                            },
+                        )
                         .clone(),
                 );
             }
@@ -617,9 +649,24 @@ fn feed_blocks(
         let content = layer.attachments().segments(&echo.text);
         blocks.push(
             cache
-                .get_or_paint(key, echo, width, theme, false, || {
-                    paint_user_prompt(key, &prose(&content), true, theme, width)
-                })
+                .get_or_paint(
+                    key,
+                    echo,
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: false,
+                    },
+                    || {
+                        paint_user_prompt(
+                            key,
+                            &words(layer.attachments(), &content),
+                            true,
+                            theme,
+                            width,
+                        )
+                    },
+                )
                 .clone(),
         );
         push_attachment_blocks(
@@ -627,6 +674,7 @@ fn feed_blocks(
             cache,
             echo_owner(index),
             &described(layer.attachments(), &content),
+            Carrier::Person,
             theme,
             width,
         );
@@ -647,6 +695,14 @@ fn entry_attachments(
     }
 }
 
+/// Whose message this is, for the surface its attachment rows take.
+fn carrier_of(entry: &FeedEntry) -> Carrier {
+    match &entry.kind {
+        FeedEntryKind::Prompt(_) => Carrier::Person,
+        _ => Carrier::Agent,
+    }
+}
+
 /// Append one focusable row per attachment under the block that carries
 /// them, so the feed can put the focus on a single attachment and open
 /// exactly that one.
@@ -655,6 +711,7 @@ fn push_attachment_blocks(
     cache: &mut PaintCache,
     owner: u64,
     attachments: &[amux_ui::attachments::AttachmentLine],
+    carrier: Carrier,
     theme: Theme,
     width: usize,
 ) {
@@ -662,9 +719,16 @@ fn push_attachment_blocks(
         let key = attachment_key(owner, index);
         blocks.push(
             cache
-                .get_or_paint(key, attachment, width, theme, false, || {
-                    paint_attachment(key, attachment, theme, width)
-                })
+                .get_or_paint(
+                    key,
+                    attachment,
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: false,
+                    },
+                    || paint_attachment(key, attachment, carrier, theme, width),
+                )
                 .clone(),
         );
     }
@@ -679,6 +743,7 @@ fn effective(chat: &View) -> crate::bindings::Effective {
 
 fn entry_block(
     entry: &FeedEntry,
+    index: &amux_ui::attachments::AttachmentIndex,
     theme: Theme,
     width: usize,
     plan_hint: bool,
@@ -687,7 +752,7 @@ fn entry_block(
     let key = BlockKey(entry.id);
     match &entry.kind {
         FeedEntryKind::Prompt(prompt) => {
-            paint_user_prompt(key, &prose(&prompt.content), false, theme, width)
+            paint_user_prompt(key, &words(index, &prompt.content), false, theme, width)
         }
         // One markdown source per message: blocks joined the way the API
         // separates them.

@@ -201,6 +201,9 @@ pub enum Mode {
     ConfirmDelete { agent: AgentId, name: String },
     /// Key help overlay.
     Help,
+    /// The profile switcher: the installation's other accounts, over the
+    /// fleet of the one currently showing.
+    Switcher(crate::switcher::SwitcherState),
 }
 
 /// Renderer-local state. Never persisted across runs, never
@@ -215,6 +218,9 @@ pub struct ViewState {
     pub scroll: usize,
     /// `gg` chord progress.
     pub pending_g: bool,
+    /// Whether the leader has been pressed and is waiting for the second
+    /// key of a chord (`<leader> p` opens the profile switcher).
+    pub pending_leader: bool,
     /// Status-line op failures with `seq <= dismissed` stay hidden
     /// (dismissal is view state; the Model only reports).
     pub dismissed_error_seq: u64,
@@ -255,6 +261,7 @@ impl Default for ViewState {
             selected: 0,
             scroll: 0,
             pending_g: false,
+            pending_leader: false,
             dismissed_error_seq: 0,
             notice: None,
             leader: 'a',
@@ -498,6 +505,11 @@ pub enum UiAction {
     Create {
         host: Option<amux_ui::HostId>,
     },
+    /// Ask the shell for the installation's profile list; the switcher
+    /// opens once it answers. The chrome has no front door of its own.
+    ListProfiles,
+    /// Rebind the shell to this profile.
+    SwitchProfile(amux_ui::ProfileEntry),
 }
 
 impl ViewState {

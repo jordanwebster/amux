@@ -6,10 +6,9 @@
                                                                                                                         
     The cap belongs in RetryConfig; I'll thread it through SyncOptions.                                                 
                                                                                                                         
-  ✔ Read sync/config.rs                                                                                                 
-                                                                                                                        
-  ▸ Bash cargo check -p amux-sync                                                                                       
-    └ running                                                                                                           
+│ ✔ Read sync/config.rs                                                                                                 
+│ ▸ Bash cargo check -p amux-sync                                                                                       
+│   └ running                                                                                                           
                                                                                                                         
                                                                                                                         
                                                                                                                         
@@ -27,14 +26,15 @@
                                                                                                                         
     permission — Edit sync/config.rs (+2 -1)                                                                            
                                                                                                                         
-      pub struct RetryConfig {                                                                                          
-     -    pub max_attempts: u8,                                                                                         
-     +    pub max_attempts: u8,        // capped at 6                                                                   
-     +    pub jitter_ms: u16,                                                                                           
-          pub base_delay: Duration,                                                                                     
-      }                                                                                                                 
+     pub struct RetryConfig {                                                                                           
+    -    pub max_attempts: u8,                                                                                          
+    +    pub max_attempts: u8,        // capped at 6                                                                    
+    +    pub jitter_ms: u16,                                                                                            
+         pub base_delay: Duration,                                                                                      
+     }                                                                                                                  
                                                                                                                         
     › 1. Allow once                                                                                                     
       2. Always allow access to /work from this project                                                                 
       3. Deny — tell the agent why (optional)                                                                           
+                                                                                                                        
     1-3/↑↓ select · enter confirm · f open document · esc back (never answers)                                          

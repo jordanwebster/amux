@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use amux::{ColorSetting, Config, DebugFormat, ThemeSetting, UiSettings};
 use amux_tui::{
-    ColorPreference, Theme, ThemeError, TuiConfig, detect_color_mode, parse_theme_file, run_fleet,
-    theme_from_file,
+    ColorPreference, TerminalColors, Theme, ThemeError, TuiConfig, detect_color_mode,
+    parse_theme_file, query_terminal_colors, run_fleet, theme_from_file,
 };
 use amux_ui::{ConnectFailure, Connector, Runtime, RuntimeOptions};
 use anyhow::{Context, Result};
@@ -21,6 +21,11 @@ use crate::init::{self, InitContext};
 use crate::update::MarkerFileReporter;
 
 const GIT_SHA: &str = env!("GIT_SHA");
+
+/// How long to wait for a terminal to say what colours it is painting with.
+/// Terminals that answer do so in a few milliseconds; the bound is for the
+/// ones that never will, over a slow remote connection.
+const TERMINAL_COLOR_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub async fn run(config: Config) -> Result<()> {
     run_inner(config, None, None).await
@@ -42,6 +47,7 @@ async fn run_inner(
     if init::needs_init(&config) {
         init::run_init(&mut config, InitContext::implicit(), false).await?;
     }
+    crate::profiles::remember_selection(&config)?;
 
     let config_dir = config
         .path
@@ -54,13 +60,16 @@ async fn run_inner(
                 .expect("default config path has a parent")
                 .to_path_buf()
         });
-    let theme = resolve_theme(&config.ui, &config_dir, &ColorEnv::capture())
+    // Asked before the alternate screen is entered, because the answers
+    // arrive on stdin and nothing else may be reading it yet. A terminal
+    // that stays silent costs this much startup once and gets the shipped
+    // palette.
+    let terminal = match config.ui.theme {
+        ThemeSetting::Terminal => query_terminal_colors(TERMINAL_COLOR_QUERY_TIMEOUT),
+        _ => None,
+    };
+    let theme = resolve_theme(&config.ui, &config_dir, &ColorEnv::capture(), terminal)
         .context("failed to resolve ui.theme")?;
-
-    // The local host id comes from the stored device identity — the wire
-    // does not mark the local host (see docs/UI.md, subscription policy).
-    let local_host_id = amux::setup::local_host_id(&config);
-    let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
 
     let connector: Connector = {
         let config = config.clone();
@@ -82,50 +91,52 @@ async fn run_inner(
     // not contain the trace module or carry its storage in TuiConfig.
     #[cfg(debug_assertions)]
     let trace = Some(amux_tui::trace::shared(amux_tui::trace::SEGMENT_LEN));
-    // The fold order is the runtime's to report. Reconstructing it from
-    // outside would mean guessing how a drain batched, and a wrong guess is
-    // a replay that diverges for no visible reason.
-    #[cfg(debug_assertions)]
-    let msg_tap: Option<amux_ui::MsgTap> = trace.clone().map(|trace| {
-        Box::new(move |msg: &amux_ui::Msg| {
-            amux_tui::trace::record_shared(&trace, &amux_tui::chrome::TraceEvent::Msg(msg.clone()));
-        }) as amux_ui::MsgTap
-    });
     let mut runtime = Runtime::start(
         connector,
-        RuntimeOptions {
-            local_host_id,
-            report_dir: Some(config.reports_dir()),
-            log_path: Some(amux_cli::diagnostics::resolved_log_path()),
-            git_sha: GIT_SHA,
-            artifact_cache: Some(amux::default_cache_dir().join("artifacts")),
-            artifact_cache_bound: config.ui.artifact_cache_mib.saturating_mul(1024 * 1024),
-            subscription_status_provider: Some(Arc::new(move || {
-                subscription_reporter.subscription_required()
-            })),
+        runtime_options(
+            &config,
             #[cfg(debug_assertions)]
-            msg_tap,
-            ..RuntimeOptions::default()
-        },
+            trace.clone(),
+        ),
     );
     // A panic anywhere in the TUI leaves a report: the terminal.rs panic
     // hook calls amux_ui::write_panic_report after restoring the
     // terminal.
     runtime.install_panic_report();
 
-    // The dump is fetched when the key is pressed, not now: a report is
-    // meant to explain the daemon's state at the moment something looked
-    // wrong. A missing daemon is a reason string, not a failed capture.
-    let dump_config = config.clone();
-    let diagnostics =
-        amux_cli::diagnostics::source(&config, GIT_SHA, cfg!(debug_assertions), move || {
-            let config = dump_config.clone();
-            async move {
-                crate::server_client::debug(&config, true, DebugFormat::Json)
-                    .await
-                    .map_err(|error| format!("{error:#}"))
-            }
-        });
+    let diagnostics = profile_diagnostics(&config);
+
+    // Switching accounts rebuilds the runtime against the selected
+    // profile's own configuration: its reports, its artifact cache, its
+    // device identity. Reusing this profile's would file a report about the
+    // account the person had just left.
+    let installation = crate::front_door::configuration(config.path.as_deref())?;
+    let profiles = Some(amux_tui::run::ProfileSwitching {
+        front_door: installation.front_door_socket.clone(),
+        current: config.socket_path.clone(),
+        options: {
+            #[cfg(debug_assertions)]
+            let trace = trace.clone();
+            Box::new(move |entry: &amux_ui::ProfileEntry| {
+                let selected = crate::profiles::load(&crate::profiles::config_path_for(
+                    &installation,
+                    entry.id.0,
+                ))?;
+                crate::profiles::remember(
+                    &crate::profiles::last_used(&installation),
+                    &entry.id.0.to_string(),
+                )?;
+                Ok(amux_tui::run::ProfileOptions {
+                    runtime: runtime_options(
+                        &selected,
+                        #[cfg(debug_assertions)]
+                        trace.clone(),
+                    ),
+                    diagnostics: profile_diagnostics(&selected),
+                })
+            })
+        },
+    });
 
     let tui_config = TuiConfig {
         working_dir: std::env::current_dir()?,
@@ -140,6 +151,7 @@ async fn run_inner(
         default_agent_type: default_agent_type(&config),
         initial_chat,
         initial_chat_configuration,
+        profiles,
         #[cfg(debug_assertions)]
         trace,
         diagnostics,
@@ -156,6 +168,59 @@ async fn run_inner(
 fn default_agent_type(config: &Config) -> amux::AgentType {
     amux::AgentType::Claude {
         driver: amux::resolve_claude_driver(None, config),
+    }
+}
+
+fn profile_diagnostics(config: &Config) -> Option<amux_tui::DiagnosticsSource> {
+    // Fetch at the capture keypress, using this selection's configuration.
+    // A missing daemon is a reason string, not a failed capture.
+    let dump_config = config.clone();
+    amux_cli::diagnostics::source(config, GIT_SHA, cfg!(debug_assertions), move || {
+        let config = dump_config.clone();
+        async move {
+            crate::server_client::debug(&config, true, DebugFormat::Json)
+                .await
+                .map_err(|error| format!("{error:#}"))
+        }
+    })
+}
+
+/// What one profile's runtime is built from.
+///
+/// The same answer for the profile the fleet opens on and for every profile
+/// the switcher moves to, so a switched account's reports, cached
+/// attachments and subscription state are its own rather than inherited
+/// from the account it replaced.
+fn runtime_options(
+    config: &Config,
+    #[cfg(debug_assertions)] trace: Option<amux_tui::trace::SharedTrace>,
+) -> RuntimeOptions {
+    // The local host id comes from the stored device identity — the wire
+    // does not mark the local host (see docs/UI.md, subscription policy).
+    let local_host_id = amux::setup::local_host_id(config);
+    let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
+    // The fold order is the runtime's to report. Reconstructing it from
+    // outside would mean guessing how a drain batched, and a wrong guess is
+    // a replay that diverges for no visible reason.
+    #[cfg(debug_assertions)]
+    let msg_tap: Option<amux_ui::MsgTap> = trace.map(|trace| {
+        Box::new(move |msg: &amux_ui::Msg| {
+            amux_tui::trace::record_shared(&trace, &amux_tui::chrome::TraceEvent::Msg(msg.clone()));
+        }) as amux_ui::MsgTap
+    });
+    RuntimeOptions {
+        local_host_id,
+        report_dir: Some(config.reports_dir()),
+        log_path: Some(amux_cli::diagnostics::resolved_log_path()),
+        git_sha: GIT_SHA,
+        artifact_cache: Some(config.artifact_cache_dir()),
+        artifact_cache_bound: config.ui.artifact_cache_mib.saturating_mul(1024 * 1024),
+        subscription_status_provider: Some(Arc::new(move || {
+            subscription_reporter.subscription_required()
+        })),
+        #[cfg(debug_assertions)]
+        msg_tap,
+        ..RuntimeOptions::default()
     }
 }
 
@@ -176,10 +241,14 @@ impl ColorEnv {
     }
 }
 
+/// The palette for this session. `terminal` is what the terminal reported
+/// about its own colours, when it was asked and answered; the `terminal`
+/// setting derives from that and falls back to the shipped dark palette.
 pub(crate) fn resolve_theme(
     settings: &UiSettings,
     config_dir: &Path,
     env: &ColorEnv,
+    terminal: Option<TerminalColors>,
 ) -> std::result::Result<Theme, ThemeError> {
     let preference = match settings.color {
         ColorSetting::Auto => ColorPreference::Auto,
@@ -194,6 +263,10 @@ pub(crate) fn resolve_theme(
     );
 
     match &settings.theme {
+        ThemeSetting::Terminal => Ok(match terminal {
+            Some(colors) => Theme::from_terminal(colors, mode),
+            None => Theme::dark(mode),
+        }),
         ThemeSetting::Dark => Ok(Theme::dark(mode)),
         ThemeSetting::Light => Ok(Theme::light(mode)),
         ThemeSetting::File(path) => {
@@ -260,6 +333,7 @@ mod tests {
             &settings,
             Path::new("/unused"),
             &env(Some("truecolor"), false),
+            None,
         )
         .expect("resolve built-in theme");
         assert_eq!(theme.name, amux_tui::ThemeName::Light);
@@ -273,6 +347,7 @@ mod tests {
             &settings,
             Path::new("/unused"),
             &env(Some("truecolor"), false),
+            None,
         )
         .expect("resolve truecolor theme");
         assert_eq!(truecolor.mode, ColorMode::TrueColor);
@@ -281,9 +356,39 @@ mod tests {
             &settings,
             Path::new("/unused"),
             &env(Some("truecolor"), true),
+            None,
         )
         .expect("resolve NO_COLOR theme");
         assert_eq!(ansi.mode, ColorMode::Ansi);
+    }
+
+    #[test]
+    fn the_terminal_setting_derives_when_answered_and_ships_dark_when_not() {
+        let settings = UiSettings::default();
+        let silent = resolve_theme(
+            &settings,
+            Path::new("/unused"),
+            &env(Some("truecolor"), false),
+            None,
+        )
+        .expect("resolve the fallback");
+        assert_eq!(silent.name, amux_tui::ThemeName::Dark);
+
+        let reported = TerminalColors {
+            background: (0xfd, 0xf6, 0xe3),
+            foreground: (0x65, 0x7b, 0x83),
+            ansi: [(0x80, 0x80, 0x80); 16],
+        };
+        let derived = resolve_theme(
+            &settings,
+            Path::new("/unused"),
+            &env(Some("truecolor"), false),
+            Some(reported),
+        )
+        .expect("derive from the terminal");
+        assert_eq!(derived.name, amux_tui::ThemeName::Adopted);
+        assert_eq!(derived.tokens.background.rgb, reported.background);
+        assert_eq!(derived.tokens.text.rgb, reported.foreground);
     }
 
     #[test]
@@ -300,7 +405,7 @@ mod tests {
         };
 
         let config_dir = config.parent().expect("temporary config has a parent");
-        let theme = resolve_theme(&settings, config_dir, &ColorEnv::default())
+        let theme = resolve_theme(&settings, config_dir, &ColorEnv::default(), None)
             .expect("resolve committed sample relative to config");
         assert_eq!(theme.name, amux_tui::ThemeName::Imported);
         assert_eq!(theme.tokens.background.rgb, (0x10, 0x10, 0x10));
@@ -317,7 +422,7 @@ mod tests {
         };
 
         assert!(matches!(
-            resolve_theme(&settings, directory.path(), &ColorEnv::default()),
+            resolve_theme(&settings, directory.path(), &ColorEnv::default(), None),
             Err(ThemeError::BadColor { key, value }) if key == "base00" && value == "nope"
         ));
     }

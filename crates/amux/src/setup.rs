@@ -22,35 +22,11 @@ impl From<IdentityError> for SetupError {
     }
 }
 
-/// Whether cloud mode is enabled (user opted in).
-///
-/// `true` iff `enable_cloud_mode == Some(true)`. Absent or `Some(false)` both
-/// count as disabled.
-pub fn cloud_enabled(config: &Config) -> bool {
-    config.enable_cloud_mode == Some(true)
-}
-
-/// Persist `enable_cloud_mode` to `config.yaml` and update the in-memory
-/// `Config`. Writes `config.yaml` as a merge so user-supplied keys are
-/// preserved.
-pub fn set_enable_cloud_mode(config: &mut Config, value: bool) -> Result<(), SetupError> {
-    write_config_bool(config, "enable_cloud_mode", Some(value))?;
-    config.enable_cloud_mode = Some(value);
-    Ok(())
-}
-
 /// Persist `prevent_idle_sleep` to `config.yaml` and update the in-memory
 /// `Config`.
 pub fn set_prevent_idle_sleep(config: &mut Config, value: bool) -> Result<(), SetupError> {
     write_config_bool(config, "prevent_idle_sleep", Some(value))?;
     config.prevent_idle_sleep = Some(value);
-    Ok(())
-}
-
-/// Clear `enable_cloud_mode` from `config.yaml` (used by `amux init --reset`).
-pub fn clear_enable_cloud_mode(config: &mut Config) -> Result<(), SetupError> {
-    write_config_bool(config, "enable_cloud_mode", None)?;
-    config.enable_cloud_mode = None;
     Ok(())
 }
 
@@ -92,7 +68,17 @@ pub fn ensure_device_identity(config: &Config) -> Result<(), SetupError> {
 }
 
 fn write_config_bool(config: &Config, key: &str, value: Option<bool>) -> Result<(), SetupError> {
-    let path = config_file_path(config);
+    let selected = config_file_path(config);
+    let path = if selected.exists() {
+        let map = read_config_mapping(&selected)
+            .map_err(|error| wrap_config_persistence_error(&selected, key, error))?;
+        match map.get(Value::String("installation_config".into())) {
+            Some(Value::String(path)) => PathBuf::from(path),
+            _ => selected,
+        }
+    } else {
+        selected
+    };
     let mut map =
         read_config_mapping(&path).map_err(|e| wrap_config_persistence_error(&path, key, e))?;
 
@@ -180,40 +166,6 @@ mod tests {
     }
 
     #[test]
-    fn cloud_enabled_requires_some_true() {
-        let dir = tempdir().unwrap();
-        let mut config = Config {
-            path: Some(dir.path().join("config.yaml")),
-            state_path: dir.path().join("state.yaml"),
-            ..Config::default()
-        };
-        assert!(!cloud_enabled(&config));
-        config.enable_cloud_mode = Some(false);
-        assert!(!cloud_enabled(&config));
-        config.enable_cloud_mode = Some(true);
-        assert!(cloud_enabled(&config));
-    }
-
-    #[test]
-    fn set_enable_cloud_mode_persists_and_updates_in_memory() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("config.yaml");
-        fs::write(&path, "host_name: test-host\n").unwrap();
-        let mut config = Config {
-            path: Some(path.clone()),
-            state_path: dir.path().join("state.yaml"),
-            ..Config::default()
-        };
-
-        set_enable_cloud_mode(&mut config, true).unwrap();
-        assert_eq!(config.enable_cloud_mode, Some(true));
-
-        let persisted = Config::from_file(&path).unwrap();
-        assert_eq!(persisted.enable_cloud_mode, Some(true));
-        assert_eq!(persisted.host_name, "test-host");
-    }
-
-    #[test]
     fn set_prevent_idle_sleep_persists_and_updates_in_memory() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.yaml");
@@ -248,25 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_enable_cloud_mode_removes_the_key() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("config.yaml");
-        let mut config = Config {
-            path: Some(path.clone()),
-            state_path: dir.path().join("state.yaml"),
-            ..Config::default()
-        };
-
-        set_enable_cloud_mode(&mut config, true).unwrap();
-        clear_enable_cloud_mode(&mut config).unwrap();
-        assert_eq!(config.enable_cloud_mode, None);
-
-        let yaml = fs::read_to_string(path).unwrap();
-        assert!(!yaml.contains("enable_cloud_mode"));
-    }
-
-    #[test]
-    fn set_enable_cloud_mode_error_mentions_active_config_file() {
+    fn set_prevent_idle_sleep_error_mentions_active_config_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config-dir");
         fs::create_dir(&path).unwrap();
@@ -276,9 +210,9 @@ mod tests {
             ..Config::default()
         };
 
-        let err = set_enable_cloud_mode(&mut config, true).unwrap_err();
+        let err = set_prevent_idle_sleep(&mut config, true).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("failed to save `enable_cloud_mode`"));
+        assert!(msg.contains("failed to save `prevent_idle_sleep`"));
         assert!(msg.contains("active config file"));
         assert!(msg.contains("--config"));
         assert!(msg.contains(&path.display().to_string()));

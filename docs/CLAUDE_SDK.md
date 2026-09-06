@@ -43,7 +43,8 @@ attach to — so this chat is the only way in, on every host.
 
 ## Choosing the driver
 
-To use the SDK for newly created Claude agents, set this in the amux config:
+To use the SDK for newly created Claude agents, set this in the installation
+config (`$XDG_CONFIG_HOME/amux/config.yaml`), which every profile shares:
 
 ```yaml
 claude:

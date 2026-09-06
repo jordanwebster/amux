@@ -8,7 +8,6 @@ use crate::agents::AgentRecord;
 use crate::debug::{DebugFormat, LossyPath};
 use crate::routing::{RoutingCore, RoutingDebug};
 use crate::services::DebugAgent;
-use crate::setup;
 use crate::tunnel::{TunnelDebug, TunnelPool};
 use crate::user_state::ServerState;
 
@@ -24,7 +23,9 @@ pub(crate) async fn dump_server_debug_info(
     let routing = routing.debug_view(&link_registry).await;
     let tunnels = tunnel_pool.debug_view().await;
     let state_guard = state.read().await;
-    let use_cloud_mode = setup::cloud_enabled(&state_guard.config);
+    // A profile is given a credential store whether or not it holds a token,
+    // so this reports that a provider is installed, never that a login exists.
+    let has_credential_provider = state_guard.credentials.is_some();
 
     let host = state_guard.local_agent_host();
     let (agents, agent_count) = match &host {
@@ -33,7 +34,7 @@ pub(crate) async fn dump_server_debug_info(
     };
     let view = ServerDebugView {
         state: &state_guard,
-        use_cloud_mode,
+        has_credential_provider,
         local_version: env!("CARGO_PKG_VERSION"),
         agents: &agents,
         agent_count,
@@ -51,7 +52,7 @@ pub(crate) async fn dump_server_debug_info(
 
 struct ServerDebugView<'a> {
     state: &'a ServerState,
-    use_cloud_mode: bool,
+    has_credential_provider: bool,
     local_version: &'static str,
     agents: &'a [DebugAgent],
     agent_count: usize,
@@ -65,7 +66,7 @@ impl Serialize for ServerDebugView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("is_cloud_server", &self.state.is_cloud_server)?;
-        map.serialize_entry("use_cloud_mode", &self.use_cloud_mode)?;
+        map.serialize_entry("has_credential_provider", &self.has_credential_provider)?;
         map.serialize_entry("user_count", &1usize)?;
         map.serialize_entry("agent_count", &self.agent_count)?;
         map.serialize_entry("remote_agent_count", &self.remote_agent_count)?;

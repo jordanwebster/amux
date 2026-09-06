@@ -20,26 +20,93 @@ async fn every_registered_sdk_specification_replays_strictly() {
     }
 }
 
-#[tokio::test]
 #[cfg(feature = "pty")]
-async fn every_recorded_pty_specification_replays_strictly() {
-    let root = claude::specs::pty::fixtures_root();
-    if !root.exists() {
-        return;
-    }
-    for entry in pty_registry() {
-        replay_pty(entry).await;
-    }
-}
+mod pty_replays {
+    use super::*;
 
-#[tokio::test]
-#[cfg(feature = "pty")]
-async fn plan_approve_pty_replays_strictly() {
-    let entry = pty_registry()
-        .iter()
-        .find(|entry| entry.name == "plan_approve")
-        .expect("plan_approve remains registered");
-    replay_pty(entry).await;
+    macro_rules! scenarios {
+        ($($name:ident),+ $(,)?) => {
+            const SCENARIOS: &[&str] = &[$(stringify!($name)),+];
+
+            $(
+                #[tokio::test]
+                async fn $name() {
+                    let entry = pty_registry().iter()
+                        .find(|entry| entry.name == stringify!($name))
+                        .expect("replay scenario remains registered");
+                    replay_pty(entry).await;
+                }
+            )+
+        };
+    }
+
+    scenarios!(
+        prompt,
+        prompt_multiline,
+        tools,
+        permission_allow_once,
+        permission_allow_scoped,
+        permission_deny_feedback,
+        plan_approve,
+        plan_auto,
+        plan_request_changes,
+        question_single,
+        question_multi_other,
+        question_mixed,
+        question_tabs,
+        question_other_single,
+        interrupt,
+        mode_cycle,
+        compact_relink,
+        clear_relink,
+    );
+
+    #[tokio::test(start_paused = true)]
+    async fn recorded_preparation_and_cleanup_do_not_wait_for_live_timers() {
+        let entry = pty_registry()
+            .iter()
+            .find(|entry| entry.name == "plan_approve")
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        replay_pty(entry).await;
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cleanup_drains_a_recorded_tail_larger_than_the_transport_buffers() {
+        let entry = pty_registry()
+            .iter()
+            .find(|entry| entry.name == "prompt")
+            .unwrap();
+        let mut recording =
+            load_recording(&claude::specs::pty::fixtures_root().join(entry.recording)).unwrap();
+        let us = recording.io.last().unwrap().us;
+        let line = serde_json::json!({
+            "row": {"type": "system", "content": "x".repeat(8192)}
+        })
+        .to_string();
+        for index in 1..=1024 {
+            recording.io.push(replay_support::IoEvent {
+                us: us + index,
+                direction: replay_support::IoDirection::Read,
+                line: line.clone(),
+                transport_id: Some("transcript".to_owned()),
+                session_id: None,
+            });
+        }
+        replay_pty_recording(entry, recording).await;
+    }
+
+    #[test]
+    fn every_registered_scenario_has_a_test() {
+        assert_eq!(
+            SCENARIOS.iter().copied().collect::<BTreeSet<_>>(),
+            pty_registry()
+                .iter()
+                .map(|entry| entry.name)
+                .collect::<BTreeSet<_>>(),
+        );
+    }
 }
 
 #[cfg(feature = "pty")]
@@ -48,6 +115,14 @@ async fn replay_pty(entry: &replay_support::SpecEntry) {
     eprintln!("replaying PTY {}", entry.name);
     let recording = load_recording(&root.join(entry.recording))
         .unwrap_or_else(|error| panic!("load {}: {error}", entry.name));
+    replay_pty_recording(entry, recording).await;
+}
+
+#[cfg(feature = "pty")]
+async fn replay_pty_recording(
+    entry: &replay_support::SpecEntry,
+    recording: replay_support::Recording,
+) {
     assert!(
         entry
             .allowed_models

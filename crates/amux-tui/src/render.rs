@@ -59,6 +59,16 @@ const RIGHT_INFO_FROM_EDGE: usize = 13;
 /// anchors at `width - RIGHT_INFO_FROM_EDGE`, which must not underflow):
 /// the frame degrades to the too-small notice instead.
 const MIN_FRAME_WIDTH: usize = RIGHT_INFO_FROM_EDGE;
+/// The switcher's three columns. An account label is a person's own words
+/// and an email address is not, so the label gets the room it needs first
+/// and the address takes what is left before the link status.
+const SWITCHER_LABEL_WIDTH: usize = 22;
+const SWITCHER_EMAIL_COL: usize = NAME_COL + SWITCHER_LABEL_WIDTH + 2;
+const SWITCHER_EMAIL_WIDTH: usize = 34;
+const SWITCHER_STATUS_COL: usize = SWITCHER_EMAIL_COL + SWITCHER_EMAIL_WIDTH + 2;
+const SWITCHER_STATUS_WIDTH: usize = 24;
+/// The narrowest a switcher annotation may be before it is dropped.
+const SWITCHER_MIN_CELL: usize = 8;
 /// Key hints in the status line (col 25 leaves two clear columns after the
 /// widest normal left status, and `q quit` still fits the 68-col frame).
 const HINTS_COL: usize = 25;
@@ -138,6 +148,7 @@ fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec
             list
         }
         ScreenState::Help => help_lines(model, view, theme),
+        ScreenState::Switcher(state) => switcher_lines(&state, width, capacity, theme),
         ScreenState::ConfirmDelete { agent } => {
             confirm_delete_lines(model, ctx, agent, width, capacity)
         }
@@ -163,6 +174,9 @@ fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec
 enum ScreenState {
     Fleet,
     Help,
+    /// The installation's accounts, listed over the fleet of the one
+    /// currently showing.
+    Switcher(crate::switcher::SwitcherState),
     /// The cascade a delete would perform, listed before it happens (U6).
     /// It takes the list area rather than the status line because a
     /// folded family is exactly one row on screen and the whole point is
@@ -182,6 +196,12 @@ fn screen_state(
 ) -> ScreenState {
     if view.mode == Mode::Help {
         return ScreenState::Help;
+    }
+    // Ahead of the connection states on purpose: a profile whose daemon is
+    // unreachable is exactly the one a person wants to switch away from, so
+    // the switcher has to be reachable over the disconnected screen.
+    if let Mode::Switcher(state) = &view.mode {
+        return ScreenState::Switcher(state.clone());
     }
     match model.connection() {
         Connection::Connecting => {
@@ -724,6 +744,7 @@ fn status_line(model: &Model, view: &ViewState, width: usize, theme: Theme) -> L
         Mode::Rename { .. } => "enter apply  esc cancel".to_string(),
         Mode::ConfirmDelete { .. } => String::new(),
         Mode::Help => "any key to close".to_string(),
+        Mode::Switcher(_) => "j/k move  enter switch  esc close".to_string(),
     };
     if !hints.is_empty() && fits(&hints, width) {
         push_span(&mut line, HINTS_COL, hints, theme.muted());
@@ -771,6 +792,84 @@ fn has_families(model: &Model) -> bool {
         .fleet()
         .iter()
         .any(|item| matches!(item, amux_ui::FleetItem::Family { .. }))
+}
+
+/// The profile switcher: one row per account on this installation, with
+/// the label the front door resolved, the address it belongs to and what
+/// that profile's link is currently doing. The email is what tells two
+/// accounts of the same person apart, so it is on the row rather than
+/// behind a detail view.
+fn switcher_lines(
+    state: &crate::switcher::SwitcherState,
+    width: usize,
+    capacity: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    if state.entries.is_empty() {
+        return centered_lines(
+            &[(
+                "no profiles on this installation".to_string(),
+                theme.muted(),
+            )],
+            width,
+            capacity,
+            theme,
+        );
+    }
+    let mut lines = Vec::with_capacity(state.entries.len() + 2);
+    let mut heading = new_line(theme);
+    push_span(&mut heading, NAME_COL, "switch profile", theme.emphasis());
+    lines.push(heading);
+    lines.push(new_line(theme));
+    // The window follows the cursor so a long account list still shows the
+    // selection; the fleet's own scrolling is view state, but the switcher
+    // is opened and closed in one act and keeps none.
+    let rows = capacity.saturating_sub(2);
+    let first = state.selected.saturating_sub(rows.saturating_sub(1));
+    for (index, entry) in state.entries.iter().enumerate().skip(first).take(rows) {
+        let selected = index == state.selected;
+        let mut line = new_line(theme);
+        if selected {
+            push_span(&mut line, MARKER_COL, SELECTION_BAR, theme.emphasis());
+        }
+        let label_style = match selected {
+            true => theme.emphasis(),
+            false => theme.text(),
+        };
+        push_span(
+            &mut line,
+            NAME_COL,
+            clip(&entry.label, SWITCHER_LABEL_WIDTH),
+            label_style,
+        );
+        // The two annotations collapse rather than being sliced into
+        // nonsense: half an email address identifies nobody, and a status
+        // word cut to two letters is worse than no word.
+        if SWITCHER_EMAIL_COL + SWITCHER_MIN_CELL < width {
+            push_span(
+                &mut line,
+                SWITCHER_EMAIL_COL,
+                clip(
+                    entry.email.as_deref().unwrap_or("—"),
+                    SWITCHER_EMAIL_WIDTH.min(width - SWITCHER_EMAIL_COL - 2),
+                ),
+                theme.muted(),
+            );
+        }
+        if SWITCHER_STATUS_COL + SWITCHER_MIN_CELL < width {
+            push_span(
+                &mut line,
+                SWITCHER_STATUS_COL,
+                clip(
+                    &entry.status,
+                    SWITCHER_STATUS_WIDTH.min(width - SWITCHER_STATUS_COL - 2),
+                ),
+                theme.muted(),
+            );
+        }
+        lines.push(line);
+    }
+    lines
 }
 
 /// The fleet help overlay, derived from the one binding table — kitty

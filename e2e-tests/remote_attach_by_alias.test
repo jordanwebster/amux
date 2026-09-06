@@ -31,10 +31,16 @@ terminal:
 ## Test
 
 @Ta
+> amux server stop
+Server shutting down.
+
 > amux server start
 Server started.
 
 @Tb
+> amux server stop
+Server shutting down.
+
 > amux server start
 Server started.
 

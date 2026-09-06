@@ -1,9 +1,10 @@
-mod auth;
 mod client_common;
+mod front_door;
 mod hooks;
 mod init;
 mod keymap;
 mod mcp;
+mod profiles;
 mod server_client;
 mod session_client;
 mod ui;
@@ -17,7 +18,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use amux::{AgentType, Config, PairingSecret, PairingStart, setup};
+use amux::{AgentType, Config, PairingSecret, PairingStart};
 #[cfg(debug_assertions)]
 use amux_cli::debug_cmd::{self, DebugCommands};
 use anyhow::{Context, Result, anyhow};
@@ -30,7 +31,6 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
 
-use crate::server_client::ServerMode;
 use crate::update::MarkerFileReporter;
 
 const QR_PAIRING_DEEP_LINK_PREFIX: &str = "amux://pair?payload=";
@@ -44,11 +44,15 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Path to config file (YAML format). Also read from `AMUX_CONFIG`, so
+    /// Path to a profile config file (YAML). Also read from `AMUX_CONFIG`, so
     /// managed Claude hooks and daemons spawned by a wrapper find the same
     /// instance without adding a config flag to their command.
     #[arg(long, global = true, env = "AMUX_CONFIG")]
     config: Option<PathBuf>,
+
+    /// Select a profile by label or UUID
+    #[arg(long, global = true)]
+    profile: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -116,15 +120,34 @@ enum Commands {
         command: KeymapCommands,
     },
 
+    /// List profiles through the installation front door
+    Profiles,
+
+    /// Connect a cloud account, optionally to an explicit profile
+    Login {
+        /// Override the account label locally
+        #[arg(long)]
+        name: Option<String>,
+    },
+
+    /// Forget a profile's credential, preserving its device and local agents
+    Logout,
+
+    /// Manage profiles in this installation (select with --profile)
+    Profile {
+        #[command(subcommand)]
+        command: profiles::ProfileCommands,
+    },
+
     /// Manage the amux server lifecycle
     Server {
         #[command(subcommand)]
         command: ServerCommands,
     },
 
-    /// Initialize amux (cloud mode, authentication)
+    /// Initialize local device preferences
     Init {
-        /// Clear existing state and re-initialize
+        /// Reset local setup preferences
         #[arg(long)]
         reset: bool,
     },
@@ -376,20 +399,159 @@ async fn main() -> Result<ExitCode> {
             Cli::command().print_help()?;
             return Ok(ExitCode::SUCCESS);
         }
-        let config = load_config(cli.config)?;
+        if cli.config.is_none() && !amux::InstallationConfig::default_path().exists() {
+            init::initialize(None, false).await?;
+        }
+        let config = profiles::configuration(cli.config.as_deref(), cli.profile.as_deref()).await?;
         config
-            .validate(false)
+            .validate()
             .map_err(|e| anyhow!("invalid config: {e}"))?;
         ui::run(config).await?;
         return Ok(ExitCode::SUCCESS);
     };
 
+    if matches!(command, Commands::Hooks { .. }) && std::env::var_os("CLAUDE_HOOK_SOCKET").is_some()
+    {
+        hooks::handle_claude_hook(None);
+        return Ok(ExitCode::SUCCESS);
+    }
+
     if handle_server_start_from_stdin(&command).await? {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let config = load_validated_config(&command, cli.config)?;
+    #[cfg(debug_assertions)]
+    if let Commands::Debug {
+        command: DebugCommands::Report { command },
+    } = &command
+        && let Some(output) = debug_cmd::replay_from_path(command)?
+    {
+        print!("{}", output.text);
+        return Ok(output.exit_code);
+    }
 
+    if let Commands::Login { name } = command {
+        if cli.config.is_none() && !amux::InstallationConfig::default_path().exists() {
+            init::initialize(None, false).await?;
+        }
+        let installation = front_door::configuration(cli.config.as_deref())?;
+        let cloud_url = match cli.config.as_deref() {
+            Some(path) => profiles::load(path)?.cloud_url,
+            None => Config::default().cloud_url,
+        };
+        profiles::login(&installation, &cloud_url, cli.profile.as_deref(), name).await?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    if let Commands::Profile { command } = command {
+        let installation = front_door::configuration(cli.config.as_deref())?;
+        let configured = configured_profile(cli.config.as_deref())?;
+        profiles::administer(
+            &installation,
+            cli.profile.as_deref().or(configured.as_deref()),
+            command,
+        )
+        .await?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    match &command {
+        Commands::Logout => {
+            let installation = front_door::configuration(cli.config.as_deref())?;
+            let configured = configured_profile(cli.config.as_deref())?;
+            profiles::logout(
+                &installation,
+                cli.profile.as_deref().or(configured.as_deref()),
+            )
+            .await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Init { reset } => {
+            init::initialize(cli.config.as_deref(), *reset).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Keymap { .. } | Commands::Update => {
+            let installation = front_door::configuration(cli.config.as_deref())?;
+            match command {
+                Commands::Keymap { command } => {
+                    keymap::run(command, &installation.keymaps_dir).await?
+                }
+                Commands::Update => update::run_update(&installation).await?,
+                _ => unreachable!(),
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Profiles => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::list(&config).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command:
+                ServerCommands::Start {
+                    cloud: false,
+                    foreground,
+                    ..
+                },
+        } => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::start(config, *foreground).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command: ServerCommands::Suspend,
+        } => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::suspend(&config).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command: ServerCommands::Resume,
+        } => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::resume(&config).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command: ServerCommands::Stop,
+        } => {
+            let config = front_door::configuration(cli.config.as_deref())?;
+            front_door::stop(&config).await?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Server {
+            command: ServerCommands::Start { cloud: true, .. },
+        } => {
+            let path = cli.config.unwrap_or_else(Config::default_path);
+            return run_command(command, Config::from_file(&path)?).await;
+        }
+        _ => {}
+    }
+    let config = if matches!(command, Commands::Mcp { .. }) {
+        let path = cli
+            .config
+            .as_deref()
+            .context("MCP requires AMUX_CONFIG or --config pointing at a profile config")?;
+        if cli.profile.is_some() {
+            return Err(anyhow!(
+                "MCP uses its profile config; --profile cannot override the launch route"
+            ));
+        }
+        profiles::load(path)?
+    } else if matches!(command, Commands::Hooks { .. })
+        && cli.config.is_some()
+        && cli.profile.is_none()
+    {
+        profiles::load(cli.config.as_deref().unwrap())?
+    } else {
+        if matches!(command, Commands::Ui)
+            && cli.config.is_none()
+            && !amux::InstallationConfig::default_path().exists()
+        {
+            init::initialize(None, false).await?;
+        }
+        profiles::configuration(cli.config.as_deref(), cli.profile.as_deref()).await?
+    };
     run_command(command, config).await
 }
 
@@ -411,38 +573,44 @@ async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
     std::io::stdin()
         .read_to_string(&mut input)
         .context("failed to read config from stdin")?;
+    if !cloud {
+        let mut config: amux::InstallationConfig = serde_yaml::from_str(&input)
+            .context("failed to parse installation config from stdin")?;
+        config.path = config_path
+            .as_deref()
+            .map(normalize_config_path)
+            .transpose()?;
+        front_door::run(config).await?;
+        return Ok(true);
+    }
     let mut config: Config =
-        serde_yaml::from_str(&input).context("failed to parse config from stdin")?;
+        serde_yaml::from_str(&input).context("failed to parse relay config from stdin")?;
     config.path = config_path
         .as_deref()
         .map(normalize_config_path)
         .transpose()?;
     config
-        .validate(*cloud)
+        .validate()
         .map_err(|e| anyhow!("invalid config: {e}"))?;
-    server_client::run_server_foreground(config, *cloud).await?;
+    server_client::run_relay_foreground(config).await?;
     Ok(true)
 }
 
-fn load_validated_config(command: &Commands, path: Option<PathBuf>) -> Result<Config> {
-    let config = load_config(path)?;
-    config
-        .validate(command_server_mode(command).is_cloud())
-        .map_err(|e| anyhow!("invalid config: {e}"))?;
-    Ok(config)
-}
-
-fn command_server_mode(command: &Commands) -> ServerMode {
-    match command {
-        Commands::Server {
-            command: ServerCommands::Start { cloud: true, .. },
-        } => ServerMode::Cloud,
-        _ => ServerMode::Local,
-    }
+fn configured_profile(path: Option<&std::path::Path>) -> Result<Option<String>> {
+    path.map(|path| {
+        Ok(amux::load_profile_config(&std::fs::canonicalize(path)?)?
+            .profile_id
+            .to_string())
+    })
+    .transpose()
 }
 
 async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> {
     match command {
+        Commands::Profiles
+        | Commands::Profile { .. }
+        | Commands::Login { .. }
+        | Commands::Logout => unreachable!("profiles dispatches before profile configuration"),
         Commands::Ui => ui::run(config).await?,
         Commands::New {
             agent_type,
@@ -482,35 +650,16 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             session_client::remove_agent(&target, force, &config).await?
         }
         Commands::List { all } => session_client::list_agents(all, &config).await?,
-        Commands::Keymap { command } => keymap::run(command, &config.data_dir).await?,
+        Commands::Keymap { .. } => unreachable!("keymaps dispatches before profile configuration"),
         Commands::Server { command } => match command {
             ServerCommands::Start {
-                cloud, foreground, ..
-            } => {
-                // Cloud servers run non-interactively (e.g. under systemd) and
-                // have no user-facing prompts to answer; the defaults via
-                // `unwrap_or(...)` at consumption sites are sufficient.
-                if !cloud {
-                    ensure_initialized(&mut config).await?;
-                }
-                let options = server_client::StartOptions::from_flags(cloud, foreground);
-                server_client::start_server(&config, options).await?
-            }
-            ServerCommands::Stop => server_client::stop_server(&config).await?,
-            ServerCommands::Suspend => server_client::suspend_server(&config).await?,
-            ServerCommands::Resume => server_client::resume_server(&config).await?,
+                cloud: true,
+                foreground,
+                ..
+            } => server_client::start_relay(&config, foreground).await?,
+            _ => unreachable!("installation lifecycle dispatches before profile configuration"),
         },
-        Commands::Init { reset } => {
-            let was_running = server_client::server_is_running(&config).await;
-            init::run_init(&mut config, init::InitContext::explicit(), reset).await?;
-            if was_running {
-                println!();
-                println!(
-                    "Note: a server is running with the previous configuration. \
-                     Restart it (`amux server stop` then `amux server start`) to apply any changes."
-                );
-            }
-        }
+        Commands::Init { .. } => unreachable!("init dispatches before profile configuration"),
         Commands::Pair {
             qr,
             link,
@@ -526,7 +675,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             validate_pair_qr_link_usage(link, cfg!(debug_assertions))?;
             if cancel {
                 ensure_initialized(&mut config).await?;
-                let client = client_common::require_running_client(&config, None).await?;
+                let client = front_door::profile_admin(&config, None).await?;
                 client.cancel_pairing().await?;
                 println!("Pairing mode cancelled.");
                 return Ok(ExitCode::SUCCESS);
@@ -536,7 +685,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                     unreachable!("clap enforces --pin and --for with --demo");
                 };
                 ensure_initialized(&mut config).await?;
-                let client = client_common::require_running_client(
+                let client = front_door::profile_admin(
                     &config,
                     Some("amux pair --demo --pin <DIGITS> --for <DURATION>"),
                 )
@@ -553,11 +702,8 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                 match parse_pair_connect_target(connect_target) {
                     PairConnectTarget::Picker => {
                         ensure_initialized(&mut config).await?;
-                        let client = client_common::require_running_client(
-                            &config,
-                            Some("amux pair --connect"),
-                        )
-                        .await?;
+                        let client =
+                            front_door::profile_admin(&config, Some("amux pair --connect")).await?;
                         let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
                         let host = prompt_pairing_host(&hosts)?;
                         let peer = pair_cloud_host(&client, &host).await?;
@@ -568,8 +714,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                         ensure_initialized(&mut config).await?;
                         let retry_command = format!("amux pair --connect {target}");
                         let client =
-                            client_common::require_running_client(&config, Some(&retry_command))
-                                .await?;
+                            front_door::profile_admin(&config, Some(&retry_command)).await?;
                         let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
                         let host = resolve_pairing_host_by_name(&hosts, &target)?;
                         let peer = pair_cloud_host(&client, &host).await?;
@@ -580,8 +725,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                         ensure_initialized(&mut config).await?;
                         let retry_command = format!("amux pair --connect {addr}");
                         let client =
-                            client_common::require_running_client(&config, Some(&retry_command))
-                                .await?;
+                            front_door::profile_admin(&config, Some(&retry_command)).await?;
                         let pin = prompt_pairing_pin()?;
                         let peer = amux::pair_via_pin_direct_tcp(
                             config.data_dir.clone(),
@@ -604,8 +748,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             #[cfg(unix)]
             if let Some(target) = via_ssh {
                 let retry_command = format!("amux pair --via-ssh {target}");
-                let client =
-                    client_common::require_running_client(&config, Some(&retry_command)).await?;
+                let client = front_door::profile_admin(&config, Some(&retry_command)).await?;
                 let peer = amux::pair_via_ssh_target(
                     config.data_dir.clone(),
                     &config.host_name,
@@ -613,13 +756,15 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                     &client,
                 )
                 .await?;
-                println!("Paired with {} ({}) via SSH.", peer.name, peer.host_id);
+                println!(
+                    "Paired with {} ({}) via SSH.",
+                    peer.identity.name, peer.identity.host_id
+                );
                 return Ok(ExitCode::SUCCESS);
             }
 
             let retry_command = pair_start_retry_command(qr, listen);
-            let client =
-                client_common::require_running_client(&config, Some(retry_command)).await?;
+            let client = front_door::profile_admin(&config, Some(retry_command)).await?;
             if listen && config.tcp_port.is_none() {
                 return Err(anyhow!(
                     "set `tcp_port` in your config, or use cloud / SSH pairing"
@@ -640,7 +785,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         }
         Commands::Peer { command } => {
             ensure_initialized(&mut config).await?;
-            let client = client_common::require_running_client(&config, None).await?;
+            let client = front_door::profile_admin(&config, None).await?;
             match command {
                 PeerCommands::List => {
                     let peers = client.list_peers().await?;
@@ -654,7 +799,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         }
         Commands::Unpair { peer, force } => {
             ensure_initialized(&mut config).await?;
-            let client = client_common::require_running_client(&config, None).await?;
+            let client = front_door::profile_admin(&config, None).await?;
             let entry = client.get_peer(peer.as_str()).await?;
             if !force && !confirm_unpair(&entry)? {
                 println!("Unpair cancelled.");
@@ -665,7 +810,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         }
         #[cfg(unix)]
         Commands::PairRecv => {
-            let client = client_common::require_running_client(&config, None).await?;
+            let client = front_door::profile_admin(&config, None).await?;
             amux::pair_via_ssh_responder_stdio(config.data_dir.clone(), &config.host_name, &client)
                 .await?;
         }
@@ -673,7 +818,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         Commands::Relay => {
             amux::relay_stdio_to_unix_socket(&config.socket_path).await?;
         }
-        Commands::Update => update::run_update(&config).await?,
+        Commands::Update => unreachable!("update dispatches before profile configuration"),
         #[cfg(debug_assertions)]
         Commands::Debug { command } => match command {
             DebugCommands::Daemon { verbose, format } => {
@@ -690,7 +835,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         },
         Commands::Hooks { provider } => match provider {
             HooksProvider::Claude => {
-                hooks::handle_claude_hook(&config);
+                hooks::handle_claude_hook(Some(&config));
             }
         },
         Commands::Mcp { provider } => match provider {
@@ -769,7 +914,9 @@ fn format_peer_reachabilities(reachabilities: &[amux::PeerReachability]) -> Stri
         .iter()
         .map(|reachability| match reachability {
             amux::PeerReachability::Cloud => "cloud".to_string(),
-            amux::PeerReachability::Ssh { target } => format!("ssh:{target}"),
+            amux::PeerReachability::Ssh { target, profile } => {
+                format!("ssh:{target} (profile {profile})")
+            }
             amux::PeerReachability::DirectTcp { addr } => format!("direct-tcp:{addr}"),
         })
         .collect::<Vec<_>>()
@@ -879,7 +1026,7 @@ fn validate_pair_qr_link_usage(link: bool, debug_build: bool) -> Result<()> {
 }
 
 async fn pair_cloud_host(
-    client: &amux::Client,
+    client: &amux::installation::ProfileAdminClient,
     host: &amux::HostEntry,
 ) -> Result<amux::SshPairingPeer> {
     let pin = prompt_pairing_pin()?;
@@ -995,7 +1142,10 @@ fn terminal_qr_code(payload: &str) -> Result<String> {
     Ok(code.render::<unicode::Dense1x2>().quiet_zone(true).build())
 }
 
-async fn wait_for_pairing_mode_to_end(client: &amux::Client, ttl_seconds: u64) -> Result<()> {
+async fn wait_for_pairing_mode_to_end(
+    client: &amux::installation::ProfileAdminClient,
+    ttl_seconds: u64,
+) -> Result<()> {
     let ttl = Duration::from_secs(ttl_seconds);
     let poll_interval = Duration::from_secs(1);
     let started_at = tokio::time::Instant::now();
@@ -1169,13 +1319,8 @@ fn init_tracing() -> WorkerGuard {
 }
 
 /// Show a blocking warning if the cloud server requires a newer version.
-/// Only shown when cloud mode is enabled and the user hasn't dismissed this version.
+/// Only shown when the user has not dismissed this version.
 fn check_update_required(config: &Config) {
-    // Only relevant if cloud mode is enabled
-    if !setup::cloud_enabled(config) {
-        return;
-    }
-
     let reporter = MarkerFileReporter::from_state_path(&config.state_path);
     let current = env!("CARGO_PKG_VERSION");
     let minimum_version = match reporter.read_active_update_required(current) {
@@ -1204,31 +1349,6 @@ fn check_update_required(config: &Config) {
     }
 }
 
-fn load_config(input_path: Option<PathBuf>) -> Result<Config> {
-    // Resolve config path: explicit --config flag, or default path if it exists
-    let config_path: Option<PathBuf> = match &input_path {
-        Some(path) => Some(path.clone()),
-        None => {
-            let default_path = Config::default_path();
-            if default_path.exists() {
-                Some(default_path)
-            } else {
-                None
-            }
-        }
-    };
-
-    // Load config from file or use defaults
-    Ok(match &config_path {
-        Some(path) => {
-            let path = normalize_config_path(path)?;
-            Config::from_file(&path)
-                .map_err(|e| anyhow!("failed to load config from {:?}: {}", path, e))?
-        }
-        None => Config::new(),
-    })
-}
-
 fn normalize_config_path(path: &std::path::Path) -> Result<PathBuf> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -1248,6 +1368,21 @@ fn normalize_config_path(path: &std::path::Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_selector_is_global_for_ui_relay_and_administration() {
+        for args in [
+            vec!["amux", "ui", "--profile", "Work"],
+            vec!["amux", "relay", "--profile", "Work"],
+            vec!["amux", "--profile", "Work", "profile", "rename", "Office"],
+            vec!["amux", "login", "--profile", "Work", "--name", "Office"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert_eq!(cli.profile.as_deref(), Some("Work"));
+        }
+        assert!(Cli::try_parse_from(["amux", "profile", "rename"]).is_err());
+        assert!(Cli::try_parse_from(["amux", "profile", "rename", "Office", "--clear"]).is_err());
+    }
 
     #[test]
     fn top_level_help_mentions_debug_exactly_in_debug_builds() {

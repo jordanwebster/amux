@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime};
 
 use futures_util::{Stream, stream};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -27,7 +27,7 @@ use crate::protocol::wire;
 use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
 use crate::services::CloudLinkService;
 use crate::transport::TcpServerTransport;
-use crate::user_state::{ServerState, ShutdownRequest};
+use crate::user_state::ServerState;
 
 /// OS-level handles to every TCP connection the relay has accepted, so an
 /// outage can sever them for real (tonic's spawned connection tasks outlive
@@ -57,6 +57,7 @@ pub(crate) struct CloudRelay {
     pub(crate) token: String,
     user_id: Uuid,
     tokens: TokenRegistry,
+    failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
     /// builder `cloud_user` label → that user's `(user_id, token)`.
     user_labels: std::sync::Mutex<HashMap<String, (Uuid, String)>>,
     server: Mutex<Option<RunningCloud>>,
@@ -118,6 +119,7 @@ impl CloudRelay {
             token,
             user_id,
             tokens,
+            failures: Arc::default(),
             user_labels: std::sync::Mutex::new(HashMap::new()),
             server: Mutex::new(None),
         };
@@ -126,12 +128,13 @@ impl CloudRelay {
     }
 
     async fn serve(&self, listener: TcpListener) {
-        let (state, _shutdown_rx) = testnet_server_state("cloud", self.host_id, None, false);
+        let state = testnet_server_state("cloud", self.host_id, None);
         state.write().await.is_cloud_server = true;
         let service = CloudLinkService::with_authenticator(
             state,
             Arc::new(RegistryTokenAuthenticator {
                 tokens: self.tokens.clone(),
+                failures: self.failures.clone(),
             }),
         );
         let connections: TrackedConnections = Arc::default();
@@ -141,6 +144,16 @@ impl CloudRelay {
             task,
             connections,
         });
+    }
+
+    pub(crate) fn reject_user(&self, label: &str, error: Option<tonic::Status>) {
+        let (id, _) = self.credentials_for_user(label);
+        let mut failures = self.failures.write().unwrap();
+        if let Some(error) = error {
+            failures.insert(id, error);
+        } else {
+            failures.remove(&id);
+        }
     }
 
     pub(crate) fn default_user_id(&self) -> Uuid {
@@ -196,6 +209,17 @@ impl CloudRelay {
         let mut client = wire::client_service_client(channel);
         client.list_agents(wire::ListAgentsRequest {}).await?;
         Ok(())
+    }
+
+    pub(crate) async fn has_link_to(&self, user_id: Uuid, host: HostId) -> bool {
+        let service = {
+            let guard = self.server.lock().await;
+            guard.as_ref().map(|running| running.service.clone())
+        };
+        match service {
+            Some(service) => service.user_has_link_to(user_id, host).await,
+            None => false,
+        }
     }
 
     /// Takes the relay down hard: stops accepting and severs every accepted
@@ -267,43 +291,27 @@ pub(crate) async fn bind_addr_with_retries(addr: SocketAddr) -> TcpListener {
     }
 }
 
-/// Minimal `ServerState` for an in-process testnet node, plus the
-/// shutdown-request receiver the `ClientService.Shutdown`/`Suspend` RPCs feed.
-/// Cloud relays drop the receiver (they never shut down via RPC); daemons keep
-/// it and wire a handler (see `start_daemon_runtime`).
+/// Minimal relay state for an in-process test network.
 ///
-/// `tcp_port` / `enable_cloud_mode` mirror what a configured daemon would
-/// hold so config-gated surfaces (e.g. `StartPairing`'s QR mode requiring
-/// cloud mode) behave like production.
+/// `tcp_port` mirrors the configured LAN listener for pairing.
 pub(crate) fn testnet_server_state(
     host_name: &str,
     host_id: HostId,
     tcp_port: Option<u16>,
-    enable_cloud_mode: bool,
-) -> (
-    std::sync::Arc<RwLock<ServerState>>,
-    mpsc::Receiver<ShutdownRequest>,
-) {
-    let (shutdown_tx, shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
+) -> std::sync::Arc<RwLock<ServerState>> {
     let config = Config {
         host_name: host_name.to_string(),
         tcp_port,
-        enable_cloud_mode: enable_cloud_mode.then_some(true),
+
         ..Config::default()
     };
-    let state = std::sync::Arc::new(RwLock::new(ServerState::new(
-        config,
-        host_id,
-        shutdown_tx,
-        None,
-        None,
-    )));
-    (state, shutdown_rx)
+    std::sync::Arc::new(RwLock::new(ServerState::new(config, host_id, None, None)))
 }
 
 #[derive(Clone)]
 struct RegistryTokenAuthenticator {
     tokens: TokenRegistry,
+    failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
 }
 
 #[tonic::async_trait]
@@ -319,6 +327,9 @@ impl LinkTokenAuthenticator for RegistryTokenAuthenticator {
             .get(token)
             .copied()
             .ok_or_else(|| tonic::Status::unauthenticated("unknown testnet token"))?;
+        if let Some(error) = self.failures.read().unwrap().get(&registered.user_id) {
+            return Err(error.clone());
+        }
         Ok(AuthenticatedLinkUser {
             user_id: registered.user_id,
             client_id: "test-client".to_string(),

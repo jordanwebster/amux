@@ -6,10 +6,9 @@
                                                                                                                         
     The cap belongs in RetryConfig; I'll thread it through SyncOptions.                                                 
                                                                                                                         
-  ✔ Read sync/config.rs                                                                                                 
-                                                                                                                        
-  ▸ Bash cargo check -p amux-sync                                                                                       
-    └ running                                                                                                           
+│ ✔ Read sync/config.rs                                                                                                 
+│ ▸ Bash cargo check -p amux-sync                                                                                       
+│   └ running                                                                                                           
                                                                                                                         
                                                                                                                         
                                                                                                                         
@@ -30,11 +29,12 @@
                                                                                                                         
     permission — Edit sync/.env (+1 -1)                                                                                 
                                                                                                                         
-     -VALUE=1                                                                                                           
-     \ No newline at end of file                                                                                        
-     +VALUE=1                                                                                                           
+    -VALUE=1                                                                                                            
+    \ No newline at end of file                                                                                         
+    +VALUE=1                                                                                                            
                                                                                                                         
     › 1. Allow once                                                                                                     
       2. Always allow access to /work from this project                                                                 
       3. Deny — tell the agent why (optional)                                                                           
+                                                                                                                        
     1-3/↑↓ select · enter confirm · f open document · esc back (never answers)                                          

@@ -29,12 +29,12 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
   ↓ scrolled back · wheel or pgdn to catch up · ctrl+end for the newest                                                 
+                                                                                                                        
     ctx 31.6k                                                                                                           
                                                                                                                         
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     C-a k/j focus · C-a y copy · ? help                                                                  shift+tab mode 

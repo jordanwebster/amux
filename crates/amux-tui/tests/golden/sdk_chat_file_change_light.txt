@@ -4,11 +4,10 @@
                                                                                                                         
 ▎   Reply with exactly PONG and nothing else.                                                                           
                                                                                                                         
-  · rate_limit_event                                                                                                    
-                                                                                                                        
-  ~ thought                                                                                                             
-    └ The user is asking me to reply with exactly "PONG" and nothing else. This is a simple, direct instruction. I      
-      should follow it exactly as stated.                                                                               
+│ · rate_limit_event                                                                                                    
+│ ~ thought                                                                                                             
+│   └ The user is asking me to reply with exactly "PONG" and nothing else. This is a simple, direct instruction. I      
+│     should follow it exactly as stated.                                                                               
                                                                                                                         
     PONG                                                                                                                
                                                                                                                         
@@ -16,12 +15,11 @@
                                                                                                                         
   ✎ Edit src/lib.rs · +2 −1                                                                                             
     src/lib.rs                                                                                                          
-          @@ -4,3 +4,4 @@                                                                                               
-     4  4  mod diff;                                                                                                    
-     5    -mod store;                                                                                                   
-        5 +mod attachments;                                                                                             
-        6 +mod reader;                                                                                                  
-     6  7  mod view;                                                                                                    
+     4 │  mod diff;                                                                                                     
+     5 │ -mod store;                                                                                                    
+     5 │ +mod attachments;                                                                                              
+     6 │ +mod reader;                                                                                                   
+     7 │  mod view;                                                                                                     
                                                                                                                         
                                                                                                                         
                                                                                                                         
@@ -36,7 +34,9 @@
                                                                                                                         
   ◑ working · ctx 27.9k/200.0k · ctrl+x interrupt                                                                       
                                                                                                                         
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     send gated while working · ? help                                                                    shift+tab mode 
 --- styles ---
@@ -45,24 +45,22 @@
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
-..mmmmmmmmmmmmmmmmmm....................................................................................................
-........................................................................................................................
-..mmmmmmmmm.............................................................................................................
-....m.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm......
-......mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............................................................................
+G.mmmmmmmmmmmmmmmmmm....................................................................................................
+G.mmmmmmmmm.............................................................................................................
+G...m.mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm......
+G.....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............................................................................
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
 ..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
 ........................................................................................................................
 ...................mmmmmmmm.............................................................................................
-.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-.PPPPPPPPP--------------------------------------------------------------------------------------------------------------
-.PPPPPPPPP++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-.PPPPPPPPP++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+PPPPPPPPP---------------------------------------------------------------------------------------------------------------
+PPPPPPPPP+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+PPPPPPPPP+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
@@ -77,6 +75,8 @@ AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ...........mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.......................................................................
 ........................................................................................................................
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm....................................................................mmmmmmmmmmmmmm.

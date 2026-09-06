@@ -12,7 +12,7 @@ use futures_util::{Stream, stream};
 use prost::Message as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{aead, digest, hkdf, hmac};
-use tokio::sync::{Mutex, OwnedMutexGuard, mpsc};
+use tokio::sync::{OwnedRwLockWriteGuard, mpsc};
 use tonic::{Code, Status};
 
 use crate::connection::ConnectionManager;
@@ -47,7 +47,7 @@ const SPAKE2_ED25519_N: [u8; 32] = [
 ];
 
 type PairStream = Pin<Box<dyn Stream<Item = Result<wire::pb::PairMessage, Status>> + Send>>;
-pub(crate) type SharedTrustCommitLock = Arc<Mutex<()>>;
+pub(crate) type SharedTrustCommitLock = Arc<crate::installation::OperationGate>;
 
 #[derive(Clone)]
 pub(crate) struct PeerTrustCommitContext {
@@ -572,6 +572,10 @@ async fn stage_peer_trust_update(
     update: PeerTrustUpdate,
 ) -> Result<PeerTrustCommitGuard, Status> {
     let trust_commit_lock = context.trust_commit_lock.clone().lock_owned().await;
+    context
+        .trust_commit_lock
+        .check()
+        .map_err(crate::protocol::protocol_status)?;
     let host_id = update.host_id;
     let (before, mut staged, mut outcome) = {
         let store = context
@@ -652,7 +656,7 @@ struct PeerTrustCommitGuard {
     staged: Option<TrustStore>,
     outcome: TrustStorePairingUpdate,
     finish_connection: bool,
-    trust_commit_lock: Option<OwnedMutexGuard<()>>,
+    trust_commit_lock: Option<OwnedRwLockWriteGuard<()>>,
 }
 
 struct PeerTrustCommitState {
@@ -683,7 +687,7 @@ impl PeerTrustCommitGuard {
         context: PeerTrustCommitContext,
         host_id: HostId,
         state: PeerTrustCommitState,
-        trust_commit_lock: OwnedMutexGuard<()>,
+        trust_commit_lock: OwnedRwLockWriteGuard<()>,
     ) -> Self {
         Self {
             trust_store: context.trust_store,
@@ -1299,7 +1303,7 @@ mod tests {
             LocalPairingIdentity::from_device_identity(&responder),
             "responder".to_string(),
             trust_store.clone(),
-            Arc::new(Mutex::new(())),
+            Arc::default(),
             connections,
             data_dir.path().to_path_buf(),
         );
@@ -1851,6 +1855,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn closed_profile_rejects_late_pairing_without_recreating_trust_files() {
+        let (dir, service, _pair_mode, trust_store, _responder, peer) = service_fixture();
+        let operation = service.trust_commit_lock.lock().await;
+        service.trust_commit_lock.close();
+        std::fs::remove_dir_all(dir.path()).unwrap();
+        drop(operation);
+        let result = service
+            .stage_peer_trust(
+                peer.host_id,
+                peer.public_key().to_vec(),
+                "late peer".into(),
+                Some(Reachability::Cloud),
+            )
+            .await;
+        assert!(matches!(result, Err(error) if error.code() == Code::FailedPrecondition));
+        assert!(trust_store.read().unwrap().entry(peer.host_id).is_none());
+        assert!(!dir.path().exists());
+    }
+
+    #[tokio::test]
     async fn trust_commit_rolls_back_when_pin_pair_mode_is_cancelled_before_completion() {
         let (dir, service, pair_mode, trust_store, _responder, peer) = service_fixture();
         pair_mode
@@ -1931,7 +1955,9 @@ mod tests {
                 TrustStorePairingUpdate::PubkeyReplacementRequired,
             )
             .finish_connection(),
-            Arc::new(Mutex::new(())).lock_owned().await,
+            Arc::new(crate::installation::OperationGate::default())
+                .lock_owned()
+                .await,
         );
         service.connections.teardown_host(peer.host_id).await;
         drop(guard);
@@ -2341,7 +2367,7 @@ mod tests {
             LocalPairingIdentity::from_device_identity(&responder),
             "responder".to_string(),
             trust_store.clone(),
-            Arc::new(Mutex::new(())),
+            Arc::default(),
             connections,
             data_dir.path().to_path_buf(),
         );

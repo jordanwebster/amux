@@ -126,7 +126,7 @@ jobs:
       - name: Build workspace
         run: cargo build --workspace
       - name: Run E2E tests
-        run: cargo run -p e2e-runner -- run
+        run: target/debug/e2e-runner run --amux-binary target/debug/amux --test-agent-binary target/debug/test-agent
         env:
           AMUX_INVARIANT_FATAL: "1"
 

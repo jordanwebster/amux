@@ -16,7 +16,7 @@ const WIDTH_DECLARING_GOLDENS: &[(&str, (u16, u16))] = &[
     ("a2a_fleet_family_60col", (60, 14)),
     ("fleet_ranked_60col", (60, 11)),
     ("fleet_ranked_80col", (80, 11)),
-    ("chat_quit_armed_panel_narrow", (60, 20)),
+    ("chat_quit_armed_panel_narrow", (60, 22)),
     ("chat_session_facts_60col", (60, 20)),
     ("fleet_too_narrow", (12, 11)),
 ];
@@ -28,6 +28,7 @@ const STATES: &[NamedState] = &[
     NamedState::ClaudeScrolledBack,
     NamedState::CodexScrolledBack,
     NamedState::HelpOverlay,
+    NamedState::ProfileSwitcher,
 ];
 
 struct Capture {
