@@ -355,6 +355,18 @@ fn upsert_block(
     {
         return;
     }
+    if key.parent_tool_use_id.is_none()
+        && finality == Finality::Complete
+        && matches!(
+            layer.todos.observe(block),
+            crate::claude::todos::Disposition::Absorbed
+        )
+    {
+        if let Some(index) = existing {
+            layer.entries.remove(index);
+        }
+        return;
+    }
     let kind = match block["type"].as_str() {
         Some("text") if block["text"].is_string() => FeedEntryKind::Message(MessageEntry {
             text: string(block, "text").unwrap_or_default(),
@@ -506,6 +518,15 @@ fn tool_result(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value, block: &Value)
         return;
     };
     let parent = id(row, "parent_tool_use_id");
+    let todo_failed = if parent.is_none() {
+        match layer.todos.observe(block) {
+            crate::claude::todos::Disposition::Absorbed => return,
+            crate::claude::todos::Disposition::Failed => true,
+            crate::claude::todos::Disposition::Other => false,
+        }
+    } else {
+        false
+    };
     let content = &block["content"];
     let mut text = String::new();
     let mut truncated = false;
@@ -546,7 +567,11 @@ fn tool_result(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value, block: &Value)
             seq,
             FeedEntryKind::Tool(ToolEntry {
                 tool_use_id: tool_id,
-                name: String::new(),
+                name: if todo_failed {
+                    "TodoWrite".into()
+                } else {
+                    String::new()
+                },
                 invocation: ToolInvocation::Other,
                 input: None,
                 input_json: String::new(),

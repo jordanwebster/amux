@@ -58,6 +58,7 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(codexSession.gate, .codex(.ready))
         XCTAssertEqual(codexSession.settingsGate, .ready)
         XCTAssertEqual(sdkSession.gate, .unavailable)
+        XCTAssertEqual(sdkSession.settingsGate, .claudeSdk(reason: .unknown))
         // This build cannot read the SDK chat layer, and the projection says so
         // rather than presenting an empty conversation as an idle one.
         XCTAssertEqual(sdkSession.facts, .claudeSdk(supported: false))

@@ -4,6 +4,37 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Shared writing controls reach Claude SDK sessions.**
+Plain drafts, queued messages and selected command tokens now use the existing
+SDK reducer and runtime encoder. The queue recognizes SDK turn completion,
+retains drafts across disconnects and failed delivery, and keeps interruption
+separate from cancellation. Shared model and effort actions delegate to SDK
+inputs; explicit permission selection and nullable effort clearing use the
+provider's native types. Permission modes retain the SDK's open string enum;
+a reducer assertion that treated unknown modes as invalid was corrected to
+check provider dispatch and refusal recovery. Observed model, effort, commands and permission populate
+shared provider facts without optimistic settings or invented choice catalogues.
+Both Claude drivers reuse the confirmed TodoWrite fold. SDK child lists cannot
+replace the parent's tasks, successful bookkeeping leaves no final feed rows,
+and failed writes remain named tool failures.
+
+The SDK integration proofs cover an unchanged recorded prompt/reply, replacement
+and cancellation, single delivery at turn end, interrupt and reconnect, stale
+turn results, multiline command arguments, setting refusals and authoritative
+facts, command filtering, task-list replay and streamed-tool reconciliation.
+A runtime proof sends actual client protobuf through the daemon decoder and real
+SDK session over scripted provider IO, observing prompts, the queued message,
+model, effort, permission and slash command at provider stdin. Native task rows
+pass through that same SDK session before reaching shared facts. The suspended
+session regression reopens both original Claude drivers without migration.
+The mobile schema and Swift decoder also carry the SDK settings refusal reason
+and observed Claude permission facts.
+Formatting, lint, all 12 targeted SDK integration tests, the full workspace
+suite, all 419 prose specifications, both suspended-Claude tests, mobile feature
+checks, both iOS Rust builds and eight simulator schema tests pass locally.
+The SDK exposes model and effort catalogues internally, but the daemon does not
+yet publish them; phone choice lists still require that extension.
+
 2026-09-06 — **Claude SDK sessions expose effort changes and initialized commands.**
 The existing SDK layer now accepts a typed effort input and dispatches the
 provider's `apply_flag_settings` control with `effortLevel`. Successful controls

@@ -647,6 +647,10 @@ fn command_verb(command: &Command) -> &'static str {
         Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::Interrupt { .. }) => "interrupt",
         Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::CyclePermissionMode { .. }) => "mode cycle",
         Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::SetModel { .. }) => "set model",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::SetEffort { .. }) => "change effort",
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::SetPermissionMode { .. }) => {
+            "change permissions"
+        }
         Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::RequestContextBreakdown { .. }) => {
             "request context"
         }

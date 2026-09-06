@@ -192,6 +192,7 @@ dependencies = [
  "amux",
  "amux-artifacts",
  "chrono",
+ "claude",
  "futures-util",
  "serde",
  "serde_json",

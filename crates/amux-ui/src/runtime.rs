@@ -2389,3 +2389,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix, debug_assertions))]
+#[path = "runtime_sdk_integration_tests.rs"]
+mod sdk_integration_tests;

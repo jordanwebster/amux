@@ -76,6 +76,7 @@ pub enum SettingsGate {
     PtySettingsUnavailable,
     Unavailable,
     Codex { reason: codex::SendGate },
+    ClaudeSdk { reason: crate::claude_sdk::SendGate },
 }
 impl SettingsGate {
     pub fn refusal(&self) -> Option<&'static str> {
@@ -86,6 +87,7 @@ impl SettingsGate {
             }
             Self::Unavailable => Some("provider settings unavailable for this agent"),
             Self::Codex { reason } => reason.refusal(),
+            Self::ClaudeSdk { reason } => reason.refusal(),
         }
     }
 }
@@ -94,6 +96,14 @@ pub fn settings_gate(model: &Model, agent: AgentId) -> SettingsGate {
         Some(AgentKind::Claude {
             driver: ClaudeDriver::Pty,
         }) => SettingsGate::PtySettingsUnavailable,
+        Some(AgentKind::Claude {
+            driver: ClaudeDriver::Sdk,
+        }) => match crate::claude_sdk::send_gate(model, agent) {
+            crate::claude_sdk::SendGate::Ready
+            | crate::claude_sdk::SendGate::Working
+            | crate::claude_sdk::SendGate::NeedsYou => SettingsGate::Ready,
+            reason => SettingsGate::ClaudeSdk { reason },
+        },
         Some(AgentKind::Codex) => match codex::send_gate(model, agent) {
             codex::SendGate::Ready => SettingsGate::Ready,
             reason => SettingsGate::Codex { reason },
@@ -105,7 +115,12 @@ pub fn facts(model: &Model, agent: AgentId) -> ProviderFacts {
     if let Some(layer) = model.claude_sdk(agent) {
         let session = layer.session();
         return ProviderFacts {
+            model: session.model.clone(),
             effort: session.effort.clone(),
+            permission: PermissionFacts::Claude {
+                mode: session.permission_mode.clone(),
+            },
+            todos: layer.todos().cloned(),
             commands: session
                 .slash_commands
                 .iter()
@@ -193,6 +208,34 @@ pub(crate) fn update_settings(
     seq: u64,
     command: Command,
 ) -> Vec<Effect> {
+    let sdk_command = match &command {
+        Command::SetModel {
+            agent,
+            model: selection,
+        } if model.claude_sdk(*agent).is_some() => Some(crate::ClaudeSdkCommand::SetModel {
+            agent: *agent,
+            model: Some(selection.clone()),
+        }),
+        Command::SetEffort { agent, effort } if model.claude_sdk(*agent).is_some() => {
+            Some(crate::ClaudeSdkCommand::SetEffort {
+                agent: *agent,
+                effort: Some(effort.clone()),
+            })
+        }
+        Command::SetPreset { agent, .. } if model.claude_sdk(*agent).is_some() => {
+            return crate::update::refuse(
+                model,
+                op,
+                seq,
+                command,
+                "Codex presets are unavailable for Claude SDK sessions",
+            );
+        }
+        _ => None,
+    };
+    if let Some(native) = sdk_command {
+        return crate::claude_sdk::update::update_command(model, op, seq, native);
+    }
     let (agent, input) = match &command {
         Command::SetModel { agent, model } => (
             *agent,

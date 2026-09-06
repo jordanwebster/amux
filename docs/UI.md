@@ -131,7 +131,9 @@ offered `models` (including per-model efforts and defaults), current `efforts`,
 and optional `todos` with done/total counts, current activity and ordered states.
 Absent facts stay absent. Codex settings/readiness rows supply its choices;
 Claude PTY supplies observed permission mode and successful TodoWrite results.
-Claude SDK remains an unsupported layer in this build.
+Claude SDK supplies observed model, effort, permission, initialized commands
+and successful parent-session TodoWrite results. Its shared writing actions
+and queue use the SDK layer's native gates and inputs.
 
 `SettingsGate` separately names readiness or the reason a settings change
 refuses, including `PtySettingsUnavailable`. Typed model, effort and preset

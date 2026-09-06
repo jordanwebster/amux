@@ -276,11 +276,21 @@ pub struct ClaudeSdkLayer {
     echo: Option<PromptEcho>,
     last_input_failure: Option<InputFailure>,
     session: SessionFacts,
+    todos: crate::claude::todos::ClaudeTodos,
+    cursor: u64,
     context_breakdown: Option<Box<ContextUsage>>,
     attachments: crate::attachments::AttachmentIndex,
 }
 
 impl ClaudeSdkLayer {
+    pub fn todos(&self) -> Option<&crate::provider::TaskList> {
+        self.todos.current()
+    }
+
+    pub fn cursor(&self) -> u64 {
+        self.cursor
+    }
+
     pub fn session(&self) -> &SessionFacts {
         &self.session
     }
@@ -361,6 +371,15 @@ impl ClaudeSdkLayer {
     }
 
     pub(crate) fn observe(&mut self, seq: u64, _at: DateTime<Utc>, row: &Value) {
+        self.cursor = self.cursor.max(seq);
+        if row["parent_tool_use_id"].is_null()
+            && matches!(
+                row["type"].as_str(),
+                Some("amux.claude_sdk.ready" | "conversation_reset")
+            )
+        {
+            self.todos = crate::claude::todos::ClaudeTodos::default();
+        }
         session::observe(self, row);
         self.attachments.observe_row(row);
         self.observe_input(row);

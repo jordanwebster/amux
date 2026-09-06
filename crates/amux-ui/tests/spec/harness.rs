@@ -566,6 +566,7 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::attachments::sequences());
     sequences.extend(crate::draft::sequences());
     sequences.extend(crate::queue::sequences());
+    sequences.extend(crate::sdk_integration::sequences());
     sequences.extend(crate::connection::sequences());
     sequences.extend(crate::inventory::sequences());
     sequences.extend(crate::ops::sequences());

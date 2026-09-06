@@ -757,59 +757,59 @@ mod tests {
 
     #[test]
     fn suspended_claude_into_session_filters_resume_unsafe_args() {
-        let sa = SuspendedAgent::Claude {
-            driver: ClaudeDriver::Sdk,
-            agent_id: Uuid::new_v4(),
-            name: Some("claude".to_string()),
-            name_source: SuspendedLocalAgentNameSource::ProviderName,
-            working_dir: PathBuf::from("/tmp"),
-            terminal_size: None,
-            args: vec![
-                "--dangerously-skip-permissions".to_string(),
-                "--resume".to_string(),
-                Uuid::new_v4().to_string(),
-                "--fork-session".to_string(),
-                "--continue".to_string(),
-                "--from-pr=123".to_string(),
-                "--session-id".to_string(),
-                Uuid::new_v4().to_string(),
-                "--worktree".to_string(),
-                "feature-branch".to_string(),
-                "--tmux=classic".to_string(),
-                "--model".to_string(),
-                "sonnet".to_string(),
-            ],
-            session_id: Uuid::new_v4(),
-            created_at: Utc::now(),
-            parent: None,
-            working_on: None,
-        };
+        for driver in [ClaudeDriver::Pty, ClaudeDriver::Sdk] {
+            let sa = SuspendedAgent::Claude {
+                driver,
+                agent_id: Uuid::new_v4(),
+                name: Some("claude".to_string()),
+                name_source: SuspendedLocalAgentNameSource::ProviderName,
+                working_dir: PathBuf::from("/tmp"),
+                terminal_size: None,
+                args: vec![
+                    "--dangerously-skip-permissions".to_string(),
+                    "--resume".to_string(),
+                    Uuid::new_v4().to_string(),
+                    "--fork-session".to_string(),
+                    "--continue".to_string(),
+                    "--from-pr=123".to_string(),
+                    "--session-id".to_string(),
+                    Uuid::new_v4().to_string(),
+                    "--worktree".to_string(),
+                    "feature-branch".to_string(),
+                    "--tmux=classic".to_string(),
+                    "--model".to_string(),
+                    "sonnet".to_string(),
+                ],
+                session_id: Uuid::new_v4(),
+                created_at: Utc::now(),
+                parent: None,
+                working_on: None,
+            };
 
-        let deps = AgentDeps::new(
-            std::env::temp_dir(),
-            std::env::temp_dir(),
-            std::env::temp_dir().join("amux-test-codex.sock"),
-            mcp_launch_route_for_tests(Uuid::new_v4()),
-            std::env::temp_dir().join("amux-test-keymaps"),
-        )
-        .unwrap();
-        let session = agent_from_suspended(sa, &deps);
+            let deps = AgentDeps::new(
+                std::env::temp_dir(),
+                std::env::temp_dir(),
+                std::env::temp_dir().join("amux-test-codex.sock"),
+                mcp_launch_route_for_tests(Uuid::new_v4()),
+                std::env::temp_dir().join("amux-test-keymaps"),
+            )
+            .unwrap();
+            let session = agent_from_suspended(sa, &deps);
 
-        assert_eq!(
-            session.kind(),
-            AgentKind::Claude {
-                driver: ClaudeDriver::Sdk,
-            }
-        );
+            assert_eq!(session.kind(), AgentKind::Claude { driver });
 
-        assert_eq!(
-            session.to_agent(Uuid::new_v4()).args,
-            vec![
-                "--dangerously-skip-permissions".to_string(),
-                "--model".to_string(),
-                "sonnet".to_string(),
-            ]
-        );
+            assert_eq!(
+                session.to_agent(Uuid::new_v4()).args,
+                vec![
+                    "--dangerously-skip-permissions".to_string(),
+                    "--model".to_string(),
+                    "sonnet".to_string(),
+                ]
+            );
+            assert!(
+                matches!(session.suspended_state().unwrap(), SuspendedAgent::Claude { driver: reopened, .. } if reopened == driver)
+            );
+        }
     }
 
     #[cfg(unix)]

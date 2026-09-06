@@ -200,6 +200,17 @@ impl ClaudeSdkBackendHarness {
             .map_err(anyhow::Error::from)
     }
 
+    /// Exercise the daemon decoder with bytes emitted by a client runtime.
+    pub async fn send_encoded(&self, input_id: &[u8], payload: &[u8]) -> Result<()> {
+        let input = crate::agents::claude::sdk_io::decode_claude_sdk_v1_input(payload)?;
+        self.send(input_id, input).await
+    }
+
+    /// Rows observed at the daemon log boundary, including synthesized facts.
+    pub fn rows(&self) -> &[Value] {
+        &self.rows
+    }
+
     pub async fn wait_for_type(&mut self, expected: &str) -> Result<Value> {
         loop {
             if let Some((offset, row)) = self.rows[self.cursor..]

@@ -28,6 +28,14 @@ pub enum ClaudeSdkCommand {
         agent: AgentId,
         model: Option<String>,
     },
+    SetEffort {
+        agent: AgentId,
+        effort: Option<String>,
+    },
+    SetPermissionMode {
+        agent: AgentId,
+        mode: String,
+    },
     RequestContextBreakdown {
         agent: AgentId,
     },
@@ -41,6 +49,8 @@ impl ClaudeSdkCommand {
             | Self::Interrupt { agent }
             | Self::CyclePermissionMode { agent }
             | Self::SetModel { agent, .. }
+            | Self::SetEffort { agent, .. }
+            | Self::SetPermissionMode { agent, .. }
             | Self::RequestContextBreakdown { agent } => *agent,
         }
     }
@@ -80,6 +90,7 @@ pub enum ClaudeSdkInput {
     Interrupt,
     SetPermissionMode { mode: String },
     SetModel { model: Option<String> },
+    SetEffort { effort: Option<String> },
     RequestContextBreakdown,
     PermissionDecision { request_id: String, decision: Value },
     ElicitationDecision { request_id: String, result: Value },
@@ -98,6 +109,11 @@ impl ClaudeSdkInput {
                 mode: serde_json::from_value(Value::String(mode))?,
             },
             Self::SetModel { model } => ClaudeSdkV1Input::SetModel { model },
+            Self::SetEffort { effort } => ClaudeSdkV1Input::SetEffort {
+                effort: effort
+                    .map(|value| serde_json::from_value(Value::String(value)))
+                    .transpose()?,
+            },
             Self::RequestContextBreakdown => ClaudeSdkV1Input::RequestContextBreakdown,
             Self::PermissionDecision {
                 request_id,

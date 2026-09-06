@@ -21,6 +21,7 @@ mod attachments; // Attachment rows, mention folds, and replay
 mod model_effort;
 mod provider_commands;
 mod queue;
+mod sdk_integration;
 mod todos;
 
 mod draft; // Drafts: what a message's attachments become when it is sent

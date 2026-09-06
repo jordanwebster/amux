@@ -589,6 +589,18 @@ public enum ClaudePtySendGate: String, Codable, Sendable, Equatable {
     case sendInFlight = "send_in_flight"
 }
 
+public enum ClaudeSdkSendGate: String, Codable, Sendable, Equatable {
+    case ready
+    case unavailable
+    case exited
+    case readOnly = "read_only"
+    case replaying
+    case working
+    case needsYou = "needs_you"
+    case unknown
+    case inputInFlight = "input_in_flight"
+}
+
 public enum CodexSendGate: String, Codable, Sendable, Equatable {
     case ready
     case unavailable
@@ -863,6 +875,7 @@ public enum SettingsGate: Sendable, Equatable, Codable {
     case ptySettingsUnavailable
     case unavailable
     case codex(reason: CodexSendGate)
+    case claudeSdk(reason: ClaudeSdkSendGate)
 
     private enum Key: String, CodingKey { case gate, reason }
 
@@ -873,6 +886,8 @@ public enum SettingsGate: Sendable, Equatable, Codable {
         case "pty_settings_unavailable": self = .ptySettingsUnavailable
         case "unavailable": self = .unavailable
         case "codex": self = .codex(reason: try container.decode(CodexSendGate.self, forKey: .reason))
+        case "claude_sdk":
+            self = .claudeSdk(reason: try container.decode(ClaudeSdkSendGate.self, forKey: .reason))
         case let other:
             throw DecodingError.dataCorrupted(.init(
                 codingPath: decoder.codingPath, debugDescription: "unknown settings gate \(other)"))
@@ -887,6 +902,9 @@ public enum SettingsGate: Sendable, Equatable, Codable {
         case .unavailable: try container.encode("unavailable", forKey: .gate)
         case .codex(let reason):
             try container.encode("codex", forKey: .gate)
+            try container.encode(reason, forKey: .reason)
+        case .claudeSdk(let reason):
+            try container.encode("claude_sdk", forKey: .gate)
             try container.encode(reason, forKey: .reason)
         }
     }

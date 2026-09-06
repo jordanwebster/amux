@@ -44,6 +44,8 @@ pub(crate) fn update_command(
         }
         ClaudeSdkCommand::CyclePermissionMode { .. }
         | ClaudeSdkCommand::SetModel { .. }
+        | ClaudeSdkCommand::SetEffort { .. }
+        | ClaudeSdkCommand::SetPermissionMode { .. }
         | ClaudeSdkCommand::RequestContextBreakdown { .. } => matches!(
             gate,
             SendGate::Ready | SendGate::Working | SendGate::NeedsYou
@@ -119,8 +121,17 @@ pub(crate) fn update_command(
                 model: selection.clone(),
             }
         }
+        ClaudeSdkCommand::SetEffort { effort, .. } => ClaudeSdkInput::SetEffort {
+            effort: effort.clone(),
+        },
+        ClaudeSdkCommand::SetPermissionMode { mode, .. } => {
+            ClaudeSdkInput::SetPermissionMode { mode: mode.clone() }
+        }
         ClaudeSdkCommand::RequestContextBreakdown { .. } => ClaudeSdkInput::RequestContextBreakdown,
     };
+    if input.clone().into_native().is_err() {
+        return refuse(model, op, seq, command, "invalid Claude SDK input value");
+    }
     with_layer(model, agent, |layer| {
         layer.last_input_failure = None;
         layer.in_flight = Some(InFlightInput {

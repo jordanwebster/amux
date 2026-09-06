@@ -94,6 +94,9 @@ pub fn can_hold(model: &Model, agent: AgentId) -> bool {
             Some(AgentLayer::Claude(_)) => {
                 crate::claude::send_gate(model, agent) == crate::claude::SendGate::Working
             }
+            Some(AgentLayer::ClaudeSdk(_)) => {
+                crate::claude_sdk::send_gate(model, agent) == crate::claude_sdk::SendGate::Working
+            }
             Some(AgentLayer::Codex(_)) => {
                 crate::codex::send_gate(model, agent) == crate::codex::SendGate::ActiveTurn
             }
@@ -107,6 +110,9 @@ fn ready(model: &Model, agent: AgentId) -> bool {
             Some(AgentLayer::Claude(_)) => {
                 crate::claude::send_gate(model, agent) == crate::claude::SendGate::Ready
             }
+            Some(AgentLayer::ClaudeSdk(_)) => {
+                crate::claude_sdk::send_gate(model, agent) == crate::claude_sdk::SendGate::Ready
+            }
             Some(AgentLayer::Codex(_)) => {
                 crate::codex::send_gate(model, agent) == crate::codex::SendGate::Ready
             }
@@ -117,6 +123,7 @@ fn ready(model: &Model, agent: AgentId) -> bool {
 fn cursor(model: &Model, agent: AgentId) -> u64 {
     match model.agent(agent).and_then(|card| card.layer.as_ref()) {
         Some(AgentLayer::Claude(layer)) => layer.cursor(),
+        Some(AgentLayer::ClaudeSdk(layer)) => layer.cursor(),
         Some(AgentLayer::Codex(layer)) => layer.entries().map(|entry| entry.seq).max().unwrap_or(0),
         _ => 0,
     }
@@ -127,6 +134,12 @@ fn turn_end(model: &Model, agent: AgentId) -> u64 {
         Some(AgentLayer::Claude(layer)) => layer
             .entries()
             .filter(|entry| matches!(entry.kind, crate::claude::FeedEntryKind::Turn(_)))
+            .map(|entry| entry.seq)
+            .max()
+            .unwrap_or(0),
+        Some(AgentLayer::ClaudeSdk(layer)) => layer
+            .entries()
+            .filter(|entry| matches!(entry.kind, crate::claude_sdk::FeedEntryKind::Turn(_)))
             .map(|entry| entry.seq)
             .max()
             .unwrap_or(0),
@@ -341,7 +354,7 @@ pub(crate) fn update_draft(
                 "command attachments are unavailable",
             );
         }
-        if model.codex(agent).is_none() {
+        if model.codex(agent).is_none() && model.claude_sdk(agent).is_none() {
             return refuse(
                 model,
                 op,
@@ -350,8 +363,9 @@ pub(crate) fn update_draft(
                 "provider commands are unavailable for this agent",
             );
         }
-        if let crate::codex::WritePermission::Refused(reason) =
-            crate::codex::write_permission(model, agent, crate::codex::WriteAction::Prompt)
+        if model.codex(agent).is_some()
+            && let crate::codex::WritePermission::Refused(reason) =
+                crate::codex::write_permission(model, agent, crate::codex::WriteAction::Prompt)
         {
             return refuse(model, op, seq, command, reason);
         }
@@ -368,6 +382,19 @@ pub(crate) fn update_draft(
                 "command is not offered by this session",
             );
         }
+        if model.claude_sdk(agent).is_some() {
+            let text = if args.is_empty() || args.starts_with(char::is_whitespace) {
+                format!("/{name}{args}")
+            } else {
+                format!("/{name} {args}")
+            };
+            return crate::claude_sdk::update::update_command(
+                model,
+                op,
+                seq,
+                crate::ClaudeSdkCommand::SendPrompt { agent, text },
+            );
+        }
         return crate::codex::update::dispatch_codex_input(
             model,
             op,
@@ -381,6 +408,13 @@ pub(crate) fn update_draft(
     let text = draft.text();
     if !draft.attachments.is_empty() {
         crate::update::update_attachment_prompt(model, op, seq, agent, text, draft.attachments)
+    } else if model.claude_sdk(agent).is_some() {
+        crate::claude_sdk::update::update_command(
+            model,
+            op,
+            seq,
+            crate::ClaudeSdkCommand::SendPrompt { agent, text },
+        )
     } else if model.claude(agent).is_some() {
         crate::claude::update::update_command(
             model,

@@ -403,12 +403,14 @@
         "efforts": [],
         "commands": [],
         "permission": {
-          "provider": "unavailable"
+          "provider": "claude",
+          "mode": null
         },
         "todos": null
       },
       "settings_gate": {
-        "gate": "unavailable"
+        "gate": "claude_sdk",
+        "reason": "unknown"
       },
       "queue": null,
       "family": []

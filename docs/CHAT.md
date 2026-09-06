@@ -1375,7 +1375,13 @@ and nullable override clearing, including `max` support before the recorded
 An acknowledgement publishes the selected effort for subsequent work. Clearing
 the override publishes unknown effort until the provider reports a concrete
 value; it does not guess the model's default. These controls do not restart the
-session or rewrite user settings.
+session or rewrite user settings. Shared `SetModel` and `SetEffort` actions
+use this SDK write path, and `ClaudeSdkCommand::SetPermissionMode` selects a
+specific provider mode. Settings remain available while working or answering
+an ask; replay, read-only sessions and an unresolved input refuse them. The
+client validates typed SDK values before creating pending state. Observed
+model, effort and permission reach `ProviderFacts`; model and effort choice
+catalogues remain empty when the daemon has not published them.
 
 The SDK initialization reply's `Session::supported_commands()` supplies command
 names in the first synthesized session-facts row, before a prompt is sent.
@@ -1411,8 +1417,17 @@ pending or failed write keeps the previous confirmed list; failures remain in
 the feed, while successful bookkeeping adds no feed rows. Malformed blocks
 retain their ordinary tool representation. Bounded correlation and duplicate
 memory survive checkpoints and disconnects; a session reset clears them. The
-fold is reusable by the SDK layer, but currently runs in Claude PTY. Task-list
-presentation can consume these facts without parsing the transcript again.
+fold runs in both Claude drivers against the same native tool blocks. SDK
+provider-internal child lists stay in the child's feed and cannot replace the
+parent's task list. Task-list presentation consumes these facts without parsing
+the transcript again.
+
+The shared held-draft queue also accepts working SDK sessions. It waits for a
+new SDK turn result and the SDK send gate to become ready, then dispatches the
+same prompt or command-token path as an immediate draft. Replacement and
+cancellation preserve the draft, interruption leaves it held, and reconnect
+replays the session before retrying a failed delivery. A previous turn result
+cannot release a draft held later.
 
 ## Deferred decisions
 
