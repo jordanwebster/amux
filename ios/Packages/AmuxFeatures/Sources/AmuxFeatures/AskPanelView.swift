@@ -268,6 +268,7 @@ private struct PlanAsk: View {
 /// Free text the layer requires before it will take an answer.
 struct FeedbackSheet: View {
     @Environment(\.design) private var design
+    @Environment(\.photographed) private var photographed
     let title: String
     let prompt: String
     let send: @MainActor (String) -> Void
@@ -291,6 +292,9 @@ struct FeedbackSheet: View {
                         cornerRadius: design.metrics.controlRadius, style: .continuous)
                         .fill(design.sunken.color)
                 }
+                // See the comment sheet's field: a blinking caret is a clock,
+                // and a baseline cannot photograph one.
+                .tint(photographed ? .clear : design.accentColor)
                 .identified("ask.feedback", value: text)
             HStack(spacing: 10) {
                 Button { send(text) } label: {

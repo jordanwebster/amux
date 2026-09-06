@@ -472,6 +472,7 @@ private struct CommentThread: View {
 /// thing the writing is about.
 private struct CommentSheet: View {
     @Environment(\.design) private var design
+    @Environment(\.photographed) private var photographed
     let model: ReviewStore
     let range: LineRange
     let add: @MainActor (String) -> Void
@@ -512,6 +513,10 @@ private struct CommentSheet: View {
                 // mostly not prose.
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.sentences)
+                // The caret blinks on a timer of its own, which a baseline
+                // cannot photograph twice the same way. It is drawn for a
+                // person and left out of the picture.
+                .tint(photographed ? .clear : design.accentColor)
                 .identified("review.commentField", value: model.draft)
             HStack(spacing: 10) {
                 Button { add(model.draft) } label: {

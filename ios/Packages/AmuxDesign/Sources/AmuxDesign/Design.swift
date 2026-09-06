@@ -168,3 +168,23 @@ extension EnvironmentValues {
         set { self[DesignKey.self] = newValue }
     }
 }
+
+/// Whether the screen is being photographed for a baseline rather than looked
+/// at by a person.
+///
+/// A photograph of a screen has to be of the screen and not of the moment it
+/// was taken in, so anything that runs on a timer of its own draws its resting
+/// state while this is set. The text caret is the one that matters: it blinks
+/// about once a second, on nobody's schedule but its own, and a picture caught
+/// mid-blink differs from the one before it by a bar of accent that means
+/// nothing.
+private struct PhotographedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    public var photographed: Bool {
+        get { self[PhotographedKey.self] }
+        set { self[PhotographedKey.self] = newValue }
+    }
+}

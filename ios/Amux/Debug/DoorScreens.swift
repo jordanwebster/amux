@@ -94,6 +94,10 @@ struct DrivenRoot<Content: View>: View {
             }
         }
         .environment(\.design, host.design)
+        // A screen the door is showing is being photographed, not used: what
+        // blinks on a timer of its own draws its resting state so two runs
+        // take the same picture.
+        .environment(\.photographed, host.screen != nil)
         // The appearance is not set here. It is the window's interface style
         // and nothing else, because the design's colours are dynamic system
         // colours and the glass is a system material, and both of those read

@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **A screen being photographed stops blinking.** The comment
+sheet's baseline came back with a bar of accent in it about half the time: the
+text caret blinks about once a second on a schedule of its own, and the
+capture, which photographs the simulator's display until a run of photographs
+agree, can never outlast a clock. A screen the door is showing now knows it is
+being photographed rather than used, and anything that runs on a timer of its
+own draws its resting state while it is — today that is the caret in the
+comment field and in the sheet the layer asks for free text in, and nothing
+else. Somebody writing in the app still sees a caret.
+
 2026-09-06 — **The changes a turn made read as one scroll.** The review page
 is the whole patch top to bottom rather than a list of files you drill into:
 twelve short changes should not cost twelve taps to read. Files are

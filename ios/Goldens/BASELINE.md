@@ -50,6 +50,13 @@ draws rather than the app:
   whole shell. What the tab bar looks like is proven by the shell's own journey,
   not by a still.
 
+A screen the door is showing knows it is being photographed rather than used,
+and anything that runs on a timer of its own draws its resting state while it
+is. Today that is the text caret and nothing else; a capture of a focused field
+is otherwise a coin toss over a bar of accent. Whatever is added next that
+blinks or sweeps belongs under the same rule, and any capture it changes is
+named in that screen's entry.
+
 ## home
 
 The Agents home on a busy morning: ten agents across three machines, one of
@@ -352,6 +359,12 @@ The same review with two lines held and a remark half written.
   one part of this capture that was not the same twice.
 - **The keyboard is in the capture.** It is the app's own window, so it is
   photographed with everything else. The reference shows it too.
+- **No text caret.** A caret blinks about once a second on a schedule of its
+  own, so no two photographs of a focused field agree: this capture came back
+  with a bar of accent in it about half the time and without it the other half.
+  A screen the door is showing is being photographed rather than used, and
+  anything that runs on a timer of its own draws its resting state while it is.
+  Somebody writing a comment in the app still sees the caret.
 
 ## codex-approval
 
