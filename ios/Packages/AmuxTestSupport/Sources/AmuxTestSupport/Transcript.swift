@@ -119,6 +119,86 @@ public enum Transcript {
              outcome: .object(["outcome": .string("failed"), "message": .string(message)]))
     }
 
+    /// A file written whole rather than edited.
+    public static func wrote(_ id: Int, seq: Int, path: String, lines: Int) -> FeedEntry {
+        tool(id, seq, name: "Write",
+             invocation: .object(["tool": .string("write"), "file_path": .string(path)]),
+             outcome: .object([
+                "outcome": .string("success"),
+                "facts": .object(["facts": .string("output"),
+                                  "head": .string("\(lines) lines"),
+                                  "truncated": .bool(false)]),
+             ]))
+    }
+
+    /// A subagent this one started.
+    public static func subagent(
+        _ id: Int, seq: Int, description: String, kind: String
+    ) -> FeedEntry {
+        tool(id, seq, name: "Task",
+             invocation: .object(["tool": .string("task"),
+                                  "description": .string(description),
+                                  "subagent_type": .string(kind),
+                                  "background": .bool(false)]),
+             outcome: .object(["outcome": .string("pending")]))
+    }
+
+    /// A message this agent sent to another one.
+    public static func toAgent(_ id: Int, seq: Int, to: String, text: String) -> FeedEntry {
+        tool(id, seq, name: "mcp__amux__send",
+             invocation: .object(["tool": .string("amux_send"), "to": .string(to),
+                                  "text": .string(text)]),
+             outcome: .object(["outcome": .string("success"),
+                               "facts": .object(["facts": .string("none")])]))
+    }
+
+    /// The provider itself failed, which is not the agent failing.
+    public static func providerError(_ id: Int, seq: Int, message: String) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("api_error"),
+            "error": .string("server_error"),
+            "text": .string(message),
+        ]))
+    }
+
+    /// History being compacted away, with what it cost.
+    public static func compaction(_ id: Int, seq: Int, before: Int, after: Int) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("compaction"),
+            "trigger": .string("auto"),
+            "pre_tokens": .int(before),
+            "post_tokens": .int(after),
+        ]))
+    }
+
+    /// A subagent that finished on its own and said so.
+    public static func subagentFinished(_ id: Int, seq: Int, text: String) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("task_notification"),
+            "text": .string(text),
+        ]))
+    }
+
+    /// A command still running: the tool has no result yet.
+    public static func running(_ id: Int, seq: Int, command: String) -> FeedEntry {
+        tool(id, seq, name: "Bash",
+             invocation: .object(["tool": .string("bash"), "command": .string(command),
+                                  "description": .null]),
+             outcome: .object(["outcome": .string("pending")]))
+    }
+
+    /// Another agent's session ending, as this agent's transcript recorded it.
+    public static func exited(_ id: Int, seq: Int, agent: String) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("agent_message"),
+            "id": .string("envelope-\(id)"),
+            "context": .null,
+            "from": .string(agent),
+            "kind": .string("exited"),
+            "text": .string(""),
+        ]))
+    }
+
     /// A message another amux agent wrote into this one's transcript.
     public static func fromAgent(_ id: Int, seq: Int, from: String, text: String) -> FeedEntry {
         row(id, seq, .object([
@@ -212,22 +292,94 @@ public enum Transcript {
             """),
     ]
 
-    /// The same conversation with the turn still open.
+    /// The same conversation with the turn still open: the person has asked
+    /// for the suite and the command is still running.
     public static var live: [FeedEntry] {
-        Array(pairingCopy.dropLast()) + [message(7, seq: 8, text: "Running the spec suite now", final: false)]
-    }
-
-    /// Every row kind at once, including the ones this build cannot read.
-    public static var everyKind: [FeedEntry] {
         pairingCopy + [
-            denied(8, seq: 9, command: "rm -rf target"),
-            failed(9, seq: 10, command: "cargo test --workspace", message: "3 tests failed"),
-            fromAgent(10, seq: 11, from: "spec-fixer/studio", text: "The three spec tests are updated."),
-            interrupted(11, seq: 12),
-            unrecognized(12, seq: 13, label: "checkpoint"),
-            turnEnd(13, seq: 14, milliseconds: 184_000),
+            prompt(8, seq: 9, text: "Good. Now run the whole suite and tell me what breaks."),
+            running(9, seq: 10, command: "cargo test --workspace"),
         ]
     }
+
+    /// Everything an agent can write, including the shapes this build cannot
+    /// read and the voices that are not the agent's own.
+    ///
+    /// It opens on a compaction rule because a long conversation does, and it
+    /// ends with the other agent's session closing: between those two the
+    /// transcript has to carry a second agent's voice in both directions, a
+    /// subagent, a refusal, a failure, an interruption, a provider error and a
+    /// row shape nobody has taught it yet, without any of them reading as the
+    /// agent's own prose. Ordered so that a single screenful holds every one of
+    /// them; the markdown the agent writes is proved by the same screen's prose.
+    public static var everyKind: [FeedEntry] {
+        [
+            compaction(0, seq: 1, before: 148_000, after: 22_000),
+            prompt(1, seq: 2, text: """
+                Check with relay-cleanup before you collapse the errors \u{2014} it's in \
+                that file too.
+                """),
+            read(2, seq: 3, path: "crates/amux-ui/src/pairing.rs"),
+            search(3, seq: 4, query: "\"INVALID_PIN\"", grouped: true),
+            toAgent(4, seq: 5, to: "relay-cleanup/mini", text: """
+                I am about to collapse the three pairing error arms onto one string in \
+                amux-ui. Are you holding anything that matches on the error name?
+                """),
+            read(5, seq: 6, path: "crates/amux-ui/tests/spec/pairing.rs"),
+            message(6, seq: 7, text: markdown),
+            fromAgent(7, seq: 8, from: "relay-cleanup/mini", text: """
+                Nothing here matches on it \u{2014} I only construct them. Go ahead, and I \
+                will rebase onto whatever you land.
+                """),
+            edit(8, seq: 9, path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14, lines: [
+                "  let message = match status {",
+                "-   Code::NotFound => \"no such host\",",
+                "+   _ => \"Pairing failed. Check the code\",",
+                "  };",
+            ]),
+            ran(9, seq: 10, command: "cargo check -p amux-ui", output: """
+                Checking amux-ui v0.1.0
+                Finished in 3.8s
+                warning: unused import
+                """),
+            wrote(10, seq: 11, path: "crates/amux-ui/src/pairing_copy.rs", lines: 38),
+            denied(11, seq: 12, command: "rm -rf target"),
+            failed(12, seq: 13, command: "cargo test --workspace", message: "3 tests failed"),
+            interrupted(13, seq: 14),
+            providerError(14, seq: 15, message: "The provider was overloaded; it retried."),
+            subagent(15, seq: 16, description: "spec-suite", kind: "general-purpose"),
+            subagentFinished(16, seq: 17, text: "spec-suite updated three assertions"),
+            unrecognized(17, seq: 18, label: "checkpoint"),
+            fromAgent(18, seq: 19, from: "relay-cleanup/mini", text: """
+                Moved it. The shared crate no longer exports the three constants, so \
+                nothing downstream can name them.
+                """),
+            exited(19, seq: 20, agent: "relay-cleanup/mini"),
+            turnEnd(20, seq: 21, milliseconds: 184_000),
+        ]
+    }
+
+    /// One agent message written in every markdown construct the transcript
+    /// promises to render, kept short because a screen is the only place that
+    /// promise can be checked and the rest of the screen has rows to prove too.
+    private static let markdown = """
+        Asked **relay-cleanup** and started reading the tests. Nothing in `amux-ui` \
+        matches on the name itself.
+
+        ## What the arms become
+
+        | Status | Copy |
+        | --- | --- |
+        | NotFound | Pairing failed |
+
+        1. Collapse the match to one arm
+        2. Fix the [spec tests](https://example.com/spec) that assert on it
+
+        ```rust
+        _ => "Pairing failed. Check the code and try again.",
+        ```
+
+        > The protocol refuses to tell them apart, and so must we.
+        """
 
     /// The changes a finished turn offers to show.
     public static let changes = DiffDocument(

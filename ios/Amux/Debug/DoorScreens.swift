@@ -16,7 +16,7 @@ enum DoorScreens {
         case .probe: true
         case .home, .homeQuiet, .firstRun, .firstRunPaid: true
         case .drawer: true
-        case .run, .reviewCta: true
+        case .run, .runLive, .voices, .reviewCta: true
         default: false
         }
     }
@@ -44,10 +44,12 @@ enum DoorScreens {
             ) {
                 Ground()
             }
-        // The same screen twice. Whether a turn has left anything to review is
-        // a fact the conversation reads off its own store, not a screen of its
-        // own: `review-cta` is `run` with a diff in it.
-        case .run, .reviewCta:
+        // One screen, four names. Whether a turn is still running, who else
+        // has spoken in it, and whether it left anything to review are all
+        // facts the conversation reads off its own store rather than screens of
+        // their own: `run-live`, `voices` and `review-cta` are `run` with a
+        // different feed and session in it.
+        case .run, .runLive, .voices, .reviewCta:
             Conversation(
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(

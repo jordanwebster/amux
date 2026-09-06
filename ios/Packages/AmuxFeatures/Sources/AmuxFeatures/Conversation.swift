@@ -98,12 +98,16 @@ public struct Conversation: View {
     /// frosting the top edge means anything.
     private var transcript: some View {
         ScrollView {
-            // The rows themselves are the next thing to land. Until they do
-            // this is deliberately empty rather than filled with a stand-in:
-            // a capture of a stand-in becomes a baseline of a stand-in.
-            Color.clear
-                .frame(height: 1)
-                .padding(.bottom, 120)
+            VStack(alignment: .leading, spacing: 0) {
+                if case .claudeSdk(let supported) = model.facts, !supported {
+                    UnsupportedLayer(layer: "this agent's transcript")
+                        .padding(.top, design.metrics.feedGap)
+                } else {
+                    TranscriptFeed(rows: model.entries.transcriptRows())
+                }
+            }
+            .padding(.bottom, 120)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.hidden)
         // The platform's effect, not a hand-drawn plate. Masking a glass layer

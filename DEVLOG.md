@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **The conversation transcript renders every row kind.**
+A shared projection turns each layer's own feed rows into what the transcript
+draws: prompts, agent prose, folded runs of reads and searches with their counts,
+edits as a path and its arithmetic, commands with their output kept to a head and
+the rest counted, refusals, failures, interruptions, provider errors, subagents,
+messages between agents, session ends, and turn-end and compaction rules. The
+three layers keep their own vocabularies — a Claude SDK row is never re-read as a
+terminal one — and a row shape this build does not know is kept and shown as
+itself rather than dropped.
+
+Everything an agent does hangs off one rail; what a person reads (their prompt,
+the agent's prose, the rules that close a turn) breaks it and takes the full
+width. Only a refusal, a failure, an interruption and a provider error carry the
+accent, and only on the glyph.
+
+Agent prose is markdown, parsed away from the main thread into finished blocks:
+headings, lists, tables, quotes, links and fenced code that keeps its language
+and scrolls sideways rather than wrapping. Links are underlined rather than
+coloured, because the one accent means "something is waiting for you".
+
+Baselines for run, run-live, voices and review-cta are taken with the transcript
+behind the chrome, and ios/Goldens/BASELINE.md records how each departs from the
+design reference.
+
 2026-09-06 — **Restore unpaired cloud host discovery on the phone.**
 The embedded phone runtime now subscribes to its profile owner's host inventory,
 so a signed-in device can see its account's online daemons before pairing. Moving

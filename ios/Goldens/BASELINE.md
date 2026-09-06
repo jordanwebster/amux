@@ -107,14 +107,19 @@ A conversation's chrome: no navigation bar, a floating pill naming the agent
 with the machine and directory it runs in under it, the drawer control on the
 pill's leading edge and the overflow beside it.
 
-- **The transcript is not in the picture.** The reference shows the chrome over
-  a conversation; the rows are the next thing to be built, and photographing
-  the chrome over a stand-in transcript would put a stand-in into a baseline.
-  So this capture is the chrome, the ground under it and nothing pretending to
-  be what an agent said. It is retaken with the transcript behind it, and the
-  chrome itself does not change when it is.
+- **The conversation is a different one.** The reference's agent is collapsing
+  pairing errors and so is this one, but the rows are not the same rows: this
+  transcript is the fixture every conversation screen shares, so what one
+  screen proves about a row kind holds for all of them. The shapes match the
+  reference — a prompt on a surface, a folded run of looks, an edit as a path
+  and its arithmetic, a command with its output under it, prose at full width.
+- **A thinking line the reference does not draw.** The layer reports how long
+  the agent spent before it spoke, so the transcript says so. The reference
+  omits it; leaving out a row the core sends would mean the screen is not
+  showing what arrived.
 - **No composer.** The reference draws the message box along the bottom edge.
-  It is built two milestones later and the same argument applies to it.
+  It is built two milestones later, and until then the feed runs to the bottom
+  of the display.
 - **The drawer control sits inside the pill.** The reference draws it there
   too; it is worth saying because it is the only way out of a conversation.
   There is no back chevron, by design, and the tab bar underneath is the other
@@ -133,7 +138,54 @@ the diff's green and red, that opens the changes.
 - **The chip is a little rounder and a little wider than the drawing.** It is
   a control, so it keeps the 44 pt target the guidelines ask for, which at this
   type size is taller than the text needs.
-- The transcript and composer are absent here for the same reason as on `run`.
+- The composer is absent here for the same reason as on `run`.
+
+## run-live
+
+The same conversation with the turn still open: the person has asked for the
+whole suite and the command has not come back.
+
+- **The live row is a command, not a sentence.** The reference ends on a `Ran`
+  row whose trailing edge reads `running`, and so does this: a tool with no
+  result yet is what "still working" looks like in the transcript, and the app
+  says it in the layer's own words rather than animating something.
+- **No composer, so no working strip.** The reference draws the box along the
+  bottom with the elapsed time and "Queue a message" in it. That box is two
+  milestones later; what is above it is the whole of this capture.
+- The thinking line and the differing conversation carry over from `run`.
+
+## voices
+
+Everything an agent can write, on one screen: history compacted away, a folded
+run of looks, a message sent to another agent and two that came back, prose in
+every markdown construct, a change, a command with its output, and the refusals
+and failures that a good morning never shows.
+
+- **The markdown is the point of the prose.** The reference's agent writes one
+  plain paragraph. This one writes a heading, a table, a numbered list with a
+  link in it, fenced code and a quote, because the transcript promises to render
+  all of those and a still is the only place that promise can be checked. The
+  code block runs off the trailing edge on purpose: code that wraps stops being
+  code, so it scrolls sideways instead.
+- **A link is underlined, not coloured.** Every colour in this design is either
+  a step on the neutral ramp or the one accent, and the accent means "something
+  is waiting for you". A link is not that, and the system's blue is not a colour
+  this app owns.
+- **Agent-to-agent rows start collapsed.** The reference draws two of them open
+  and two closed. Which ones are open is a reader's choice rather than a state
+  the app should decide, so all of them arrive closed to one line and open where
+  they are tapped; the chevron says which way they will go.
+- **The screen is taller than the frame.** Below what this capture holds are the
+  written file, the refusal, the failure, the interruption, the provider error,
+  the subagent's start and finish, the row this build cannot read, the last
+  message back and the line where the other agent's session ends. They are
+  proved by the projection suite, which asserts what each of those rows becomes,
+  and by the conversation journey, which streams every one of them from a real
+  host and scrolls to it.
+- **The accent stops at the glyph.** A denied, failed, interrupted or
+  provider-error row is marked on its mark and nowhere else. Colouring the words
+  as well would make a page with three failures on it mostly coloured, which
+  reads the same as a page with no colour at all.
 
 ## ax-home
 
