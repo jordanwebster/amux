@@ -76,6 +76,12 @@ and verify it has been reaped. No provider deadline or host security setting
 changes. The workspace test recipe now honors explicit Cargo target selection
 while retaining full coverage by default and workspace feature unification;
 `docs/TESTING.md` explains both the commands and the test boundaries.
+2026-09-06 — **Keep profile inventory coverage on Windows.** The presence
+spec's local inventory comparison still called the Unix-only socket helper.
+It now uses the in-process profile client on Windows and retains socket coverage
+on Unix. Imports belonging to Unix-only profile specs follow the same guards.
+The focused presence spec, formatting and workspace lint pass.
+
 2026-09-06 — **Keep the full-output shutdown test focused on shutdown.**
 The real-subprocess SDK test could fail during its one-second initialization
 budget before it filled the output queue or exercised close. Allow five seconds

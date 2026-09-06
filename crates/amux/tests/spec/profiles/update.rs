@@ -3,7 +3,9 @@
 use amux::installation::{AgentResumeStatus, OperationId, SuspendReason};
 #[cfg(unix)]
 use amux::installation::{FrontDoor, FrontDoorClient, rpc};
-use amux::testnet::{InstallationHandle, TestNet};
+#[cfg(unix)]
+use amux::testnet::InstallationHandle;
+use amux::testnet::TestNet;
 
 async fn devices() -> TestNet {
     TestNet::builder()
