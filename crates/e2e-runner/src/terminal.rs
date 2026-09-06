@@ -130,6 +130,27 @@ fn render_terminal(bytes: &[u8]) -> (String, Vec<usize>) {
     )
 }
 
+/// Consume a visible prefix and its corresponding raw bytes. Unexpected output
+/// can contain multibyte characters where an ASCII expectation ends; keep that
+/// character whole so the caller can report a mismatch without panicking.
+fn consume_rendered_prefix(bytes: &mut Vec<u8>, len: usize) -> Option<String> {
+    if len == 0 {
+        return Some(String::new());
+    }
+    let (rendered, rendered_map) = render_terminal(bytes);
+    if rendered.len() < len {
+        return None;
+    }
+    let mut end = len;
+    while !rendered.is_char_boundary(end) {
+        end += 1;
+    }
+    let actual = rendered[..end].to_string();
+    let consumed = rendered_map.get(end - 1).copied().unwrap_or(0);
+    bytes.drain(..consumed);
+    Some(actual)
+}
+
 /// Error type for terminal operations
 #[derive(Debug)]
 pub struct TerminalError {
@@ -303,18 +324,11 @@ impl TestTerminal {
         let start = std::time::Instant::now();
 
         loop {
-            let (rendered, rendered_map) = render_terminal(&self.output_buffer);
-
-            if rendered.len() >= expected.len() {
-                let actual = rendered[..expected.len()].to_string();
-                let consumed = rendered_map
-                    .get(expected.len().saturating_sub(1))
-                    .copied()
-                    .unwrap_or(0);
-                self.output_buffer.drain(..consumed);
+            if let Some(actual) = consume_rendered_prefix(&mut self.output_buffer, expected.len()) {
                 return Ok(actual);
             }
 
+            let (rendered, _) = render_terminal(&self.output_buffer);
             let remaining = timeout.saturating_sub(start.elapsed());
             if remaining.is_zero() {
                 return Err(TerminalError {
@@ -389,7 +403,35 @@ impl TestTerminal {
 
 #[cfg(test)]
 mod tests {
-    use super::render_terminal;
+    use super::{consume_rendered_prefix, render_terminal};
+
+    #[test]
+    fn rendered_prefix_keeps_unexpected_unicode_and_remaining_output_whole() {
+        let mut bytes = "\x1b[31m┌ amux ───\x1b[0m\r\nnext\r\n".as_bytes().to_vec();
+        assert_eq!(consume_rendered_prefix(&mut bytes, 1).as_deref(), Some("┌"));
+        assert_eq!(
+            consume_rendered_prefix(&mut bytes, " amux ───\n".len()).as_deref(),
+            Some(" amux ───\n")
+        );
+        assert_eq!(
+            consume_rendered_prefix(&mut bytes, 5).as_deref(),
+            Some("next\n")
+        );
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn rendered_prefix_waits_for_enough_output_without_consuming_it() {
+        let mut bytes = b"hello\r\n".to_vec();
+        assert_eq!(consume_rendered_prefix(&mut bytes, 7), None);
+        assert_eq!(consume_rendered_prefix(&mut bytes, 0).as_deref(), Some(""));
+        assert_eq!(bytes, b"hello\r\n");
+        assert_eq!(
+            consume_rendered_prefix(&mut bytes, 6).as_deref(),
+            Some("hello\n")
+        );
+        assert!(bytes.is_empty());
+    }
 
     #[test]
     fn render_terminal_collapses_crlf() {

@@ -11,6 +11,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Keep remote test-agent attachments on their terminal.**
+The remote-chat default had sent the development test agent into a UI with no
+chat layer, breaking direct and cloud-relayed terminal scenarios. CLI attach
+now keeps that agent on its terminal on every host, while remote Claude and
+Codex agents retain their chat default. The E2E runner also consumes complete
+Unicode characters when reporting an unexpected output prefix, so a rendered
+border produces a mismatch instead of aborting the suite with a string-slice
+panic. All 22 E2E scenarios, 13 entry-policy checks, both Unicode/buffer
+regression checks, formatting and workspace lint pass locally.
+
 2026-09-06 — **Merge main into the stream-JSON chat branch.** Main brought the
 profiles work (one installation, many accounts, a switcher in the fleet), the
 settled look for every chat surface, and the in-process provider test fixtures.

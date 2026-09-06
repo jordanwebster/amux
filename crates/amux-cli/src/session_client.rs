@@ -204,13 +204,17 @@ fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
 
 /// The command line's half of the one entry policy the fleet keys use:
 /// a session with no terminal behind it has nothing to pass through, and
-/// an agent on another machine opens the chat rather than piping a
-/// terminal across the network. Everything else raw attaches, except a
+/// an agent with a chat layer on another machine opens that chat.
+/// Everything else raw attaches, except a
 /// Codex agent: its own structured screen is its primary surface, and
 /// the command line — unlike the fleet, which offers Ctrl+Enter and `o`
 /// beside Enter — has only one key to spend, so it spends it on the
 /// richer surface. `docs/CHAT.md` records that difference.
 fn attach_opens_chat(kind: &amux::AgentKind, local: bool) -> bool {
+    // The development test agent has no chat layer, even on a remote host.
+    if matches!(kind, amux::AgentKind::TestAgent) {
+        return false;
+    }
     !local || matches!(kind, amux::AgentKind::Codex) || !kind.exposes(amux::Protocol::TerminalV1)
 }
 
@@ -1091,21 +1095,30 @@ mod attach {
     /// chat travels over the connection the daemon already has, so a
     /// terminal-capable agent on another machine still opens the chat.
     #[test]
-    fn entry_policy_attach_opens_chat_for_every_agent_on_another_machine() {
+    fn entry_policy_attach_opens_chat_for_providers_on_another_machine() {
         for kind in [
             amux::AgentKind::Claude {
                 driver: amux::ClaudeDriver::Pty,
             },
-            amux::AgentKind::TestAgent,
+            amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Sdk,
+            },
+            amux::AgentKind::Codex,
         ] {
-            assert!(
-                !super::attach_opens_chat(&kind, true),
-                "{kind:?} raw attaches on this machine"
-            );
             assert!(
                 super::attach_opens_chat(&kind, false),
                 "{kind:?} opens the chat from another machine"
             );
+        }
+    }
+
+    #[test]
+    fn entry_policy_test_agent_uses_its_terminal_on_every_host() {
+        for local in [true, false] {
+            assert!(!super::attach_opens_chat(
+                &amux::AgentKind::TestAgent,
+                local
+            ));
         }
     }
 
