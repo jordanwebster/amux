@@ -54,6 +54,11 @@ enum Control {
     Snapshot(std::sync::mpsc::SyncSender<Option<String>>),
     #[cfg(feature = "debug-tools")]
     ReportSnapshot(std::sync::mpsc::SyncSender<Option<String>>),
+    #[cfg(feature = "debug-tools")]
+    PairQr {
+        payload: String,
+        reply: std::sync::mpsc::SyncSender<Option<String>>,
+    },
     FrameInterval(Duration),
     Dispatch {
         op: OpId,
@@ -312,6 +317,46 @@ pub unsafe extern "C" fn amux_mobile_report_snapshot(handle: *mut Handle) -> *mu
     unsafe { snapshot(handle, Control::ReportSnapshot) }
 }
 
+/// Pairs this device with the host a QR pairing payload names, over the relay
+/// this runtime is already connected to. Returns owned JSON `{"host":"…"}` for
+/// a peer now trusted, or `{"error":"…"}`; free it with amux_mobile_free. NULL
+/// means the handle or the worker was unavailable, or the handshake did not
+/// finish inside a minute.
+///
+/// Debug-tools builds only, and a harness affordance rather than the product
+/// path: a person pairs a phone by reading a code or following a link, and the
+/// screens that do that carry their own confirmation step. A driver proving
+/// what a paired phone shows needs the trust without the screens, and needs it
+/// before those screens exist.
+///
+/// # Safety
+/// handle must be live and payload readable and NUL-terminated for this call.
+/// Neither may race stop. Never call from an event callback.
+#[cfg(feature = "debug-tools")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_pair_qr(
+    handle: *mut Handle,
+    payload: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { handle.as_ref() }?;
+        let payload = unsafe { read_string(payload) }?.to_owned();
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        handle
+            .commands
+            .send(Control::PairQr {
+                payload,
+                reply: send,
+            })
+            .ok()?;
+        let json = receive.recv_timeout(Duration::from_secs(60)).ok()??;
+        Some(CString::new(json).ok()?.into_raw())
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
 /// Folds a report's `msgs.jsonl` into the model it recorded and projects that
 /// model as the event batch a running runtime would have delivered. Returns
 /// owned JSON `{"events":[…]}`, or `{"error":"…"}` when the file cannot be
@@ -479,6 +524,23 @@ async fn run(
                 None | Some(Control::Stop) => break,
                 Some(Control::Snapshot(reply)) => {
                     let _ = reply.send(serde_json::to_string(runtime.ui.model()).ok());
+                }
+                #[cfg(feature = "debug-tools")]
+                Some(Control::PairQr { payload, reply }) => {
+                    let admin = runtime.embedded.admin();
+                    tokio::spawn(async move {
+                        let result = match amux::parse_qr_pairing_payload(&payload) {
+                            Ok(payload) => admin
+                                .pair_qr_cloud_peer(payload.host_id, payload.secret)
+                                .await
+                                .map(|peer| serde_json::json!({"host": peer.name}))
+                                .unwrap_or_else(|error| {
+                                    serde_json::json!({"error": error.to_string()})
+                                }),
+                            Err(error) => serde_json::json!({"error": error.to_string()}),
+                        };
+                        let _ = reply.send(serde_json::to_string(&result).ok());
+                    });
                 }
                 #[cfg(feature = "debug-tools")]
                 Some(Control::ReportSnapshot(reply)) => {

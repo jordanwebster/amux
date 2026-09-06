@@ -1087,3 +1087,104 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
         net.shutdown().await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_pairing_over_the_relay_admits_the_hosts_agents_to_the_fleet() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let host = net.daemon("workstation");
+    let (_, token) = net.user_credentials("owner");
+    let admin = host.admin_client().await;
+    admin
+        .create_agent(amux::CreateAgentRequest {
+            agent_id: uuid::Uuid::from_u128(301),
+            host_id: None,
+            name: Some("fix-login".into()),
+            agent_type: amux::AgentType::TestAgent {
+                command: "cat".into(),
+            },
+            working_dir: std::env::temp_dir(),
+            terminal_size: None,
+            args: vec![],
+            parent: None,
+            initial_prompt: None,
+        })
+        .await
+        .unwrap();
+
+    let root = tempfile::tempdir().unwrap();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &config(
+                root.path(),
+                format!("http://{}", net.relay_addr()),
+                json!({ "Static": token }),
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    let connected = until(&mut receive, running.handle, &token, |e| {
+        e["Connection"]["state"] == "connected"
+    })
+    .await;
+    let empty = until(&mut receive, running.handle, &token, |e| {
+        e["Fleet"]["reconciled"] == true
+    })
+    .await;
+    assert_eq!(
+        empty["Fleet"]["agents"].as_array().unwrap().len(),
+        0,
+        "an unpaired phone was given the host's agents: {empty}"
+    );
+
+    // What the phone reads off a screen the host is showing.
+    let mut start_pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
+    start_pairing.cloud_url = format!("http://{}", net.relay_addr());
+    let amux::PairingSecret::QrSecret(secret) = &start_pairing.secret else {
+        panic!("QR pairing returned a PIN")
+    };
+    let payload = CString::new(
+        amux::encode_qr_pairing_payload(&start_pairing, secret).unwrap(),
+    )
+    .unwrap();
+    let paired = owned_json(unsafe { amux_mobile_pair_qr(running.handle, payload.as_ptr()) });
+    assert_eq!(
+        paired["host"], "workstation",
+        "pairing did not name the host it trusted: {paired}"
+    );
+
+    let fleet = until(&mut receive, running.handle, &token, |e| {
+        e["Fleet"]["agents"]
+            .as_array()
+            .is_some_and(|agents| agents.len() == 1)
+    })
+    .await;
+    assert_eq!(fleet["Fleet"]["agents"][0]["agent"]["name"], "fix-login");
+    println!("connected: {connected}");
+    println!("paired: {paired}, fleet: {fleet}");
+
+    // A payload nothing on the other side is offering is refused, not obeyed.
+    let nonsense = CString::new("not a pairing payload").unwrap();
+    let refused = owned_json(unsafe { amux_mobile_pair_qr(running.handle, nonsense.as_ptr()) });
+    assert!(
+        refused["error"].is_string(),
+        "an unreadable payload was accepted: {refused}"
+    );
+
+    drop(running);
+    drop(admin);
+    net.shutdown().await;
+}

@@ -9668,3 +9668,17 @@ daemon stopped. Bare report names still use the selected profile's reports
 directory. CLI regressions compare the replayed frame with the saved frame,
 cover absent configuration and stopped installations, and verify that a
 listening installation socket receives no connection during explicit replay.
+
+2026-09-06 — **A phone can be paired for a test, and a script can play
+anything.** The mobile bridge built with the debug tools gains
+`amux_mobile_pair_qr`, which takes the payload a host's QR code carries and
+trusts that host over the relay the runtime is already talking to. Until then a
+phone could see a machine on the other side but never its agents: an unpaired
+device is discovered and disowned, so its fleet confirms empty and there is no
+conversation to stream. Pairing on the phone is a screen with its own
+confirmation step and does not exist yet; a driver proving what a paired phone
+shows needs the trust before the screen. Release builds contain neither the
+call nor the plaintext relay beside it. The test relay's control channel gains
+`AgentPlay`, which plays any sequence of provider steps at a scripted agent
+rather than the five kinds the named verbs cover, so a claim about rendering
+every kind of row there is fails when the vocabulary grows.

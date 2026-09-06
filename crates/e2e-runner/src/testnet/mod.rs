@@ -141,6 +141,17 @@ pub enum Control {
         agent: String,
         rows: Vec<serde_json::Value>,
     },
+    /// Plays a sequence of provider steps at an agent, whatever they are.
+    ///
+    /// The verbs beside this one each name one thing a script can do, which is
+    /// what a caller reaching for that thing wants to say. A driver proving
+    /// that a client renders every kind of step there is wants the opposite:
+    /// the whole vocabulary, so that adding a step kind to the script makes
+    /// that driver's claim incomplete rather than silently narrower.
+    AgentPlay {
+        agent: String,
+        steps: Vec<Step>,
+    },
     AgentRaiseAsk {
         agent: String,
         ask: ScriptAsk,
@@ -522,6 +533,10 @@ async fn apply(
                 .provider
                 .play(vec![Step::Rows { jsonl: rows }])
                 .await?;
+        }
+        Control::AgentPlay { agent, steps } => {
+            ensure!(!steps.is_empty(), "a play must carry at least one step");
+            scripted(&agent)?.provider.play(steps).await?;
         }
         Control::AgentRaiseAsk { agent, ask } => {
             scripted(&agent)?
