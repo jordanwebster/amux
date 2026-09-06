@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Golden captures are photographs of the simulator's display.**
+The app used to draw its own window into an image for every baseline. That is
+where glass resolved, and it did not resolve the same way twice: the lensing
+along a card's top edge appeared on some passes and not others, so a screen with
+glass on it failed about one run in three whichever pass its baseline came from.
+The picture is now taken from the Mac with `simctl io screenshot`, so the render
+server that draws the material is the thing that produces the capture.
+
+Waiting had to move with it. The app can only watch its own view tree, and a
+glass surface that has just been built keeps animating in the render server
+after the tree has stopped changing, so the display is photographed repeatedly
+until two photographs are the same file. Every capture is checked against the
+size the simulator says its built-in display is, so a picture of the wrong
+device fails loudly instead of being compared.
+
+Every baseline was re-established once. The frame now includes the system status
+bar, pinned to 9:41 with a full battery, and the home indicator, both of which
+the design references draw; ios/Goldens/BASELINE.md says why. The pixel
+tolerance is unchanged, the deliberate perturbation run still fails on purpose,
+and the built manifest passed ten consecutive runs with no baseline changed
+between them. The app's own frame capture stays, because a report from a real
+phone has to freeze the screen from inside the process.
+
 2026-09-06 — **The conversation transcript renders every row kind.**
 A shared projection turns each layer's own feed rows into what the transcript
 draws: prompts, agent prose, folded runs of reads and searches with their counts,

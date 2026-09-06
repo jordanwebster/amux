@@ -418,7 +418,13 @@ pub fn run(
                     .join(format!("{}.{appearance}.png", screen.id));
                 requests.push(json!({"kind": "appearance", "appearance": appearance.name()}));
                 requests.push(json!({"kind": "settle"}));
-                requests.push(json!({"kind": "capture", "path": taken.to_string_lossy()}));
+                // Photographed off the simulator's display rather than drawn
+                // by the app into an image: glass is resolved by the render
+                // server, and only the render server's own output is stable
+                // from one run to the next. The app's own frame capture is
+                // still there for a report, which has to freeze what the
+                // person was looking at from inside the process.
+                requests.push(json!({"kind": "display", "path": taken.to_string_lossy()}));
                 about.extend([screen.id.clone(), screen.id.clone(), screen.id.clone()]);
                 planned.push((screen.id.clone(), *appearance, taken));
             }

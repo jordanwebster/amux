@@ -27,6 +27,12 @@ pub enum DoorError {
     },
     /// The app answered something that is not a door reply.
     Unreadable(String),
+    /// The simulator's display photographed at a size the device does not
+    /// have. A capture of the wrong size is a capture of the wrong device.
+    WrongSize {
+        got: (u32, u32),
+        device: (u32, u32),
+    },
     Io(String),
     Tool {
         command: String,
@@ -43,6 +49,11 @@ impl std::fmt::Display for DoorError {
                 write!(out, "the app did not open its door within {seconds}s")
             }
             Self::Unreadable(line) => write!(out, "the door answered something unreadable: {line}"),
+            Self::WrongSize { got, device } => write!(
+                out,
+                "the display photographed {}x{} but the simulator's screen is {}x{}",
+                got.0, got.1, device.0, device.1
+            ),
             Self::Io(message) => write!(out, "{message}"),
             Self::Tool { command, output } => write!(out, "{command} failed: {output}"),
         }
@@ -151,7 +162,7 @@ pub fn door(
         &ready.to_string_lossy(),
     ])?;
 
-    let outcome = converse(&container, &ready, requests, timeout);
+    let outcome = converse(&udid, &container, &ready, requests, timeout);
     simctl(&["terminate", &udid, bundle_id]).ok();
     outcome
 }
@@ -162,6 +173,7 @@ struct Ready {
 }
 
 fn converse(
+    udid: &str,
     container: &Path,
     ready: &Path,
     requests: Vec<Value>,
@@ -183,6 +195,19 @@ fn converse(
 
     let mut replies = Vec::with_capacity(requests.len());
     for (index, request) in requests.into_iter().enumerate() {
+        // A photograph of the display is taken from this side rather than
+        // asked of the app. See `display`.
+        if request.get("kind").and_then(Value::as_str) == Some("display") {
+            let destination = PathBuf::from(
+                request
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| DoorError::Unreadable("display needs a path".into()))?,
+            );
+            display(udid, &destination)?;
+            replies.push(json!({"kind": "ack", "path": destination.to_string_lossy()}));
+            continue;
+        }
         let wanted = traffic(&request);
         let sent = match &wanted {
             Some((Traffic::CaptureOut, _)) => {
@@ -218,6 +243,118 @@ fn converse(
         replies.push(reply);
     }
     Ok(replies)
+}
+
+/// Photographs the simulator's display, as the device itself draws it, once it
+/// has stopped changing.
+///
+/// The app cannot take this picture. Drawing a view hierarchy into an image
+/// asks every system material on it to resolve against a renderer that is not
+/// the one on screen, and glass resolved that way is not stable: the lensing
+/// along a card's top edge appeared on some passes and not others, so a
+/// baseline of a glass screen failed about one run in three whichever pass it
+/// was taken from. The render server does not have that problem, because it is
+/// the thing that draws the material in the first place, so the picture is
+/// taken from its output instead.
+///
+/// Settling is decided here rather than inside the app for the same reason.
+/// The app can only see its own view tree, and a glass surface that has just
+/// been built animates into place in the render server for a length of time
+/// nobody publishes; a tree that has stopped changing is not a screen that has
+/// stopped moving. So the display is photographed repeatedly until two
+/// consecutive photographs are the same file, which is the only evidence
+/// available that the thing being captured has come to rest.
+///
+/// The app is the only thing running on the device and the door has already
+/// said the screen is built, so what is photographed is the screen under test
+/// with nothing over it. The frame includes the system's own chrome — the
+/// status bar pinned to 9:41 with a full battery, and the home indicator —
+/// which the design's own references draw too.
+fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
+    if let Some(directory) = destination.parent() {
+        std::fs::create_dir_all(directory)?;
+    }
+    std::fs::remove_file(destination).ok();
+    let device = display_size(udid)?;
+
+    // The ceiling exists because some screens never come to rest — a row that
+    // is only remembered has a sweep passing over it forever — and a capture
+    // of one still has to happen. Whatever the last photograph caught is what
+    // is kept, and the comparison against the baseline is what judges it.
+    let mut previous: Option<Vec<u8>> = None;
+    for _ in 0..STEADY_SHOTS {
+        simctl(&[
+            "io",
+            udid,
+            "screenshot",
+            "--type",
+            "png",
+            &destination.to_string_lossy(),
+        ])?;
+        let got = png_size(destination)?;
+        if got != device {
+            return Err(DoorError::WrongSize { got, device });
+        }
+        let bytes = std::fs::read(destination)?;
+        if previous.as_deref() == Some(bytes.as_slice()) {
+            return Ok(());
+        }
+        previous = Some(bytes);
+    }
+    Ok(())
+}
+
+/// How many photographs of one screen are taken while waiting for two of them
+/// to agree. Each costs about a quarter of a second, and a screen that is
+/// going to settle does so within two or three.
+const STEADY_SHOTS: usize = 24;
+
+/// A PNG's width and height, read from the header rather than decoded.
+fn png_size(path: &Path) -> Result<(u32, u32), DoorError> {
+    let bytes = std::fs::read(path)?;
+    if bytes.len() < 24 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err(DoorError::Unreadable(format!(
+            "{} is not a PNG",
+            path.display()
+        )));
+    }
+    let read =
+        |at: usize| u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
+    Ok((read(16), read(20)))
+}
+
+/// The pinned device's own screen size, asked of the simulator.
+///
+/// The pin is what makes a capture comparable at all: a screenshot taken on a
+/// device of another size is a picture of another phone, and it must fail
+/// rather than be scaled or cropped into agreement. A simulator enumerates
+/// several ports; the one being photographed is the built-in display, which is
+/// display class 0.
+fn display_size(udid: &str) -> Result<(u32, u32), DoorError> {
+    let enumerated = simctl(&["io", udid, "enumerate"])?;
+    let mut width = None;
+    let mut height = None;
+    let mut builtin = false;
+    for line in enumerated.lines() {
+        let line = line.trim();
+        if let Some(class) = line.strip_prefix("Display class:") {
+            builtin = class.trim() == "0";
+            width = None;
+            height = None;
+        }
+        if let Some(value) = line.strip_prefix("Default width:") {
+            width = value.trim().parse::<u32>().ok();
+        }
+        if let Some(value) = line.strip_prefix("Default height:") {
+            height = value.trim().parse::<u32>().ok();
+        }
+        if builtin && let (Some(width), Some(height)) = (width, height) {
+            return Ok((width, height));
+        }
+    }
+    Err(DoorError::Unreadable(format!(
+        "{udid} does not enumerate a built-in display"
+    )))
 }
 
 /// Which way a request's path has to travel across the sandbox boundary.

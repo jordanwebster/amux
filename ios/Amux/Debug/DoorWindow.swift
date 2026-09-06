@@ -59,10 +59,21 @@ enum DoorFrames {
     }
 }
 
-/// A PNG of the composited window: the material, the blur and the text as the
-/// display shows them, not a redraw of the view tree that would lose them.
+/// A PNG of the window drawn from inside the process.
+///
+/// This is how a report freezes what the person was looking at: a bug is
+/// reported from a running app on a real phone, where nothing outside the
+/// process can photograph the screen, so the app has to draw its own.
+///
+/// It is not how a golden is taken. Drawing the hierarchy asks every system
+/// material on screen to resolve against this renderer rather than the one on
+/// the display, and glass resolved that way is not stable from one pass to the
+/// next; a golden is a photograph of the simulator's display taken from the
+/// Mac instead. What that costs a report is a frame that may differ in its
+/// glass from what the person saw, which is a fair trade for being able to
+/// freeze the screen at all.
 enum DoorCapture {
-    /// Draws the window into an image, exactly as a capture does.
+    /// Draws the window into an image.
     ///
     /// Rendering the hierarchy is itself what makes a system material resolve
     /// its backdrop for this renderer, and the first pass after an appearance

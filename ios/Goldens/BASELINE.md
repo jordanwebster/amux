@@ -11,16 +11,31 @@ approved. Where the two disagree, this file says which is right.
 
 ## Departures every screen shares
 
-The design references were drawn in a catalogue app that painted its own phone
-chrome. The real app does not, so no capture of it carries these:
+Every capture here is a photograph of the pinned simulator's own display, taken
+from the Mac once the screen has stopped moving, rather than a picture the app
+draws of itself.
 
-- **No status bar.** The references draw a fixed "9:41" bar so two captures a
-  minute apart do not differ over the clock. The app's captures are of the app's
-  own window, which the system status bar is not part of.
-- **No tab bar and no home indicator.** A capture opens one screen directly
-  rather than the whole shell, because compositing a `TabView` draws the
-  floating tab bar twice. What the tab bar looks like is proven by the shell's
-  own journey, not by a still.
+It used to be the app drawing its own window into an image. That is where glass
+resolved, and it did not resolve the same way twice — the lensing along a
+card's top edge appeared on some passes and not others, and a screen with glass
+on it failed about one run in three whichever pass its baseline came from. The
+render server does not have that problem, because it is what draws the material
+in the first place. Waiting also had to move: the app can only watch its own
+view tree, and a glass surface that has just been built keeps animating in the
+render server after the tree has stopped changing, so the display is now
+photographed repeatedly until two photographs are the same file.
+
+The frame is therefore the whole screen, and two pieces of it are the system's
+rather than the app's:
+
+- **The status bar is in the picture,** pinned to 9:41 with three bars of Wi-Fi,
+  four of cellular and a full battery, so two captures a minute apart do not
+  differ over the clock. The references draw a fixed bar for the same reason,
+  which brings these captures closer to them rather than further.
+- **The home indicator is in the picture** too, and the references draw one.
+- **Still no tab bar.** A capture opens one screen directly rather than the
+  whole shell. What the tab bar looks like is proven by the shell's own journey,
+  not by a still.
 
 ## home
 
