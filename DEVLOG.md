@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **A screen is built one state at a time.**
+The catalogue's unit is a state — a screen and what fills it — but the debug
+door declared built-ness per screen. So the moment the conversation landed,
+every state of that screen became openable: the conversation whose host was
+lost mid-turn, the one stripped back to its rows and the one at an
+accessibility type size all answered as if they were drawn and locked, and the
+check of "everything built so far still draws what it was locked as" started
+failing on three pieces of work nobody had started.
+
+Built-ness now belongs to the pair. The door asks before it looks the state up,
+so a state nobody has written yet is answered "unimplemented" — which is what
+it is — rather than "no state named", which reads as a broken fixture.
+Establishing a state's baseline includes naming it built, in the same commit;
+the baselines file and the CI notes say so. A state that opens and has no
+baseline still fails, because that is what catches one built and never locked.
+
 2026-09-06 — **The transcript stays SwiftUI, and the measurement says why.**
 The streaming budget was being measured over a stand-in: a plain list of
 one-line texts, not the transcript people will actually scroll. It is now the

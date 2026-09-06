@@ -8,12 +8,17 @@ Golden baseline updates and deliberate perturbation runs remain explicit
 commands.
 
 While the native app is being built, this check verifies what exists rather
-than what is planned. The goldens run over the screens the app can open
+than what is planned. The goldens run over the states the app can open
 (`wt run ios-goldens -- --built`): every one of them is captured in both
-appearances and must still draw what it was locked as, and a screen nobody has
-built yet is reported and counted rather than failed. A bare
-`wt run ios-goldens` is unchanged — it asks the whole catalogue and fails
-naming every screen still owed. The measured run happens only where a number
+appearances and must still draw what it was locked as, and a state nobody has
+built yet is reported and counted rather than failed. Built is a property of a
+state, not of a screen: one screen draws several of them — the conversation, the
+conversation whose host was lost, the same conversation at an accessibility
+type size — and each is written, captured and locked on its own, so the first
+one landing does not make the rest openable. A bare `wt run ios-goldens` is
+unchanged — it asks the whole catalogue and fails naming every state still
+owed. A state that opens and has no baseline fails either way; that is what
+catches one built and never locked. The measured run happens only where a number
 from it would mean something: on a machine whose budgets are written down in
 `docs/IOS_PERFORMANCE.md`, or on one judged against its own recorded run once
 that baseline file exists. Otherwise it is skipped with one line naming the

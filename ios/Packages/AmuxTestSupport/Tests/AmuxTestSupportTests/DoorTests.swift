@@ -1,4 +1,5 @@
 import AmuxDesign
+import AmuxFeatures
 import SwiftUI
 import XCTest
 
@@ -99,6 +100,40 @@ final class DoorTests: XCTestCase {
         for reply in replies {
             let round = try decoder.decode(DoorReply.self, from: encoder.encode(reply))
             XCTAssertEqual(round, reply)
+        }
+    }
+
+    func testAScreenIsBuiltOneStateAtATime() {
+        // The conversation screen draws its ordinary state and not the one
+        // whose host was lost, the one stripped to its rows or the one at an
+        // accessibility type size: each has its own baseline and is written on
+        // its own. Declared per screen, all four became openable together and a
+        // check of what is built so far started failing on work nobody had
+        // started.
+        XCTAssertTrue(Fixtures.isBuilt(.run, state: "run"))
+        XCTAssertFalse(Fixtures.isBuilt(.run, state: "host-lost"))
+        XCTAssertFalse(Fixtures.isBuilt(.run, state: "run-accessibility"))
+        // A state with no fixture behind it is unbuilt rather than unknown, so
+        // asking for it names work still to come.
+        XCTAssertFalse(Fixtures.isBuilt(.run, state: "strip"))
+        XCTAssertNil(Fixtures.named("strip"))
+        // The home screen has two states built, so this is about the pair and
+        // not about a screen being all-or-nothing either way.
+        XCTAssertTrue(Fixtures.isBuilt(.home, state: "home"))
+        XCTAssertTrue(Fixtures.isBuilt(.home, state: "home-accessibility"))
+    }
+
+    func testEveryBuiltStateHasAFixtureBehindIt() {
+        // A state cannot be declared built with nothing to fill it: the door
+        // would answer "no state named" for a state the manifest expects a
+        // baseline for, which reads as a broken fixture rather than as work
+        // still to come.
+        for state in Fixtures.built {
+            let fixture = Fixtures.named(state.state)
+            XCTAssertNotNil(fixture, "\(state.state) is built with nothing to fill it")
+            XCTAssertEqual(
+                fixture?.screen, state.screen,
+                "\(state.state) is built for \(state.screen.rawValue) but fills another screen")
         }
     }
 

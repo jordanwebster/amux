@@ -9,6 +9,12 @@ A departure is not a defect only if it is written down here. The captures under
 `notes/ios-intake/design-reference/design/captures/` are the drawing that was
 approved. Where the two disagree, this file says which is right.
 
+Establishing a state's baseline includes declaring the state built, in
+`Fixtures.built`. One screen draws several states and each is written and
+locked on its own, so until a state is named there the app answers
+"unimplemented" when it is asked for — which is what keeps a check of
+everything built so far from failing on work nobody has started.
+
 ## Departures every screen shares
 
 Every capture here is a photograph of the pinned simulator's own display, taken

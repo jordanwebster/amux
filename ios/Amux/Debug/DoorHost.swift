@@ -128,12 +128,14 @@ final class DoorHost {
 
     private func open(screen name: String, fixture: String?) -> DoorReply {
         guard let screen = Screen(rawValue: name) else { return .error("no screen named \(name)") }
-        // Whether the screen exists is asked first: a screen nobody has built
-        // is unimplemented whether or not its state has been written yet, and
-        // a golden run over the whole manifest needs to hear that word rather
-        // than a complaint about a fixture.
-        guard DoorScreens.isBuilt(screen) else { return .error("unimplemented: \(name)") }
         let wanted = fixture ?? name
+        // Whether this build draws the state is asked before the state is
+        // looked up: a state nobody has written yet is unimplemented, and a
+        // golden run over the whole manifest needs to hear that word rather
+        // than a complaint about a missing fixture.
+        guard Fixtures.isBuilt(screen, state: wanted) else {
+            return .error("unimplemented: \(wanted)")
+        }
         guard let fixture = Fixtures.named(wanted) else { return .error("no state named \(wanted)") }
         // A fresh bundle every time: a screen opened after another one must
         // not inherit the conversation the last one left behind.
@@ -351,7 +353,11 @@ final class DoorHost {
         switch event {
         case .route(let name):
             guard let screen = Screen(rawValue: name) else { return .error("no screen named \(name)") }
-            guard DoorScreens.isBuilt(screen) else { return .error("unimplemented: \(name)") }
+            // A route names a screen and nothing else, so the state it means
+            // is that screen's own — the same rule opening one by name uses.
+            guard Fixtures.isBuilt(screen, state: name) else {
+                return .error("unimplemented: \(name)")
+            }
             show(screen)
             return .ack
         case .appearance(let appearance):

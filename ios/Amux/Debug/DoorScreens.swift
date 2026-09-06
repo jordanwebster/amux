@@ -8,19 +8,10 @@ import SwiftUI
 ///
 /// A screen that is not here is not silently something else: opening it is a
 /// typed refusal, so a golden run over the whole catalogue names every screen
-/// still to be built instead of passing on a placeholder.
+/// still to be built instead of passing on a placeholder. Which states are
+/// drawn is `Fixtures.isBuilt`, which the door asks before it ever gets here —
+/// one screen can draw several states, and they are built one at a time.
 enum DoorScreens {
-    @MainActor
-    static func isBuilt(_ screen: Screen) -> Bool {
-        switch screen {
-        case .probe: true
-        case .home, .homeQuiet, .firstRun, .firstRunPaid: true
-        case .drawer: true
-        case .run, .runLive, .voices, .reviewCta: true
-        default: false
-        }
-    }
-
     @MainActor
     @ViewBuilder
     static func view(for screen: Screen, host: DoorHost) -> some View {

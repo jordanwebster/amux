@@ -15,6 +15,50 @@ public enum Fixtures {
         all.first { $0.id == id }
     }
 
+    /// One state this build can be asked for: a screen and what fills it.
+    public struct Built: Hashable, Sendable {
+        public let screen: Screen
+        public let state: String
+
+        public init(_ screen: Screen, _ state: String) {
+            self.screen = screen
+            self.state = state
+        }
+    }
+
+    /// Whether this build draws that state.
+    ///
+    /// Built-ness belongs to the pair, not to the screen. The conversation
+    /// screen draws a conversation, but the conversation whose host was lost
+    /// mid-turn, the one stripped back to its rows and the one at an
+    /// accessibility type size are separate states with separate baselines.
+    /// Declared per screen, all of them became openable the moment the first
+    /// one landed, and a check of "everything built so far still draws what it
+    /// was locked as" started failing on work nobody had started.
+    ///
+    /// Asked before the state is looked up, so a state nobody has written yet
+    /// answers "unimplemented" rather than "no state named": not having been
+    /// written is exactly what being unbuilt means.
+    public static func isBuilt(_ screen: Screen, state: String) -> Bool {
+        built.contains(Built(screen, state))
+    }
+
+    /// Every state that is drawn and locked today. A state joins this list in
+    /// the same commit that establishes its baseline.
+    static let built: Set<Built> = [
+        Built(.probe, "probe"),
+        Built(.home, "home"),
+        Built(.home, "home-accessibility"),
+        Built(.homeQuiet, "home-quiet"),
+        Built(.drawer, "drawer"),
+        Built(.run, "run"),
+        Built(.runLive, "run-live"),
+        Built(.voices, "voices"),
+        Built(.reviewCta, "review-cta"),
+        Built(.firstRun, "first-run"),
+        Built(.firstRunPaid, "first-run-paid"),
+    ]
+
     /// The screens the design catalogue describes, in its own order.
     public static let catalogue: [Fixture] = [
         // The harness's own target, which is not a screen of the app.
