@@ -1242,7 +1242,7 @@ pub(crate) fn host_entry_from_wire(
     })
 }
 
-fn client_service_host_response_to_host_event(
+pub(crate) fn client_service_host_response_to_host_event(
     response: wire::SubscribeHostsResponse,
 ) -> Result<HostEvent, ClientError> {
     let event = response.event.ok_or_else(|| ClientError::Decode {

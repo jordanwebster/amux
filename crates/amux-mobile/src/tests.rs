@@ -458,6 +458,106 @@ fn owned_json(pointer: *mut c_char) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_unpaired_relay_hosts_are_discovered_without_entering_the_fleet() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("owners-host")
+        .cloud_only()
+        .cloud_user("owner")
+        .daemon("other-accounts-host")
+        .cloud_only()
+        .cloud_user("other")
+        .start()
+        .await;
+    let host_id = net.daemon("owners-host").host_id().to_string();
+    let other_id = net.daemon("other-accounts-host").host_id().to_string();
+    let (_, token) = net.user_credentials("owner");
+    let root = tempfile::tempdir().unwrap();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &config(
+                root.path(),
+                format!("http://{}", net.relay_addr()),
+                json!({"Static": token}),
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    for reconnect in [false, true] {
+        if reconnect {
+            net.cloud_offline().await;
+            until(&mut receive, running.handle, &token, |e| {
+                e["Connection"]["state"] == "disconnected"
+            })
+            .await;
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let snapshot = owned_json(unsafe { amux_mobile_snapshot(running.handle) });
+                    if snapshot["hosts"][&host_id]["entry"]["online"] != true {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            })
+            .await
+            .expect("unpaired host stayed online after relay disconnect");
+            net.cloud_online().await;
+        }
+        until(&mut receive, running.handle, &token, |e| {
+            e["Connection"]["state"] == "connected"
+        })
+        .await;
+        let snapshot = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let snapshot = owned_json(unsafe { amux_mobile_snapshot(running.handle) });
+                assert!(snapshot["hosts"][&other_id].is_null(), "{snapshot}");
+                if snapshot["hosts"][&host_id]["entry"]["online"] == true {
+                    break snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "unpaired relay host missing: {}",
+                owned_json(unsafe { amux_mobile_snapshot(running.handle) })
+            )
+        });
+        assert_eq!(snapshot["hosts"][&host_id]["entry"]["name"], "owners-host");
+        assert_eq!(
+            snapshot["hosts"][&host_id]["entry"]["trust_status"],
+            json!(amux::HostTrustStatus::UntrustedButOnline)
+        );
+        println!("Unpaired mobile C snapshot (reconnected={reconnect}): {snapshot}");
+    }
+    drop(running);
+    for event in events.captured.lock().unwrap().iter() {
+        if let Some(fleet) = event.get("Fleet") {
+            for host in fleet["hosts"].as_array().unwrap() {
+                assert_eq!(host["entry"]["name"], "phone", "{fleet}");
+            }
+            assert_eq!(fleet["agents"], json!([]), "{fleet}");
+        }
+    }
+    let cache: Value =
+        serde_json::from_slice(&std::fs::read(root.path().join("cache/fleet.json")).unwrap())
+            .unwrap();
+    for host in cache["Fleet"]["hosts"].as_array().unwrap() {
+        assert_eq!(host["entry"]["name"], "phone", "{cache}");
+    }
+    net.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     let net = TestNet::builder()
         .cloud()

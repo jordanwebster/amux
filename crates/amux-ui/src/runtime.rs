@@ -23,7 +23,7 @@ use amux::{
 };
 use amux_artifacts::{ArtifactMeta, Cache, FetchError, StoreError, SystemClock};
 use chrono::{DateTime, Utc};
-use futures_util::FutureExt;
+use futures_util::{FutureExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -294,6 +294,9 @@ pub struct RuntimeOptions {
     /// The daemon's own host id (read from the local device identity);
     /// enters the Model via `ServerMsg::Connected`.
     pub local_host_id: Option<HostId>,
+    /// Owner inventory for an embedded profile, including cloud pairing candidates.
+    /// Without this capability, host presence comes from the trusted-only client API.
+    pub host_inventory: Option<amux::ProfileAdmin>,
     /// Where report bundles land. `None` disables reporting.
     pub report_dir: Option<PathBuf>,
     /// Log file whose bounded tail is included when it exists.
@@ -323,6 +326,7 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             local_host_id: None,
+            host_inventory: None,
             report_dir: None,
             log_path: None,
             git_sha: "unknown",
@@ -508,6 +512,7 @@ impl Runtime {
             client.clone(),
             options.local_host_id,
             subscription_status_provider.clone(),
+            options.host_inventory,
         ));
 
         Self {
@@ -1583,6 +1588,7 @@ async fn connection_task(
     shared_client: Arc<StdMutex<Option<Client>>>,
     local_host_id: Option<HostId>,
     subscription_status_provider: Option<SubscriptionStatusProvider>,
+    host_inventory: Option<amux::ProfileAdmin>,
 ) {
     let mut backoff = RECONNECT_BACKOFF_INITIAL;
     loop {
@@ -1617,6 +1623,7 @@ async fn connection_task(
             &tx,
             local_host_id,
             subscription_status_provider.as_ref(),
+            host_inventory.as_ref(),
         )
         .await;
         *shared_client.lock().expect("client mutex poisoned") = None;
@@ -1645,8 +1652,13 @@ async fn pump_inventory(
     tx: &MsgSink,
     local_host_id: Option<HostId>,
     subscription_status_provider: Option<&SubscriptionStatusProvider>,
+    host_inventory: Option<&amux::ProfileAdmin>,
 ) -> Option<DisconnectReason> {
-    let mut hosts_stream = match client.subscribe_hosts().await {
+    let hosts_stream = match host_inventory {
+        Some(admin) => admin.subscribe_hosts().await.map(|stream| stream.boxed()),
+        None => client.subscribe_hosts().await.map(|stream| stream.boxed()),
+    };
+    let mut hosts_stream = match hosts_stream {
         Ok(stream) => stream,
         Err(error) => return Some(disconnect_reason(&error)),
     };
@@ -1679,11 +1691,14 @@ async fn pump_inventory(
 
     loop {
         let event = tokio::select! {
-            event = hosts_stream.recv() => match event {
-                Ok(amux::HostEvent::HostUpdated { host }) => ServerMsg::HostUpserted { host },
-                Ok(amux::HostEvent::HostRemoved { id }) => ServerMsg::HostRemoved { id },
-                Ok(amux::HostEvent::SnapshotComplete) => ServerMsg::HostsSynchronized,
-                Err(error) => return Some(disconnect_reason(&error)),
+            event = hosts_stream.next() => match event {
+                Some(Ok(amux::HostEvent::HostUpdated { host })) => ServerMsg::HostUpserted { host },
+                Some(Ok(amux::HostEvent::HostRemoved { id })) => ServerMsg::HostRemoved { id },
+                Some(Ok(amux::HostEvent::SnapshotComplete)) => ServerMsg::HostsSynchronized,
+                Some(Err(error)) => return Some(disconnect_reason(&error)),
+                None => return Some(DisconnectReason::TransportError {
+                    message: "host inventory stream ended".into(),
+                }),
             },
             event = agents_stream.recv() => match event {
                 Ok(amux::AgentEvent::AgentUp { agent })

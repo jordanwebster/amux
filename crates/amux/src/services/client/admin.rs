@@ -150,6 +150,30 @@ impl ProfileAdmin {
         Ok(self.service.list_pairing_candidates().await)
     }
 
+    /// Subscribe to this profile's trusted hosts and online cloud pairing candidates.
+    /// The initial inventory ends with `SnapshotComplete`; subsequent events include
+    /// departures and trust changes. Only the owner can discover unpaired hosts:
+    /// profile sockets and peer tunnels keep their trusted-only inventory.
+    pub async fn subscribe_hosts(
+        &self,
+    ) -> Result<impl Stream<Item = Result<HostEvent, ClientError>> + Send + 'static, ClientError>
+    {
+        self.service
+            .pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(|error| status_to_client_error(protocol_status(error)))?;
+        Ok(self
+            .service
+            .host_inventory_stream(HostInventory::WithPairingCandidates)
+            .await
+            .map(|response| {
+                response
+                    .map_err(status_to_client_error)
+                    .and_then(crate::client::client_service_host_response_to_host_event)
+            }))
+    }
+
     #[cfg(any(test, testnet))]
     pub(crate) fn for_test(service: ClientService) -> Self {
         let id = crate::installation::ProfileId(service.local_agents.host_id());

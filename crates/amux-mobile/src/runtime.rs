@@ -116,6 +116,7 @@ impl MobileRuntime {
         let ui = Runtime::start_with_client(
             embedded.client(),
             RuntimeOptions {
+                host_inventory: Some(embedded.admin()),
                 report_dir: Some(config.data_dir.join("reports")),
                 log_path: Some(config.log_path.clone()),
                 artifact_cache: Some(config.cache_dir.join("artifacts")),

@@ -4,6 +4,23 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Restore unpaired cloud host discovery on the phone.**
+The embedded phone runtime now subscribes to its profile owner's host inventory,
+so a signed-in device can see its account's online daemons before pairing. Moving
+pairing discovery out of the profile client service had left the phone reading
+only trusted hosts. An owner-only administration stream restores initial presence,
+live arrivals and departures through the shared Rust reducer, while profile
+sockets and peer tunnels retain their trusted-only inventory. Unpaired candidates
+remain outside Fleet callbacks and the fleet cache.
+
+A new Rust test starts the mobile C ABI against two users on a real test relay,
+without pairing, and checks discovery, account isolation, disconnect and reconnect,
+and Fleet/cache exclusion. It reproduced the missing-host failure before the fix.
+Service coverage also checks the owner's initial snapshot and live events, hiding
+direct-only candidates and retaining the existing remote-inventory boundary.
+The full Rust suite, all 450 prose specifications, testnet smoke, the unchanged
+iOS simulator loopback smoke, formatting and workspace lint pass.
+
 2026-09-06 — **A conversation's chrome on the phone, and the way in to its changes.**
 A conversation now has no navigation bar. A floating glass pill names the
 agent with the machine and directory it runs in underneath, carries the drawer

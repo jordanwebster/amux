@@ -199,6 +199,32 @@ impl ClientService {
         (snapshot, rx)
     }
 
+    async fn host_inventory_stream(
+        &self,
+        inventory: HostInventory,
+    ) -> ResponseStream<wire::SubscribeHostsResponse> {
+        let (hosts, rx) = self.subscribe_hosts_with_snapshot().await;
+        let mut snapshot = Vec::new();
+        for host in hosts {
+            if inventory
+                .includes(&host, &self.remote_agent_connections)
+                .await
+            {
+                snapshot.push(host);
+            }
+        }
+        self.mark_client_visible_host_entries(&snapshot).await;
+        let visible = snapshot.iter().map(|host| host.id).collect();
+        let snapshot = stream::iter(host_snapshot_to_wire(snapshot).into_iter().map(Ok));
+        let live = host_receiver_stream(
+            rx,
+            visible,
+            self.remote_agent_connections.clone(),
+            inventory,
+        );
+        Box::pin(snapshot.chain(live))
+    }
+
     #[cfg(test)]
     pub(crate) async fn subscribe_agents(&self) -> mpsc::Receiver<AgentEvent> {
         self.state.write().await.agent_events.subscribe()
@@ -760,13 +786,9 @@ impl wire::client_service_server::ClientService for ClientService {
         &self,
         _request: tonic::Request<wire::SubscribeHostsRequest>,
     ) -> TonicResult<Self::SubscribeHostsStream> {
-        let (snapshot, rx) = self.subscribe_hosts_with_snapshot().await;
-        let snapshot = trusted_host_entries(snapshot);
-        self.mark_client_visible_host_entries(&snapshot).await;
-        let visible = snapshot.iter().map(|host| host.id).collect();
-        let snapshot = stream::iter(host_snapshot_to_wire(snapshot).into_iter().map(Ok));
-        let live = host_receiver_stream(rx, visible, self.remote_agent_connections.clone());
-        Ok(tonic::Response::new(Box::pin(snapshot.chain(live))))
+        Ok(tonic::Response::new(
+            self.host_inventory_stream(HostInventory::Trusted).await,
+        ))
     }
 
     type SubscribeAgentsStream = ResponseStream<wire::SubscribeAgentsResponse>;
@@ -1652,14 +1674,30 @@ where
     ))
 }
 
+#[derive(Clone, Copy)]
+enum HostInventory {
+    Trusted,
+    WithPairingCandidates,
+}
+
+impl HostInventory {
+    async fn includes(self, host: &HostEntry, connections: &ConnectionManager) -> bool {
+        host.trust_status == HostTrustStatus::Trusted
+            || (matches!(self, Self::WithPairingCandidates)
+                && host.online
+                && connections.has_cloud_route(host.id).await)
+    }
+}
+
 fn host_receiver_stream(
     rx: mpsc::Receiver<HostEvent>,
     visible: HashSet<Uuid>,
     remote_agent_connections: Arc<ConnectionManager>,
+    inventory: HostInventory,
 ) -> ResponseStream<wire::SubscribeHostsResponse> {
     Box::pin(stream::unfold(
         (rx, visible, remote_agent_connections, false),
-        |(mut rx, mut visible, remote_agent_connections, done)| async move {
+        move |(mut rx, mut visible, remote_agent_connections, done)| async move {
             if done {
                 return None;
             }
@@ -1677,7 +1715,7 @@ fn host_receiver_stream(
                 };
                 let event = match event {
                     HostEvent::HostUpdated { host }
-                        if host.trust_status == HostTrustStatus::Trusted =>
+                        if inventory.includes(&host, &remote_agent_connections).await =>
                     {
                         visible.insert(host.id);
                         if host.online {
@@ -4435,7 +4473,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_list_hosts_cloud_routable_filter_matches_connection_manager() {
+    async fn owner_host_inventory_discovers_only_cloud_pairing_candidates() {
         let host_id = Uuid::from_u128(1);
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(8);
@@ -4488,6 +4526,48 @@ mod tests {
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].id, cloud_peer.id);
         assert_eq!(hosts[0].trust_status, HostTrustStatus::UntrustedButOnline);
+
+        let admin = ProfileAdmin::for_test(service.clone());
+        let mut inventory = Box::pin(admin.subscribe_hosts().await.unwrap());
+        assert_eq!(
+            inventory.next().await.unwrap().unwrap(),
+            HostEvent::HostUpdated {
+                host: hosts[0].clone()
+            }
+        );
+        assert_eq!(
+            inventory.next().await.unwrap().unwrap(),
+            HostEvent::SnapshotComplete
+        );
+        assert!(tonic_list_hosts(&service).await.hosts.is_empty());
+
+        // A direct-only candidate never entered this inventory, so its departure
+        // must not disclose an ID to the cloud pairing UI either.
+        service
+            .apply_host_event(HostReachabilityEvent::Removed {
+                host_id: Uuid::from_u128(3),
+            })
+            .await;
+        service
+            .apply_host_event(HostReachabilityEvent::Removed {
+                host_id: cloud_peer.id,
+            })
+            .await;
+        assert_eq!(
+            inventory.next().await.unwrap().unwrap(),
+            HostEvent::HostRemoved { id: cloud_peer.id }
+        );
+        service
+            .apply_host_event(HostReachabilityEvent::Added {
+                host: cloud_peer.clone(),
+            })
+            .await;
+        assert_eq!(
+            inventory.next().await.unwrap().unwrap(),
+            HostEvent::HostUpdated {
+                host: hosts[0].clone()
+            }
+        );
     }
 
     #[tokio::test]

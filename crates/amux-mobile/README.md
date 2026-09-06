@@ -133,6 +133,10 @@ list completes. Local agent-list completion and relay connectivity never prove
 remote inventory membership; unreachable paired hosts keep their cached rows.
 
 `amux_mobile_snapshot` returns the shared reducer Model as owned JSON.
+Its hosts map includes online unpaired hosts advertised through this account's
+relay. The embedded runtime subscribes through its owner administration handle;
+profile sockets and peer tunnels expose only trusted hosts. Pairing candidates
+stay outside Fleet callbacks and the fleet cache until trust is confirmed.
 In `debug-tools` builds, `amux_mobile_report_snapshot` returns
 `{"msgs":{"format_version":1,"checkpoint":MODEL,"msgs":[JSON_LINE,...]},
 "daemon":JSON_STRING_OR_NULL,"daemon_absent_reason":STRING_OR_NULL}`.
