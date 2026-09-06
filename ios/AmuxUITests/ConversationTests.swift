@@ -253,8 +253,16 @@ final class ConversationTests: XCTestCase {
         XCTAssertTrue(Set(stale).isSubset(of: Set(readable)),
                       "an unreachable machine's transcript grew rows nobody sent: "
                       + "\(Set(stale).subtracting(Set(readable)))")
-        XCTAssertTrue(element(app, "conversation.retry").exists,
-                      "an unreachable machine offered no way to ask again")
+        // Reachable, not merely present. The panel sits in the composer's
+        // place along the bottom edge, which is also where the tab bar floats,
+        // and an offer drawn under that bar is one nobody can read or press.
+        let retry = app.descendants(matching: .any)
+            .matching(identifier: "conversation.retry").allElementsBoundByIndex
+        XCTAssertFalse(retry.isEmpty,
+                       "an unreachable machine offered no way to ask again")
+        XCTAssertTrue(retry.contains(where: { $0.isHittable }),
+                      "the way to ask again is on screen and cannot be pressed; the tab bar "
+                      + "is over it")
         photograph(app, "conversation-stale")
 
         // A message tried while nothing can carry it.

@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Keep the tab bar off the bottom of a conversation.** A machine
+that has gone away says so where the composer will go, along the bottom edge,
+and offers Retry Now — which on a phone is exactly where the floating tab bar
+sits. The offer was drawn underneath it: the word was half legible and the part
+of it a thumb would reach was the Hosts tab.
+
+The panel was not at fault. The drawer that wraps every conversation ignored the
+bottom safe area for the whole stack it draws, so the page inside it lost the
+clearance the system reserves for that bar and put its own panel into it.
+Nothing needed the stack to ignore it: every ground drawn in there already runs
+to the physical edge on its own, which is why taking it off changed no
+background. The panel now sits above the bar and the feed still travels under
+it.
+
+The drawer's locked photograph moved with the fix — its foot, and the lower
+corner of the conversation behind it, lift by that clearance, which with no tab
+bar over them is the home indicator's — and was retaken with the reason written
+into the baseline notes. Proof: the conversation journey passes against a real
+host and the photograph it takes of an unreachable machine reads Retry Now in
+full.
+
 2026-09-06 — **Refresh the phone branch from main.** Merged main at 713d5476
 into this branch as a merge commit, keeping both parents; both dependency
 branches this work already carries were ancestors, so what landed is the 22

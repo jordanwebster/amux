@@ -308,7 +308,12 @@ public struct DrawerOverlay<Content: View>: View {
                 .offset(x: -Self.width * (1 - progress))
                 .accessibilityHidden(progress == 0)
         }
-        .ignoresSafeArea(edges: .bottom)
+        // The bottom safe area is kept rather than ignored. Every ground in
+        // here already runs to the physical edge on its own, so ignoring it
+        // bought nothing and cost the screen underneath the clearance the
+        // system reserves for the tab bar — which is where a conversation
+        // puts its composer, and where a machine that has gone away offers
+        // Retry Now. Ignored, that offer is drawn behind the bar.
         .gesture(drag)
         .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: open)
     }

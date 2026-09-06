@@ -128,6 +128,13 @@ against. Three things about the picture are worth knowing:
   list first, and reaching for the tab bar underneath means leaving the
   conversation to get there. The design drew this panel for an app with no tab
   bar; this one has both, and the shorter path wins.
+- **The foot stops short of the bottom edge, and so does the screen behind
+  it.** Both keep the clearance the system reserves at the bottom rather than
+  running under it. In the app that strip is where the tab bar floats, and
+  anything drawn into it — this foot, or a conversation's Retry Now — is
+  unreadable and cannot be pressed. Photographed here with no tab bar over it,
+  the clearance is the home indicator's, which is why the panel's last row and
+  the conversation's lower corner sit above the edge.
 
 ## run
 
