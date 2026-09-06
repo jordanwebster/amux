@@ -62,19 +62,28 @@ enum DoorFrames {
 /// A PNG of the composited window: the material, the blur and the text as the
 /// display shows them, not a redraw of the view tree that would lose them.
 enum DoorCapture {
+    /// Draws the window into an image, exactly as a capture does.
+    ///
+    /// Rendering the hierarchy is itself what makes a system material resolve
+    /// its backdrop for this renderer, and the first pass after an appearance
+    /// change resolves it against the appearance before — a light screen comes
+    /// back wearing the dark screen's plates. So a capture is this, repeated
+    /// until two passes agree.
     @MainActor
-    static func png(of window: UIWindow, to path: String) -> DoorReply {
-        let scale = window.traitCollection.displayScale
+    static func render(of window: UIWindow) -> UIImage? {
         let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
+        format.scale = window.traitCollection.displayScale
         format.opaque = true
         let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
         var drew = false
         let image = renderer.image { _ in
             drew = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
-        guard drew else { return .error("capture failed: the window would not draw") }
-        guard let data = image.pngData() else { return .error("capture failed: no png data") }
+        return drew ? image : nil
+    }
+
+    @MainActor
+    static func write(_ image: UIImage, _ data: Data, to path: String) -> DoorReply {
         let url = URL(fileURLWithPath: path)
         do {
             try FileManager.default.createDirectory(
@@ -83,6 +92,7 @@ enum DoorCapture {
         } catch {
             return .error("capture failed: \(error.localizedDescription)")
         }
+        let scale = image.scale
         return .captured(
             path: path,
             width: Int((image.size.width * scale).rounded()),

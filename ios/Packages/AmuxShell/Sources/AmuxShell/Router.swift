@@ -59,8 +59,18 @@ public final class Router {
     /// The page on show, or nothing when a tab is showing its own root.
     public var top: Route? { path.last }
 
+    /// Goes to a tab, or — when it is the tab already on show — back to the
+    /// top of it.
+    ///
+    /// That second half is the platform's own convention and it is load-bearing
+    /// here: a conversation has no navigation bar, so reaching for Agents while
+    /// already inside one is how a person gets back to the list.
     public func select(_ tab: Tab) {
-        self.tab = tab
+        if tab == self.tab {
+            popToRoot()
+        } else {
+            self.tab = tab
+        }
     }
 
     /// Pushes a page. Synchronous, and deliberately not `async`: the frame the

@@ -7,8 +7,8 @@ import SwiftUI
 // page is stood up here as the plainest thing that reads the right store and
 // emits the right action. They are not the design: a screen replaces the one
 // named for it as it lands, and nothing else about the shell changes when it
-// does — the Agents tab has already been replaced this way. Nothing here is a
-// golden's subject; captures open a screen by name.
+// does — the Agents tab and the conversation have already been replaced this
+// way. Nothing here is a golden's subject; captures open a screen by name.
 
 /// The Hosts tab until the hosts screen lands.
 struct HostsPlaceholder: View {
@@ -60,42 +60,6 @@ struct YouPlaceholder: View {
                 .identified("you.help", label: "Help")
         }
         .identified("you")
-    }
-}
-
-/// One agent's page until the conversation lands. It shows what the store has
-/// for that agent, which on the frame the page is pushed is nothing: the page
-/// is up and the transcript arrives into it.
-struct ConversationPlaceholder: View {
-    @Environment(\.design) private var design
-    let agent: AgentId
-    let router: Router
-    let stores: StoreBundle
-
-    var body: some View {
-        let conversation = stores.conversation(agent)
-        VStack(alignment: .leading, spacing: design.metrics.feedGap) {
-            Text(name)
-                .designFont(.screenTitle, design)
-                .foregroundStyle(design.ink.color)
-                .identified("conversation.name", value: name)
-            Text("\(conversation.entries.count) entries")
-                .designFont(.caption, design)
-                .foregroundStyle(design.inkMuted.color)
-                .identified("conversation.entries", value: "\(conversation.entries.count)")
-            Button("Changes") { router.open(.changes(agent)) }
-                .identified("conversation.changes", label: "Changes")
-            Spacer()
-        }
-        .padding(design.metrics.gutter)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .identified("conversation", value: agent.description)
-    }
-
-    /// The fleet knows the name; a conversation opened before the fleet has
-    /// arrived shows the identity it was opened with rather than nothing.
-    private var name: String {
-        stores.fleet.rows.first { $0.id == agent }?.name ?? agent.description
     }
 }
 

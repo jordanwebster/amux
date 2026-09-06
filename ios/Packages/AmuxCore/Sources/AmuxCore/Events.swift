@@ -1067,6 +1067,26 @@ public struct DiffDocument: Codable, Sendable, Equatable {
         self.hunks = hunks
         self.truncated = truncated
     }
+
+    /// How many rows this patch adds and how many it takes away.
+    ///
+    /// Counted from the patch itself rather than taken from the agent card's
+    /// last-turn totals: what the chip offers to open is this document, and a
+    /// number that disagreed with the page it opens would be worse than no
+    /// number. A truncated document is still counted honestly — it says what
+    /// is in it, and the page it opens says it was cut short.
+    public var insertions: Int { lines(startingWith: "+") }
+    public var deletions: Int { lines(startingWith: "-") }
+
+    /// Whether there is anything here to review at all. A document that
+    /// arrived with no hunks, or with nothing but context, is not a change.
+    public var isEmpty: Bool { insertions == 0 && deletions == 0 }
+
+    private func lines(startingWith mark: Character) -> Int {
+        hunks.reduce(0) { total, hunk in
+            total + hunk.lines.count { $0.first == mark }
+        }
+    }
 }
 
 public enum DiffNumbering: String, Codable, Sendable, Equatable {

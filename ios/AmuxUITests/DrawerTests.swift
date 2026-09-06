@@ -79,9 +79,11 @@ final class DrawerTests: XCTestCase {
         XCTAssertEqual(value(app, "conversation"), opened,
                        "closing the drawer came back to a different conversation")
 
-        // And back to the fleet the way a person goes back: the bar's own
-        // control, which no screen declares.
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        // And back to the fleet the way a person goes back from a conversation,
+        // which has no navigation bar to go back from: reaching for the tab
+        // already on show, which the platform reads as "take me to the top of
+        // it".
+        press(app, "tab.agents")
         XCTAssertTrue(home.waitForExistence(timeout: waiting),
                       "going back did not return to the home")
         XCTAssertEqual(identifiers(app, startingWith: "home.row."), remembered,

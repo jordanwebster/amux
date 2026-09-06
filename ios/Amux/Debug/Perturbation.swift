@@ -31,6 +31,8 @@ enum Perturbation {
             inkFaint: ramp("inkFaint", base.inkFaint),
             accent: ramp("accent", base.accent),
             onAccent: ramp("onAccent", base.onAccent),
+            added: ramp("added", base.added),
+            removed: ramp("removed", base.removed),
             faces: base.faces,
             metrics: base.metrics,
             type: base.type,

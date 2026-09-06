@@ -25,6 +25,17 @@ public struct Design: Sendable, Equatable {
     public let accent: Ramp
     public let onAccent: Ramp
 
+    /// What a change added and what it took away.
+    ///
+    /// The only colours in the design that are not the accent or a step on the
+    /// neutral ramp, and the exception is deliberate: green and red are a
+    /// convention about what changed, while the accent is this app's one word
+    /// for "something is waiting for you". A diff is not that, so it must not
+    /// borrow the word. Both are muted well below a signal green and red so
+    /// that a page of them still reads as text.
+    public let added: Ramp
+    public let removed: Ramp
+
     public let faces: Faces
     public let metrics: Metrics
     public let type: Typography
@@ -32,8 +43,8 @@ public struct Design: Sendable, Equatable {
 
     public init(
         name: String, ground: Ramp, raised: Ramp, sunken: Ramp, hairline: Ramp, ink: Ramp,
-        inkMuted: Ramp, inkFaint: Ramp, accent: Ramp, onAccent: Ramp, faces: Faces,
-        metrics: Metrics, type: Typography, surfaces: Surfaces
+        inkMuted: Ramp, inkFaint: Ramp, accent: Ramp, onAccent: Ramp, added: Ramp,
+        removed: Ramp, faces: Faces, metrics: Metrics, type: Typography, surfaces: Surfaces
     ) {
         self.name = name
         self.ground = ground
@@ -45,6 +56,8 @@ public struct Design: Sendable, Equatable {
         self.inkFaint = inkFaint
         self.accent = accent
         self.onAccent = onAccent
+        self.added = added
+        self.removed = removed
         self.faces = faces
         self.metrics = metrics
         self.type = type
@@ -115,6 +128,11 @@ public struct Design: Sendable, Equatable {
         // the indigo every AI product wears to read as instrument, not brand.
         accent: Ramp(0x0E5F6E, 0x4FBACD),
         onAccent: Ramp(0xFFFFFF, 0x06080B),
+        // Read off the approved drawings rather than picked afresh, so the
+        // arithmetic on a chip and the body of a diff are the same green and
+        // the same red the design was signed off in.
+        added: Ramp(0x458353, 0x84C490),
+        removed: Ramp(0x9B3C40, 0xD78583),
         faces: .instrument,
         metrics: Metrics(
             cardRadius: 16, controlRadius: 12, floatRadius: 26,
@@ -132,6 +150,7 @@ public struct Design: Sendable, Equatable {
             ("ground", ground), ("raised", raised), ("sunken", sunken),
             ("hairline", hairline), ("ink", ink), ("inkMuted", inkMuted),
             ("inkFaint", inkFaint), ("accent", accent), ("onAccent", onAccent),
+            ("added", added), ("removed", removed),
         ]
     }
 

@@ -4,6 +4,42 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **A conversation's chrome on the phone, and the way in to its changes.**
+A conversation now has no navigation bar. A floating glass pill names the
+agent with the machine and directory it runs in underneath, carries the drawer
+control on its leading edge and the overflow beside it, and the platform's
+scroll edge effect frosts whatever passes under it. Once a turn has changed
+something, a chip appears between the two in the diff's green and red and opens
+the changes; it counts the patch it opens rather than repeating the fleet's
+totals for the last turn, so the numbers can never disagree with the page
+behind them. Green and red join the design as tokens of their own — the only
+colours that are neither the accent nor a step on the neutral ramp — because
+they are a convention about what changed, while the accent is the app's one
+word for "something is waiting for you".
+
+Taking the bar away removed the only way back to the list, so reaching for the
+tab already on show now returns it to its root, which is what the platform
+means by tapping the tab you are on. The drawer test goes back that way instead
+of through a bar button that no longer exists.
+
+Two things about the capture harness had to be true before either appearance
+could be photographed. The appearance is now the window's interface style and
+nothing else: the design's colours are dynamic system colours and the glass is
+a system material, and both read the trait collection rather than SwiftUI's
+colour scheme, so overriding both gave them a frame to disagree in and a light
+screen came back wearing the dark screen's plates. And the screen is rebuilt a
+frame after the trait changes rather than moved into the new appearance, because
+a material already on show cross-fades over a length of time nobody publishes.
+A capture is now also drawn until two passes agree. Baselines for `run` and
+`review-cta` in both appearances hold after seven consecutive runs.
+
+One thing is not fixed and is filed: a screen with a glass card over content
+draws the band along the card's top edge on some passes and not on others, so
+`probe`, `home`, `home-quiet` and `ax-home` fail roughly one run in three
+whichever of the two renders their baseline holds. That predates this work —
+the same band was in the first run of the day — and it is the in-process
+capture, not the screens.
+
 2026-09-06 — **Enable the message queue in Claude SDK chat.**
 Tab now holds or replaces a message while the SDK agent works; Tab with an
 empty composer returns the queued draft for editing. The SDK view tracks queue

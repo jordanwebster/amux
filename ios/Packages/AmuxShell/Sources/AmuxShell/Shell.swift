@@ -38,7 +38,7 @@ public struct Shell: View {
 
     public var body: some View {
         @Bindable var router = router
-        TabView(selection: $router.tab) {
+        TabView(selection: tab) {
             SwiftUI.Tab(Tab.agents.title, systemImage: Tab.agents.symbol, value: Tab.agents) {
                 NavigationStack(path: $router.agentsPath) {
                     AgentsTab(router: self.router, accounts: accounts, stores: stores, actions: actions)
@@ -64,6 +64,17 @@ public struct Shell: View {
         .identified("shell", value: router.tab.rawValue)
     }
 
+    /// The tab bar, written through the router rather than straight into it.
+    ///
+    /// Reaching for the tab you are already on is the platform's way of saying
+    /// "take me back to the top of this", and it is the only way out of a
+    /// conversation now that a conversation has no bar to go back from. A
+    /// plain binding to the stored property would never see that tap, because
+    /// the value it sets is the value already there.
+    private var tab: Binding<Tab> {
+        Binding(get: { router.tab }, set: { router.select($0) })
+    }
+
     /// One page per route. A route with no screen behind it yet says so rather
     /// than showing something that looks like the screen it is not.
     @ViewBuilder
@@ -82,8 +93,7 @@ public struct Shell: View {
 /// The drawer is drawn here rather than inside the conversation because it is
 /// not part of the conversation: it is the fleet, borrowing the screen. Wrapped
 /// this way the page underneath is never torn down, so closing the drawer
-/// returns to the same conversation at the position it was left at, and the
-/// screen that replaces the placeholder inherits all of that unchanged.
+/// returns to the same conversation at the position it was left at.
 private struct ConversationPage: View {
     let agent: AgentId
     let router: Router
@@ -94,19 +104,22 @@ private struct ConversationPage: View {
 
     var body: some View {
         DrawerOverlay(open: $open, drawer: drawer) {
-            ConversationPlaceholder(agent: agent, router: router, stores: stores)
-        }
-        .toolbar {
-            // Where the drawer is opened from until the conversation's own
-            // floating pill carries the control.
-            ToolbarItem(placement: .topBarLeading) {
-                Button { open = true } label: {
-                    Image(systemName: "sidebar.left")
+            Conversation(
+                model: stores.conversation(agent),
+                subject: ConversationSubject(agent: agent, in: stores.fleet)
+            ) { action in
+                switch action {
+                case .openDrawer: open = true
+                case .openChanges: router.open(.changes(agent))
+                // The overflow's own panel is not built yet, so nothing is
+                // presented and nothing pretends to have been.
+                case .overflow: break
                 }
-                .accessibilityLabel("Agents")
-                .identified("conversation.drawer", label: "Agents")
             }
         }
+        // A conversation has no bar. The feed runs to the top of the display
+        // and the way out is the drawer control on its own chrome.
+        .toolbar(.hidden, for: .navigationBar)
     }
 
     private var drawer: AgentsDrawer {

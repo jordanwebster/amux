@@ -16,6 +16,7 @@ enum DoorScreens {
         case .probe: true
         case .home, .homeQuiet, .firstRun, .firstRunPaid: true
         case .drawer: true
+        case .run, .reviewCta: true
         default: false
         }
     }
@@ -43,6 +44,14 @@ enum DoorScreens {
             ) {
                 Ground()
             }
+        // The same screen twice. Whether a turn has left anything to review is
+        // a fact the conversation reads off its own store, not a screen of its
+        // own: `review-cta` is `run` with a diff in it.
+        case .run, .reviewCta:
+            Conversation(
+                model: host.stores.conversation(Scenario.focus),
+                subject: ConversationSubject(
+                    agent: Scenario.focus, in: host.stores.fleet)) { _ in }
         default: EmptyView()
         }
     }
@@ -68,7 +77,19 @@ struct DrivenRoot<Content: View>: View {
             }
         }
         .environment(\.design, host.design)
-        .environment(\.colorScheme, host.appearance.colorScheme)
+        // The appearance is not set here. It is the window's interface style
+        // and nothing else, because the design's colours are dynamic system
+        // colours and the glass is a system material, and both of those read
+        // the trait collection rather than SwiftUI's colour scheme. Overriding
+        // the environment as well gave the two sources a frame to disagree in,
+        // and a capture taken in that frame showed white plates over a
+        // near-black ground.
+        //
+        // Built afresh on every appearance request rather than moved into the
+        // new one: a material already on screen cross-fades over a length of
+        // time nobody publishes, and a still of that fade is a picture of
+        // neither appearance.
+        .id(host.appearances)
         .dynamicTypeSize(host.typeSize)
         .onPreferenceChange(IdentifiedElements.self) { declared in
             Task { @MainActor in DoorHost.shared.declared = declared }

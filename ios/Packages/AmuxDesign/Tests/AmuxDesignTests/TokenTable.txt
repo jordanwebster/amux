@@ -11,6 +11,8 @@ inkMuted        #575F6E  #949CAB
 inkFaint        #949CAB  #747D8D
 accent          #0E5F6E  #4FBACD
 onAccent        #FFFFFF  #06080B
+added           #458353  #84C490
+removed         #9B3C40  #D78583
 
 metric           value
 cardRadius      16

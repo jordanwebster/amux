@@ -21,6 +21,12 @@ final class DoorHost {
     /// running as itself.
     private(set) var screen: Screen?
     private(set) var appearance: Appearance = .light
+    /// How many times an appearance has been asked for. The driven tree is
+    /// keyed on this, so every request builds it afresh — including one that
+    /// asks for the appearance already on show. Otherwise the first screen of
+    /// a run is photographed as it was built at launch and every screen after
+    /// it is photographed rebuilt, and the two do not draw glass identically.
+    private(set) var appearances = 0
     /// The design every driven screen is drawn with. The app's own, unless a
     /// driver has asked for one token to be moved.
     private(set) var design: Design = .app
@@ -72,7 +78,7 @@ final class DoorHost {
         case .bridge: return .bridge(bridgeState())
         case .signposts: return .signposts(Signposts.marks)
         case .appearance(let appearance):
-            self.appearance = appearance
+            await wear(appearance)
             trace.append(.appearance(appearance))
             return .ack
         case .perturb(let token):
@@ -98,7 +104,7 @@ final class DoorHost {
             await settle()
             return .ack
         case .query: return query()
-        case .capture(let path): return capture(to: path)
+        case .capture(let path): return await capture(to: path)
         case .tap(let identifier): return tap(identifier)
         case .type(let identifier, let text): return type(text, into: identifier)
         // Answered here so the driver has an acknowledgement in hand before
@@ -145,6 +151,29 @@ final class DoorHost {
         typeSize = fixture.typeSize.flatMap(DynamicTypeSize.init(doorName:)) ?? .large
         show(screen)
         return .ack
+    }
+
+    /// Puts the app into an appearance.
+    ///
+    /// The appearance is the window's interface style and nothing else: the
+    /// design's colours are dynamic system colours and the glass is a system
+    /// material, and both read the trait collection rather than SwiftUI's
+    /// colour scheme.
+    ///
+    /// The screen is then built afresh, a frame later. Both halves matter. A
+    /// material already on screen cross-fades to the new appearance over a
+    /// length of time nobody publishes, so it is replaced rather than moved;
+    /// and a replacement made in the same frame as the trait change is built
+    /// while that change is still propagating, which is how a light screen
+    /// ended up wearing the dark screen's plates.
+    private func wear(_ appearance: Appearance) async {
+        DoorWindow.current?.overrideUserInterfaceStyle =
+            appearance == .dark ? .dark : .light
+        self.appearance = appearance
+        await DoorFrames.next()
+        var immediately = Transaction()
+        immediately.disablesAnimations = true
+        withTransaction(immediately) { appearances += 1 }
     }
 
     /// Shows a screen without touching the stores. Opening a fixture replaces
@@ -326,7 +355,7 @@ final class DoorHost {
             show(screen)
             return .ack
         case .appearance(let appearance):
-            self.appearance = appearance
+            Task { await wear(appearance) }
             trace.append(event)
             return .ack
         case .dynamicType(let name):
@@ -354,10 +383,21 @@ final class DoorHost {
         bridge = nil
     }
 
-    /// Waits for the screen to stop changing. Three frames, because a state
-    /// change lands one frame, is laid out the next and is drawn the third.
+    /// Waits for the screen to stop changing.
+    ///
+    /// Waits for the screen to stop changing.
+    ///
+    /// Three frames for a state change to land, be laid out and be drawn, and
+    /// then the screen is drawn repeatedly until two passes agree. A fixed
+    /// count of frames does not work: switching appearance re-resolves every
+    /// system material on screen and UIKit takes a length of time over it that
+    /// nobody publishes, so three frames photographed the half-way point and
+    /// any larger number is a guess that is still too small on a loaded
+    /// machine and wasted on an idle one.
     private func settle() async {
         for _ in 0..<3 { await DoorFrames.next() }
+        guard let window = DoorWindow.current else { return }
+        _ = await steady(window)
     }
 
     // MARK: - Reading and driving what is drawn
@@ -384,9 +424,45 @@ final class DoorHost {
             shimmering: stores.fleet.rows.filter { !$0.confirmed }.count))
     }
 
-    private func capture(to path: String) -> DoorReply {
+    /// Photographs the window, once it draws the same thing twice.
+    ///
+    /// Not a formality. Drawing the hierarchy into an image is what makes a
+    /// system material resolve its backdrop for that renderer, and the first
+    /// pass after an appearance change resolves it against the appearance
+    /// before: a light screen came back wearing the dark screen's plates,
+    /// every time and never the other way round. Two passes that agree are
+    /// the only evidence available from inside the process that the picture
+    /// is of the screen rather than of the one before it.
+    ///
+    /// The ceiling exists because some screens never stop — a row that is only
+    /// remembered has a sweep passing over it forever — and a capture of one
+    /// still has to happen. Whatever the last pass drew is what gets written.
+    private func capture(to path: String) async -> DoorReply {
         guard let window = DoorWindow.current else { return .error("no window on screen") }
-        return DoorCapture.png(of: window, to: path)
+        guard let (image, data) = await steady(window) else {
+            return .error("capture failed: the window would not draw")
+        }
+        return DoorCapture.write(image, data, to: path)
+    }
+
+    /// Draws the window until two passes agree, and hands back the last one.
+    ///
+    /// The ceiling exists because some screens never stop — a row that is only
+    /// remembered has a sweep passing over it forever — and a capture of one
+    /// still has to happen; whatever the last pass drew is what is returned.
+    private func steady(_ window: UIWindow) async -> (UIImage, Data)? {
+        var previous: Data?
+        var last: (UIImage, Data)?
+        for _ in 0..<30 {
+            guard let image = DoorCapture.render(of: window),
+                let data = image.pngData()
+            else { return last }
+            last = (image, data)
+            if data == previous { return last }
+            previous = data
+            await DoorFrames.next()
+        }
+        return last
     }
 
     private func tap(_ identifier: String) -> DoorReply {

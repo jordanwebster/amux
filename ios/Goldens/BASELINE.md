@@ -101,6 +101,40 @@ against. Three things about the picture are worth knowing:
   conversation to get there. The design drew this panel for an app with no tab
   bar; this one has both, and the shorter path wins.
 
+## run
+
+A conversation's chrome: no navigation bar, a floating pill naming the agent
+with the machine and directory it runs in under it, the drawer control on the
+pill's leading edge and the overflow beside it.
+
+- **The transcript is not in the picture.** The reference shows the chrome over
+  a conversation; the rows are the next thing to be built, and photographing
+  the chrome over a stand-in transcript would put a stand-in into a baseline.
+  So this capture is the chrome, the ground under it and nothing pretending to
+  be what an agent said. It is retaken with the transcript behind it, and the
+  chrome itself does not change when it is.
+- **No composer.** The reference draws the message box along the bottom edge.
+  It is built two milestones later and the same argument applies to it.
+- **The drawer control sits inside the pill.** The reference draws it there
+  too; it is worth saying because it is the only way out of a conversation.
+  There is no back chevron, by design, and the tab bar underneath is the other
+  way back: reaching for Agents while already inside a conversation returns to
+  the list, which is what the platform means by tapping the tab you are on.
+
+## review-cta
+
+The same screen once the turn has changed something: a chip in the chrome, in
+the diff's green and red, that opens the changes.
+
+- **The chip reads "+3 −6", not "+118 −40".** The reference's numbers belong to
+  a different agent's finished turn. The chip counts the patch it opens, hunk
+  by hunk, rather than repeating the fleet's totals for the last turn — a
+  number that disagreed with the page behind it would be worse than no number.
+- **The chip is a little rounder and a little wider than the drawing.** It is
+  a control, so it keeps the 44 pt target the guidelines ask for, which at this
+  type size is taller than the text needs.
+- The transcript and composer are absent here for the same reason as on `run`.
+
 ## ax-home
 
 The same Agents home at an accessibility text size. There is no design

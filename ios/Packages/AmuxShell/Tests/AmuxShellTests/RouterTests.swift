@@ -126,6 +126,31 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(router.path(.agents), [.conversation(agent)])
     }
 
+    /// A conversation has no navigation bar, so reaching for Agents while
+    /// inside one is the way back to the list. Coming from another tab is not
+    /// that: it finds the stack where it was left.
+    func testReachingForTheTabYouAreOnGoesBackToTheTopOfIt() {
+        let router = Router()
+        let agent = agent()
+        router.open(.conversation(agent))
+
+        router.select(.agents)
+
+        XCTAssertEqual(router.tab, .agents)
+        XCTAssertEqual(router.path, [])
+    }
+
+    func testArrivingFromAnotherTabKeepsTheStackItLeftBehind() {
+        let router = Router()
+        let agent = agent()
+        router.open(.conversation(agent))
+        router.select(.you)
+
+        router.select(.agents)
+
+        XCTAssertEqual(router.path, [.conversation(agent)])
+    }
+
     func testEveryRouteBelongsToOneTab() {
         XCTAssertEqual(Route.conversation(agent()).tab, .agents)
         XCTAssertEqual(Route.changes(agent()).tab, .agents)
