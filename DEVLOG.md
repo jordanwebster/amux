@@ -4,6 +4,25 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Every kind of transcript row is now told apart on screen.** The
+shared row shape named every one of them `transcript.activity`, so one denied
+row satisfied a check meant to cover refusals, failures, interruptions,
+provider errors, subagents, written files, exits and rows this build cannot
+read; the rule that closes a turn and the rule that marks compaction shared one
+name too. Each kind now carries its own name, which VoiceOver and the journey
+both read. The scripted provider gained the steps needed to play the missing
+ones — a prompt that opens a turn so it can end, a tool that ran and failed, an
+interruption, and an envelope kind on an agent message — and the conversation
+journey plays all of them, fails if any single kind stops being drawn, and
+photographs the end of the turn with them on screen.
+
+A message from another agent stating that its sender exited was drawn as an
+ordinary message: the envelope kind arrives as a tagged object and the phone
+read it as a bare string, so the line saying a session ended could never
+appear. The reader now reads the shape the core sends, and an unknown kind
+keeps the label the carrier wrote. Fixtures that encoded the string shape were
+wrong and now encode what a host actually sends.
+
 2026-09-06 — **A refusal now belongs to the agent it was said about.** An
 operation result names its operation and no agent, so the connection offers
 every result to every open conversation. Each conversation kept all of them,

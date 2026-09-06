@@ -194,7 +194,7 @@ public enum Transcript {
             "id": .string("envelope-\(id)"),
             "context": .null,
             "from": .string(agent),
-            "kind": .string("exited"),
+            "kind": .object(["message_kind": .string("exited")]),
             "text": .string(""),
         ]))
     }
@@ -206,7 +206,7 @@ public enum Transcript {
             "id": .string("envelope-\(id)"),
             "context": .null,
             "from": .string(from),
-            "kind": .string("message"),
+            "kind": .object(["message_kind": .string("message")]),
             "text": .string(text),
         ]))
     }

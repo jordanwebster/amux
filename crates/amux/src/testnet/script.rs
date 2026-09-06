@@ -61,11 +61,25 @@ pub enum Step {
     Markdown {
         text: String,
     },
+    /// A turn beginning with somebody asking for something.
+    ///
+    /// The same rows and hook a real prompt writes, so a script can play a
+    /// whole turn — the ask, the work, the rule that closes it — without a
+    /// client being there to type one. A turn nobody opened cannot end, and
+    /// the row that says a turn ended is one a reader is shown.
+    Prompt {
+        text: String,
+    },
     Tool {
         name: String,
         input: Value,
         output: Option<String>,
         denied: bool,
+        /// The tool ran and came back an error. A refusal and a failure are
+        /// different rows to a reader, and only a denial carries the typed
+        /// denial kind, so a script says which of the two it means.
+        #[serde(default)]
+        failed: bool,
         /// The `toolUseResult` sidecar Claude writes beside a tool result.
         ///
         /// The text a tool returns is what a reader sees; the sidecar is what
@@ -88,6 +102,15 @@ pub enum Step {
     AgentMessage {
         from: String,
         text: String,
+        /// What the carrier said the envelope was: a message, a sender that
+        /// finished its turn, a sender whose session ended. Unstated is an
+        /// ordinary message.
+        #[serde(default)]
+        kind: Option<String>,
+    },
+    /// The person cut a turn, or the tool it had asked to run, short.
+    Interrupted {
+        tool_use: bool,
     },
     Working {
         secs: f32,
@@ -607,6 +630,7 @@ impl Player {
         input: &Value,
         output: Option<&str>,
         denied: bool,
+        failed: bool,
         result: Option<Value>,
     ) -> Result<(), ScriptError> {
         let id = self.id();
@@ -620,13 +644,15 @@ impl Player {
             json!({"tool_name":name,"tool_input":input,"tool_use_id":id}),
         )
         .await?;
-        if output.is_some() || denied {
+        if output.is_some() || denied || failed {
             let content = if denied {
                 "The user doesn't want to proceed with this tool use."
             } else {
-                output.unwrap()
+                output.unwrap_or("the tool returned an error")
             };
-            let mut row = self.row("user", json!({"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":id,"content":content,"is_error":denied}]}}));
+            let mut row = self.row("user", json!({"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":id,"content":content,"is_error":denied || failed}]}}));
+            // Only a denial carries the typed denial kind. A failure without
+            // one is what tells the fold the two apart.
             if denied {
                 row["toolDenialKind"] = json!("user_rejected");
             }
@@ -635,7 +661,7 @@ impl Player {
             }
             self.rows(vec![row]).await?;
             self.hook(
-                if denied {
+                if denied || failed {
                     "PostToolUseFailure"
                 } else {
                     "PostToolUse"
@@ -713,6 +739,19 @@ impl Player {
             match step {
                 Step::Rows { jsonl } => self.rows(jsonl.clone()).await?,
                 Step::Unknown { raw } => self.rows(vec![raw.clone()]).await?,
+                Step::Prompt { text } => {
+                    self.turn_open = true;
+                    self.duration_ms = 0;
+                    self.hook("UserPromptSubmit", json!({"prompt":text})).await?;
+                    let row = self.row(
+                        "user",
+                        json!({
+                            "origin":{"kind":"human"}, "promptSource":"typed",
+                            "message":{"role":"user","content":text},
+                        }),
+                    );
+                    self.rows(vec![row]).await?
+                }
                 Step::Markdown { text } => {
                     self.message("assistant", json!([{"type":"text","text":text}]))
                         .await?
@@ -722,9 +761,10 @@ impl Player {
                     input,
                     output,
                     denied,
+                    failed,
                     result,
                 } => {
-                    self.tool(name, input, output.as_deref(), *denied, result.clone())
+                    self.tool(name, input, output.as_deref(), *denied, *failed, result.clone())
                         .await?
                 }
                 Step::Ask(ask) => self.ask(ask).await?,
@@ -735,12 +775,13 @@ impl Player {
                         &json!({"todos":todos}),
                         Some("Todos updated"),
                         false,
+                        false,
                         None,
                     )
                     .await?;
                 }
                 Step::ChildStarted { name } => {
-                    self.tool("Agent", &json!({"description":name,"subagent_type":"general-purpose","run_in_background":true}), Some(&format!("agentId: {name}")), false, None).await?;
+                    self.tool("Agent", &json!({"description":name,"subagent_type":"general-purpose","run_in_background":true}), Some(&format!("agentId: {name}")), false, false, None).await?;
                     self.hook(
                         "SubagentStart",
                         json!({"agent_id":name,"agent_type":"general-purpose"}),
@@ -752,7 +793,7 @@ impl Player {
                     self.rows(vec![row]).await?;
                     self.hook("SubagentStop", json!({"agent_id":name})).await?;
                 }
-                Step::AgentMessage { from, text } => {
+                Step::AgentMessage { from, text, kind } => {
                     let escape = |s: &str| {
                         s.replace('&', "&amp;")
                             .replace('<', "&lt;")
@@ -762,12 +803,25 @@ impl Player {
                     self.message(
                         "user",
                         json!(format!(
-                            "<amux from=\"{}\" kind=\"message\">\n{}\n</amux>",
+                            "<amux from=\"{}\" kind=\"{}\">\n{}\n</amux>",
                             escape(from),
+                            escape(kind.as_deref().unwrap_or("message")),
                             escape(text)
                         )),
                     )
                     .await?;
+                }
+                Step::Interrupted { tool_use } => {
+                    // The canonical markers claude writes when somebody cuts
+                    // a turn short; the fold reads these strings and nothing
+                    // else, so a script that means an interruption says them.
+                    let text = if *tool_use {
+                        "[Request interrupted by user for tool use]"
+                    } else {
+                        "[Request interrupted by user]"
+                    };
+                    self.message("user", json!([{"type":"text","text":text}]))
+                        .await?
                 }
                 Step::Working { secs } => {
                     let duration = Duration::try_from_secs_f32(*secs).map_err(playback_error)?;

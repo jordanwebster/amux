@@ -213,10 +213,16 @@ and failures that a good morning never shows.
 - **The screen is taller than the frame.** Below what this capture holds are the
   written file, the refusal, the failure, the interruption, the provider error,
   the subagent's start and finish, the row this build cannot read, the last
-  message back and the line where the other agent's session ends. They are
-  proved by the projection suite, which asserts what each of those rows becomes,
-  and by the conversation journey, which streams every one of them from a real
-  host and scrolls to it.
+  message back and the line where the other agent's session ends. This still
+  does not show them, so they are proved twice elsewhere: the projection suite
+  asserts what each of those rows becomes, and the conversation journey streams
+  every one of them from a real host, reads the whole feed by scrolling and
+  fails if any single kind stopped being drawn. Each kind is named on screen
+  under its own name — `transcript.denied`, `transcript.failed`,
+  `transcript.interrupted`, `transcript.provider-error` and the rest — so one
+  row of one kind can no longer stand in for all of them. The journey's
+  `conversation-row-kinds` photograph is taken at the end of that turn, with
+  those rows on screen.
 - **The accent stops at the glyph.** A denied, failed, interrupted or
   provider-error row is marked on its mark and nowhere else. Colouring the words
   as well would make a page with three failures on it mostly coloured, which

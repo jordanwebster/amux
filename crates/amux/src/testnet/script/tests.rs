@@ -151,11 +151,15 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
             jsonl: vec![json!({"type":"user","message":{"role":"user","content":"raw row"}})],
         },
         markdown("# Hello\n\nA real transcript."),
+        Step::Prompt {
+            text: "look again".into(),
+        },
         Step::Tool {
             name: "Bash".into(),
             input: json!({"command":"pwd"}),
             output: Some("/workspace".into()),
             denied: false,
+            failed: false,
             result: None,
         },
         Step::Tool {
@@ -163,8 +167,18 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
             input: json!({"file_path":"blocked"}),
             output: None,
             denied: true,
+            failed: false,
             result: None,
         },
+        Step::Tool {
+            name: "Bash".into(),
+            input: json!({"command":"cargo build"}),
+            output: Some("error[E0308]".into()),
+            denied: false,
+            failed: true,
+            result: None,
+        },
+        Step::Interrupted { tool_use: false },
         Step::Todo {
             items: vec![
                 ("Read".into(), TodoState::Completed),
@@ -181,6 +195,12 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
         Step::AgentMessage {
             from: "reviewer/host".into(),
             text: "Looks <good> & ready".into(),
+            kind: None,
+        },
+        Step::AgentMessage {
+            from: "reviewer/host".into(),
+            text: String::new(),
+            kind: Some("exited".into()),
         },
         Step::Working { secs: 0.01 },
         Step::Compaction,
@@ -237,6 +257,26 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
                 s.contains("from=\"reviewer/host\"") && s.contains("&lt;good&gt; &amp; ready")
             })
     }));
+    // A failure is an error result with no denial kind on it, which is the
+    // only thing that tells a refusal and a failure apart.
+    assert!(rows.iter().any(|r| r.get("toolDenialKind").is_none()
+        && r.pointer("/message/content/0/is_error") == Some(&json!(true))
+        && r.pointer("/message/content/0/content") == Some(&json!("error[E0308]"))));
+    assert!(rows.iter().any(
+        |r| r.pointer("/message/content/0/text").and_then(Value::as_str)
+            == Some("[Request interrupted by user]")
+    ));
+    assert!(rows.iter().any(|r| {
+        r.pointer("/message/content")
+            .and_then(Value::as_str)
+            .is_some_and(|s| s.contains("kind=\"exited\""))
+    }));
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.pointer("/promptSource") == Some(&json!("typed")))
+            .count(),
+        2
+    );
     assert!(rows.iter().any(|r| r["isApiErrorMessage"] == true));
     assert!(rows.iter().any(|r| r["subtype"] == "compact_boundary"));
     let turns: Vec<_> = rows
@@ -245,7 +285,7 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
         .collect();
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0]["durationMs"], 10);
-    assert_eq!(turns[0]["messageCount"], 14);
+    assert_eq!(turns[0]["messageCount"], 19);
     let hooks: Vec<_> = events
         .iter()
         .filter_map(|e| {

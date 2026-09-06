@@ -135,6 +135,13 @@ final class ConversationTests: XCTestCase {
             XCTAssertTrue(transcript.contains(kind),
                           "the transcript never drew \(kind); it drew \(transcript.sorted())")
         }
+        // The end of the turn, photographed where it is. The refusals, the
+        // failure, the interruption and the provider's error all sit below the
+        // fold of a feed this long, so a photograph taken where the feed opens
+        // shows none of them: this one is taken with them on screen, and says
+        // which of them were.
+        record["endOfTurn"] = toTheEnd(app)
+        photograph(app, "conversation-row-kinds")
         photograph(app, "conversation-head")
 
         // MARK: A folded run, opened.
@@ -459,6 +466,9 @@ final class ConversationTests: XCTestCase {
     ] }
 
     private static var whileWatching: [Any] { [
+        // A turn somebody asked for, so that the rule which closes a turn is
+        // one of the rows this reads back. A turn nobody opened never ends.
+        ["Prompt": ["text": "Have another look at the parser."]],
         ["Markdown": ["text": """
         ## What I found
 
@@ -498,14 +508,30 @@ final class ConversationTests: XCTestCase {
                   "output": String(repeating: "running 1 test\n", count: 40), "denied": false]],
         ["Tool": ["name": "Write", "input": ["file_path": "/work/secrets.env"],
                   "output": NSNull(), "denied": true]],
+        // A file written whole, which is a different row from a file edited
+        // and from one the person would not let it write.
+        ["Tool": ["name": "Write", "input": ["file_path": "/work/notes.md"],
+                  "output": "File created successfully at: /work/notes.md", "denied": false]],
+        // Ran and came back an error. Not a refusal: nobody stopped this one.
+        ["Tool": ["name": "Bash", "input": ["command": "cargo build -p parser"],
+                  "output": "error[E0308]: mismatched types", "denied": false, "failed": true]],
+        // A tool this build has no line of its own for, which is drawn as its
+        // name and the one thing it came back with.
+        ["Tool": ["name": "NotebookEdit", "input": ["notebook_path": "/work/notes.ipynb"],
+                  "output": "Updated cell 3", "denied": false]],
         ["Todo": ["items": [["fix the parser", "completed"], ["run the suite", "in_progress"],
                             ["write it up", "pending"]]]],
         ["ChildStarted": ["name": "scout"]],
         ["AgentMessage": ["from": "scout", "text": "I looked at the other three callers and "
                           + "only one of them cares about the trailing newline."]],
         ["ChildFinished": ["name": "scout"]],
+        // Another agent's session ending, which the carrier states as a kind
+        // and the transcript draws as an event rather than a quote.
+        ["AgentMessage": ["from": "scout", "text": "", "kind": "exited"]],
         ["Working": ["secs": 0.2]],
         ["ApiError": ["message": "upstream returned 529"]],
+        // The person cut it off.
+        ["Interrupted": ["tool_use": false]],
         "Compaction",
         ["Unknown": ["raw": ["type": "something_this_build_has_no_case_for", "value": 1]]],
         "EndTurn",
@@ -515,14 +541,25 @@ final class ConversationTests: XCTestCase {
     /// them, so a kind that stops being drawn fails here rather than quietly
     /// going missing.
     private static let everyRowKind = [
+        "transcript.prompt",
         "transcript.prose",
         "transcript.code",
         "transcript.exploration",
         "transcript.edit",
+        "transcript.wrote",
+        "transcript.ran",
         "transcript.output",
-        "transcript.activity",
+        "transcript.tool",
+        "transcript.denied",
+        "transcript.failed",
+        "transcript.interrupted",
+        "transcript.provider-error",
+        "transcript.subagent",
         "transcript.agent-message",
-        "transcript.rule",
+        "transcript.exit",
+        "transcript.unreadable",
+        "transcript.compaction",
+        "transcript.turn-end",
     ]
 
     // MARK: - Talking to the runner and to the app
@@ -736,6 +773,22 @@ final class ConversationTests: XCTestCase {
     /// client sees: the elements the screen is currently showing. A transcript
     /// is longer than a phone, so the names are unioned across the walk rather
     /// than read once at the bottom.
+    /// Scrolls to the end of the feed and answers with what is on screen
+    /// there. The rows a turn ends with — what was refused, what failed, what
+    /// was cut off — are only ever at the bottom of a long one.
+    private func toTheEnd(_ app: XCUIApplication) -> [String] {
+        var last: [String] = []
+        var unchanged = 0
+        for _ in 0..<60 {
+            app.swipeUp(velocity: .fast)
+            let now = transcriptRows(app)
+            unchanged = now == last ? unchanged + 1 : 0
+            last = now
+            if unchanged >= 3 { break }
+        }
+        return last
+    }
+
     private func readWholeFeed(_ app: XCUIApplication) -> Set<String> {
         var found = Set(transcriptRows(app))
         var unchanged = 0

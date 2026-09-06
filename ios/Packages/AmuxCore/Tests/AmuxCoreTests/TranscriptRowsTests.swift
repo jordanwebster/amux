@@ -152,11 +152,40 @@ final class TranscriptRowsTests: XCTestCase {
     func testAMessageBetweenAgentsKeepsWhoSentIt() {
         let row = claude(0, .object([
             "entry": .string("agent_message"), "from": .string("relay-cleanup/mini"),
-            "kind": .string("message"), "text": .string("Nothing here matches on it."),
+            "kind": .object(["message_kind": .string("message")]),
+            "text": .string("Nothing here matches on it."),
         ])).kind
         XCTAssertEqual(row, .agentMessage(
             from: "relay-cleanup/mini", text: "Nothing here matches on it.",
             outbound: false, note: nil))
+    }
+
+    /// The envelope kind arrives as a tagged object, and two of its kinds are
+    /// not messages at all. Read as a bare string — which is not what the core
+    /// sends — every one of them would be drawn as an ordinary message and the
+    /// line saying another agent's session ended would never appear.
+    func testASenderThatEndedIsAnEventRatherThanAMessage() {
+        for (kind, text) in [("exited", "relay-cleanup/mini ended its session"),
+                             ("completed", "relay-cleanup/mini finished its turn")] {
+            let row = claude(0, .object([
+                "entry": .string("agent_message"), "from": .string("relay-cleanup/mini"),
+                "kind": .object(["message_kind": .string(kind)]), "text": .string(""),
+            ])).kind
+            XCTAssertEqual(row, .exit(text: text))
+        }
+    }
+
+    /// A kind this build has no case for keeps the label the carrier wrote,
+    /// beside the message itself.
+    func testAnUnknownEnvelopeKindKeepsItsLabel() {
+        let row = claude(0, .object([
+            "entry": .string("agent_message"), "from": .string("relay-cleanup/mini"),
+            "kind": .object(["message_kind": .string("other"), "label": .string("handover")]),
+            "text": .string("Taking this one over."),
+        ])).kind
+        XCTAssertEqual(row, .agentMessage(
+            from: "relay-cleanup/mini", text: "Taking this one over.",
+            outbound: false, note: "handover"))
     }
 
     func testAMessageThisAgentSentIsOutbound() {

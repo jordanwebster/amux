@@ -325,7 +325,11 @@ extension FeedEntry {
     /// nothing inside it.
     private static func carried(_ body: JSONValue) -> TranscriptRow.Kind {
         let from = body["from"]?.stringValue ?? "another agent"
-        switch body["kind"]?.stringValue {
+        // The envelope kind is a tagged object, not a bare string: the core
+        // states it as `{"message_kind": …}` and a kind it does not know
+        // carries the label the carrier wrote beside it.
+        let envelope = body["kind"]
+        switch envelope?["message_kind"]?.stringValue {
         case "exited":
             return .exit(text: "\(from) ended its session")
         case "completed":
@@ -333,6 +337,10 @@ extension FeedEntry {
         case "message", "unstated", .none:
             return .agentMessage(
                 from: from, text: body["text"]?.stringValue ?? "", outbound: false, note: nil)
+        case "other":
+            return .agentMessage(
+                from: from, text: body["text"]?.stringValue ?? "", outbound: false,
+                note: envelope?["label"]?.stringValue ?? "an unknown kind")
         case .some(let other):
             return .agentMessage(
                 from: from, text: body["text"]?.stringValue ?? "", outbound: false, note: other)

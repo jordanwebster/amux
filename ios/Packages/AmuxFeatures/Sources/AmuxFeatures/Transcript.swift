@@ -45,10 +45,14 @@ private struct TranscriptRowView: View {
             Prose(markdown: markdown, open: open)
                 .padding(.vertical, design.metrics.feedGap / 2)
         case .turnEnd(let meta):
-            FeedRule(glyph: nil, label: meta.map { "\($0) · turn ended" } ?? "turn ended")
+            FeedRule(
+                kind: "turn-end", glyph: nil,
+                label: meta.map { "\($0) · turn ended" } ?? "turn ended")
                 .padding(.vertical, design.metrics.feedGap / 2)
         case .compaction(let before, let after):
-            FeedRule(glyph: "arrow.down.right.and.arrow.up.left", label: Self.compacted(before, after))
+            FeedRule(
+                kind: "compaction", glyph: "arrow.down.right.and.arrow.up.left",
+                label: Self.compacted(before, after))
                 .padding(.vertical, design.metrics.feedGap / 2)
         default:
             Rail(glyph: glyph, accented: accented, continues: railContinues) {
@@ -76,37 +80,43 @@ private struct TranscriptRowView: View {
         case .edit(let path, let added, let removed):
             EditRow(path: path, added: added, removed: removed)
         case .wrote(let path, let meta):
-            ActivityRow(verb: "Wrote", subject: path, mono: true, meta: meta)
+            ActivityRow(kind: "wrote", verb: "Wrote", subject: path, mono: true, meta: meta)
         case .ran(let command, let meta, let output):
             RanRow(command: command, meta: meta, output: output)
         case .tool(let name, let detail, let meta):
-            ActivityRow(verb: name, subject: detail, mono: true, meta: meta)
+            ActivityRow(kind: "tool", verb: name, subject: detail, mono: true, meta: meta)
         case .denied(let label, let reason):
-            ActivityRow(verb: "Denied", subject: label, mono: true, meta: nil, note: reason)
+            ActivityRow(
+                kind: "denied", verb: "Denied", subject: label, mono: true, meta: nil,
+                note: reason)
         case .failed(let label, let message):
-            ActivityRow(verb: "Failed", subject: label, mono: true, meta: nil, note: message)
+            ActivityRow(
+                kind: "failed", verb: "Failed", subject: label, mono: true, meta: nil,
+                note: message)
         case .interrupted(let toolUse):
             ActivityRow(
-                verb: "Interrupted", subject: toolUse ? "a tool it asked to run" : nil,
-                mono: false, meta: nil)
+                kind: "interrupted", verb: "Interrupted",
+                subject: toolUse ? "a tool it asked to run" : nil, mono: false, meta: nil)
         case .providerError(let message):
-            ActivityRow(verb: "Provider error", subject: nil, mono: false, meta: nil, note: message)
+            ActivityRow(
+                kind: "provider-error", verb: "Provider error", subject: nil, mono: false,
+                meta: nil, note: message)
         case .thinking(let seconds, let redacted):
             ActivityRow(
-                verb: seconds.map { "Thought for \($0)s" } ?? "Thought",
+                kind: "thinking", verb: seconds.map { "Thought for \($0)s" } ?? "Thought",
                 subject: redacted ? "withheld" : nil, mono: false, meta: nil)
         case .subagent(let name, let kind, let state):
             ActivityRow(
-                verb: state == nil ? "Started" : (state ?? "").capitalized,
+                kind: "subagent", verb: state == nil ? "Started" : (state ?? "").capitalized,
                 subject: [name, kind].compactMap { $0 }.joined(separator: " \u{00B7} "),
                 mono: true, meta: nil)
         case .agentMessage(let from, let text, let outbound, let note):
             AgentMessageRow(from: from, text: text, outbound: outbound, note: note)
         case .exit(let text):
-            ActivityRow(verb: text, subject: nil, mono: false, meta: nil)
+            ActivityRow(kind: "exit", verb: text, subject: nil, mono: false, meta: nil)
         case .unreadable(let label):
             ActivityRow(
-                verb: "Unreadable", subject: label, mono: true, meta: nil,
+                kind: "unreadable", verb: "Unreadable", subject: label, mono: true, meta: nil,
                 note: "This build does not know this row; it is kept as it arrived.")
         case .prompt, .prose, .turnEnd, .compaction:
             EmptyView()
@@ -387,6 +397,10 @@ private struct TableBlock: View {
 /// A rule across the feed, with what it is about written into it.
 private struct FeedRule: View {
     @Environment(\.design) private var design
+    /// Which rule this is, in the name the screen goes by. A turn ending and
+    /// history being compacted away are different events and are told apart
+    /// by whoever reads the screen, not only by the words on them.
+    let kind: String
     let glyph: String?
     let label: String
 
@@ -406,7 +420,7 @@ private struct FeedRule: View {
                 .frame(height: design.metrics.hairline)
         }
         .accessibilityElement(children: .combine)
-        .identified("transcript.rule", label: label)
+        .identified("transcript.\(kind)", label: label)
     }
 }
 
@@ -509,7 +523,7 @@ private struct RanRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ActivityRow(verb: "Ran", subject: command, mono: true, meta: meta)
+            ActivityRow(kind: "ran", verb: "Ran", subject: command, mono: true, meta: meta)
             if let output { OutputPreview(output: output) }
         }
     }
@@ -607,6 +621,11 @@ private struct AgentMessageRow: View {
 /// second line when there is a reason worth stating.
 private struct ActivityRow: View {
     @Environment(\.design) private var design
+    /// Which kind of row this is, in the name the screen goes by. The shape is
+    /// shared; a refusal, a failure and a file written are not, and anybody
+    /// reading the screen — a journey, a person with VoiceOver on — has to be
+    /// able to tell which of them is on it.
+    let kind: String
     let verb: String
     let subject: String?
     let mono: Bool
@@ -646,7 +665,7 @@ private struct ActivityRow: View {
         }
         .accessibilityElement(children: .combine)
         .identified(
-            "transcript.activity",
+            "transcript.\(kind)",
             label: [verb, subject, meta, note].compactMap { $0 }.joined(separator: ", "))
     }
 }

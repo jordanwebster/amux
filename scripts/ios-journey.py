@@ -825,8 +825,8 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     port = free_port()
     photographs = {
         name: journey.directory / f"{name}.png" for name in (
-            "conversation-rows", "conversation-head", "conversation-unfolded",
-            "conversation-changes",
+            "conversation-rows", "conversation-row-kinds", "conversation-head",
+            "conversation-unfolded", "conversation-changes",
             "conversation-stale", "conversation-send-refused", "conversation-exited",
             "conversation-restored", "conversation-reconnected-live")}
     read = journey.directory / "conversation.json"
@@ -869,12 +869,28 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
                    f"a paired phone was given {len(fleet)} of the runner's {len(running)} "
                    f"agents: {fleet}")
 
-    # Every kind of row the scripted provider can produce, drawn.
+    # Every kind of row the scripted provider can produce, drawn — each under
+    # its own name, so a refusal, a failure, an interruption and a file written
+    # are told apart rather than counted as one shape.
     rows = seen.get("rows", [])
     journey.expect("transcript.prose" in rows and "transcript.code" in rows,
                    f"the agent's prose did not arrive as markdown: {rows}")
+    told_apart = ["transcript.denied", "transcript.failed", "transcript.interrupted",
+                  "transcript.provider-error", "transcript.subagent", "transcript.wrote",
+                  "transcript.exit", "transcript.unreadable", "transcript.compaction",
+                  "transcript.turn-end"]
+    missing = [kind for kind in told_apart if kind not in rows]
+    journey.expect(not missing, f"the transcript never drew {', '.join(missing)}: {rows}")
     journey.say(f"the provider played every kind of step it has and the transcript drew "
-                f"{len(rows)} kinds of row: {', '.join(rows)}")
+                f"{len(rows)} kinds of row, each under its own name: {', '.join(rows)}")
+    # And photographed where they are, which is the bottom of a long turn.
+    end = seen.get("endOfTurn") or []
+    shown = [kind for kind in told_apart if kind in end]
+    journey.expect(len(shown) >= 4,
+                   f"the end of the turn was photographed with none of those rows on screen: "
+                   f"{end}")
+    journey.say(f"conversation-row-kinds.png was taken at the end of the turn, with "
+                f"{', '.join(shown)} on screen")
     journey.expect(bool(seen.get("fold")),
                    "the folded run of reads did not list what it did when it was pressed")
     journey.say(f"the run of reads was folded, and opening it listed "
