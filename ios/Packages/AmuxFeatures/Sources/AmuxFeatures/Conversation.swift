@@ -125,6 +125,11 @@ public struct Conversation: View {
     @Environment(\.design) private var design
     private let model: ConversationStore
     private let subject: ConversationSubject
+    /// What the fleet calls an agent this one started. The fleet owns names
+    /// and this screen does not, so whoever has the fleet hands the naming in
+    /// and a conversation drawn without one falls back to the identity, which
+    /// is at least true.
+    private let naming: (AgentId) -> String
     private let actions: @MainActor (ConversationAction) -> Void
     /// Whether the finished turn's panel has been set aside for this visit.
     ///
@@ -133,13 +138,22 @@ public struct Conversation: View {
     /// still the way to them. Coming back to the conversation offers again.
     @State private var deferred = false
 
+    /// Which child said it cannot be opened, while its sentence is on show.
+    ///
+    /// View state, because pressing one of those chips is not going anywhere:
+    /// nothing is sent, nothing is opened, and coming back to the conversation
+    /// starts again with the strip as it was.
+    @State private var unopenable: ChildRow.ID?
+
     public init(
         model: ConversationStore,
         subject: ConversationSubject,
+        naming: @escaping (AgentId) -> String = { $0.description },
         actions: @escaping @MainActor (ConversationAction) -> Void
     ) {
         self.model = model
         self.subject = subject
+        self.naming = naming
         self.actions = actions
     }
 
@@ -227,20 +241,72 @@ public struct Conversation: View {
     // MARK: - The chrome
 
     private var chrome: some View {
-        HStack(alignment: .center, spacing: 8) {
-            pill
-            Spacer(minLength: 6)
-            if let changes = model.changes, !changes.isEmpty {
-                ChangesChip(changes: changes) { actions(.openChanges) }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
+                pill
+                Spacer(minLength: 6)
+                if let changes = model.changes, !changes.isEmpty {
+                    ChangesChip(changes: changes) { actions(.openChanges) }
+                }
+                Button { actions(.overflow) } label: {
+                    GlassIcon(glyph: "ellipsis")
+                }
+                .accessibilityLabel("More")
+                .identified("conversation.overflow", label: "More")
             }
-            Button { actions(.overflow) } label: {
-                GlassIcon(glyph: "ellipsis")
-            }
-            .accessibilityLabel("More")
-            .identified("conversation.overflow", label: "More")
+            children
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.vertical, 6)
+    }
+
+    /// What this agent started, and where each one can be answered.
+    ///
+    /// It rides with the chrome rather than sitting in the feed because a
+    /// child is a fact about the agent and not something it said: scrolling
+    /// back through a long turn must not take the one waiting child off the
+    /// screen. Nothing is drawn when an agent has started nothing, which is
+    /// most conversations.
+    @ViewBuilder
+    private var children: some View {
+        let roster = model.children(named: naming)
+        if !roster.isEmpty {
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(roster) { child in
+                        ChildChip(child: child, explaining: unopenable == child.id) {
+                            if let agent = child.openable {
+                                unopenable = nil
+                                actions(.openChild(agent))
+                            } else {
+                                unopenable = unopenable == child.id ? nil : child.id
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+            .scrollIndicators(.hidden)
+            .accessibilityElement(children: .contain)
+            .identified("conversation.children", value: "\(roster.count)")
+            // The sentence sits under the strip rather than inside a chip: it
+            // is a whole clause and a chip is a name, and a chip that grew to
+            // hold it would move every chip beside it.
+            if let named = unopenable,
+               let sentence = roster.first(where: { $0.id == named })?.unopenable {
+                Text(sentence)
+                    .designFont(.caption, design)
+                    .foregroundStyle(design.inkMuted.color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background { Color.clear.frosted(
+                        RoundedRectangle(
+                            cornerRadius: design.metrics.controlRadius, style: .continuous)) }
+                    .identified("conversation.child.unopenable", value: sentence)
+            }
+        }
     }
 
     /// The agent, its machine and its directory, on one floating surface with
@@ -280,6 +346,81 @@ public struct Conversation: View {
         .identified(
             "conversation.subject", label: "\(subject.name), \(subject.place)",
             value: subject.name)
+    }
+}
+
+/// One agent this one started, as a chip you can press.
+///
+/// An agent with a conversation of its own is a door and is drawn as one; work
+/// the provider runs inside this session is not, and pressing it says so
+/// rather than doing nothing. Both are pressable because both look pressable,
+/// and a control that looks alive and ignores a finger reads as a broken app.
+private struct ChildChip: View {
+    @Environment(\.design) private var design
+    let child: ChildRow
+    /// Whether this chip's own reason for going nowhere is on show under the
+    /// strip.
+    let explaining: Bool
+    let press: @MainActor () -> Void
+
+    var body: some View {
+        Button(action: press) {
+            HStack(spacing: 6) {
+                if child.needs != nil {
+                    NeedsYouMark(glyph: glyph, size: 16)
+                } else if child.openable == nil {
+                    Image(systemName: explaining ? "info.circle.fill" : "info.circle")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(design.inkFaint.color)
+                }
+                Text(child.name)
+                    .designFont(.caption, design)
+                    .foregroundStyle(design.ink.color)
+                    .lineLimit(1)
+                if let state = child.state {
+                    Text(state)
+                        .designFont(.caption, design)
+                        .foregroundStyle(design.inkFaint.color)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 34)
+            .background { Color.clear.frosted(Capsule()) }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(spoken)
+        .identified("conversation.child.\(child.id)", label: spoken, value: value)
+    }
+
+    /// The accent glyph is the fleet's, so a child waiting on a permission
+    /// reads here exactly as its row reads on the home.
+    private var glyph: String {
+        switch child.needs {
+        case .permission: "hand.raised.fill"
+        case .question: "questionmark"
+        case .finished: "checkmark"
+        case nil: "circle"
+        }
+    }
+
+    private var spoken: String {
+        [child.name, said, child.openable == nil ? "no conversation" : nil]
+            .compactMap { $0 }.joined(separator: ", ")
+    }
+
+    /// What a driver and VoiceOver read off the chip: what it is waiting for,
+    /// or the layer's own last word about it.
+    private var value: String { said ?? "" }
+
+    private var said: String? {
+        switch child.needs {
+        case .permission: "needs permission"
+        case .question: "has a question"
+        case .finished: "finished"
+        case nil: child.state
+        }
     }
 }
 

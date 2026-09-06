@@ -111,7 +111,10 @@ private struct ConversationPage: View {
         DrawerOverlay(open: $open, drawer: drawer) {
             Conversation(
                 model: stores.conversation(agent),
-                subject: ConversationSubject(agent: agent, in: stores.fleet)
+                subject: ConversationSubject(agent: agent, in: stores.fleet),
+                naming: { child in
+                    stores.fleet.rows.first { $0.id == child }?.name ?? child.description
+                }
             ) { action in
                 switch action {
                 case .openDrawer: open = true
@@ -125,11 +128,13 @@ private struct ConversationPage: View {
                 // panel says; the button is here so the offer is on the screen
                 // it belongs to rather than arriving with the wiring.
                 case .retry: break
-                // Answering is the one thing on this screen that has to reach
-                // the host, and the shell has no runtime to reach it with yet.
-                // What the panel decided is carried as one value so the
-                // wiring, when it lands, has nothing left to interpret.
-                case .answer: break
+                // Answering is the one thing on this screen that leaves the
+                // phone. The panel spells the command, because only it knows
+                // which ask this is and which layer raised it; the bundle
+                // sends it and keeps the operation, so the host's reply
+                // belongs to this conversation.
+                case .answer(let panel, let decision):
+                    stores.answer(panel, decision, of: agent)
                 // A child is pushed on top of its parent rather than replacing
                 // it, so answering the child and coming back finds the parent
                 // where it was left — the page underneath is never torn down.

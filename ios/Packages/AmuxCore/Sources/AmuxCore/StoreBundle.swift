@@ -28,6 +28,15 @@ public final class StoreBundle {
     @ObservationIgnored public var watch: (@MainActor (AgentId) -> Void)?
     @ObservationIgnored public var unwatch: (@MainActor (AgentId) -> Void)?
 
+    /// How a decision made on a screen reaches the machine.
+    ///
+    /// Answering an agent that is waiting is the one thing a conversation
+    /// does that has to leave the phone, and the screens decide nothing and
+    /// reach nothing themselves. Whoever owns the connection sets this; a
+    /// bundle with no connection behind it — a fixture, a replay — leaves it
+    /// alone, and a photograph of a panel answers nobody.
+    @ObservationIgnored public var dispatch: (@MainActor (BridgeCommand) -> OpId?)?
+
     public init(account: AccountId, now: Date = Date(), unread: UnreadWeights = UnreadWeights()) {
         self.account = account
         self.fleet = FleetStore(now: now, unread: unread)
@@ -82,6 +91,22 @@ public final class StoreBundle {
         let store = ReviewStore(diff: artifact, document: document)
         reviews[agent] = store
         return store
+    }
+
+    /// Tells an agent what the person answered, in the layer's own words.
+    ///
+    /// The panel spells the command, because only the panel knows which ask
+    /// this is and which layer raised it; the operation comes back to the
+    /// conversation that answered so the host's reply is claimed by it rather
+    /// than by whichever conversation happens to be open. False means the
+    /// answer never left: no connection, or a decision the ask cannot take,
+    /// which is a mistake in this app and not something a person can do.
+    @discardableResult
+    public func answer(_ panel: AskPanel, _ decision: AskDecision, of agent: AgentId) -> Bool {
+        guard let command = panel.command(decision, agent: agent),
+              let op = dispatch?(.shared(command)) else { return false }
+        conversation(agent).dispatched(op)
+        return true
     }
 
     public func closeConversation(_ agent: AgentId) {

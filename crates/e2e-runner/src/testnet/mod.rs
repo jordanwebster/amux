@@ -318,6 +318,12 @@ struct ScriptedAgent {
     daemon: String,
     agent: amux::Agent,
     provider: AgentProvider,
+    /// The script this agent answers with, kept so a child spawned from it
+    /// answers the same way. A child raised through this control channel is
+    /// driven by the same test as its parent, and one that refused every
+    /// answer because it was given an empty script would make answering a
+    /// child's ask impossible to drive.
+    script: Script,
 }
 
 enum AgentProvider {
@@ -432,6 +438,7 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
                 daemon: decl.daemon.clone(),
                 agent,
                 provider,
+                script: topology.scripts.get(&decl.name).cloned().unwrap_or_default(),
             },
         );
     }
@@ -577,11 +584,12 @@ async fn apply(
                 "parent provider has stopped"
             );
             let host = daemon(&parent.daemon)?;
+            let script = parent.script.clone();
             let (agent, provider) = host
                 .spawn_scripted_agent(
                     &child,
                     &parent.agent.working_dir,
-                    Script::default(),
+                    script.clone(),
                     Some(amux::AgentParent {
                         agent_id: parent.agent.id,
                         host_id: parent.agent.host_id,
@@ -594,6 +602,7 @@ async fn apply(
                     daemon: parent.daemon.clone(),
                     agent,
                     provider: AgentProvider::Claude(provider),
+                    script,
                 },
             );
         }

@@ -174,4 +174,24 @@ final class AskPanelTests: XCTestCase {
         ])
         XCTAssertNil(Ask(layer: .claudePty, body: .object(fields)).panel)
     }
+
+    /// An answer that never left comes back as a question again.
+    ///
+    /// A tap can be refused — it raced the session, or the connection went —
+    /// and the core puts the ask back rather than leaving it looking
+    /// answered. Drawing nothing there would lose the agent's request behind
+    /// a tap that did nothing, with the agent still waiting for it.
+    func testAnAskWhoseAnswerNeverLeftIsAskedAgain() throws {
+        let ask = try XCTUnwrap(pinned("permission").first)
+        guard case .object(var fields) = ask.body else { return XCTFail("expected an object") }
+        fields["state"] = .object([
+            "state": .string("send_failed"),
+            "message": .string("input raced the session"),
+        ])
+        let again = try XCTUnwrap(Ask(layer: .claudePty, body: .object(fields)).panel)
+        guard case .permission(let permission) = again.kind else {
+            return XCTFail("expected the permission back, got \(again.kind)")
+        }
+        XCTAssertNil(permission.unanswerable, "the ask came back with no way to answer it")
+    }
 }

@@ -56,6 +56,47 @@ final class AskRoutingTests: XCTestCase {
         XCTAssertEqual(command["ask"]?.intValue, 7)
     }
 
+    /// The answer leaves the phone, and the reply belongs to whoever answered.
+    ///
+    /// A tap on a panel decides nothing on its own: the bundle is what reaches
+    /// the machine, and the operation it comes back with is what makes the
+    /// host's reply this conversation's rather than whichever one is on
+    /// screen. A bundle with no connection behind it says the answer did not
+    /// go, which is what a fixture and a replay want.
+    func testAnsweringSendsTheSharedCommandAndKeepsTheOperation() throws {
+        let bundle = StoreBundle(account: AccountId("test"))
+        bundle.apply(.session(SessionSnapshot(
+            agent: child, gate: .claudePty(.ready), phase: .unavailable, stream: .live,
+            asks: [Self.permissionAsk], facts: .unavailable, provider: ProviderFacts(),
+            settingsGate: .unavailable, queue: nil, family: [])))
+        let panel = try XCTUnwrap(bundle.conversation(child).asks.panel)
+
+        XCTAssertFalse(bundle.answer(panel, .allowOnce, of: child),
+                       "a bundle with nothing connected claimed the answer had gone")
+
+        var sent: [BridgeCommand] = []
+        let op = OpId(UUID())
+        bundle.dispatch = { command in
+            sent.append(command)
+            return op
+        }
+        XCTAssertTrue(bundle.answer(panel, .deny(feedback: nil), of: child))
+        guard case .shared(let command) = try XCTUnwrap(sent.first) else {
+            return XCTFail("the answer was not sent as a shared command: \(sent)")
+        }
+        XCTAssertEqual(command["command"]?.stringValue, "claude")
+        XCTAssertEqual(command["claude_command"]?.stringValue, "answer_ask")
+        XCTAssertEqual(command["agent"]?.stringValue, child.description)
+        XCTAssertEqual(command["answer"]?["permission"]?.stringValue, "deny")
+        // Claimed, shown by the one thing a claim is for: the host's reply to
+        // that operation lands in the conversation that answered and nowhere
+        // else.
+        bundle.apply(.opResult(OpResult(op: op, outcome: .inputSent)))
+        XCTAssertEqual(bundle.conversation(child).results.map(\.op), [op])
+        XCTAssertTrue(bundle.conversation(parent).results.isEmpty,
+                      "the reply to the child's answer landed in the parent as well")
+    }
+
     /// A subagent is the provider's own work and has no session behind it.
     /// The list says why instead of offering a control that would do nothing.
     func testProviderInternalWorkCannotBeOpenedAndSaysWhy() throws {

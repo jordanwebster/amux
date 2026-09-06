@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
 use uuid::Uuid;
 
-use crate::claude_io::{AskAnswer, Intent};
+use crate::claude_io::{AskAnswer, Intent, PermissionAnswer, PlanAnswer};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -700,27 +700,66 @@ impl Player {
             ),
         };
         self.engine.lock().unwrap().pending_ask = Some((AskId(id.clone()), kind));
-        let transcript_asks = self.progress.borrow().asks
-            + u64::from(matches!(kind, AskKindMatch::Question | AskKindMatch::Plan));
-        self.message(
-            "assistant",
-            json!([{"type":"tool_use","id":id,"name":tool,"input":input}]),
-        )
-        .await?;
-        self.wait(|progress| progress.asks >= transcript_asks)
-            .await?;
         let suggestions: Vec<Value> = directories.into_iter().map(|directory|
             json!({"type":"addDirectories","directories":[directory],"destination":"session"})).collect();
+        // The hook first and the transcript row after it, which is the order a
+        // real Claude produces them in. A reader pairs the two by the tool the
+        // ask is about, and it only looks forwards: an ask announced after its
+        // own transcript row is never paired with it, and an unpaired ask is
+        // one nothing can ever close — so the session could be asked exactly
+        // one question and every answer after that was refused as queued
+        // behind a menu that had not gone away.
         self.hook(
             "PermissionRequest",
             json!({"tool_use_id":id,"tool_name":tool,
             "tool_input":input,"permission_suggestions":suggestions}),
         )
+        .await?;
+        self.message(
+            "assistant",
+            json!([{"type":"tool_use","id":id,"name":tool,"input":input}]),
+        )
         .await
+    }
+
+    /// The result a real Claude writes once an ask has been answered.
+    ///
+    /// A permission or a plan review is a tool the agent asked to use, and
+    /// answering it finishes that tool: the transcript carries the result
+    /// under the same `tool_use_id`, and that correlation is what takes the
+    /// ask out of every reader's queue. Without it a scripted session could
+    /// be asked exactly one question — the second answer is refused as queued
+    /// behind a menu that never closed.
+    async fn answered(&mut self, id: &str, answer: &AskAnswer) -> Result<(), ScriptError> {
+        let (content, refused) = match answer {
+            AskAnswer::Permission(PermissionAnswer::Deny { feedback }) => (
+                feedback.clone().unwrap_or_else(|| {
+                    "The user doesn't want to proceed with this tool use.".to_string()
+                }),
+                true,
+            ),
+            AskAnswer::Permission(_) => ("Permission granted.".to_string(), false),
+            AskAnswer::Plan(PlanAnswer::RequestChanges { feedback }) => (feedback.clone(), true),
+            AskAnswer::Plan(_) => ("The user has approved your plan.".to_string(), false),
+            AskAnswer::Question(response) => (
+                serde_json::to_string(response).map_err(playback_error)?,
+                false,
+            ),
+        };
+        let row = self.row(
+            "user",
+            json!({"message":{"role":"user","content":[
+                {"type":"tool_result","tool_use_id":id,"content":content,"is_error":refused}]}}),
+        );
+        self.rows(vec![row]).await
     }
 
     async fn play(&mut self, work: &Playback) -> Result<(), ScriptError> {
         self.turn_ended = false;
+        if let Some(Intent::Answer { ask_id, answer }) = &work.input {
+            let (ask_id, answer) = (ask_id.clone(), answer.clone());
+            self.answered(&ask_id, &answer).await?;
+        }
         if let Some(Intent::Prompt { text }) = &work.input {
             self.turn_open = true;
             self.duration_ms = 0;

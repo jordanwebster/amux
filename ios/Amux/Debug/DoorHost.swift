@@ -110,6 +110,7 @@ final class DoorHost {
         case .type(let identifier, let text): return type(text, into: identifier)
         case .pair(let qr): return await pair(with: qr)
         case .send(let agent, let text): return send(text, to: agent)
+        case .sendDraft(let agent, let prose): return sendDraft(prose, to: agent)
         case .watch(let agent):
             guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
             stores.conversation(identity)
@@ -227,6 +228,10 @@ final class DoorHost {
         // empty beside a live connection.
         stores.watch = { [weak client] agent in client?.dispatch(.subscribe(agent: agent)) }
         stores.unwatch = { [weak client] agent in client?.dispatch(.unsubscribe(agent: agent)) }
+        // What a screen decides reaches the machine through the same runtime
+        // the feed arrives on. Answering an ask is a tap, so the connection
+        // has to be reachable from the shell and not only from here.
+        stores.dispatch = { [weak client] command in client?.dispatch(command) }
         for agent in stores.conversations.keys { client.dispatch(.subscribe(agent: agent)) }
         pump = Task { @MainActor in
             for await batch in client.events {
@@ -368,6 +373,36 @@ final class DoorHost {
         // The identifier the bridge answers with is what makes the host's
         // reply this conversation's rather than some other agent's.
         if let op = bridge.dispatch(.shared(.object(draft))) { conversation.dispatched(op) }
+        return .sendAttempt(delivered: true, reason: nil)
+    }
+
+    /// Sends the draft a conversation is holding, with these words beside it.
+    ///
+    /// The message is built by the draft rather than here: a review element is
+    /// spelled by the shared library and the attachment travels with it, and a
+    /// second spelling of either in the driving tools would be a second thing
+    /// to keep right. The gate is the one every message goes through, so a
+    /// conversation that will not take one refuses this too.
+    private func sendDraft(_ prose: String, to agent: String) -> DoorReply {
+        guard bridge != nil else { return .error("nothing has been connected") }
+        guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
+        guard let conversation = stores.conversations[identity] else {
+            return .error("no conversation is open with \(agent)")
+        }
+        conversation.draft.prose = prose
+        let subject = ConversationSubject(agent: identity, in: stores.fleet)
+        guard conversation.gate.accepts else {
+            let state = ConversationFootState(
+                gate: conversation.gate, results: conversation.results, subject: subject)
+            return .sendAttempt(
+                delivered: false,
+                reason: state?.detail ?? "This agent is not taking messages.")
+        }
+        guard let command = conversation.draft.command(to: identity) else {
+            return .error("the draft could not be turned into a message")
+        }
+        if let op = bridge?.dispatch(command) { conversation.dispatched(op) }
+        conversation.draft.clear()
         return .sendAttempt(delivered: true, reason: nil)
     }
 

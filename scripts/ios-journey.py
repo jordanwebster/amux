@@ -157,6 +157,42 @@ def forget_cache(udid: str) -> None:
         shutil.rmtree(cache, ignore_errors=True)
 
 
+def scratch_repository(name: str, committed: dict[str, str], edited: dict[str, str]) -> Path:
+    """A repository with one commit in it and an uncommitted change on top.
+
+    A journey about reading changes needs a patch that says the same thing
+    every time it runs. This checkout's own working tree does not: what it
+    holds depends on who ran what last, and a diff of it would make every
+    assertion about a line number a guess. So the agent works in a repository
+    this leaves for it, with exactly the change the journey is about.
+
+    It lives under `target/` because it is built rather than kept, and the
+    topology names the same path — the runner resolves an agent's directory
+    when it loads the topology, so the repository has to exist before the
+    daemons start.
+    """
+    root = OUTPUT / name
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True)
+
+    def git(*arguments: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(root), *arguments], check=True, capture_output=True, text=True)
+
+    git("init", "--quiet", "--initial-branch", "main")
+    git("config", "user.email", "journey@amux.invalid")
+    git("config", "user.name", "Journey")
+    for path, text in committed.items():
+        written = root / path
+        written.parent.mkdir(parents=True, exist_ok=True)
+        written.write_text(text)
+    git("add", "--all")
+    git("commit", "--quiet", "--message", "The state the agent started from")
+    for path, text in edited.items():
+        (root / path).write_text(text)
+    return root
+
+
 def speak(journey: Journey, launch: str, requests: list[dict]) -> list[dict]:
     """Says one launch's whole plan to the app through the door and returns its
     answers.
@@ -993,7 +1029,321 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     forget_cache(udid)
 
 
-JOURNEYS = {"home-coldstart": home_coldstart, "home": home, "conversation": conversation}
+
+# MARK: - The repositories two journeys read changes out of
+
+PARSER_COMMITTED = """fn parse(input: &str) -> Vec<Token> {
+    let mut tokens = Vec::new();
+    for piece in input.split('\\n') {
+        tokens.push(Token::new(piece));
+    }
+    tokens
+}
+"""
+
+PARSER_EDITED = """fn parse(input: &str) -> Vec<Token> {
+    let mut tokens = Vec::new();
+    for piece in input.split_terminator('\\n') {
+        if piece.is_empty() {
+            continue;
+        }
+        tokens.push(Token::new(piece.trim_end()));
+    }
+    tokens
+}
+"""
+
+WIRE_COMMITTED = """pub fn encode(tokens: &[Token]) -> String {
+    tokens.iter().map(Token::text).collect::<Vec<_>>().join("\\n")
+}
+"""
+
+WIRE_EDITED = """pub fn encode(tokens: &[Token]) -> String {
+    let joined = tokens.iter().map(Token::text).collect::<Vec<_>>().join("\\n");
+    format!("{joined}\\n")
+}
+"""
+
+
+def asks(journey: Journey, udid: str, ready: dict) -> None:
+    """Every kind of ask, answered on the phone and confirmed on the host.
+
+    The panels are raised by a machine the runner is really running and
+    answered by a finger. What is claimed here is not what the screen did with
+    the tap — a panel that redrew itself while the answer went nowhere would
+    satisfy any screen-side assertion — but what the host says it received,
+    which is read back from the scripted provider afterwards and compared
+    answer by answer.
+
+    The phone pairs first, through the debug bridge: an unpaired device is
+    disowned by every machine on the relay, and the screens that pair one are
+    later work.
+    """
+    daemon = ready["daemons"][0]
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+    control_address = ready["control"]
+
+    install(udid)
+    forget_cache(udid)
+    pairing = answer(control_address, {"StartQrPairing": {"daemon": daemon["name"]}})["qr"]
+    journey.say(f"{daemon['name']} is offering to pair, and holds "
+                f"{', '.join(sorted(running))} in a repository this journey left for it")
+
+    photographs = {
+        "ask-permission.png": "permission.png",
+        "ask-question.png": "question.png",
+        "ask-plan.png": "plan.png",
+        "ask-plan-reopened.png": "plan-reopened.png",
+        "ask-children.png": "children.png",
+        "ask-finished.png": "finished.png",
+        "ask-review.png": "review.png",
+    }
+    read = journey.directory / "asks.json"
+    # What the host received is written whether the test passed or not: a
+    # panel that would not clear is either an answer the phone refused to send
+    # or one the host refused to take, and only the host's own account of what
+    # arrived tells those two apart.
+    def observed_by(name: str) -> list[dict]:
+        try:
+            return answer(control_address, {"AgentObserve": {"agent": name}})["observed"]
+        except Exception as unreachable:  # noqa: BLE001 - a diagnostic, never a claim
+            return [{"error": str(unreachable)}]
+
+    def record_what_the_host_received() -> tuple[list[dict], list[dict]]:
+        parent, child = observed_by("mind-the-gap"), observed_by("spec-fixer")
+        (journey.directory / "observed-answers.json").write_text(
+            json.dumps({"mind-the-gap": parent, "spec-fixer": child}, indent=2))
+        return parent, child
+
+    try:
+        perform(
+            journey, udid, "AmuxUITests/AskTests",
+            {taken: journey.directory / name for taken, name in photographs.items()}
+            | {"asks.json": read},
+            telling={
+                "AMUX_RELAY": f"http://{ready['relay']}",
+                "AMUX_TOKEN": token,
+                "AMUX_USER": "journey-phone",
+                "AMUX_PAIR": pairing,
+                "AMUX_CONTROL": control_address,
+                "AMUX_DOOR_PORT": str(free_port()),
+                "AMUX_AGENT": running["mind-the-gap"]["agent_id"],
+                "AMUX_HOST": daemon["name"],
+            })
+    except SystemExit:
+        record_what_the_host_received()
+        raise
+    seen = json.loads(read.read_text())
+
+    # What each panel said, in the words the layer that asked chose.
+    permission = seen.get("permission", {})
+    journey.expect(permission.get("head") == "Wants to run a command"
+                   and permission.get("subject") == "rm -rf /work/scratch",
+                   f"the permission panel did not carry the host's own command: {permission}")
+    scope = seen.get("scope", {})
+    journey.expect(scope.get("title") == "Always allow access in /work/api"
+                   and scope.get("directory") == "/work/api",
+                   f"the standing grant did not name the directory the host offered: {scope}")
+    journey.expect(seen.get("question") == ["The tokenizer", "The round trip", "Neither yet"],
+                   f"the question offered something other than the agent's own answers: "
+                   f"{seen.get('question')}")
+    journey.say(f"the permission read {permission['head']!r} over {permission['subject']!r}; "
+                f"the standing grant read {scope['title']!r}; the question offered "
+                f"{', '.join(seen['question'])}")
+
+    # A decision made earlier in the session, reopened.
+    journey.expect(seen.get("verdict") == "Plan approved" and seen.get("reopened") is True,
+                   f"the plan approved earlier did not reopen onto the document that was judged: "
+                   f"{seen.get('verdict')!r}, reopened {seen.get('reopened')!r}")
+    journey.say(f"the plan approved earlier reads {seen['verdict']!r} in the feed once two more "
+                f"asks have gone by, and opening it shows the plan as it was approved")
+
+    # The two kinds of child, told apart by where they can be answered.
+    child = seen.get("child", {})
+    journey.expect(child.get("says", "").startswith("spec-fixer"),
+                   f"the agent this one started was not listed beside it: {child}")
+    journey.expect(seen.get("childConversation")
+                   and seen["childConversation"] != running["mind-the-gap"]["agent_id"],
+                   f"pressing the child did not open the child's own conversation: "
+                   f"{seen.get('childConversation')}")
+    journey.expect(
+        seen.get("unopenable")
+        == "This one runs inside the session and has no conversation of its own.",
+        f"the provider's own subagent did not say why it cannot be opened: "
+        f"{seen.get('unopenable')!r}")
+    journey.say(f"the child said {child['says']!r} and led to its own conversation, where its "
+                f"ask was answered; the provider's own subagent says "
+                f"{seen['unopenable']!r}")
+
+    # A finished turn, deferred and then read.
+    journey.expect(seen.get("finished", "").startswith("+"),
+                   f"the finished turn did not count what changed: {seen.get('finished')!r}")
+    journey.expect(bool(seen.get("review")),
+                   "Review Changes did not lead to a patch with an identity")
+    journey.say(f"the turn finished with {seen['finished']} to read; Later put the panel away "
+                f"and coming back offered it again, and Review Changes opened patch "
+                f"{seen['review']}")
+
+    # And the host's own account of every answer, which is the point.
+    observed, child_observed = record_what_the_host_received()
+    answers = [input["answer"] for input in observed if input["intent"] == "answer"]
+    expected = [
+        {"answer": "permission", "permission": "deny", "feedback": None},
+        {"answer": "permission", "permission": "allow_once"},
+        {"answer": "permission", "permission": "allow_scoped", "suggestion": 0},
+        {"answer": "question", "answers": [{"selected": [1], "other": None}]},
+        {"answer": "plan", "plan": "approve_manual"},
+        {"answer": "plan", "plan": "request_changes",
+         "feedback": "Keep the round-trip test; rewrite it instead."},
+    ]
+    journey.expect(answers == expected,
+                   f"the host received {json.dumps(answers)} and the phone was told to send "
+                   f"{json.dumps(expected)}")
+    journey.expect(all(input["ask_id"] for input in observed if input["intent"] == "answer"),
+                   f"an answer reached the host addressed to no ask: {observed}")
+    child_answers = [input["answer"] for input in child_observed if input["intent"] == "answer"]
+    journey.expect(child_answers == [{"answer": "permission", "permission": "allow_once"}],
+                   f"the child received {child_answers} and its ask was answered in its own "
+                   f"conversation")
+    journey.say(f"the host received {len(answers)} answers and each is exactly what was pressed: "
+                + "; ".join(json.dumps(given) for given in answers))
+    journey.say(f"the child received its own answer, addressed to its own ask: "
+                f"{json.dumps(child_answers)}")
+
+    for capture in photographs.values():
+        written = journey.directory / capture
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs.values())))
+    forget_cache(udid)
+
+
+def review(journey: Journey, udid: str, ready: dict) -> None:
+    """A patch the host froze, written about on the phone and sent back.
+
+    The repository the agent works in was left with one uncommitted change, so
+    the patch on screen is the same patch every time this runs. Nothing about
+    it is drawn from a fixture: the host computes it, freezes it as an
+    artifact and sends it over the relay, and what a finger does to it is a UI
+    test because holding a line and dragging is the only way to take a range.
+
+    What the host received is read back and held against what the sheet said
+    each range was, so the claim is not that the phone drew a comment but that
+    the machine was told about those lines of that patch.
+    """
+    daemon = ready["daemons"][0]
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+    control_address = ready["control"]
+
+    install(udid)
+    forget_cache(udid)
+    pairing = answer(control_address, {"StartQrPairing": {"daemon": daemon["name"]}})["qr"]
+    journey.say(f"{daemon['name']} holds {', '.join(sorted(running))} in a repository this "
+                f"journey left with one uncommitted change in it")
+
+    photographs = {"review-diff.png": "diff.png", "review-comment.png": "comment.png",
+                   "review-sent.png": "sent.png"}
+    read = journey.directory / "review.json"
+    perform(
+        journey, udid, "AmuxUITests/ReviewTests",
+        {taken: journey.directory / name for taken, name in photographs.items()}
+        | {"review.json": read},
+        telling={
+            "AMUX_RELAY": f"http://{ready['relay']}",
+            "AMUX_TOKEN": token,
+            "AMUX_USER": "journey-phone",
+            "AMUX_PAIR": pairing,
+            "AMUX_CONTROL": control_address,
+            "AMUX_DOOR_PORT": str(free_port()),
+            "AMUX_AGENT": running["tidy-the-parser"]["agent_id"],
+            "AMUX_HOST": daemon["name"],
+        })
+    seen = json.loads(read.read_text())
+
+    journey.expect(sorted(seen.get("files", [])) == ["parser.rs", "wire.rs"],
+                   f"the patch the host computed covers {seen.get('files')}, and the repository "
+                   f"this journey left has two changed files in it")
+    journey.expect(bool(seen.get("diff")), "the page carries no identity for the patch it drew")
+    journey.say(f"the host froze {seen['magnitudes']} across {', '.join(seen['files'])} and the "
+                f"phone drew patch {seen['diff']}")
+
+    written = seen.get("comments", [])
+    journey.expect(len(written) == 3,
+                   f"three ranges were written about and the test recorded {len(written)}")
+    journey.expect(seen.get("sent", {}).get("delivered") is True,
+                   f"the review did not leave the phone: {seen.get('sent')}")
+    journey.say("three ranges were held and written about — "
+                + "; ".join(f"{comment['says']} at {comment['lines']}" for comment in written)
+                + f"; a fourth, {seen['cancelled']['about']['says']}, was cancelled")
+
+    # What the host received: one message, carrying the patch's identity, the
+    # ranges and the words, with the remark about the whole change beside it.
+    observed = answer(control_address, {"AgentObserve": {"agent": "tidy-the-parser"}})["observed"]
+    (journey.directory / "observed-inputs.json").write_text(json.dumps(observed, indent=2))
+    arrived = [input["text"] for input in observed if input.get("text") is not None]
+    journey.expect(len(arrived) == 1,
+                   f"the host received {len(arrived)} messages and exactly one was sent: "
+                   f"{arrived}")
+    element = arrived[0]
+    (journey.directory / "received-review.txt").write_text(element + "\n")
+    journey.expect(f'diff="{seen["diff"]}"' in element,
+                   f"the message the host received names a different patch than the page drew: "
+                   f"{element[:400]}")
+    journey.expect('comments="3"' in element,
+                   f"the message the host received does not carry three remarks: {element[:400]}")
+    for comment in written:
+        first, last = (comment["lines"].split("\u2013") + [comment["lines"]])[:2]
+        heading = [line for line in element.splitlines()
+                   if line.startswith(f"## {comment['path']} @@ ")]
+        journey.expect(bool(heading),
+                       f"the host was told nothing about {comment['path']}: {element[:400]}")
+        located = [line for line in heading
+                   if line.rstrip().endswith(f":{last}") and f":{first}.." in line]
+        journey.expect(bool(located),
+                       f"the host was told about {comment['path']} but not about lines "
+                       f"{comment['lines']}: {heading}")
+        journey.expect(comment["text"] in element,
+                       f"what was written about {comment['lines']} did not reach the host")
+    journey.expect(seen["cancelled"]["text"] not in element,
+                   "the remark that was cancelled reached the host anyway")
+    journey.expect("Three remarks on the parser change" in element,
+                   f"what was said about the change as a whole did not travel with the review: "
+                   f"{element[-200:]}")
+    pins = [pin for input in observed for pin in input.get("pins", [])]
+    journey.expect(seen["diff"] in pins,
+                   f"the patch itself was not pinned to the message that reviewed it: {pins}")
+    journey.say(f"the host received one message carrying patch {seen['diff']}, three ranges with "
+                f"what was said about each, the words about the whole change, and the patch "
+                f"pinned to it; the cancelled remark is not in it")
+
+    for capture in photographs.values():
+        taken = journey.directory / capture
+        journey.expect(taken.is_file() and taken.stat().st_size > 0, f"{taken} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs.values())))
+    forget_cache(udid)
+
+
+def prepare_asks() -> None:
+    scratch_repository(
+        "asks-repository",
+        {"parser.rs": PARSER_COMMITTED, "wire.rs": WIRE_COMMITTED},
+        {"parser.rs": PARSER_EDITED})
+
+
+def prepare_review() -> None:
+    scratch_repository(
+        "review-repository",
+        {"parser.rs": PARSER_COMMITTED, "wire.rs": WIRE_COMMITTED},
+        {"parser.rs": PARSER_EDITED, "wire.rs": WIRE_EDITED})
+
+
+JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
+            "conversation": conversation, "asks": asks, "review": review}
+# What has to exist before the daemons start: the runner resolves an
+# agent's working directory when it loads the topology.
+PREPARE = {"asks": prepare_asks, "review": prepare_review}
 
 
 def declared() -> list[dict]:
@@ -1017,6 +1367,8 @@ def main() -> None:
     for plan in chosen:
         journey = Journey(plan["id"], OUTPUT / plan["id"])
         journey.say(plan["claim"])
+        if plan["id"] in PREPARE:
+            PREPARE[plan["id"]]()
         with runner(plan["topology"]) as ready:
             JOURNEYS[plan["id"]](journey, udid, ready)
         journey.write()

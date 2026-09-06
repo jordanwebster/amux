@@ -17,6 +17,18 @@
       "stage": 6,
       "topology": "e2e-tests/topologies/conversation.json",
       "claim": "A phone paired with the machine that holds them opens one of its agents and reads what it says: every kind of step the scripted provider can play arrives over the relay and is drawn, a folded run of reads opens when it is pressed, a diff the host computed puts the changes chip on screen and it leads to the changes, and an agent that ends while somebody is reading it states its code and offers nowhere to write. Losing the machine says so where the composer will go, with a way to ask again. Three messages tried where the conversation will not take one \u2014 in the moment it opens and the layer is still catching up, while the machine is unreachable, and while the last one is unanswered \u2014 are refused on the phone with the reason on screen, and the host confirms it received only the single message that was allowed through."
+    },
+    {
+      "id": "asks",
+      "stage": 7,
+      "topology": "e2e-tests/topologies/asks.json",
+      "claim": "Everything an agent can be waiting to be told, answered on the phone against a machine the runner is really running: a permission refused and another allowed, the standing grant the host itself offered taken by the name the host gave it, the agent's own question answered with one of the agent's own answers, a plan read out and approved and a second sent back with what should change, a plan judged earlier reopened onto the document that was judged, an agent this one started answered in its own conversation and the provider's own subagent saying why it has none, and a finished turn deferred and then read. The host is asked afterwards what it received, and every answer is exactly what was pressed."
+    },
+    {
+      "id": "review",
+      "stage": 7,
+      "topology": "e2e-tests/topologies/review.json",
+      "claim": "A patch a real host froze, read as one scroll and written about with a finger: ranges taken by holding a line and dragging, three remarks added and a fourth cancelled before it was said, and the whole review attached and sent with a remark about the change as a whole. The host received one message carrying that patch's identity, those ranges, what was said about each of them and the patch pinned to it \u2014 and nothing about the remark that was cancelled."
     }
   ]
 }

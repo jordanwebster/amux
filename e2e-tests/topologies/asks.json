@@ -1,0 +1,10 @@
+{
+  "users": ["personal"],
+  "daemons": [
+    {"name": "studio", "user": "personal", "repository_roots": ["../../target/ios/journeys"]}
+  ],
+  "paired": [],
+  "agents": [
+    {"name": "mind-the-gap", "daemon": "studio", "working_dir": "../../target/ios/journeys/asks-repository", "provider": {"Claude": {"script": "../scripts/answers.json"}}}
+  ]
+}

@@ -81,6 +81,14 @@ public enum DoorRequest: Sendable, Equatable {
     /// refusing to send is a thing this app does deliberately, and a driver
     /// asks for it on purpose.
     case send(agent: String, text: String)
+    /// Say something beside the review a conversation is already holding, and
+    /// send the two together.
+    ///
+    /// The composer is not built, so there is nowhere on screen to write the
+    /// remark that goes with a review. This puts the words where the composer
+    /// will keep them and sends the draft the conversation holds — the same
+    /// message, through the same gate, with the patch attached.
+    case sendDraft(agent: String, prose: String)
     /// Write a report bundle into this directory: the shared runtime's own
     /// recording and the view-state trace beside it.
     case report(path: String)
@@ -244,7 +252,7 @@ public struct VisibleFrame: Codable, Sendable, Equatable {
 extension DoorRequest: Codable {
     private enum Key: String, CodingKey {
         case kind, screen, fixture, cloud, relay, token, user, appearance, size, path
-        case identifier, text, seconds, qr, agent, base
+        case identifier, text, seconds, qr, agent, base, prose
     }
 
     public init(from decoder: any Decoder) throws {
@@ -300,6 +308,10 @@ extension DoorRequest: Codable {
             self = .send(
                 agent: try fields.decode(String.self, forKey: .agent),
                 text: try fields.decode(String.self, forKey: .text))
+        case "sendDraft":
+            self = .sendDraft(
+                agent: try fields.decode(String.self, forKey: .agent),
+                prose: try fields.decode(String.self, forKey: .prose))
         case "report":
             self = .report(path: try fields.decode(String.self, forKey: .path))
         case "replay":
@@ -377,6 +389,10 @@ extension DoorRequest: Codable {
             try fields.encode("send", forKey: .kind)
             try fields.encode(agent, forKey: .agent)
             try fields.encode(text, forKey: .text)
+        case .sendDraft(let agent, let prose):
+            try fields.encode("sendDraft", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+            try fields.encode(prose, forKey: .prose)
         case .report(let path):
             try fields.encode("report", forKey: .kind)
             try fields.encode(path, forKey: .path)

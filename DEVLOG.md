@@ -4,6 +4,60 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **An answer pressed on a phone reaches the machine.** Answering
+an agent that is waiting was the one thing a conversation screen could do that
+went nowhere: the panel carried the decision out to the shell and the shell had
+no runtime to send it with. The bundle of stores now carries the seam — set by
+whoever owns the connection, left alone by a fixture or a replay — and the
+panel spells the command, because only it knows which ask this is and which
+layer raised it. The operation comes back to the conversation that answered, so
+the host's reply belongs to that conversation and not to whichever one is on
+screen.
+
+A conversation also lists what its agent started, in the chrome above the feed
+so scrolling back through a long turn cannot take a waiting child off screen.
+An agent amux started is a chip that leads to its own conversation; work the
+provider runs inside this session is a chip that says why there is nowhere to
+go, because a control that looks alive and ignores a finger reads as a broken
+app.
+
+Two journeys drive all of it against a machine the runner is really running.
+`asks` refuses one permission and allows another, takes the standing grant by
+the name the host gave it, answers the agent's own question, approves one plan
+and sends another back with what should change, reopens a plan judged earlier
+onto the document that was judged, answers a child's ask in the child's own
+conversation, presses a subagent that has none, and defers and then reads a
+finished turn — and the host is asked afterwards what it received, answer by
+answer. `review` holds lines and drags to take ranges out of a patch the host
+froze, writes three remarks, cancels a fourth before it is said, and sends the
+review with a remark about the change as a whole; the host's copy carries that
+patch's identity, those ranges and the patch pinned to the message.
+
+Both journeys work in a repository they leave under `target/` rather than in
+this checkout, so the patch on screen says the same thing every run. A child
+spawned through the test runner now inherits its parent's script: a child
+raised by the same control channel is answered by the same test, and one given
+an empty script refuses every answer. What a screen declares about itself — a
+label, a value — reaches the accessibility tree only where the screen also
+spells it for VoiceOver, so a UI test reads those through the app's own door
+and keeps the pressing to itself.
+
+An answer that never left is asked again. A tap can be refused — it raced the
+session it was answering, which had moved on between the question being drawn
+and the finger landing — and the layer puts the ask back rather than leaving it
+looking answered. The phone was drawing nothing for that state, so a refused
+answer took the agent's request off the screen and left the agent waiting for
+it with nothing to press. It comes back, with the answer still to make, and a
+driver that presses again gets through.
+
+That refusal is also why anything answering an agent has to wait for the ask
+and the row announcing the tool it is about to be paired up before it answers:
+an ask reaches a reader the moment it is raised and its transcript row follows,
+and an answer sent in that window is racing. The end-to-end test that answers
+two asks in one session waits for the pairing, and the script it drives has a
+reaction for the second answer — a session that can be asked exactly one
+question is not a session.
+
 2026-09-06 — **A written review leaves the diff page as one token.** Attaching
 a review hands the conversation it came from the element the review is sent as
 and the reference that keeps its patch fetchable, and goes back there. The

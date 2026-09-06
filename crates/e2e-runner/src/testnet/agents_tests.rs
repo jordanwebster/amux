@@ -145,8 +145,17 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
         control.ack(json!({"AgentRaiseAsk":{"agent":"helper","ask":{"Permission":{
             "tool":"Bash", "invocation":{"command":"pwd"}, "scoped_directories":["/workspace"]
         }}}})).await;
+        // Not just the ask, but the transcript row that announces the tool it
+        // is about: an ask reaches a reader on the hook and the row follows,
+        // and an answer sent in between raced a session that had moved on and
+        // is refused. Waiting for the pairing is waiting for the client to be
+        // level with the host.
         wait_for(&mut runtime, "permission ask", |model| {
-            model.claude(agent).unwrap().ask_count() == 1
+            let layer = model.claude(agent).unwrap();
+            layer.ask_count() == 1
+                && layer
+                    .ask_head()
+                    .is_some_and(|head| head.tool_use_id.is_some())
         })
         .await;
         let ask = runtime
@@ -169,6 +178,40 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             has_text(model, agent, "Permission received on the host.")
         })
         .await;
+        // A second ask in the same session, answered like the first.
+        //
+        // A permission is a tool the agent asked to use, and answering it has
+        // to finish that tool: an ask that never closes stays at the head of
+        // the queue, and every answer after it is refused as queued behind a
+        // menu nobody can see. One ask per session is not a session.
+        control.ack(json!({"AgentRaiseAsk":{"agent":"helper","ask":{"Permission":{
+            "tool":"Bash", "invocation":{"command":"ls"}, "scoped_directories":["/workspace"]
+        }}}})).await;
+        let answered = ask.session_ask_id.clone();
+        wait_for(&mut runtime, "the first ask to close and a second to arrive", |model| {
+            let layer = model.claude(agent).unwrap();
+            layer.ask_count() == 1
+                && layer.ask_head().is_some_and(|head| {
+                    head.session_ask_id != answered && head.tool_use_id.is_some()
+                })
+        })
+        .await;
+        let second = runtime
+            .model()
+            .claude(agent)
+            .unwrap()
+            .ask_head()
+            .unwrap()
+            .clone();
+        succeeded(
+            &mut runtime,
+            UiCommand::Claude(ClaudeCommand::AnswerAsk {
+                agent,
+                ask: second.id,
+                answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+            }),
+        )
+        .await;
         control
             .ack(json!({"AgentEndTurn":{"agent":"helper"}}))
             .await;
@@ -182,7 +225,8 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
         .await;
         let mut expected = json!([
             {"seq":1,"intent":"prompt","text":"Please check the workspace","ask_id":null,"answer":null,"pins":[]},
-            {"seq":2,"intent":"answer","text":null,"ask_id":ask.session_ask_id,"answer":{"answer":"permission","permission":"allow_once"},"pins":[]}
+            {"seq":2,"intent":"answer","text":null,"ask_id":ask.session_ask_id,"answer":{"answer":"permission","permission":"allow_once"},"pins":[]},
+            {"seq":3,"intent":"answer","text":null,"ask_id":second.session_ask_id,"answer":{"answer":"permission","permission":"allow_once"},"pins":[]}
         ]);
         assert_eq!(
             control
@@ -237,8 +281,12 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
                     == index + 2
             })
             .await;
+            // Numbered by what the host has already been told, not by this
+            // loop: every input before this one counts, and an answer added
+            // to the run above would otherwise shift each of these by one.
+            let seq = expected.as_array().unwrap().len() + 1;
             expected.as_array_mut().unwrap().push(json!({
-                "seq": index + 3, "intent": "prompt", "text": text,
+                "seq": seq, "intent": "prompt", "text": text,
                 "ask_id": null, "answer": null, "pins": pins,
             }));
             let observed = control

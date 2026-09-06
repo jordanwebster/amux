@@ -337,8 +337,13 @@ extension Ask {
         }
     }
 
+    /// An ask is drawn while it is waiting and again when the answer never
+    /// left: the core resurfaces a send that failed rather than leaving a
+    /// spinner, and a person whose tap raced the session has to be able to
+    /// make it again. Only an answer in flight draws nothing.
     private var claudePanel: AskPanel? {
-        guard body["state"]?["state"]?.stringValue == "pending" else { return nil }
+        guard ["pending", "send_failed"].contains(body["state"]?["state"]?.stringValue ?? "")
+        else { return nil }
         guard let ask = body["id"]?.intValue else { return nil }
         let id = "claude:\(ask)"
         let kind = body["kind"]
