@@ -656,6 +656,10 @@ pub struct Model {
     /// Last authoritative remote membership; disconnection does not mean deletion.
     pub(crate) remote_inventories: BTreeMap<HostId, BTreeSet<AgentId>>,
     pub(crate) streams: BTreeMap<AgentId, StreamState>,
+    /// User-opened conversations outlive the temporary inventory removal of
+    /// an unreachable host. Its next inventory re-establishes these streams.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) attached: BTreeMap<AgentId, HostId>,
     pub(crate) queues: BTreeMap<AgentId, crate::QueuedMessage>,
     pub(crate) pending_ops: BTreeMap<OpId, PendingOp>,
     pub(crate) finished_ops: Vec<FinishedOp>,
@@ -677,6 +681,7 @@ impl Default for Model {
             agents: BTreeMap::new(),
             remote_inventories: BTreeMap::new(),
             streams: BTreeMap::new(),
+            attached: BTreeMap::new(),
             queues: BTreeMap::new(),
             pending_ops: BTreeMap::new(),
             finished_ops: Vec::new(),

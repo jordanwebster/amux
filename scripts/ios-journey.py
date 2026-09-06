@@ -827,7 +827,8 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
         name: journey.directory / f"{name}.png" for name in (
             "conversation-rows", "conversation-head", "conversation-unfolded",
             "conversation-changes",
-            "conversation-stale", "conversation-send-refused", "conversation-exited")}
+            "conversation-stale", "conversation-send-refused", "conversation-exited",
+            "conversation-restored", "conversation-reconnected-live")}
     read = journey.directory / "conversation.json"
     # The one thing a photograph cannot show: the feed moving under a thumb
     # while rows are still landing in it. The test says when that stretch
@@ -839,6 +840,7 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     # unreadable from a photograph.
     offline = journey.directory / "conversation-offline-tree.txt"
     restored = journey.directory / "conversation-restored-tree.txt"
+    recovery_report = container(udid) / "tmp/conversation-recovery"
     perform(
         journey, udid, "AmuxUITests/ConversationTests",
         {f"{name}.png": path for name, path in photographs.items()}
@@ -856,7 +858,9 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_AGENT": running["carry-on"]["agent_id"],
             "AMUX_ENDED_AGENT": running["ran-its-course"]["agent_id"],
             "AMUX_HOST": daemon["name"],
+            "AMUX_REPORT": str(recovery_report),
         })
+    shutil.copytree(recovery_report, journey.directory / "conversation-recovery", dirs_exist_ok=True)
     seen = json.loads(read.read_text())
 
     # What the phone was given once it was trusted.
@@ -893,11 +897,17 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
                    "losing the machine emptied the transcript on screen")
     journey.say(f"while the machine was unreachable the feed on screen still held "
                 f"{', '.join(stale)}")
-    # Said rather than required: what a machine that has come back replays into
-    # a screen somebody already has open is the reconnection's claim, not this
-    # journey's, and it is written down so a change in it is visible.
-    journey.say(f"when the machine came back the feed on screen held "
-                f"{', '.join(seen.get('feedAfterRestored') or ['no rows'])}")
+    journey.expect(seen.get("feedAfterRestored") == ["transcript.prose"],
+                   "the host's new transcript did not replace the rows retained during the outage")
+    journey.expect(seen.get("replayedText") ==
+                   "A fresh transcript, started on the host while the phone was away.",
+                   "the open conversation never showed the transcript replayed by the host")
+    journey.expect(seen.get("liveAfterRestored") ==
+                   "The next row arrived after the connection returned.",
+                   "rows sent after reconnection did not reach the open conversation")
+    journey.say(f"without reopening the conversation, the host's replay replaced the retained "
+                f"rows with {seen['replayedText']!r}; its next live row read "
+                f"{seen['liveAfterRestored']!r}")
 
     # The one message that was meant to arrive, and the three that were not.
     delivered = seen.get("delivered", {})

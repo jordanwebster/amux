@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Reconnect conversations left open on the phone.** Losing a
+remote host removed its agent cards and structured streams from the shared
+reducer. When the host returned, its cards came back but nothing reopened the
+transcript stream, leaving the conversation empty until it was opened again.
+The reducer now remembers user attachments independently of temporary inventory
+removal and resubscribes when those agents return. A host's confirmed inventory
+releases attachments to deleted agents; separate reachability and agent events
+can arrive in either order without forgetting an open conversation.
+
+The conversation journey now requires recovery. While the relay is down, the
+scripted host starts a fresh transcript. Without navigating away, the phone must
+replace its retained rows with that replay, then show another row written after
+reconnection. Screenshots and the accessibility tree capture both results.
+Reducer specs cover all three structured protocols, read-only agents, duplicate
+upserts, both outage event orders, recorder checkpoints and confirmed deletion.
+The regression fails against the previous reducer because it emits no stream
+subscription when the remote agent returns.
+
+The journey rejects runner errors and saves the runtime recording beside its
+captures. Its synthetic streaming rows omit session identity, so a
+provider-written row establishes the previous identity before the scripted
+transcript change; the exact one-row replay and two-row live assertions verify
+replacement without relying on cached content.
+
 2026-09-06 — **Film the transcript being read while it is still arriving.** The
 conversation journey proves every kind of row, every refusal and what a machine
 going away does to the screen, but the one thing about this screen a photograph

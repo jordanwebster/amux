@@ -227,3 +227,79 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
         ("inventory::stale_rename", stale_rename_sequence()),
     ]
 }
+
+/// A conversation left open stays subscribed through both a transport close
+/// and the temporary disappearance of its host's inventory.
+#[test]
+fn attached_remote_conversations_rejoin_after_an_outage() {
+    use amux_ui::{ServerMsg, StreamCloseReason, StreamMsg, update};
+
+    for kind in [
+        amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        },
+        amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Sdk,
+        },
+        amux::AgentKind::Codex,
+    ] {
+        for readonly in [false, true] {
+            let mut remote = an_agent("open-chat", "hetzner");
+            remote.kind = kind;
+            remote.readonly = readonly;
+            let mut model = fold(seq([
+                base(),
+                vec![host_up(&a_host("hetzner")), agent_up(&remote)],
+            ]));
+            let requested = update(&mut model, Msg::UserAttached { agent: remote.id });
+            assert_eq!(requested.len(), 1);
+            assert!(update(&mut model, agent_up(&remote)).is_empty());
+
+            update(
+                &mut model,
+                Msg::Stream {
+                    agent: remote.id,
+                    event: StreamMsg::Closed {
+                        reason: StreamCloseReason::TransportError {
+                            message: "relay lost".into(),
+                        },
+                    },
+                },
+            );
+            assert_eq!(update(&mut model, agent_up(&remote)), requested);
+
+            for offline_first in [false, true] {
+                let mut outage = vec![
+                    Msg::Server(ServerMsg::AgentRemoved { id: remote.id }),
+                    host_up(&an_offline_host("hetzner")),
+                ];
+                if offline_first {
+                    outage.reverse();
+                }
+                for msg in outage {
+                    update(&mut model, msg);
+                }
+                // Recorder checkpoints must remember intent even without a card.
+                model = serde_json::from_value(serde_json::to_value(model).unwrap()).unwrap();
+                update(&mut model, host_up(&a_host("hetzner")));
+                assert_eq!(update(&mut model, agent_up(&remote)), requested);
+                assert!(update(&mut model, agent_up(&remote)).is_empty());
+            }
+
+            // A confirmed deletion releases the attachment, so an inventory
+            // upsert alone cannot subscribe this remote agent again.
+            update(
+                &mut model,
+                Msg::Server(ServerMsg::AgentRemoved { id: remote.id }),
+            );
+            update(
+                &mut model,
+                Msg::Server(ServerMsg::HostInventory {
+                    host_id: remote.host_id,
+                    agent_ids: vec![],
+                }),
+            );
+            assert!(update(&mut model, agent_up(&remote)).is_empty());
+        }
+    }
+}

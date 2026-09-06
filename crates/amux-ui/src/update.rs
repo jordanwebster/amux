@@ -28,6 +28,9 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
         Msg::OpResult { op, outcome } => update_op_result(model, op, outcome),
         Msg::Stream { agent, event } => update_stream(model, agent, event),
         Msg::UserAttached { agent } => {
+            if let Some(card) = model.agents.get(&agent) {
+                model.attached.insert(agent, card.agent.host_id);
+            }
             // Widen the subscription policy to agents the user interacts
             // with, wherever they run — readonly agents included: opening
             // a read-only chat (F1) IS the interaction, and the feed it
@@ -495,6 +498,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 return tripwire("host removal while not connected");
             }
             model.hosts.remove(&id);
+            model.attached.retain(|_, host| *host != id);
             Vec::new()
         }
         ServerMsg::HostsSynchronized => {
@@ -537,9 +541,13 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                     model.agents.insert(agent_id, card);
                 }
             }
-            // Kernel policy: every local agent's structured stream is
-            // subscribed (in-process, cheap); remote agents join on attach.
-            if is_local {
+            // Remote conversations join on attach and rejoin after transport
+            // loss, including when the offline host lost its inventory.
+            if model.attached.contains_key(&agent_id) {
+                ensure_stream(model, agent_id, StreamWanted::UserRequested)
+                    .into_iter()
+                    .collect()
+            } else if is_local {
                 ensure_stream(model, agent_id, StreamWanted::InventoryPolicy)
                     .into_iter()
                     .collect()
@@ -552,6 +560,12 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 return tripwire("agent removal while not connected");
             }
             crate::queue::remove(model, id);
+            // Remote removal can race the separate host-offline event. Its
+            // authoritative HostInventory, not reachability at this instant,
+            // decides whether a requested conversation is really gone.
+            if model.attached.get(&id).copied() == model.local_host_id {
+                model.attached.remove(&id);
+            }
             model.agents.remove(&id);
             if let Some(stream) = model.streams.remove(&id)
                 && !matches!(stream.phase, StreamPhase::Closed { .. })
@@ -564,9 +578,11 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             if !model.is_connected() {
                 return tripwire("host inventory while not connected");
             }
+            let agent_ids: std::collections::BTreeSet<_> = agent_ids.into_iter().collect();
             model
-                .remote_inventories
-                .insert(host_id, agent_ids.into_iter().collect());
+                .attached
+                .retain(|agent, host| *host != host_id || agent_ids.contains(agent));
+            model.remote_inventories.insert(host_id, agent_ids);
             Vec::new()
         }
         ServerMsg::AgentsSynchronized => {

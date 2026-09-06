@@ -34,6 +34,7 @@ final class ConversationTests: XCTestCase {
         let agent: String
         let ended: String
         let host: String
+        let report: String
 
         init() throws {
             let environment = ProcessInfo.processInfo.environment
@@ -50,6 +51,7 @@ final class ConversationTests: XCTestCase {
             agent = try required("AMUX_AGENT")
             ended = try required("AMUX_ENDED_AGENT")
             host = try required("AMUX_HOST")
+            report = try required("AMUX_REPORT")
         }
     }
 
@@ -331,17 +333,47 @@ final class ConversationTests: XCTestCase {
             kind: "send", agent: runner.agent, text: "sent while unreachable"))
         record["whileUnreachable"] = whileUnreachable
 
+        // The host starts a new transcript while the phone cannot hear it.
+        // Replaying this must replace the retained rows, not append to them.
+        try control.ask(["AgentPlay": ["agent": "carry-on", "steps": [
+            // The synthetic streaming rows omit sessionId. A provider-written
+            // row establishes the old identity in the host's replay window,
+            // so the next identity is a change rather than its first evidence.
+            ["Markdown": ["text": "The previous transcript ended while the phone was away."]],
+            Self.recoveryRow(Self.replayed, id: "replayed"),
+        ]]])
+        XCTAssertFalse(app.staticTexts[Self.replayed].exists,
+                       "a disconnected phone already shows the host's new transcript")
         press(app, "conversation.retry")
         try control.ask("CloudOnline")
         XCTAssertTrue(waitUntil { !gone.exists },
                       "the machine came back and the conversation still says it is gone")
         record["restored"] = footSays(app)
-        // What a machine that has come back puts on screen, written down
-        // rather than required: replaying a conversation into a screen that
-        // is already open is the reconnection's own claim, and this journey
-        // is about what happens while the machine is away. The tree beside it
-        // is for whoever takes that on.
-        record["feedAfterRestored"] = transcriptRows(app)
+        let recovered = app.staticTexts[Self.replayed].waitForExistence(timeout: waiting)
+        _ = try door(runner, .init(kind: "report", agent: runner.agent, path: runner.report))
+        XCTAssertTrue(recovered,
+                      "the open conversation never received the host's replay")
+        guard recovered else { throw Lines.Failure("the host's replay did not arrive") }
+        let replayedRows = readWholeFeed(app)
+        XCTAssertEqual(replayedRows, ["transcript.prose"],
+                       "the host's new transcript kept rows from the old one")
+        let prose = app.descendants(matching: .any).matching(identifier: "transcript.prose")
+        XCTAssertEqual(prose.count, 1, "the replay did not replace the retained transcript")
+        record["feedAfterRestored"] = Array(replayedRows).sorted()
+        record["replayedText"] = app.staticTexts[Self.replayed].label
+        photograph(app, "conversation-restored")
+
+        try control.ask(["AgentPlay": ["agent": "carry-on", "steps": [
+            Self.recoveryRow(Self.afterRecovery, id: "live"),
+        ]]])
+        XCTAssertTrue(app.staticTexts[Self.afterRecovery].waitForExistence(timeout: waiting),
+                      "the replay arrived but new rows no longer reach the open conversation")
+        XCTAssertTrue(app.staticTexts[Self.replayed].exists,
+                      "the live row replaced the replay instead of following it")
+        XCTAssertEqual(prose.count, 2, "the live transcript lost or duplicated a row")
+        record["liveAfterRestored"] = app.staticTexts[Self.afterRecovery].label
+        photograph(app, "conversation-reconnected-live")
+        _ = try door(runner, .init(kind: "report", agent: runner.agent, path: runner.report))
         try? app.debugDescription.write(
             to: Self.inContainer("conversation-restored-tree.txt"), atomically: true,
             encoding: .utf8)
@@ -366,6 +398,18 @@ final class ConversationTests: XCTestCase {
     /// The text of the one message that is meant to arrive. The journey looks
     /// for exactly this on the host and for nothing else.
     static let delivered = "carry on then"
+
+    private static let replayed = "A fresh transcript, started on the host while the phone was away."
+    private static let afterRecovery = "The next row arrived after the connection returned."
+
+    private static func recoveryRow(_ text: String, id: String) -> [String: Any] {
+        ["Rows": ["jsonl": [
+            ["type": "assistant", "uuid": "recovery-\(id)",
+             "sessionId": "9210b4e1-2fb1-4c30-9ca7-490332330127",
+             "message": ["id": "recovery-\(id)", "role": "assistant",
+                         "content": [["type": "text", "text": text]]]],
+        ]]]
+    }
 
     /// The filmed turn, in batches: ten of them, twelve rows each, so that the
     /// turn arrives over the whole stretch that is being scrolled and filmed
@@ -563,6 +607,9 @@ final class ConversationTests: XCTestCase {
                     guard let object = try JSONSerialization.jsonObject(with: Data(line))
                         as? [String: Any]
                     else { throw Failure("the answer was not one JSON object") }
+                    if let error = object["Error"] {
+                        throw Failure("the runner refused the request: \(error)")
+                    }
                     return object
                 }
                 // A stream that has not finished connecting answers a read
@@ -597,12 +644,14 @@ final class ConversationTests: XCTestCase {
         var text: String?
         var base: String?
         var seconds: Double?
+        var path: String?
 
         var body: [String: Any] {
             var fields: [String: Any] = ["kind": kind, "agent": agent]
             if let text { fields["text"] = text }
             if let base { fields["base"] = base }
             if let seconds { fields["seconds"] = seconds }
+            if let path { fields["path"] = path }
             return fields
         }
     }
