@@ -289,7 +289,7 @@ public struct Conversation: View {
 /// one word for "something is waiting for you". A diff is not that.
 struct ChangesChip: View {
     @Environment(\.design) private var design
-    let changes: DiffDocument
+    let changes: ReviewDocument
     let open: @MainActor () -> Void
 
     /// "+118 −40". The minus is a true minus sign, not a hyphen: it sits

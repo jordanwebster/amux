@@ -14,20 +14,30 @@ final class ConversationChromeTests: XCTestCase {
     private let host = HostId(UUID(uuidString: "00000000-0000-0000-0000-0000000000AA")!)
     private let agent = AgentId(UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!)
 
-    private func document(_ lines: [String]...) -> DiffDocument {
-        DiffDocument(
-            numbering: .absolute,
-            hunks: lines.enumerated().map { index, rows in
-                DiffHunk(oldStart: UInt32(index + 1), newStart: UInt32(index + 1),
-                         header: nil, lines: rows)
+    private func document(_ lines: [String]...) -> ReviewDocument {
+        ReviewDocument(
+            files: lines.enumerated().map { index, rows in
+                ReviewFile(
+                    path: "file\(index).rs",
+                    added: UInt32(rows.count { $0.first == "+" }),
+                    removed: UInt32(rows.count { $0.first == "-" }),
+                    rows: rows.map { text in
+                        switch text.first {
+                        case "+": DiffRow(old: nil, new: 1, kind: .added, text: text)
+                        case "-": DiffRow(old: 1, new: nil, kind: .removed, text: text)
+                        default: DiffRow(old: 1, new: 1, kind: .context, text: text)
+                        }
+                    },
+                    hunkStarts: [0])
             },
-            truncated: false)
+            identity: BaseIdentity(
+                base: .workingTree, head: "abc", mergeBase: nil, blobs: []))
     }
 
     /// The chip counts the patch it opens rather than the agent card's totals
     /// for its last turn. A number that disagreed with the page behind it
     /// would be worse than no number at all.
-    func testTheChipCountsEveryHunkInTheDocument() {
+    func testTheChipCountsEveryFileInTheDocument() {
         let changes = document(
             ["  context", "- gone", "- gone too", "+ new"],
             ["- also gone", "+ another", "  context"])

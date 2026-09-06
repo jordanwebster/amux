@@ -20,7 +20,10 @@ public final class ConversationStore {
     public private(set) var settingsGate: SettingsGate = .unavailable
     public private(set) var queued: QueuedMessage?
     public private(set) var family: [FamilyMember] = []
-    public private(set) var changes: DiffDocument?
+    /// The frozen patch this turn offers to show, and what it is.
+    public private(set) var changes: ReviewDocument?
+    /// The artifact that patch is, so a review sent about it names it.
+    public private(set) var changesArtifact: ArtifactId?
     /// Results for operations this conversation dispatched, newest last.
     ///
     /// A result names its operation and no agent, so the connection has to
@@ -86,6 +89,7 @@ public final class ConversationStore {
             family = session.family
         case .diff(let update) where update.agent == agent:
             changes = update.document
+            changesArtifact = update.diff
         case .opResult(let result):
             guard pendingOps.remove(result.op) != nil else { break }
             results.append(result)

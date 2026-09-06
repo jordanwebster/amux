@@ -498,7 +498,7 @@ private struct UnreadableAsk: View {
 /// for this visit.
 struct FinishedPanel: View {
     @Environment(\.design) private var design
-    let changes: DiffDocument
+    let changes: ReviewDocument
     let review: @MainActor () -> Void
     let later: @MainActor () -> Void
 

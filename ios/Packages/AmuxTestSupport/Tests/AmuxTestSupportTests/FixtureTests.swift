@@ -217,10 +217,18 @@ final class FixtureTests: XCTestCase {
         XCTAssertNotNil(bundle.conversation(Scenario.focus).queued)
     }
 
+    /// The frozen patch is two files with their own paths, and the chip's
+    /// arithmetic is the patch's own.
     func testTheReviewFixtureCarriesTheChanges() {
         let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
         Fixtures.named("review-cta")!.apply(bundle)
-        XCTAssertEqual(bundle.conversation(Scenario.focus).changes?.hunks.count, 2)
+        let conversation = bundle.conversation(Scenario.focus)
+        XCTAssertEqual(conversation.changes?.files.map(\.path), [
+            "crates/amux-ui/src/pairing.rs", "crates/amux-ui/src/pairing/errors.rs",
+        ])
+        XCTAssertEqual(conversation.changes?.insertions, 3)
+        XCTAssertEqual(conversation.changes?.deletions, 6)
+        XCTAssertEqual(conversation.changesArtifact, Transcript.changesArtifact)
     }
 
     func testTheUnpairedMachineIsAnOfferRatherThanAHost() {

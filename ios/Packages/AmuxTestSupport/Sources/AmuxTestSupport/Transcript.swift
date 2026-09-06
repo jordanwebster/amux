@@ -420,26 +420,55 @@ public enum Transcript {
         ]))
     }
 
-    /// The changes a finished turn offers to show.
-    public static let changes = DiffDocument(
-        numbering: .absolute,
-        hunks: [
-            DiffHunk(oldStart: 118, newStart: 118, header: "@@ -118,14 +118,9 @@", lines: [
-                "  let message = match status {",
-                "-   Code::NotFound => \"no such host\",",
-                "-   Code::Unauthenticated => \"wrong PIN\",",
-                "-   Code::DeadlineExceeded => \"expired\",",
-                "+   // One string for every failure: the protocol",
-                "+   // refuses to tell them apart, and so must we.",
-                "+   _ => \"Pairing failed. Check the code\",",
-                "  };",
-            ]),
-            DiffHunk(oldStart: 4, newStart: 4, header: "@@ -4,6 +4,3 @@", lines: [
-                "- pub const INVALID_PIN: &str = \"wrong PIN\";",
-                "- pub const NO_SUCH_HOST: &str = \"no such host\";",
-                "- pub const EXPIRED: &str = \"expired\";",
-                "  pub const PAIRING_FAILED: &str =",
-            ]),
+    /// The artifact the frozen patch is. A digest rather than a UUID, because
+    /// that is what names a stored artifact.
+    public static let changesArtifact = ArtifactId(
+        "sha256:11ee9c1a0f3d4b8a72c6e5d0918f3a4b6c7d8e9f0a1b2c3d4e5f60718293a4b5")
+
+    /// The changes a finished turn offers to show: two files, already split,
+    /// numbered and identified, exactly as the core hands them over.
+    public static let changes = ReviewDocument(
+        files: [
+            ReviewFile(
+                path: "crates/amux-ui/src/pairing.rs", added: 3, removed: 3,
+                rows: [
+                    DiffRow(old: 118, new: 118, kind: .context,
+                            text: "  let message = match status {"),
+                    DiffRow(old: 119, new: nil, kind: .removed,
+                            text: "-   Code::NotFound => \"no such host\","),
+                    DiffRow(old: 120, new: nil, kind: .removed,
+                            text: "-   Code::Unauthenticated => \"wrong PIN\","),
+                    DiffRow(old: 121, new: nil, kind: .removed,
+                            text: "-   Code::DeadlineExceeded => \"expired\","),
+                    DiffRow(old: nil, new: 119, kind: .added,
+                            text: "+   // One string for every failure: the protocol"),
+                    DiffRow(old: nil, new: 120, kind: .added,
+                            text: "+   // refuses to tell them apart, and so must we."),
+                    DiffRow(old: nil, new: 121, kind: .added,
+                            text: "+   _ => \"Pairing failed. Check the code\","),
+                    DiffRow(old: 122, new: 122, kind: .context, text: "  };"),
+                ],
+                hunkStarts: [0]),
+            ReviewFile(
+                path: "crates/amux-ui/src/pairing/errors.rs", added: 0, removed: 3,
+                rows: [
+                    DiffRow(old: 4, new: nil, kind: .removed,
+                            text: "- pub const INVALID_PIN: &str = \"wrong PIN\";"),
+                    DiffRow(old: 5, new: nil, kind: .removed,
+                            text: "- pub const NO_SUCH_HOST: &str = \"no such host\";"),
+                    DiffRow(old: 6, new: nil, kind: .removed,
+                            text: "- pub const EXPIRED: &str = \"expired\";"),
+                    DiffRow(old: 7, new: 4, kind: .context,
+                            text: "  pub const PAIRING_FAILED: &str ="),
+                ],
+                hunkStarts: [0]),
         ],
-        truncated: false)
+        identity: BaseIdentity(
+            base: .branch("main"),
+            head: "9f2c1b40a7e3d58f6b0c2a94d13e7f85c6b2a0d9",
+            mergeBase: "4a7d3e91c2b508f6a1d94e73b0c528f6d1a934e7",
+            blobs: [
+                ["crates/amux-ui/src/pairing.rs", "b71c3f0a"],
+                ["crates/amux-ui/src/pairing/errors.rs", "2d8e46b1"],
+            ]))
 }

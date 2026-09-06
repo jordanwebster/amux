@@ -1053,26 +1053,36 @@ public struct OpFailure: Sendable, Equatable, Codable {
     }
 }
 
+/// A patch frozen for review, and what it was taken against.
 public struct DiffUpdate: Codable, Sendable, Equatable {
     public var agent: AgentId
-    public var document: DiffDocument
+    /// The artifact this patch is. A review sent later names it, so the person
+    /// who receives the review can open the same diff that was read.
+    public var diff: ArtifactId
+    public var document: ReviewDocument
 
-    public init(agent: AgentId, document: DiffDocument) {
+    public init(agent: AgentId, diff: ArtifactId, document: ReviewDocument) {
         self.agent = agent
+        self.diff = diff
         self.document = document
     }
 }
 
-public struct DiffDocument: Codable, Sendable, Equatable {
-    public var numbering: DiffNumbering
-    public var hunks: [DiffHunk]
-    /// The source was a bounded head rather than the whole patch.
-    public var truncated: Bool
+/// A multi-file patch, already split, numbered and identified.
+///
+/// The phone does no diff parsing of its own. Splitting a patch into files,
+/// numbering its rows on both sides and checking the arithmetic against what
+/// the host said changed all happen once, in the shared core, and arrive here
+/// finished — because a page that guessed a row number would put a comment on
+/// the wrong line.
+public struct ReviewDocument: Codable, Sendable, Equatable {
+    public var files: [ReviewFile]
+    /// The repository state this was computed from.
+    public var identity: BaseIdentity
 
-    public init(numbering: DiffNumbering, hunks: [DiffHunk], truncated: Bool) {
-        self.numbering = numbering
-        self.hunks = hunks
-        self.truncated = truncated
+    public init(files: [ReviewFile], identity: BaseIdentity) {
+        self.files = files
+        self.identity = identity
     }
 
     /// How many rows this patch adds and how many it takes away.
@@ -1080,45 +1090,130 @@ public struct DiffDocument: Codable, Sendable, Equatable {
     /// Counted from the patch itself rather than taken from the agent card's
     /// last-turn totals: what the chip offers to open is this document, and a
     /// number that disagreed with the page it opens would be worse than no
-    /// number. A truncated document is still counted honestly — it says what
-    /// is in it, and the page it opens says it was cut short.
-    public var insertions: Int { lines(startingWith: "+") }
-    public var deletions: Int { lines(startingWith: "-") }
+    /// number.
+    public var insertions: Int { files.reduce(0) { $0 + Int($1.added) } }
+    public var deletions: Int { files.reduce(0) { $0 + Int($1.removed) } }
 
-    /// Whether there is anything here to review at all. A document that
-    /// arrived with no hunks, or with nothing but context, is not a change.
+    /// Whether there is anything here to review at all.
     public var isEmpty: Bool { insertions == 0 && deletions == 0 }
-
-    private func lines(startingWith mark: Character) -> Int {
-        hunks.reduce(0) { total, hunk in
-            total + hunk.lines.count { $0.first == mark }
-        }
-    }
 }
 
-public enum DiffNumbering: String, Codable, Sendable, Equatable {
-    case absolute
-    case none
-}
-
-public struct DiffHunk: Codable, Sendable, Equatable {
-    public var oldStart: UInt32
-    public var newStart: UInt32
-    public var header: String?
-    /// Rows keep their leading ` `, `-` or `+`.
-    public var lines: [String]
+/// One file's share of a patch: its magnitudes, its numbered rows, and where
+/// each hunk begins in them.
+public struct ReviewFile: Codable, Sendable, Equatable, Identifiable {
+    public var path: String
+    public var added: UInt32
+    public var removed: UInt32
+    public var rows: [DiffRow]
+    /// The index of each hunk's first real row. A reader scrubbing through a
+    /// file lands on these rather than on the blank between two hunks.
+    public var hunkStarts: [Int]
 
     private enum CodingKeys: String, CodingKey {
-        case oldStart = "old_start"
-        case newStart = "new_start"
-        case header, lines
+        case path, added, removed, rows
+        case hunkStarts = "hunk_starts"
     }
 
-    public init(oldStart: UInt32, newStart: UInt32, header: String?, lines: [String]) {
-        self.oldStart = oldStart
-        self.newStart = newStart
-        self.header = header
-        self.lines = lines
+    public init(
+        path: String, added: UInt32, removed: UInt32, rows: [DiffRow], hunkStarts: [Int]
+    ) {
+        self.path = path
+        self.added = added
+        self.removed = removed
+        self.rows = rows
+        self.hunkStarts = hunkStarts
+    }
+
+    /// A patch names a file once, so its path is its identity.
+    public var id: String { path }
+}
+
+/// One row with independent old-file and new-file positions.
+public struct DiffRow: Codable, Sendable, Equatable {
+    public var old: UInt32?
+    public var new: UInt32?
+    public var kind: Kind
+    /// The row as the patch wrote it, leading ` `, `-` or `+` included.
+    public var text: String
+
+    public enum Kind: String, Codable, Sendable, Equatable {
+        /// The break between two hunks. It carries no text of its own: what it
+        /// says — that the next line is not the one after the last — the row
+        /// numbers on either side of it already say.
+        case boundary
+        /// A line inside a hunk that is not content, such as the note that a
+        /// file has no newline at its end. It is a fact about the patch.
+        case note
+        case context
+        case added
+        case removed
+    }
+
+    public init(old: UInt32?, new: UInt32?, kind: Kind, text: String) {
+        self.old = old
+        self.new = new
+        self.kind = kind
+        self.text = text
+    }
+}
+
+/// The repository state a patch was computed from, kept whole so a review sent
+/// later says exactly what it was written against.
+public struct BaseIdentity: Codable, Sendable, Equatable {
+    public var base: DiffBase
+    public var head: String
+    public var mergeBase: String?
+    /// The blob each reviewed file was at, as pairs of path and object name.
+    public var blobs: [[String]]
+
+    private enum CodingKeys: String, CodingKey {
+        case base, head, blobs
+        case mergeBase = "merge_base"
+    }
+
+    public init(base: DiffBase, head: String, mergeBase: String?, blobs: [[String]]) {
+        self.base = base
+        self.head = head
+        self.mergeBase = mergeBase
+        self.blobs = blobs
+    }
+}
+
+/// What a diff was taken against.
+public enum DiffBase: Sendable, Equatable, Codable {
+    case workingTree
+    case branch(String)
+
+    private enum Key: String, CodingKey { case kind, base }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: Key.self)
+        switch try container.decode(String.self, forKey: .kind) {
+        case "working_tree": self = .workingTree
+        case "branch": self = .branch(try container.decode(String.self, forKey: .base))
+        case let other:
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath, debugDescription: "unknown diff base \(other)"))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: Key.self)
+        switch self {
+        case .workingTree:
+            try container.encode("working_tree", forKey: .kind)
+        case .branch(let base):
+            try container.encode("branch", forKey: .kind)
+            try container.encode(base, forKey: .base)
+        }
+    }
+
+    /// How a review header spells this base.
+    public var spelling: String {
+        switch self {
+        case .workingTree: ""
+        case .branch(let base): "branch:\(base)"
+        }
     }
 }
 

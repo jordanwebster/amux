@@ -155,7 +155,20 @@ fn mobile_projection_schema_snapshot() {
     });
     events.push(Event::Diff {
         agent: AGENT,
-        document: diff::parse_unified_patch("@@ -1 +1 @@\n-old\n+new\n", false),
+        diff: serde_json::from_value(json!(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ))
+        .unwrap(),
+        document: amux_ui::review::parse_stored_patch(
+            "diff --git a/one.rs b/one.rs\n--- a/one.rs\n+++ b/one.rs\n@@ -1 +1 @@\n-old\n+new\n",
+            amux::BaseIdentity {
+                base: amux::DiffBase::WorkingTree,
+                head: "abc".into(),
+                merge_base: None,
+                blobs: vec![],
+            },
+        )
+        .unwrap(),
     });
     row(&mut model, 2, message(0, "Updated"));
     events.extend(collect(&mut projection, &model));
@@ -463,6 +476,9 @@ async fn mobile_projection_cadence_adapts_without_catchup() {
     );
 }
 
+/// A frozen diff reaches the phone once, as the review document the rest of
+/// the workspace reads: files under their own paths, rows already numbered,
+/// and the repository identity it was taken against.
 #[test]
 fn mobile_projection_op_results_and_diff_are_delivered_once() {
     let mut model = claude_model();
@@ -476,9 +492,9 @@ fn mobile_projection_op_results_and_diff_are_delivered_once() {
         &mut model,
         Msg::Command {
             op,
-            command: Command::FetchDiff {
+            command: Command::RequestDiff {
                 agent: AGENT,
-                id: artifact.clone(),
+                base: amux::DiffBase::WorkingTree,
             },
         },
     );
@@ -486,17 +502,47 @@ fn mobile_projection_op_results_and_diff_are_delivered_once() {
         &mut model,
         Msg::OpResult {
             op,
-            outcome: OpOutcome::DiffFetched {
-                id: artifact,
-                patch: "@@ -1 +1 @@\n-old\n+new\n".into(),
+            outcome: OpOutcome::DiffReady {
+                response: amux::DiffResponse {
+                    artifact: amux::ArtifactRef {
+                        id: artifact.clone(),
+                        kind: amux::ArtifactKind::Diff,
+                        name: "changes.patch".into(),
+                        mime: "text/x-diff".into(),
+                        size: 0,
+                    },
+                    patch: "diff --git a/one.rs b/one.rs\n\
+                            --- a/one.rs\n\
+                            +++ b/one.rs\n\
+                            @@ -1 +1 @@\n\
+                            -old\n\
+                            +new\n"
+                        .into(),
+                    identity: amux::BaseIdentity {
+                        base: amux::DiffBase::WorkingTree,
+                        head: "abc".into(),
+                        merge_base: None,
+                        blobs: vec![],
+                    },
+                    files: vec![amux::DiffFile {
+                        path: "one.rs".into(),
+                        added: 1,
+                        removed: 1,
+                    }],
+                },
             },
         },
     );
     let mut events = vec![];
     projection.outcomes(&model, &mut events);
-    assert!(
-        matches!(events.as_slice(), [Event::OpResult { .. }, Event::Diff { document, .. }] if document.line_count() == 2)
-    );
+    let [Event::OpResult { .. }, Event::Diff { diff, document, .. }] = events.as_slice() else {
+        panic!("expected one op result and one diff, got {events:?}");
+    };
+    assert_eq!(diff, &artifact);
+    assert_eq!(document.files.len(), 1);
+    assert_eq!(document.files[0].path, "one.rs");
+    assert_eq!(document.files[0].rows.len(), 2);
+    assert_eq!(document.identity.head, "abc");
     projection.outcomes(&model, &mut events);
     assert_eq!(events.len(), 2);
 }

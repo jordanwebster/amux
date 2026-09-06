@@ -117,10 +117,20 @@ final class SchemaTests: XCTestCase {
         XCTAssertFalse(failure.authRequired)
         XCTAssertFalse(failure.subscriptionRequired)
 
+        // A patch arrives split into files and numbered on both sides. The
+        // phone parses no diffs of its own, so what the core sends is what the
+        // page draws and what a comment is anchored against.
         guard case .diff(let diff) = events[7] else { return XCTFail("expected a Diff") }
-        XCTAssertEqual(diff.document.numbering, .absolute)
-        XCTAssertEqual(diff.document.hunks.first?.lines, ["-old", "+new"])
-        XCTAssertFalse(diff.document.truncated)
+        XCTAssertEqual(diff.diff.digest.hasPrefix("sha256:"), true)
+        let file = try XCTUnwrap(diff.document.files.first)
+        XCTAssertEqual(file.path, "one.rs")
+        XCTAssertEqual(file.rows.map(\.text), ["-old", "+new"])
+        XCTAssertEqual(file.rows.map(\.kind), [.removed, .added])
+        XCTAssertEqual(file.rows.map(\.old), [1, nil])
+        XCTAssertEqual(file.rows.map(\.new), [nil, 1])
+        XCTAssertEqual(file.hunkStarts, [0])
+        XCTAssertEqual(diff.document.identity.base, .workingTree)
+        XCTAssertEqual(diff.document.identity.head, "abc")
 
         XCTAssertEqual(events[4], .tokenRequest(requestId: 7))
         XCTAssertEqual(events[15], .invariant(detail: "example diagnostic"))

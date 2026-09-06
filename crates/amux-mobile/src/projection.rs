@@ -6,7 +6,7 @@ use std::time::Duration;
 use amux::RelayConnection;
 use amux_ui::{
     Agent, AgentId, AgentPhase, Attention, Command, HostState, Model, OpId, OpOutcome, StreamPhase,
-    StructuredProtocol, Why, claude, codex, diff,
+    StructuredProtocol, Why, claude, codex, review,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -188,7 +188,15 @@ pub enum Event {
     },
     Diff {
         agent: AgentId,
-        document: diff::Document,
+        /// The artifact the patch is, so a review sent later names the same
+        /// diff the person read.
+        diff: amux::ArtifactId,
+        /// One document per file, numbered, with the repository state it was
+        /// computed from. The phone reads the frozen review document rather
+        /// than a flat run of hunks, because a page that has to collapse a
+        /// file, name it, or say which file a comment is about cannot do any
+        /// of that from hunks alone.
+        document: review::ReviewDocument,
     },
     Connection {
         state: ConnectionDto,
@@ -353,18 +361,35 @@ impl Projection {
                 op: result.op,
                 outcome: OpOutcomeDto::Shared(Box::new(result.outcome.clone())),
             });
-            let (agent, patch) = match (&result.command, &result.outcome) {
+            // A frozen patch reaches the phone as the review document the
+            // rest of the workspace already reads, identity and all. A patch
+            // that will not parse into one is dropped rather than half-drawn:
+            // a page whose row numbers or file boundaries were guessed would
+            // put a comment on the wrong line.
+            let document = match (&result.command, &result.outcome) {
                 (Command::RequestDiff { agent, .. }, OpOutcome::DiffReady { response }) => {
-                    (*agent, response.patch.as_str())
+                    review::parse_patch(&response.patch, response.identity.clone(), &response.files)
+                        .ok()
+                        .map(|document| (*agent, response.artifact.id.clone(), document))
                 }
-                (Command::FetchDiff { agent, .. }, OpOutcome::DiffFetched { patch, .. }) => {
-                    (*agent, patch.as_str())
-                }
+                // A patch fetched back from a stored review is not projected
+                // here. The identity it was taken against lives in the review
+                // mention that referenced it, not in this outcome, and a
+                // document assembled with an invented identity would claim
+                // the phone knew what it had been diffed against. Reading a
+                // review somebody else sent is its own path.
                 _ => continue,
+            };
+            let Some((agent, diff, document)) = document else {
+                events.push(Event::Invariant {
+                    detail: "a diff arrived that would not parse as a review document".into(),
+                });
+                continue;
             };
             events.push(Event::Diff {
                 agent,
-                document: diff::parse_unified_patch(patch, false),
+                diff,
+                document,
             });
         }
     }

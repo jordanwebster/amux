@@ -35,14 +35,17 @@ public enum States {
         entries: [FeedEntry] = [],
         agent: AgentId = Scenario.focus,
         session: SessionSnapshot? = nil,
-        changes: DiffDocument? = nil,
+        changes: ReviewDocument? = nil,
         extra: [Event] = []
     ) {
         bundle.fleet.unread = unread
         var batch: [Event] = [fleet(agents, hosts: hosts, reconciled: reconciled)]
         if !entries.isEmpty { batch.append(feed(entries, agent: agent)) }
         if let session { batch.append(.session(session)) }
-        if let changes { batch.append(.diff(DiffUpdate(agent: agent, document: changes))) }
+        if let changes {
+            batch.append(.diff(DiffUpdate(
+                agent: agent, diff: Transcript.changesArtifact, document: changes)))
+        }
         batch.append(contentsOf: extra)
         // A fixture's operation results belong to the agent it is about: the
         // conversation is told it dispatched them, exactly as the send path

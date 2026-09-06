@@ -4,6 +4,24 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **The phone is sent a reviewable diff rather than a run of
+hunks.** A frozen patch arrived with its file headers stripped: enough to count
+a change, not enough to read one. Nothing said which file a hunk belonged to,
+what its rows were numbered, or what the patch had been taken against, so a
+page that lists files, collapses one, scrubs between them or anchors a comment
+to a line could not be built on it. The bridge now projects the review document
+the rest of the workspace already reads — files under their own paths, rows
+numbered on both sides, hunk starts, and the repository identity — parsed once
+in the shared core by the same code the terminal client uses, with the artifact
+identifier beside it so a review sent later names the diff that was read.
+
+A patch fetched back from a stored review is deliberately no longer projected:
+its identity lives in the review mention that referenced it, and a document
+assembled with an invented identity would claim the phone knew what it had been
+diffed against. Reading somebody else's review is its own path, still to build.
+The shared fixture is now a real two-file patch whose arithmetic is unchanged,
+so every locked capture is unchanged.
+
 2026-09-06 — **An agent that is waiting on you now asks in its own words.**
 An unanswered ask replaces the composer with a panel. A Claude permission shows
 the command verbatim with Allow filled, Deny outlined, and — where the host

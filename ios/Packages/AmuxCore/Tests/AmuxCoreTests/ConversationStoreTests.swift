@@ -103,13 +103,27 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(store.settingsGate, .ptySettingsUnavailable)
     }
 
-    func testChangesArriveAsADocument() {
+    /// A patch arrives already split into files, already numbered, and
+    /// already identified. Keeping the artifact beside it is what lets a
+    /// review sent later name the diff that was actually read.
+    func testChangesArriveAsAReviewDocument() {
         let store = ConversationStore(agent: agent)
-        store.apply(.diff(DiffUpdate(agent: agent, document: DiffDocument(
-            numbering: .absolute,
-            hunks: [DiffHunk(oldStart: 1, newStart: 1, header: "@@ -1 +1 @@", lines: ["-old", "+new"])],
-            truncated: false))))
-        XCTAssertEqual(store.changes?.hunks.first?.lines, ["-old", "+new"])
+        let artifact = ArtifactId("sha256:abc")
+        store.apply(.diff(DiffUpdate(agent: agent, diff: artifact, document: ReviewDocument(
+            files: [ReviewFile(
+                path: "one.rs", added: 1, removed: 1,
+                rows: [
+                    DiffRow(old: 1, new: nil, kind: .removed, text: "-old"),
+                    DiffRow(old: nil, new: 1, kind: .added, text: "+new"),
+                ],
+                hunkStarts: [0])],
+            identity: BaseIdentity(
+                base: .workingTree, head: "abc", mergeBase: nil, blobs: [])))))
+        XCTAssertEqual(store.changes?.files.first?.path, "one.rs")
+        XCTAssertEqual(store.changes?.files.first?.rows.map(\.text), ["-old", "+new"])
+        XCTAssertEqual(store.changes?.insertions, 1)
+        XCTAssertEqual(store.changes?.deletions, 1)
+        XCTAssertEqual(store.changesArtifact, artifact)
     }
 
     private func refusal(_ message: String, op: OpId) -> Event {
