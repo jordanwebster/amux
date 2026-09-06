@@ -1,10 +1,11 @@
 //! Profile clients have independent selections and no installation administration.
+#![cfg(unix)]
+
 use amux::installation::{FrontDoor, rpc};
 use amux::testnet::{TestNet, Via};
 
 /// A paired peer can use agent calls, but lifecycle and trust administration is absent
 /// from its gRPC service. The installation owner still administers trust.
-#[cfg(unix)]
 #[tokio::test]
 async fn administration_is_absent_from_profile_sockets_and_peer_tunnels() {
     let net = TestNet::builder()
@@ -46,7 +47,6 @@ async fn administration_is_absent_from_profile_sockets_and_peer_tunnels() {
 }
 
 /// Discovering another profile on a second connection never retargets an existing client.
-#[cfg(unix)]
 #[tokio::test]
 async fn two_clients_select_different_profiles_independently() {
     let net = TestNet::builder()

@@ -148,7 +148,11 @@ async fn untrusted_online_hosts_are_absent_from_profile_inventory() {
     // The installation front door offers the untrusted host for pairing.
     laptop.sees_pairing_candidate(&desktop).await;
 
-    let local_hosts = laptop.socket_client().await.list_hosts().await.unwrap();
+    #[cfg(unix)]
+    let local_client = laptop.socket_client().await;
+    #[cfg(not(unix))]
+    let local_client = laptop.client();
+    let local_hosts = local_client.list_hosts().await.unwrap();
     assert!(!local_hosts.iter().any(|host| host.id == desktop.host_id()));
     assert!(local_hosts.iter().any(|host| host.id == laptop.host_id()));
 
@@ -170,14 +174,14 @@ async fn untrusted_online_hosts_are_absent_from_profile_inventory() {
     remote_ids.sort();
     assert_eq!(local_ids.len(), 2);
     assert_eq!(local_ids, remote_ids);
-    println!("Profile socket ListHosts: {local_hosts:?}");
+    println!("Local profile ListHosts: {local_hosts:?}");
     println!("Paired tunnel ListHosts IDs: {hosts:?}");
     println!(
         "Front door ListPairingCandidates IDs: {:?}",
         laptop.pairing_candidates().await
     );
     println!(
-        "Front door lists the unpaired cloud device for pairing; local profile socket and paired tunnel both list only the local host and trusted phone."
+        "Front door lists the unpaired cloud device for pairing; local profile client and paired tunnel both list only the local host and trusted phone."
     );
 }
 

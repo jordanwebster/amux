@@ -1,5 +1,6 @@
 //! Account boundaries preserve device identity, trust and independent service.
 
+#[cfg(unix)]
 use amux::installation::{InstallationError, Observed, ProfileEvent};
 use amux::testnet::{TestNet, Via};
 
