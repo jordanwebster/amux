@@ -35,12 +35,13 @@ enum DoorScreens {
             ) {
                 Ground()
             }
-        // One screen, four names. Whether a turn is still running, who else
-        // has spoken in it, and whether it left anything to review are all
-        // facts the conversation reads off its own store rather than screens of
-        // their own: `run-live`, `voices` and `review-cta` are `run` with a
-        // different feed and session in it.
-        case .run, .runLive, .voices, .reviewCta:
+        // One screen, six names. Whether a turn is still running, who else has
+        // spoken in it, whether the layer will take a message and whether the
+        // run has ended are all facts the conversation reads off its own store
+        // rather than screens of their own: `run-live`, `voices`,
+        // `review-cta`, `working` and `exited` are `run` with a different
+        // feed, session and fleet in it.
+        case .run, .runLive, .voices, .reviewCta, .working, .exited:
             Conversation(
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(

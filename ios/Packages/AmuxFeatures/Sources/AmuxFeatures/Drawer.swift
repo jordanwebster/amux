@@ -102,18 +102,31 @@ public struct AgentsDrawer: View {
                 SectionHead(title: title)
                 VStack(spacing: 0) {
                     ForEach(rows) { row in
-                        Button { actions(.open(row.id)) } label: {
-                            DrawerRow(
-                                row: row,
-                                host: model.host(row.hostId)?.name,
-                                open: row.id == current)
+                        let content = DrawerRow(
+                            row: row,
+                            host: model.host(row.hostId)?.name,
+                            open: row.id == current)
+                        // The panel is a way to switch conversations, so an
+                        // agent whose provider this build has no case for is
+                        // named here and not offered as somewhere to switch
+                        // to. It is still listed: leaving it out would make
+                        // the panel disagree with the list it came from.
+                        if row.readable {
+                            Button { actions(.open(row.id)) } label: { content }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(spoken(row))
+                                .accessibilityAddTraits(row.id == current ? [.isSelected] : [])
+                                .identified(
+                                    "drawer.row.\(row.id)", label: spoken(row),
+                                    value: row.id == current ? "open" : row.attention.spoken)
+                        } else {
+                            content
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel(spoken(row))
+                                .identified(
+                                    "drawer.row.\(row.id)", label: spoken(row),
+                                    value: "cannot be read")
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(spoken(row))
-                        .accessibilityAddTraits(row.id == current ? [.isSelected] : [])
-                        .identified(
-                            "drawer.row.\(row.id)", label: spoken(row),
-                            value: row.id == current ? "open" : row.attention.spoken)
                     }
                 }
             }
@@ -123,6 +136,7 @@ public struct AgentsDrawer: View {
     private func spoken(_ row: AgentRow) -> String {
         var parts = [row.name, row.attention.spoken]
         parts.append(row.headline ?? model.host(row.hostId)?.name ?? row.workingDirectory)
+        if !row.readable { parts.append("this build cannot read it") }
         if row.id == current { parts.append("the conversation you are in") }
         return parts.joined(separator: ", ")
     }

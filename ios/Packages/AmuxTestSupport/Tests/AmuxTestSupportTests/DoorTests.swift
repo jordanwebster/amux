@@ -104,14 +104,14 @@ final class DoorTests: XCTestCase {
     }
 
     func testAScreenIsBuiltOneStateAtATime() {
-        // The conversation screen draws its ordinary state and not the one
-        // whose host was lost, the one stripped to its rows or the one at an
+        // The conversation screen draws its ordinary state and the one whose
+        // host was lost, but not the one stripped to its rows or the one at an
         // accessibility type size: each has its own baseline and is written on
         // its own. Declared per screen, all four became openable together and a
         // check of what is built so far started failing on work nobody had
         // started.
         XCTAssertTrue(Fixtures.isBuilt(.run, state: "run"))
-        XCTAssertFalse(Fixtures.isBuilt(.run, state: "host-lost"))
+        XCTAssertTrue(Fixtures.isBuilt(.run, state: "host-lost"))
         XCTAssertFalse(Fixtures.isBuilt(.run, state: "run-accessibility"))
         // A state with no fixture behind it is unbuilt rather than unknown, so
         // asking for it names work still to come.

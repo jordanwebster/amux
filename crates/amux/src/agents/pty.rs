@@ -111,6 +111,23 @@ impl PtyHandle {
         self.buffer.debug_snapshot().await
     }
 
+    /// The exit code of the process behind this PTY, once it has one.
+    ///
+    /// `None` means either that it is still running or that the host never
+    /// learned a code — a signal, or a backend that does not report one. The
+    /// two are not distinguished here because nothing downstream may treat an
+    /// unknown code as a zero, so an absent code is the only honest answer to
+    /// both.
+    pub(crate) fn exit_code(&self) -> Option<i32> {
+        let status = match &self.hosted {
+            HostedPty::Process(process) => process.exit.status(),
+            HostedPty::Claude(control) => control.exit_status(),
+            #[cfg(any(test, testnet))]
+            HostedPty::TestEcho(_) => None,
+        }?;
+        i32::try_from(status.exit_code()).ok()
+    }
+
     pub(crate) fn backend_state(&self, _output: &OutputDebug) -> BackendState {
         let (pid, status) = match &self.hosted {
             HostedPty::Process(process) => (Some(process.handle.pid()), process.exit.status()),

@@ -261,6 +261,14 @@ public enum AgentKind: Sendable, Equatable, Codable {
     case claude(driver: ClaudeDriver)
     case codex
     case testAgent
+    /// A provider this build has no case for, kept under the name the host
+    /// used for it.
+    ///
+    /// Refusing to decode it would throw away the whole fleet the moment one
+    /// machine on the account runs a newer amux, which turns one agent nobody
+    /// can read into a phone that shows nothing at all. So it arrives, it is
+    /// listed, and `AgentRow.readable` is what stops it being offered to open.
+    case unknown(String)
 
     private enum Key: String, CodingKey { case kind, driver }
 
@@ -270,9 +278,7 @@ public enum AgentKind: Sendable, Equatable, Codable {
         case "claude": self = .claude(driver: try container.decode(ClaudeDriver.self, forKey: .driver))
         case "codex": self = .codex
         case "test_agent": self = .testAgent
-        case let other:
-            throw DecodingError.dataCorrupted(.init(
-                codingPath: decoder.codingPath, debugDescription: "unknown agent kind \(other)"))
+        case let other: self = .unknown(other)
         }
     }
 
@@ -284,6 +290,7 @@ public enum AgentKind: Sendable, Equatable, Codable {
             try container.encode(driver, forKey: .driver)
         case .codex: try container.encode("codex", forKey: .kind)
         case .testAgent: try container.encode("test_agent", forKey: .kind)
+        case .unknown(let name): try container.encode(name, forKey: .kind)
         }
     }
 }

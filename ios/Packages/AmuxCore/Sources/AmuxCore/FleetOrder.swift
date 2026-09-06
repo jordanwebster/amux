@@ -52,6 +52,18 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     /// at a time, so this turns true a row at a time.
     public var confirmed: Bool { !card.awaiting }
 
+    /// Whether this build can read what this agent says.
+    ///
+    /// An agent run by a provider this build has no case for still belongs on
+    /// the list: it exists, it is somebody's work, and leaving it out would
+    /// make the phone disagree with the machine it is talking to. But opening
+    /// it would show a conversation of which not one row can be read, so it is
+    /// listed, said to be unreadable, and never offered to open.
+    public var readable: Bool {
+        if case .unknown = card.agent.kind { return false }
+        return true
+    }
+
     public init(card: AgentCard, unread: Bool) {
         self.card = card
         self.unread = unread

@@ -117,6 +117,12 @@ private struct ConversationPage: View {
                 // The overflow's own panel is not built yet, so nothing is
                 // presented and nothing pretends to have been.
                 case .overflow: break
+                // Asking the machine again means asking the runtime, and the
+                // shell has no runtime to ask yet. Reconnecting on its own
+                // schedule is what is already happening, which is what the
+                // panel says; the button is here so the offer is on the screen
+                // it belongs to rather than arriving with the wiring.
+                case .retry: break
                 }
             }
         }

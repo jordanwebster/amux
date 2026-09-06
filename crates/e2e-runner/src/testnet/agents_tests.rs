@@ -329,6 +329,15 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             )
         })
         .await;
+        // The code the agent was asked to exit with, all the way through. The
+        // end of the output stream is how a subscriber learns the agent has
+        // gone and it carries no code, so this is the assertion that keeps the
+        // daemon completing the close reason from the backend instead of
+        // sending an empty one every reader has to guess at.
+        assert_eq!(
+            runtime.model().agent(agent).unwrap().phase,
+            amux_ui::AgentPhase::Exited { exit_code: Some(7) }
+        );
         assert_eq!(
             control
                 .ack(json!({"AgentObserve":{"agent":"helper"}}))

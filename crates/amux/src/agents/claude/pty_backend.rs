@@ -770,6 +770,14 @@ impl AgentBackend for ClaudePtyBackend {
         .into())
     }
 
+    fn exit_code(&self) -> Option<i32> {
+        let pty = {
+            let runtime = self.runtime.lock().expect("Claude runtime poisoned");
+            runtime.pty.clone()
+        };
+        pty?.exit_code()
+    }
+
     async fn debug_json(&self, verbose: bool) -> serde_json::Result<Value> {
         let (pty, control) = {
             let runtime = self.runtime.lock().expect("Claude runtime poisoned");

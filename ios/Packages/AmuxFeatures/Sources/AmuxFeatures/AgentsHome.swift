@@ -210,18 +210,27 @@ public struct AgentsHome: View {
         .refreshable { actions(.refresh) }
     }
 
+    @ViewBuilder
     private func agentRow(_ row: AgentRow) -> some View {
-        Button {
-            actions(.open(row.id))
-        } label: {
-            AgentRowView(row: row, host: model.host(row.hostId)?.name, now: model.orderedAt)
-                .shimmering(!row.confirmed)
+        let content = AgentRowView(row: row, host: model.host(row.hostId)?.name, now: model.orderedAt)
+            .shimmering(!row.confirmed)
+        // An agent run by a provider this build has no case for is listed and
+        // not offered to open. A button that led to a conversation of which
+        // not one row could be read would be a worse answer than the row
+        // saying so where it stands.
+        if row.readable {
+            Button { actions(.open(row.id)) } label: { content }
+                .buttonStyle(.plain)
+                .accessibilityLabel(spoken(row))
+                .identified(
+                    "home.row.\(row.id)", label: spoken(row),
+                    value: row.confirmed ? row.attention.spoken : "\(row.attention.spoken), remembered")
+        } else {
+            content
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(spoken(row))
+                .identified("home.row.\(row.id)", label: spoken(row), value: "cannot be read")
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(spoken(row))
-        .identified(
-            "home.row.\(row.id)", label: spoken(row),
-            value: row.confirmed ? row.attention.spoken : "\(row.attention.spoken), remembered")
     }
 
     /// What a row says to somebody who cannot see it, in the order the row
@@ -234,6 +243,7 @@ public struct AgentsHome: View {
         parts.append([model.host(row.hostId)?.name, row.workingDirectory]
             .compactMap { $0 }.joined(separator: ", "))
         parts.append(row.age(at: model.orderedAt) + " ago")
+        if !row.readable { parts.append("this build cannot read it") }
         if row.unread { parts.append("unread") }
         // Said aloud too: a row nobody has confirmed yet looks different and
         // must sound different, or VoiceOver reports a memory as a fact.
@@ -453,10 +463,14 @@ struct AgentRowView: View {
     }
 
     private var stateWord: String? {
+        // Said in words rather than left to the mark. There is no glyph for
+        // "this build has no case for what runs here", and an agent that
+        // cannot be read is not idle.
+        guard row.readable else { return "Cannot be read" }
         switch row.attention {
-        case .needsYou(why: .finished): "Finished"
-        case .idle: "Idle"
-        default: nil
+        case .needsYou(why: .finished): return "Finished"
+        case .idle: return "Idle"
+        default: return nil
         }
     }
 

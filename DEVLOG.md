@@ -4,6 +4,37 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **What a conversation says when it will not take a message.**
+Three ways a conversation stops accepting messages, and they were being drawn
+as one thing or as nothing. They are now distinct, and each is read off a fact
+the core reports rather than one the phone infers.
+
+A layer that refuses a send says so where the composer will be, in the core's
+own sentence when the core has refused an actual send and in the phone's words
+for that gate when nothing has been attempted. A machine that has gone away
+mid-turn leaves the feed exactly as it was — the last thing that was true, and
+still readable — and says so twice: the place line under the agent's name
+reads "unreachable" instead of the directory, and the panel along the bottom
+names the machine, says reconnecting is what is happening and offers Retry Now.
+A run that has ended offers nothing at all, on purpose, and states its exit
+code in a card at the end of the feed where the last thing that happened
+belongs.
+
+That exit code was being thrown away at the daemon. A subscriber learns an
+agent has gone from its output stream ending, and the stream carries no code,
+so the close reason went out with `exit_code: None` for every agent on every
+host — while the backend that had just reaped the process knew the answer. The
+close reason is now completed from the backend, and the runner test that exits
+an agent with code 7 asserts the 7 arrives instead of matching on any exit at
+all. An absent code stays absent all the way to the phone: nothing may read
+"the host never said" as a successful exit.
+
+An agent run by a provider this build has no case for used to fail to decode,
+which took the whole fleet down with it — one unreadable agent turning into a
+phone that shows nothing. It now arrives under whatever name the host used for
+it, is listed with the rest, says it cannot be read, and is not offered to open
+from either the home or the drawer.
+
 2026-09-06 — **A screen is built one state at a time.**
 The catalogue's unit is a state — a screen and what fills it — but the debug
 door declared built-ness per screen. So the moment the conversation landed,

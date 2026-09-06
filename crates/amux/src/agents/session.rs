@@ -337,6 +337,17 @@ pub(crate) trait AgentBackend: Send + Sync {
     fn kind(&self) -> AgentKind;
     fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError>;
 
+    /// The code this agent's process exited with, once the backend knows one.
+    ///
+    /// The end of a session's output stream is how a subscriber finds out that
+    /// an agent has gone, but the stream carries no code, so the close reason
+    /// is filled in from here instead. `None` is "the backend has no code for
+    /// it" and is never to be read as a successful exit: a phone that drew a
+    /// missing code as zero would be reporting something no host ever said.
+    fn exit_code(&self) -> Option<i32> {
+        None
+    }
+
     /// The structured output log where daemon-authored attachment metadata is
     /// published before an agent includes the matching mention in its reply.
     fn attachment_log(&self) -> Option<StructuredLogSource> {

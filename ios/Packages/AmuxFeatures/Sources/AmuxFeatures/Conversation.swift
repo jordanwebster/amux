@@ -12,6 +12,8 @@ public enum ConversationAction: Equatable, Sendable {
     case openChanges
     /// Everything a conversation can be done to rather than said to.
     case overflow
+    /// Reach the machine again now, rather than waiting for the next attempt.
+    case retry
 }
 
 /// Who this conversation is with and where it runs.
@@ -24,11 +26,40 @@ public struct ConversationSubject: Equatable, Sendable {
     public let name: String
     public let host: String?
     public let directory: String
+    /// Whether the machine that owns this agent is answering.
+    ///
+    /// A conversation opened before the fleet has arrived is not called
+    /// unreachable: nothing has said it is, and marking a screen stale on the
+    /// strength of not having heard yet is the same lie in the other
+    /// direction.
+    public let hostReachable: Bool
+    /// How long ago this agent last did anything, in the shortest true unit.
+    /// Absent while the fleet that knows has not arrived.
+    public let age: String?
+    /// Set once the agent has stopped for good.
+    public let ended: Ended?
 
-    public init(name: String, host: String?, directory: String) {
+    /// A run that is over.
+    public struct Ended: Equatable, Sendable {
+        /// Whatever code the host reported. Absent means the host never said
+        /// which, which is not the same as zero and is never drawn as one.
+        public let code: Int?
+
+        public init(code: Int?) {
+            self.code = code
+        }
+    }
+
+    public init(
+        name: String, host: String?, directory: String,
+        hostReachable: Bool = true, age: String? = nil, ended: Ended? = nil
+    ) {
         self.name = name
         self.host = host
         self.directory = directory
+        self.hostReachable = hostReachable
+        self.age = age
+        self.ended = ended
     }
 
     /// What the chrome names an agent, gathered from the fleet that owns those
@@ -40,15 +71,29 @@ public struct ConversationSubject: Equatable, Sendable {
             self.init(name: agent.description, host: nil, directory: "")
             return
         }
+        var ended: Ended?
+        if case .exited(let code) = row.phase { ended = Ended(code: code) }
         self.init(
             name: row.name, host: fleet.host(row.hostId)?.name,
-            directory: row.workingDirectory)
+            directory: row.workingDirectory,
+            hostReachable: fleet.host(row.hostId)?.online ?? true,
+            age: row.age(at: fleet.orderedAt),
+            ended: ended)
     }
 
     /// "Studio · ~/src/amux", or just the directory while the machine that
     /// owns this agent has not been heard from.
+    ///
+    /// A machine that has gone away says so here instead of naming the
+    /// directory. The directory has not changed, but it is the least useful
+    /// true thing on the screen at the moment the machine holding it cannot
+    /// be reached, and this line is the one place a reader is already looking
+    /// to find out where this conversation lives.
     public var place: String {
-        [host, directory].compactMap { $0 }.joined(separator: " · ")
+        guard hostReachable else {
+            return [host, "unreachable"].compactMap { $0 }.joined(separator: " · ")
+        }
+        return [host, directory].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -105,6 +150,16 @@ public struct Conversation: View {
                 } else {
                     TranscriptFeed(rows: model.entries.transcriptRows())
                 }
+                // The end of a run belongs in the feed rather than under it.
+                // It is the last thing that happened, in sequence after the
+                // last thing the agent said, and a run that ended is not a
+                // state of the screen you can act on — it is a fact about the
+                // transcript you scroll to the bottom of.
+                if let ended = subject.ended {
+                    EndOfRun(ended: ended, age: subject.age, host: subject.host)
+                        .padding(.horizontal, design.metrics.gutter)
+                        .padding(.top, design.metrics.feedGap)
+                }
             }
             .padding(.bottom, 120)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -115,6 +170,24 @@ public struct Conversation: View {
         // as a pane you can read straight through; this samples correctly.
         .scrollEdgeEffectStyle(.soft, for: .top)
         .safeAreaInset(edge: .top, spacing: 0) { chrome }
+        .safeAreaInset(edge: .bottom, spacing: 0) { foot }
+    }
+
+    /// What occupies the composer's place when a message would not go.
+    ///
+    /// The composer is the one control on this screen that lies by staying
+    /// usable, so where it will sit is where a refusal is reported. Nothing
+    /// is drawn when the layer is taking messages: an empty strip along the
+    /// bottom of every ordinary conversation would cost the feed a row of
+    /// screen to say nothing.
+    @ViewBuilder
+    private var foot: some View {
+        if let state = ConversationFootState(
+            gate: model.gate, results: model.results, subject: subject) {
+            ConversationFoot(state: state) { actions(.retry) }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+        }
     }
 
     // MARK: - The chrome

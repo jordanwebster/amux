@@ -215,6 +215,75 @@ and failures that a good morning never shows.
   as well would make a page with three failures on it mostly coloured, which
   reads the same as a page with no colour at all.
 
+## exited
+
+The same conversation after the run stopped for good: the feed as it was, and
+a card at the end of it stating the exit code and that nothing is still
+running.
+
+- **Nothing is offered.** The reference offers nothing either, and it is the
+  point of the screen rather than an omission: restarting is starting a new
+  agent, and deleting a finished run is not something to put in front of
+  somebody at the moment they are reading what it did.
+- **The machine is Studio and the age is 2m.** The reference reads
+  "mini · ~/src/amux" and "14m". Both come from the one scenario every capture
+  is a state of, where this agent runs on Studio and last did something two
+  minutes ago, rather than from numbers written on the card.
+- **No exit code is invented.** The code on the card is the one the host
+  reported. Where a host never says which, the card reads "Exited" and stops;
+  an absent code is not a zero.
+- The differing conversation, the thinking line and the absent composer carry
+  over from `run`.
+
+## stale
+
+The same conversation after the machine that owns the agent stopped answering
+mid-turn. The feed is not cleared and not greyed out — it is the last thing
+that was true and stays readable — and the two places a reader is already
+looking say so.
+
+The design has no preserved capture of this, so there is nothing to compare it
+against.
+
+- **The place line says "unreachable" instead of the directory.** The
+  directory has not changed, but it is the least useful true thing on the
+  screen while the machine holding it cannot be reached, and that line is
+  where a reader looks to find out where a conversation lives.
+- **The overflow stays.** The design's own drawing of this screen replaced the
+  overflow with a hollow mark. Here the mark is on the panel along the bottom,
+  where the sentence explaining it is, and the overflow keeps its place: it is
+  the only way to act on a conversation, and a machine going away is not a
+  reason to take that away too.
+- **The panel is where the composer will be.** The composer is the one control
+  on this screen that would lie by staying usable, so its place is where the
+  failure is reported. Retry Now is offered here and nowhere else, because
+  waiting is what is actually happening and asking again is the only thing a
+  person can add to it.
+
+## send-refused
+
+A send the layer refused, with its reason where the composer will be. The
+session is replaying its history, so nothing this person typed reached the
+host.
+
+The design has no preserved capture of this either.
+
+- **The sentence is the core's, not the phone's.** "the session is replaying
+  history" is what the host answered, printed as it arrived. The phone has its
+  own sentence for each gate and uses it only when nothing has been attempted
+  yet; a refusal rewritten here would be a second opinion about something only
+  the host knows.
+- **Two words on the headline, not a paragraph.** "Not sent" is the whole of
+  what the person needs to act on. Whether it will go later is the sentence
+  under it.
+- **The accent stops at the glyph,** as it does on a denied row in the
+  transcript. Colouring the words as well would make a refusal louder than the
+  three failures a busy transcript above it already carries.
+
+- **No Retry Now here.** A layer that is catching up is already doing the thing
+  a retry would ask for. The button appears only where something has actually
+  stopped, which is `stale`.
+
 ## ax-home
 
 The same Agents home at an accessibility text size. There is no design

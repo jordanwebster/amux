@@ -52,7 +52,10 @@ public enum Fixtures {
         Built(.homeQuiet, "home-quiet"),
         Built(.drawer, "drawer"),
         Built(.run, "run"),
+        Built(.run, "host-lost"),
         Built(.runLive, "run-live"),
+        Built(.working, "send-refused"),
+        Built(.exited, "exited"),
         Built(.voices, "voices"),
         Built(.reviewCta, "review-cta"),
         Built(.firstRun, "first-run"),
@@ -250,8 +253,9 @@ public enum Fixtures {
                 session: Sessions.unreadable())
         },
         // A send the layer refused, with the reason visible and no input
-        // reaching the host.
-        Fixture(id: "send-refused", screen: .run) { bundle in
+        // reaching the host. It is a state of the screen the composer lives
+        // on, which is where a refusal to send is read.
+        Fixture(id: "send-refused", screen: .working) { bundle in
             States.open(
                 bundle, entries: Transcript.pairingCopy,
                 session: Sessions.claude(gate: .replaying, phase: "replaying", stream: .replaying),
