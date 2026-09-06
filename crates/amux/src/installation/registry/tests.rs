@@ -143,6 +143,7 @@ fn ephemeral_registries_are_independent() {
     assert_eq!(b.profiles().count(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn atomic_replacement_keeps_old_readers_whole() {
     use std::io::Read;
@@ -166,6 +167,35 @@ fn atomic_replacement_keeps_old_readers_whole() {
     println!(
         "atomic replace: an open reader keeps the complete old registry; a new reader sees revision 2"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn blocked_replacement_preserves_registry_and_retries_after_reader_closes() {
+    let root = root();
+    let mut registry = open(root.path());
+    let record = registry.create(ProfileId::new(), label("Before")).unwrap();
+    let path = root.path().join("registry.yaml");
+    let original = fs::read(&path).unwrap();
+    let reader = File::open(&path).unwrap();
+    let mut replacement = record.clone();
+    replacement.label = label("After");
+
+    assert!(matches!(
+        registry.replace(replacement.clone()),
+        Err(InstallationError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied
+    ));
+    assert_eq!(registry.get(record.id).unwrap(), &record);
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+
+    drop(reader);
+    registry.replace(replacement).unwrap();
+    drop(registry);
+    let reopened = open(root.path());
+    let replaced = reopened.get(record.id).unwrap();
+    assert_eq!(replaced.label, label("After"));
+    assert_eq!(replaced.revision, record.revision + 1);
 }
 
 #[test]

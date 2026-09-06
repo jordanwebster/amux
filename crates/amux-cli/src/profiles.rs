@@ -498,7 +498,7 @@ mod tests {
         use amux::installation::{ProfileId, ProfilePaths};
 
         // A short root: the profile socket has to fit the Unix path limit.
-        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let dir = amux::test_fixtures::short_installation_root();
         let root = dir.path().to_path_buf();
         let id = ProfileId::new();
         let paths = ProfilePaths::for_id(&root, id).unwrap();

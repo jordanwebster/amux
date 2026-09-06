@@ -277,6 +277,7 @@ fn write_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), Inst
     staged
         .persist_noclobber(path)
         .map_err(|error| error.error)?;
+    #[cfg(unix)]
     std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }

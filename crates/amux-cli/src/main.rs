@@ -1373,6 +1373,7 @@ mod tests {
     fn profile_selector_is_global_for_ui_relay_and_administration() {
         for args in [
             vec!["amux", "ui", "--profile", "Work"],
+            #[cfg(unix)]
             vec!["amux", "relay", "--profile", "Work"],
             vec!["amux", "--profile", "Work", "profile", "rename", "Office"],
             vec!["amux", "login", "--profile", "Work", "--name", "Office"],

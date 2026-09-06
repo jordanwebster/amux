@@ -597,6 +597,24 @@ accepts a closed `claude.driver` setting with `pty` as the shipped default and
 before configuration, and the command-line, fleet create action, and managed
 agent spawn tool all use it. Focused tests cover absent configuration, SDK
 configuration, explicit PTY override, and rejected Claude-section keys.
+2026-09-06 — **Keep CLI profile tests portable on Windows.**
+Profile selection and installation-update fixtures now use the shared temporary
+root helper, which keeps Unix socket paths short and uses the system temporary
+directory on Windows. The global profile-selector parser test exercises the
+relay command only where that command exists, while retaining UI and
+administration coverage on every platform. Profile-filtered tests, the
+installation-update marker test, formatting and workspace lint pass locally.
+
+2026-09-06 — **Open installations on Windows without directory-file syncing.**
+Configuration creation now syncs its parent directory only on Unix, matching
+registry, credential and update-journal writes. Windows had returned AccessDenied
+after the configuration was already written, preventing installation startup.
+Registry replacement tests now cover each platform's open-reader behavior:
+Unix retains the old reader across replacement; Windows refuses replacement,
+preserves both memory and disk, cleans staging files and succeeds after the
+reader closes. All 40 installation tests pass locally, along with formatting
+and workspace lint.
+
 2026-09-06 — **Replay cleanup drains trailing events until delivery completes.**
 A recorded tail larger than the transport buffers must still drain after the
 scenario's assertions finish. Cleanup now consumes pending events while the
