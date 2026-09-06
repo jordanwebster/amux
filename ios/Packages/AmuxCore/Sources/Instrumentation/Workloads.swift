@@ -103,8 +103,14 @@ public enum Workloads {
     /// A thousand rows in the pinned mixture: 55% prose with markdown, 20%
     /// tool rows, 10% folded reads, 5% command output over 200 lines, 5%
     /// edits, 5% rules and rows this build does not know.
+    ///
+    /// `from` is the identity of the first row. A feed never hands out an
+    /// identity twice, so rows generated to arrive on top of an existing
+    /// transcript continue its numbering rather than starting again: repeated
+    /// identities make the list's diffing undefined, and a measurement taken
+    /// over an undefined list is a measurement of nothing.
     public static func conversation(
-        agent: AgentId, rows count: Int = 1_000, seed: UInt64 = seed
+        agent: AgentId, rows count: Int = 1_000, seed: UInt64 = seed, from first: Int = 1
     ) -> [FeedEntry] {
         var random = Deterministic(seed: seed)
         var kinds: [Kind] = []
@@ -116,16 +122,19 @@ public enum Workloads {
         kinds += Array(repeating: .unknown, count: count - kinds.count)
         kinds.shuffle(using: &random)
         return kinds.enumerated().map { index, kind in
-            entry(kind, id: index + 1, random: &random)
+            entry(kind, id: first + index, random: &random)
         }
     }
 
-    /// The stream: the conversation's rows handed out in the batches a fifty
-    /// rows a second arrival would deliver them in.
+    /// The stream: fresh rows handed out in the batches a fifty rows a second
+    /// arrival would deliver them in, numbered to land on top of the
+    /// `onTopOf`-row transcript they arrive into.
     public static func stream(
-        agent: AgentId, rowsPerSecond: Int = 50, seconds: Int = 20, seed: UInt64 = seed
+        agent: AgentId, rowsPerSecond: Int = 50, seconds: Int = 20, seed: UInt64 = seed,
+        onTopOf existing: Int = 1_000
     ) -> [[FeedEntry]] {
-        let rows = conversation(agent: agent, rows: rowsPerSecond * seconds, seed: seed &+ 1)
+        let rows = conversation(
+            agent: agent, rows: rowsPerSecond * seconds, seed: seed &+ 1, from: existing + 1)
         return stride(from: 0, to: rows.count, by: rowsPerSecond).map {
             Array(rows[$0..<min($0 + rowsPerSecond, rows.count)])
         }

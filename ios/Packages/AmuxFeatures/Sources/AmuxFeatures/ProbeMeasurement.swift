@@ -2,13 +2,16 @@ import AmuxCore
 import AmuxDesign
 import SwiftUI
 
-/// Not screens of the app: the two the performance harness measures over
-/// before any real screen exists.
+/// What the performance harness puts on screen.
 ///
-/// They are deliberately plain — a row is a name and a line of text, a
-/// transcript row is its text — so that a number taken over them is a floor.
-/// Whatever the designed screens cost, they cost at least this, and a
-/// regression here is the list machinery rather than a decoration.
+/// Two different things live here. The probe home is not a screen of the app:
+/// it is deliberately plain — a row is a name and a line of text — so that the
+/// cold-start number taken over it is a floor. Whatever the designed home
+/// costs, it costs at least this, and a regression there is the list machinery
+/// rather than a decoration. The bench transcript is the opposite: it is the
+/// shipped transcript, in a container that only decides where the list rests,
+/// because the streaming budget is a claim about the rows people actually
+/// read.
 public struct ProbeHomeScreen: View {
     @Environment(\.design) private var design
     private let rows: [AgentRow]
@@ -43,79 +46,72 @@ public struct ProbeHomeScreen: View {
     }
 }
 
-/// One row of the probe transcript: an identity and the line it draws.
+/// The shipped transcript, put on screen so it can be measured.
 ///
-/// The text is worked out once, when the row arrives, rather than every time
-/// the list is drawn. A row that recomputes itself on each pass measures the
-/// recomputation instead of the list.
-public struct ProbeRow: Identifiable, Sendable, Equatable {
-    public let id: UInt64
-    public let text: String
-
-    public init(id: UInt64, text: String) {
-        self.id = id
-        self.text = text
-    }
-
-    public init(entry: FeedEntry) {
-        self.id = entry.rowId
-        self.text = ProbeRow.text(of: entry)
-    }
-
-    /// One line for a row, whatever kind it is. A row this build has no
-    /// drawing for still has to take up space and still has to be scrolled
-    /// past, so it says what it is rather than being dropped.
-    static func text(of entry: FeedEntry) -> String {
-        switch entry.entryKind {
-        case "message", "prompt":
-            entry.row["content"]?.arrayValue?.compactMap { $0["value"]?.stringValue }
-                .joined(separator: "\n") ?? ""
-        case "tool":
-            "\(entry.row["name"]?.stringValue ?? "tool") · "
-                + (entry.row["outcome"]?["facts"]?["head"]?.stringValue ?? "")
-        default:
-            entry.row["rule"]?.stringValue ?? entry.entryKind
-        }
-    }
-}
-
-/// A thousand rows of transcript, drawn as plainly as a row can be drawn, with
-/// the tail followed as new rows arrive.
+/// Not a stand-in: these are the rows the conversation draws, projected by the
+/// same `transcriptRows()` and laid out by the same lazy stack, so a number
+/// taken here is a number about the product's list rather than about a plainer
+/// one standing in for it.
 ///
-/// A `List` rather than a stack in a scroll view: the list reuses the rows
-/// that scroll off, which is what a transcript of any length needs and what
-/// the streaming budget assumes.
-public struct ProbeListScreen: View {
-    @Environment(\.design) private var design
-    private let rows: [ProbeRow]
+/// The scroll view around them is this bench's, and it copies the
+/// conversation's — the same stack, the same bottom padding, the same full
+/// width, the same hidden indicators — with one addition: it rests at the
+/// bottom. Streaming is defined as rows arriving while the list follows its
+/// tail, and a row appended below the fold of a lazy stack is never built, so
+/// without an anchor the measurement would be of a list nobody is looking at.
+/// The shipped conversation has no anchor because where a conversation rests
+/// when you open it is a product question nobody has answered yet.
+public struct BenchTranscriptScreen: View {
+    private let model: ConversationStore
+    private let drew: (@Sendable ([IdentifiedElement]) -> Void)?
 
-    public init(rows: [ProbeRow]) {
-        self.rows = rows
+    /// `drew`, when it is given, is handed everything under the scroll view
+    /// that named itself, every time that changes. Only a view that was built
+    /// can name itself, so this is how a measurement can say the list drew a
+    /// screenful of a thousand rows rather than a thousand of them, and that
+    /// the folded runs among them were still folded.
+    ///
+    /// Left out, nothing observes the preference at all. Observing it is not
+    /// free — the names are gathered up the tree every time a row changes —
+    /// and a measurement of how a list behaves under a stream must not be a
+    /// measurement of the instrument watching it.
+    public init(
+        model: ConversationStore, drew: (@Sendable ([IdentifiedElement]) -> Void)? = nil
+    ) {
+        self.model = model
+        self.drew = drew
     }
 
     public var body: some View {
-        List(rows) { row in
-            Text(row.text)
-                .designFont(.body, design)
-                .foregroundStyle(design.ink.color)
-                // One line at a fixed height. A plain row is the floor this
-                // harness measures against, and a row whose height depends on
-                // its text makes the list measure every row it holds each
-                // time one arrives — which is a fact about wrapping, not
-                // about streaming.
-                .lineLimit(1)
-                .frame(height: 22, alignment: .leading)
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
+        ZStack {
+            Ground()
+            watched(transcript)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background { Ground() }
-        // The tail is followed by anchoring the scroll there rather than by
-        // asking to scroll to the last row on every arrival: an explicit
-        // scroll to a row makes the list measure every row above it, which at
-        // a thousand rows costs more than drawing the frame does.
+        .identified("bench.transcript", value: "\(model.entries.count)")
+    }
+
+    private var transcript: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                TranscriptFeed(rows: model.entries.transcriptRows())
+            }
+            .padding(.bottom, 120)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.hidden)
+        // The tail is followed by resting there rather than by asking to
+        // scroll to the last row on every arrival: an explicit scroll makes
+        // the stack measure everything above it, which at a thousand rows
+        // costs more than drawing the frame does.
         .defaultScrollAnchor(.bottom)
-        .identified("probe.list", value: "\(rows.count)")
+    }
+
+    @ViewBuilder
+    private func watched(_ content: some View) -> some View {
+        if let drew {
+            content.onPreferenceChange(IdentifiedElements.self) { drew($0) }
+        } else {
+            content
+        }
     }
 }

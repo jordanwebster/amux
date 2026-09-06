@@ -1,7 +1,6 @@
 import AmuxCore
 import AmuxDesign
 import AmuxFeatures
-import Observation
 import SwiftUI
 import UIKit
 import XCTest
@@ -132,27 +131,28 @@ struct StalledMeasurement: Error, CustomStringConvertible {
     var description: String { why }
 }
 
-/// The rows a probe list is showing, so appending to the list is one state
-/// change the view observes rather than a hierarchy rebuilt by the test.
-@MainActor
-@Observable
-final class ProbeListRows {
-    var rows: [ProbeRow]
+/// What the bench transcript last said it had drawn.
+///
+/// SwiftUI draws rows into layers rather than into a view each, so counting
+/// the window's views says nothing about how many rows were built. What a
+/// built row does do is name itself, and the names travel up the view tree as
+/// a preference — so this is the list's own account of what it made.
+final class DrawnElements: @unchecked Sendable {
+    private let lock = NSLock()
+    private var elements: [IdentifiedElement] = []
 
-    init(entries: [FeedEntry]) {
-        self.rows = entries.map(ProbeRow.init(entry:))
+    func record(_ drawn: [IdentifiedElement]) {
+        lock.lock()
+        defer { lock.unlock() }
+        elements = drawn
     }
 
-    func append(_ entries: [FeedEntry]) {
-        rows.append(contentsOf: entries.map(ProbeRow.init(entry:)))
-    }
-}
-
-/// The probe list, reading its rows from the box the run appends to.
-struct ProbeList: View {
-    let box: ProbeListRows
-
-    var body: some View {
-        ProbeListScreen(rows: box.rows)
+    /// The transcript rows among them. Everything a row draws names itself,
+    /// so a code block inside a prose row counts too; what matters is the
+    /// order of magnitude, not the exact number.
+    var transcriptRows: [IdentifiedElement] {
+        lock.lock()
+        defer { lock.unlock() }
+        return elements.filter { $0.identifier.hasPrefix("transcript.") }
     }
 }

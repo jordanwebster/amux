@@ -51,6 +51,8 @@ subject; when two overlap, the owner named here wins.
 - [TESTNET.md](TESTNET.md) — isolated relay and daemon topologies, readiness and the
   runner's loopback control protocol, provider scripts and the offline smoke
   recipe.
+- [IOS.md](IOS.md) — the iPhone app: how its screens are built and the
+  measurements behind the choices.
 - [IOS_PERFORMANCE.md](IOS_PERFORMANCE.md) — what the iPhone app is measured on,
   the workloads and budgets it is held to, which figures are proxies and the
   physical-phone checklist.

@@ -29,25 +29,35 @@ final class PerformanceSuite: XCTestCase {
         let inputs = try PerfInputs.read()
         var run = PerfRun(inputs: inputs)
 
-        // The launches the recipe already did, measured by the app itself.
-        let cold = PerfRun.coldSamples()
-        XCTAssertGreaterThanOrEqual(
-            cold.count, samples,
-            "the recipe launched the cold probe \(cold.count) times, not \(samples)")
-        for sample in cold.suffix(samples) { run.record(sample) }
+        // A run can be asked for one group of measurements. What it does not
+        // take, it does not judge: the verdict carries rows for the samples
+        // this run took and nothing else, so a partial run can never report a
+        // pass on a metric it never measured.
+        if inputs.measures(.cold) {
+            // The launches the recipe already did, measured by the app itself.
+            let cold = PerfRun.coldSamples()
+            XCTAssertGreaterThanOrEqual(
+                cold.count, samples,
+                "the recipe launched the cold probe \(cold.count) times, not \(samples)")
+            for sample in cold.suffix(samples) { run.record(sample) }
+        }
 
-        for workload in [Workload.latency0, .latency100] {
-            for _ in 0..<samples {
-                run.record(try await reconciliation(latency: workload))
+        if inputs.measures(.reconciliation) {
+            for workload in [Workload.latency0, .latency100] {
+                for _ in 0..<samples {
+                    run.record(try await reconciliation(latency: workload))
+                }
             }
         }
 
-        for _ in 0..<samples {
-            for sample in try await streamingScroll() { run.record(sample) }
-        }
+        if inputs.measures(.streaming) {
+            for _ in 0..<samples {
+                for sample in try await streamingScroll() { run.record(sample) }
+            }
 
-        for _ in 0..<samples {
-            run.record(try await idle())
+            for _ in 0..<samples {
+                run.record(try await idle())
+            }
         }
 
         let cadence = FrameCadence.current()
@@ -116,8 +126,11 @@ final class PerformanceSuite: XCTestCase {
 
         let agent = AgentId(UUID())
         let entries = Workloads.conversation(agent: agent, rows: 1_000)
-        let screen = ProbeListRows(entries: entries)
-        let window = harness.show { ProbeList(box: screen) }
+        // The screen reads the conversation store the runtime's own events
+        // land in, so a row's journey from the bridge to a drawn view is the
+        // app's whole journey rather than a shortcut the test took.
+        let model = harness.stores.conversation(agent)
+        let window = harness.show { BenchTranscriptScreen(model: model) }
         defer { window.isHidden = true }
         harness.deliver([Workloads.append(entries, to: agent, at: 0)])
         await harness.settle()
@@ -127,11 +140,10 @@ final class PerformanceSuite: XCTestCase {
         // second, because that is what the bridge's frame interval does to a
         // stream before the app ever sees it.
         let arrivals = Workloads.stream(agent: agent).flatMap { $0 }
-        var batches: [(String, [FeedEntry])] = []
+        var batches: [String] = []
         var position = UInt64(entries.count)
         for row in arrivals {
-            batches.append((
-                Harness.encoded([Workloads.append([row], to: agent, at: position)]), [row]))
+            batches.append(Harness.encoded([Workloads.append([row], to: agent, at: position)]))
             position += 1
         }
 
@@ -141,8 +153,7 @@ final class PerformanceSuite: XCTestCase {
         let started = ContinuousClock.now
         let interval = Duration.seconds(1) / 50
         for (index, batch) in batches.enumerated() {
-            harness.deliver(batch.0)
-            screen.append(batch.1)
+            harness.deliver(batch)
             let due = started + interval * (index + 1)
             let remaining = ContinuousClock.now.duration(to: due)
             if remaining > .zero { try await Task.sleep(for: remaining) }
@@ -181,12 +192,38 @@ final class PerformanceSuite: XCTestCase {
 
         let agent = AgentId(UUID())
         let entries = Workloads.conversation(agent: agent, rows: 1_000)
-        let screen = ProbeListRows(entries: entries)
-        let window = harness.show { ProbeList(box: screen) }
+        let model = harness.stores.conversation(agent)
+        // What the list drew is read here rather than under the stream: the
+        // reading is a preference travelling up the view tree, and asking for
+        // it while rows arrive every twenty milliseconds puts the instrument
+        // inside the thing it is measuring. A settled screen answers the same
+        // question and answers it about the same list.
+        let drawn = DrawnElements()
+        let window = harness.show {
+            BenchTranscriptScreen(model: model) { drawn.record($0) }
+        }
         defer { window.isHidden = true }
         harness.deliver([Workloads.append(entries, to: agent, at: 0)])
         await harness.settle()
         try await Task.sleep(for: .seconds(2))
+
+        // A thousand rows in the transcript, of which a screenful was ever
+        // drawn. A list that drew them all would meet a hitch budget for a
+        // while and then run out of memory on a longer transcript, so the
+        // laziness is checked rather than inferred from the footprint.
+        let built = drawn.transcriptRows
+        print("the transcript drew \(built.count) of its 1,000 rows")
+        XCTAssertGreaterThan(built.count, 0, "the transcript drew nothing to measure")
+        XCTAssertLessThan(
+            built.count, 200,
+            "the transcript drew \(built.count) of 1,000 rows: it is not rendering lazily")
+        // A run of reads that opened itself would have drawn the lines inside
+        // it, and every number here would be about an opened transcript rather
+        // than the one a person arrives at.
+        XCTAssertTrue(
+            built.filter { $0.identifier == "transcript.exploration" }
+                .allSatisfy { $0.value == "folded" },
+            "a folded run of reads was open while the transcript was measured")
 
         Signposts.reset()
         try await Task.sleep(for: .seconds(5))

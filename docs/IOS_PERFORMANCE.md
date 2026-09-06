@@ -24,7 +24,7 @@ A budget is never loosened to fit a machine.
 | CI runner | GitHub-hosted `macos-26` (Xcode 26.6 default, iOS 26.5 simulator runtime, iPhone 17 Pro device type), Xcode selected explicitly in the workflow |
 | Fleet workload | 40 cached agents over 3 hosts: 6 needing you, 4 finished, 3 unknown, 5 day-old, the rest running or idle; seed 1 |
 | Conversation workload | 1,000 rows: 55% prose with markdown, 20% tool rows, 10% folded reads, 5% command output over 200 lines, 5% edits, 5% rules and unknown rows; seed 1 |
-| Stream | 50 rows per second for 20 s appended to the conversation workload while the list auto-scrolls to the tail |
+| Stream | 50 rows per second for 20 s appended to the conversation workload while the list auto-scrolls to the tail; the arriving rows carry identities that continue the transcript's, as a real feed's do |
 | Network | Runner latency 0 ms and 100 ms; reconciliation measured at both, budget applies at both |
 | Cold first frame | Kernel process start to the first presented frame containing the cached fleet rows; 5 cold launches with the app terminated between; median ≤ 400 ms, worst ≤ 600 ms |
 | Reconciliation | `streamConnected` to the last row's shimmer ending; median ≤ 1,000 ms at either latency |
@@ -52,6 +52,21 @@ the same main-thread application a relay-fed run would do.
 `processStart` comes from the process table, not from the first line of
 `main()`, so the dynamic linker's work is inside the cold-start measurement
 rather than hidden by it.
+
+The streaming and idle numbers are taken over the transcript the app ships:
+the same rows, projected by the same code and laid out by the same lazy stack
+the conversation uses. Only the scroll view around them belongs to the bench,
+and the one thing it decides is that the list rests at its tail — a row
+appended below the fold of a lazy stack is never built, so a stream measured
+in a list nobody is looking at would measure nothing. Where a conversation
+rests when a person opens it is a product question that has not been answered;
+when it is, these numbers are taken again over whatever the answer is.
+
+A run can be asked for one group of measurements — `wt run ios-perf -- --only
+streaming`, or `cold`, or `reconciliation` — which is for working on that
+group rather than for reporting. The verdict then carries only the rows this
+run measured, so a partial run cannot report a pass on a metric it never took;
+recording a baseline needs a whole run, and asking for both is refused.
 
 Every measurement is taken five times with the app's state reset between
 samples, and the median is what a budget is applied to. One suite runs at a

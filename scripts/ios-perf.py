@@ -32,6 +32,9 @@ COLD_LAUNCHES = 5
 # What a measured run writes and what therefore has to be gone before one
 # starts: a file left over from last time is indistinguishable from a result.
 PRODUCED = ["verdict.json", "samples.json", "cadence.json"]
+# The groups of measurements a run can be asked for one of, named as the app
+# names them. A whole run takes all of them and is what CI does.
+SECTIONS = ["cold", "reconciliation", "streaming"]
 
 
 def machines() -> list[dict]:
@@ -136,7 +139,7 @@ def clear_previous(perf: Path, output: Path) -> None:
             (folder / name).unlink(missing_ok=True)
 
 
-def inputs(udid: str, row: dict) -> Path:
+def inputs(udid: str, row: dict, only: str | None) -> Path:
     """What only the Mac knows, left where the app will read it."""
     baseline = BASELINES / f"{row['name']}.json"
     perf = container(udid) / "Documents/perf"
@@ -148,6 +151,7 @@ def inputs(udid: str, row: dict) -> Path:
         "simulator": SIMULATOR,
         "measurements": DOCUMENT.read_text(),
         "baselines": json.loads(baseline.read_text()) if baseline.is_file() else {},
+        "only": only,
     }, indent=2))
     (perf / "cold-samples.jsonl").unlink(missing_ok=True)
     return perf
@@ -278,8 +282,21 @@ def self_test() -> None:
     print("self-test: a run without its own verdict is refused", flush=True)
 
 
+def selection(arguments: list[str]) -> tuple[str | None, list[str]]:
+    """`--only <group>`, and everything else that was on the command line."""
+    if "--only" not in arguments:
+        return None, arguments
+    at = arguments.index("--only")
+    if at + 1 >= len(arguments):
+        raise SystemExit(f"--only needs a group to run: {', '.join(SECTIONS)}")
+    named = arguments[at + 1]
+    if named not in SECTIONS:
+        raise SystemExit(f"--only {named} names no group of measurements: {', '.join(SECTIONS)}")
+    return named, arguments[:at] + arguments[at + 2:]
+
+
 def main() -> None:
-    arguments = sys.argv[1:]
+    only, arguments = selection(sys.argv[1:])
     record_baseline = "--baseline" in arguments
     unknown = [
         argument for argument in arguments
@@ -287,6 +304,13 @@ def main() -> None:
     ]
     if unknown:
         raise SystemExit(f"unknown argument: {' '.join(unknown)}")
+    # A baseline file names every measurement the machine is judged against.
+    # Recording one from a run that took a third of them would quietly drop the
+    # rest, and the next whole run would have nothing to be compared to.
+    if only and record_baseline:
+        raise SystemExit(
+            "--baseline records the machine's whole baseline, so it needs a whole run; "
+            f"drop --only {only}")
     if "--machine" in arguments:
         describe()
         return
@@ -299,8 +323,11 @@ def main() -> None:
     udid = ios_simulators.ensure(SIMULATOR)
     ios_simulators.pin(udid)
     build(udid)
-    perf = inputs(udid, row)
-    cold_starts(udid, perf)
+    perf = inputs(udid, row, only)
+    if only:
+        print(f"only the {only} measurements were asked for", flush=True)
+    if only in [None, "cold"]:
+        cold_starts(udid, perf)
     measure(udid)
     # The container is asked for again rather than remembered: installing the
     # test build can give the app a new one, and copying out of the old one

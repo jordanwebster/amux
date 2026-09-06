@@ -18,6 +18,9 @@ import Foundation
 /// A case with no file behind it is a candidate, not a leaf: it is what the
 /// measurement is about to be taken for.
 public enum RegisteredLeaves: String, CaseIterable, Sendable {
+    /// Measured and answered: the SwiftUI list meets the streaming budget with
+    /// room to spare, so this stays a candidate rather than becoming a leaf.
+    /// `docs/IOS.md` has the numbers and what would reopen the question.
     case transcriptList
     case tokenTextField
     case diffSelection

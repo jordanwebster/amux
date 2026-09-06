@@ -26,8 +26,27 @@ public enum PerfFiles {
     }
 }
 
+/// The measurements a run takes, as groups a person can ask for one of.
+///
+/// A whole run is the honest one and is what CI does. Naming one group is for
+/// working on it: the streaming measurements take a minute each and asking for
+/// them alone skips five cold launches and ten reconciliations that were not
+/// going to say anything new.
+public enum PerfSection: String, Codable, Sendable, CaseIterable {
+    /// The five launches the Mac drives and the app times from the process
+    /// table.
+    case cold
+    /// The fleet arriving, with and without a hundred milliseconds in front
+    /// of it.
+    case reconciliation
+    /// The transcript: a thousand rows with fifty a second arriving on top of
+    /// them, and the same thousand rows left alone.
+    case streaming
+}
+
 /// The facts only the Mac knows: which machine this is, which simulator is
-/// booted, and the measurement document the budgets are written in.
+/// booted, the measurement document the budgets are written in, and which
+/// measurements were asked for.
 public struct PerfInputs: Codable, Sendable, Equatable {
     public let machine: String
     public let simulator: String
@@ -36,12 +55,23 @@ public struct PerfInputs: Codable, Sendable, Equatable {
     /// This machine's recorded baseline, when it has one, keyed by metric and
     /// workload written as `reconciliationMs.latency100`.
     public let baselines: [String: Double]
+    /// The one group this run was asked for, or nothing for all of them.
+    public let only: PerfSection?
 
-    public init(machine: String, simulator: String, measurements: String, baselines: [String: Double]) {
+    public init(
+        machine: String, simulator: String, measurements: String,
+        baselines: [String: Double], only: PerfSection? = nil
+    ) {
         self.machine = machine
         self.simulator = simulator
         self.measurements = measurements
         self.baselines = baselines
+        self.only = only
+    }
+
+    /// Whether this run takes that group's measurements.
+    public func measures(_ section: PerfSection) -> Bool {
+        only == nil || only == section
     }
 
     public static func read() throws -> PerfInputs {

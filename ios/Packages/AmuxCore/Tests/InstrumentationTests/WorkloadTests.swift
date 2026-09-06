@@ -65,6 +65,21 @@ final class WorkloadTests: XCTestCase {
         XCTAssertTrue(batches.allSatisfy { $0.count == 50 })
     }
 
+    func testTheStreamsRowsContinueTheTranscriptTheyLandOn() {
+        // A feed never hands out an identity twice, and a list whose rows
+        // share identities diffs undefined: the arriving rows would land in
+        // arbitrary places and the streaming numbers would be about nothing.
+        let agent = AgentId(UUID())
+        let transcript = Workloads.conversation(agent: agent)
+        let arriving = Workloads.stream(agent: agent).flatMap { $0 }
+        XCTAssertEqual(
+            Set(transcript.map(\.rowId)).intersection(arriving.map(\.rowId)), [],
+            "an arriving row reuses an identity the transcript already holds")
+        XCTAssertEqual(
+            Set((transcript + arriving).map(\.rowId)).count, 2_000,
+            "every row of the streamed transcript is its own")
+    }
+
     func testTheLatencyWorkloadsCarryTheirDelay() {
         XCTAssertEqual(Workload.latency0.latencyMilliseconds, 0)
         XCTAssertEqual(Workload.latency100.latencyMilliseconds, 100)

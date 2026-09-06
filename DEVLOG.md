@@ -4,6 +4,35 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **The transcript stays SwiftUI, and the measurement says why.**
+The streaming budget was being measured over a stand-in: a plain list of
+one-line texts, not the transcript people will actually scroll. It is now the
+shipped rows — the same projection, the same row views, the same lazy stack —
+reading the same conversation store the runtime's events land in, so a row's
+journey from the bridge to a drawn view is the app's whole journey. Only the
+scroll view around them belongs to the bench, and the one thing it decides is
+that the list rests at its tail, because a row appended below the fold of a
+lazy stack is never built and a stream measured in a list nobody is looking at
+measures nothing. Where a conversation should rest when a person opens it is
+still an open product question, so the shipped screen was left alone.
+
+The numbers, five samples each on the pinned Mac's simulator: no hitch at all
+against a budget of 5 ms per second, 29% of one core against 60%, 56 MB at two
+thousand rows against 250 MB, and nothing committed over five seconds of idle.
+A settled screen of a thousand rows draws 28 of them, with the folded runs
+among them still folded, and that is now asserted from the list's own account
+of what it drew rather than inferred from the memory it held. So the UIKit
+transcript leaf is not bought: `transcriptList` stays a candidate with no file
+behind it, and `docs/IOS.md` carries the numbers and what would reopen the
+question.
+
+Two things were wrong underneath. The streamed rows reused the identities the
+transcript already held, which makes a list's diffing undefined — a feed never
+does that, and now neither does the workload. And a measured run can now be
+asked for one group of measurements, `wt run ios-perf -- --only streaming`,
+which judges only what it took: a partial run cannot report a pass on a metric
+it never measured, and recording a baseline still needs a whole run.
+
 2026-09-06 — **A golden capture waits out the home indicator.**
 The home indicator is drawn for the first moment of an app launch and then
 takes itself away. A capture waited only for two photographs of the display to
