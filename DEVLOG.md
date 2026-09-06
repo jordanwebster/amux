@@ -4,6 +4,32 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Film the transcript being read while it is still arriving.** The
+conversation journey proves every kind of row, every refusal and what a machine
+going away does to the screen, but the one thing about this screen a photograph
+cannot show is the thing a person actually does with it: scroll a transcript
+while the agent is still writing into it. The journey now records that stretch
+and leaves a playable film beside the photographs.
+
+Two things had to be arranged. A Mac that starts a UI test cannot see inside it,
+so the test writes `begin` and `end` into its own container — an ordinary
+directory on the Mac's disk — and the runner reads that word off disk and
+records the simulator for exactly as long as it says, rather than filming
+several minutes of a test nobody will watch. And the turn has to arrive while
+the scrolling is happening: asked for in one go it is taken by the host in one
+go and the whole thing lands before a thumb has moved, which is what the first
+attempt measured — the play was answered a tenth of a millisecond after the
+scrolling stopped. It is now played in ten batches of twelve numbered rows, each
+acknowledged before the next is asked for.
+
+That the rows arrived while the feed was being read is measured rather than left
+to the film: three times during the scrolling the test reads what is on screen
+and records the furthest row in view, and both the test and the journey fail
+unless that number rises. It went 0, then 71, then 119 across twenty swipes.
+xcodebuild's output now goes straight to its log file rather than through a
+pipe, because the camera runs alongside it and a pipe nobody is draining would
+stall the build.
+
 2026-09-06 — **Keep the tab bar off the bottom of a conversation.** A machine
 that has gone away says so where the composer will go, along the bottom edge,
 and offers Retry Now — which on a phone is exactly where the floating tab bar

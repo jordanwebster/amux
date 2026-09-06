@@ -197,6 +197,67 @@ final class ConversationTests: XCTestCase {
         record["whileInFlight"] = whileInFlight
         photograph(app, "conversation-send-refused")
 
+        // MARK: Reading a turn while it is still arriving.
+        //
+        // A transcript that grows under a thumb is the one thing about this
+        // screen a still photograph cannot show, so this stretch is filmed:
+        // the test says when it begins and when it is over by writing a word
+        // where the Mac can read it, and the Mac records the simulator for
+        // exactly that long.
+        //
+        // The turn is played a batch at a time, in between the swipes, because
+        // a whole turn asked for at once is taken by the host in one go and
+        // lands on the phone before a thumb has moved. Split up, arriving and
+        // scrolling are genuinely happening at the same time, and the claim is
+        // measured rather than assumed: each time the screen is read, the turn
+        // has got further into itself than the time before.
+        marker("begin")
+        let arriving = try Lines(address: runner.control)
+        var swipes = 0
+        var seenLines = Set<Int>()
+        var furthest: [Int] = []
+        for batch in 0..<Self.streamedBatches {
+            // One batch at a time, each acknowledged before the next is asked
+            // for, so the turn genuinely lands in pieces spread across the
+            // scrolling rather than in one burst before it.
+            try arriving.ask(["AgentPlay": ["agent": "carry-on",
+                                            "steps": Self.streamedBatch(batch)]])
+            // Towards the end, which is where the new rows are landing: a
+            // conversation does not follow a turn on its own, so keeping up
+            // with one is something a reader does with a thumb.
+            app.swipeUp(velocity: .fast)
+            app.swipeUp(velocity: .fast)
+            swipes += 2
+            // Read three times rather than every time. Asking the system what
+            // is on screen means snapshotting the whole feed, which takes
+            // seconds on a transcript this long, and doing it between every
+            // swipe would leave a film of a screen standing still.
+            if Self.readTheScreenAfter.contains(batch) {
+                let visible = streamedLines(app)
+                seenLines.formUnion(visible)
+                furthest.append(visible.max() ?? -1)
+            }
+        }
+        marker("end")
+        record["streaming"] = [
+            "swipes": swipes,
+            "linesSeenWhileScrolling": seenLines.count,
+            "furthestRowInView": furthest,
+        ]
+        XCTAssertGreaterThan(swipes, 14,
+                             "the transcript was barely scrolled while the turn arrived")
+        XCTAssertFalse(seenLines.isEmpty,
+                       "scrolling the feed while the turn arrived read none of its rows")
+        // The claim, measured: each time the screen was read, the turn had got
+        // further than the time before. Rows were arriving while it was being
+        // scrolled, not before.
+        XCTAssertEqual(furthest.count, Self.readTheScreenAfter.count,
+                       "the screen was not read as often as it was meant to be")
+        XCTAssertEqual(furthest, furthest.sorted(),
+                       "the feed did not get further into the turn as it was scrolled: \(furthest)")
+        XCTAssertGreaterThan(furthest.last ?? -1, furthest.first ?? -1,
+                             "no row arrived while the transcript was being scrolled: \(furthest)")
+
         // MARK: A run that ended.
         pressTab(app, "Agents")
         XCTAssertTrue(element(app, "home").waitForExistence(timeout: waiting),
@@ -305,6 +366,29 @@ final class ConversationTests: XCTestCase {
     /// The text of the one message that is meant to arrive. The journey looks
     /// for exactly this on the host and for nothing else.
     static let delivered = "carry on then"
+
+    /// The filmed turn, in batches: ten of them, twelve rows each, so that the
+    /// turn arrives over the whole stretch that is being scrolled and filmed
+    /// rather than all at once at the start of it.
+    private static let streamedBatches = 10
+    private static let rowsPerBatch = 12
+    /// When to ask the system what is on screen. Three times, at the start,
+    /// the middle and the end, because each answer costs a snapshot of a feed
+    /// hundreds of rows long.
+    private static let readTheScreenAfter = [0, 5, streamedBatches - 1]
+
+    /// One batch of plain rows, each numbered, so that how far into the turn
+    /// the screen has got can be read off what is written on it.
+    private static func streamedBatch(_ batch: Int) -> [Any] {
+        ((batch * rowsPerBatch)..<((batch + 1) * rowsPerBatch)).map { line in
+            ["Rows": ["jsonl": [
+                ["type": "assistant", "uuid": "streaming-\(line)",
+                 "message": ["id": "s-\(line)", "role": "assistant",
+                             "content": [["type": "text",
+                                          "text": "Streaming line \(line) of a turn you are "
+                                          + "reading while it arrives."]]]]]]]
+        }
+    }
 
     /// Every kind of step the scripted provider can play, in an order a turn
     /// would really take them in.
@@ -670,6 +754,28 @@ final class ConversationTests: XCTestCase {
         } else {
             target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
+    }
+
+    /// Which of the filmed turn's rows are on screen right now.
+    private func streamedLines(_ app: XCUIApplication) -> Set<Int> {
+        var found = Set<Int>()
+        for label in app.staticTexts.allElementsBoundByIndex.map({ $0.label })
+        where label.hasPrefix("Streaming line ") {
+            let number = label.dropFirst("Streaming line ".count).prefix { $0.isNumber }
+            if let line = Int(number) { found.insert(line) }
+        }
+        return found
+    }
+
+    /// Says what this test is doing, where the Mac that started it can read it.
+    ///
+    /// The Mac cannot see inside a UI test — it starts one and waits — so the
+    /// stretch worth filming is marked by writing a word to a file in this
+    /// process's own container, which is a real directory on the Mac's disk.
+    private func marker(_ word: String) {
+        try? word.write(
+            to: Self.inContainer("conversation-streaming.marker"),
+            atomically: true, encoding: .utf8)
     }
 
     private func photograph(_ app: XCUIApplication, _ name: String) {

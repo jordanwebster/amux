@@ -23,10 +23,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -214,9 +216,77 @@ def free_port() -> int:
         return listener.getsockname()[1]
 
 
+def test_container(udid: str) -> Path:
+    """Where the UI test runner's own files land, which is a real directory on
+    this Mac: it is how a test hands a photograph, a tree or a word back."""
+    return Path(ios_simulators.run(
+        "xcrun", "simctl", "get_app_container", udid, UI_TESTS, "data").strip())
+
+
+def film(process: subprocess.Popen, udid: str, name: str, destination: Path) -> None:
+    """Records the simulator for as long as a running test says it is doing the
+    thing worth watching.
+
+    A UI test is started and waited on; nothing about what it is doing at any
+    moment reaches the process that started it. So the test writes a word into
+    its own container and this reads it: the camera starts on `begin` and stops
+    on `end`, or when the test is over, whichever comes first. Filming the whole
+    run instead would answer the same question with a film nobody will watch.
+
+    The word is looked for by walking the device's containers on disk rather
+    than by asking `simctl` which one belongs to the test runner. The runner is
+    reinstalled as part of the run being watched, and the question cannot be
+    answered while that is happening; the containers are ordinary directories
+    on this Mac and are always there to read. Only a word written after the
+    filming started counts, so nothing a previous run left behind can start a
+    camera.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.unlink(missing_ok=True)
+    containers = (Path.home() / "Library/Developer/CoreSimulator/Devices" / udid
+                  / "data/Containers/Data/Application")
+    began = time.time()
+
+    def said() -> str:
+        for marker in containers.glob(f"*/tmp/{name}"):
+            try:
+                if marker.stat().st_mtime >= began:
+                    return marker.read_text().strip()
+            except OSError:
+                continue
+        return ""
+
+    camera = None
+    try:
+        while process.poll() is None:
+            word = said()
+            if word == "begin" and camera is None:
+                print(f"filming {destination.name}", flush=True)
+                camera = subprocess.Popen([
+                    "xcrun", "simctl", "io", udid, "recordVideo",
+                    "--codec", "h264", "--force", str(destination)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if word == "end" and camera is not None:
+                return
+            time.sleep(0.25)
+    finally:
+        if camera is not None:
+            # An interrupt is how this recorder is asked to finish the file it
+            # is writing; killed, it leaves an unplayable one.
+            camera.send_signal(signal.SIGINT)
+            try:
+                camera.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                camera.kill()
+                camera.wait(timeout=10)
+        for marker in containers.glob(f"*/tmp/{name}"):
+            marker.unlink(missing_ok=True)
+
+
 def perform(
     journey: Journey, udid: str, test: str, collecting: dict[str, Path],
     telling: dict[str, str] | None = None,
+    filming: Path | None = None,
 ) -> None:
     """Runs one UI test against the app on the pinned simulator.
 
@@ -234,20 +304,29 @@ def perform(
     # not by this script.
     environment = os.environ | {f"TEST_RUNNER_{key}": value
                                 for key, value in (telling or {}).items()}
-    outcome = subprocess.run([
-        "xcodebuild", "test",
-        "-project", "ios/Amux.xcodeproj",
-        "-scheme", "Amux",
-        "-configuration", "Debug",
-        "-destination", f"id={udid}",
-        "-derivedDataPath", str(DERIVED_DATA.resolve()),
-        "-only-testing", test,
-        "-quiet",
-    ], env=environment, text=True, capture_output=True, timeout=1800)
-    log.write_text(outcome.stdout + outcome.stderr)
-    journey.expect(outcome.returncode == 0, f"{test} failed; its output is in {log}")
-    container = Path(ios_simulators.run(
-        "xcrun", "simctl", "get_app_container", udid, UI_TESTS, "data").strip())
+    # Written straight to the log rather than through a pipe: the camera below
+    # runs while xcodebuild does, and a pipe nobody is draining would stop it.
+    with log.open("w") as sink:
+        started = subprocess.Popen([
+            "xcodebuild", "test",
+            "-project", "ios/Amux.xcodeproj",
+            "-scheme", "Amux",
+            "-configuration", "Debug",
+            "-destination", f"id={udid}",
+            "-derivedDataPath", str(DERIVED_DATA.resolve()),
+            "-only-testing", test,
+            "-quiet",
+        ], env=environment, text=True, stdout=sink, stderr=subprocess.STDOUT)
+        try:
+            if filming is not None:
+                film(started, udid, "conversation-streaming.marker", filming)
+            returned = started.wait(timeout=1800)
+        finally:
+            if started.poll() is None:
+                started.kill()
+                started.wait(timeout=30)
+    journey.expect(returned == 0, f"{test} failed; its output is in {log}")
+    container = test_container(udid)
     for name, destination in collecting.items():
         written = container / "tmp" / name
         journey.expect(written.is_file(), f"{test} did not leave {name} in its container")
@@ -750,6 +829,10 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
             "conversation-changes",
             "conversation-stale", "conversation-send-refused", "conversation-exited")}
     read = journey.directory / "conversation.json"
+    # The one thing a photograph cannot show: the feed moving under a thumb
+    # while rows are still landing in it. The test says when that stretch
+    # begins and ends; the Mac films exactly that.
+    film_of_streaming = journey.directory / "conversation-streaming.mp4"
     tree = journey.directory / "conversation-tree.txt"
     # What was on screen while the machine was away and once it was back, as
     # the system built it: a claim about which rows survived an outage is
@@ -762,6 +845,7 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
         | {"conversation.json": read, "conversation-tree.txt": tree,
            "conversation-offline-tree.txt": offline,
            "conversation-restored-tree.txt": restored},
+        filming=film_of_streaming,
         telling={
             "AMUX_RELAY": relay,
             "AMUX_TOKEN": token,
@@ -845,6 +929,23 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
                    f"the agent that ended does not say so: {seen.get('exited')!r}")
     journey.say(f"the agent that ended reads {seen.get('exited')!r} at the end of its feed and "
                 f"offers nowhere to write")
+
+    # Read while it arrived, and filmed.
+    streaming = seen.get("streaming", {})
+    journey.expect(streaming.get("swipes", 0) > 4,
+                   f"the transcript was barely scrolled while a turn arrived: {streaming}")
+    journey.expect(streaming.get("linesSeenWhileScrolling", 0) > 0,
+                   f"scrolling while the turn arrived read none of its rows: {streaming}")
+    furthest = streaming.get("furthestRowInView") or []
+    journey.expect(len(furthest) > 1 and furthest == sorted(furthest) and furthest[-1] > furthest[0],
+                   f"the feed did not get further into the turn as it was scrolled: {streaming}")
+    journey.expect(film_of_streaming.is_file() and film_of_streaming.stat().st_size > 50_000,
+                   f"{film_of_streaming} is not a film of the feed being read while it arrived")
+    journey.say(f"a turn of rows was played into a conversation somebody was reading: the feed "
+                f"was scrolled {streaming['swipes']} times while it arrived, and the furthest row "
+                f"in view went {' then '.join(str(row) for row in furthest)} as it was scrolled; "
+                f"filmed in {film_of_streaming.name} "
+                f"({film_of_streaming.stat().st_size // 1024} KB)")
 
     for photograph in photographs.values():
         journey.expect(photograph.is_file() and photograph.stat().st_size > 0,
