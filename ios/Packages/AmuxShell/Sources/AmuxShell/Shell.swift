@@ -184,10 +184,15 @@ private struct ChangesPage: View {
                     // to apply: the wheel and the file list scroll, and a
                     // scroll is not somewhere the app has been taken.
                     case .scrubTo: break
-                    // The composer is not built yet, so the review has nowhere
-                    // to be attached to. It stays on this page rather than
-                    // being sent somewhere that cannot hold it.
-                    case .attachReview: break
+                    // Attaching hands the review to the conversation it came
+                    // from and goes back there. What is said about the patch
+                    // as a whole is written beside the token as ordinary
+                    // prose, so the page is done once the token exists.
+                    case .attachReview:
+                        if let token = review.token {
+                            stores.conversation(agent).draft.attach(token)
+                            router.pop()
+                        }
                     }
                 }
             } else {

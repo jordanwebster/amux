@@ -24,6 +24,10 @@ public final class ConversationStore {
     public private(set) var changes: ReviewDocument?
     /// The artifact that patch is, so a review sent about it names it.
     public private(set) var changesArtifact: ArtifactId?
+    /// What is being written to this agent: the review attached from the diff
+    /// page, and whatever is said beside it. The composer is not built yet, so
+    /// this is where a review waits until there is one to hold it.
+    public var draft = MessageDraft()
     /// Results for operations this conversation dispatched, newest last.
     ///
     /// A result names its operation and no agent, so the connection has to

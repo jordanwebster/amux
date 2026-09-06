@@ -40,7 +40,8 @@ pub use amux::{
 };
 pub use attachments::{
     ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DraftAttachment, Mention,
-    MentionKind, Segment, format_mention, split_mentions,
+    DIFF_MIME, MentionKind, REVIEW_NAME, Segment, format_mention, review_mention,
+    split_mentions,
 };
 pub use claude::{ClaudeCommand, SendGate};
 pub use claude_sdk::{ClaudeSdkCommand, ClaudeSdkInput, SdkAnswer};

@@ -271,6 +271,42 @@ impl DraftAttachment {
     }
 }
 
+/// The display name and mime a review attachment carries.
+///
+/// One spelling for every client: the phone and the terminal both send the
+/// same element, and a review that arrived under a different name would read
+/// as a different kind of thing in the feed.
+pub const REVIEW_NAME: &str = "review";
+pub const DIFF_MIME: &str = "text/x-diff";
+
+/// The mention a review is sent as, and the artifact reference that pins its
+/// frozen patch for whoever reads it.
+///
+/// The attachment carries no bytes: the diff is already stored where it was
+/// produced, so this rides the send only to keep it alive for the reader.
+pub fn review_mention(review: &crate::review::Review) -> (Mention, DraftAttachment) {
+    let header = review.header();
+    let diff = header.diff.clone();
+    let mention = Mention {
+        kind: MentionKind::Review {
+            header,
+            comments: review.comments().to_vec(),
+        },
+        name: REVIEW_NAME.to_string(),
+        size: None,
+        path: None,
+    };
+    let attachment = DraftAttachment {
+        id: diff,
+        kind: ArtifactKind::Diff,
+        name: REVIEW_NAME.to_string(),
+        mime: DIFF_MIME.to_string(),
+        size: 0,
+        bytes: None,
+    };
+    (mention, attachment)
+}
+
 /// Splits text into prose and valid attachment elements.
 ///
 /// Invalid candidates remain byte-for-byte in prose. Scanning resumes after

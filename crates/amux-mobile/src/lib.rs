@@ -420,6 +420,84 @@ unsafe fn snapshot(
     .unwrap_or(std::ptr::null_mut())
 }
 
+/// What a review page hands the composer: the frozen document, the artifact it
+/// is, and the comments written on it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewToken {
+    diff: amux_ui::ArtifactId,
+    document: amux_ui::review::ReviewDocument,
+    comments: Vec<amux_ui::review::ReviewComment>,
+}
+
+/// Turns a written review into the token a composer holds: the canonical
+/// attachment element to put in the message, and the artifact reference that
+/// pins its frozen patch for whoever reads it.
+///
+/// Returns owned JSON `{"element":"…","attachment":{…}}`; free it with
+/// amux_mobile_free. NULL means the request was not the document, artifact and
+/// comments this needs.
+///
+/// The element is formatted here rather than on the client for the same reason
+/// the projection is: the review body frames its comment text by byte length
+/// and escapes what would otherwise close the element, and a second spelling
+/// of that would be a second thing to keep right.
+///
+/// # Safety
+/// review_json must be a readable NUL-terminated UTF-8 string for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_review_element(review_json: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let json = unsafe { read_string(review_json) }?;
+        let token: ReviewToken = serde_json::from_str(json).ok()?;
+        let review = amux_ui::review::Review::with_comments(
+            token.document,
+            token.diff,
+            token.comments,
+        );
+        let (mention, attachment) = amux_ui::review_mention(&review);
+        let reply = serde_json::json!({
+            "element": amux_ui::format_mention(&mention),
+            "attachment": attachment,
+        });
+        Some(
+            CString::new(serde_json::to_string(&reply).ok()?)
+                .ok()?
+                .into_raw(),
+        )
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
+/// Splits message text into prose and the attachment elements it carries, as
+/// owned JSON; free it with amux_mobile_free. NULL means the text was not
+/// readable.
+///
+/// This is the parser the whole system reads attachments with. A composer asks
+/// it what its own draft says so that what is drawn as a token is what will be
+/// sent — anything it does not accept stays ordinary prose, which is what a
+/// reader will see too.
+///
+/// # Safety
+/// text must be a readable NUL-terminated UTF-8 string for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_attachments(text: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let text = unsafe { read_string(text) }?;
+        let segments = amux_ui::split_mentions(text);
+        Some(
+            CString::new(serde_json::to_string(&segments).ok()?)
+                .ok()?
+                .into_raw(),
+        )
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
 /// Releases a string returned by this library. NULL is accepted.
 ///
 /// # Safety

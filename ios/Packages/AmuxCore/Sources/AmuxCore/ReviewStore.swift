@@ -163,6 +163,15 @@ public final class ReviewStore {
         }
     }
 
+    /// This review as the composer will hold it: the element it is sent as,
+    /// and the reference that keeps its patch fetchable for whoever reads it.
+    ///
+    /// Nil when the shared library will not spell it — a review of a document
+    /// it cannot read is not something to send a half-formed version of.
+    public var token: ReviewToken? {
+        Bridge.reviewToken(diff: diff, document: document, comments: comments)
+    }
+
     public func isCollapsed(_ path: String) -> Bool { collapsed.contains(path) }
 
     public func toggle(file path: String) {

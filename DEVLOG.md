@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **A written review leaves the diff page as one token.** Attaching
+a review hands the conversation it came from the element the review is sent as
+and the reference that keeps its patch fetchable, and goes back there. The
+element is formatted by the shared library rather than on the phone: the review
+body frames each remark by its length in bytes and escapes what would close the
+element early, and a second spelling of those rules would be a second thing to
+keep right. The phone reads its own draft back through the same parser every
+other client reads messages with, so a token can only be drawn if what it will
+send is something the whole system accepts. A review carries no verdict — what
+somebody wants to say about the change as a whole is ordinary prose beside the
+token in the same message. The name and mime a review attachment carries now
+live in the shared crate, so the terminal and the phone cannot drift apart over
+what a review is called.
+
 2026-09-06 — **A screen being photographed stops blinking.** The comment
 sheet's baseline came back with a bar of accent in it about half the time: the
 text caret blinks about once a second on a schedule of its own, and the

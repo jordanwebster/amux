@@ -40,10 +40,6 @@ pub const PASTE_TOKEN_CHARS: usize = 1000;
 /// has no source filename, and the mention format requires a name.
 const PASTED_NAME: &str = "pasted text";
 
-/// The `name` and mime a review attachment carries.
-const REVIEW_NAME: &str = "review";
-const DIFF_MIME: &str = "text/x-diff";
-
 fn is_slot(c: char) -> bool {
     (SLOT_FIRST..=SLOT_LAST).contains(&c)
 }
@@ -715,27 +711,9 @@ impl Composer {
                     let Some(review) = review else {
                         continue;
                     };
-                    let header = review.header();
-                    let diff = header.diff.clone();
-                    text.push_str(&format_mention(&Mention {
-                        kind: MentionKind::Review {
-                            header,
-                            comments: review.comments().to_vec(),
-                        },
-                        name: REVIEW_NAME.to_string(),
-                        size: None,
-                        path: None,
-                    }));
-                    // Bytes-less: the diff is already stored, so this rides
-                    // the send only to be pinned for the reader's lifetime.
-                    attachments.push(DraftAttachment {
-                        id: diff,
-                        kind: ArtifactKind::Diff,
-                        name: REVIEW_NAME.to_string(),
-                        mime: DIFF_MIME.to_string(),
-                        size: 0,
-                        bytes: None,
-                    });
+                    let (mention, attachment) = amux_ui::review_mention(review);
+                    text.push_str(&format_mention(&mention));
+                    attachments.push(attachment);
                 }
             }
         }
