@@ -9682,3 +9682,37 @@ call nor the plaintext relay beside it. The test relay's control channel gains
 `AgentPlay`, which plays any sequence of provider steps at a scripted agent
 rather than the five kinds the named verbs cover, so a claim about rendering
 every kind of row there is fails when the vocabulary grows.
+
+2026-09-06 — **A conversation, driven against a machine that is really
+running.** `wt run ios-journey -- conversation` pairs a phone with a host over
+a real relay, opens one of its agents and reads what the screen says: every
+kind of step the scripted provider can play arrives and is drawn, a folded run
+of reads lists what it did when it is pressed, a diff the host computed puts
+the changes chip on screen and it leads to the changes, and an agent that ends
+while somebody is reading it states its code and offers nowhere to write.
+Three messages tried where the conversation will not take one — in the moment
+it opens and the layer is still catching up, while the machine is unreachable,
+and while the last one is unanswered — are refused on the phone, and the host
+is then asked what it received: the one message that was allowed through, and
+nothing else.
+
+Four things this needed. A conversation store opened now becomes a
+subscription: the shared library only projects a feed for an agent this client
+asked to watch, and nothing was asking. A debug launch can be told what to
+connect to and which machine to trust, so a UI test — the only thing that can
+press a SwiftUI control — drives an app that is really connected; the same
+launch can be told which port to open its door on, because a test on the
+device cannot read the readiness file in the app's container. The door itself
+grew the four things a driver needs that a finger cannot yet do, since the
+composer is not built: trust a host, watch an agent, ask its host for the
+changes, and try to send. A scripted tool step can now carry the sidecar
+Claude writes beside a result, which is the only thing that says how many
+lines of a file moved — without it an edit can never be drawn as one.
+
+Two things the journey found and states rather than asserts. A conversation
+whose machine has gone away keeps its chrome and its designed panel but loses
+its rows, because the shared projection has no feed for an agent no host is
+answering for. And a relay that comes back brings the connection back before
+it brings the agent's session back; the phone's reconnection is its own later
+work, so the journey ends with the machine away rather than depending on it
+returning.

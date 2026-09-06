@@ -4,13 +4,19 @@
       "id": "home-coldstart",
       "stage": 5,
       "topology": "e2e-tests/topologies/two-hosts.json",
-      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every row shimmering and nothing spinning, and a real connection to two real hosts confirms it. Today that confirmation leaves the list empty: pairing from the phone is not built, so neither machine vouches for anything this phone remembered. That a row goes solid when its own host answers, without the list moving, is proven where it happens — in the shared library's cache tests and the fleet store's — and becomes a claim about the screen here once a paired phone can be driven through this journey."
+      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every row shimmering and nothing spinning, and a real connection to two real hosts confirms it. Today that confirmation leaves the list empty: pairing from the phone is not built, so neither machine vouches for anything this phone remembered. That a row goes solid when its own host answers, without the list moving, is proven where it happens \u2014 in the shared library's cache tests and the fleet store's \u2014 and becomes a claim about the screen here once a paired phone can be driven through this journey."
     },
     {
       "id": "home",
       "stage": 5,
       "topology": "e2e-tests/topologies/home-fleet.json",
       "claim": "Six agents on two machines the runner is running: before it has reached anything the phone draws the ones it remembers, the two that need an answer at the top and the one waiting longest first; a real connection reaches both machines and confirms the fleet without moving what survives, and a turn emitted by one of them changes nothing about the order; a phone that remembers nothing shows the home empty; and opening the row at the top reaches the whole fleet from a drawer over the conversation and comes back."
+    },
+    {
+      "id": "conversation",
+      "stage": 6,
+      "topology": "e2e-tests/topologies/conversation.json",
+      "claim": "A phone paired with the machine that holds them opens one of its agents and reads what it says: every kind of step the scripted provider can play arrives over the relay and is drawn, a folded run of reads opens when it is pressed, a diff the host computed puts the changes chip on screen and it leads to the changes, and an agent that ends while somebody is reading it states its code and offers nowhere to write. Losing the machine says so where the composer will go, with a way to ask again. Three messages tried where the conversation will not take one \u2014 in the moment it opens and the layer is still catching up, while the machine is unreachable, and while the last one is unanswered \u2014 are refused on the phone with the reason on screen, and the host confirms it received only the single message that was allowed through."
     }
   ]
 }

@@ -48,6 +48,39 @@ public enum DoorRequest: Sendable, Equatable {
     case capture(path: String)
     case tap(identifier: String)
     case type(identifier: String, text: String)
+    /// Trust the host a pairing payload names, over the relay this app is
+    /// already connected to.
+    ///
+    /// A person pairs a phone by reading a code off a machine, on a screen
+    /// that names the host and its fingerprint before anything is written. A
+    /// driver proving what a paired phone shows needs the trust rather than
+    /// the ceremony, and needs it before that screen exists.
+    case pair(qr: String)
+    /// Ask the host holding an agent for the changes its working tree has
+    /// against a base — a branch or a commit, or the working tree itself when
+    /// the base is empty. The host computes the diff; the phone draws it.
+    case requestChanges(agent: String, base: String)
+    /// Open an agent's conversation without going to it, which is what tells
+    /// the runtime this client is watching that agent.
+    ///
+    /// Opening one by pressing a row is a tap, and a tap takes long enough
+    /// that the layer behind it has already caught up by the time the next
+    /// thing happens. A driver asking what a conversation does in the moment
+    /// it opens has to be there in that moment.
+    case watch(agent: String)
+    /// Wait until an agent's conversation will take a message, or give up.
+    ///
+    /// A machine that has just come back has not finished saying so: the
+    /// connection returns before the layer behind it does. A driver that sent
+    /// straight after a reconnection would be asking about the gap rather than
+    /// about the send.
+    case awaitSendable(agent: String, seconds: Double)
+    /// Try to send a message to an agent, exactly as pressing send will.
+    ///
+    /// The answer says whether it left the phone. A refusal is not an error:
+    /// refusing to send is a thing this app does deliberately, and a driver
+    /// asks for it on purpose.
+    case send(agent: String, text: String)
     /// Write a report bundle into this directory: the shared runtime's own
     /// recording and the view-state trace beside it.
     case report(path: String)
@@ -65,6 +98,11 @@ public enum DoorReply: Sendable, Equatable {
     case captured(path: String, width: Int, height: Int, scale: Int)
     /// A bundle was written at this path, holding these files.
     case bundle(path: String, parts: [String])
+    /// This phone now trusts the machine of this name.
+    case paired(host: String)
+    /// What became of an attempted send: whether it left the phone, and the
+    /// sentence on screen when it did not.
+    case sendAttempt(delivered: Bool, reason: String?)
     case replayed(ReplayedState)
     /// Why the request could not be answered, in one line. The door never
     /// half-answers: a request either happened or is reported here.
@@ -206,7 +244,7 @@ public struct VisibleFrame: Codable, Sendable, Equatable {
 extension DoorRequest: Codable {
     private enum Key: String, CodingKey {
         case kind, screen, fixture, cloud, relay, token, user, appearance, size, path
-        case identifier, text, seconds
+        case identifier, text, seconds, qr, agent, base
     }
 
     public init(from decoder: any Decoder) throws {
@@ -245,6 +283,22 @@ extension DoorRequest: Codable {
         case "type":
             self = .type(
                 identifier: try fields.decode(String.self, forKey: .identifier),
+                text: try fields.decode(String.self, forKey: .text))
+        case "pair":
+            self = .pair(qr: try fields.decode(String.self, forKey: .qr))
+        case "requestChanges":
+            self = .requestChanges(
+                agent: try fields.decode(String.self, forKey: .agent),
+                base: try fields.decode(String.self, forKey: .base))
+        case "watch":
+            self = .watch(agent: try fields.decode(String.self, forKey: .agent))
+        case "awaitSendable":
+            self = .awaitSendable(
+                agent: try fields.decode(String.self, forKey: .agent),
+                seconds: try fields.decode(Double.self, forKey: .seconds))
+        case "send":
+            self = .send(
+                agent: try fields.decode(String.self, forKey: .agent),
                 text: try fields.decode(String.self, forKey: .text))
         case "report":
             self = .report(path: try fields.decode(String.self, forKey: .path))
@@ -305,6 +359,24 @@ extension DoorRequest: Codable {
             try fields.encode("type", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)
             try fields.encode(text, forKey: .text)
+        case .pair(let qr):
+            try fields.encode("pair", forKey: .kind)
+            try fields.encode(qr, forKey: .qr)
+        case .requestChanges(let agent, let base):
+            try fields.encode("requestChanges", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+            try fields.encode(base, forKey: .base)
+        case .watch(let agent):
+            try fields.encode("watch", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+        case .awaitSendable(let agent, let seconds):
+            try fields.encode("awaitSendable", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+            try fields.encode(seconds, forKey: .seconds)
+        case .send(let agent, let text):
+            try fields.encode("send", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+            try fields.encode(text, forKey: .text)
         case .report(let path):
             try fields.encode("report", forKey: .kind)
             try fields.encode(path, forKey: .path)
@@ -320,6 +392,7 @@ extension DoorRequest: Codable {
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
         case kind, state, bridge, path, width, height, scale, message, parts, replayed, marks
+        case host, delivered, reason
     }
 
     public init(from decoder: any Decoder) throws {
@@ -343,6 +416,12 @@ extension DoorReply: Codable {
             self = .bundle(
                 path: try fields.decode(String.self, forKey: .path),
                 parts: try fields.decode([String].self, forKey: .parts))
+        case "paired":
+            self = .paired(host: try fields.decode(String.self, forKey: .host))
+        case "sendAttempt":
+            self = .sendAttempt(
+                delivered: try fields.decode(Bool.self, forKey: .delivered),
+                reason: try fields.decodeIfPresent(String.self, forKey: .reason))
         case "replayed":
             self = .replayed(try fields.decode(ReplayedState.self, forKey: .replayed))
         case "error":
@@ -377,6 +456,13 @@ extension DoorReply: Codable {
             try fields.encode("bundle", forKey: .kind)
             try fields.encode(path, forKey: .path)
             try fields.encode(parts, forKey: .parts)
+        case .paired(let host):
+            try fields.encode("paired", forKey: .kind)
+            try fields.encode(host, forKey: .host)
+        case .sendAttempt(let delivered, let reason):
+            try fields.encode("sendAttempt", forKey: .kind)
+            try fields.encode(delivered, forKey: .delivered)
+            try fields.encodeIfPresent(reason, forKey: .reason)
         case .replayed(let state):
             try fields.encode("replayed", forKey: .kind)
             try fields.encode(state, forKey: .replayed)
@@ -393,6 +479,29 @@ public enum Door {
     /// on, once it is listening. The driver waits for this file rather than
     /// guessing a port or a delay.
     public static let readyArgument = "amux-door-ready"
+
+    /// `-amux-door-port N`: listen here instead of on a port the kernel
+    /// picks and a readiness file names.
+    ///
+    /// The readiness file lives in the app's own container, which a driver on
+    /// the Mac reads back out of it. A UI test cannot: it runs on the device,
+    /// in a container of its own, with no way into the app's. So a launch a UI
+    /// test starts says which port to listen on, and the test connects to it
+    /// over the loopback both processes share.
+    public static let portArgument = "amux-door-port"
+
+    /// `-amux-relay URL -amux-token BEARER -amux-user NAME`, and optionally
+    /// `-amux-pair PAYLOAD`: connect the shared runtime as the launch starts,
+    /// and trust the host that payload names before drawing anything.
+    ///
+    /// A driver that speaks through the door connects by asking. A UI test
+    /// cannot ask — it launches the app and presses things — so a launch it
+    /// starts says up front what to reach, and everything a tap then does
+    /// happens against a real relay and a real machine.
+    public static let relayArgument = "amux-relay"
+    public static let tokenArgument = "amux-token"
+    public static let userArgument = "amux-user"
+    public static let pairArgument = "amux-pair"
 
     /// What the ready file holds.
     public struct Ready: Codable, Sendable, Equatable {

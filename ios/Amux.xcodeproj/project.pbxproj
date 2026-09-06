@@ -17,6 +17,7 @@
 		1EB380BBF813E1A744D85210 /* Workloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B661BE2402BC7D004818A5 /* Workloads.swift */; };
 		2F0347A6EA4A7731721003EE /* Budgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001566356B6645AB41CE39B /* Budgets.swift */; };
 		344D301838279573239BD80D /* Judge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7316CFA811C55B9CEEB041C5 /* Judge.swift */; };
+		37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */; };
 		3E12136749508940FA54BC5F /* Fixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DE7599AB005A8225918A3EF /* Fixture.swift */; };
 		40764CA1E1F2F8A2C244A3FF /* AmuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7A185CA200BF122E708201F8 /* AmuxCore */; };
 		48C852D18B47B3DA431FDA05 /* Door.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DA38C20C8560FEE2BB88D9F /* Door.swift */; };
@@ -92,6 +93,7 @@
 		A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorWindow.swift; sourceTree = "<group>"; };
 		B4EFC5ACC5BD2F025A261F98 /* AmuxTestSupport */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxTestSupport; path = Packages/AmuxTestSupport; sourceTree = SOURCE_ROOT; };
 		B60FB9981D4C68D3915DA21A /* Composition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composition.swift; sourceTree = "<group>"; };
+		B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTests.swift; sourceTree = "<group>"; };
 		C0FF4DBFB3F554EC2761318D /* Sessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sessions.swift; sourceTree = "<group>"; };
 		C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedCloud.swift; sourceTree = "<group>"; };
 		D0E455E43044DD55EB8662D4 /* Transcript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transcript.swift; sourceTree = "<group>"; };
@@ -178,6 +180,7 @@
 		5445FBC267DE6D42E3D857C1 /* AmuxUITests */ = {
 			isa = PBXGroup;
 			children = (
+				B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */,
 				7BF809F88F54D264E26E1F0B /* DrawerTests.swift */,
 				31777DF351ACE50870B1C6A5 /* LaunchTests.swift */,
 			);
@@ -454,6 +457,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */,
 				6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */,
 				0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */,
 			);

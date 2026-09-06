@@ -35,6 +35,12 @@ final class DoorTests: XCTestCase {
             .capture(path: "/tmp/home.png"),
             .tap(identifier: "home.row.aurora"),
             .type(identifier: "composer.field", text: "hello"),
+            .pair(qr: #"{"host_id":"…","cloud_url":"http://127.0.0.1:9","secret":[1]}"#),
+            .send(agent: "6f1c1f8e-0000-4000-8000-000000000001", text: "carry on"),
+            .awaitSendable(agent: "6f1c1f8e-0000-4000-8000-000000000001", seconds: 30),
+            .watch(agent: "6f1c1f8e-0000-4000-8000-000000000001"),
+            .requestChanges(agent: "6f1c1f8e-0000-4000-8000-000000000001", base: "HEAD~1"),
+            .requestChanges(agent: "6f1c1f8e-0000-4000-8000-000000000001", base: ""),
             .report(path: "/tmp/report"),
             .replay(path: "/tmp/report"),
             .shutdown,
@@ -67,6 +73,11 @@ final class DoorTests: XCTestCase {
         // rather than a null, like every other request the door takes.
         XCTAssertNil(try wire(.perturb(token: nil))["token"])
         XCTAssertEqual(try wire(.report(path: "/tmp/report"))["path"] as? String, "/tmp/report")
+        XCTAssertEqual(try wire(.pair(qr: "payload"))["qr"] as? String, "payload")
+        XCTAssertEqual(try wire(.requestChanges(agent: "aurora", base: "HEAD~1"))["base"] as? String, "HEAD~1")
+        let attempt = try wire(.send(agent: "aurora", text: "carry on"))
+        XCTAssertEqual(attempt["agent"] as? String, "aurora")
+        XCTAssertEqual(attempt["text"] as? String, "carry on")
         XCTAssertEqual(try wire(.replay(path: "/tmp/report"))["path"] as? String, "/tmp/report")
     }
 
@@ -95,6 +106,9 @@ final class DoorTests: XCTestCase {
                 events: 4, agents: ["aurora"], hosts: ["desktop"],
                 entries: ["6f1c1f8e-0000-4000-8000-000000000001": 12],
                 reconciled: true, trace: 3, screen: "probe")),
+            .paired(host: "workstation"),
+            .sendAttempt(delivered: true, reason: nil),
+            .sendAttempt(delivered: false, reason: "This session is replaying what it missed."),
             .error("unimplemented: home"),
         ]
         for reply in replies {

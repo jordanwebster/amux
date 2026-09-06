@@ -16,6 +16,16 @@ public final class StoreBundle {
     /// Batches applied, in the order they arrived.
     public private(set) var applied = 0
 
+    /// Told when a conversation is opened and when it is closed.
+    ///
+    /// The runtime only projects a feed for an agent this client asked to
+    /// watch, so opening a store here has to become a subscription there.
+    /// Whoever owns the connection sets these; a bundle with no connection
+    /// behind it — a fixture, a replay — leaves them alone and nothing is
+    /// asked of a runtime that is not there.
+    @ObservationIgnored public var watch: (@MainActor (AgentId) -> Void)?
+    @ObservationIgnored public var unwatch: (@MainActor (AgentId) -> Void)?
+
     public init(account: AccountId, now: Date = Date(), unread: UnreadWeights = UnreadWeights()) {
         self.account = account
         self.fleet = FleetStore(now: now, unread: unread)
@@ -47,10 +57,12 @@ public final class StoreBundle {
         if let existing = conversations[agent] { return existing }
         let store = ConversationStore(agent: agent)
         conversations[agent] = store
+        watch?(agent)
         return store
     }
 
     public func closeConversation(_ agent: AgentId) {
-        conversations[agent] = nil
+        guard conversations.removeValue(forKey: agent) != nil else { return }
+        unwatch?(agent)
     }
 }

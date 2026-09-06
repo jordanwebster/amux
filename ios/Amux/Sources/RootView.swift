@@ -19,7 +19,10 @@ struct RootView: View {
             DrivenRoot { app }
                 // What a driver queries is what is on screen, and until it
                 // opens a screen by name that is the app itself.
-                .onAppear { DoorHost.shared.adopt(composition.stores) }
+                .onAppear {
+                    DoorHost.shared.adopt(composition.stores)
+                    DoorHost.shared.connectAsLaunchAsks()
+                }
         }
         #else
         app

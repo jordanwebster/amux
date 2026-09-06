@@ -15,7 +15,7 @@ import SwiftUI
 /// Which of these is true is read off the core's own typed gate and the core's
 /// own refusal. The phone decides nothing about whether a message may be sent;
 /// it says what it was told, in the words a person reads.
-enum ConversationFootState: Equatable {
+public enum ConversationFootState: Equatable {
     /// The machine that owns this agent is not answering. The feed above is
     /// the last thing that was true and stays readable.
     case unreachable(host: String, since: String?)
@@ -25,7 +25,7 @@ enum ConversationFootState: Equatable {
     case refused(headline: String, reason: String)
 
     /// Nothing to say, which is most conversations.
-    init?(gate: SendGate, results: [OpResult], subject: ConversationSubject) {
+    public init?(gate: SendGate, results: [OpResult], subject: ConversationSubject) {
         // An ended run offers nothing. It has already said what happened, in
         // the feed, where the last thing that happened belongs.
         if subject.ended != nil { return nil }
@@ -72,6 +72,24 @@ enum ConversationFootState: Equatable {
 
     private static let replaying = "This session is replaying what it missed."
     private static let inFlight = "The last message has not been acknowledged yet."
+
+    /// The line in bold.
+    public var headline: String {
+        switch self {
+        case .unreachable(let host, _): "\(host) is unreachable"
+        case .refused(let headline, _): headline
+        }
+    }
+
+    /// The line under it, which is where the reason is.
+    public var detail: String {
+        switch self {
+        case .unreachable(_, let since):
+            ["Reconnecting", since.map { "last update \($0) ago" }]
+                .compactMap { $0 }.joined(separator: " · ")
+        case .refused(_, let reason): reason
+        }
+    }
 }
 
 /// The panel in the composer's place.
@@ -134,21 +152,8 @@ struct ConversationFoot: View {
         }
     }
 
-    private var headline: String {
-        switch state {
-        case .unreachable(let host, _): "\(host) is unreachable"
-        case .refused(let headline, _): headline
-        }
-    }
-
-    private var detail: String {
-        switch state {
-        case .unreachable(_, let since):
-            ["Reconnecting", since.map { "last update \($0) ago" }]
-                .compactMap { $0 }.joined(separator: " · ")
-        case .refused(_, let reason): reason
-        }
-    }
+    private var headline: String { state.headline }
+    private var detail: String { state.detail }
 }
 
 /// A run that stopped for good, at the end of the feed.

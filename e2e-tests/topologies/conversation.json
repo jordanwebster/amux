@@ -1,0 +1,11 @@
+{
+  "users": ["personal"],
+  "daemons": [
+    {"name": "studio", "user": "personal", "repository_roots": ["../.."]}
+  ],
+  "paired": [],
+  "agents": [
+    {"name": "carry-on", "daemon": "studio", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}},
+    {"name": "ran-its-course", "daemon": "studio", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}}
+  ]
+}

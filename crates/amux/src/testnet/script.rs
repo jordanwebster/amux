@@ -66,6 +66,14 @@ pub enum Step {
         input: Value,
         output: Option<String>,
         denied: bool,
+        /// The `toolUseResult` sidecar Claude writes beside a tool result.
+        ///
+        /// The text a tool returns is what a reader sees; the sidecar is what
+        /// the fold reads to say a file changed by so many lines. A step that
+        /// only carries text can never become a file-change row, so a script
+        /// proving one says what the sidecar held.
+        #[serde(default)]
+        result: Option<Value>,
     },
     Ask(ScriptAsk),
     Todo {
@@ -599,6 +607,7 @@ impl Player {
         input: &Value,
         output: Option<&str>,
         denied: bool,
+        result: Option<Value>,
     ) -> Result<(), ScriptError> {
         let id = self.id();
         self.message(
@@ -620,6 +629,9 @@ impl Player {
             let mut row = self.row("user", json!({"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":id,"content":content,"is_error":denied}]}}));
             if denied {
                 row["toolDenialKind"] = json!("user_rejected");
+            }
+            if let Some(sidecar) = result {
+                row["toolUseResult"] = sidecar;
             }
             self.rows(vec![row]).await?;
             self.hook(
@@ -710,7 +722,11 @@ impl Player {
                     input,
                     output,
                     denied,
-                } => self.tool(name, input, output.as_deref(), *denied).await?,
+                    result,
+                } => {
+                    self.tool(name, input, output.as_deref(), *denied, result.clone())
+                        .await?
+                }
                 Step::Ask(ask) => self.ask(ask).await?,
                 Step::Todo { items } => {
                     let todos: Vec<_> = items.iter().map(|(text, state)| json!({"content":text,"activeForm":text,"status":state})).collect();
@@ -719,11 +735,12 @@ impl Player {
                         &json!({"todos":todos}),
                         Some("Todos updated"),
                         false,
+                        None,
                     )
                     .await?;
                 }
                 Step::ChildStarted { name } => {
-                    self.tool("Agent", &json!({"description":name,"subagent_type":"general-purpose","run_in_background":true}), Some(&format!("agentId: {name}")), false).await?;
+                    self.tool("Agent", &json!({"description":name,"subagent_type":"general-purpose","run_in_background":true}), Some(&format!("agentId: {name}")), false, None).await?;
                     self.hook(
                         "SubagentStart",
                         json!({"agent_id":name,"agent_type":"general-purpose"}),

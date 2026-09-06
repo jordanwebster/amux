@@ -14,10 +14,13 @@ enum DoorServer {
     /// nothing at all when they do not.
     @MainActor
     static func startIfRequested() {
-        guard let ready = UserDefaults.standard.string(forKey: Door.readyArgument) else { return }
+        let defaults = UserDefaults.standard
+        let asked = defaults.string(forKey: Door.readyArgument)
+        let port = defaults.string(forKey: Door.portArgument).flatMap { UInt16($0) }
+        guard asked != nil || port != nil else { return }
         do {
-            let listener = try DoorListener()
-            try listener.announce(to: ready)
+            let listener = try DoorListener(port: port ?? 0)
+            if let asked { try listener.announce(to: asked) }
             listener.serve()
         } catch {
             // A build that was told to open the door and could not is a
@@ -51,7 +54,7 @@ private final class DoorListener: @unchecked Sendable {
     private let descriptor: Int32
     let port: UInt16
 
-    init() throws {
+    init(port wanted: UInt16) throws {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw DoorFailure.socket(errno) }
         var reuse: Int32 = 1
@@ -61,9 +64,9 @@ private final class DoorListener: @unchecked Sendable {
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
-        // Port zero: the kernel picks one that is free, and the readiness file
-        // tells the driver which.
-        address.sin_port = 0
+        // Port zero unless a launch named one: the kernel picks one that is
+        // free, and the readiness file tells the driver which.
+        address.sin_port = wanted.bigEndian
         address.sin_addr = in_addr(s_addr: UInt32(0x7f00_0001).bigEndian)
         let bound = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {

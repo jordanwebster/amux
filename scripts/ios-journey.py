@@ -23,6 +23,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -184,7 +185,39 @@ def speak(journey: Journey, launch: str, requests: list[dict]) -> list[dict]:
 UI_TESTS = "sh.amux.AmuxUITests.xctrunner"
 
 
-def perform(journey: Journey, udid: str, test: str, collecting: dict[str, Path]) -> None:
+def answer(address: str, request: object) -> dict:
+    """One control request and the Ack it came back with.
+
+    `control` is enough where a verb only has to have happened. Pairing and
+    observing come back with something the journey then uses, so their answers
+    are read rather than only checked.
+    """
+    host, port = address.rsplit(":", 1)
+    with socket.create_connection((host, int(port)), timeout=30) as connection:
+        connection.sendall((json.dumps(request) + "\n").encode())
+        with connection.makefile("rb") as stream:
+            reply = json.loads(stream.readline())
+    if "Ack" not in reply:
+        raise RuntimeError(f"the runner refused {request}: {reply}")
+    return reply["Ack"]
+
+
+def free_port() -> int:
+    """A port nothing is listening on, for the door a UI test will talk to.
+
+    A UI test cannot read the readiness file the app writes: that file is in
+    the app's container on the device and the test has a container of its own.
+    So the port is chosen here, where both sides can be told about it.
+    """
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+def perform(
+    journey: Journey, udid: str, test: str, collecting: dict[str, Path],
+    telling: dict[str, str] | None = None,
+) -> None:
     """Runs one UI test against the app on the pinned simulator.
 
     A journey drives what it can through the door, which reads the same names
@@ -196,6 +229,11 @@ def perform(journey: Journey, udid: str, test: str, collecting: dict[str, Path])
     """
     journey.directory.mkdir(parents=True, exist_ok=True)
     log = journey.directory / f"{test.split('/')[-1]}.log"
+    # xcodebuild passes TEST_RUNNER_X through to the test process as X, which
+    # is the only way to tell a UI test anything: it is launched by the system,
+    # not by this script.
+    environment = os.environ | {f"TEST_RUNNER_{key}": value
+                                for key, value in (telling or {}).items()}
     outcome = subprocess.run([
         "xcodebuild", "test",
         "-project", "ios/Amux.xcodeproj",
@@ -205,7 +243,7 @@ def perform(journey: Journey, udid: str, test: str, collecting: dict[str, Path])
         "-derivedDataPath", str(DERIVED_DATA.resolve()),
         "-only-testing", test,
         "-quiet",
-    ], text=True, capture_output=True, timeout=1800)
+    ], env=environment, text=True, capture_output=True, timeout=1800)
     log.write_text(outcome.stdout + outcome.stderr)
     journey.expect(outcome.returncode == 0, f"{test} failed; its output is in {log}")
     container = Path(ios_simulators.run(
@@ -676,7 +714,141 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     forget_cache(udid)
 
 
-JOURNEYS = {"home-coldstart": home_coldstart, "home": home}
+def conversation(journey: Journey, udid: str, ready: dict) -> None:
+    """One conversation with an agent the runner is really running.
+
+    Everything on screen arrived over the relay from a real host: the app is
+    launched already told what to connect to and which machine to trust, and
+    the scripted provider then plays every kind of step it has. What a finger
+    does is a UI test, because unfolding a run of reads and reaching the
+    changes are taps. What a finger cannot do yet is send a message — the
+    composer is chunk eight — so the attempts go through the app's own door,
+    to the same gate the composer will send through, and the host is asked
+    afterwards what it actually received.
+
+    The phone pairs first. An unpaired device is discovered by the relay and
+    disowned by every machine on it, so its fleet confirms empty and there is
+    no conversation to open; the screens that pair a phone are later work, so
+    the trust is taken through the debug bridge instead of through them.
+    """
+    daemon = ready["daemons"][0]
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+    relay = f"http://{ready['relay']}"
+    control_address = ready["control"]
+
+    install(udid)
+    forget_cache(udid)
+    pairing = answer(control_address, {"StartQrPairing": {"daemon": daemon["name"]}})["qr"]
+    journey.say(f"{daemon['name']} is offering to pair; the phone will be given that offer at "
+                f"launch, because the screen that reads one is later work")
+
+    port = free_port()
+    photographs = {
+        name: journey.directory / f"{name}.png" for name in (
+            "conversation-rows", "conversation-head", "conversation-unfolded",
+            "conversation-changes",
+            "conversation-stale", "conversation-send-refused", "conversation-exited")}
+    read = journey.directory / "conversation.json"
+    tree = journey.directory / "conversation-tree.txt"
+    perform(
+        journey, udid, "AmuxUITests/ConversationTests",
+        {f"{name}.png": path for name, path in photographs.items()}
+        | {"conversation.json": read, "conversation-tree.txt": tree},
+        telling={
+            "AMUX_RELAY": relay,
+            "AMUX_TOKEN": token,
+            "AMUX_USER": "journey-phone",
+            "AMUX_PAIR": pairing,
+            "AMUX_CONTROL": control_address,
+            "AMUX_DOOR_PORT": str(port),
+            "AMUX_AGENT": running["carry-on"]["agent_id"],
+            "AMUX_ENDED_AGENT": running["ran-its-course"]["agent_id"],
+            "AMUX_HOST": daemon["name"],
+        })
+    seen = json.loads(read.read_text())
+
+    # What the phone was given once it was trusted.
+    fleet = seen.get("fleet", [])
+    journey.expect(len(fleet) == len(running),
+                   f"a paired phone was given {len(fleet)} of the runner's {len(running)} "
+                   f"agents: {fleet}")
+
+    # Every kind of row the scripted provider can produce, drawn.
+    rows = seen.get("rows", [])
+    journey.expect("transcript.prose" in rows and "transcript.code" in rows,
+                   f"the agent's prose did not arrive as markdown: {rows}")
+    journey.say(f"the provider played every kind of step it has and the transcript drew "
+                f"{len(rows)} kinds of row: {', '.join(rows)}")
+    journey.expect(bool(seen.get("fold")),
+                   "the folded run of reads did not list what it did when it was pressed")
+    journey.say(f"the run of reads was folded, and opening it listed "
+                f"{', '.join(seen['fold'])}; the changes the host computed put "
+                f"{' '.join(seen.get('changes', []))} on the chip and it led to the changes")
+
+    # The machine going away and coming back, read off the screen.
+    said = " · ".join(seen.get("unreachable") or [])
+    journey.expect("unreachable" in said,
+                   f"losing the machine left the conversation saying {said!r}")
+    journey.say(f"with the relay down the conversation said {said!r} with Retry Now beside it; "
+                f"when it came back it said "
+                f"{' · '.join(seen.get('restored') or ['nothing at all'])!r}")
+    # Said rather than required, because what the core does with a
+    # conversation whose machine has gone is the core's claim and not this
+    # journey's: the phone draws what it is given. What it was given here is
+    # written down so a change in it is visible.
+    journey.say(f"while the machine was unreachable the feed on screen held "
+                f"{seen.get('feedWhileUnreachable') or 'no rows'}")
+
+    # The one message that was meant to arrive, and the three that were not.
+    delivered = seen.get("delivered", {})
+    journey.expect(delivered.get("delivered") is True,
+                   f"the one message that should have gone did not: {delivered}")
+    refusals = {situation: seen.get(key, {}) for situation, key in (
+        ("while the layer was catching up", "whileCatchingUp"),
+        ("while the machine was unreachable", "whileUnreachable"),
+        ("while the last message was unanswered", "whileInFlight"))}
+    for situation, attempt in refusals.items():
+        journey.expect(attempt.get("delivered") is False,
+                       f"a message sent {situation} left the phone: {attempt}")
+    journey.say("three messages were refused on the phone — "
+                + "; ".join(f"{situation}: {attempt.get('reason')!r}"
+                            for situation, attempt in refusals.items()))
+
+    # And the host's own account of what reached it, which is the point: a
+    # refusal that only redrew the screen while the message went anyway would
+    # pass everything above.
+    observed = answer(control_address, {"AgentObserve": {"agent": "carry-on"}})["observed"]
+    (journey.directory / "observed-inputs.json").write_text(json.dumps(observed, indent=2))
+    arrived = [input["text"] for input in observed if input.get("text") is not None]
+    journey.expect(arrived == ["carry on then"],
+                   f"the host received {arrived}, and exactly one message was sent to it")
+    journey.say(f"the host received {arrived} and nothing else: not one refused message "
+                f"reached it")
+
+    journey.expect("Exited" in (seen.get("exited") or ""),
+                   f"the agent that ended does not say so: {seen.get('exited')!r}")
+    journey.say(f"the agent that ended reads {seen.get('exited')!r} at the end of its feed and "
+                f"offers nowhere to write")
+
+    for photograph in photographs.values():
+        journey.expect(photograph.is_file() and photograph.stat().st_size > 0,
+                       f"{photograph} was not written")
+    journey.say("photographed " + ", ".join(sorted(path.name for path in photographs.values())))
+    # Said plainly, because it is the one thing this journey cannot show: an
+    # agent run by a provider this build has no case for is listed, marked
+    # unreadable and never offered to open. Every provider this checkout's
+    # hosts can run is one this build reads, so there is nothing for a runner
+    # of the same version to put in front of it. That rule is proven where it
+    # can be: in the fleet ordering's own tests and in the unreadable state's
+    # baseline.
+    journey.say("an agent this build cannot read is not shown here: every provider a host of "
+                "this version runs is one this build reads, so the runner cannot produce one — "
+                "the rule is proven in the fleet ordering's tests and in that state's baseline")
+    forget_cache(udid)
+
+
+JOURNEYS = {"home-coldstart": home_coldstart, "home": home, "conversation": conversation}
 
 
 def declared() -> list[dict]:

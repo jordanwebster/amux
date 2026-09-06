@@ -1,6 +1,7 @@
 import AmuxCore
 import AmuxDesign
 import AmuxFeatures
+import AmuxMobile
 import Foundation
 import Observation
 import SwiftUI
@@ -107,6 +108,15 @@ final class DoorHost {
         case .capture(let path): return await capture(to: path)
         case .tap(let identifier): return tap(identifier)
         case .type(let identifier, let text): return type(text, into: identifier)
+        case .pair(let qr): return await pair(with: qr)
+        case .send(let agent, let text): return send(text, to: agent)
+        case .watch(let agent):
+            guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
+            stores.conversation(identity)
+            return .ack
+        case .awaitSendable(let agent, let seconds):
+            return await awaitSendable(of: agent, within: seconds)
+        case .requestChanges(let agent, let base): return requestChanges(of: agent, against: base)
         // Answered here so the driver has an acknowledgement in hand before
         // the process goes; the server exits once the reply is written.
         case .shutdown: return .ack
@@ -211,12 +221,152 @@ final class DoorHost {
         bridge = client
         deviceName = user
         let stores = stores
+        // Opening a conversation is what tells the runtime this client is
+        // watching that agent. Without this the transcript for an agent
+        // somebody opened would never be projected, and the screen would sit
+        // empty beside a live connection.
+        stores.watch = { [weak client] agent in client?.dispatch(.subscribe(agent: agent)) }
+        stores.unwatch = { [weak client] agent in client?.dispatch(.unsubscribe(agent: agent)) }
+        for agent in stores.conversations.keys { client.dispatch(.subscribe(agent: agent)) }
         pump = Task { @MainActor in
             for await batch in client.events {
                 stores.apply(batch)
             }
         }
         return .ack
+    }
+
+    /// Connects and pairs as the launch itself asked, once.
+    ///
+    /// A driver speaking through the door connects by asking. A UI test cannot
+    /// ask — it launches the app and presses things — so a launch it starts
+    /// carries what to reach in its own arguments, and every tap after that
+    /// happens against a real relay and a real machine rather than a fixture.
+    /// A launch that says nothing about a relay is a launch of the app as
+    /// itself and nothing here happens.
+    func connectAsLaunchAsks() {
+        // Read off the arguments themselves rather than through the defaults.
+        // The defaults parse an argument's value as a property list, so a
+        // pairing payload — which is JSON, and JSON braces are a plist
+        // dictionary — comes back as a dictionary and `string(forKey:)`
+        // answers nothing at all. Everything here is somebody else's text.
+        let arguments = ProcessInfo.processInfo.arguments
+        func said(_ name: String) -> String? {
+            guard let flag = arguments.firstIndex(of: "-\(name)"),
+                arguments.index(after: flag) < arguments.endIndex
+            else { return nil }
+            return arguments[arguments.index(after: flag)]
+        }
+        guard bridge == nil,
+            let relay = said(Door.relayArgument),
+            let token = said(Door.tokenArgument),
+            let user = said(Door.userArgument)
+        else { return }
+        guard case .ack = connect(relay: relay, token: token, user: user) else {
+            fatalError("the launch was told to connect to \(relay) and could not")
+        }
+        guard let payload = said(Door.pairArgument) else { return }
+        Task { @MainActor in
+            if case .error(let complaint) = await pair(with: payload) {
+                fatalError("the launch was told to pair and could not: \(complaint)")
+            }
+        }
+    }
+
+    /// Trusts a machine from the payload its QR code carries.
+    ///
+    /// The handshake is the shared runtime's and takes a round trip through
+    /// the relay, so it is run off the main actor: the screen stays live while
+    /// it happens, which is what a driver photographing the wait would want
+    /// and what a person watching it would get.
+    private func pair(with qr: String) async -> DoorReply {
+        guard let bridge else { return .error("nothing has been connected") }
+        let answered = await Task.detached {
+            bridge.withRuntime { handle -> String? in
+                guard let owned = qr.withCString({ amux_mobile_pair_qr(handle, $0) }) else {
+                    return nil
+                }
+                defer { amux_mobile_free(owned) }
+                return String(cString: owned)
+            } ?? nil
+        }.value
+        guard let answered, let data = answered.data(using: .utf8),
+            let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return .error("the runtime did not answer the pairing") }
+        if let host = reply["host"] as? String { return .paired(host: host) }
+        return .error(reply["error"] as? String ?? "the pairing was refused")
+    }
+
+    /// Waits until an agent's conversation will take a message.
+    ///
+    /// Polled a frame at a time, for the same reason the other waits here are:
+    /// the event stream is already being drained into the stores on this
+    /// actor, and a second reader would take batches away from them.
+    private func awaitSendable(of agent: String, within seconds: Double) async -> DoorReply {
+        guard bridge != nil else { return .error("nothing has been connected") }
+        guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if stores.conversations[identity]?.gate.accepts == true { return .ack }
+            await DoorFrames.next()
+        }
+        let gate = stores.conversations[identity]?.gate
+        return .error(
+            "the conversation with \(agent) would still not take a message after \(seconds)s: "
+            + "\(gate.map(String.init(describing:)) ?? "no conversation is open")")
+    }
+
+    /// Asks the host for an agent's changes. The host computes the diff and
+    /// sends it back as an ordinary event, so nothing here waits for it: the
+    /// chip appears when the answer lands, like every other fact on screen.
+    private func requestChanges(of agent: String, against base: String) -> DoorReply {
+        guard let bridge else { return .error("nothing has been connected") }
+        guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
+        let against: JSONValue = base.isEmpty
+            ? .object(["kind": .string("working_tree")])
+            : .object(["kind": .string("branch"), "base": .string(base)])
+        bridge.dispatch(.shared(.object([
+            "command": .string("request_diff"),
+            "agent": .string(identity.description),
+            "base": against,
+        ])))
+        return .ack
+    }
+
+    /// Tries to send a message, through the gate the composer will send
+    /// through.
+    ///
+    /// A refusal is an answer rather than a failure: the conversation states
+    /// why it will not take a message, and the point of asking is to find out
+    /// that nothing left the phone. So a refused send dispatches nothing at
+    /// all — the host is never told, which is what the runner then confirms
+    /// from the other side.
+    private func send(_ text: String, to agent: String) -> DoorReply {
+        guard let bridge else { return .error("nothing has been connected") }
+        guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
+        guard let conversation = stores.conversations[identity] else {
+            return .error("no conversation is open with \(agent)")
+        }
+        let subject = ConversationSubject(agent: identity, in: stores.fleet)
+        guard conversation.gate.accepts else {
+            let state = ConversationFootState(
+                gate: conversation.gate, results: conversation.results, subject: subject)
+            return .sendAttempt(
+                delivered: false,
+                reason: state?.detail ?? "This agent is not taking messages.")
+        }
+        let draft: [String: JSONValue] = [
+            "command": .string("send"),
+            "agent": .string(identity.description),
+            "draft": .object([
+                "segments": .array([.object([
+                    "segment": .string("text"), "text": .string(text),
+                ])]),
+                "attachments": .array([]),
+            ]),
+        ]
+        bridge.dispatch(.shared(.object(draft)))
+        return .sendAttempt(delivered: true, reason: nil)
     }
 
     /// Waits for the connection to have arrived somewhere: established, the

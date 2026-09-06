@@ -156,12 +156,14 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
             input: json!({"command":"pwd"}),
             output: Some("/workspace".into()),
             denied: false,
+            result: None,
         },
         Step::Tool {
             name: "Write".into(),
             input: json!({"file_path":"blocked"}),
             output: None,
             denied: true,
+            result: None,
         },
         Step::Todo {
             items: vec![

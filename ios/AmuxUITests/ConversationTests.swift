@@ -1,0 +1,662 @@
+import Foundation
+import XCTest
+
+/// One conversation, against a machine the runner is really running.
+///
+/// This is a UI test rather than a door conversation because everything it
+/// claims is about pressing things: opening an agent, unfolding a run of reads,
+/// reaching the changes. The app is launched already told what to connect to
+/// and which machine to trust, so every row on screen arrived over a real relay
+/// from a real host, and nothing here fills a store.
+///
+/// Three sockets, all on the loopback the simulator shares with the Mac:
+/// XCUITest for what a finger does, the runner's control channel for what the
+/// agent on the other side does, and the app's own door for the one thing a
+/// finger cannot yet do — trying to send a message, because the composer is not
+/// built. The journey that starts this test passes their addresses in.
+final class ConversationTests: XCTestCase {
+    private let waiting: TimeInterval = 60
+
+    /// Where the photographs and the record are left for the journey to
+    /// collect out of this process's container.
+    private static func inContainer(_ name: String) -> URL {
+        URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(name)
+    }
+
+    /// What the journey told this test to talk to.
+    private struct Runner {
+        let relay: String
+        let token: String
+        let user: String
+        let pairing: String
+        let control: String
+        let doorPort: String
+        let agent: String
+        let ended: String
+        let host: String
+
+        init() throws {
+            let environment = ProcessInfo.processInfo.environment
+            func required(_ name: String) throws -> String {
+                let value = environment[name]
+                return try XCTUnwrap(value, "the journey did not pass \(name)")
+            }
+            relay = try required("AMUX_RELAY")
+            token = try required("AMUX_TOKEN")
+            user = try required("AMUX_USER")
+            pairing = try required("AMUX_PAIR")
+            control = try required("AMUX_CONTROL")
+            doorPort = try required("AMUX_DOOR_PORT")
+            agent = try required("AMUX_AGENT")
+            ended = try required("AMUX_ENDED_AGENT")
+            host = try required("AMUX_HOST")
+        }
+    }
+
+    /// What this test found, written out for the journey to assert on and for
+    /// a person to read after a failure.
+    private var record: [String: Any] = [:]
+
+    func testAConversationStreamsAndRefusesWhatItCannotSend() throws {
+        let runner = try Runner()
+        let control = try Lines(address: runner.control)
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-amux-door-port", runner.doorPort,
+            "-amux-relay", runner.relay,
+            "-amux-token", runner.token,
+            "-amux-user", runner.user,
+            "-amux-pair", runner.pairing,
+        ]
+        app.launch()
+
+        // MARK: The fleet a paired phone is given.
+        let row = element(app, "home.row.\(runner.agent)")
+        XCTAssertTrue(row.waitForExistence(timeout: waiting),
+                      "the machine never answered for \(runner.agent); the home shows "
+                      + "\(identifiers(app, startingWith: "home.row."))")
+        record["fleet"] = identifiers(app, startingWith: "home.row.")
+
+        // Half the turn before anybody is watching, so that opening the
+        // conversation has something to catch up on. A layer catching up is
+        // one of the three states that will not take a message, and it is the
+        // only one that cannot be arranged after the fact.
+        // Two things make catching up something a person could watch, and a
+        // driver reach: a turn long enough to still be arriving, and a relay
+        // slow enough that arriving takes time. Both are put back afterwards.
+        try control.ask(["Latency": ["millis": 200]])
+        let playing = try Lines(address: runner.control)
+        try playing.say(["AgentPlay": ["agent": "carry-on", "steps": Self.beforeAnybodyWatches]])
+
+        // MARK: Opening it, while that is still going on.
+        press(app, "home.row.\(runner.agent)")
+        let conversation = element(app, "conversation")
+        XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
+                      "opening the row did not lead to a conversation")
+
+        // A message tried in the moment a conversation opens, which is the
+        // moment the layer is catching up on what it missed.
+        //
+        // Opened through the door rather than by a tap, and on the agent
+        // nobody has looked at yet: a tap takes long enough that the layer has
+        // already caught up by the time the next thing can be asked, and the
+        // window this is about is milliseconds wide.
+        _ = try door(runner, .init(kind: "watch", agent: runner.ended))
+        let whileCatchingUp = try door(runner, .init(
+            kind: "send", agent: runner.ended, text: "sent while catching up"))
+        record["whileCatchingUp"] = whileCatchingUp
+
+        // The rest of the turn, into a conversation somebody has open: these
+        // rows arrive over the relay while the screen is on show, which is
+        // what a person watching an agent work sees.
+        _ = try playing.awaitAnswer()
+        try control.ask(["Latency": ["millis": 0]])
+        try control.ask(["AgentPlay": ["agent": "carry-on", "steps": Self.whileWatching]])
+
+        // MARK: Every kind of row, from the host.
+        //
+        // Read by scrolling, because the system builds a tree for what is on
+        // screen: a feed longer than the display is never all in it at once,
+        // and a claim about every kind of row has to walk the whole thing the
+        // way a person would.
+        _ = try waitForRows(app)
+        photograph(app, "conversation-rows")
+        let transcript = readWholeFeed(app)
+        record["rows"] = transcript.sorted()
+        // The tree beside the photograph. A row that did not arrive, or that
+        // arrived as something else, is unreadable from a screenshot and from
+        // a list of names; what the system built is the only thing that says
+        // which.
+        try? app.debugDescription.write(
+            to: Self.inContainer("conversation-tree.txt"), atomically: true, encoding: .utf8)
+        for kind in Self.everyRowKind {
+            XCTAssertTrue(transcript.contains(kind),
+                          "the transcript never drew \(kind); it drew \(transcript.sorted())")
+        }
+        photograph(app, "conversation-head")
+
+        // MARK: A folded run, opened.
+        //
+        // Folded and open are told apart by what is written, not by a value on
+        // the row: a name declared on a screen reaches the system's tree as an
+        // identifier and nothing else, so a test that read a value would be
+        // reading the empty string every time. A folded run says how many
+        // times it looked and where it looked last; an open one lists each
+        // look under it, and those lines are only there once it is open.
+        reveal(app, "transcript.exploration")
+        XCTAssertFalse(app.staticTexts["Searched"].exists,
+                       "the run of reads listed what it did before it was opened")
+        press(app, "transcript.exploration")
+        XCTAssertTrue(app.staticTexts["Searched"].waitForExistence(timeout: waiting),
+                      "the run of reads did not list what it did when it was pressed")
+        record["fold"] = app.staticTexts.allElementsBoundByIndex
+            .map { $0.label }.filter { $0 == "Read" || $0 == "Searched" }
+        photograph(app, "conversation-unfolded")
+
+        // MARK: The changes, asked for and opened.
+        _ = try door(runner, .init(
+            kind: "requestChanges", agent: runner.agent, base: "HEAD~1"))
+        let chip = element(app, "conversation.changes")
+        XCTAssertTrue(chip.waitForExistence(timeout: waiting),
+                      "the host answered with no changes to review")
+        record["changes"] = app.staticTexts.allElementsBoundByIndex
+            .map { $0.label }.filter { $0.hasPrefix("+") || $0.hasPrefix("\u{2212}") }
+        press(app, "conversation.changes")
+        // Where the chip leads. The diff itself is a later screen; what is
+        // claimed here is that a real diff, computed by the host that holds
+        // the repository, put the chip on screen and that pressing it goes to
+        // the changes rather than nowhere.
+        XCTAssertTrue(element(app, "page.changes").waitForExistence(timeout: waiting),
+                      "pressing the changes chip did not go to the changes")
+        photograph(app, "conversation-changes")
+        // The bar's own button and nothing else. A drag from the left edge is
+        // the system's way back, but it is also the drawer's way out, and the
+        // drawer wins: the fleet slides over the conversation and everything
+        // asked about it afterwards is asked of a screen nobody is looking at.
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(back.waitForExistence(timeout: waiting),
+                      "the changes have no way back")
+        back.tap()
+        XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
+                      "coming back from the changes did not come back to the conversation")
+        XCTAssertTrue(identifiers(app, startingWith: "drawer.row.").isEmpty,
+                      "coming back from the changes left the fleet over the conversation")
+
+        // MARK: One message that goes, and one tried before it is answered.
+        //
+        // The wait is for the layer, not for the connection: a machine that
+        // has just come back has not finished saying so, and a send in that
+        // gap would be refused for a reason nobody arranged.
+        _ = try door(runner, .init(kind: "awaitSendable", agent: runner.agent, seconds: 90))
+        let sent = try door(runner, .init(kind: "send", agent: runner.agent, text: Self.delivered))
+        XCTAssertEqual(sent["delivered"] as? Bool, true,
+                       "a conversation with a reachable machine refused a message: \(sent)")
+        let whileInFlight = try door(runner, .init(
+            kind: "send", agent: runner.agent, text: "sent while the last is unanswered"))
+        record["delivered"] = sent
+        record["whileInFlight"] = whileInFlight
+        photograph(app, "conversation-send-refused")
+
+        // MARK: A run that ended.
+        pressTab(app, "Agents")
+        XCTAssertTrue(element(app, "home").waitForExistence(timeout: waiting),
+                      "going back did not return to the home")
+        // Opened first and ended while it is open, which is how somebody would
+        // see a run end: they are reading it when it stops.
+        press(app, "home.row.\(runner.ended)")
+        XCTAssertTrue(element(app, "conversation").waitForExistence(timeout: waiting),
+                      "opening the second agent did not lead to a conversation")
+        try control.ask(["AgentExit": ["agent": "ran-its-course", "code": 7]])
+        let ended = app.staticTexts["Exited · code 7"]
+        XCTAssertTrue(ended.waitForExistence(timeout: waiting),
+                      "the agent that ended does not say so: "
+                      + "\(self.identifiers(app, startingWith: "conversation."))")
+        record["exited"] = ended.exists ? ended.label : footSays(app)
+        try? app.debugDescription.write(
+            to: Self.inContainer("conversation-exited-tree.txt"), atomically: true,
+            encoding: .utf8)
+        XCTAssertFalse(element(app, "conversation.foot").exists,
+                       "a run that ended offered somewhere to write")
+        photograph(app, "conversation-exited")
+
+        // MARK: The machine goes away, and comes back.
+        //
+        // Back to the conversation that is still running: the one that ended
+        // has nothing to say about a machine going away, because it has
+        // already said the only thing it has to say.
+        pressTab(app, "Agents")
+        XCTAssertTrue(element(app, "home").waitForExistence(timeout: waiting),
+                      "leaving the agent that ended did not return to the home")
+        press(app, "home.row.\(runner.agent)")
+        XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
+                      "reopening the running agent did not lead to its conversation")
+        try control.ask("CloudOffline")
+        let gone = app.staticTexts["\(runner.host) is unreachable"]
+        XCTAssertTrue(gone.waitForExistence(timeout: waiting),
+                      "losing the machine left the conversation saying "
+                      + "\(self.footSays(app))")
+        record["unreachable"] = footSays(app)
+        try? app.debugDescription.write(
+            to: Self.inContainer("conversation-offline-tree.txt"), atomically: true,
+            encoding: .utf8)
+        record["feedWhileUnreachable"] = transcriptRows(app)
+        XCTAssertTrue(element(app, "conversation.retry").exists,
+                      "an unreachable machine offered no way to ask again")
+        photograph(app, "conversation-stale")
+
+        // A message tried while nothing can carry it.
+        let whileUnreachable = try door(runner, .init(
+            kind: "send", agent: runner.agent, text: "sent while unreachable"))
+        record["whileUnreachable"] = whileUnreachable
+
+        press(app, "conversation.retry")
+        try control.ask("CloudOnline")
+        XCTAssertTrue(waitUntil { !gone.exists },
+                      "the machine came back and the conversation still says it is gone")
+        record["restored"] = footSays(app)
+
+        for (situation, attempt) in [
+            ("while catching up", whileCatchingUp),
+            ("while unreachable", whileUnreachable),
+            ("while the last is unanswered", whileInFlight),
+        ] {
+            XCTAssertEqual(attempt["delivered"] as? Bool, false,
+                           "a message sent \(situation) left the phone: \(attempt)")
+            XCTAssertNotNil(attempt["reason"] as? String,
+                            "a message refused \(situation) said nothing about why")
+        }
+
+
+        try write()
+    }
+
+    // MARK: - What the runner is told to play
+
+    /// The text of the one message that is meant to arrive. The journey looks
+    /// for exactly this on the host and for nothing else.
+    static let delivered = "carry on then"
+
+    /// Every kind of step the scripted provider can play, in an order a turn
+    /// would really take them in.
+    private static var beforeAnybodyWatches: [Any] { [
+        // Enough history that catching up on it is something a person could
+        // watch happen. A conversation opened over three rows is caught up
+        // before the screen has drawn, and the state a message is refused in
+        // would never be reached.
+        // One step per row rather than one step for all of them: each waits
+        // for the host to have taken it, so the turn is still arriving while
+        // somebody opens the conversation it is arriving into.
+    ] + (0..<40).map { line in
+        ["Rows": ["jsonl": [
+            ["type": "assistant", "uuid": "row-\(line)",
+             "message": ["id": "m-\(line)", "role": "assistant",
+                         "content": [["type": "text",
+                                      "text": "Line \(line) of what it did before anybody was looking."]]]]]]]
+    } + [
+        ["Markdown": ["text": "Looking at the parser first."]],
+        ["Tool": ["name": "Read", "input": ["file_path": "/work/parser.rs"],
+                  "output": "1 fn parse(input: &str) -> Vec<Token> {", "denied": false]],
+        ["Tool": ["name": "Grep", "input": ["pattern": "split"],
+                  "output": "parser.rs:1", "denied": false]],
+    ] }
+
+    private static var whileWatching: [Any] { [
+        ["Markdown": ["text": """
+        ## What I found
+
+        The parser drops the trailing newline. Three things follow from that:
+
+        1. `parse` returns one token short
+        2. the round trip is not a round trip
+        3. `tests/wire.rs` passes for the wrong reason
+
+        ```rust
+        fn parse(input: &str) -> Vec<Token> { input.split('\\n').map(Token::new).collect() }
+        ```
+
+        | file | lines |
+        | --- | --- |
+        | parser.rs | 118 |
+
+        > Worth reading [the note](https://example.invalid/note) before changing it.
+        """]],
+        ["Tool": ["name": "Read", "input": ["file_path": "/work/parser.rs"],
+                  "output": NSNull(), "denied": false]],
+        ["Tool": ["name": "Read", "input": ["file_path": "/work/wire.rs"],
+                  "output": NSNull(), "denied": false]],
+        ["Tool": ["name": "Grep", "input": ["pattern": "split"], "output": NSNull(),
+                  "denied": false]],
+        ["Tool": ["name": "Edit", "input": ["file_path": "/work/parser.rs",
+                                            "old_string": "split", "new_string": "split_terminator"],
+                  "output": "The file /work/parser.rs has been updated.", "denied": false,
+                  // What the layer writes beside the result of an edit, and
+                  // the only thing that says how much of the file moved.
+                  "result": ["filePath": "/work/parser.rs",
+                             "structuredPatch": [["lines": [
+                                "-    input.split('\n')",
+                                "+    input.split_terminator('\n')",
+                                "+        .map(Token::new)"]]]]]],
+        ["Tool": ["name": "Bash", "input": ["command": "cargo test -p parser"],
+                  "output": String(repeating: "running 1 test\n", count: 40), "denied": false]],
+        ["Tool": ["name": "Write", "input": ["file_path": "/work/secrets.env"],
+                  "output": NSNull(), "denied": true]],
+        ["Todo": ["items": [["fix the parser", "completed"], ["run the suite", "in_progress"],
+                            ["write it up", "pending"]]]],
+        ["ChildStarted": ["name": "scout"]],
+        ["AgentMessage": ["from": "scout", "text": "I looked at the other three callers and "
+                          + "only one of them cares about the trailing newline."]],
+        ["ChildFinished": ["name": "scout"]],
+        ["Working": ["secs": 0.2]],
+        ["ApiError": ["message": "upstream returned 529"]],
+        "Compaction",
+        ["Unknown": ["raw": ["type": "something_this_build_has_no_case_for", "value": 1]]],
+        "EndTurn",
+    ] }
+
+    /// The rows those steps have to become. Named by what the screen calls
+    /// them, so a kind that stops being drawn fails here rather than quietly
+    /// going missing.
+    private static let everyRowKind = [
+        "transcript.prose",
+        "transcript.code",
+        "transcript.exploration",
+        "transcript.edit",
+        "transcript.output",
+        "transcript.activity",
+        "transcript.agent-message",
+        "transcript.rule",
+    ]
+
+    // MARK: - Talking to the runner and to the app
+
+    /// One JSON object per line, over a socket that stays open.
+    ///
+    /// The runner's control channel and the app's door speak the same shape,
+    /// so one client serves both.
+    private final class Lines {
+        private let input: InputStream
+        private let output: OutputStream
+        private var pending = Data()
+
+        init(address: String) throws {
+            let parts = address.split(separator: ":")
+            guard parts.count == 2, let port = UInt32(parts[1]) else {
+                throw Failure("\(address) is not host:port")
+            }
+            var readable: InputStream?
+            var writable: OutputStream?
+            Stream.getStreamsToHost(
+                withName: String(parts[0]), port: Int(port), inputStream: &readable,
+                outputStream: &writable)
+            guard let readable, let writable else { throw Failure("nothing answered at \(address)") }
+            input = readable
+            output = writable
+            input.open()
+            output.open()
+        }
+
+        deinit {
+            input.close()
+            output.close()
+        }
+
+        /// Says one request and does not wait for it to finish.
+        ///
+        /// Everything else here is a question. This is for work that has to
+        /// still be going when the next thing happens — a turn being played
+        /// while somebody opens the conversation it is being played into.
+        func say(_ request: Any) throws {
+            try write(request)
+        }
+
+        /// Reads the answer to something said earlier.
+        @discardableResult
+        func awaitAnswer() throws -> [String: Any] {
+            try read()
+        }
+
+        /// Says one request and reads the one line that answers it.
+        @discardableResult
+        func ask(_ request: Any) throws -> [String: Any] {
+            try write(request)
+            return try read()
+        }
+
+        private func write(_ request: Any) throws {
+            var line = try JSONSerialization.data(
+                withJSONObject: request, options: [.fragmentsAllowed])
+            line.append(0x0A)
+            try line.withUnsafeBytes { bytes in
+                var written = 0
+                while written < line.count {
+                    let wrote = output.write(
+                        bytes.baseAddress!.advanced(by: written).assumingMemoryBound(to: UInt8.self),
+                        maxLength: line.count - written)
+                    guard wrote > 0 else { throw Failure("the socket stopped taking bytes") }
+                    written += wrote
+                }
+            }
+        }
+
+        private func read() throws -> [String: Any] {
+            var buffer = [UInt8](repeating: 0, count: 65536)
+            let deadline = Date().addingTimeInterval(120)
+            while Date() < deadline {
+                if let newline = pending.firstIndex(of: 0x0A) {
+                    let line = pending[pending.startIndex..<newline]
+                    pending = pending[pending.index(after: newline)...]
+                    guard !line.isEmpty else { continue }
+                    guard let object = try JSONSerialization.jsonObject(with: Data(line))
+                        as? [String: Any]
+                    else { throw Failure("the answer was not one JSON object") }
+                    return object
+                }
+                // A stream that has not finished connecting answers a read
+                // with -1 and no error. Only a stream that has actually failed
+                // or ended is a failure; everything else is waiting.
+                let read = input.hasBytesAvailable
+                    ? input.read(&buffer, maxLength: buffer.count) : 0
+                if read > 0 {
+                    pending.append(contentsOf: buffer[0..<read])
+                } else if input.streamStatus == .error || input.streamStatus == .atEnd {
+                    throw Failure(
+                        "the socket \(input.streamStatus == .atEnd ? "closed" : "failed") while "
+                        + "an answer was outstanding: "
+                        + "\(input.streamError.map(String.init(describing:)) ?? "no reason given")")
+                } else {
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+                }
+            }
+            throw Failure("nothing answered within two minutes")
+        }
+
+        struct Failure: Error, CustomStringConvertible {
+            let description: String
+            init(_ description: String) { self.description = description }
+        }
+    }
+
+    /// One request for the app's own door, whose fields are the door's.
+    private struct DoorRequest {
+        var kind: String
+        var agent: String
+        var text: String?
+        var base: String?
+        var seconds: Double?
+
+        var body: [String: Any] {
+            var fields: [String: Any] = ["kind": kind, "agent": agent]
+            if let text { fields["text"] = text }
+            if let base { fields["base"] = base }
+            if let seconds { fields["seconds"] = seconds }
+            return fields
+        }
+    }
+
+    /// Opens the door, says one thing, and closes it. One connection at a
+    /// time is all the door serves, and holding one open across a test would
+    /// stop anything else reaching it.
+    private func door(_ runner: Runner, _ request: DoorRequest) throws -> [String: Any] {
+        let door = try Lines(address: "127.0.0.1:\(runner.doorPort)")
+        let answer = try door.ask(request.body)
+        if let complaint = answer["message"] as? String, answer["kind"] as? String == "error" {
+            XCTFail("the door refused \(request.kind): \(complaint)")
+        }
+        return answer
+    }
+
+    // MARK: - Reading a screen by the names it declares
+
+    private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// What a named element says its value is.
+    ///
+    /// A name lands on more than one element in the tree the system builds,
+    /// and only one of them carries the value the screen set; the others carry
+    /// an empty string. So the first one with something in it is the answer.
+    private func value(_ app: XCUIApplication, _ identifier: String) -> String? {
+        app.descendants(matching: .any).matching(identifier: identifier)
+            .allElementsBoundByIndex.compactMap { $0.value as? String }
+            .first { !$0.isEmpty }
+    }
+
+    /// What the panel where the composer will go is saying, in its own words.
+    ///
+    /// Read off the writing rather than off the row's name, because a name
+    /// declared on a screen reaches the system's tree as an identifier alone.
+    private func footSays(_ app: XCUIApplication) -> [String] {
+        let foot = app.descendants(matching: .any)
+            .matching(identifier: "conversation.foot").firstMatch
+        guard foot.exists else { return [] }
+        return foot.staticTexts.allElementsBoundByIndex.map { $0.label }
+    }
+
+    private func identifiers(_ app: XCUIApplication, startingWith prefix: String) -> [String] {
+        let matching = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+        var seen: [String] = []
+        for element in matching.allElementsBoundByIndex where !seen.contains(element.identifier) {
+            seen.append(element.identifier)
+        }
+        return seen
+    }
+
+    private func transcriptRows(_ app: XCUIApplication) -> [String] {
+        identifiers(app, startingWith: "transcript.")
+    }
+
+    /// Waits until the transcript has stopped growing, and answers with what it
+    /// holds. A feed that is still arriving would be read half way through.
+    private func waitForRows(_ app: XCUIApplication) throws -> [String] {
+        var last: [String] = []
+        var still = 0
+        let deadline = Date().addingTimeInterval(waiting)
+        while Date() < deadline {
+            let now = transcriptRows(app)
+            // Six identical reads a half-second apart, because a feed that is
+            // still catching up pauses between batches and a shorter run
+            // reads one of those pauses as the end of it.
+            still = now == last && !now.isEmpty ? still + 1 : 0
+            last = now
+            if still >= 6 { return now }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        throw Lines.Failure("the transcript never settled; it holds \(last)")
+    }
+
+    /// Every kind of row in the whole feed, gathered by scrolling it from the
+    /// end to the beginning.
+    ///
+    /// XCUITest is an accessibility client and sees what an accessibility
+    /// client sees: the elements the screen is currently showing. A transcript
+    /// is longer than a phone, so the names are unioned across the walk rather
+    /// than read once at the bottom.
+    private func readWholeFeed(_ app: XCUIApplication) -> Set<String> {
+        var found = Set(transcriptRows(app))
+        var unchanged = 0
+        // To the end first: a conversation with history behind it opens onto
+        // the beginning of it, and everything this turn did is below that.
+        for _ in 0..<60 {
+            let before = found.count
+            app.swipeUp(velocity: .fast)
+            found.formUnion(transcriptRows(app))
+            unchanged = found.count == before ? unchanged + 1 : 0
+            if unchanged >= 4 { break }
+        }
+        unchanged = 0
+        for _ in 0..<60 {
+            let before = found.count
+            app.swipeDown(velocity: .fast)
+            found.formUnion(transcriptRows(app))
+            unchanged = found.count == before ? unchanged + 1 : 0
+            if unchanged >= 4 { break }
+        }
+        return found
+    }
+
+    /// Scrolls until the named row is on screen, in whichever direction it is.
+    private func reveal(_ app: XCUIApplication, _ identifier: String) {
+        for attempt in 0..<40 {
+            // On screen is not the same as reachable: a row under the floating
+            // chrome or behind the panel at the foot exists and cannot be
+            // pressed, and scrolling one more step is what a person does about
+            // that.
+            let candidates = app.descendants(matching: .any)
+                .matching(identifier: identifier).allElementsBoundByIndex
+            if candidates.contains(where: { $0.isHittable }) { return }
+            if attempt < 20 { app.swipeDown(velocity: .slow) } else { app.swipeUp(velocity: .slow) }
+        }
+        XCTFail("scrolling the feed never brought \(identifier) somewhere it could be pressed")
+    }
+
+    private func waitUntil(_ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(waiting)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return condition()
+    }
+
+    private func pressTab(_ app: XCUIApplication, _ title: String) {
+        let button = app.tabBars.buttons[title]
+        guard button.waitForExistence(timeout: waiting) else {
+            return XCTFail("the tab bar has no \(title) tab")
+        }
+        button.tap()
+    }
+
+    private func press(_ app: XCUIApplication, _ identifier: String) {
+        let candidates = app.descendants(matching: .any)
+            .matching(identifier: identifier).allElementsBoundByIndex
+        let hittable = candidates.first(where: { $0.isHittable })
+        guard let target = hittable ?? candidates.first else {
+            return XCTFail("nothing on screen is named \(identifier)")
+        }
+        if target.isHittable {
+            target.tap()
+        } else {
+            target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+    }
+
+    private func photograph(_ app: XCUIApplication, _ name: String) {
+        let shot = XCUIScreen.main.screenshot()
+        try? shot.pngRepresentation.write(to: Self.inContainer("\(name).png"))
+        let attached = XCTAttachment(screenshot: shot)
+        attached.name = name
+        attached.lifetime = .keepAlways
+        add(attached)
+    }
+
+    /// Everything this test read, left where the Mac can collect it. The
+    /// journey asserts on this as well as on the test passing, so a failure
+    /// afterwards can be read against what was actually on screen.
+    private func write() throws {
+        let data = try JSONSerialization.data(
+            withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: Self.inContainer("conversation.json"))
+    }
+}
