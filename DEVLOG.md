@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Attach directly to agents without a chat view.**
+Fleet entry and `amux attach` now choose raw attach on every host for an agent
+with a terminal and no chat layer. Every fleet entry key reaches that one
+mode, and its status hint and help overlay name raw attach alone. The mode
+comes from the same agent-kind lookup used to open chat. Claude and Codex
+retain their existing local and remote entry rules, as do read-only viewers.
+
+The remote-entry rule introduced with the SDK opened chat for TestAgent even
+though that kind has no chat view, leaving the user in the fleet. The CLI
+policy test now separates that raw-only case from remote chat-capable agents,
+and covers both hosts; fleet tests exercise all three entry keys, both
+configured defaults, and both keyboard tiers with their hints and help rows.
+
+Formatting, lint, all 2,277 workspace tests, all 14 entry-policy tests, all 450
+prose specifications and all 22 CLI journeys pass. The CLI runner and journey
+expectations are unchanged; remote replay, bidirectional input, alias attachment
+and session exit now pass
+through both direct links and the relay. The saved TestAgent report's old
+footer offered chat, freezing the same bug in its expected frame. Regenerating
+that footer through the current renderer changes only row 38 of frame.txt and
+frame.styles; the trace, messages and all other report files stay identical.
+The four CLI saved-report replay tests and the TUI report-fixture suite now
+pass without relaxing replay comparison. Fleet PNG goldens are unchanged.
+
 2026-09-06 — **Integrate per-account profiles with the native runtime.**
 Merge the independently reviewed profiles revision
 `16b6f5123cfbd452c1d5c2cc9f9549f9dcf58011`. Installations own profile creation,

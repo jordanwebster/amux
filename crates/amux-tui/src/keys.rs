@@ -308,7 +308,8 @@ fn open_selected(view: &mut ViewState, model: &Model, other_mode: bool) -> Optio
 /// an agent (A1, A3).
 ///
 /// Read-only viewers and sessions with no terminal behind them have no
-/// raw mode at all. An agent on another machine defaults to the chat
+/// raw mode at all. A terminal agent with no chat layer has raw mode
+/// alone. An agent with both modes on another machine defaults to the chat
 /// even where the setting says raw: the chat travels over the same
 /// stream the fleet already has, while raw attach pipes a terminal
 /// across the network, so the safe half of the pair leads — but the
@@ -320,6 +321,9 @@ pub fn entry_modes(
 ) -> crate::view::EntryModes {
     if card.agent.readonly || !card.agent.kind.exposes(amux_ui::Protocol::TerminalV1) {
         return crate::view::EntryModes::ChatOnly;
+    }
+    if amux_ui::AgentLayer::from_kind(&card.agent.kind).is_none() {
+        return crate::view::EntryModes::RawOnly;
     }
     // Unknown locality reads as local: the fleet is usually one machine,
     // and this only picks which half of a pair Enter opens.
@@ -737,6 +741,46 @@ mod tests {
                         handle_key(&mut view, model, key, 10, t(0)),
                         Some(UiAction::OpenChat(agent_id()))
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn entry_policy_agents_without_chat_attach_on_every_key_and_host() {
+        let local = entry_model_with_kind(false, true, amux_ui::AgentKind::TestAgent);
+        let remote = remote_entry_model(amux_ui::AgentKind::TestAgent);
+        for model in [&local, &remote] {
+            for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+                let mut view = ViewState {
+                    default_open_mode,
+                    ..ViewState::default()
+                };
+                let entry = selected_entry_modes(&view, model);
+                assert_eq!(entry, crate::view::EntryModes::RawOnly);
+                assert_eq!(crate::bindings::entry_hint(entry), "enter raw attach");
+                for kitty in [false, true] {
+                    view.kitty = kitty;
+                    let sections = crate::bindings::fleet_sections(
+                        &crate::bindings::Effective {
+                            kitty,
+                            leader_label: "C-a".to_string(),
+                        },
+                        entry,
+                        false,
+                    );
+                    let bindings = &sections[0].bindings;
+                    let enter_row = bindings.iter().find(|b| b.keys == "enter").unwrap();
+                    assert_eq!(enter_row.action, "open in raw attach");
+                    assert!(!bindings.iter().any(|b| {
+                        b.keys == "o" || b.keys == "ctrl+enter" || b.action.contains("chat")
+                    }));
+                    for key in [enter(), ctrl_enter(), o_key()] {
+                        assert_eq!(
+                            handle_key(&mut view, model, key, 10, t(0)),
+                            Some(UiAction::Attach(agent_id()))
+                        );
+                    }
                 }
             }
         }

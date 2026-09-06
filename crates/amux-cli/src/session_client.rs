@@ -217,14 +217,18 @@ fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
 }
 
 /// The command line's half of the one entry policy the fleet keys use:
+/// a terminal agent without a chat layer can only raw attach;
 /// a session with no terminal behind it has nothing to pass through, and
-/// an agent on another machine opens the chat rather than piping a
+/// an agent with a chat layer on another machine opens it rather than piping a
 /// terminal across the network. Everything else raw attaches, except a
 /// Codex agent: its own structured screen is its primary surface, and
 /// the command line — unlike the fleet, which offers Ctrl+Enter and `o`
 /// beside Enter — has only one key to spend, so it spends it on the
 /// richer surface. `docs/CHAT.md` records that difference.
 fn attach_opens_chat(kind: &amux::AgentKind, local: bool) -> bool {
+    if kind.exposes(amux::Protocol::TerminalV1) && amux_ui::AgentLayer::from_kind(kind).is_none() {
+        return false;
+    }
     !local || matches!(kind, amux::AgentKind::Codex) || !kind.exposes(amux::Protocol::TerminalV1)
 }
 
@@ -1133,23 +1137,32 @@ mod attach {
 
     /// `amux attach` follows the fleet's rule for a remote agent too: the
     /// chat travels over the connection the daemon already has, so a
-    /// terminal-capable agent on another machine still opens the chat.
+    /// terminal-capable agent with a chat layer still opens the chat.
     #[test]
-    fn entry_policy_attach_opens_chat_for_every_agent_on_another_machine() {
+    fn entry_policy_attach_opens_chat_for_chat_capable_agents_on_another_machine() {
         for kind in [
             amux::AgentKind::Claude {
                 driver: amux::ClaudeDriver::Pty,
             },
-            amux::AgentKind::TestAgent,
+            amux::AgentKind::Codex,
+            amux::AgentKind::Claude {
+                driver: amux::ClaudeDriver::Sdk,
+            },
         ] {
-            assert!(
-                !super::attach_opens_chat(&kind, true),
-                "{kind:?} raw attaches on this machine"
-            );
             assert!(
                 super::attach_opens_chat(&kind, false),
                 "{kind:?} opens the chat from another machine"
             );
+        }
+    }
+
+    #[test]
+    fn entry_policy_attach_uses_raw_without_a_chat_layer_on_every_host() {
+        for local in [false, true] {
+            assert!(!super::attach_opens_chat(
+                &amux::AgentKind::TestAgent,
+                local
+            ));
         }
     }
 

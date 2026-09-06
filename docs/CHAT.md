@@ -85,7 +85,7 @@ and three-chat consistency table live in [`CLAUDE_SDK.md`](./CLAUDE_SDK.md).
 | Human requests | Permission, plan and question panels share Claude's tool facts; MCP elicitations render flat typed forms. Unsupported schemas offer explicit Decline and Cancel. |
 | Session details | Header model and mode, passive context meter, requested context breakdown, task lifecycle, MCP status and turn cost. |
 | Fleet and families | Both Claude drivers rank and group alike; SDK parents and children exchange messages and host each other's asks through native panels. |
-| Creation and entry | `claude.driver` chooses new agents, `--driver` overrides it, and `pty` remains the default. SDK agents offer chat only; remote terminal-capable agents default to chat with raw attach available through the other-mode key. |
+| Creation and entry | `claude.driver` chooses new agents, `--driver` overrides it, and `pty` remains the default. SDK agents offer chat only; remote agents with both modes default to chat with raw attach available through the other-mode key. |
 | Dialog | Kind-and-payload recognizer with a blocked fallback; no kind is recorded and no live dialog answer is validated. |
 
 At Claude Code 2.1.261 there are **37 registered dialog kinds**. The headless
@@ -101,8 +101,8 @@ the daemon must never auto-cancel a dialog it receives.
 
 ## Modes and entry (A)
 
-From the fleet, a local terminal-capable agent opens in one of two modes:
-**raw attach** (the existing byte passthrough) or **chat**. Enter opens the default
+From the fleet, a local agent with a terminal and a chat layer opens in one of
+two modes: **raw attach** (the existing byte passthrough) or **chat**. Enter opens the default
 mode; which mode is default is a client setting in the standard amux
 config (mobile clients are chat-only and carry no such setting), and
 the shipped default is raw attach — the battle-tested path stays the path of least
@@ -120,7 +120,12 @@ behind it: a Claude session driven over stream-JSON has no bytes to pass
 through, so every entry key opens its chat and neither its hint nor its
 `?` overlay names raw attach.
 
-An agent on another machine keeps both modes but defaults to the chat
+A terminal agent with no chat layer in this build (currently TestAgent) opens
+raw attach on every host. Enter, Ctrl+Enter and `o` all attach; its hint and
+`?` overlay name raw attach alone. The available chat layer comes from the
+agent's kind, never from inspecting its stream.
+
+An agent with both modes on another machine defaults to the chat
 whatever the setting says: the chat travels over the connection the fleet
 already holds, while raw attach pipes a terminal across the network, so
 the safe half of the pair leads and the other-mode key still reaches raw
@@ -130,11 +135,12 @@ Every affordance in the fleet — Enter, Ctrl+Enter and `o`, the status-line
 hint and the `?` overlay rows — derives from that one answer per agent, so a
 key, its hint and its help row can never disagree.
 
-`amux attach` opens chat for remote agents, agents without a terminal, and
-Codex agents on any host. A local Claude PTY agent opens raw attach through
+`amux attach` opens chat for remote agents with a chat layer, agents without
+a terminal, and Codex agents on any host. A local Claude PTY agent opens raw attach through
 that command. The command line has no other-mode key; the configured local
 open-mode preference applies to fleet entry and creation, not to this attach
-command. The fleet still offers both modes for local terminal-capable agents.
+command. An agent with a terminal and no chat layer attaches raw through this
+command on every host. The fleet offers both modes where the agent has both.
 
 There is no in-session mode
 switching in V1: the mode is chosen at open, with no toggle inside a
