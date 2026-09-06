@@ -130,6 +130,16 @@ fn render_terminal(bytes: &[u8]) -> (String, Vec<usize>) {
     )
 }
 
+// A mismatching expectation can end inside a UTF-8 character. Return the
+// complete character so the comparison reports the mismatch instead of panicking.
+fn comparison_prefix(rendered: &str, expected_bytes: usize) -> &str {
+    let mut end = expected_bytes.min(rendered.len());
+    while !rendered.is_char_boundary(end) {
+        end += 1;
+    }
+    &rendered[..end]
+}
+
 /// Error type for terminal operations
 #[derive(Debug)]
 pub struct TerminalError {
@@ -155,6 +165,7 @@ impl From<std::io::Error> for TerminalError {
 /// A test terminal that wraps a PTY.
 /// The PTY reader runs in a background thread to avoid blocking on read().
 pub struct TestTerminal {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn MasterPty + Send>,
     rx: mpsc::Receiver<Vec<u8>>,
     writer: Box<dyn Write + Send>,
@@ -215,11 +226,13 @@ impl TestTerminal {
             cmd.env(key, value);
         }
         // Then override with test-specific vars
+        // The executor passes an explicit --config for this fixture.
+        cmd.env_remove("AMUX_CONFIG");
         for (key, value) in env {
             cmd.env(key, value);
         }
 
-        let _child = pair.slave.spawn_command(cmd).map_err(|e| TerminalError {
+        let child = pair.slave.spawn_command(cmd).map_err(|e| TerminalError {
             message: format!("Failed to spawn command: {}", e),
         })?;
         drop(pair.slave);
@@ -250,11 +263,33 @@ impl TestTerminal {
         });
 
         Ok(Self {
+            child,
             _master: pair.master,
             rx,
             writer,
             output_buffer: Vec::new(),
         })
+    }
+
+    pub fn wait_exit(&mut self, code: u32, timeout: Duration) -> Result<(), TerminalError> {
+        let start = std::time::Instant::now();
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                return if status.exit_code() == code {
+                    Ok(())
+                } else {
+                    Err(TerminalError {
+                        message: format!("Command exited with {status}"),
+                    })
+                };
+            }
+            if start.elapsed() >= timeout {
+                return Err(TerminalError {
+                    message: "Timeout waiting for command exit".into(),
+                });
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Send input to the terminal (with newline)
@@ -281,9 +316,9 @@ impl TestTerminal {
             let (rendered, rendered_map) = render_terminal(&self.output_buffer);
 
             if rendered.len() >= expected.len() {
-                let actual = rendered[..expected.len()].to_string();
+                let actual = comparison_prefix(&rendered, expected.len()).to_string();
                 let consumed = rendered_map
-                    .get(expected.len().saturating_sub(1))
+                    .get(actual.len().saturating_sub(1))
                     .copied()
                     .unwrap_or(0);
                 self.output_buffer.drain(..consumed);
@@ -364,7 +399,17 @@ impl TestTerminal {
 
 #[cfg(test)]
 mod tests {
-    use super::render_terminal;
+    use super::{comparison_prefix, render_terminal};
+
+    #[test]
+    fn unicode_output_mismatch_remains_a_strict_comparison() {
+        let (rendered, map) = render_terminal("a─tail".as_bytes());
+        let actual = comparison_prefix(&rendered, "ab".len());
+        assert_eq!(actual, "a─");
+        assert_ne!(actual, "ab");
+        assert_eq!(&"a─tail"[map[actual.len() - 1]..], "tail");
+        assert_eq!(comparison_prefix("abc", 2), "ab");
+    }
 
     #[test]
     fn render_terminal_collapses_crlf() {

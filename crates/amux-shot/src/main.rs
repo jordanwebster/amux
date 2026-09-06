@@ -22,6 +22,7 @@ const SET_NAMES: &[&str] = &[
     "themes",
     "fleet",
     "parity",
+    "profiles",
     "all",
 ];
 
@@ -463,6 +464,19 @@ const PARITY: &[SetMember] = &[
     ),
 ];
 
+/// The account switcher and the two fleets it moves between. The pair of
+/// fleets is the point: the second frame is a different account's device,
+/// so it shares no host and no agent with the first.
+const PROFILES: &[SetMember] = &[
+    member(
+        "profile-switcher",
+        "profile-switcher-dark.png",
+        ThemeSpec::Dark,
+    ),
+    member("fleet", "fleet-personal-dark.png", ThemeSpec::Dark),
+    member("fleet-switched", "fleet-work-dark.png", ThemeSpec::Dark),
+];
+
 const fn member(state: &'static str, file: &'static str, theme: ThemeSpec) -> SetMember {
     SetMember {
         state,
@@ -588,6 +602,7 @@ fn set_members(name: &str) -> Result<Vec<SetMember>, ShotError> {
         "themes" => THEMES,
         "fleet" => FLEET,
         "parity" => PARITY,
+        "profiles" => PROFILES,
         "all" => {
             let mut members = Vec::new();
             let mut files = BTreeSet::new();
@@ -603,6 +618,7 @@ fn set_members(name: &str) -> Result<Vec<SetMember>, ShotError> {
                 THEMES,
                 FLEET,
                 PARITY,
+                PROFILES,
             ] {
                 for member in set {
                     if files.insert(member.file) {
@@ -669,6 +685,15 @@ mod tests {
     #[test]
     fn the_scroll_set_names_states_that_exist() {
         for member in set_members("scroll").unwrap() {
+            super::parse_state(member.state).unwrap();
+        }
+    }
+
+    /// The switcher set is what the screenshots of account switching come
+    /// from, so a renamed fixture must fail here rather than at capture time.
+    #[test]
+    fn the_switcher_set_names_states_that_exist() {
+        for member in set_members("profiles").unwrap() {
             super::parse_state(member.state).unwrap();
         }
     }

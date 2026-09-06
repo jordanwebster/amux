@@ -28,8 +28,10 @@ mod embedded_relay;
 #[path = "agents/envelope.rs"]
 pub mod envelope;
 mod identity;
+pub mod installation;
 mod pairing;
 mod paths;
+mod profile;
 mod protocol;
 mod repositories;
 mod resource_limits;
@@ -40,6 +42,9 @@ pub mod setup;
 mod sleep_inhibitor;
 mod subscription;
 mod suspend;
+#[cfg(test_fixtures)]
+#[doc(hidden)]
+pub mod test_fixtures;
 #[cfg(testnet)]
 #[doc(hidden)]
 pub mod testnet;
@@ -62,22 +67,30 @@ pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
     AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, DeviceIdentity,
     HostEventStream, PairingError, PairingSecret, PairingStart, PeerEntry, PeerReachability,
-    PendingPeer, ResumeSummary, SessionStream, SuspendSummary,
+    PendingPeer, SessionStream,
 };
 pub use config::{
-    ClaudeSettings, ColorSetting, Config, ConfigError, Keybinds, LeaderKey, OpenMode, ThemeSetting,
-    UiSettings, resolve_claude_driver,
+    ClaudeSettings, ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey,
+    OpenMode, ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
+    resolve_claude_driver,
 };
 pub use debug::DebugFormat;
 pub use embedded_relay::{EmbeddedRelay, RelayConnection, RelayEndpoint};
+pub use installation::{
+    BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
+    InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
+    ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, ResumeReport,
+    SuspendReason, SuspendReport,
+};
+pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
     QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,
     parse_qr_pairing_payload_for_cloud, validate_qr_payload_cloud_url,
 };
 pub use pairing::ssh::{
-    SshPairingError, SshPairingPeer, pair_via_ssh_initiator, pair_via_ssh_responder,
-    pair_via_ssh_target,
+    SshPairingError, SshPairingPeer, SshPairingProfile, SshTarget, pair_via_ssh_initiator,
+    pair_via_ssh_responder, pair_via_ssh_target,
 };
 #[cfg(unix)]
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
@@ -85,7 +98,7 @@ pub use paths::{default_cache_dir, default_data_dir, default_log_path, keymap_di
 pub use protocol::{PROTOCOL_VERSION, ProtocolError};
 pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
 pub use server::{
-    DaemonBuilder, EmbeddedBuilder, Server, ServerBuilder, ServerError, ShutdownReason,
+    DaemonBuilder, EmbeddedRuntime, Server, ServerBuilder, ServerError, ShutdownReason,
 };
 pub use subscription::SubscriptionReporter;
 pub use transport::TransportError;

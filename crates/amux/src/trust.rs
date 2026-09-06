@@ -18,8 +18,13 @@ const TRUST_FILE: &str = "trust.json";
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Reachability {
     Cloud,
-    Ssh { target: String },
-    DirectTcp { addr: SocketAddr },
+    Ssh {
+        target: String,
+        profile: crate::installation::ProfileId,
+    },
+    DirectTcp {
+        addr: SocketAddr,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,6 +372,7 @@ mod tests {
                     "renamed".to_string(),
                     Reachability::Ssh {
                         target: "workstation".to_string(),
+                        profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
                     },
                     DateTime::<Utc>::from_timestamp(400, 0).unwrap(),
                 )
@@ -381,6 +387,7 @@ mod tests {
         assert!(entry.reachabilities.contains(&Reachability::Cloud));
         assert!(entry.reachabilities.contains(&Reachability::Ssh {
             target: "workstation".to_string(),
+            profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
         }));
     }
 
@@ -525,6 +532,7 @@ mod tests {
                 paired_at: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
                 reachabilities: vec![Reachability::Ssh {
                     target: "workstation".to_string(),
+                    profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
                 }],
             },
         );

@@ -70,6 +70,19 @@ impl PtyHandle {
         }
     }
 
+    /// Reserve the echo input queue so production writes wait on backpressure.
+    #[cfg(testnet)]
+    pub(crate) async fn hold_echo_input(&self) -> Vec<mpsc::OwnedPermit<Vec<u8>>> {
+        let HostedPty::TestEcho(input) = &self.hosted else {
+            panic!("input backpressure fixture requires an echo PTY");
+        };
+        let mut permits = Vec::new();
+        for _ in 0..input.max_capacity() {
+            permits.push(input.clone().reserve_owned().await.unwrap());
+        }
+        permits
+    }
+
     /// Send raw input bytes to the PTY.
     pub(crate) async fn send_input(&self, data: Vec<u8>) -> Result<()> {
         match &self.hosted {

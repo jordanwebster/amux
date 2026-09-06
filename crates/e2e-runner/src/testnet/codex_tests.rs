@@ -41,6 +41,7 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 match client
+                    .admin()
                     .pair_qr_cloud_peer(qr.host_id, qr.secret.clone())
                     .await
                 {

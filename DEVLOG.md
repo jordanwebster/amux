@@ -4,6 +4,44 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Integrate per-account profiles with the native runtime.**
+Merge the independently reviewed profiles revision
+`16b6f5123cfbd452c1d5c2cc9f9549f9dcf58011`. Installations own profile creation,
+binding, watches, separate identities and trust stores, switching, and removal.
+The existing SDK writing controls, model catalogues, repository enumeration,
+scripted testnet providers, and mobile callback/projection hooks remain in place.
+Repository roots and Claude creation defaults belong to the installation's
+preferences; every profile inherits them, with its own recent-project history.
+
+Two-phase pairing and device identity inspection now use the local profile
+administration handle and the installation front door. Ordinary profile sockets
+and peer tunnels serve no administration RPCs. The removed ClientService
+permission-denial tests are replaced by the profile revision's real socket and
+peer-tunnel absence probes, extended to begin, confirm, abandon and identity
+inspection; rejection is now UNIMPLEMENTED because the service is absent.
+The CLI expiry test now starts a real installation and selected profile while
+retaining its exact PIN and expiry assertions. Both sets of E2E transcripts and
+terminal fixtures are retained.
+
+The phone still opens its existing embedded entry point. Its explicit owner
+uses the shared profile runtime for startup and shutdown and exposes a separate
+local administration handle; it does not yet map phone accounts to Installation
+profiles or switch the mobile runtime between accounts.
+
+The mixed-fleet help fixtures now include the profile-switch key, retaining the
+SDK entry-mode assertions. The CLI output comparator reports a Unicode mismatch
+instead of panicking when an expected byte count ends inside a divider character;
+a regression test keeps that mismatch strict and checks the remaining raw input.
+Formatting, lint, all 2,275 workspace tests, all 450 prose specifications,
+17 testnet smoke tests and both iOS target checks pass locally. The CLI suite
+passes 18 of 22 journeys. `cloud_relay_connection`, `remote_agent_ended`,
+`remote_attach_by_alias` and `remote_connection` fail at remote `amux attach`:
+the entry policy introduced by SDK commit `3b03d279` opens remote agents in
+chat, but TestAgent has only a terminal, so it lands in the fleet. That policy
+predates this merge and is unchanged here. `bare_help` and every imported
+profile journey pass. No E2E expectation or entry policy changes to obtain
+this count; agents with only a terminal still need a raw-only entry path.
+
 2026-09-06 — **Provider subprocess fixtures pass after SDK integration.**
 The default parallel workspace suite passes with the integrated SDK, including
 launch-setting capture, closing a session with a full subprocess-output channel,
@@ -1464,6 +1502,482 @@ accepts a closed `claude.driver` setting with `pty` as the shipped default and
 before configuration, and the command-line, fleet create action, and managed
 agent spawn tool all use it. Focused tests cover absent configuration, SDK
 configuration, explicit PTY override, and rejected Claude-section keys.
+2026-09-05 — **Verify complete account profiles across every supported surface.**
+The installation hosts independent account devices behind one administrative
+socket, with profile selection in the CLI and TUI and an in-process host API.
+Final validation passes lint, 1,986 workspace tests including both spec suites,
+the iOS build without local agents, all three embedding tests and all 22
+real-process CLI scenarios. The eight focused update specs also pass, covering
+preparation failure, interrupted replacement and independent recovery; the CLI
+capture shows both profiles' active agents resumed while an already-suspended
+agent remains parked. Formatting leaves the tree unchanged. The switcher and
+both fleet captures match their recorded hashes and show distinct agents.
+The phone app's bridge remains unchanged; iOS validation compiles the library,
+and the embedding tests exercise its account lifecycle.
+
+2026-09-05 — **Keep report fixtures replayable with profile-switch chords.**
+Both committed report traces now record `pending_leader: false` in their initial
+view snapshot, matching the inactive chord state added for profile switching.
+Their captured frames and styles are unchanged. The replay regression still
+requires exact reproduction and checks every fixture file for private text.
+
+2026-09-05 — **Include account switching in the fleet help golden.**
+The plain help-frame expectation now includes the implemented `C-a p` shortcut
+for switching profiles. It had retained the help text from before the switcher,
+while the renderer and key handling already exposed the command. The exact
+frame comparison remains unchanged; the new row uses one formerly blank line.
+
+2026-09-05 — **Release installation ownership when the registry closes.**
+The root lock now unlocks explicitly before its file closes. A concurrently
+forked child can retain the same open-file description until exec, so closing
+the parent's descriptor alone could leave a rejected installation temporarily
+busy. A deterministic regression retains a duplicate descriptor, reopens the
+root immediately after dropping its owner, and checks that closing the stale
+duplicate cannot unlock the replacement owner. The existing root-exclusivity
+and configuration-rejection assertions remain intact.
+
+2026-09-05 — **Keep ephemeral installation files inside the platform temp directory.**
+The test-only `InstallationRoot::Ephemeral` replaces the misleading `InMemory`
+name: its registry is unpersisted, while profile files live beneath
+`std::env::temp_dir()` and are removed when the installation drops. Embedded
+hosts use a durable directory in their app data container so identity, trust
+and bindings survive relaunch. A no-local-agents subprocess regression supplies
+a TMPDIR longer than the Unix socket limit, creates a profile, reopens its
+client with the same identity, checks configuration, cache, reports and socket
+paths stay beneath the canonical root, and verifies cleanup. Desktop fixtures
+explicitly retain short on-disk roots so socket limits remain enforced without
+redirecting embedded storage to `/tmp`.
+
+2026-09-05 — **Match the descriptor assertion to the profile client API.**
+The protocol test now expects the exact ClientService method set declared in
+the proto, excluding the pairing, peer administration and lifecycle RPCs moved
+to the installation front door. Exact-set equality still rejects unexpected
+methods on the profile client service. Verified with `wt test -- descriptor_set`.
+
+2026-09-05 — **Switch accounts from the fleet.**
+`<leader> p` on the fleet opens a switcher listing every account on the
+installation with its label, the address behind it and what its link is
+doing; j/k or the arrows move, enter switches, esc closes, and the help
+overlay names the chord. The list is read from the front door when the
+overlay opens rather than at startup, so a fleet still opens when the
+installation socket does not answer, and the overlay is reachable over the
+disconnected screen — the profile whose daemon is unreachable is the one a
+person wants to move away from. Switching rebinds the runtime to the
+selected profile's socket and rebuilds it from that profile's own
+configuration, so its reports, artifact cache and device identity are its
+own; the screen starts over, because the open chat, filter and selection
+all named agents the new account does not have, and the selection is
+remembered for the next command. Two named fixtures — the open switcher and
+the fleet of the account switched to — render through the production view,
+and a `profiles` screenshot set captures the switcher and both fleets. A
+frame test holds the claim the pair of fleets makes: the account switched
+to shares no host and no agent with the one switched away from.
+
+2026-09-05 — **Bind the fleet to one account at a time.**
+The UI runtime carries a generation on every task, stream and command it
+starts. Selecting another profile consumes the runtime, retires its
+generation and starts a new one on the selected profile's socket from an
+empty model, so an inventory event, session batch, attachment fetch or
+command result the previous account was still delivering is dropped before
+the reducer rather than folded into the account on screen. The new runtime
+takes the selected profile's connector, local host id, subscription status,
+report directory and artifact cache. The switcher reads the installation's
+profile list through the front door, and profile labels and statuses now
+have one implementation shared with the CLI listing. Opening the fleet
+records the selection immediately instead of waiting for the daemon to
+answer, and a panic after a switch reports the profile actually on screen.
+
+2026-09-05 — **Allow embedded profile storage beneath long app roots.**
+Profile allocation enforces Unix and Codex socket lengths only when local
+agents are compiled in. UUID namespaces, private directories and symlink
+protections remain in both builds. The no-local-agents integration regression
+creates and reopens a profile below a root longer than the Unix socket buffer,
+verifies its identity survives, and refuses a redirected trust file without
+touching the foreign data. Desktop socket-boundary tests retain their limits.
+
+2026-09-05 — **Prove embedded account isolation without local agents.**
+The embedding integration target opens two profiles under distinct relay users,
+binds through the identity fixture, and pairs independent peer profiles after
+every screen client has been dropped. Public directory, trust and host inventory
+calls verify distinct identities, tenant isolation, suspension teardown and
+independent reconnection. A rejected work refresh leaves personal connected;
+recovering work preserves both identities and trust without refreshing personal.
+The architecture describes installation ownership and app lifecycle hooks.
+The UI library no longer enables local agents transitively; its own tests opt
+in separately. The embedding recipe asserts the feature is off and captures
+the public API observations, preventing an unnoticed desktop-feature build.
+Pairing discovery is available through in-process profile administration, and
+the relay fixture can supply its transport without enabling local agents.
+
+2026-09-05 — **Expose installation ownership to embedded hosts.**
+The public library exports installation options, profiles and administration.
+Host suspension tears down cloud connectors while retaining local clients,
+identity and trust; resumption refreshes eligible profiles independently.
+Login and profile resume respect host suspension, and host-provided credentials
+remain the refresh source after binding. Desktop listener and credential-file
+modes compile out without local agents. Embedded callers now retain an
+installation owner and explicitly await shutdown; clients no longer own a
+server. API regressions cover screen-client lifetimes, cancelled asynchronous
+shutdown, suspended-host login and saved installation settings.
+
+2026-09-05 — **Release installation admission after failed agent recovery.**
+Update resume now completes after every agent has been attempted and retained
+state cleanup succeeds, even when an agent cannot start or its profile has no
+host. Failed agents remain parked in their own profile, including records
+consumed by an earlier partial resume and recovered from the journal after
+restart. Storage failures still keep recovery pending without double-starting
+agents. Spec regressions exercise a removed executable and an occupied profile
+socket, verify front-door failure reports survive restart, and prove agent
+creation, profile lifecycle calls and a later update remain usable.
+
+2026-09-05 — **Read periodic update banners from the installation release source.**
+Shared runtime settings now carry the exact installation manifest URL into
+periodic checks. Profiles keep independent available, required-version and
+subscription markers. The desktop regression uses separate cloud and release
+servers advertising different versions, checks both CLI banners select the
+installation release, and retains the warning-isolation and cleanup assertions.
+
+2026-09-05 — **Exercise executable updates across two profiles.**
+The end-to-end cloud fixture serves an installation manifest with a higher
+version and the current binary. Update tests replace a disposable executable,
+resume active agents in both profiles, preserve a previously suspended record,
+and repeat resume without duplicating either fleet. A filesystem-error regression
+checks that failed replacement leaves the previous executable intact and runs
+recovery before returning the error. The debugging guide describes the durable
+update journal, retained sessions and explicit recovery after interruption.
+
+2026-09-05 — **Restore desktop update and subscription warnings per profile.**
+Desktop installation settings now select marker-file reporting for each profile's
+state directory. Both runtime observations and update checks use those reporters,
+while embedded hosts retain callback reporting. The CLI and TUI share the same
+marker reader with the library. Update clears every profile's visible markers,
+even with the daemon stopped, instead of clearing an unused installation path.
+A desktop installation regression injects cloud observations into two running
+profiles, verifies one profile connecting cannot erase the other's warnings,
+and exercises update against a local current-version manifest.
+
+2026-09-05 — **Make cloud end-to-end fixtures wait for network readiness.**
+The relay session test checks both profiles are connected before starting
+pairing, so a device's initial connection retry cannot race the pairing command.
+The identity fixture explicitly makes accepted sockets blocking before timed
+HTTP reads; macOS can inherit the listener's nonblocking mode and otherwise
+drop a request whose body arrives separately. A fragmented-request regression
+fails before the fix and verifies a complete device-authorization response.
+
+2026-09-05 — **Document installations, account profiles and local discovery.**
+The architecture now distinguishes the installation supervisor from each
+profile's complete device identity and runtime, describes split configuration
+and UUID paths, and gives third-party clients the two-connection gRPC discovery
+contract. The service map places lifecycle and trust administration solely on
+the front door and describes identical agent APIs for local and paired callers.
+The user and protocol guides explain per-profile pairing and account behavior;
+the debugging guide distinguishes profile reports from shared installation log
+tails. The isolation scope explicitly excludes sandboxing code under the same
+OS user. Documentation checks verify the scope statement and removal of the
+obsolete administration exception.
+
+2026-09-05 — **Reconnect SSH peers to their immutable profile.**
+SSH pairing exchanges the selected profile UUID alongside its device identity
+and persists it with the SSH destination. Relay launches pass that UUID as a
+separate `--profile` argument, so a rename or a changed remote default cannot
+retarget the connection. Peer listings include the stored profile UUID. Debug
+builds accept `AMUX_SSH` for an offline transport fixture; release builds use SSH.
+The real CLI regression pairs, renames the remote profile, changes both remote
+selection defaults, restarts the caller and checks the original fleet through
+the persisted route. The opt-in cross-host attachment harness now writes split
+installation and UUID profile configurations with short socket paths.
+
+2026-09-05 — **Pin managed MCP and hooks to their launching profile.**
+Claude and Codex MCP launches require an explicit profile configuration and
+carry that path alongside the exact socket. MCP connects directly to that
+socket without reading or updating the CLI's last-used selection. Managed
+Claude hooks forward to their session socket before loading configuration,
+so unrelated or missing ambient config cannot redirect or block delivery.
+The real CLI regression runs two profiles per installation with matching
+agent IDs, a conflicting ambient configuration and last-used selection, and
+checks isolated status changes, hook payloads and fail-closed launch errors.
+
+2026-09-05 — **Exercise account profiles through the real CLI and public API.**
+The e2e identity fixture auto-approves Alice and Bob through device authorization,
+requires profile and email scopes, rotates single-use refresh tokens, and
+serves account-specific userinfo and relay claims. Fixture setup logs in through
+the CLI instead of seeding credentials. An independent proto-generated tonic
+client discovers profile sockets at the front door and lists isolated fleets.
+New transcripts cover login labels, lifecycle and deletion confirmation, two
+simultaneous profile sessions, agent process death on server stop, and a fresh
+layout rendered from the worktree template and generator. The runner captures
+actual commands and output and verifies interactive command exit codes.
+
+2026-09-05 — **Reserve lifecycle administration for installation owners.**
+Shutdown, suspend and resume leave ClientService and its generated clients.
+Profile sockets and paired tunnels expose no lifecycle or trust administration;
+wire probes require UNIMPLEMENTED and then verify pairing state, trust,
+inventory and a live terminal session survive. Independent front-door callers
+can select separate profiles without retargeting either client. Shutdown and
+suspend fixtures now use owned installations or front-door administration,
+including live provider fixtures with isolated split configuration. The unused
+service-to-server lifecycle channel is removed; standalone server runners wait
+for a process interrupt and embedded guards retain their owned teardown.
+CLI startup tests first stop the installation that init starts, and the
+suspension test verifies its agent returns after resume.
+
+2026-09-05 — **Move trust administration off profile connections.**
+The profile ClientService no longer serves pairing windows, peer inspection,
+pairing commits or revocation. Generated clients and descriptors drop those
+nine methods, and the local-connection metadata exception is removed.
+Installation owners use a separate in-process ProfileAdmin handle; the front
+door delegates to the same handlers. Pairing fixtures use owner handles while
+agent clients keep their ordinary service. A spec probes every removed trust
+method through a profile socket and a paired tunnel, requiring UNIMPLEMENTED
+and verifying the pairing window, trust, inventory and terminal session remain
+intact. Shutdown, suspend and resume remain available on ClientService.
+
+2026-09-05 — **Keep profile host inventory consistent for every caller.**
+ClientService lists and streams the local host and trusted peers, including
+trusted devices that are offline. Pairing candidates are available through
+the installation front door; the old ListHosts scope is removed from the
+protocol and generated clients. Host subscriptions track delivered IDs so
+revoking trust removes an existing entry without disclosing arrivals or
+departures of untrusted devices. Tests replace the old local-only inventory
+expectations with identical local, remote and metadata-free results, and the
+presence spec checks front-door discovery beside a profile socket and a
+paired tunnel.
+
+2026-09-05 — **Keep CLI trust administration with the selected profile.**
+Pairing windows, cloud pairing, peer inspection and unpairing now use a
+front-door client pinned to a profile UUID. Direct PIN and SSH identity
+exchanges store trust through that same administration client, including the
+hidden SSH receiver. Profile diagnostics use the front door too. The CLI no
+longer owns a credential refresher or carries a ClientService lifecycle
+fallback. Update reads the installation manifest URL, suspends every profile,
+shuts down before replacement, then restarts and resumes through the front
+door; replacement failure attempts to restore the previous server. Keymap
+commands use the installation's configured directory and work without any
+profiles or a running daemon. Tests exercise real-binary direct pairing,
+profile-specific SSH reception, independent trust and pairing windows, and
+shared keymap installation and removal. Keymap unit tests now accept the
+configured directory directly and keep uninstalled inputs outside it, so
+validation sees only installed overrides.
+
+2026-09-05 — **Select and administer profiles through the front door.**
+The CLI resolves a global `--profile` label or UUID from the installation
+before connecting to the returned ClientService socket. Explicit profile
+configurations retain their device selection; default invocations remember
+successful selections by UUID, including across renames. Duplicate labels show
+distinguishing UUID suffixes and ambiguous selectors list candidates. Fresh
+`amux init` writes installation preferences and creates an unbound profile,
+asking only about keep-awake. Login stages its token in memory for the daemon,
+uses account identity to choose a profile unless explicitly targeted, and asks
+before adopting retained local state. Logout and profile create, delete, rename,
+pause and resume use the front door and report identity and connection status.
+Deletion requires confirmation or `--yes`. Real-binary tests exercise fresh
+initialization, account labels from an offline identity server, local identity
+surviving logout, lifecycle commands and independent selections. A gRPC test
+covers adoption confirmation and retrying a single-use staged token.
+
+2026-09-05 — **Boot the desktop daemon as an installation.**
+Daemon startup loads installation preferences through the selected profile file,
+starts every registered profile, and serves administration on the front door.
+`amux profiles` probes that front door; start, stop and internal suspend/resume
+use it too. Shutdown replies drain before connections close, all profile sockets
+are removed, and the installation root is released before restart. One sleep
+assertion covers the daemon, and setup writes sleep choices to the installation.
+Worktree and e2e generators now create split YAML and UUID-v5 profiles with
+isolated state and data; AMUX_CONFIG selects the worktree profile through an
+alias. The e2e recipe reuses workspace-built binaries instead of rebuilding
+separate package configurations. Real CLI tests cover startup, probing, stop,
+restart and rejected path disagreement; the MCP fixture retains its isolation
+assertions using the new files.
+
+2026-09-05 — **Remove the cloud-mode preference.**
+Cloud attachment is controlled by profile intent and credentials, with no
+`enable_cloud_mode` field in config, setup or runtime options. Standalone runtime
+builders attach when supplied credentials; installations retain their independent
+bind, pause, logout and resume rules. Local init now handles identity and sleep
+preferences without starting authentication or deleting credentials on reset.
+Preparing a pairing QR no longer depends on a preference flag; connecting still
+requires a reachable cloud peer. Relay TCP requirements are checked by relay
+startup instead of shared config validation. Test fixtures and worktree config
+stop writing the removed key; focused tests cover its rejection, credential-free
+local operation and relay validation.
+
+2026-09-05 — **Separate installation preferences from profile storage.**
+InstallationConfig and ProfileConfig now have strict, separate YAML shapes;
+load_profile_config resolves both files, UUID identity and paths relative to each
+file. Installation::from_config opens profiles with shared preferences, and the
+supervisor writes only per-profile settings into their config files. Path
+mismatches against registry allocation fail before any runtime starts with a
+structured ConfigError::Disagreement. Profile sockets now live directly beneath
+profiles as <UUID>.sock; their shorter adjacent Codex sockets stay in the same
+private directory. Tests cover loading, unknown fields, missing files, path
+mismatch, real Unix gRPC discovery and restart. The daemon CLI and config generators
+still need to adopt the new loader.
+
+2026-09-05 — **Suspend and recover agents across an installation.**
+Installation-wide suspend and resume now serialize against profile lifecycle and
+freeze agent creation, rename, deletion and ordinary resume while an update is
+pending. Every profile saves its active sessions before any agent stops; an
+installation journal retains those snapshots until the entire resume completes.
+Preparation failures leave live sessions running, older parked records remain
+parked, and reopening a pending update waits for explicit resume. Recovery skips
+running identities before constructing sessions and can restore a profile whose
+saved file was consumed before an interrupted resume. The front door now serves
+both operations with replayable per-profile and per-agent results. Six profile
+specs cover preparation refusal, admission races, concurrent calls, older records,
+restart and interrupted cleanup; the gRPC test covers two profiles and replay
+across connections.
+
+2026-09-05 — **Preserve previously suspended agents during preparation.**
+Preparing live agents now retains older suspended records, replaces stale copies
+of active identities, and reports only the newly prepared count. Preparation
+serializes with resume and refuses unreadable retained state instead of replacing
+it. Suspended-state replacement and removal sync their directory before reporting
+success. Tests cover repeated preparation, preservation of older records, and
+read/write failures leaving live agents registered and saved bytes intact.
+
+2026-09-05 — **Expose installation administration through a separate gRPC front door.**
+ProfileService lists and watches profiles, binds accounts, runs profile lifecycle
+operations and directs pairing and trust administration to the named device.
+InstallationService exposes installation information, diagnostics and shutdown.
+Both run in process and on a private Unix socket that serves no ClientService;
+a plain client discovers the profile socket and connects there for agent calls.
+Retries across connections retain their original result, including pairing
+secrets, and accepted mutations continue after a caller disconnects. Watches
+emit a snapshot boundary, ordered changes and an explicit resubscribe error on
+lag. Tests cover revisions, unknown/deleted ids, binding labels and refusals,
+pairing isolation, shutdown, discovery and socket ownership. Installation-wide
+suspend and resume have wire contracts but await their transaction coordinator.
+
+2026-09-05 — **Keep blocked agent input independent of profile lifecycle.**
+Profile storage work now takes shared access while lifecycle operations and trust
+commits remain exclusive. Input releases its guard after attachment preparation
+and before PTY or provider delivery; a slow agent cannot hold up another agent,
+a Diff, pause, logout, deletion or shutdown. Diff keeps its shared guard until
+completion so deletion still drains accepted artifact writes. Creation and resume
+release the profile gate before startup, recheck closure before preparing storage,
+and register sessions atomically with host shutdown. Resume attempts remain
+serialized per host, and cannot rewrite suspended state after profile closure.
+Regression tests hold a production echo PTY queue full while other calls finish,
+and close profiles during create/resume preparation without resurrecting state.
+
+2026-09-05 — **Prove independent profile lifecycle and drain artifact work before deletion.**
+Lifecycle specs exercise logout, persistent pause, repeated resume, independent
+authentication/subscription/version failures, ordered directory watches and full
+client teardown against production installations. Logout and pause preserve local
+sessions, trust and artifacts while other profiles keep their original cloud
+connections. Deletion now serializes artifact access, pinned input and session
+replay with lifecycle operations, including reads that lazily create storage.
+An accepted diff must finish before deletion removes its directory; retained
+pairing and artifact service work and a held credential refresh cannot recreate
+the deleted device. The specs check already-open Unix, in-process, LAN and cloud
+streams and continued service from another profile.
+
+2026-09-05 — **Prove binding against live profile devices.**
+The profile binding specs now exercise production login, logout and credential
+refresh with a real identity fixture, relay and paired peer. They verify account
+refusals preserve exact credential bytes and an open cloud session, concurrent
+logins leave one device and link, swapped subjects cannot reconnect, logout wins
+against a held refresh, reservations and trust survive reopen, and pairing or
+agent creation during login requires adoption confirmation. Testnet can trigger
+the installed credential provider and inspect cloud connection identities without
+exposing tokens; its echo sessions also support local clients.
+
+2026-09-05 — **Exercise account isolation through production installations.**
+TestNet now builds named installations and profiles with real identity-server
+binding, per-account relay authentication, profile sockets and production runtime
+ownership. Profile handles reuse the daemon assertion surface; persistent fixtures
+reopen the same root and expose lifecycle operations and ordered watches.
+The isolation chapter proves key rejection across profiles, separate tenant
+presence, claims, routes, candidates and tunnel frames, independent pairing
+secrets and attempt budgets, exclusive roots and sockets, and continued service
+after one profile fails to start. Same-tenant frame probes and explicit LAN
+pairing provide positive controls. Cloud fixtures override only the relay
+transport; credential validation and connector lifecycle remain production paths.
+
+2026-09-05 — **Bind profiles atomically to stable cloud accounts.**
+Login validates identity-server userinfo, preserves explicit targets, adopts the
+sole pristine profile or creates a new one, and refuses account reassignment.
+The registry atomically selects a private credential version while failed or
+interrupted staging preserves the accepted credential. Confirmation retries reuse
+rotated staged tokens. Profile credential stores serialize refresh, verify the
+subject, and reject late results after logout or deletion. Logout keeps the
+account reservation and local device, including when credentials come from an
+embedding host. Tests cover concurrent login and refresh, staged-write failure,
+confirmation during concurrent state changes, subject mismatch, cancellation,
+restart, and credential-file permissions.
+
+2026-09-05 — **Supervise independent profile lifecycles and ordered status watches.**
+The installation starts each profile independently, keeps runtimes alive without
+clients, and serializes lifecycle operations with agent mutations and trust
+commits. Completed operations replay their original results; cancelling a caller
+does not cancel its accepted mutation. Watches deliver a snapshot followed by
+ordered changes, removal events, and an explicit terminal overflow indication.
+Deletion records durable intent before teardown, closes accepted gRPC connections,
+and leaves failed cleanup unavailable and retryable across restart. Tests cover
+replayed operations, stale revisions, startup failure, persistent pause, independent
+cloud preparation, late startup and pairing, and clients surviving other profiles.
+
+2026-09-05 — **Add exclusive installation storage and UUID profile paths.**
+An installation registry holds its root lock until drop, persists profile
+records with atomic file replacement, and rejects stale per-profile revisions.
+Runtime paths now share an allocator that creates private UUID directories,
+rejects symlink redirection, and checks socket lengths before creating storage.
+Filesystem tests cover restart persistence, failed-write cleanup, independent
+profile paths and permissions, and the platform socket boundary.
+
+2026-09-05 — **Retain required-update notices during local operation.**
+The runtime status adapter clears required-update markers only after a cloud
+connection succeeds. Startup and cloud teardown preserve both the notice and
+its dismissal while continuing to clear subscription notices. Captured-status
+and file-backed reporter tests cover these transitions through runtime startup
+and a successful shutdown reply.
+
+2026-09-05 — **Keep the profile listener tied to runtime ownership.**
+Dropping a runtime aborts its separately owned Unix accept task, preserving
+the cleanup previously supplied by the service task list. A regression test
+waits for task termination and confirms the listener no longer accepts.
+
+2026-09-05 — **Preserve configured cloud mode in profile services.**
+Runtime options now carry the cloud-mode flag independently of credentials,
+including its unset pre-init value. Testnet sets the flag explicitly. Tests
+verify configuration round-trips and a daemon with credentials but cloud mode
+disabled reports that state in its debug dump and refuses QR pairing.
+
+2026-09-05 — **Release the daemon socket before acknowledging shutdown.**
+Profile quiescence now closes its Unix accept loop and removes its owned socket
+before replying to shutdown or suspend, keeping accepted connections alive
+long enough to deliver the reply. Daemon RPC tests prove immediate reconnect
+fails, a fresh bind succeeds, and final teardown preserves the replacement.
+
+2026-09-05 — **Publish profile connectivity independently of clients.**
+Each runtime retains an observed-status watch channel fed by startup and
+cloud connection outcomes, including authentication, subscription, update,
+and retry states. Existing marker reporters adapt those observations, with
+minimum-version details preserved. Regression tests exercise real cloud API
+and relay failures, client-independent service and link lifetime, failed
+startup status, and the embedded owner's cooperative teardown on final drop.
+
+2026-09-05 — **Run specification daemons through the profile runtime.**
+Testnet now uses the same identity loading, local agent host, service startup,
+cloud ownership, and cooperative shutdown as production. Its clock and
+prebound transport fixtures keep tests deterministic. Normal stop and restart
+no longer sever sockets to make peers notice shutdown; regression tests cover
+cloud and direct link cleanup while other profiles keep routing. In-process
+spec clients share the runtime's managed server connection so teardown closes
+them too.
+
+2026-09-04 — **Built the profile test substrate and fixed shared roots.** Unix
+socket startup now refuses to replace a live listener or any non-socket path,
+cloud connector stop waits for link, tunnel, route, and relay-claim cleanup,
+and viewing-host artifact caches live under the configured device data. A
+debug-only identity fixture exercises the production device and rotating
+refresh flows with userinfo, while a feature-independent relay and dedicated
+embedding recipe keep no-local-agents integration tests isolated from the
+workspace build. Discarding a connector's stop handle preserves cloud retry
+and subscription backoff, while an explicit stop still interrupts either
+wait immediately. Stop also cancels credential and connection-detail
+preparation, so a stalled cloud API request cannot block profile teardown;
+an established routing connector still shuts down through link cleanup.
 
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by
@@ -8866,3 +9380,46 @@ named state carries the request the chord issues through to its answer, so
 the footer states how old the numbers are instead of calling them an
 anonymous snapshot. A test renders that state and fails if the overlay
 ever goes back to painting its waiting line.
+2026-09-05 — **A panic after switching accounts reports the account on
+screen.** The process-global panic-report slot held the recorder and report
+directory of whichever runtime installed it, so once the shell rebound to
+another profile a panic still filed its bundle under the account the person had
+left, with a recorder that had stopped seeing anything. Switching now carries
+the slot across when the retiring runtime was the one that installed it —
+matched by recorder identity, so a host that keeps its own panic hook does not
+acquire one by switching — and clears it when the new selection has nowhere to
+write rather than leaving the retired directory registered.
+
+2026-09-05 — **Document the installation host API and account boundaries.**
+The architecture now walks an app author through opening durable storage,
+supplying per-profile credentials, obtaining clients and pairing handles, and
+awaiting host lifecycle transitions and shutdown. The user guide describes
+account switching and installation-wide stop and update. Debugging explains
+where switched-profile reports go and why a completed update journal can remain
+on disk. Trust and relay wording now distinguishes profile deletion, authorized
+pairing, paired forwarding peers and the cloud's ability to disrupt delivery.
+Checked the four documents against the implementation, both spec suites,
+embedding tests, panic-report regressions and seven real-process CLI scenarios,
+including third-party discovery and updating two profiles.
+
+2026-09-05 — **Debug captures follow the selected account.** Switching the
+fleet now replaces the shell's daemon-dump source and report destination along
+with the runtime. Ctrl+G after Personal → Work therefore captures Work's
+diagnostics and writes beneath Work's data directory, including after leaving
+and re-entering the fleet. A shell regression exercises the switch effect,
+capture key and report prompt through to the written bundle and its replay.
+The existing automatic and panic-report switching behavior is preserved.
+
+2026-09-05 — **Keep reproducible profile screenshots with the docs.** The
+profile switcher, Personal fleet and Work fleet now have committed amux-shot
+PNGs, a SHA-256 manifest and regeneration instructions under
+`docs/screenshots/profiles`. Fresh production renders match the existing
+captures byte for byte; the two fleets show disjoint agent lists.
+
+2026-09-05 — **Replay saved reports without starting an installation.**
+An explicit report path now reaches the replay engine before profile discovery,
+so a saved bundle works without installation configuration and leaves a stopped
+daemon stopped. Bare report names still use the selected profile's reports
+directory. CLI regressions compare the replayed frame with the saved frame,
+cover absent configuration and stopped installations, and verify that a
+listening installation socket receives no connection during explicit replay.

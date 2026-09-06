@@ -3,39 +3,48 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use amux::{Config, Server};
+use amux::installation::FrontDoorClient;
+use amux::{Installation, InstallationConfig, OperationId};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// Read the real command's stdout, then cancel through the same admin API a
 /// second terminal uses. The printed deadline belongs to the generated PIN.
 #[tokio::test]
 async fn pairing_cli_prints_pin_expiry() {
-    let root = tempfile::tempdir().unwrap();
-    let config_path = root.path().join("config.yaml");
-    let config = Config {
+    let root = tempfile::Builder::new()
+        .prefix("pair-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let installation_path = root.path().join("installation.yaml");
+    let config = InstallationConfig {
+        root: root.path().to_owned(),
         host_name: "pairing-output".into(),
-        socket_path: root.path().join("amux.sock"),
-        state_path: root.path().join("state.yaml"),
-        data_dir: root.path().join("data"),
-        enable_cloud_mode: Some(false),
+        front_door_socket: root.path().join("amux.sock"),
+        keymaps_dir: root.path().join("keymaps"),
         prevent_idle_sleep: Some(false),
-        path: Some(config_path.clone()),
-        ..Config::default()
+        path: Some(installation_path.clone()),
+        ..InstallationConfig::default()
     };
-    std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
-    let server_config = config.clone();
-    let server = tokio::spawn(async move {
-        Server::builder().config(server_config).run().await.unwrap();
-    });
-    let client = tokio::time::timeout(Duration::from_secs(10), async {
+    std::fs::write(&installation_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+    let installation = Installation::from_config(config.clone()).await.unwrap();
+    let profile = installation.create(OperationId::new(), None).await.unwrap();
+    let config_path = root
+        .path()
+        .join("profiles")
+        .join(profile.record.id.to_string())
+        .join("config.yaml");
+    let client = installation.admin(profile.record.id).await.unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(installation.serve(async move {
+        let _ = stopped.await;
+    }));
+    tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            if let Ok(client) = Server::builder()
-                .config(config.clone())
-                .daemon()
-                .open()
+            if FrontDoorClient::connect(&config.front_door_socket)
                 .await
+                .is_ok()
             {
-                break client;
+                break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -83,9 +92,10 @@ async fn pairing_cli_prints_pin_expiry() {
             .unwrap()
             .success()
     );
-    client.shutdown().await.unwrap();
+    stop.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(5), server)
         .await
+        .unwrap()
         .unwrap()
         .unwrap();
 }

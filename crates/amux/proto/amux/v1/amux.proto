@@ -2,7 +2,7 @@
 //
 // This file is the canonical protobuf source. Generated Rust types are
 // committed under crates/amux/src/protocol/generated/ — regenerate with
-// `cargo run -p xtask -- codegen` after editing any proto here (CI fails on
+// `wt run protobuf` after editing any proto here (CI fails on
 // stale output) — and must be wrapped in domain types before being used by
 // application code.
 //
@@ -386,15 +386,7 @@ message PairingIdentity {
   int64 expires_at_unix_ms = 4;
 }
 
-message ListHostsRequest {
-  enum Scope {
-    SCOPE_UNSPECIFIED = 0;
-    ALL = 1;
-    PAIRING_CANDIDATES = 2;
-  }
-
-  Scope scope = 1;
-}
+message ListHostsRequest {}
 message ListHostsResponse {
   repeated HostEntry hosts = 1;
 }
@@ -693,6 +685,168 @@ message InternalError {
 // Client service
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Installation front door (local Unix socket and in-process only)
+// ---------------------------------------------------------------------------
+
+service ProfileService {
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
+  // Snapshot, SnapshotComplete, then ordered events; ABORTED requires a fresh watch.
+  rpc WatchProfiles(WatchProfilesRequest) returns (stream WatchProfilesResponse);
+  rpc CreateProfile(CreateProfileRequest) returns (ProfileInfo);
+  rpc BindProfile(BindProfileRequest) returns (ProfileInfo);
+  rpc LogoutProfile(ProfileOperation) returns (ProfileInfo);
+  rpc PauseProfile(ProfileOperation) returns (ProfileInfo);
+  rpc ResumeProfile(ProfileOperation) returns (ProfileInfo);
+  rpc RenameProfile(RenameProfileRequest) returns (ProfileInfo);
+  rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileResponse);
+  rpc StartPairing(ProfileStartPairingRequest) returns (StartPairingResponse);
+  rpc GetPairingStatus(ProfilePairingStatusRequest) returns (GetPairingStatusResponse);
+  rpc CancelPairing(ProfileOperation) returns (CancelPairingResponse);
+  rpc PairPeer(ProfilePairPeerRequest) returns (PairPeerResponse);
+  rpc PairPinCloudPeer(ProfilePairPinCloudPeerRequest) returns (PairPinCloudPeerResponse);
+  rpc PairQrCloudPeer(ProfilePairQrCloudPeerRequest) returns (PairQrCloudPeerResponse);
+  rpc BeginPair(ProfileBeginPairRequest) returns (PendingPairResponse);
+  rpc ConfirmPair(ProfilePendingPairRequest) returns (GetPeerResponse);
+  rpc AbandonPair(ProfilePendingPairRequest) returns (PairingAbandoned);
+  rpc GetDeviceIdentity(ProfileRequest) returns (DeviceIdentity);
+  rpc ListPeers(ProfileRequest) returns (ListPeersResponse);
+  rpc GetPeer(ProfileGetPeerRequest) returns (GetPeerResponse);
+  rpc Unpair(ProfileUnpairRequest) returns (UnpairResponse);
+  rpc ListPairingCandidates(ProfileRequest) returns (ListPairingCandidatesResponse);
+  rpc DebugProfile(ProfileDebugRequest) returns (DebugResponse);
+}
+
+service InstallationService {
+  rpc GetInfo(GetInfoRequest) returns (InstallationInfo);
+  rpc SuspendAll(SuspendAllRequest) returns (SuspendAllResponse);
+  rpc ResumeAll(ResumeAllRequest) returns (ResumeAllResponse);
+  rpc Shutdown(InstallationShutdownRequest) returns (ShutdownResponse);
+  rpc DebugInstallation(DebugRequest) returns (DebugResponse);
+}
+
+enum Intent {
+  INTENT_UNSPECIFIED = 0;
+  INTENT_UNBOUND = 1;
+  INTENT_BOUND = 2;
+  INTENT_LOGGED_OUT = 3;
+  INTENT_PAUSED = 4;
+}
+enum Observed {
+  OBSERVED_UNSPECIFIED = 0;
+  OBSERVED_LOCAL = 1;
+  OBSERVED_CONNECTING = 2;
+  OBSERVED_CONNECTED = 3;
+  OBSERVED_RETRYING = 4;
+  OBSERVED_AUTHENTICATION_REQUIRED = 5;
+  OBSERVED_SUBSCRIPTION_REQUIRED = 6;
+  OBSERVED_UPDATE_REQUIRED = 7;
+  OBSERVED_STARTUP_FAILED = 8;
+}
+message ProfileInfo {
+  string id = 1;
+  string label = 2;
+  string email = 3;
+  string account_name = 4;
+  string socket_path = 5;
+  string host_id = 6;
+  Intent intent = 7;
+  Observed observed = 8;
+  uint64 revision = 9;
+  string startup_error = 10;
+  bool available = 11;
+  optional string minimum_version = 12;
+}
+message ListProfilesRequest {}
+message ListProfilesResponse { repeated ProfileInfo profiles = 1; }
+message WatchProfilesRequest {}
+message WatchProfilesResponse {
+  uint64 sequence = 1;
+  oneof event {
+    ProfileInfo upserted = 2;
+    string removed_id = 3;
+    SnapshotComplete snapshot_complete = 4;
+  }
+}
+message CreateProfileRequest { string operation_id = 1; optional string label = 2; }
+message ProfileRequest { string profile_id = 1; }
+message ProfileOperation { string operation_id = 1; string profile_id = 2; }
+message BindProfileRequest {
+  string operation_id = 1;
+  optional string profile_id = 2;
+  string cloud_url = 3;
+  string staged_refresh_token = 4;
+  bool adopt_non_pristine = 5;
+}
+message RenameProfileRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  uint64 expected_revision = 3;
+  optional string override_name = 4;
+}
+message DeleteProfileRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  uint64 confirm_revision = 3;
+}
+message DeleteProfileResponse {}
+message ProfileStartPairingRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  StartPairingRequest pairing = 3;
+}
+message ProfilePairingStatusRequest { string profile_id = 1; }
+message ProfilePairPeerRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  PairPeerRequest pairing = 3;
+}
+message ProfilePairPinCloudPeerRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  PairPinCloudPeerRequest pairing = 3;
+}
+message ProfilePairQrCloudPeerRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  PairQrCloudPeerRequest pairing = 3;
+}
+message ProfileGetPeerRequest { string profile_id = 1; PeerRef peer = 2; }
+message ProfileUnpairRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  PeerRef peer = 3;
+  string reason = 4;
+}
+message ListPairingCandidatesResponse { repeated HostEntry hosts = 1; }
+message ProfileDebugRequest { string profile_id = 1; DebugRequest debug = 2; }
+message GetInfoRequest {}
+message InstallationInfo {
+  string version = 1;
+  string root = 2;
+  string front_door_path = 3;
+}
+message SuspendAllRequest { string operation_id = 1; SuspendReason reason = 2; }
+message ProfileSuspendResult { string profile_id = 1; uint64 suspended_count = 2; repeated string agent_ids = 3; }
+message SuspendAllResponse { repeated ProfileSuspendResult profiles = 1; }
+message ResumeAllRequest { string operation_id = 1; }
+enum AgentResumeStatus {
+  AGENT_RESUME_STATUS_UNSPECIFIED = 0;
+  AGENT_RESUME_STATUS_RESUMED = 1;
+  AGENT_RESUME_STATUS_ALREADY_RUNNING = 2;
+  AGENT_RESUME_STATUS_FAILED = 3;
+}
+message AgentResumeResult { string agent_id = 1; AgentResumeStatus status = 2; }
+message ProfileResumeResult {
+  string profile_id = 1;
+  uint64 resumed_count = 2;
+  uint64 failed_count = 3;
+  repeated AgentResumeResult agents = 4;
+  optional string error = 5;
+}
+message ResumeAllResponse { repeated ProfileResumeResult profiles = 1; }
+message InstallationShutdownRequest { string operation_id = 1; }
+
 // New architecture client-facing service.
 service ClientService {
   rpc ListHosts(ListHostsRequest) returns (ListHostsResponse);
@@ -714,22 +868,6 @@ service ClientService {
   rpc ListRepositories(ClientListRepositoriesRequest) returns (ListRepositoriesResponse);
 
   rpc Debug(DebugRequest) returns (DebugResponse);
-  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
-  rpc Suspend(SuspendRequest) returns (SuspendResponse);
-  rpc Resume(ResumeRequest) returns (ResumeResponse);
-  rpc StartPairing(StartPairingRequest) returns (StartPairingResponse);
-  rpc GetPairingStatus(GetPairingStatusRequest) returns (GetPairingStatusResponse);
-  rpc CancelPairing(CancelPairingRequest) returns (CancelPairingResponse);
-  rpc PairPeer(PairPeerRequest) returns (PairPeerResponse);
-  rpc PairPinCloudPeer(PairPinCloudPeerRequest) returns (PairPinCloudPeerResponse);
-  rpc PairQrCloudPeer(PairQrCloudPeerRequest) returns (PairQrCloudPeerResponse);
-  rpc BeginPair(BeginPairRequest) returns (PendingPairResponse);
-  rpc ConfirmPair(PendingPairRequest) returns (GetPeerResponse);
-  rpc AbandonPair(PendingPairRequest) returns (PairingAbandoned);
-  rpc GetDeviceIdentity(GetDeviceIdentityRequest) returns (DeviceIdentity);
-  rpc ListPeers(ListPeersRequest) returns (ListPeersResponse);
-  rpc GetPeer(GetPeerRequest) returns (GetPeerResponse);
-  rpc Unpair(UnpairRequest) returns (UnpairResponse);
 
   rpc HandleHook(HandleHookRequest) returns (HandleHookResponse);
 }
@@ -866,11 +1004,22 @@ message HandleHookRequest {
 
 message HandleHookResponse {}
 
+// SSH bootstrap includes the local selector needed for subsequent stdio relays.
+message SshPairingIdentity {
+  PairingIdentity identity = 1;
+  string profile_id = 2;
+}
+
+message SshTarget {
+  string target = 1;
+  string profile_id = 2;
+}
+
 message PairPeerRequest {
   PairingIdentity peer = 1;
 
   oneof reachability {
-    string ssh_target = 2;
+    SshTarget ssh_target = 2;
     string direct_tcp_addr = 3;
   }
 }
@@ -923,7 +1072,7 @@ message PeerRef {
 message PeerReachability {
   oneof kind {
     Empty cloud = 1;
-    string ssh_target = 2;
+    SshTarget ssh_target = 2;
     string direct_tcp_addr = 3;
   }
 }
@@ -978,11 +1127,7 @@ message DebugResponse {
   string dump = 1;
 }
 
-message ShutdownRequest {}
 message ShutdownResponse {}
-message SuspendRequest {
-  SuspendReason reason = 1;
-}
 
 enum SuspendReason {
   SUSPEND_REASON_UNSPECIFIED = 0;
@@ -990,14 +1135,6 @@ enum SuspendReason {
   SUSPEND_REASON_UPDATE = 2;
 }
 
-message SuspendResponse {
-  uint64 suspended_count = 1;
-}
-message ResumeRequest {}
-message ResumeResponse {
-  uint64 resumed_count = 1;
-  uint64 failed_count = 2;
-}
 message StartPairingRequest {
   enum Mode {
     MODE_UNSPECIFIED = 0;
@@ -1057,4 +1194,15 @@ message ProjectEntry {
   string path = 1;
   string name = 2;
   optional int64 last_used_unix_ms = 3;
+}
+
+message ProfileBeginPairRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  BeginPairRequest pairing = 3;
+}
+message ProfilePendingPairRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  PendingPairRequest pairing = 3;
 }

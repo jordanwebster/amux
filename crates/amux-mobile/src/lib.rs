@@ -483,7 +483,7 @@ async fn run(
                 #[cfg(feature = "debug-tools")]
                 Some(Control::ReportSnapshot(reply)) => {
                     let snapshot = runtime.ui.recorder_snapshot();
-                    let client = runtime.client.clone();
+                    let client = runtime.embedded.client();
                     tokio::spawn(async move {
                         let (daemon, reason) = match tokio::time::timeout(Duration::from_secs(3), client.debug_dump(amux::DebugFormat::Json)).await {
                             Ok(Ok(dump)) => (Some(dump), None),
@@ -567,8 +567,7 @@ async fn run(
     drop(pending);
     // Dropping the executor after this future cancels and drains all owned
     // transport tasks, including in-flight connection and token work.
-    let _ = tokio::time::timeout(Duration::from_secs(1), runtime.client.shutdown()).await;
-    drop(runtime);
+    let _ = tokio::time::timeout(Duration::from_secs(1), runtime.embedded.shutdown()).await;
     Ok(())
 }
 

@@ -5,6 +5,7 @@ use amux_ui::{Command, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+use crate::switcher::SwitcherOutcome;
 use crate::view::{Mode, Notice, OpenMode, UiAction, ViewState, VisibleRow, visible_rows};
 
 pub fn handle_key(
@@ -54,10 +55,45 @@ pub fn handle_key(
     // Any other key disarms the quit guard.
     view.quit_guard.disarm();
 
+    // `<leader> p` opens the profile switcher — the one chord the fleet
+    // has, matching the chat's leader chords so the leader means the same
+    // thing on both screens. An armed leader followed by anything else
+    // falls through to the ordinary handling of that key, exactly as the
+    // chat's does. The switcher itself owns every key while it is open, so
+    // the chord cannot re-enter it.
+    if !matches!(view.mode, Mode::Switcher(_)) {
+        let pending_leader = std::mem::take(&mut view.pending_leader);
+        if pending_leader {
+            if key.code == KeyCode::Char('p') {
+                return Some(UiAction::ListProfiles);
+            }
+        } else if key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char(view.leader)
+        {
+            view.pending_leader = true;
+            return None;
+        }
+    }
+
     match view.mode.clone() {
         Mode::Help => {
             view.mode = Mode::Normal;
             None
+        }
+        Mode::Switcher(mut state) => {
+            let outcome = state.handle_key(key);
+            view.mode = Mode::Switcher(state);
+            match outcome {
+                Some(SwitcherOutcome::Switch(entry)) => {
+                    view.mode = Mode::Normal;
+                    Some(UiAction::SwitchProfile(entry))
+                }
+                Some(SwitcherOutcome::Close) => {
+                    view.mode = Mode::Normal;
+                    None
+                }
+                None => None,
+            }
         }
         Mode::ConfirmDelete { agent, .. } => {
             match key.code {
@@ -314,6 +350,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use super::*;
+    use crate::switcher::SwitcherState;
     use crate::view::{Mode, UiAction, ViewState};
 
     fn ctrl_c() -> KeyEvent {
@@ -341,6 +378,109 @@ mod tests {
             let second = handle_key(&mut view, &model, ctrl_c(), 10, t(2));
             assert!(matches!(second, Some(UiAction::Quit)), "second quits");
         }
+    }
+
+    fn leader(view: &ViewState) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(view.leader), KeyModifiers::CONTROL)
+    }
+
+    fn plain(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn open_switcher(view: &mut ViewState, model: &Model) {
+        let chord = leader(view);
+        handle_key(view, model, chord, 10, t(0));
+        let action = handle_key(view, model, plain(KeyCode::Char('p')), 10, t(0));
+        assert_eq!(action, Some(UiAction::ListProfiles));
+        // The shell answers the listing; that path is the chrome's.
+        view.mode = Mode::Switcher(SwitcherState::open(
+            vec![switcher_entry("Personal", 1), switcher_entry("Work", 2)],
+            None,
+        ));
+    }
+
+    fn switcher_entry(label: &str, index: u128) -> amux_ui::ProfileEntry {
+        amux_ui::ProfileEntry {
+            id: amux_ui::ProfileId(uuid::Uuid::from_u128(index)),
+            label: label.to_string(),
+            email: Some(format!("{label}@example.com")),
+            status: "connected".to_string(),
+            socket: std::path::PathBuf::from(format!("/run/amux/{index}.sock")),
+        }
+    }
+
+    /// The fleet's one leader chord. It asks the shell for the account
+    /// list rather than opening anything itself: the chrome has no front
+    /// door.
+    #[test]
+    fn the_leader_chord_asks_for_the_switcher() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        let chord = leader(&view);
+        assert_eq!(handle_key(&mut view, &model, chord, 10, t(0)), None);
+        assert!(view.pending_leader, "the leader arms rather than acting");
+        assert_eq!(
+            handle_key(&mut view, &model, plain(KeyCode::Char('p')), 10, t(0)),
+            Some(UiAction::ListProfiles)
+        );
+        assert!(!view.pending_leader, "the chord consumed the leader");
+    }
+
+    /// An armed leader followed by anything else is that other key, not a
+    /// swallowed press — the same rule the chat's leader chords follow.
+    #[test]
+    fn an_unfinished_switcher_chord_falls_through_to_the_key_pressed() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        let chord = leader(&view);
+        handle_key(&mut view, &model, chord, 10, t(0));
+        assert_eq!(
+            handle_key(&mut view, &model, plain(KeyCode::Char('q')), 10, t(0)),
+            Some(UiAction::Quit)
+        );
+    }
+
+    #[test]
+    fn the_switcher_moves_with_j_k_and_the_arrows() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        open_switcher(&mut view, &model);
+        for (key, expected) in [
+            (plain(KeyCode::Char('j')), 1),
+            (plain(KeyCode::Char('k')), 0),
+            (plain(KeyCode::Down), 1),
+            (plain(KeyCode::Up), 0),
+        ] {
+            assert_eq!(handle_key(&mut view, &model, key, 10, t(0)), None);
+            let Mode::Switcher(state) = &view.mode else {
+                panic!("the switcher stays open while moving");
+            };
+            assert_eq!(state.selected, expected);
+        }
+    }
+
+    #[test]
+    fn switcher_enter_switches_and_esc_leaves_the_account_alone() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        open_switcher(&mut view, &model);
+        handle_key(&mut view, &model, plain(KeyCode::Char('j')), 10, t(0));
+        let action = handle_key(&mut view, &model, plain(KeyCode::Enter), 10, t(0));
+        assert_eq!(
+            action,
+            Some(UiAction::SwitchProfile(switcher_entry("Work", 2))),
+            "enter hands the selected account to the shell"
+        );
+        assert_eq!(view.mode, Mode::Normal, "switching closes the overlay");
+
+        open_switcher(&mut view, &model);
+        assert_eq!(
+            handle_key(&mut view, &model, plain(KeyCode::Esc), 10, t(0)),
+            None,
+            "esc asks the shell for nothing"
+        );
+        assert_eq!(view.mode, Mode::Normal, "esc closes the overlay");
     }
 
     #[test]

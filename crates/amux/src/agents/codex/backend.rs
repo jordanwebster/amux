@@ -699,17 +699,16 @@ impl CodexBackend {
                 Value::String(mcp_launch_route.host_id().to_string()),
             ),
         ]);
-        if let Some(config_path) = mcp_launch_route.config_path() {
-            environment.insert(
-                "AMUX_CONFIG".to_string(),
-                Value::String(
-                    config_path
-                        .to_str()
-                        .context("the amux config path is not valid UTF-8")?
-                        .to_string(),
-                ),
-            );
-        }
+        let config_path = mcp_launch_route.config_path()?;
+        environment.insert(
+            "AMUX_CONFIG".to_string(),
+            Value::String(
+                config_path
+                    .to_str()
+                    .context("the amux config path is not valid UTF-8")?
+                    .to_string(),
+            ),
+        );
         let enabled_tools = agent_tools::definitions()
             .into_iter()
             .map(|tool| Value::String(tool.name.to_string()))
@@ -2324,12 +2323,22 @@ mod tests {
     }
 
     #[test]
-    fn a2a_codex_true_default_mcp_route_omits_only_amux_config() {
+    fn a2a_codex_mcp_route_always_sets_profile_config() {
         let session = session();
         let config = session.thread_config().unwrap();
         let environment = &config.config.as_ref().unwrap()["mcp_servers"]["amux"]["env"];
 
-        assert!(environment.get("AMUX_CONFIG").is_none());
+        assert_eq!(
+            environment["AMUX_CONFIG"],
+            session
+                .mcp_launch_route
+                .as_ref()
+                .unwrap()
+                .config_path()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
         assert_eq!(environment["AMUX_AGENT_ID"], session.agent_id.to_string());
         assert_eq!(
             environment["AMUX_HOST_ID"],

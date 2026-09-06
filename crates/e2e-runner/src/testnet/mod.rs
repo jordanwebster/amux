@@ -481,7 +481,7 @@ async fn apply(
         Control::Unpair { daemon, peer } => {
             let (daemon, peer) = pair(&daemon, &peer)?;
             daemon
-                .admin_client()
+                .pairing_admin()
                 .await
                 .unpair(peer.host_id(), "testnet control revocation")
                 .await?;
@@ -501,7 +501,7 @@ async fn apply(
         }
         Control::StartQrPairing { daemon: name } => {
             let mut start = daemon(&name)?
-                .admin_client()
+                .pairing_admin()
                 .await
                 .start_qr_pairing()
                 .await?;
@@ -799,7 +799,7 @@ mod tests {
         let exercise = async {
             let mut control = ControlClient::connect(address).await;
             let mut second = ControlClient::connect(address).await;
-            let observer = b.admin_client().await;
+            let observer = b.pairing_admin().await;
             async fn count(client: &mut ControlClient, name: &str) -> u64 {
                 client.ack(json!({"Connections":{"daemon":name}})).await["connections"]
                     .as_u64()
@@ -810,7 +810,8 @@ mod tests {
             assert_eq!(count(&mut second, "b").await, 1);
             assert!(TcpStream::connect(relay).await.is_err());
             assert!(
-                observer
+                b.admin_client()
+                    .await
                     .list_hosts()
                     .await
                     .unwrap()
@@ -855,7 +856,7 @@ mod tests {
             control
                 .ack(json!({"Unpair":{"daemon":"a","peer":"b"}}))
                 .await;
-            assert!(a.admin_client().await.get_peer(b.host_id()).await.is_err());
+            assert!(a.pairing_admin().await.get_peer(b.host_id()).await.is_err());
             assert!(b.lists_agents_on(&a).await.is_err());
             let pin = control
                 .ack(json!({"StartPinPairing":{"daemon":"b","ttl_secs":1}}))
@@ -891,7 +892,7 @@ mod tests {
             let qr =
                 amux::parse_qr_pairing_payload_for_cloud(&qr, &format!("http://{relay}")).unwrap();
             assert_eq!(qr.host_id, a.host_id());
-            c.admin_client()
+            c.pairing_admin()
                 .await
                 .pair_qr_cloud_peer(qr.host_id, qr.secret)
                 .await

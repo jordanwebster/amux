@@ -1,11 +1,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use amux::installation::{
+    CredentialSource, Installation, InstallationOptions, InstallationRoot, InstallationSettings,
+    Listeners, OperationId, ProfilePaths, SuspendReason,
+};
 use amux::{
     AccessToken, AuthError, Config, CredentialProvider, Server, UpdateReporter, UpdateStatus,
 };
 #[cfg(debug_assertions)]
 use amux::{AgentType, CreateAgentRequest};
+#[cfg(not(unix))]
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
@@ -33,42 +38,41 @@ impl UpdateReporter for CapturingUpdateReporter {
 
 #[tokio::test]
 async fn embedded_server_opens_client_service_client() {
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
 
-    let client = Server::builder()
-        .config(config)
-        .embedded()
-        .open()
-        .await
-        .unwrap();
+    let (installation, id) = owned_installation(&config, Listeners::InProcessOnly).await;
+    let client = installation.client(id).unwrap();
 
     let agents = client.list_agents().await.unwrap();
     assert!(agents.is_empty());
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn daemon_open_uses_local_client_service() {
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
-    let server_config = config.clone();
-    let server_task = tokio::spawn(async move {
-        Server::builder().config(server_config).run().await.unwrap();
-    });
-
+    let (installation, _) = owned_installation(&config, Listeners::Sockets).await;
+    let config = Config {
+        socket_path: installation.profiles()[0].socket_path.clone().unwrap(),
+        ..config
+    };
     let client = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             match Server::builder()
@@ -85,10 +89,11 @@ async fn daemon_open_uses_local_client_service() {
     .await
     .expect("timed out waiting for daemon client");
 
-    assert!(!client.owns_embedded_server());
     assert!(client.list_agents().await.unwrap().is_empty());
-    client.shutdown().await.unwrap();
-    server_task.await.unwrap();
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
+    expect_client_closed(&client).await;
 }
 
 #[tokio::test]
@@ -99,25 +104,26 @@ async fn embedded_server_does_not_poll_for_updates() {
     // over the cloud connection (`UpdateStatus::Required`), which its
     // `update_reporter` still receives. Here we reach a working manifest server
     // and assert the embedded client never hits it.
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let (cloud_url, manifest_task) = spawn_manifest_server("999.0.0").await;
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
         cloud_url,
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let client = Server::builder()
-        .config(config)
-        .update_reporter(Arc::new(CapturingUpdateReporter { tx }))
-        .embedded()
-        .open()
-        .await
-        .unwrap();
+    let mut options = installation_options(&config, Listeners::InProcessOnly);
+    options.settings.update_manifest_url = config.cloud_url.clone();
+    options.settings.status_reporters = amux::update::StatusReporters::Host {
+        update: Some(Arc::new(CapturingUpdateReporter { tx })),
+        subscription: None,
+    };
+    let installation = Installation::open(options).await.unwrap();
+    installation.create(OperationId::new(), None).await.unwrap();
 
     // The update poll fires immediately when spawned, so a short window with no
     // status reliably proves the embedded client never spawned one.
@@ -127,7 +133,9 @@ async fn embedded_server_does_not_poll_for_updates() {
         "embedded client unexpectedly reported update status: {result:?}"
     );
 
-    drop(client);
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
     manifest_task.abort();
 }
 
@@ -138,21 +146,17 @@ async fn embedded_server_does_not_poll_for_updates() {
     ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
 )]
 async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
 
-    let client = Server::builder()
-        .config(config)
-        .embedded()
-        .open()
-        .await
-        .unwrap();
+    let (installation, id) = owned_installation(&config, Listeners::InProcessOnly).await;
+    let client = installation.client(id).unwrap();
 
     let agent_id = Uuid::new_v4();
     client
@@ -172,7 +176,9 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
         .await
         .unwrap();
 
-    client.shutdown().await.unwrap();
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
     expect_client_closed(&client).await;
 }
 
@@ -183,22 +189,18 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
     ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
 )]
 async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let state_path = dir.path().join("state.yaml");
     let config = Config {
         state_path: state_path.clone(),
         socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(false),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
 
-    let client = Server::builder()
-        .config(config)
-        .embedded()
-        .open()
-        .await
-        .unwrap();
+    let (installation, id) = owned_installation(&config, Listeners::InProcessOnly).await;
+    let client = installation.client(id).unwrap();
 
     let agent_id = Uuid::new_v4();
     client
@@ -218,10 +220,17 @@ async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
         .await
         .unwrap();
 
-    let summary = client.suspend().await.unwrap();
-    assert_eq!(summary.suspended_count, 1);
+    let summary = installation
+        .suspend_all(OperationId::new(), SuspendReason::User)
+        .await
+        .unwrap();
+    assert_eq!(summary.profiles[0].agent_ids.len(), 1);
+    let paths = ProfilePaths::for_id(installation.root(), id).unwrap();
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
     expect_client_closed(&client).await;
-    let suspended_path = state_path.with_file_name("suspended.yaml");
+    let suspended_path = paths.state_path.with_file_name("suspended.yaml");
     assert!(
         std::fs::read_to_string(suspended_path)
             .unwrap_or_default()
@@ -264,58 +273,36 @@ async fn spawn_manifest_server(version: &'static str) -> (String, tokio::task::J
 }
 
 #[tokio::test]
-async fn embedded_server_requires_credentials_when_cloud_enabled() {
-    let dir = tempdir().unwrap();
+async fn config_split_embedded_without_credentials_stays_local() {
+    let dir = short_tempdir();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
-        socket_path: dir.path().join("amux.sock"),
-        enable_cloud_mode: Some(true),
+        data_dir: dir.path().to_owned(),
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
-
-    let result = Server::builder().config(config).embedded().open().await;
-    let Err(error) = result else {
-        panic!("embedded cloud-enabled server opened without credentials");
-    };
-
-    assert!(
-        error
-            .to_string()
-            .contains("credentials provider is required")
-    );
+    let (installation, id) = owned_installation(&config, Listeners::InProcessOnly).await;
+    let client = installation.client(id).unwrap();
+    assert!(client.list_agents().await.unwrap().is_empty());
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
 }
 
 #[tokio::test]
-async fn embedded_open_rejects_cloud_relay() {
-    let dir = tempdir().unwrap();
-    let config = Config {
-        state_path: dir.path().join("state.yaml"),
-        socket_path: dir.path().join("amux.sock"),
-        prevent_idle_sleep: Some(false),
-        ..Config::default()
-    };
-
-    let result = Server::builder()
-        .config(config)
+async fn config_split_relay_still_requires_a_tcp_listener() {
+    let error = Server::builder()
+        .config(Config::default())
         .as_cloud_relay()
-        .embedded()
-        .open()
-        .await;
-    let Err(error) = result else {
-        panic!("embedded cloud relay opened");
-    };
-
-    assert!(
-        error
-            .to_string()
-            .contains("embedded cloud relays are not supported")
-    );
+        .run()
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("cloud relay requires tcp_port"));
 }
 
 #[tokio::test]
 async fn server_builder_rejects_credentials_for_cloud_relay() {
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
@@ -327,8 +314,7 @@ async fn server_builder_rejects_credentials_for_cloud_relay() {
         .config(config)
         .as_cloud_relay()
         .credentials(Arc::new(TestCredentials))
-        .embedded()
-        .open()
+        .run()
         .await;
     let Err(error) = result else {
         panic!("server builder accepted credentials for a cloud relay");
@@ -343,7 +329,7 @@ async fn server_builder_rejects_credentials_for_cloud_relay() {
 
 #[tokio::test]
 async fn server_builder_rejects_credentials_before_cloud_relay() {
-    let dir = tempdir().unwrap();
+    let dir = short_tempdir();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("amux.sock"),
@@ -355,8 +341,7 @@ async fn server_builder_rejects_credentials_before_cloud_relay() {
         .config(config)
         .credentials(Arc::new(TestCredentials))
         .as_cloud_relay()
-        .embedded()
-        .open()
+        .run()
         .await;
     let Err(error) = result else {
         panic!("server builder accepted credentials before as_cloud_relay");
@@ -370,12 +355,12 @@ async fn server_builder_rejects_credentials_before_cloud_relay() {
 }
 
 #[tokio::test]
-async fn daemon_open_does_not_require_credentials_when_cloud_enabled() {
-    let dir = tempdir().unwrap();
+async fn daemon_open_does_not_require_credentials() {
+    let dir = short_tempdir();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
         socket_path: dir.path().join("missing.sock"),
-        enable_cloud_mode: Some(true),
+
         prevent_idle_sleep: Some(false),
         ..Config::default()
     };
@@ -391,4 +376,50 @@ async fn daemon_open_does_not_require_credentials_when_cloud_enabled() {
             .contains("credentials provider is required"),
         "daemon client attach should not validate server credential providers"
     );
+}
+
+async fn owned_installation(
+    config: &Config,
+    listeners: Listeners,
+) -> (Installation, amux::installation::ProfileId) {
+    let installation = Installation::open(installation_options(config, listeners))
+        .await
+        .unwrap();
+    let profile = installation.create(OperationId::new(), None).await.unwrap();
+    (installation, profile.record.id)
+}
+
+fn installation_options(config: &Config, listeners: Listeners) -> InstallationOptions {
+    InstallationOptions {
+        root: InstallationRoot::OnDisk(config.state_path.parent().unwrap().join("installation")),
+        settings: InstallationSettings {
+            repository_roots: Vec::new(),
+            claude: amux::ClaudeSettings::default(),
+            host_name: config.host_name.clone(),
+            prevent_idle_sleep: Some(false),
+            keybinds: config.keybinds.clone(),
+            ui: config.ui.clone(),
+            keymaps_dir: config.state_path.parent().unwrap().join("keymaps"),
+            minimum_client_versions: Default::default(),
+            update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
+            status_reporters: Default::default(),
+        },
+        listeners,
+        credentials: CredentialSource::HostProvided(Arc::new(|_| Arc::new(TestCredentials))),
+        identity_http: reqwest::Client::new(),
+    }
+}
+
+fn short_tempdir() -> tempfile::TempDir {
+    #[cfg(unix)]
+    {
+        tempfile::Builder::new()
+            .prefix("ae-")
+            .tempdir_in("/tmp")
+            .unwrap()
+    }
+    #[cfg(not(unix))]
+    {
+        tempdir().unwrap()
+    }
 }

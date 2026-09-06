@@ -444,16 +444,15 @@ impl ClaudePtyBackend {
                 Value::String(route.host_id().to_string()),
             ),
         ]);
-        if let Some(path) = route.config_path() {
-            env.insert(
-                "AMUX_CONFIG".to_string(),
-                Value::String(
-                    path.to_str()
-                        .context("the amux config path is not valid UTF-8")?
-                        .to_string(),
-                ),
-            );
-        }
+        let path = route.config_path()?;
+        env.insert(
+            "AMUX_CONFIG".to_string(),
+            Value::String(
+                path.to_str()
+                    .context("the amux config path is not valid UTF-8")?
+                    .to_string(),
+            ),
+        );
         let hook_command = vec![
             executable.to_string(),
             "hooks".to_string(),
@@ -1262,7 +1261,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_launch_preapproves_artifact_reads_after_user_settings() {
+    fn managed_launch_pins_mcp_and_preapproves_artifact_reads() {
         let agent_id = Uuid::new_v4();
         let artifact_root = PathBuf::from("/var/amux/agents/test/artifacts");
         let req = CreateAgentRequest {
@@ -1290,7 +1289,18 @@ mod tests {
         )
         .with_artifact_root(artifact_root.clone());
 
-        let settings = backend.launch().unwrap().settings.into_value();
+        let launch = backend.launch().unwrap();
+        let route = backend.launch_route.as_ref().unwrap();
+        let mcp = &launch.mcp_servers[0].config;
+        assert_eq!(
+            mcp["env"]["AMUX_CONFIG"],
+            route.config_path().unwrap().to_str().unwrap()
+        );
+        assert_eq!(
+            mcp["args"],
+            json!(["mcp", "agent", "--socket-path", route.socket_path()])
+        );
+        let settings = launch.settings.into_value();
         assert_eq!(
             settings["permissions"]["allow"],
             json!([

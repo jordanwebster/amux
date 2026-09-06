@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use amux::{Client, CredentialProvider, EmbeddedRelay, RelayConnection, RelayEndpoint};
+use amux::{CredentialProvider, EmbeddedRelay, RelayConnection, RelayEndpoint};
 use amux_ui::{Runtime, RuntimeOptions};
 use serde::Deserialize;
 use tokio::sync::watch;
@@ -51,7 +51,6 @@ impl StartConfig {
             data_dir: self.data_dir.clone(),
             state_path: self.data_dir.join("state.yaml"),
             socket_path: self.data_dir.join("amux.sock"),
-            enable_cloud_mode: Some(false),
             prevent_idle_sleep: Some(false),
             ..Default::default()
         }
@@ -67,9 +66,7 @@ impl StartConfig {
         {
             return Err("mobile paths must be absolute and device name must be nonempty".into());
         }
-        self.server_config()
-            .validate(false)
-            .map_err(|e| e.to_string())?;
+        self.server_config().validate().map_err(|e| e.to_string())?;
         match self.relay.tls {
             RelayTls::System => RelayEndpoint::system(&self.relay.url).map_err(|e| e.to_string()),
             RelayTls::PlainLoopback => {
@@ -95,7 +92,7 @@ pub struct MobileRuntime {
     pub ui: Runtime,
     pub relay: watch::Receiver<RelayConnection>,
     // Keep the server alive until the reducer and its tasks are dropped.
-    pub client: Client,
+    pub embedded: amux::EmbeddedRuntime,
 }
 
 impl MobileRuntime {
@@ -105,7 +102,7 @@ impl MobileRuntime {
     ) -> Result<Self, String> {
         let endpoint = config.endpoint()?;
         let (connection, relay) = watch::channel(RelayConnection::Connecting);
-        let client = amux::Server::builder()
+        let embedded = amux::Server::builder()
             .config(config.server_config())
             .embedded()
             .relay(EmbeddedRelay {
@@ -117,7 +114,7 @@ impl MobileRuntime {
             .await
             .map_err(|e| e.to_string())?;
         let ui = Runtime::start_with_client(
-            client.clone(),
+            embedded.client(),
             RuntimeOptions {
                 report_dir: Some(config.data_dir.join("reports")),
                 log_path: Some(config.log_path.clone()),
@@ -125,6 +122,10 @@ impl MobileRuntime {
                 ..Default::default()
             },
         );
-        Ok(Self { ui, relay, client })
+        Ok(Self {
+            ui,
+            relay,
+            embedded,
+        })
     }
 }

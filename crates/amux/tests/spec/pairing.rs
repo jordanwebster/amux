@@ -336,7 +336,7 @@ async fn pairing_confirm_pin_returns_identity_before_mutual_trust() {
         .await;
     let [phone, host] = net.daemons(["phone", "host"]);
     phone.sees(&host).await;
-    let client = phone.admin_client().await;
+    let client = phone.pairing_admin().await;
     let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
     let start = chrono::Utc::now();
     let pin = host.start_pairing().await;
@@ -376,7 +376,7 @@ async fn pairing_confirm_pin_returns_identity_before_mutual_trust() {
     phone.can_call(&host).await;
     host.can_call(&phone).await;
     println!("pairing confirmation: mutual trust persisted and calls succeed after restart");
-    let client = phone.admin_client().await;
+    let client = phone.pairing_admin().await;
     let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
     let pin = host.start_pairing().await;
     let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
@@ -402,8 +402,8 @@ async fn pairing_confirm_qr_can_be_abandoned_then_confirmed() {
         .await;
     let [phone, host] = net.daemons(["phone", "host"]);
     phone.sees(&host).await;
-    let client = phone.admin_client().await;
-    let start = host.admin_client().await.start_qr_pairing().await.unwrap();
+    let client = phone.pairing_admin().await;
+    let start = host.pairing_admin().await.start_qr_pairing().await.unwrap();
     let amux::PairingSecret::QrSecret(secret) = start.secret else {
         panic!("expected QR")
     };
@@ -466,7 +466,7 @@ async fn pairing_confirm_secret_failures_are_indistinguishable() {
         .await;
     let [phone, host] = net.daemons(["phone", "host"]);
     phone.sees(&host).await;
-    let client = phone.admin_client().await;
+    let client = phone.pairing_admin().await;
     let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
     let pin = host.start_pairing().await;
     for invalid in [pin.wrong_guess().to_string(), "123".into()] {

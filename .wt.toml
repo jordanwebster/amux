@@ -6,26 +6,30 @@ bin = ["target/debug"]
 commands = ["amux"]
 
 [env]
-AMUX_CONFIG = "{{root()}}/.wt/amux/config.yaml"
+AMUX_CONFIG = "{{root()}}/.wt/amux/profile.yaml"
 AMUX_LOG = "{{root()}}/.wt/amux/amux.log"
 AMUX_INVARIANT_FATAL = "1"
 
-[files.".wt/amux/config.yaml"]
+[files.".wt/amux/installation.yaml"]
 marker = "#"
 content = """
 host_name: {{name_short()}}
-socket_path: {{root()}}/.wt/amux/amux.sock
-state_path: {{root()}}/.wt/amux/state/state.yaml
-data_dir: {{root()}}/.wt/amux/data
-enable_cloud_mode: false
+root: {{root()}}/.wt/amux
+front_door_socket: {{root()}}/.wt/amux/amux.sock
+keymaps_dir: {{root()}}/.wt/amux/keymaps
 prevent_idle_sleep: false
 """
 
 # One dependency graph for everything below: `build` compiles tests and
 # examples too (without running them), so `test`, `lint` and `spec` reuse
 # its artifacts instead of producing variants of their own.
+[task.profile-config]
+run = ["python3", "scripts/worktree-profile.py", "{{root()}}/.wt/amux", "{{name()}}"]
+exists = 'test -f "$AMUX_CONFIG"'
+
 [task.build]
 run = "cargo build --workspace --all-targets"
+needs = ["profile-config"]
 
 [task.test]
 run = 'scripts/workspace-test.sh "$@"'
@@ -43,6 +47,9 @@ run = 'scripts/spec-test.sh "$@"'
 # target so it never produces a host variant of the workspace.
 [task.mobile-check]
 run = "timeout 900 sh scripts/mobile-check.sh"
+
+[task.embed-test]
+run = "AMUX_EMBED_TEST=1 CARGO_TARGET_DIR=target/embed cargo test -p amux --no-default-features --test embedding -- --nocapture"
 
 # The rules the screens package is written to: SwiftUI only outside a
 # registered leaf, no platform conditionals, no spinners. Pure text, so it runs
@@ -139,7 +146,7 @@ run = 'scripts/ci-observe.sh "$@"'
 run = "cargo run -p xtask -- codegen"
 
 [task.e2e]
-run = "timeout 900 cargo run -p e2e-runner -- run"
+run = 'timeout 900 target/debug/e2e-runner run --amux-binary target/debug/amux --test-agent-binary target/debug/test-agent "$@"'
 needs = ["build"]
 
 [task.testnet]
@@ -154,6 +161,6 @@ run = 'scripts/workspace-test.sh testnet_ -- --nocapture --test-threads=1'
 tied_to = "tree"
 name = "{{name_short()}}"
 needs = ["build"]
-exists = "amux list >/dev/null 2>&1"
+exists = "amux profiles >/dev/null 2>&1"
 run = "amux server start"
 destroy = "amux server stop"

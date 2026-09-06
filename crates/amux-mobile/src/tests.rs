@@ -111,11 +111,12 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
     .await
     .unwrap();
     let admin = host.admin_client().await;
-    let pairing = admin.start_qr_pairing().await.unwrap();
+    let pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
     let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
         panic!("QR expected")
     };
-    seed.client
+    seed.embedded
+        .admin()
         .pair_qr_cloud_peer(host.host_id(), secret)
         .await
         .unwrap();
@@ -135,8 +136,7 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
         })
         .await
         .unwrap();
-    seed.client.shutdown().await.unwrap();
-    drop(seed);
+    seed.embedded.shutdown().await;
 
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
@@ -494,11 +494,12 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     .await
     .unwrap();
     let admin = host.admin_client().await;
-    let pairing = admin.start_qr_pairing().await.unwrap();
+    let pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
     let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
         panic!("QR expected")
     };
-    seed.client
+    seed.embedded
+        .admin()
         .pair_qr_cloud_peer(host.host_id(), secret)
         .await
         .unwrap();
@@ -520,8 +521,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
             .await
             .unwrap();
     }
-    seed.client.shutdown().await.unwrap();
-    drop(seed);
+    seed.embedded.shutdown().await;
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -763,11 +763,12 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
         .await
         .unwrap();
         let admin = host.admin_client().await;
-        let pairing = admin.start_qr_pairing().await.unwrap();
+        let pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
         let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
             panic!("QR expected")
         };
-        seed.client
+        seed.embedded
+            .admin()
             .pair_qr_cloud_peer(host.host_id(), secret)
             .await
             .unwrap();
@@ -789,8 +790,7 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
                 .await
                 .unwrap();
         }
-        seed.client.shutdown().await.unwrap();
-        drop(seed);
+        seed.embedded.shutdown().await;
         let (sender, mut receive) = mpsc::unbounded_channel();
         let events = Events {
             sender,
@@ -843,12 +843,12 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
             "unpair" => {
                 let offline = open_runtime().await.unwrap();
                 offline
-                    .client
+                    .embedded
+                    .admin()
                     .unpair(host.host_id(), "Remove this device")
                     .await
                     .unwrap();
-                offline.client.shutdown().await.unwrap();
-                drop(offline);
+                offline.embedded.shutdown().await;
             }
             _ => unreachable!(),
         }

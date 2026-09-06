@@ -21,6 +21,7 @@ claude = { workspace = true }
 tempfile = { workspace = true }
 pty-host = { workspace = true, optional = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -29,6 +30,8 @@ tonic = { workspace = true }
 tonic-prost = { workspace = true }
 tower = { workspace = true }
 hyper-util = { workspace = true }
+hyper = { workspace = true }
+http-body-util = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 futures-util = { workspace = true }

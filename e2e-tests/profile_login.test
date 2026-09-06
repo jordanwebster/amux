@@ -1,0 +1,44 @@
+# test: profile_login
+# description: Device authorization binds Alice and Bob and displays name and email
+
+## Environment
+
+config:
+  name: relay
+  cloud_relay: true
+  tcp_port: 0
+  accounts: [alice, bob]
+
+config:
+  name: local
+  profiles: [personal, work]
+
+terminal:
+  name: relay
+  config: relay
+
+terminal:
+  name: T1
+  config: local
+
+## Test
+
+@relay
+> amux server start --cloud --foreground
+@@sleep 500
+
+@T1
+> amux --profile personal profile rename --clear
+> amux --profile work profile rename --clear
+> amux --profile $local.personal.id login
+@@contains To authenticate, visit:
+@@contains $local.personal.id  Alice Example  alice@example.test  bound /
+
+> amux --profile $local.work.id login
+@@contains $local.work.id  Bob Example  bob@example.test  bound /
+
+> amux profiles
+@@retry 8000 100
+Profiles:
+  $local.work.id  Bob Example  bob@example.test  bound / connected
+  $local.personal.id  Alice Example  alice@example.test  bound / connected

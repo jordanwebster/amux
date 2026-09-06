@@ -34,7 +34,7 @@ async fn revocation_device_identity_and_peer_fingerprints_survive_restart() {
         .start()
         .await;
     let [phone, host] = net.daemons(["phone", "host"]);
-    let client = phone.admin_client().await;
+    let client = phone.pairing_admin().await;
     let identity = client.device_identity().await.unwrap();
     assert_eq!(identity.host_id, phone.host_id());
     assert_eq!(identity.name, "phone");
@@ -46,13 +46,13 @@ async fn revocation_device_identity_and_peer_fingerprints_survive_restart() {
         .collect::<String>();
     assert_eq!(identity.fingerprint, fingerprint);
     assert!(!client.pairing_is_active().await.unwrap());
-    let peers = host.admin_client().await.list_peers().await.unwrap();
+    let peers = host.pairing_admin().await.list_peers().await.unwrap();
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].host_id, identity.host_id);
     assert_eq!(peers[0].name, identity.name);
     assert_eq!(peers[0].fingerprint, identity.fingerprint);
     let peer = host
-        .admin_client()
+        .pairing_admin()
         .await
         .get_peer(phone.host_id())
         .await
@@ -60,11 +60,11 @@ async fn revocation_device_identity_and_peer_fingerprints_survive_restart() {
     assert_eq!(peer, peers[0]);
     phone.restart().await;
     assert_eq!(
-        phone.admin_client().await.device_identity().await.unwrap(),
+        phone.pairing_admin().await.device_identity().await.unwrap(),
         identity
     );
     phone.can_call(&host).await;
-    host.rejects_remote_trust_admin_from(&phone).await;
+    host.rejects_remote_admin_from(&phone).await;
     println!(
         "revocation identity: {}",
         serde_json::json!({
@@ -132,7 +132,7 @@ async fn revoked_session(via: Via) {
     .await
     .expect("phone must receive a live echo before revocation");
 
-    let admin = host.admin_client().await;
+    let admin = host.pairing_admin().await;
     let removed = admin
         .unpair(phone.host_id(), "remove this device")
         .await
@@ -140,7 +140,13 @@ async fn revoked_session(via: Via) {
     assert_eq!(removed.host_id, phone.host_id());
     assert_eq!(
         removed.fingerprint,
-        client.device_identity().await.unwrap().fingerprint
+        phone
+            .pairing_admin()
+            .await
+            .device_identity()
+            .await
+            .unwrap()
+            .fingerprint
     );
     assert!(admin.list_peers().await.unwrap().is_empty());
 
@@ -168,9 +174,13 @@ async fn revoked_session(via: Via) {
     host.cannot_call(&phone).await;
     phone.trusts(&host).await;
     // The host and agent remain usable by their owner.
-    send(&admin, agent.id, "owner-still-has-access")
-        .await
-        .unwrap();
+    send(
+        &host.admin_client().await,
+        agent.id,
+        "owner-still-has-access",
+    )
+    .await
+    .unwrap();
     println!(
         "revocation session: {}",
         serde_json::json!({

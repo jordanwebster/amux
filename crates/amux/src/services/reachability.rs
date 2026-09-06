@@ -225,7 +225,7 @@ async fn establish_reachability_link(
             dialed_tracker,
         )
         .map_err(|error| error.to_string()),
-        Reachability::Ssh { target } => spawn_ssh_relay(&target)
+        Reachability::Ssh { target, profile } => spawn_ssh_relay(&target, profile)
             .map(|io| {
                 channel_from_single_io(
                     configure_tonic_endpoint_keepalive(Endpoint::from_static("http://ssh-relay")),
@@ -339,6 +339,7 @@ mod tests {
                     Reachability::DirectTcp { addr },
                     Reachability::Ssh {
                         target: "workstation".to_string(),
+                        profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
                     },
                 ],
             },
@@ -352,7 +353,7 @@ mod tests {
         ));
         assert!(matches!(
             &attempts[1].reachability,
-            Reachability::Ssh { target } if target == "workstation"
+            Reachability::Ssh { target, .. } if target == "workstation"
         ));
     }
 }

@@ -9,7 +9,13 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 use super::{Result, TransportError};
 
-const SSH_RELAY_PROGRAM: &str = "ssh";
+fn ssh_program() -> std::ffi::OsString {
+    #[cfg(debug_assertions)]
+    if let Some(program) = std::env::var_os("AMUX_SSH") {
+        return program;
+    }
+    "ssh".into()
+}
 const AMUX_RELAY_COMMAND: [&str; 2] = ["amux", "relay"];
 const AMUX_PAIR_RECV_COMMAND: [&str; 2] = ["amux", "pair-recv"];
 
@@ -24,8 +30,21 @@ pub(crate) struct SshChildIo {
     stdin: ChildStdin,
 }
 
-pub(crate) fn spawn_ssh_relay(target: &str) -> Result<SshRelayIo> {
-    spawn_ssh_amux_command(target, &AMUX_RELAY_COMMAND, "SSH relay")
+pub(crate) fn spawn_ssh_relay(
+    target: &str,
+    profile: crate::installation::ProfileId,
+) -> Result<SshRelayIo> {
+    let profile = profile.to_string();
+    spawn_ssh_amux_command(
+        target,
+        &[
+            AMUX_RELAY_COMMAND[0],
+            AMUX_RELAY_COMMAND[1],
+            "--profile",
+            &profile,
+        ],
+        "SSH relay",
+    )
 }
 
 pub(crate) fn spawn_ssh_pair_recv(target: &str) -> Result<SshPairRecvIo> {
@@ -44,7 +63,7 @@ fn spawn_ssh_amux_command(target: &str, amux_command: &[&str], label: &str) -> R
         )));
     }
 
-    let mut child = Command::new(SSH_RELAY_PROGRAM)
+    let mut child = Command::new(ssh_program())
         .args(ssh_amux_args(target, amux_command))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

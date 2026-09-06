@@ -36,3 +36,5 @@ mod revocation; // Device identity and immediate session revocation
 mod routing; // Chapter 4 — Routing & failover
 mod sessions; // Chapter 5 — Remote sessions & authority
 mod wire; // Chapter 6 — Wire conformance (WirePeer)
+
+mod profiles;

@@ -1,10 +1,10 @@
+mod client;
 mod executor;
 mod parser;
 mod terminal;
 #[cfg(testnet)]
 mod testnet;
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -70,6 +70,11 @@ enum Commands {
         #[command(subcommand)]
         command: testnet::Command,
     },
+    /// Exercise the public API as an independent gRPC client
+    Client {
+        #[command(subcommand)]
+        command: client::ClientCommand,
+    },
     /// Run E2E tests
     Run {
         /// Filter tests by name (substring match)
@@ -123,32 +128,21 @@ fn find_test_files(test_dir: &Path, filter: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-fn build_default_binaries(build_amux: bool, build_test_agent: bool, target_dir: &Path) {
+fn build_default_binaries(build_amux: bool, build_test_agent: bool) {
     if !build_amux && !build_test_agent {
         return;
     }
-
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let mut command = std::process::Command::new(cargo);
-    command
+    eprintln!("Building default e2e binaries through wt...");
+    let status = std::process::Command::new("timeout")
+        .args(["900", "wt", "build"])
         .current_dir(workspace_root())
-        .arg("build")
-        .arg("--target-dir")
-        .arg(target_dir);
-    if build_amux {
-        command.args(["-p", "amux-cli"]);
-    }
-    if build_test_agent {
-        command.args(["-p", "test-agent"]);
-    }
-
-    eprintln!("Building default e2e binaries...");
-    let status = command.status().unwrap_or_else(|error| {
-        eprintln!("failed to run cargo build for e2e binaries: {error}");
-        std::process::exit(1);
-    });
+        .status()
+        .unwrap_or_else(|error| {
+            eprintln!("failed to run wt build for e2e binaries: {error}");
+            std::process::exit(1);
+        });
     if !status.success() {
-        eprintln!("cargo build for e2e binaries failed");
+        eprintln!("wt build for e2e binaries failed");
         std::process::exit(status.code().unwrap_or(1));
     }
 }
@@ -177,7 +171,7 @@ fn run_tests(
     let build_amux = amux_binary.is_none();
     let build_test_agent = test_agent_binary.is_none();
     let target_dir = cargo_target_dir();
-    build_default_binaries(build_amux, build_test_agent, &target_dir);
+    build_default_binaries(build_amux, build_test_agent);
 
     // Find binaries and convert to absolute paths
     let amux_binary = make_binary_path_absolute(
@@ -191,7 +185,7 @@ fn run_tests(
     // Check binaries exist
     if !amux_binary.exists() && amux_binary != Path::new("amux") {
         eprintln!(
-            "amux binary not found at {}. Did you run 'cargo build'?",
+            "amux binary not found at {}. Did you run 'wt build'?",
             amux_binary.display()
         );
         std::process::exit(1);
@@ -199,7 +193,7 @@ fn run_tests(
 
     if !test_agent_binary.exists() && test_agent_binary != Path::new("test-agent") {
         eprintln!(
-            "test-agent binary not found at {}. Did you run 'cargo build -p test-agent'?",
+            "test-agent binary not found at {}. Did you run 'wt build'?",
             test_agent_binary.display()
         );
         std::process::exit(1);
@@ -290,6 +284,13 @@ fn main() {
         Commands::Testnet { command } => {
             if let Err(error) = testnet::run(command) {
                 eprintln!("testnet: {error:#}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Client { command } => {
+            let runtime = tokio::runtime::Runtime::new().expect("create client runtime");
+            if let Err(error) = runtime.block_on(client::run(command)) {
+                eprintln!("{error}");
                 std::process::exit(1);
             }
         }

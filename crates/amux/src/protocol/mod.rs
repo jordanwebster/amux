@@ -156,6 +156,8 @@ mod tests {
             "ClientService",
             "LinkService",
             "PairingService",
+            "ProfileService",
+            "InstallationService",
         ]);
         assert_eq!(service_names, expected_services);
 
@@ -203,39 +205,23 @@ mod tests {
         assert_eq!(
             service_methods.get("ClientService").cloned(),
             Some(std::collections::BTreeSet::from([
-                "AbandonPair",
-                "BeginPair",
-                "CancelPairing",
-                "ConfirmPair",
                 "CreateAgent",
                 "Debug",
                 "DeleteAgent",
                 "Diff",
                 "GetArtifact",
                 "ListRepositories",
-                "GetDeviceIdentity",
-                "GetPairingStatus",
-                "GetPeer",
                 "HandleHook",
                 "ListAgents",
                 "ListHosts",
-                "ListPeers",
-                "PairPeer",
-                "PairPinCloudPeer",
-                "PairQrCloudPeer",
                 "PutArtifact",
                 "RenameAgent",
-                "Resume",
                 "SendInput",
                 "SendMessage",
                 "SetAgentStatus",
-                "Shutdown",
-                "StartPairing",
                 "SubscribeAgents",
                 "SubscribeHosts",
                 "SubscribeSession",
-                "Suspend",
-                "Unpair",
             ]))
         );
 

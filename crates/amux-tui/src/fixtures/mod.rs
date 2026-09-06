@@ -7,19 +7,23 @@
 mod gallery;
 
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use amux_ui::{
     Agent, AgentId, Command, HostEntry, HostId, HostTrustStatus, Model, Msg, OpId, OpOutcome,
-    ServerMsg, StreamEntry, StreamMsg, StructuredProtocol, update,
+    ProfileEntry, ProfileId, ServerMsg, StreamEntry, StreamMsg, StructuredProtocol, update,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 use crate::chat::{handle_chat_key, handle_chat_mouse};
+use crate::switcher::SwitcherState;
+use crate::view::Mode;
 use crate::{ChatView, FrameContext, Theme, ViewState, render};
 
 const NOW: &str = "2026-08-12T09:12:30Z";
@@ -59,6 +63,8 @@ pub enum NamedState {
     FleetMixed,
     FleetSdkHelp,
     A2aSdkFamily,
+    ProfileSwitcher,
+    FleetSwitched,
     ClaudeLongFeed,
     CodexLongFeed,
     ClaudeScrolledBack,
@@ -111,6 +117,8 @@ const ALL_STATES: &[NamedState] = &[
     NamedState::FleetMixed,
     NamedState::FleetSdkHelp,
     NamedState::A2aSdkFamily,
+    NamedState::ProfileSwitcher,
+    NamedState::FleetSwitched,
     NamedState::ClaudeLongFeed,
     NamedState::CodexLongFeed,
     NamedState::ClaudeScrolledBack,
@@ -165,6 +173,8 @@ impl NamedState {
             Self::FleetMixed => "fleet-mixed",
             Self::FleetSdkHelp => "fleet-sdk-help",
             Self::A2aSdkFamily => "a2a-sdk-family",
+            Self::ProfileSwitcher => "profile-switcher",
+            Self::FleetSwitched => "fleet-switched",
             Self::ClaudeLongFeed => "claude-long-feed",
             Self::CodexLongFeed => "codex-long-feed",
             Self::ClaudeScrolledBack => "claude-scrolled-back",
@@ -330,6 +340,8 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::FleetMixed => mixed_fleet_fixture(),
         NamedState::FleetSdkHelp => sdk_fleet_help_fixture(),
         NamedState::A2aSdkFamily => sdk_family_fixture(),
+        NamedState::ProfileSwitcher => profile_switcher_fixture(),
+        NamedState::FleetSwitched => switched_fleet_fixture(),
         NamedState::ClaudeLongFeed => long_feed(StructuredProtocol::Claude, 1_000),
         NamedState::CodexLongFeed => long_feed(StructuredProtocol::Codex, 1_000),
         NamedState::ClaudeScrolledBack => scrolled_back(StructuredProtocol::Claude),
@@ -1126,6 +1138,84 @@ fn mixed_fleet_fixture() -> Fixture {
     }
 }
 
+/// The accounts one installation holds, as the front door lists them.
+/// Three, because two would not show that the list is a list, and the
+/// third is logged out — an account you still have but are not connected
+/// to is exactly what the status column exists for.
+fn profile_entries() -> Vec<ProfileEntry> {
+    vec![
+        ProfileEntry {
+            id: ProfileId(Uuid::from_u128(0x9e01)),
+            label: "Personal".to_string(),
+            email: Some("robin@example.com".to_string()),
+            status: "connected".to_string(),
+            socket: PathBuf::from("/run/amux/9e01.sock"),
+        },
+        ProfileEntry {
+            id: ProfileId(Uuid::from_u128(0x9e02)),
+            label: "Work".to_string(),
+            email: Some("robin@northwind.example".to_string()),
+            status: "connected".to_string(),
+            socket: PathBuf::from("/run/amux/9e02.sock"),
+        },
+        ProfileEntry {
+            id: ProfileId(Uuid::from_u128(0x9e03)),
+            label: "Conference laptop".to_string(),
+            email: Some("robin@example.org".to_string()),
+            status: "logged out".to_string(),
+            socket: PathBuf::from("/run/amux/9e03.sock"),
+        },
+    ]
+}
+
+/// The switcher, open over the personal fleet with the work account under
+/// the cursor: the frame a person sees the moment before they switch.
+fn profile_switcher_fixture() -> Fixture {
+    let mut fixture = fleet_fixture(false);
+    let entries = profile_entries();
+    let work = entries[1].socket.clone();
+    fixture.view.mode = Mode::Switcher(SwitcherState::open(entries, Some(&work)));
+    fixture
+}
+
+/// The fleet after that switch: the work account, which shares no host and
+/// no agent with the personal one. Two accounts on one machine are two
+/// devices, so nothing carries over.
+fn switched_fleet_fixture() -> Fixture {
+    let host = HostEntry {
+        id: work_host_id(),
+        name: "northwind-mbp".to_string(),
+        ..host()
+    };
+    let messages = vec![
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(work_host_id()),
+        }),
+        Msg::Server(ServerMsg::HostUpserted { host }),
+        Msg::Server(ServerMsg::AgentUpserted {
+            agent: work_agent(
+                StructuredProtocol::Claude,
+                AgentId::from_u128(21),
+                "ship-invoices",
+            ),
+        }),
+        Msg::Server(ServerMsg::AgentUpserted {
+            agent: work_agent(
+                StructuredProtocol::Codex,
+                AgentId::from_u128(22),
+                "audit-deps",
+            ),
+        }),
+        Msg::Server(ServerMsg::HostsSynchronized),
+        Msg::Server(ServerMsg::AgentsSynchronized),
+    ];
+    Fixture {
+        model: fold(messages),
+        view: ViewState::default(),
+        now: fixed_now(),
+    }
+}
+
 /// The mixed fleet with the stream-JSON session selected and its `?`
 /// overlay open. The overlay is the claim: a session with no terminal
 /// behind it is offered one way in, so Enter says "open in chat" and no
@@ -1265,6 +1355,19 @@ fn fleet_stream_rows(agent: AgentId, rows: Vec<Value>) -> Vec<Msg> {
             },
         },
     ]
+}
+
+fn work_host_id() -> HostId {
+    HostId::from_u128(2)
+}
+
+fn work_agent(protocol: StructuredProtocol, id: AgentId, name: &str) -> Agent {
+    Agent {
+        id,
+        host_id: work_host_id(),
+        working_dir: "/work/northwind".into(),
+        ..agent(protocol, name)
+    }
 }
 
 fn claude_ready() -> Value {

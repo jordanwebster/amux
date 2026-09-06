@@ -331,14 +331,13 @@ impl ClaudeSdkBackend {
             ("AMUX_AGENT_ID".to_string(), self.agent_id.to_string()),
             ("AMUX_HOST_ID".to_string(), route.host_id().to_string()),
         ]);
-        if let Some(path) = route.config_path() {
-            env.insert(
-                "AMUX_CONFIG".to_string(),
-                path.to_str()
-                    .context("the amux config path is not valid UTF-8")?
-                    .to_string(),
-            );
-        }
+        let path = route.config_path()?;
+        env.insert(
+            "AMUX_CONFIG".to_string(),
+            path.to_str()
+                .context("the amux config path is not valid UTF-8")?
+                .to_string(),
+        );
         options.mcp_servers.insert(
             "amux".to_string(),
             McpServerConfig::Stdio(McpStdioServerConfig {
@@ -1224,7 +1223,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_sdk_launch_preapproves_artifact_reads_after_user_settings() {
+    fn managed_sdk_launch_pins_mcp_and_preapproves_artifact_reads() {
         let artifact_root = PathBuf::from("/var/amux/agents/test/artifacts");
         let req = CreateAgentRequest {
             agent_id: Uuid::new_v4(),
@@ -1246,6 +1245,23 @@ mod tests {
             .with_artifact_root(artifact_root.clone());
 
         let options = backend.query_options().unwrap();
+        let McpServerConfig::Stdio(mcp) = &options.mcp_servers["amux"] else {
+            panic!("managed MCP server must use stdio");
+        };
+        let route = backend.launch_route.as_ref().unwrap();
+        assert_eq!(
+            mcp.env["AMUX_CONFIG"],
+            route.config_path().unwrap().to_str().unwrap()
+        );
+        assert_eq!(
+            mcp.args,
+            vec![
+                "mcp",
+                "agent",
+                "--socket-path",
+                route.socket_path().to_str().unwrap()
+            ]
+        );
         let Some(SettingsConfig::Inline(settings)) = options.settings else {
             panic!("managed SDK settings must be inline");
         };

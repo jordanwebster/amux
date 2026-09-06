@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt, stream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 use uuid::Uuid;
@@ -265,11 +265,12 @@ pub(crate) fn spawn_connector_to_channel_with_establishment(
         None,
         None,
         Some(established_tx),
+        None,
     );
     (task, established_rx)
 }
 
-#[cfg(any(test, testnet))]
+#[cfg(test)]
 pub(crate) fn spawn_connector_to_channel_with_bearer_token(
     ctx: LinkConnectorCtx,
     channel: Channel,
@@ -283,10 +284,11 @@ pub(crate) fn spawn_connector_to_channel_with_bearer_token(
     )
 }
 
-pub(crate) fn spawn_connector_to_channel_with_auth_and_establishment(
+pub(crate) fn spawn_connector_to_channel_with_auth_establishment_and_shutdown(
     ctx: LinkConnectorCtx,
     channel: Channel,
     auth: LinkConnectorAuth,
+    shutdown_rx: watch::Receiver<bool>,
 ) -> (ConnectorTask, EstablishmentReceiver) {
     let (established_tx, established_rx) = oneshot::channel();
     let task = spawn_connector_to_channel_with_authorization_and_signal(
@@ -295,11 +297,31 @@ pub(crate) fn spawn_connector_to_channel_with_auth_and_establishment(
         None,
         Some(auth),
         Some(established_tx),
+        Some(shutdown_rx),
     );
     (task, established_rx)
 }
 
-#[cfg(any(test, testnet))]
+#[cfg(testnet)]
+pub(crate) fn spawn_connector_to_channel_with_bearer_token_and_shutdown(
+    ctx: LinkConnectorCtx,
+    channel: Channel,
+    token: String,
+    shutdown_rx: watch::Receiver<bool>,
+) -> (ConnectorTask, EstablishmentReceiver) {
+    let (established_tx, established_rx) = oneshot::channel();
+    let task = spawn_connector_to_channel_with_authorization_and_signal(
+        ctx.with_link_role(LinkRole::CloudRelay),
+        channel,
+        Some(format!("Bearer {token}")),
+        None,
+        Some(established_tx),
+        Some(shutdown_rx),
+    );
+    (task, established_rx)
+}
+
+#[cfg(test)]
 fn spawn_connector_to_channel_with_authorization(
     ctx: LinkConnectorCtx,
     channel: Channel,
@@ -312,6 +334,7 @@ fn spawn_connector_to_channel_with_authorization(
         authorization,
         connector_auth,
         None,
+        None,
     )
 }
 
@@ -321,8 +344,10 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
     authorization: Option<String>,
     connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
+    shutdown_rx: Option<watch::Receiver<bool>>,
 ) -> ConnectorTask {
     tokio::spawn(async move {
+        let mut shutdown_rx = shutdown_rx;
         let mut client = wire::link_service_client::LinkServiceClient::new(channel);
         let (out_tx, out_rx) = mpsc::channel(256);
         let request_stream = stream::unfold(out_rx, |mut rx| async move {
@@ -340,7 +365,11 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
                 .metadata_mut()
                 .insert("authorization", authorization);
         }
-        let response = match client.connect(request).await {
+        let response = match tokio::select! {
+            biased;
+            _ = wait_for_connector_shutdown(&mut shutdown_rx) => return Ok(()),
+            response = client.connect(request) => response,
+        } {
             Ok(response) => response,
             Err(status) => return connector_establishment_failed(established_tx, status),
         };
@@ -350,6 +379,7 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
             out_tx,
             connector_auth,
             established_tx,
+            shutdown_rx,
         )
         .await
     })
@@ -408,7 +438,7 @@ where
 {
     let (out_tx, out_rx) = mpsc::channel(256);
     tokio::spawn(async move {
-        let _ = run_connector_connect(ctx, input, out_tx, None, None).await;
+        let _ = run_connector_connect(ctx, input, out_tx, None, None, None).await;
     });
     out_rx
 }
@@ -483,6 +513,7 @@ async fn run_acceptor_connect<S>(
             sent_snapshot: snapshot.into_iter().map(|host| host.id).collect(),
             connector_auth: None,
             established_tx: None,
+            shutdown_rx: None,
         },
     )
     .await;
@@ -494,6 +525,7 @@ async fn run_connector_connect<S>(
     out_tx: mpsc::Sender<wire::pb::Message>,
     connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
+    mut shutdown_rx: Option<watch::Receiver<bool>>,
 ) -> Result<(), tonic::Status>
 where
     S: Stream<Item = Result<wire::pb::Message, tonic::Status>> + Send + 'static,
@@ -501,14 +533,24 @@ where
     let mut input: ConnectInputStream = Box::pin(input);
     let mut handshake = ConnectHandshake::connector();
     let snapshot = ctx.links.neighbor_snapshot().await;
-    if out_tx.send(connector_hello(&ctx, &snapshot)).await.is_err() {
+    let hello_sent = tokio::select! {
+        biased;
+        _ = wait_for_connector_shutdown(&mut shutdown_rx) => return Ok(()),
+        result = out_tx.send(connector_hello(&ctx, &snapshot)) => result.is_ok(),
+    };
+    if !hello_sent {
         return connector_establishment_failed(
             established_tx,
             tonic::Status::unavailable("link connect request stream closed before Hello"),
         );
     }
 
-    let Some(first) = input.next().await else {
+    let first = tokio::select! {
+        biased;
+        _ = wait_for_connector_shutdown(&mut shutdown_rx) => return Ok(()),
+        first = input.next() => first,
+    };
+    let Some(first) = first else {
         return connector_establishment_failed(
             established_tx,
             tonic::Status::unavailable("link connect response stream closed before HelloAck"),
@@ -573,6 +615,7 @@ where
             sent_snapshot: snapshot.into_iter().map(|host| host.id).collect(),
             connector_auth,
             established_tx,
+            shutdown_rx,
         },
     )
     .await
@@ -615,6 +658,7 @@ struct EstablishedConnectArgs {
     sent_snapshot: Vec<HostId>,
     connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
+    shutdown_rx: Option<watch::Receiver<bool>>,
 }
 
 async fn run_established_connect(
@@ -630,6 +674,7 @@ async fn run_established_connect(
         sent_snapshot,
         connector_auth,
         established_tx,
+        mut shutdown_rx,
     } = args;
 
     debug_assert!(handshake.is_established());
@@ -788,6 +833,13 @@ async fn run_established_connect(
                 }
                 break;
             }
+            _ = wait_for_connector_shutdown(&mut shutdown_rx) => {
+                let _ = try_send_outbound(
+                    &out_tx,
+                    link_close(wire::pb::LinkCloseReason::UserShutdown),
+                );
+                break;
+            }
         }
     }
 
@@ -795,6 +847,36 @@ async fn run_established_connect(
     match close_status {
         Some(status) => Err(status),
         None => Ok(()),
+    }
+}
+
+async fn wait_for_connector_shutdown(shutdown_rx: &mut Option<watch::Receiver<bool>>) {
+    let Some(shutdown_rx) = shutdown_rx else {
+        future::pending::<()>().await;
+        return;
+    };
+    loop {
+        if *shutdown_rx.borrow() {
+            return;
+        }
+        match shutdown_rx.changed().await {
+            Ok(()) => {}
+            Err(_) => {
+                // Dropping the sender only removes the ability to request a
+                // shutdown. It must not turn ordinary handle disposal into
+                // an implicit connector shutdown.
+                future::pending::<()>().await;
+            }
+        }
+    }
+}
+
+fn link_close(reason: wire::pb::LinkCloseReason) -> wire::pb::Message {
+    wire::pb::Message {
+        body: Some(wire::pb::message::Body::LinkClose(wire::pb::LinkClose {
+            reason: reason as i32,
+            error: None,
+        })),
     }
 }
 
@@ -1494,7 +1576,7 @@ mod tests {
     {
         let (out_tx, out_rx) = mpsc::channel(256);
         tokio::spawn(async move {
-            let _ = run_connector_connect(ctx, input, out_tx, Some(auth), None).await;
+            let _ = run_connector_connect(ctx, input, out_tx, Some(auth), None, None).await;
         });
         out_rx
     }

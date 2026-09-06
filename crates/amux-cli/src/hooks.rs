@@ -23,13 +23,13 @@ const MESSAGING_ENV_KEYS: &[&str] = &[
 /// Handle Claude Code hook event.
 /// Reads JSON from stdin and sends HookEvent to server.
 /// Fails silently (logs errors but returns 0) to not block Claude Code.
-pub fn handle_claude_hook(config: &Config) {
+pub fn handle_claude_hook(config: Option<&Config>) {
     if let Err(e) = handle_claude_hook_inner(config) {
         tracing::warn!(error = %e, "hook handling failed");
     }
 }
 
-fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
+fn handle_claude_hook_inner(config: Option<&Config>) -> io::Result<()> {
     let mut payload = Vec::new();
     io::stdin().lock().read_to_end(&mut payload)?;
 
@@ -60,7 +60,9 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
 
     // Fire-and-forget: connect, send, don't wait for ack.
     // Hooks must exit quickly so Claude Code is never blocked.
-    let config = config.clone();
+    let config = config
+        .ok_or_else(|| io::Error::other("external hook requires a profile config"))?
+        .clone();
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async {
             if let Err(e) = send_hook_event(&config, payload, messaging_environment()).await {

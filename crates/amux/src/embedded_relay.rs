@@ -9,7 +9,7 @@ use tonic::transport::Channel;
 
 use crate::routing::{
     LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken, LinkConnectorTokenRefresher, LinkRole,
-    spawn_connector_to_channel_with_auth_and_establishment,
+    spawn_connector_to_channel_with_auth_establishment_and_shutdown,
 };
 use crate::{CredentialProvider, ServerError};
 
@@ -139,10 +139,12 @@ impl EmbeddedRelay {
             .await
             .map_err(|e| e.to_string())?;
         let channel = self.endpoint.channel().map_err(|e| e.to_string())?;
-        let (task, established) = spawn_connector_to_channel_with_auth_and_establishment(
+        let (_shutdown, shutdown_rx) = watch::channel(false);
+        let (task, established) = spawn_connector_to_channel_with_auth_establishment_and_shutdown(
             context.with_link_role(LinkRole::CloudRelay),
             channel,
             LinkConnectorAuth::new(token, credentials),
+            shutdown_rx,
         );
         let _guard = AbortOnDrop(task.abort_handle());
         tokio::time::timeout(Duration::from_secs(10), established)
