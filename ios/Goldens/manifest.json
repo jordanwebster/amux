@@ -66,6 +66,19 @@
       ]
     },
     {
+      "id": "finished",
+      "stage": 7,
+      "screen": "review-cta",
+      "fixture": "finished",
+      "origin": "added_state",
+      "reason": "a finished turn nobody has read: the panel that takes the composer's place, which the design has no capture of",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "run",
       "stage": 6,
       "screen": "run",

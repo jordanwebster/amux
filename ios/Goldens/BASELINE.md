@@ -228,6 +228,110 @@ and failures that a good morning never shows.
   as well would make a page with three failures on it mostly coloured, which
   reads the same as a page with no colour at all.
 
+## ask-permission
+
+An agent stopped in the middle of a turn, asking to run a command. The panel
+takes the composer's place: the command verbatim, why it wants to run it, and
+the answers.
+
+- **Allow and Deny are not the same size.** Allow is filled and takes the
+  width; Deny is an outline beside it. Two equal buttons would make a
+  fifty-fifty decision out of one that is not — the agent asked to do a thing,
+  and allowing it is what carries on. The reference draws them this way too.
+- **The scope row says "Always allow access", not "Always allow cargo test".**
+  The reference names the command. What Claude actually offers here is a
+  directory grant for the session, and Claude builds its own permission menu
+  out of exactly that suggestion — so a row promising to always allow the
+  command while sending a directory grant would be a lie about what pressing it
+  does. The row says what the host offered and nothing else. Where the host
+  offers no suggestion at all there is no row, and where it offers a shape
+  nobody has checked against a real Claude the panel offers no answers and says
+  where to answer instead, because the core refuses every answer to those.
+- **No speech-bubble control.** The reference draws one at the panel's trailing
+  edge, for answering in words rather than with a button. Denying with feedback
+  and answering a question with free text both need a field, and the field is
+  the composer, which is built in the next milestone. A control that does
+  nothing is worse than its absence.
+- **The feed runs under the panel rather than stopping above it.** The panel is
+  glass over the transcript, as the drawer is over the conversation, so the
+  last thing the agent said is still legible through it and scrolls out from
+  under it. The reference's conversation was short enough that the question
+  never arose.
+- The differing conversation and the pinned status bar carry over from `run`.
+
+## ask-question
+
+The same agent asking which crate should own something, with its own answers.
+
+- **The header is not drawn.** Claude sends both a header ("Ownership") and the
+  question; with one question on screen the header restates what the question
+  already says, so only the question is drawn. A panel carrying several
+  questions draws each header, because there it is what tells them apart.
+- **Tapping an answer is the answer.** There is no confirm step: one question
+  that takes one answer is finished the moment it is tapped. A question that
+  takes several, or a panel carrying more than one, collects and then sends —
+  the layer refuses a response with a question missing, so the button waits
+  until every question has one. Only the single-answer shape is captured here;
+  the multi-select shape is asserted in the projection suite against a real
+  recorded multi-select ask.
+- The absent speech-bubble control and the feed running under the panel carry
+  over from `ask-permission`.
+
+## plan
+
+A plan to judge: the agent's own markdown, folded, with the two things to do
+with it.
+
+- **Approve means "approve, and keep asking about edits".** Claude's plan menu
+  has three arms — approve and auto-accept edits, approve and approve edits one
+  at a time, keep planning. The reference draws two buttons, and the one this
+  build sends is the manual arm: an app whose whole permission story is that
+  you are asked before things happen must not turn that off from a button
+  labelled Approve. Send Back is the third arm and asks what should change,
+  because the layer will not take a plan back without a reason.
+- **The plan is capped and faded, with a grabber under it.** A panel that ran
+  to the plan's full length would take the transcript off the screen, and the
+  transcript is what makes a plan judgeable. The grabber opens the rest in
+  place. The reference draws the same fold.
+- **The markdown is set as the transcript sets it.** A plan is reopenable from
+  the feed after the verdict, and the same document has to read the same way in
+  both places.
+- The absent speech-bubble control carries over from `ask-permission`.
+
+## codex-approval
+
+The same moment on a Codex agent. There is no design reference for it; what it
+locks is that the two providers are not flattened into one.
+
+- **Codex's own decisions, in Codex's order.** Accept, Accept for Session and
+  Decline are three of the four the frozen backend takes. The panel lists them
+  as Codex offered them rather than mapping them onto Claude's Allow and Deny,
+  which would put words in a provider's mouth.
+- **A choice that cannot be pressed is still shown.** "Accept and Allow
+  Similar" is an object-valued decision this build cannot carry. Hiding it
+  would misrepresent what the far side offered; offering it would send
+  something the backend refuses. So it is listed, dimmed, and inert.
+- **The conversation is a Codex conversation.** Its rows arrive under Codex's
+  own keys rather than being a Claude transcript with the names changed, which
+  is why this feed is shorter and differently shaped than every other capture
+  here.
+
+## finished
+
+The turn ended, something changed, and nobody has read it yet.
+
+- **The panel and the chip say the same number.** Both count the patch that
+  they open — "+3 −6" — rather than the fleet's totals for the last turn.
+- **The tick is the accent.** Everywhere else a finished turn draws no mark and
+  is said in words, because on a list of ten agents a coloured tick per
+  finished turn would flood the screen. Here there is one agent and it is
+  waiting on you to read what it did, which is what the accent means.
+- **Later sends nothing.** It sets the panel aside for this visit; the chip in
+  the chrome is still the way to the changes, and coming back to the
+  conversation offers again. There is nothing to tell the host, so nothing is
+  told.
+- The design has no capture of this state.
+
 ## exited
 
 The same conversation after the run stopped for good: the feed as it was, and

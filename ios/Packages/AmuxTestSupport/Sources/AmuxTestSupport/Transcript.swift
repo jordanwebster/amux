@@ -381,6 +381,45 @@ public enum Transcript {
         > The protocol refuses to tell them apart, and so must we.
         """
 
+    /// A short Codex turn, in Codex's own row vocabulary.
+    ///
+    /// A Codex conversation is not a Claude conversation with the names
+    /// changed: its rows arrive under different keys and its work is one kind
+    /// of entry with a state on it. So the state a Codex approval is read in
+    /// is built from Codex's rows rather than borrowing the other layer's.
+    public static let codexTurn: [FeedEntry] = [
+        codexRow(0, seq: 1, kind: .object([
+            "entry": .string("prompt"),
+            "content": .array([.object([
+                "kind": .string("text"),
+                "value": .string("Run the spec suite and tell me what breaks."),
+            ])]),
+        ])),
+        codexRow(1, seq: 2, kind: .object([
+            "entry": .string("reasoning"),
+            "summary": .array([.string("Reading the suite's own runner first.")]),
+            "finality": .string("final"),
+        ])),
+        codexRow(2, seq: 3, kind: .object([
+            "entry": .string("work"),
+            "kind": .object(["work": .string("command"), "command": .string("cargo check")]),
+            "state": .object(["state": .string("completed")]),
+            "exit_code": .int(0),
+        ])),
+        codexRow(3, seq: 4, kind: .object([
+            "entry": .string("message"),
+            "text": .string(
+                "The workspace checks clean. Running the suite needs to leave the sandbox."),
+            "finality": .string("final"),
+        ])),
+    ]
+
+    private static func codexRow(_ id: Int, seq: Int, kind: JSONValue) -> FeedEntry {
+        FeedEntry(layer: .codex, row: .object([
+            "id": .int(id), "seq": .int(seq), "kind": kind,
+        ]))
+    }
+
     /// The changes a finished turn offers to show.
     public static let changes = DiffDocument(
         numbering: .absolute,

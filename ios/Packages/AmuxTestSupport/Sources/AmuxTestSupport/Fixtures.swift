@@ -59,6 +59,11 @@ public enum Fixtures {
         Built(.exited, "exited"),
         Built(.voices, "voices"),
         Built(.reviewCta, "review-cta"),
+        Built(.reviewCta, "finished"),
+        Built(.askPermission, "ask-permission"),
+        Built(.askPermission, "ask-permission-codex"),
+        Built(.askQuestion, "ask-question"),
+        Built(.plan, "plan"),
         Built(.firstRun, "first-run"),
         Built(.firstRunPaid, "first-run-paid"),
     ]
@@ -83,10 +88,7 @@ public enum Fixtures {
 
         // 2 · A conversation
         Fixture(id: "run", screen: .run) { bundle in
-            States.open(
-                bundle, entries: Transcript.pairingCopy,
-                session: Sessions.claude(gate: .needsYou, phase: "idle",
-                                         asks: [Sessions.claudePermission]))
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
         Fixture(id: "run-live", screen: .runLive) { bundle in
             States.open(bundle, entries: Transcript.live,
@@ -225,11 +227,22 @@ public enum Fixtures {
         // provider's mouth.
         Fixture(id: "ask-permission-codex", screen: .askPermission) { bundle in
             States.open(
-                bundle, entries: [], agent: Scenario.agentId("spec-suite"),
+                bundle, entries: Transcript.codexTurn, agent: Scenario.agentId("spec-suite"),
                 session: Sessions.codex(gate: .needsYou, asks: [Sessions.codexPermission]))
         },
         Fixture(id: "settings-codex", screen: .settings) { bundle in
             States.open(bundle, agent: Scenario.agentId("spec-suite"), session: Sessions.codex())
+        },
+        // The same finished turn once the fleet says nobody has read it: the
+        // panel takes the composer's place and offers the page the chip in the
+        // chrome opens.
+        Fixture(id: "finished", screen: .reviewCta) { bundle in
+            var read = Scenario.agents
+            read[0].attention = .needsYou(why: .finished)
+            read[0].outcome = TurnOutcome(files: 2, insertions: 3, deletions: 6)
+            States.open(
+                bundle, agents: read, entries: Transcript.pairingCopy,
+                session: Sessions.claude(), changes: Transcript.changes)
         },
         // A link that landed on a confirmation. It names the host and never
         // pairs on arrival.

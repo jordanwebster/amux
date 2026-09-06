@@ -123,6 +123,11 @@ private struct ConversationPage: View {
                 // panel says; the button is here so the offer is on the screen
                 // it belongs to rather than arriving with the wiring.
                 case .retry: break
+                // Answering is the one thing on this screen that has to reach
+                // the host, and the shell has no runtime to reach it with yet.
+                // What the panel decided is carried as one value so the
+                // wiring, when it lands, has nothing left to interpret.
+                case .answer: break
                 }
             }
         }

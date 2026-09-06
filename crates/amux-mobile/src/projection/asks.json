@@ -1,0 +1,153 @@
+{
+  "codex-approval": [
+    {
+      "layer": "codex",
+      "value": {
+        "actions": [
+          {
+            "meaning": {
+              "decision": "accept",
+              "meaning": "scalar"
+            },
+            "wire": "accept"
+          },
+          {
+            "meaning": {
+              "matches_proposal": true,
+              "meaning": "accept_with_execpolicy_amendment"
+            },
+            "wire": {
+              "acceptWithExecpolicyAmendment": {
+                "execpolicy_amendment": [
+                  "/usr/bin/touch",
+                  "<MACHINE_PATH>"
+                ]
+              }
+            }
+          },
+          {
+            "meaning": {
+              "decision": "cancel",
+              "meaning": "scalar"
+            },
+            "wire": "cancel"
+          }
+        ],
+        "context": {
+          "ask": "command",
+          "command": "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'",
+          "cwd": "<MACHINE_PATH>",
+          "item_id": "exec-8ed0fba0-f88b-452f-911c-79283dcb350f",
+          "proposed_execpolicy_amendment": [
+            "/usr/bin/touch",
+            "<MACHINE_PATH>"
+          ],
+          "proposed_network_policy_amendments": [],
+          "reason": "Allow the exact requested command to create the approval file?"
+        },
+        "request_id": 0,
+        "seq": 30
+      }
+    }
+  ],
+  "permission": [
+    {
+      "layer": "claude_pty",
+      "value": {
+        "document": null,
+        "hook_key": 12878787835684851601,
+        "id": 0,
+        "kind": {
+          "ask": "permission",
+          "invocation": {
+            "command": "printf allow-scoped > allow-scoped.txt; printf allow-scoped",
+            "description": "Create file and print content as requested",
+            "tool": "bash"
+          },
+          "suggestions": [
+            {
+              "destination": "session",
+              "directories": [
+                "<MACHINE_PATH>"
+              ],
+              "kind": "add_directories"
+            }
+          ],
+          "tool_name": "Bash"
+        },
+        "seq": 17,
+        "session_ask_id": "3126cfff-f438-434e-b7df-1fd5b0fdb21f",
+        "state": {
+          "state": "pending"
+        },
+        "tool_use_id": null
+      }
+    }
+  ],
+  "plan": [
+    {
+      "layer": "claude_pty",
+      "value": {
+        "document": null,
+        "hook_key": 1979134974966623812,
+        "id": 0,
+        "kind": {
+          "ask": "permission",
+          "invocation": {
+            "plan": "# Context\n\nThe user wants README.md's single line of content updated from the literal text `CURRENT` to `UPDATED`.\n\n# Plan\n\n- Edit `README.md`, replacing the line `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read `README.md` and confirm its content is now `UPDATED`.\n",
+            "plan_file_path": "<MACHINE_PATH>",
+            "tool": "plan"
+          },
+          "suggestions": [],
+          "tool_name": "ExitPlanMode"
+        },
+        "seq": 43,
+        "session_ask_id": "389a1365-92b6-41f7-91e3-ec33c09165cd",
+        "state": {
+          "state": "pending"
+        },
+        "tool_use_id": null
+      }
+    }
+  ],
+  "question": [
+    {
+      "layer": "claude_pty",
+      "value": {
+        "document": null,
+        "hook_key": 6774351379995283147,
+        "id": 0,
+        "kind": {
+          "ask": "question",
+          "questions": [
+            {
+              "header": "Tools",
+              "multi_select": true,
+              "options": [
+                {
+                  "description": "A tool for driving nails and general striking",
+                  "label": "Hammer"
+                },
+                {
+                  "description": "A tool for cutting wood and other materials",
+                  "label": "Saw"
+                },
+                {
+                  "description": "A tool for creating holes and driving screws",
+                  "label": "Drill"
+                }
+              ],
+              "question": "Which tools would you like to use?"
+            }
+          ]
+        },
+        "seq": 17,
+        "session_ask_id": "415bae24-952a-42f5-bb6b-e903aa6520b5",
+        "state": {
+          "state": "pending"
+        },
+        "tool_use_id": null
+      }
+    }
+  ]
+}

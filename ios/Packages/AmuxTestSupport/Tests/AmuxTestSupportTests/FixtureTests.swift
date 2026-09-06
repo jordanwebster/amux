@@ -96,15 +96,50 @@ final class FixtureTests: XCTestCase {
         XCTAssertTrue(bundle.fleet.reconciled)
     }
 
+    /// The plain conversation carries its rows and nothing is waiting on
+    /// anybody. An ask replaces the composer wherever there is one, so a
+    /// fixture that carried one would be a picture of the ask panel rather
+    /// than of the chrome and the feed this state is about.
     func testTheConversationFixturesCarryTheirRows() {
         let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
         Fixtures.named("run")!.apply(bundle)
         let conversation = bundle.conversation(Scenario.focus)
         XCTAssertEqual(conversation.entries.count, Transcript.pairingCopy.count)
         XCTAssertEqual(conversation.entries.first?.entryKind, "prompt")
-        XCTAssertEqual(conversation.asks.count, 1)
-        XCTAssertEqual(conversation.asks.first?.layer, .claudePty)
-        XCTAssertEqual(conversation.gate, .claudePty(.needsYou))
+        XCTAssertTrue(conversation.asks.isEmpty)
+        XCTAssertEqual(conversation.gate, .claudePty(.ready))
+    }
+
+    /// Each ask state is the same conversation with a different thing waiting
+    /// on it, and each one draws its own panel.
+    func testEachAskStateCarriesTheAskItIsAbout() {
+        let expected: [(String, AgentId, String)] = [
+            ("ask-permission", Scenario.focus, "permission"),
+            ("ask-question", Scenario.focus, "question"),
+            ("plan", Scenario.focus, "permission"),
+        ]
+        for (name, agent, kind) in expected {
+            let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+            Fixtures.named(name)!.apply(bundle)
+            let conversation = bundle.conversation(agent)
+            XCTAssertEqual(conversation.gate, .claudePty(.needsYou), name)
+            XCTAssertEqual(conversation.asks.first?.layer, .claudePty, name)
+            XCTAssertEqual(
+                conversation.asks.first?.body["kind"]?["ask"]?.stringValue, kind, name)
+            XCTAssertNotNil(conversation.asks.panel, name)
+        }
+    }
+
+    /// The finished turn's panel is offered off the fleet's own vocabulary
+    /// rather than off the gate: an agent that ended a turn nobody has read is
+    /// one of the things that need you.
+    func testTheFinishedTurnIsOfferedForReview() {
+        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        Fixtures.named("finished")!.apply(bundle)
+        XCTAssertEqual(
+            bundle.fleet.rows.first(where: { $0.id == Scenario.focus })?.attention,
+            .needsYou(why: .finished))
+        XCTAssertNotNil(bundle.conversation(Scenario.focus).changes)
     }
 
     func testBothPermissionVocabulariesStayApart() {
@@ -119,9 +154,16 @@ final class FixtureTests: XCTestCase {
         let codexAsk = codexBundle.conversation(Scenario.agentId("spec-suite")).asks.first
         XCTAssertEqual(codexAsk?.layer, .codex)
         // Codex offers its own choices, including one Claude does not have.
+        // These are the four V1 decisions the frozen backend accepts, spelled
+        // as the backend spells them; the words this used to assert were not
+        // any layer's, so a panel built on them would have offered decisions
+        // no host would take.
         XCTAssertEqual(
             codexAsk?.body["actions"]?.arrayValue?.compactMap { $0["wire"]?.stringValue },
-            ["approve", "approve_for_session", "deny"])
+            ["accept", "acceptForSession", "decline"])
+        // The object-valued choice in the middle is real and is not a scalar,
+        // which is why it has no wire word here and cannot be pressed.
+        XCTAssertEqual(codexAsk?.body["actions"]?.arrayValue?.count, 4)
     }
 
     func testTheUnreadableAgentSaysSoRatherThanLookingIdle() {

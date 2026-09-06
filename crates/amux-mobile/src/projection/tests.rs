@@ -667,3 +667,89 @@ fn todos_mobile_callback_replaces_session_facts_without_appending_feed_rows() {
     );
     assert!(phone.rows.is_empty());
 }
+
+/// Every ask shape the phone draws a panel for, taken from recorded sessions
+/// rather than written by hand.
+///
+/// The panels read a provider's own words — a command, a question's options, a
+/// plan's markdown, Codex's decisions — and a hand-written example of those
+/// words agrees with itself and with nothing else. So each shape here is the
+/// projection of a real recording replayed up to the moment it asked, pinned
+/// beside the app that reads it.
+const ASK_FIXTURES: &[(&str, amux::AgentKind, &str)] = &[
+    (
+        "permission",
+        amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        },
+        include_str!("../../../amux/tests/fixtures/rows/claude-pty/permission_session.rows.jsonl"),
+    ),
+    (
+        "question",
+        amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        },
+        include_str!("../../../amux/tests/fixtures/rows/claude-pty/question_multi.rows.jsonl"),
+    ),
+    (
+        "plan",
+        amux::AgentKind::Claude {
+            driver: amux::ClaudeDriver::Pty,
+        },
+        include_str!("../../../amux/tests/fixtures/rows/claude-pty/plan_approve.rows.jsonl"),
+    ),
+    (
+        "codex-approval",
+        amux::AgentKind::Codex,
+        include_str!("../../../amux/tests/fixtures/rows/codex/approval_allow.rows.jsonl"),
+    ),
+];
+
+fn pending_asks(model: &Model) -> Vec<AskDto> {
+    let mut asks: Vec<AskDto> = model
+        .claude(AGENT)
+        .map(|l| l.asks().cloned().map(AskDto::ClaudePty).collect())
+        .unwrap_or_default();
+    asks.extend(
+        model
+            .codex(AGENT)
+            .map(|l| l.asks().cloned().map(AskDto::Codex).collect::<Vec<_>>())
+            .unwrap_or_default(),
+    );
+    asks
+}
+
+#[test]
+fn mobile_projection_ask_snapshot() {
+    let mut pinned = serde_json::Map::new();
+    for (name, kind, fixture) in ASK_FIXTURES {
+        let mut model = self::model(*kind);
+        let mut asks = vec![];
+        for (index, line) in fixture.lines().enumerate() {
+            row(
+                &mut model,
+                index as u64 + 1,
+                serde_json::from_str(line).unwrap(),
+            );
+            asks = pending_asks(&model);
+            if !asks.is_empty() {
+                break;
+            }
+        }
+        assert!(!asks.is_empty(), "{name} never reached an unanswered ask",);
+        pinned.insert((*name).to_string(), serde_json::to_value(&asks).unwrap());
+    }
+    let actual = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&Value::Object(pinned)).unwrap()
+    );
+    if std::env::var_os("UPDATE_MOBILE_PROJECTION").is_some() {
+        std::fs::write(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/src/projection/asks.json"),
+            &actual,
+        )
+        .unwrap();
+    } else {
+        assert_eq!(actual, include_str!("asks.json"));
+    }
+}

@@ -232,7 +232,11 @@ private struct PromptSurface: View {
 /// finished value. Parsing on the main thread is what a streaming transcript
 /// cannot afford: resolving inline attributes for a paragraph costs more than a
 /// frame, and fifty rows a second is fifty of those.
-private struct Prose: View {
+/// The agent's markdown, rendered.
+///
+/// Shared with the ask panel, where a plan is the same markdown asking to be
+/// judged rather than reporting what happened.
+struct Prose: View {
     @Environment(\.design) private var design
     let markdown: String
     let open: Bool

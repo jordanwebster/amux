@@ -45,15 +45,37 @@ public struct AttentionMark: View {
             if why == .finished {
                 Color.clear.frame(width: size, height: size)
             } else {
-                ZStack {
-                    Circle().fill(design.accent.color)
-                    Image(systemName: why.glyph)
-                        .font(.system(size: size * 0.5, weight: .bold))
-                        .foregroundStyle(design.onAccent.color)
-                }
-                .frame(width: size, height: size)
+                NeedsYouMark(glyph: why.glyph, size: size)
             }
         }
+    }
+}
+
+/// The accent disc with a glyph in it: the one thing on a screen allowed to be
+/// coloured, because it is the one thing that is waiting for you.
+///
+/// The list draws it small on a row and an ask panel draws it larger at the
+/// head of the thing being asked. It is one mark either way — a person who has
+/// learnt what it means on the home should not have to learn it again inside a
+/// conversation.
+public struct NeedsYouMark: View {
+    @Environment(\.design) private var design
+    private let glyph: String
+    private let size: CGFloat
+
+    public init(glyph: String, size: CGFloat = 19) {
+        self.glyph = glyph
+        self.size = size
+    }
+
+    public var body: some View {
+        ZStack {
+            Circle().fill(design.accent.color)
+            Image(systemName: glyph)
+                .font(.system(size: size * 0.5, weight: .bold))
+                .foregroundStyle(design.onAccent.color)
+        }
+        .frame(width: size, height: size)
     }
 }
 

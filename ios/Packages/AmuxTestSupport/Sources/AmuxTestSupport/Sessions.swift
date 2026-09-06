@@ -137,7 +137,14 @@ public enum Sessions {
                 "command": .string("cargo test --workspace --test spec"),
                 "description": .string("Watch the three tests fail before calling it done"),
             ]),
-            "suggestions": .array([]),
+            // The host's own standing grant, in the shape it actually sends:
+            // a directory to add for the session, not a rule about the
+            // command. What the panel offers is what this grants.
+            "suggestions": .array([.object([
+                "kind": .string("add_directories"),
+                "destination": .string("session"),
+                "directories": .array([.string("~/src/amux")]),
+            ])]),
         ]),
         "state": .object(["state": .string("pending")]),
         "document": .null,
@@ -198,14 +205,25 @@ public enum Sessions {
             "proposed_execpolicy_amendment": .null,
             "proposed_network_policy_amendments": .array([]),
         ]),
+        // Codex's four V1 decisions are accept, acceptForSession, decline and
+        // cancel; this request offers three of them and one object-valued
+        // choice the backend will not take, which is listed and cannot be
+        // pressed.
         "actions": .array([
-            .object(["wire": .string("approve"),
-                     "meaning": .object(["meaning": .string("scalar"), "decision": .string("approve")])]),
-            .object(["wire": .string("approve_for_session"),
+            .object(["wire": .string("accept"),
                      "meaning": .object(["meaning": .string("scalar"),
-                                         "decision": .string("approve_for_session")])]),
-            .object(["wire": .string("deny"),
-                     "meaning": .object(["meaning": .string("scalar"), "decision": .string("deny")])]),
+                                         "decision": .string("accept")])]),
+            .object(["wire": .string("acceptForSession"),
+                     "meaning": .object(["meaning": .string("scalar"),
+                                         "decision": .string("acceptForSession")])]),
+            .object(["wire": .object(["acceptWithExecpolicyAmendment": .object([
+                        "execpolicy_amendment": .array([.string("/usr/bin/cargo")])])]),
+                     "meaning": .object([
+                        "meaning": .string("accept_with_execpolicy_amendment"),
+                        "matches_proposal": .bool(true)])]),
+            .object(["wire": .string("decline"),
+                     "meaning": .object(["meaning": .string("scalar"),
+                                         "decision": .string("decline")])]),
         ]),
     ]))
 

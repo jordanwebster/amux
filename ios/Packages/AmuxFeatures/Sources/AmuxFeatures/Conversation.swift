@@ -14,6 +14,8 @@ public enum ConversationAction: Equatable, Sendable {
     case overflow
     /// Reach the machine again now, rather than waiting for the next attempt.
     case retry
+    /// What the person told the agent that was waiting on them.
+    case answer(AskPanel, AskDecision)
 }
 
 /// Who this conversation is with and where it runs.
@@ -38,6 +40,12 @@ public struct ConversationSubject: Equatable, Sendable {
     public let age: String?
     /// Set once the agent has stopped for good.
     public let ended: Ended?
+    /// Whether this agent's last turn finished and nobody has read it yet.
+    ///
+    /// The fleet keeps one vocabulary for everything that needs you, and a
+    /// finished turn is one of them. The conversation asks the same question
+    /// the home does rather than inventing a second answer from the gate.
+    public let finished: Bool
 
     /// A run that is over.
     public struct Ended: Equatable, Sendable {
@@ -52,7 +60,8 @@ public struct ConversationSubject: Equatable, Sendable {
 
     public init(
         name: String, host: String?, directory: String,
-        hostReachable: Bool = true, age: String? = nil, ended: Ended? = nil
+        hostReachable: Bool = true, age: String? = nil, ended: Ended? = nil,
+        finished: Bool = false
     ) {
         self.name = name
         self.host = host
@@ -60,6 +69,7 @@ public struct ConversationSubject: Equatable, Sendable {
         self.hostReachable = hostReachable
         self.age = age
         self.ended = ended
+        self.finished = finished
     }
 
     /// What the chrome names an agent, gathered from the fleet that owns those
@@ -78,7 +88,8 @@ public struct ConversationSubject: Equatable, Sendable {
             directory: row.workingDirectory,
             hostReachable: fleet.host(row.hostId)?.online ?? true,
             age: row.age(at: fleet.orderedAt),
-            ended: ended)
+            ended: ended,
+            finished: row.attention == .needsYou(why: .finished))
     }
 
     /// "Studio · ~/src/amux", or just the directory while the machine that
@@ -111,6 +122,12 @@ public struct Conversation: View {
     private let model: ConversationStore
     private let subject: ConversationSubject
     private let actions: @MainActor (ConversationAction) -> Void
+    /// Whether the finished turn's panel has been set aside for this visit.
+    ///
+    /// View state, because Later is not something the host is told: nothing is
+    /// sent, the changes stay where they are, and the chip in the chrome is
+    /// still the way to them. Coming back to the conversation offers again.
+    @State private var deferred = false
 
     public init(
         model: ConversationStore,
@@ -182,12 +199,25 @@ public struct Conversation: View {
     /// screen to say nothing.
     @ViewBuilder
     private var foot: some View {
-        if let state = ConversationFootState(
-            gate: model.gate, results: model.results, subject: subject) {
-            ConversationFoot(state: state) { actions(.retry) }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+        Group {
+            // An unanswered ask outranks everything else down here. Whatever
+            // else is true — a machine that has gone quiet, a layer catching
+            // up — the agent has stopped and is waiting on one answer, and
+            // that answer is the only thing worth offering.
+            if let panel = model.asks.panel {
+                AskPanelView(panel: panel) { actions(.answer(panel, $0)) }
+            } else if let changes = model.changes, !changes.isEmpty,
+                      subject.finished, !deferred {
+                FinishedPanel(
+                    changes: changes, review: { actions(.openChanges) },
+                    later: { deferred = true })
+            } else if let state = ConversationFootState(
+                gate: model.gate, results: model.results, subject: subject) {
+                ConversationFoot(state: state) { actions(.retry) }
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
     }
 
     // MARK: - The chrome

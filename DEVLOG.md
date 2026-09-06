@@ -4,6 +4,39 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **An agent that is waiting on you now asks in its own words.**
+An unanswered ask replaces the composer with a panel. A Claude permission shows
+the command verbatim with Allow filled, Deny outlined, and — where the host
+offered one — the standing grant it actually offered. A question shows its own
+answers; one question that takes one answer is finished by tapping it, and
+anything else collects and sends together, because the layer refuses a response
+with a question missing. A plan is the agent's own markdown, folded with a
+grabber, with Approve and Send Back; Approve is the arm that keeps asking about
+edits one at a time, since an app whose whole permission story is being asked
+first must not turn that off from a button. A finished turn nobody has read
+offers Review Changes and Later in the same place. Codex is not flattened into
+any of that: it lists the decisions Codex itself named, in Codex's order, and a
+decision this build cannot carry is listed and cannot be pressed.
+
+The panels are read off asks projected by the bridge, and those projections are
+now pinned from recorded sessions rather than written by hand. Four are folded
+out of real recordings — a permission carrying a real directory suggestion, a
+multi-select question, a plan, and a Codex command approval — into
+`crates/amux-mobile/src/projection/asks.json`, read by the phone's own suite.
+Doing that immediately found two hand-written fixtures that were wrong: the
+Codex approval offered "approve", "approve_for_session" and "deny", which are
+not any layer's words — the frozen backend takes accept, acceptForSession,
+decline and cancel — so a panel built on the old fixture would have offered
+decisions no host would take. The permission fixture carried no suggestion at
+all, which is the one shape the core refuses to answer. Both are corrected, and
+the test that asserted the wrong decisions now asserts the real ones.
+
+Five states are captured and locked in both appearances: ask-permission,
+ask-question, plan, codex-approval and a finished turn. The plain conversation
+capture lost the pending ask it used to carry, since a state whose composer is
+replaced by a panel is a picture of the panel rather than of the chrome and the
+feed. Every previously locked capture is unchanged.
+
 2026-09-06 — **The home now has a locked capture of an agent it cannot read.**
 A machine on an account can run a newer amux than the phone, and then a real
 agent arrives under a provider name this build has never heard of. The app

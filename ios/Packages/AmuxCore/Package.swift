@@ -29,7 +29,7 @@ let package = Package(
             // The pinned projection schema, read from the crate that defines
             // it, so a DTO change breaks this suite instead of drifting past
             // a stale copy.
-            resources: [.copy("Resources/schema.json")]
+            resources: [.copy("Resources/schema.json"), .copy("Resources/asks.json")]
         ),
     ],
     swiftLanguageModes: [.v6]

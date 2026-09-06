@@ -50,6 +50,17 @@ enum DoorScreens {
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(
                     agent: Scenario.focus, in: host.stores.fleet)) { _ in }
+        // An ask is a state of the conversation rather than a screen beside
+        // it: what replaces the composer is read off the session's own asks,
+        // so permission, question and plan are one screen with a different
+        // thing waiting on it. The Codex approval opens on a Codex agent,
+        // which is why the agent is not always the same one.
+        case .askPermission, .askQuestion, .plan:
+            let agent = host.stores.conversations.keys.contains(Scenario.focus)
+                ? Scenario.focus : Scenario.agentId("spec-suite")
+            Conversation(
+                model: host.stores.conversation(agent),
+                subject: ConversationSubject(agent: agent, in: host.stores.fleet)) { _ in }
         default: EmptyView()
         }
     }
