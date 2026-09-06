@@ -160,9 +160,17 @@ fn mobile_projection_schema_snapshot() {
         3,
         json!({"type":"item/completed", "item":{"id":"m", "type":"agentMessage", "text":"Done", "phase":"final_answer"}}),
     );
-    let sdk = self::model(amux::AgentKind::Claude {
+    let mut sdk = self::model(amux::AgentKind::Claude {
         driver: amux::ClaudeDriver::Sdk,
     });
+    let facts =
+        include_str!("../../../amux/tests/fixtures/rows/claude-sdk/streamed_turn.rows.jsonl")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .rev()
+            .find(|row| row["type"] == "amux.claude_sdk.session_facts")
+            .unwrap();
+    row(&mut sdk, 1, facts);
     events.extend(collect(&mut subscribed(), &sdk));
     events.push(Event::connection(&RelayConnection::Disconnected {
         reason: "relay unavailable".into(),

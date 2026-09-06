@@ -465,6 +465,9 @@ async fn ingest_session(
         state
             .facts
             .initialize_commands(control.supported_commands().unwrap_or_default());
+        state
+            .facts
+            .initialize_models(control.supported_models().unwrap_or_default());
         state.control = Some(control.clone());
     }
     if resumed {

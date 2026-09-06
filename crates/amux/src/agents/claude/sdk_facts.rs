@@ -4,13 +4,16 @@ use std::collections::HashMap;
 
 use claude::sdk::{Message, PermissionMode, ResultMessage};
 
-use super::sdk_io::{ClaudeSdkSynthesized, ContextMeter, ContextMeterSource, McpServerFact};
+use super::sdk_io::{
+    ClaudeSdkSynthesized, ContextMeter, ContextMeterSource, McpServerFact, ModelFact,
+};
 
 #[derive(Default)]
 pub(super) struct SessionFacts {
     pub model: Option<String>,
     pub launch_model: Option<String>,
     pub effort: Option<String>,
+    models: Vec<ModelFact>,
     pub slash_commands: Vec<String>,
     terminal_slash_commands: Vec<String>,
     pub permission_mode: Option<String>,
@@ -26,6 +29,18 @@ impl SessionFacts {
         self.slash_commands = commands
             .iter()
             .map(|command| command.name.clone())
+            .collect();
+    }
+
+    pub fn initialize_models(&mut self, models: &[claude::sdk::init::ModelInfo]) {
+        self.models = models
+            .iter()
+            .map(|model| ModelFact {
+                value: model.value.clone(),
+                resolved_model: model.resolved_model.clone(),
+                display_name: model.display_name.clone(),
+                supported_effort_levels: model.supported_effort_levels.clone(),
+            })
             .collect();
     }
 
@@ -73,6 +88,7 @@ impl SessionFacts {
         ClaudeSdkSynthesized::SessionFacts {
             model: self.model.clone(),
             effort: self.effort.clone(),
+            models: self.models.clone(),
             slash_commands: self.slash_commands.clone(),
             terminal_slash_commands: self.terminal_slash_commands.clone(),
             permission_mode: self.permission_mode.clone(),

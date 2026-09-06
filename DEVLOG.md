@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Claude SDK model choices come from session initialization.**
+The daemon now publishes each initialized model's selectable value, resolved
+name, display name and advertised effort levels in every session-facts snapshot.
+Shared provider facts expose those choices and select efforts by the current
+model's value or resolved name. Unknown models, absent catalogues and models
+without advertised efforts leave the choice list empty; no default is guessed.
+Reopening from retained facts restores the catalogue, and a new SDK session
+clears it. The existing Swift model-choice decoder consumes the shared projection.
+
+The runtime integration exercises the actual SDK initialization and daemon input
+path with distinct per-model effort lists, an alias, a model without effort
+choices and an empty catalogue. It still observes prompt, queued-message,
+model, effort, permission and command delivery at provider stdin. The reducer
+spec also checks the original recorded catalogue, replay equality and clearing.
+Fourteen daemon-row fixtures regenerate from their original SDK recordings:
+only the new catalogue on 100 facts rows changes, preserving provider messages.
+The mobile schema now includes the recorded SDK choices, with a Swift assertion
+for their values, labels, effort levels and unknown defaults.
+Formatting, lint, all 14 SDK integration tests, the full workspace suite,
+all 420 prose specifications and both mobile feature checks pass. The full
+suite's initial frozen-JSON failure was corrected by adding the new empty
+catalogue field to the expected facts shape; no assertion was removed.
+Both iOS Rust builds and nine simulator schema tests also pass.
+
 2026-09-06 — **Shared writing controls reach Claude SDK sessions.**
 Plain drafts, queued messages and selected command tokens now use the existing
 SDK reducer and runtime encoder. The queue recognizes SDK turn completion,

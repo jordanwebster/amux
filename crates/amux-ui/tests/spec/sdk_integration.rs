@@ -641,3 +641,77 @@ fn sdk_integration_streamed_todo_final_removes_provisional_tool_without_losing_s
         3
     );
 }
+
+#[test]
+fn sdk_integration_recorded_model_catalogue_survives_replay_and_clears_with_session() {
+    let agent = agent_id(AGENT);
+    let snapshot = rows(STREAM)
+        .into_iter()
+        .rev()
+        .find(|row| row["type"] == "amux.claude_sdk.session_facts")
+        .unwrap();
+    let mut model = fold(seq([
+        ready(),
+        vec![batch(AGENT, 100, vec![snapshot.clone()])],
+    ]));
+    let facts = provider::facts(&model, agent);
+    assert_eq!(
+        facts
+            .models
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "default",
+            "opus[1m]",
+            "claude-fable-5[1m]",
+            "sonnet",
+            "haiku"
+        ]
+    );
+    assert_eq!(facts.models[0].name, "Default (recommended)");
+    assert_eq!(
+        facts.models[0].efforts,
+        ["low", "medium", "high", "xhigh", "max"]
+    );
+    assert!(
+        facts
+            .models
+            .iter()
+            .all(|item| item.default_effort.is_none())
+    );
+    assert!(
+        facts.efforts.is_empty(),
+        "the recorded Haiku model advertises no efforts"
+    );
+    let mut messages = ready();
+    for (i, current) in ["default", "claude-opus-5[1m]", "haiku", "unreported-model"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut row = snapshot.clone();
+        row["model"] = json!(current);
+        let msg = batch(AGENT, 101 + i as i64, vec![row]);
+        update(&mut model, msg.clone());
+        messages.push(msg);
+        assert_eq!(
+            provider::facts(&model, agent).efforts,
+            if i < 2 {
+                vec!["low", "medium", "high", "xhigh", "max"]
+            } else {
+                vec![]
+            }
+        );
+    }
+    crate::wire_free::assert_differential_sequence("SDK recorded model choices", messages);
+    let mut absent = snapshot.clone();
+    absent.as_object_mut().unwrap().remove("models");
+    update(&mut model, batch(AGENT, 110, vec![absent]));
+    assert!(provider::facts(&model, agent).models.is_empty());
+    assert!(provider::facts(&model, agent).efforts.is_empty());
+    update(&mut model, batch(AGENT, 111, vec![snapshot]));
+    assert!(!provider::facts(&model, agent).models.is_empty());
+    update(&mut model, batch(AGENT, 112, vec![rows(STREAM)[0].clone()]));
+    assert!(provider::facts(&model, agent).models.is_empty());
+    assert!(provider::facts(&model, agent).efforts.is_empty());
+}

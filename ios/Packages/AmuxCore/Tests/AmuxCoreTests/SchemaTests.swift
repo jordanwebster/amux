@@ -64,6 +64,21 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(sdkSession.facts, .claudeSdk(supported: false))
     }
 
+    func testSDKModelChoicesDecodeFromRecordedInitialization() throws {
+        guard case .session(let session) = try pinnedEvents()[13] else {
+            return XCTFail("expected SDK session facts")
+        }
+        XCTAssertEqual(session.provider.model, "claude-haiku-4-5-20251001")
+        XCTAssertEqual(session.provider.models.map(\.id), [
+            "default", "opus[1m]", "claude-fable-5[1m]", "sonnet", "haiku"
+        ])
+        XCTAssertEqual(session.provider.models.first?.name, "Default (recommended)")
+        XCTAssertEqual(session.provider.models.first?.efforts, ["low", "medium", "high", "xhigh", "max"])
+        XCTAssertTrue(session.provider.models.allSatisfy { $0.defaultEffort == nil })
+        XCTAssertEqual(session.provider.models.last?.efforts, [])
+        XCTAssertTrue(session.provider.efforts.isEmpty)
+    }
+
     func testFeedRowsKeepTheirLayerPositionAndKind() throws {
         let events = try pinnedEvents()
         guard case .feed(let first) = events[3], case .feed(let rewritten) = events[8],

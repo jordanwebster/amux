@@ -117,6 +117,26 @@ pub fn facts(model: &Model, agent: AgentId) -> ProviderFacts {
         return ProviderFacts {
             model: session.model.clone(),
             effort: session.effort.clone(),
+            models: session
+                .models
+                .iter()
+                .map(|item| ModelInfo {
+                    id: item.value.clone(),
+                    name: item.display_name.clone(),
+                    efforts: item.supported_effort_levels.clone().unwrap_or_default(),
+                    default_effort: None,
+                })
+                .collect(),
+            efforts: session
+                .model
+                .as_ref()
+                .and_then(|current| {
+                    session.models.iter().find(|item| {
+                        &item.value == current || item.resolved_model.as_ref() == Some(current)
+                    })
+                })
+                .and_then(|item| item.supported_effort_levels.clone())
+                .unwrap_or_default(),
             permission: PermissionFacts::Claude {
                 mode: session.permission_mode.clone(),
             },
@@ -130,7 +150,6 @@ pub fn facts(model: &Model, agent: AgentId) -> ProviderFacts {
                     terminal_only: session.terminal_slash_commands.contains(name),
                 })
                 .collect(),
-            ..ProviderFacts::default()
         };
     }
     if let Some(layer) = model.codex(agent) {

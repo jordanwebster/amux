@@ -132,7 +132,7 @@ async fn claude_sdk_controls_publish_facts_and_only_explicit_context_requests() 
     assert_eq!(
         rows[1],
         json!({"type": "amux.claude_sdk.session_facts", "model": "launch",
-        "effort": null, "slash_commands": ["compact"], "terminal_slash_commands": [], "permission_mode": "default", "context": null, "mcp_servers": []})
+        "effort": null, "models": [], "slash_commands": ["compact"], "terminal_slash_commands": [], "permission_mode": "default", "context": null, "mcp_servers": []})
     );
     for (name, command, expected_model, expected_mode, ok) in [
         (

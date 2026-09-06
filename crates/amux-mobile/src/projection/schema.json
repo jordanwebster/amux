@@ -397,14 +397,390 @@
         "supported": false
       },
       "provider": {
-        "model": null,
+        "model": "claude-haiku-4-5-20251001",
         "effort": null,
-        "models": [],
+        "models": [
+          {
+            "id": "default",
+            "name": "Default (recommended)",
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": null
+          },
+          {
+            "id": "opus[1m]",
+            "name": "Opus (1M context)",
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": null
+          },
+          {
+            "id": "claude-fable-5[1m]",
+            "name": "Fable",
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": null
+          },
+          {
+            "id": "sonnet",
+            "name": "Sonnet",
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": null
+          },
+          {
+            "id": "haiku",
+            "name": "Haiku",
+            "efforts": [],
+            "default_effort": null
+          }
+        ],
         "efforts": [],
-        "commands": [],
+        "commands": [
+          {
+            "name": "autopilot",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "delegate",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "frontend-design",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "handoff",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "intake",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "tasks",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "deep-research",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:explain-error",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:test-cards",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:connect-recommend",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:connect-required-verification-information",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-apps",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-best-practices",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-directory",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-docs",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-projects",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:upgrade-stripe",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "design-sync",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "dataviz",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "update-config",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "verify",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "debug",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "code-review",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "simplify",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "batch",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "fewer-permission-prompts",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "doctor",
+            "source": "claude",
+            "terminal_only": true
+          },
+          {
+            "name": "loop",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "schedule",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "claude-api",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "run",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "run-skill-generator",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "agents",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "auto-mode-setup",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "autocompact",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "clear",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "color",
+            "source": "claude",
+            "terminal_only": true
+          },
+          {
+            "name": "compact",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "config",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "context",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "effort",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "fast",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "heapdump",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "init",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "mcp",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "import",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "model",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "__remote-workflow",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "workflow-launch-exec",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "reload-skills",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "rename",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "ultrareview",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "security-review",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "usage-credits",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "extra-usage",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "usage",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "insights",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "recap",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "goal",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "design",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "design-consent",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "design-revoke",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "list-agents",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "team-onboarding",
+            "source": "claude",
+            "terminal_only": false
+          }
+        ],
         "permission": {
           "provider": "claude",
-          "mode": null
+          "mode": "default"
         },
         "todos": null
       },

@@ -129,7 +129,7 @@ pub mod claude_sdk_io {
     pub use crate::agents::claude::sdk_io::{
         CLAUDE_SDK_V1, ClaudeSdkSynthesized, ClaudeSdkV1Args, ClaudeSdkV1Input, ClaudeSdkV1Output,
         ClaudeSdkV1ReplayQuery, ClaudeSdkV1Row, ContextMeter, ContextMeterSource, ContextUsage,
-        McpServerFact, decode_claude_sdk_v1_output, encode_claude_sdk_v1_args,
+        McpServerFact, ModelFact, decode_claude_sdk_v1_output, encode_claude_sdk_v1_args,
         encode_claude_sdk_v1_input,
     };
 }

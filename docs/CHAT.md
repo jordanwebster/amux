@@ -1380,8 +1380,14 @@ use this SDK write path, and `ClaudeSdkCommand::SetPermissionMode` selects a
 specific provider mode. Settings remain available while working or answering
 an ask; replay, read-only sessions and an unresolved input refuse them. The
 client validates typed SDK values before creating pending state. Observed
-model, effort and permission reach `ProviderFacts`; model and effort choice
-catalogues remain empty when the daemon has not published them.
+model, effort and permission reach `ProviderFacts`. The initialization reply's
+`Session::supported_models()` supplies the model value, resolved model, display
+name and advertised effort levels in every synthesized session-facts row.
+Shared model choices retain the selectable value; the current model matches
+that value or its resolved name to select the effort list. Missing catalogues,
+unknown current models and models without advertised effort levels produce no
+effort choices. No model default is inferred. Reopening from a retained facts
+snapshot restores the catalogue without another discovery request.
 
 The SDK initialization reply's `Session::supported_commands()` supplies command
 names in the first synthesized session-facts row, before a prompt is sent.

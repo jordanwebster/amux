@@ -1,6 +1,8 @@
 //! Session facts persist independently of the retained conversation feed.
 
-pub use amux::claude_sdk_io::{ContextMeter, ContextMeterSource, ContextUsage, McpServerFact};
+pub use amux::claude_sdk_io::{
+    ContextMeter, ContextMeterSource, ContextUsage, McpServerFact, ModelFact,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -10,6 +12,7 @@ use super::ClaudeSdkLayer;
 pub struct SessionFacts {
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub models: Vec<ModelFact>,
     pub permission_mode: Option<String>,
     pub context: Option<ContextMeter>,
     pub mcp_servers: Vec<McpServerFact>,
@@ -25,6 +28,8 @@ pub(super) fn observe(layer: &mut ClaudeSdkLayer, row: &Value) {
         "amux.claude_sdk.session_facts" => {
             layer.session.model = row["model"].as_str().map(str::to_owned);
             layer.session.effort = row["effort"].as_str().map(str::to_owned);
+            layer.session.models =
+                serde_json::from_value(row["models"].clone()).unwrap_or_default();
             layer.session.terminal_slash_commands =
                 serde_json::from_value(row["terminal_slash_commands"].clone()).unwrap_or_default();
             layer.session.slash_commands =

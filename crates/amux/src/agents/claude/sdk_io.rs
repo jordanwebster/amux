@@ -117,6 +117,7 @@ pub enum ClaudeSdkSynthesized {
     SessionFacts {
         model: Option<String>,
         effort: Option<String>,
+        models: Vec<ModelFact>,
         slash_commands: Vec<String>,
         terminal_slash_commands: Vec<String>,
         permission_mode: Option<String>,
@@ -136,6 +137,15 @@ pub enum ClaudeSdkSynthesized {
         input_id: Option<String>,
         refs: Vec<ArtifactRef>,
     },
+}
+
+/// Model choices reported by SDK initialization, including provider-resolved aliases.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelFact {
+    pub value: String,
+    pub resolved_model: Option<String>,
+    pub display_name: String,
+    pub supported_effort_levels: Option<Vec<String>>,
 }
 
 /// Latest observed context size, with a passively observed window.
@@ -776,6 +786,12 @@ mod tests {
                 ClaudeSdkSynthesized::SessionFacts {
                     model: Some("model".into()),
                     effort: Some("high".into()),
+                    models: vec![ModelFact {
+                        value: "model".into(),
+                        resolved_model: Some("resolved-model".into()),
+                        display_name: "A model".into(),
+                        supported_effort_levels: Some(vec!["high".into()]),
+                    }],
                     slash_commands: vec!["compact".into()],
                     terminal_slash_commands: vec![],
                     permission_mode: Some("plan".into()),
@@ -789,7 +805,7 @@ mod tests {
                         status: "connected".into(),
                     }],
                 },
-                json!({"type": "amux.claude_sdk.session_facts", "model": "model", "effort": "high", "slash_commands": ["compact"], "terminal_slash_commands": [], "permission_mode": "plan",
+                json!({"type": "amux.claude_sdk.session_facts", "model": "model", "effort": "high", "models": [{"value":"model", "resolved_model":"resolved-model", "display_name":"A model", "supported_effort_levels":["high"]}], "slash_commands": ["compact"], "terminal_slash_commands": [], "permission_mode": "plan",
                     "context": {"used_tokens": 42, "window_tokens": 200000, "source": "assistant_usage"},
                     "mcp_servers": [{"name": "tools", "status": "connected"}]}),
             ),
@@ -797,13 +813,14 @@ mod tests {
                 ClaudeSdkSynthesized::SessionFacts {
                     model: None,
                     effort: None,
+                    models: vec![],
                     slash_commands: vec![],
                     terminal_slash_commands: vec![],
                     permission_mode: None,
                     context: None,
                     mcp_servers: vec![],
                 },
-                json!({"type": "amux.claude_sdk.session_facts", "model": null, "effort": null, "slash_commands": [], "terminal_slash_commands": [], "permission_mode": null, "context": null, "mcp_servers": []}),
+                json!({"type": "amux.claude_sdk.session_facts", "model": null, "effort": null, "models": [], "slash_commands": [], "terminal_slash_commands": [], "permission_mode": null, "context": null, "mcp_servers": []}),
             ),
             (
                 ClaudeSdkSynthesized::Ready {

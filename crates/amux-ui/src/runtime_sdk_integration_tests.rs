@@ -146,11 +146,17 @@ fn recorded(kind: &str) -> Value {
 
 #[tokio::test]
 async fn sdk_integration_runtime_round_trips_queue_settings_and_command_through_sdk() {
-    tokio::time::timeout(std::time::Duration::from_secs(20), journey())
+    tokio::time::timeout(std::time::Duration::from_secs(20), journey(true))
         .await
         .unwrap();
 }
-async fn journey() {
+#[tokio::test]
+async fn sdk_integration_runtime_keeps_missing_model_catalogue_unknown() {
+    tokio::time::timeout(std::time::Duration::from_secs(20), journey(false))
+        .await
+        .unwrap();
+}
+async fn journey(with_catalogue: bool) {
     let (sdk_stdin, provider_stdin) = duplex(65536);
     let (mut stdout, sdk_stdout) = duplex(65536);
     let (release, held) = tokio::sync::oneshot::channel();
@@ -158,8 +164,17 @@ async fn journey() {
     let provider = tokio::spawn(async move {
         let mut stdin = BufReader::new(provider_stdin);
         let init = read(&mut stdin).await;
+        let models = if with_catalogue {
+            json!([
+                {"value":"sonnet", "resolvedModel":"sonnet-resolved", "displayName":"Sonnet", "description":"Balanced", "supportedEffortLevels":["low", "high"]},
+                {"value":"haiku", "displayName":"Haiku", "description":"Fast", "supportedEffortLevels":["medium"]},
+                {"value":"provider-default", "displayName":"Provider default", "description":"No advertised effort choices"}
+            ])
+        } else {
+            json!([])
+        };
         ack(&mut stdout, &init, json!({"commands":[{"name":"compact","description":"Compact","argumentHint":"[instructions]"}],
-            "agents":[],"models":[],"account":{},"output_style":"default","available_output_styles":[]})).await;
+            "agents":[],"models":models,"account":{},"output_style":"default","available_output_styles":[]})).await;
         let mut observed = vec![];
         let first = read(&mut stdin).await;
         assert_eq!(first["message"]["content"], "first");
@@ -184,6 +199,21 @@ async fn journey() {
         ] {
             let request = read(&mut stdin).await;
             assert_eq!(request["request"], expected);
+            ack(&mut stdout, &request, json!({})).await;
+            observed.push(request);
+        }
+        for model in [
+            "sonnet-resolved",
+            "haiku",
+            "provider-default",
+            "unknown-model",
+            "sonnet",
+        ] {
+            let request = read(&mut stdin).await;
+            assert_eq!(
+                request["request"],
+                json!({"subtype":"set_model", "model":model})
+            );
             ack(&mut stdout, &request, json!({})).await;
             observed.push(request);
         }
@@ -217,6 +247,38 @@ async fn journey() {
         crate::provider::facts(&model, AGENT).commands[0].name,
         "compact"
     );
+    let initialized = crate::provider::facts(&model, AGENT);
+    assert!(
+        initialized.efforts.is_empty(),
+        "no current model is known before the first turn"
+    );
+    if with_catalogue {
+        assert_eq!(
+            initialized.models,
+            vec![
+                crate::provider::ModelInfo {
+                    id: "sonnet".into(),
+                    name: "Sonnet".into(),
+                    efforts: vec!["low".into(), "high".into()],
+                    default_effort: None
+                },
+                crate::provider::ModelInfo {
+                    id: "haiku".into(),
+                    name: "Haiku".into(),
+                    efforts: vec!["medium".into()],
+                    default_effort: None
+                },
+                crate::provider::ModelInfo {
+                    id: "provider-default".into(),
+                    name: "Provider default".into(),
+                    efforts: vec![],
+                    default_effort: None
+                },
+            ]
+        );
+    } else {
+        assert!(initialized.models.is_empty());
+    }
     let effects = issue(
         &mut model,
         1,
@@ -293,6 +355,73 @@ async fn journey() {
             mode: Some("plan".into())
         }
     );
+    assert_eq!(facts.models, initialized.models);
+    assert_eq!(
+        facts.efforts,
+        if with_catalogue {
+            vec!["low", "high"]
+        } else {
+            vec![]
+        }
+    );
+    let mut choices = vec![];
+    for (n, (selection, efforts)) in [
+        ("sonnet-resolved", vec!["low", "high"]),
+        ("haiku", vec!["medium"]),
+        ("provider-default", vec![]),
+        ("unknown-model", vec![]),
+        ("sonnet", vec!["low", "high"]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let effects = issue(
+            &mut model,
+            10 + n as u128,
+            Command::SetModel {
+                agent: AGENT,
+                model: selection.into(),
+            },
+        );
+        send(&host, &mut model, effects).await;
+        host.wait_for_type("amux.claude_sdk.input_result")
+            .await
+            .unwrap();
+        pump(&mut model, &host, &mut consumed);
+        let current = crate::provider::facts(&model, AGENT);
+        assert_eq!(current.model.as_deref(), Some(selection));
+        assert_eq!(current.models, initialized.models);
+        assert_eq!(
+            current.efforts,
+            if with_catalogue { efforts } else { vec![] }
+        );
+        // Reopening only the latest facts snapshot must recover the same choices.
+        let snapshot = host
+            .rows()
+            .iter()
+            .rev()
+            .find(|row| row["type"] == "amux.claude_sdk.session_facts")
+            .unwrap()
+            .clone();
+        let mut reopened = self::model();
+        update(
+            &mut reopened,
+            Msg::Stream {
+                agent: AGENT,
+                event: StreamMsg::Batch {
+                    at: now(),
+                    entries: vec![StreamEntry {
+                        seq: 1,
+                        payload: snapshot,
+                    }],
+                },
+            },
+        );
+        let replayed = crate::provider::facts(&reopened, AGENT);
+        assert_eq!(replayed.models, current.models);
+        assert_eq!(replayed.efforts, current.efforts);
+        choices.push(current);
+    }
     let effects = issue(
         &mut model,
         6,
@@ -323,12 +452,17 @@ async fn journey() {
     let observed = provider.await.unwrap();
     assert_eq!(
         observed.len(),
-        6,
+        11,
         "the provider receives the queued prompt once"
     );
     let rows = host.finish().await.unwrap();
     if let Some(path) = std::env::var_os("SDK_INTEGRATION_EVIDENCE") {
         let path = std::path::PathBuf::from(path);
+        let path = if with_catalogue {
+            path
+        } else {
+            path.join("no-catalogue")
+        };
         std::fs::create_dir_all(&path).unwrap();
         std::fs::write(
             path.join("provider-observed-inputs.json"),
@@ -340,6 +474,11 @@ async fn journey() {
             rows.iter()
                 .map(|row| format!("{row}\n"))
                 .collect::<String>(),
+        )
+        .unwrap();
+        std::fs::write(
+            path.join("model-choice-facts.json"),
+            serde_json::to_string_pretty(&choices).unwrap(),
         )
         .unwrap();
         std::fs::write(
