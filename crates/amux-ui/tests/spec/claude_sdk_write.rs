@@ -5,7 +5,8 @@ use amux_ui::claude_sdk::{
     ElicitationAnswer, PermissionAnswer, PlanAnswer, QuestionAnswer, SdkAnswer, SendGate,
 };
 use amux_ui::{
-    Command, Effect, InputPayload, Model, Msg, OpOutcome, StreamCloseReason, StreamMsg, update,
+    Attention, Command, Effect, InputPayload, Model, Msg, OpOutcome, StreamCloseReason, StreamMsg,
+    update,
 };
 use serde_json::{Value, json};
 
@@ -736,4 +737,32 @@ fn authoritative_rows_win_over_late_transport_failures_and_closure_releases_pend
         }
         assert!(model.check_invariants().is_empty());
     }
+}
+
+/// The moment a prompt is dispatched the fleet badge says Working, as it
+/// does for the terminal and Codex chats: the person asked for work and
+/// the badge should not wait one round trip for the session to agree.
+/// The phase stays what the session last stated; only attention and the
+/// send gate reflect the input on its way.
+#[test]
+fn a_dispatched_prompt_projects_working_before_the_session_reports_its_turn() {
+    let mut model = fold(base());
+    let agent = agent_id(AGENT);
+    let card = model.agent(agent).expect("the agent");
+    assert_eq!(model.effective_attention(card), Attention::Idle);
+
+    update(&mut model, send(1, prompt()));
+    assert_eq!(claude_sdk::phase(&model, agent), claude_sdk::SdkPhase::Idle);
+    assert_eq!(
+        claude_sdk::send_gate(&model, agent),
+        SendGate::InputInFlight
+    );
+    let card = model.agent(agent).expect("the agent");
+    assert_eq!(model.effective_attention(card), Attention::Working);
+    assert_eq!(
+        card.attention,
+        Attention::Working,
+        "the fleet's cached badge agrees"
+    );
+    assert!(model.check_invariants().is_empty());
 }

@@ -191,10 +191,18 @@ fn reasoning_plans_files_tools_usage_compaction_errors_and_unknowns_are_visible(
         json!({"type":"thread/compacted","turnId":"t"}),
         json!({"type":"warning","message":"nearly full"}),
         json!({"type":"error","error":{"message":"retrying"},"willRetry":true}),
+        json!({"type":"thread/goal/updated","threadId":"t","goal":"ship it"}),
+        json!({"type":"thread/goal/cleared","threadId":"t"}),
         json!({"type":"future/method","payload":1}),
     ];
     let model = feed(rows);
     let entries: Vec<_> = codex_layer(&model, AGENT).entries().collect();
+    // Goal bookkeeping is the app-server's own; it never prints its method.
+    assert!(
+        !entries
+            .iter()
+            .any(|e| matches!(&e.kind, FeedEntryKind::Unrecognized(u) if u.method.starts_with("thread/goal/")))
+    );
     assert!(
         entries
             .iter()

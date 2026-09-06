@@ -131,23 +131,35 @@ marker when the message completes.
 
 ## Tasks
 
-Subagent runs get one block per task, in the feed where the task started, and a
-count in the activity row. The block updates in place:
+Subagent runs get one block per task, in the feed where the task was launched,
+and a count in the activity row. The block updates in place:
 
 ```
   ⣾ Explore · scan the sync client for retry paths · running · Read sync/client.rs
   ✔ general-purpose · draft the migration plan · done · 3 tools · 42s
 ```
 
-State comes from the task rows, not from the tool stream: `task_started` opens
-the block with its description and subagent type, `task_updated` and
-`task_progress` move it, `task_notification` closes it with the summary the
-subagent reported. A task whose lifecycle stops arriving stays in its last
-stated state and is not aged into a guess.
+The `Task`/`Agent` tool use that launched the subagent and the task rows that
+follow describe one subagent, so they are one entry: the first task row takes
+the launch row over where it sits, carrying the description and subagent type
+the launch already stated, and the launch tool's own result ("Agent launched.")
+is not the task's outcome. State comes from the task rows, not from the tool
+stream: `task_started` opens the block, `task_updated` and `task_progress` move
+it, `task_notification` closes it with the summary the subagent reported. A
+task whose lifecycle stops arriving stays in its last stated state and is not
+aged into a guess. The lifecycle rows (`task_started`, `task_progress`,
+`task_updated`, `task_notification`) carry the launching `tool_use_id`, which
+is how the two are joined; the `background_tasks_changed` list names tasks by
+id alone, so a task it announces first moves into the launch row when the
+first row carrying the id arrives.
 
-Nested timelines — what a subagent did, step by step — are out of scope. The
-list reports what the session sends about its children, and nothing is read out
-of child transcript files.
+A subagent's own rows arrive on the parent's stream marked with that same
+`tool_use_id` as `parent_tool_use_id`. They are the subagent's timeline, not
+the session's, so each message and tool use paints as one muted line naming
+its task — `└ scan the sync client · Read sync/client.rs`, clipped to the row
+— and never joins the session's exploration runs on either side of it. A
+subagent's thinking paints nothing: the task block already says it is running.
+Nothing is read out of child transcript files.
 
 ## Context
 
@@ -292,11 +304,11 @@ recording: at 2.1.260 a **bare** allow on `ExitPlanMode` is followed by a
 `system.status` row with `permissionMode: "acceptEdits"`, so the CLI leaves plan
 mode into accept-edits on its own. Approving manually therefore has to say so;
 sending nothing would silently give the agent the auto behaviour under the
-manual label. The auto path's explicit `setMode` is recorded and confirmed
-(`plan_reviewed`); the manual path's `setMode default` is this design's answer
-to that finding and is not yet recorded — the first recording that exercises it
-settles whether one call suffices or the mode must also be re-sent after the
-turn.
+manual label. Both paths are recorded and confirmed (`plan_reviewed`, at
+2.1.261): the auto approval's `setMode acceptEdits` is followed by a
+`system.status` row stating `acceptEdits`, and the manual approval's `setMode
+default` by one stating `default`. One call suffices; nothing has to be re-sent
+after the turn.
 
 Request-changes does not end the turn: the agent may revise and re-ask, which
 is a new ask with a new request id.
@@ -479,7 +491,7 @@ visible difference between the three chats.
 | --- | --- | --- |
 | Header session-fact line | Adopted. `message.model` is a per-message fact in the transcript and permission mode is a hook fact; both print in the same place. The footer states the key that cycles permission mode. | Adopted. Model, approval and sandbox appear on the header's right, bare-valued and joined like the other two. They are creation choices the launcher hands over, so a chat opened another way states none. |
 | Streaming assistant message | Lacks: main-session transcript files burst-write whole messages, so there is no partial text to stream. Block-level streaming exists only in subagent files. | Adopted. The layer already folds `item/agentMessage/delta`; the open block now carries the same caret instead of a marker row of its own. |
-| Task list | Lacks a lifecycle: the transcript has `Task` tool calls and sidechain files, not task state rows, so the existing subagent line stays and no live list is synthesized. | Lacks: subagent-sourced items exist, but there is no task lifecycle vocabulary to fill a state column. |
+| Task list | Lacks a lifecycle: the transcript has `Task` tool calls and sidechain files, not task state rows, so the existing subagent line stays and no live list is synthesized. | Lacks: subagent-sourced items exist, but there is no task lifecycle vocabulary to fill a state column. In the SDK chat the launch tool row and the task are one entry, joined by the launching `tool_use_id`, and the subagent's own rows paint as attributed one-liners. |
 | Context meter | Adopted, partially: the same used-token sum is available per assistant message, but no row states the context window, so the PTY meter shows used tokens with no denominator. | Adopted fully. `thread/tokenUsage/updated` carries the latest turn's usage and `modelContextWindow`; the meter uses that context snapshot, not cumulative thread spend. |
 | Context breakdown overlay | Lacks: no control returns a per-category accounting; Claude's own `/context` is a terminal screen, not a fact. | Adopted, coarsely: its token-usage row breaks down the latest turn into input and output, with cached input and reasoning nested under their respective totals. It has no per-tool grid, and the overlay says so. Nothing is fetched: the numbers arrived with the last turn, so `<leader> c` never refreshes. |
 | MCP status line | Lacks: the transcript carries no server inventory or health. | Already has it — the SDK chat adopts the Codex chat's rule rather than the other way round. |
@@ -521,8 +533,9 @@ missing rather than an apology:
   states the context window.
 - **Neither the PTY chat nor the Codex chat gets a task list**, for want of a
   task lifecycle in either backend.
-- **No nested subagent timeline** anywhere: the list reports what a session
-  says about its children.
+- **No nested subagent timeline** anywhere: the task block reports what a
+  session says about its children, and the SDK chat's attributed one-liners
+  are that session's own stream, not a child transcript.
 
 ## Rejected alternatives
 

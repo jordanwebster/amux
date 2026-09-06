@@ -368,6 +368,10 @@ pub struct TokenUsage {
     /// `input_tokens`, not beside it, so a breakdown states it as a share
     /// rather than adding it in again.
     pub cached_input_tokens: Option<u64>,
+    /// Input tokens the provider wrote into its cache this turn. Also a
+    /// share of `input_tokens`; zero in every recording so far, and
+    /// stated so the breakdown reports what the app-server reports.
+    pub cache_write_input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub reasoning_output_tokens: Option<u64>,
     pub total_tokens: Option<u64>,

@@ -176,7 +176,7 @@ pub(crate) fn ask_identity(ask: &SharedAsk<'_>) -> String {
 /// state outcome + scope from the facts they carry.
 fn scoped_label(suggestions: &[SuggestionFact]) -> String {
     let Some(suggestion) = suggestions.first() else {
-        return "Allow — apply the suggested rule".to_string();
+        unreachable!("the scoped action is offered only when a rule is suggested");
     };
     if suggestion.kind.as_ref() == Some(&SuggestionKind::AddDirectories)
         && !suggestion.directories.is_empty()
@@ -276,20 +276,21 @@ pub(crate) fn plan_actions(
 }
 
 /// The permission actions (C2): plain outcomes and scopes, option 2 from
-/// the suggestion facts.
+/// the suggestion facts. A request that suggests no rule offers no rule
+/// to apply — only allowing once and denying remain.
 pub(crate) fn permission_actions(
     suggestions: &[SuggestionFact],
     cursor: Option<usize>,
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
+    let deny = ("Deny — tell the agent why (optional)", None);
+    if suggestions.is_empty() {
+        return action_lines(&[("Allow once", None), deny], cursor, width, theme);
+    }
     let scoped = scoped_label(suggestions);
     action_lines(
-        &[
-            ("Allow once", None),
-            (scoped.as_str(), None),
-            ("Deny — tell the agent why (optional)", None),
-        ],
+        &[("Allow once", None), (scoped.as_str(), None), deny],
         cursor,
         width,
         theme,
@@ -494,8 +495,9 @@ fn permission_panel(
             } else {
                 ""
             };
+            let count = if suggestions.is_empty() { 2 } else { 3 };
             panel.hinted(
-                &format!("1-3/↑↓ select · enter confirm{f_hint} · esc back (never answers)"),
+                &format!("1-{count}/↑↓ select · enter confirm{f_hint} · esc back (never answers)"),
                 quit_guard_armed,
                 theme,
             )

@@ -255,6 +255,47 @@ pub(crate) fn rule_line(width: usize, theme: Theme) -> Line<'static> {
     line
 }
 
+/// A whole-frame overlay: the title with its close hint, a rule, the
+/// body padded or cut to what is left, a rule, and one footer row. The
+/// context breakdowns of every chat share this frame so the same overlay
+/// opened over different agents reads as the same overlay.
+pub(crate) fn overlay_frame(
+    title: String,
+    mut rows: Vec<Line<'static>>,
+    footer: Line<'static>,
+    width: usize,
+    height: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let body_h = height.saturating_sub(5).max(1);
+    rows.truncate(body_h);
+    while rows.len() < body_h {
+        rows.push(Line::default());
+    }
+    let mut title_line = Line::default();
+    push_span(
+        &mut title_line,
+        crate::chat::blocks::GLYPH_COL,
+        title,
+        theme.emphasis(),
+    );
+    push_right(
+        &mut title_line,
+        "esc close".to_string(),
+        width,
+        theme.muted(),
+    );
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
+    lines.push(title_line);
+    lines.push(Line::default());
+    lines.push(rule_line(width, theme));
+    lines.extend(rows);
+    lines.push(rule_line(width, theme));
+    lines.push(footer);
+    lines.truncate(height);
+    lines
+}
+
 /// The reader frame, replacing the whole chat frame while open; `None`
 /// when the reader's source no longer resolves. Non-actionable readers
 /// suppress the action row and retain only read affordances.

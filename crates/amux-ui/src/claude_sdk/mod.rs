@@ -44,9 +44,23 @@ pub struct FeedEntry {
     pub kind: FeedEntryKind,
     /// The provider message and block this entry represents, when applicable.
     pub block: Option<BlockId>,
+    /// The tool use whose subagent produced this entry, when it was not the
+    /// session's own. Stream-JSON carries a subagent's rows on the parent's
+    /// stream with this id set. Kept apart from `block` so a row that
+    /// arrives without its block — a result-only tail — still says whose
+    /// it was.
+    pub parent_tool_use_id: Option<String>,
     /// Payload clipping is separate from missing earlier feed entries.
     pub content_truncated: bool,
     final_row_id: Option<String>,
+}
+
+impl FeedEntry {
+    /// The tool use whose subagent produced this entry, when it was not
+    /// the session's own.
+    pub fn parent_tool_use_id(&self) -> Option<&str> {
+        self.parent_tool_use_id.as_deref()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +97,11 @@ impl runs::RunEntry for FeedEntry {
     }
 
     fn exploration(&self) -> Option<&ToolInvocation> {
+        // A subagent's reads are its own timeline, not the session's
+        // exploration; they paint as attributed lines and never fold.
+        if self.parent_tool_use_id().is_some() {
+            return None;
+        }
         let FeedEntryKind::Tool(tool) = &self.kind else {
             return None;
         };
@@ -166,6 +185,10 @@ pub enum TaskState {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TaskEntry {
     pub task_id: String,
+    /// The `Task`/`Agent` tool use that launched it. The lifecycle rows
+    /// carry it, so the launch row and the task are one entry rather
+    /// than two rows naming the same subagent.
+    pub tool_use_id: Option<String>,
     pub description: String,
     pub subagent_type: Option<String>,
     pub state: TaskState,

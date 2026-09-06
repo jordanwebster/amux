@@ -1766,6 +1766,10 @@ fn sdk_exploration_rows() -> Vec<Value> {
             "tool_use_result": {
                 "filePath": "sync/config.rs",
                 "structuredPatch": [{
+                    "oldStart": 3,
+                    "oldLines": 3,
+                    "newStart": 3,
+                    "newLines": 3,
                     "lines": [
                         " pub struct RetryConfig {",
                         "-    pub max_attempts: u8,",

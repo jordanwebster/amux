@@ -916,3 +916,60 @@ fn every_fixture_row_type_is_classified() {
         );
     }
 }
+
+/// Every main-session assistant message states the model it ran on and
+/// what its context cost. Both are latest-wins session facts, and the
+/// cost is fresh input plus both cache halves — the same three fields the
+/// stream-JSON session reports, folded to the same number.
+#[test]
+fn assistant_messages_fold_model_and_context_cost_as_latest_wins_facts() {
+    let assistant = |n: u32, model: &str, usage: serde_json::Value| {
+        json!({
+            "type": "assistant",
+            "uuid": format!("cccccccc-0000-4000-8000-0000000000{n:02}"),
+            "sessionId": chat_session_id("pong"),
+            "timestamp": format!("2026-08-11T22:00:{n:02}.000Z"),
+            "message": {
+                "id": format!("msg-{n}"),
+                "model": model,
+                "role": "assistant",
+                "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": format!("reply {n}")}],
+                "usage": usage,
+            }
+        })
+    };
+    let mut msgs = chat_base("fix-auth-bug");
+    msgs.push(batch(
+        "fix-auth-bug",
+        10,
+        vec![assistant(
+            1,
+            "claude-opus-5",
+            json!({"input_tokens": 3, "cache_read_input_tokens": 1000,
+                   "cache_creation_input_tokens": 200, "output_tokens": 5}),
+        )],
+    ));
+    let model = fold(msgs.clone());
+    let session = claude_layer(&model, "fix-auth-bug").session();
+    assert_eq!(session.model.as_deref(), Some("claude-opus-5"));
+    assert_eq!(session.context_used_tokens, Some(1203));
+
+    msgs.push(batch(
+        "fix-auth-bug",
+        20,
+        vec![assistant(
+            2,
+            "claude-sonnet-5",
+            json!({"input_tokens": 7, "cache_read_input_tokens": 1200, "output_tokens": 9}),
+        )],
+    ));
+    let model = fold(msgs);
+    let session = claude_layer(&model, "fix-auth-bug").session();
+    assert_eq!(session.model.as_deref(), Some("claude-sonnet-5"));
+    assert_eq!(
+        session.context_used_tokens,
+        Some(1207),
+        "a missing cache half counts as zero, not as a stale carry-over"
+    );
+}

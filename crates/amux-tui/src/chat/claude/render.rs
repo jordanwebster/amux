@@ -20,7 +20,7 @@ use ratatui::text::{Line, Span};
 
 use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
 use crate::chat::blocks::{
-    self, paint_agent_message, paint_ask_fact, paint_assistant, paint_attachment,
+    self, fmt_tokens, paint_agent_message, paint_ask_fact, paint_assistant, paint_attachment,
     paint_compaction_rule, paint_composer_block, paint_error, paint_exploration_run,
     paint_file_change, paint_header, paint_plan, paint_subagent, paint_thinking, paint_tool_line,
     paint_turn_rule, paint_unrecognized, paint_user_prompt,
@@ -1069,15 +1069,6 @@ fn fmt_secs(total: u64) -> String {
         format!("{}m {}s", total / 60, total % 60)
     } else {
         format!("{total}s")
-    }
-}
-
-/// `31.6k` / `421` token counts (the compaction rule).
-fn fmt_tokens(count: u64) -> String {
-    if count >= 1000 {
-        format!("{:.1}k", count as f64 / 1000.0)
-    } else {
-        count.to_string()
     }
 }
 

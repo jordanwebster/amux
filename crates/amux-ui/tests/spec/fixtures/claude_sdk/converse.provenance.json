@@ -19,5 +19,6 @@
   "boundary": "The final CHILD_ACK delivery starts a follow-up turn; this capture ends at its requesting status, before a result. No final result or dialog request was inserted.",
   "privacy_check": "No home path, current machine hostname, .local/.lan hostname or email address occurs in the fixture. Temporary directory and socket identifiers are replaced.",
   "capture_tree": "d02832a8275641d86b726eece4e8c32f56db08f4",
-  "harness_committed_as": "7a67d844"
+  "harness_committed_as": "7a67d844",
+  "replacement": "A replacement capture comes from a fresh run of the harness into a new evidence directory (it refuses an existing one) and will hold a different conversation; adopt it by re-deriving the fixture with the transformations above, updating every hash, row count and boundary here, and reviewing the spec tests that anchor on this conversation's prose."
 }

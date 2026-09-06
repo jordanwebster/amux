@@ -66,7 +66,7 @@ drivers.
 |---|---|---|---|
 | `agents` | `{}` | fleet rows | List names, kinds, hosts, liveness, work, parent, and the caller marker. |
 | `send` | `{to, text, context?}` | `{id}` | Send text to an agent by name. Replies to an `amux:` address must use this tool. |
-| `spawn` | `{kind, prompt, name?, cwd?}` | `{name, id, initial_prompt_delivery?}` | Create a Claude or Codex child and deliver its initial prompt. |
+| `spawn` | `{kind, prompt, name?, cwd?}` | `{name, id}` | Create a Claude or Codex agent and deliver its initial prompt once it is ready. |
 | `stop` | `{name}` | `{}` | Stop a direct child of the caller. |
 | `status` | `{working_on: string|null}` | `{}` | Set or clear the caller's current work. |
 | `attach` | `{path, name?}` | canonical attachment element | Store a file from this agent's host and return the exact text to include in a reply. |
@@ -95,7 +95,12 @@ Codex uses its shared thread-attachment state. The readiness wait
 is scoped to this initial delivery, so an ordinary send to an unavailable
 session fails immediately. The prompt arrives with parent provenance instead of
 masquerading as human input. If readiness or delivery fails, spawn removes the
-new child and reports failure rather than leaving an orphan. With no explicit
+new child and reports failure rather than leaving an orphan. A `spawn` from a
+caller with no agent identity — an external MCP client — takes the same path
+with no parent: the prompt rides the creation, the daemon waits for readiness
+before delivering it with human provenance, and an agent that never becomes
+ready is removed. A send issued after creation instead would race a Claude SDK
+session's startup and fail. With no explicit
 `cwd`, the child inherits the parent's working directory. Claude children
 inherit only the parent's permission-mode arguments; Codex children inherit
 approval and sandbox policy. New Claude children use the configured

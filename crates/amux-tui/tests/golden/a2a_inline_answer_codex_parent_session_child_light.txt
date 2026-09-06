@@ -1,10 +1,10 @@
 --- text ---
-  refactor-tunnels · claude @ mbp · ⋯ 1 subagent                                                            chat · idle 
+  test-runner · codex @ mbp · ⋯ 1 subagent                                                                  chat · idle 
   ⚠ tidy-the-imports needs permission: cargo fmt --all                                                                  
                                                                                                                         
-▎   split the tunnel supervisor                                                                                         
                                                                                                                         
-    Handing the imports to a helper.                                                                                    
+                                                                                                                        
+                                                                                                                        
                                                                                                                         
                                                                                                                         
                                                                                                                         
@@ -40,10 +40,10 @@
       3. Deny — tell the agent why (optional)                                                                           
     1-3/↑↓ select · enter confirm · esc back (never answers)                                                            
 --- styles ---
-..eeeeeeeeeeeeeeeemmmmmmmmmmmmmmmmmmmmmmmmmmmmmm............................................................mmmmmmmmmmm.
+..eeeeeeeeeeemmmmmmmmmmmmmmmmmmmmmmmmmmmmm..................................................................mmmmmmmmmmm.
 ..w.wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..................................................................
 ........................................................................................................................
-AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................

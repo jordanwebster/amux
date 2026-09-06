@@ -1749,6 +1749,96 @@ fn session_child_family() -> Model {
     fold(msgs)
 }
 
+/// A Codex lead with a stream-JSON child blocked on a permission, and no
+/// approval of the lead's own in the way.
+fn codex_parent_session_child_family() -> Model {
+    let mut msgs = vec![
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host_id()),
+        }),
+        Msg::Server(ServerMsg::HostUpserted { host: a_host() }),
+        agent_up(&an_agent(RUNNER, "codex", CODEX_PROTOCOL, None)),
+        Msg::Server(ServerMsg::AgentUpserted {
+            agent: a_session_agent(SESSION_CHILD, Some(RUNNER)),
+        }),
+        Msg::Server(ServerMsg::HostsSynchronized),
+        Msg::Server(ServerMsg::AgentsSynchronized),
+    ];
+    msgs.extend(opened(RUNNER));
+    msgs.push(batch(RUNNER, NOW - 60, vec![codex_ready()]));
+    msgs.extend(opened(SESSION_CHILD));
+    msgs.push(batch(
+        SESSION_CHILD,
+        NOW - 20,
+        vec![session_ready(), session_permission_row()],
+    ));
+    fold(msgs)
+}
+
+/// The third pairing: a Codex parent hosts a stream-JSON child's panel
+/// and dispatches that child's own command, exactly as the two Claude
+/// parents do.
+#[test]
+fn a2a_inline_answer_hosts_a_session_childs_panel_in_a_codex_parents_chat() {
+    let model = codex_parent_session_child_family();
+    let frame = frame_of(&model, &docked(&model, RUNNER));
+    assert!(
+        frame.contains("answering tidy-the-imports"),
+        "the boundary names the child:\n{frame}"
+    );
+    assert!(
+        frame.contains("Allow once") && frame.contains("cargo fmt --all"),
+        "the child layer's own panel:\n{frame}"
+    );
+
+    let mut view = docked(&model, RUNNER);
+    let chat = view.chat.as_mut().expect("an open chat");
+    let action = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Enter, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    match action {
+        Some(UiAction::Dispatch(amux_ui::Command::ClaudeSdk(
+            amux_ui::claude_sdk::ClaudeSdkCommand::AnswerAsk { agent, .. },
+        ))) => assert_eq!(agent, agent_id(SESSION_CHILD), "the child is the addressee"),
+        other => panic!("expected the child's own AnswerAsk, got {other:?}"),
+    }
+    assert_surface(
+        "a2a_inline_answer_codex_parent_session_child",
+        &model,
+        &docked(&model, RUNNER),
+        HEIGHT,
+    );
+}
+
+/// Interrupting behind a docked stream-JSON guest reaches that guest, in
+/// its own vocabulary: the child is blocked on an ask, which its own chat
+/// counts as something to interrupt.
+#[test]
+fn a2a_inline_answer_points_the_interrupt_at_a_session_child() {
+    let model = session_child_family();
+    let mut view = docked(&model, LEAD);
+    let chat = view.chat.as_mut().expect("an open chat");
+    let action = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    assert_eq!(
+        action,
+        Some(UiAction::Dispatch(amux_ui::Command::ClaudeSdk(
+            amux_ui::claude_sdk::ClaudeSdkCommand::Interrupt {
+                agent: agent_id(SESSION_CHILD)
+            }
+        )))
+    );
+}
+
 /// A stream-JSON session's chat carries the same banner as any other
 /// parent's: whose need it is, what it is blocked on, and the chord that
 /// docks it.

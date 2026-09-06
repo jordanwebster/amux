@@ -95,9 +95,8 @@ pub async fn new_agent(
         },
         move |agent_id| async move {
             match (config.ui.default_open_mode, terminal_exposed) {
-                // Kinds without terminal_v1 still have a structured layer.
-                // For Claude/SDK that layer is the deliberate unsupported
-                // placeholder and intentionally opens no stream.
+                // Kinds without terminal_v1 still have a structured layer,
+                // so the chat is the only place they can open.
                 (_, false) => {
                     crate::ui::run_for_agent(config.clone(), agent_id, codex_configuration).await
                 }

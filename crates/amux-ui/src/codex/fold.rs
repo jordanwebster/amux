@@ -113,6 +113,11 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
         | "thread/archived"
         | "thread/unarchived" => {}
 
+        // Thread goals are the app-server's own bookkeeping for its
+        // feature-gated goal field; amux never sets one, and a notice that
+        // it was updated or cleared says nothing a person is waiting on.
+        "thread/goal/updated" | "thread/goal/cleared" => {}
+
         // Hooks are not configured by amux V1. If one appears, make the
         // unsupported family visible rather than pretending it was folded.
         "hook/started" | "hook/completed" => push_unrecognized(
@@ -1275,6 +1280,7 @@ fn token_usage(row: &Value) -> TokenUsage {
     TokenUsage {
         input_tokens: usage.get("inputTokens").and_then(Value::as_u64),
         cached_input_tokens: usage.get("cachedInputTokens").and_then(Value::as_u64),
+        cache_write_input_tokens: usage.get("cacheWriteInputTokens").and_then(Value::as_u64),
         output_tokens: usage.get("outputTokens").and_then(Value::as_u64),
         reasoning_output_tokens: usage.get("reasoningOutputTokens").and_then(Value::as_u64),
         total_tokens: usage.get("totalTokens").and_then(Value::as_u64),

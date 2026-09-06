@@ -600,6 +600,61 @@ pub(crate) fn paint_subagent(
     block(key, lines)
 }
 
+// --- token counts -----------------------------------------------------------
+//
+// Every chat states the same two quantities the same way: the meter's
+// abbreviation and the overlay's full count. One copy, so a number a
+// person compares across chats never rounds differently in each.
+
+/// `31.6k` / `421` token counts (the compaction rule).
+pub(crate) fn fmt_tokens(count: u64) -> String {
+    if count >= 1000 {
+        format!("{:.1}k", count as f64 / 1000.0)
+    } else {
+        count.to_string()
+    }
+}
+
+/// `34,102` — the overlay's own accounting, where a person is comparing
+/// categories and the rounding the meter uses would hide the differences.
+pub(crate) fn fmt_thousands(count: u64) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// A row a subagent produced, as one muted line in the session's own
+/// timeline: which task it belongs to, then what it did. The task block
+/// states the subagent's progress; this is only its visible footprint,
+/// kept apart from the session's own rows so the two never read as one.
+pub(crate) fn paint_subagent_activity(
+    key: BlockKey,
+    owner: &str,
+    text: &str,
+    theme: Theme,
+    width: usize,
+) -> PaintedBlock {
+    let lead = format!("{owner} · ");
+    let available = text_width(width).saturating_sub(str_width(&lead)).max(1);
+    let text = text.split('\n').next().unwrap_or_default().trim();
+    let body = if str_width(text) > available {
+        format!("{}…", clip_to_width(text, available.saturating_sub(1)))
+    } else {
+        text.to_string()
+    };
+    let row = vec![
+        Span::styled(lead, theme.muted()),
+        Span::styled(body, theme.muted()),
+    ];
+    block(key, glyph_rows(("└", theme.muted()), vec![row], theme))
+}
+
 /// A message from another agent: who sent it, what it said, and the one
 /// row naming what is not being shown.
 pub(crate) fn paint_agent_message(

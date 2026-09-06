@@ -180,8 +180,12 @@ fn sdk_corpus_is_inventoried_current_and_unorphaned() {
             }
             SourceKind::LiveCapture => {
                 assert!(
-                    [Version::new(2, 1, 251), Version::new(2, 1, 260)]
-                        .contains(&recording.manifest.recorded.version),
+                    [
+                        Version::new(2, 1, 251),
+                        Version::new(2, 1, 260),
+                        Version::new(2, 1, 261),
+                    ]
+                    .contains(&recording.manifest.recorded.version),
                     "{} was captured against an unreviewed Claude version {}",
                     entry.name,
                     recording.manifest.recorded.version

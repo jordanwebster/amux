@@ -4,6 +4,42 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Handoff follow-ups: one subagent per entry, spawn without a
+parent, and the small things the review named.** The stream-JSON chat's task
+rows carry the `tool_use_id` of the `Task`/`Agent` call that launched them, so
+the first task row now takes that launch row over where it sits instead of
+adding a second entry for the same subagent; the launch tool's own result is
+not the task's outcome, and a late final row for the tool block cannot turn
+the task back into a tool. A subagent's own rows, which arrive on the parent's
+stream marked with that id, paint as one muted attributed line each (`└ scan
+the sync client · Read sync/client.rs`) and never fold into the session's
+exploration runs: the run predecessor check now requires the same context, so
+a subagent's last read and the session's next one stay two entries. An
+in-flight prompt or answer projects Working on the fleet badge at once, as the
+terminal and Codex chats already did, with the projection invariant amended to
+expect it. The MCP `spawn` tool no longer sends the prompt after creating a
+parentless agent — that send raced a Claude SDK session's startup and failed —
+the daemon accepts an initial prompt without a parent, waits for readiness,
+delivers it with human provenance, and rolls the agent back if it never
+becomes ready, exactly the child path; a remote host's best-effort drop of an
+agent-authored message no longer applies to a delivery something waits on, so
+a remote spawn cannot report success after losing its prompt. Smaller: a permission request with no
+suggested rule offers allow-once and deny only (the panel and the menu agree,
+as the docs already said, and Esc from the deny reason returns to whichever
+row Deny is); the inline child panel no longer repeats its escape
+hint; the Codex context breakdown states cache writes as the fifth share the
+app-server reports; `thread/goal/*` notices fold silently; token formatting
+and the context overlay frame are shared by all three renderers; the stale
+"unsupported placeholder" comment on SDK chat entry is gone; the SDK
+exploration fixture's patch hunk carries its line ranges; the live fixture's
+provenance says how a replacement capture is adopted. New coverage: PTY
+session facts (model and context tokens, latest wins) in the spec, a Codex
+parent hosting a stream-JSON child's request, interrupting an inline
+stream-JSON child, the parentless spawn's readiness wait and rollback. The
+Claude spec's manual plan approval now sends the explicit session `setMode
+default` the design calls for and asserts the mode the session reports after
+each approval; `tools/plan_reviewed` was re-recorded live to carry it.
+
 2026-09-05 — **Live fleet captures verify Claude labels and chat-only entry.**
 The configuration harness now opens an unfiltered 120×40 fleet while its
 default and configured Claude agents coexist, selects the configured agent,

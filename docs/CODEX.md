@@ -342,9 +342,9 @@ thread costs against the window the session reported (`ctx 30.0k/272.0k`).
 That number is what the context holds after the most recent turn, not
 every turn's tokens added together — the app-server reports both, and
 only the first can be read against a window. `<leader> c` opens the
-totals behind it: input and output, with cached input and reasoning
-indented as shares of those two rather than listed beside them, which is
-all the app-server reports, and the overlay says so. `<leader> o` on a pasted attachment or a sent review
+totals behind it: input and output, with cached input, cache writes and
+reasoning indented as shares of those two rather than listed beside them,
+which is all the app-server reports, and the overlay says so. `<leader> o` on a pasted attachment or a sent review
 opens the same fullscreen reader the Claude chats use. Raw mode is
 `codex resume` on a PTY, byte-identical for every subscriber.
 Because both current creation modes open interactively, `amux new codex`
