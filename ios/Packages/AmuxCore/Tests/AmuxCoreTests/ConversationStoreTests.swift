@@ -111,4 +111,55 @@ final class ConversationStoreTests: XCTestCase {
             truncated: false))))
         XCTAssertEqual(store.changes?.hunks.first?.lines, ["-old", "+new"])
     }
+
+    private func refusal(_ message: String, op: OpId) -> Event {
+        let json = Data("""
+            {"error":"general","message":"\(message)",\
+            "auth_required":false,"subscription_required":false}
+            """.utf8)
+        let failure = try! AmuxJSON.decoder.decode(OpFailure.self, from: json)
+        return .opResult(OpResult(op: op, outcome: .failed(failure)))
+    }
+
+    /// A result names its operation and no agent, so every open conversation
+    /// is offered it. Only the one that dispatched the operation keeps it —
+    /// otherwise one agent's refusal would be read as another's.
+    func testOnlyTheConversationThatDispatchedKeepsAResult() {
+        let bundle = StoreBundle(account: AccountId("test"))
+        let mine = bundle.conversation(agent)
+        let theirs = bundle.conversation(Made.agentId(2))
+        let op = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA11")!)
+        theirs.dispatched(op)
+
+        bundle.apply([refusal("the session is replaying history", op: op)])
+
+        XCTAssertEqual(theirs.results.count, 1)
+        XCTAssertTrue(mine.results.isEmpty, "a foreign result reached this conversation")
+    }
+
+    /// The same identifier answered twice is one operation, not two.
+    func testAResultIsClaimedOnce() {
+        let store = ConversationStore(agent: agent)
+        let op = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA12")!)
+        store.dispatched(op)
+        store.apply(refusal("no", op: op))
+        store.apply(refusal("no", op: op))
+        XCTAssertEqual(store.results.count, 1)
+    }
+
+    /// A long-lived conversation sends many times. What it remembers is
+    /// bounded, and the newest answer — the only one ever drawn — is kept.
+    func testWhatAConversationRemembersIsBounded() {
+        let store = ConversationStore(agent: agent)
+        for number in 0..<200 {
+            let op = OpId(UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", number))!)
+            store.dispatched(op)
+            store.apply(refusal("refusal \(number)", op: op))
+        }
+        XCTAssertLessThanOrEqual(store.results.count, 32)
+        guard case .failed(let last) = store.results.last?.outcome else {
+            return XCTFail("expected the newest refusal to be kept")
+        }
+        XCTAssertEqual(last.message, "refusal 199")
+    }
 }

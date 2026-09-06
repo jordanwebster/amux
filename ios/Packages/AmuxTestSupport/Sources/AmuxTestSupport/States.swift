@@ -44,6 +44,12 @@ public enum States {
         if let session { batch.append(.session(session)) }
         if let changes { batch.append(.diff(DiffUpdate(agent: agent, document: changes))) }
         batch.append(contentsOf: extra)
+        // A fixture's operation results belong to the agent it is about: the
+        // conversation is told it dispatched them, exactly as the send path
+        // tells it in the app.
+        for case .opResult(let result) in batch {
+            bundle.conversation(agent).dispatched(result.op)
+        }
         bundle.apply(batch)
         bundle.fleet.refreshOrder(now: Scenario.now)
     }

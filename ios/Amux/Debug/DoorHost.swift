@@ -365,7 +365,9 @@ final class DoorHost {
                 "attachments": .array([]),
             ]),
         ]
-        bridge.dispatch(.shared(.object(draft)))
+        // The identifier the bridge answers with is what makes the host's
+        // reply this conversation's rather than some other agent's.
+        if let op = bridge.dispatch(.shared(.object(draft))) { conversation.dispatched(op) }
         return .sendAttempt(delivered: true, reason: nil)
     }
 

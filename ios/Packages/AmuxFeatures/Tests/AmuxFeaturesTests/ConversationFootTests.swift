@@ -84,6 +84,31 @@ final class ConversationFootTests: XCTestCase {
         XCTAssertEqual(reason, "the session is replaying history")
     }
 
+    /// Two conversations are open and a send fails on one of them. The other
+    /// agent's foot says what its own gate says: a host that never spoke about
+    /// this agent must not be quoted under its name.
+    func testAFailureOnAnotherAgentIsNotThisAgentsRefusal() {
+        let bundle = StoreBundle(account: AccountId("test"))
+        let mine = bundle.conversation(agent)
+        let other = AgentId(UUID(uuidString: "00000000-0000-0000-0000-0000000000B2")!)
+        let theirs = bundle.conversation(other)
+        let result = refusal("that layer is replaying history")[0]
+        theirs.dispatched(result.op)
+
+        bundle.apply([.opResult(result)])
+
+        guard case .refused(let headline, let reason)? = ConversationFootState(
+            gate: .claudePty(.replaying), results: mine.results, subject: subject())
+        else { return XCTFail("a replaying gate should refuse") }
+        XCTAssertEqual(headline, "Cannot send")
+        XCTAssertEqual(reason, "This session is replaying what it missed.")
+
+        guard case .refused(_, let theirReason)? = ConversationFootState(
+            gate: .claudePty(.replaying), results: theirs.results, subject: subject())
+        else { return XCTFail("the agent that was refused should say so") }
+        XCTAssertEqual(theirReason, "that layer is replaying history")
+    }
+
     /// The host went away mid-turn. The panel names it, says what is happening
     /// and how old the screen above it is.
     func testALostHostIsNamedWithHowOldTheScreenIs() {

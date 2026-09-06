@@ -22,6 +22,12 @@ public final class ConversationStore {
     public private(set) var family: [FamilyMember] = []
     public private(set) var changes: DiffDocument?
     /// Results for operations this conversation dispatched, newest last.
+    ///
+    /// A result names its operation and no agent, so the connection has to
+    /// offer every one to every open conversation. A conversation keeps only
+    /// the ones it asked for: anything else answers for some other agent, and
+    /// drawing it here would put a host's sentence about one agent under
+    /// another agent's name.
     public private(set) var results: [OpResult] = []
     /// A batch the bridge could not place. Kept rather than hidden: a hole in
     /// the transcript is a fact the report screen has to be able to state.
@@ -35,8 +41,25 @@ public final class ConversationStore {
     /// is measured between.
     private var awaitingEcho = false
 
+    /// Operations dispatched from this conversation that have not been
+    /// answered yet. An answer claims its entry and removes it, so a second
+    /// result carrying the same identifier is not claimed twice.
+    private var pendingOps: Set<OpId> = []
+
+    /// How many answers a conversation remembers. Only the newest is ever
+    /// drawn; the rest are kept so a report can say what a run was told.
+    /// Unbounded, this would grow for as long as the app runs.
+    private static let remembered = 32
+
     public init(agent: AgentId) {
         self.agent = agent
+    }
+
+    /// This conversation has dispatched an operation and the result carrying
+    /// this identifier is its own. Called by whoever sends, with the
+    /// identifier the bridge answered with.
+    public func dispatched(_ op: OpId) {
+        pendingOps.insert(op)
     }
 
     /// The person has sent. Called the instant the tap is handled, before
@@ -64,7 +87,11 @@ public final class ConversationStore {
         case .diff(let update) where update.agent == agent:
             changes = update.document
         case .opResult(let result):
+            guard pendingOps.remove(result.op) != nil else { break }
             results.append(result)
+            if results.count > Self.remembered {
+                results.removeFirst(results.count - Self.remembered)
+            }
         case .invariant(let detail):
             invariants.append(detail)
         case .feed, .session, .diff, .fleet, .connection, .tokenRequest:

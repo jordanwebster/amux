@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **A refusal now belongs to the agent it was said about.** An
+operation result names its operation and no agent, so the connection offers
+every result to every open conversation. Each conversation kept all of them,
+and the panel where the composer goes reads the newest one: with two
+conversations open, a send that failed on one agent was drawn as the other
+agent's refusal, quoting a host that never said it about that agent. A
+conversation is now told the identifier when it dispatches, keeps only results
+answering its own operations, and remembers a bounded number of them instead of
+growing for the life of the process. Store tests cover the foreign result, a
+repeated identifier and the bound; a panel test fails if another agent's
+failure reaches it.
+
 2026-09-06 — **Reconnect conversations left open on the phone.** Losing a
 remote host removed its agent cards and structured streams from the shared
 reducer. When the host returned, its cards came back but nothing reopened the

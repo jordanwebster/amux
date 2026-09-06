@@ -44,6 +44,9 @@ public final class StoreBundle {
         case .feed(let update): conversation(update.agent).apply(event)
         case .session(let session): conversation(session.agent).apply(event)
         case .diff(let update): conversation(update.agent).apply(event)
+        // Nothing here names an agent, so every open conversation is offered
+        // the event and decides for itself. A result is claimed only by the
+        // conversation that dispatched the operation it answers.
         case .opResult, .fleet, .connection, .tokenRequest, .invariant:
             for store in conversations.values { store.apply(event) }
         }
