@@ -4,6 +4,25 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **A child's ask is answered where the child lives, and a plan
+verdict keeps the plan it judged.** A conversation now lists what this agent
+started as two plainly different things. An agent amux started has a
+conversation of its own, so the row carries its identity and reaching it pushes
+that conversation on top of this one — answering there addresses the child, not
+whichever conversation the person happened to be reading, and coming back finds
+the parent page exactly as it was left because it was never torn down. Work a
+provider runs inside the session has no address at all: it is listed, it cannot
+be opened, and it says why in a sentence instead of offering a control that
+would do nothing. A subagent that started and then finished is one child rather
+than two.
+
+A judged plan used to arrive in the feed as a nameless tool with no output. It
+is now a recorded verdict — approved, or sent back with the layer's own reason
+— carrying the plan exactly as it was written when it was judged, so reopening
+an old decision shows the document that was in front of the person rather than
+the file as it has since been rewritten. A plan nobody has answered yet is
+still an ask and is not claimed as a decision.
+
 2026-09-06 — **The phone is sent a reviewable diff rather than a run of
 hunks.** A frozen patch arrived with its file headers stripped: enough to count
 a change, not enough to read one. Nothing said which file a hunk belonged to,

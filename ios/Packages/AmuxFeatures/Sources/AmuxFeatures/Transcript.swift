@@ -110,6 +110,8 @@ private struct TranscriptRowView: View {
                 kind: "subagent", verb: state == nil ? "Started" : (state ?? "").capitalized,
                 subject: [name, kind].compactMap { $0 }.joined(separator: " \u{00B7} "),
                 mono: true, meta: nil)
+        case .planVerdict(let verdict):
+            PlanVerdictRow(verdict: verdict)
         case .agentMessage(let from, let text, let outbound, let note):
             AgentMessageRow(from: from, text: text, outbound: outbound, note: note)
         case .exit(let text):
@@ -136,6 +138,7 @@ private struct TranscriptRowView: View {
         case .providerError: "exclamationmark.triangle"
         case .thinking: "ellipsis"
         case .subagent: "arrow.triangle.branch"
+        case .planVerdict: "list.bullet.rectangle"
         case .agentMessage(_, _, let outbound, _):
             outbound ? "arrow.turn.up.right" : "arrow.turn.down.left"
         case .exit: "power"
@@ -488,6 +491,88 @@ private struct ExplorationRow: View {
         [reads > 0 ? "\(reads) read\(reads == 1 ? "" : "s")" : nil,
          searches > 0 ? "\(searches) search\(searches == 1 ? "" : "es")" : nil]
             .compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+}
+
+/// A plan that was judged, and the plan itself when somebody asks for it.
+///
+/// The verdict is one line because that is what a reader scrolling past a
+/// finished decision wants; the document folds out underneath because a
+/// decision is only reviewable if what was decided about is still there. It is
+/// the row's own markdown rather than the file on disk, so reopening an old
+/// approval shows the plan as it was approved and not as it has since been
+/// rewritten.
+///
+/// No accent: the accent is this app's one word for something waiting on you,
+/// and a plan already answered is the opposite of that. A plan sent back was
+/// sent back by the person reading this, which is not news to them.
+private struct PlanVerdictRow: View {
+    @Environment(\.design) private var design
+    let verdict: TranscriptRow.PlanVerdict
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { open.toggle() } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(headline)
+                        .designFont(.body, design)
+                        .foregroundStyle(design.ink.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let note {
+                        Text(note)
+                            .designFont(.detail, design)
+                            .foregroundStyle(design.inkFaint.color)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                    if verdict.markdown != nil {
+                        Image(systemName: open ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(design.inkFaint.color)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(verdict.markdown == nil)
+            if open, let markdown = verdict.markdown {
+                Prose(markdown: markdown, open: false)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background {
+                        RoundedRectangle(
+                            cornerRadius: design.metrics.controlRadius, style: .continuous)
+                            .fill(design.sunken.color)
+                    }
+            }
+            if let path = verdict.path {
+                Text(path)
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .identified(
+            "transcript.plan", label: headline,
+            value: verdict.markdown == nil ? "no document" : (open ? "open" : "folded"))
+    }
+
+    private var headline: String {
+        switch verdict.decision {
+        case .approved: "Plan approved"
+        case .sentBack: "Plan sent back"
+        }
+    }
+
+    /// The layer's own word for why, where it stated one. Never invented: a
+    /// plan sent back without a stated reason says nothing rather than
+    /// guessing at the person's mind.
+    private var note: String? {
+        guard case .sentBack(let reason) = verdict.decision else { return nil }
+        return reason
     }
 }
 

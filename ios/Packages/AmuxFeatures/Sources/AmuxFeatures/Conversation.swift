@@ -16,6 +16,10 @@ public enum ConversationAction: Equatable, Sendable {
     case retry
     /// What the person told the agent that was waiting on them.
     case answer(AskPanel, AskDecision)
+    /// One of the agents this one started, asked for from the list of them.
+    /// Answering a child's ask happens in the child's own conversation, so
+    /// reaching it is going there rather than answering from here.
+    case openChild(AgentId)
 }
 
 /// Who this conversation is with and where it runs.

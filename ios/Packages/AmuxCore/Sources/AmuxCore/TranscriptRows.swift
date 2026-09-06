@@ -49,6 +49,9 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         case providerError(message: String)
         /// A subagent started or finished under this one.
         case subagent(name: String, kind: String?, state: String?)
+        /// A plan that was judged, with the document that was judged kept
+        /// beside the verdict.
+        case planVerdict(PlanVerdict)
         /// A message between two amux agents, collapsed to one line until
         /// it is opened.
         case agentMessage(from: String, text: String, outbound: Bool, note: String?)
@@ -61,6 +64,36 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         /// A row shape this build does not know, named by whatever the row
         /// did say about itself.
         case unreadable(label: String)
+    }
+
+    /// What was decided about a plan, and the plan it was decided about.
+    ///
+    /// The document travels with the verdict rather than being fetched when
+    /// somebody reopens the decision. A plan lives in the agent's own words at
+    /// the moment it was offered; the file it was also written to can be
+    /// edited afterwards, and re-reading it later would show a reader
+    /// something other than what they approved.
+    public struct PlanVerdict: Equatable, Sendable {
+        public enum Decision: Equatable, Sendable {
+            case approved
+            /// Sent back to be reworked. `reason` is the layer's own typed
+            /// denial word where it stated one.
+            case sentBack(reason: String?)
+        }
+
+        public let decision: Decision
+        /// The plan as the agent wrote it. Absent where the layer offered a
+        /// plan it did not carry, which is drawn as a verdict with nothing to
+        /// reopen rather than as a blank document.
+        public let markdown: String?
+        /// Where the agent also wrote it down, when it did.
+        public let path: String?
+
+        public init(decision: Decision, markdown: String?, path: String?) {
+            self.decision = decision
+            self.markdown = markdown
+            self.path = path
+        }
     }
 
     /// One line inside a folded run.
@@ -233,6 +266,14 @@ extension FeedEntry {
         let name = body["name"]?.stringValue ?? "a tool"
         let label = toolLabel(invocation, name: name)
 
+        // A judged plan is a decision somebody made, not a tool that ran, and
+        // it is read before the ordinary outcomes so that approving one does
+        // not arrive in the feed as a nameless tool with no output.
+        if invocation?["tool"]?.stringValue == "plan",
+           let verdict = planVerdict(invocation, outcome) {
+            return .planVerdict(verdict)
+        }
+
         switch outcome?["outcome"]?.stringValue {
         case "denied":
             return .denied(label: label, reason: deniedReason(outcome?["kind"]?.stringValue))
@@ -282,6 +323,35 @@ extension FeedEntry {
                 text: invocation?["text"]?.stringValue ?? "", outbound: true, note: nil)
         default:
             return .tool(name: name, detail: label, meta: output?.head)
+        }
+    }
+
+    /// What was decided about a plan, or nothing while it is still being
+    /// decided.
+    ///
+    /// Claude records the decision on the ExitPlanMode tool use itself: a
+    /// result means it was approved, a typed denial means it was sent back to
+    /// be reworked. A plan nobody has answered yet is not a verdict — the ask
+    /// is still on the screen — and a tool that failed is a failure rather
+    /// than a judgement, so neither is claimed as one.
+    private static func planVerdict(
+        _ invocation: JSONValue?, _ outcome: JSONValue?
+    ) -> TranscriptRow.PlanVerdict? {
+        let markdown = invocation?["plan"]?.stringValue
+        // The layer states the sidecar path on the outcome once it has one and
+        // on the invocation before that; either is the same file.
+        let path = outcome?["facts"]?["plan_file_path"]?.stringValue
+            ?? invocation?["plan_file_path"]?.stringValue
+        switch outcome?["outcome"]?.stringValue {
+        case "success":
+            return TranscriptRow.PlanVerdict(
+                decision: .approved, markdown: markdown, path: path)
+        case "denied":
+            return TranscriptRow.PlanVerdict(
+                decision: .sentBack(reason: deniedReason(outcome?["kind"]?.stringValue)),
+                markdown: markdown, path: path)
+        default:
+            return nil
         }
     }
 

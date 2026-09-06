@@ -128,6 +128,12 @@ private struct ConversationPage: View {
                 // What the panel decided is carried as one value so the
                 // wiring, when it lands, has nothing left to interpret.
                 case .answer: break
+                // A child is pushed on top of its parent rather than replacing
+                // it, so answering the child and coming back finds the parent
+                // where it was left — the page underneath is never torn down.
+                case .openChild(let child):
+                    stores.fleet.opened(child)
+                    router.open(.conversation(child))
                 }
             }
         }
