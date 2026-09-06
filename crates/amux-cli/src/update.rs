@@ -70,7 +70,7 @@ mod tests {
         use amux::test_fixtures::report_profile_status;
 
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
-            let temp = tempfile::Builder::new().prefix("am").tempdir_in("/tmp").unwrap();
+            let temp = amux::test_fixtures::short_installation_root();
             let root = std::fs::canonicalize(temp.path()).unwrap();
             let (cloud_url, cloud_server) = manifest_fixture("/manifest.json", "100.0.0").await;
             let (update_url, manifest_server) = manifest_fixture("/releases/desktop.json", "99.0.0").await;
@@ -272,7 +272,7 @@ mod tests {
                 root: amux::InstallationRoot::OnDisk(root.path().into()),
                 settings: amux::InstallationSettings {
                     repository_roots: Vec::new(),
-                    claude: amux::ClaudeSettings::default(),
+                    claude: config.claude,
                     host_name: config.host_name,
                     prevent_idle_sleep: Some(false),
                     keybinds: config.keybinds,

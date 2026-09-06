@@ -26,8 +26,8 @@ use crate::trace::{SharedTrace, record_shared};
 use crate::view::{Notice, ViewState, next_agent_name};
 
 /// What the embedding CLI's attach handoff decided: resume the fleet
-/// (optionally with a status-line notice) or exit the TUI entirely
-/// (`<leader>d` — detach means back to the shell).
+/// (optionally with a status-line notice) or exit the TUI entirely. Only
+/// `<leader>s` resumes; a detach or the session ending means the shell.
 #[derive(Debug)]
 pub enum AttachReturn {
     Fleet(Option<Notice>),
@@ -151,7 +151,7 @@ where
                 // hand the real terminal to the passthrough.
                 runtime.note_attached(agent);
                 match attach(agent).await {
-                    // `<leader>d`: detach means the shell, not the chrome.
+                    // Detach, or the session ending: the shell, not the chrome.
                     Ok(AttachReturn::Exit) => return Ok(()),
                     Ok(AttachReturn::Fleet(notice)) => {
                         set_notice(runtime, &config, &mut chrome, notice)

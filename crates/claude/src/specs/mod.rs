@@ -497,9 +497,18 @@ impl SpecSession {
                                 ]),
                                 tool_use_id: None,
                             },
+                            // A bare allow leaves plan mode into accept-edits
+                            // on the CLI's own initiative, so approving
+                            // manually has to say which mode it wants.
                             PlanReview::ApproveManual => crate::sdk::PermissionResult::Allow {
                                 updated_input: Some(input),
-                                updated_permissions: None,
+                                updated_permissions: Some(vec![
+                                    crate::sdk::PermissionUpdate::SetMode {
+                                        mode: PermissionMode::Default,
+                                        destination:
+                                            crate::sdk::PermissionUpdateDestination::Session,
+                                    },
+                                ]),
                                 tool_use_id: None,
                             },
                             PlanReview::RequestChanges(message) => {
@@ -648,6 +657,18 @@ impl Turn {
         self.blocks()
             .filter_map(|block| match block {
                 ContentBlock::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every permission mode the session stated during this turn, in
+    /// order: the `system.status` rows that follow a mode change.
+    pub fn permission_modes(&self) -> Vec<PermissionMode> {
+        self.messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::Status(status) => status.permission_mode.clone(),
                 _ => None,
             })
             .collect()

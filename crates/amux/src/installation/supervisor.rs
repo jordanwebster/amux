@@ -277,6 +277,7 @@ fn write_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), Inst
     staged
         .persist_noclobber(path)
         .map_err(|error| error.error)?;
+    #[cfg(unix)]
     std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
@@ -384,6 +385,7 @@ impl Installation {
             prevent_idle_sleep: options.settings.prevent_idle_sleep,
             keybinds: options.settings.keybinds.clone(),
             ui: options.settings.ui.clone(),
+            claude: options.settings.claude.clone(),
             keymaps_dir: options.settings.keymaps_dir.clone(),
             minimum_client_versions: options.settings.minimum_client_versions.clone(),
             update_manifest_url: options.settings.update_manifest_url.clone(),

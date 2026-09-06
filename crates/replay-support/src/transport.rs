@@ -268,18 +268,7 @@ pub fn strict_replay(recording: &Recording, options: ReplayOptions) -> StrictRep
 }
 
 async fn drive_replay(controller: ReplayController) {
-    loop {
-        let notified = controller.progress.notified();
-        match controller.peek_next() {
-            ReplayPeek::Ready { .. } => {
-                if matches!(controller.advance_one().await, ReplayAdvance::Exhausted) {
-                    return;
-                }
-            }
-            ReplayPeek::BlockedOnWrite => notified.await,
-            ReplayPeek::Exhausted => return,
-        }
-    }
+    controller.drive().await;
 }
 
 fn replay_state(
@@ -352,10 +341,36 @@ fn event_transport_id(event: &IoEvent) -> String {
 }
 
 impl ReplayController {
-    /// Deliver recorded reads as matching writes unlock them, sleeping while
-    /// waiting for the next write. The caller owns cancellation of this future.
-    pub async fn run(&self) {
-        drive_replay(self.clone()).await;
+    /// Deliver recorded reads, sleeping until the application supplies any
+    /// expected write. This does not close the streams when the script ends.
+    pub async fn drive(&self) {
+        loop {
+            let notified = self.progress.notified();
+            match self.peek_next() {
+                ReplayPeek::Ready { .. } => {
+                    if matches!(self.advance_one().await, ReplayAdvance::Exhausted) {
+                        return;
+                    }
+                }
+                ReplayPeek::BlockedOnWrite => notified.await,
+                ReplayPeek::Exhausted => return,
+            }
+        }
+    }
+
+    /// Send EOF after the application has finished its replay assertions.
+    /// Controllers and clocks may remain alive for final accounting without
+    /// keeping simulated processes waiting for their output streams to close.
+    pub async fn close_reads(&self) -> io::Result<()> {
+        match &self.outputs {
+            ReplayOutputs::Single(output) => output.lock().await.shutdown().await,
+            ReplayOutputs::Named(outputs) => {
+                for output in outputs.values() {
+                    output.lock().await.shutdown().await?;
+                }
+                Ok(())
+            }
+        }
     }
 
     pub fn peek_next(&self) -> ReplayPeek {

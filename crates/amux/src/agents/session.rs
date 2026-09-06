@@ -291,6 +291,8 @@ impl AgentDeps {
     ) -> io::Result<Self> {
         #[cfg(not(unix))]
         let _ = codex_private_socket;
+        // The daemon can be the first thing to touch its data directory on a
+        // fresh machine, and canonicalizing a path requires it to exist.
         std::fs::create_dir_all(&data_dir)?;
         Ok(Self {
             data_dir: std::fs::canonicalize(data_dir)?,

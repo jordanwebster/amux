@@ -23,13 +23,13 @@ use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
 use crate::services::CloudLinkService;
 use crate::user_state::ServerState;
 
-/// A caller-owned on-disk root for desktop tests that allocate profile sockets.
+/// A caller-owned on-disk root for tests that allocate installation sockets.
 /// macOS's default TMPDIR leaves too little room for UUID socket names; tests
 /// choose a short path explicitly instead of changing installation allocation.
 pub fn short_installation_root() -> tempfile::TempDir {
-    #[cfg(all(unix, feature = "local-agents"))]
+    #[cfg(unix)]
     let parent = std::path::PathBuf::from("/tmp");
-    #[cfg(not(all(unix, feature = "local-agents")))]
+    #[cfg(not(unix))]
     let parent = std::env::temp_dir();
     tempfile::Builder::new()
         .prefix("ai")
@@ -519,17 +519,19 @@ impl TestRelay {
         }
     }
 
+    /// One label is one relay account. The token is derived from the label, so
+    /// minting a fresh user on every call would silently repoint an account's
+    /// existing token at a new tenant the second time a test registers it.
     pub fn register_user(&self, label: &str) -> RelayUser {
-        let user = RelayUser {
-            user_id: Uuid::new_v4(),
-            token: relay_token(label),
-        };
-        self.authenticator
+        let token = relay_token(label);
+        let user_id = *self
+            .authenticator
             .users
             .lock()
             .expect("test relay users poisoned")
-            .insert(user.token.clone(), user.user_id);
-        user
+            .entry(token.clone())
+            .or_insert_with(Uuid::new_v4);
+        RelayUser { user_id, token }
     }
 
     /// Use this fixture's plaintext transport for an unbound profile. Credential

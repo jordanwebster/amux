@@ -31,10 +31,10 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
-                                                                                                                        
     ctx 31.6k                                                                                                           
                                                                                                                         
+▎                                                                                                                       
 ▎   繁 体 字 と  emoji 🚀  の ド ラ フ ト ▌                                                                                       
+▎                                                                                                                       
                                                                                                                         
     enter send · ctrl+j newline · C-a r review diff                                                      shift+tab mode 

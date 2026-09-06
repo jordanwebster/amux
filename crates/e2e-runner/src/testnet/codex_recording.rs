@@ -73,7 +73,7 @@ impl Prepared {
             .context("recording transport missing")?;
         let controller = replay.controller;
         let driver_controller = controller.clone();
-        let driver = tokio::spawn(async move { driver_controller.run().await });
+        let driver = tokio::spawn(async move { driver_controller.drive().await });
         let mut recorded = Recorded {
             controller,
             driver,

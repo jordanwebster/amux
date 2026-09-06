@@ -3,15 +3,15 @@
   "spec": "tools/plan_reviewed",
   "recorded": {
     "provider": "claude",
-    "version": "2.1.260",
+    "version": "2.1.261",
     "model": "claude-haiku-4-5-20251001",
-    "at": "2026-09-04T19:38:22.996550Z",
+    "at": "2026-09-05T23:35:03.974691Z",
     "source_kind": "live_capture"
   },
   "verified": [],
   "content": {
-    "io.jsonl": "sha256:d8e9a15b4669ed21736226a4ffb26d4a4273321b962a98f03c5b3d2069bd5691",
-    "spawn.jsonl": "sha256:d82bd564c70e63095b694d18eee47db59af03432e7fec4f00358b310c3c4f63b"
+    "io.jsonl": "sha256:1a3852140589de58082d4ea251bca919a72963f2c9eefb705592b36ab36209f8",
+    "spawn.jsonl": "sha256:2f849a5f83a12a8e38f9d44941fbd63febe16808fe3a6b572fd4b89a504b6a3a"
   },
   "observed": {
     "frames": [
@@ -79,7 +79,6 @@
       "message.content.0.input",
       "message.content.0.input.command",
       "message.content.0.input.content",
-      "message.content.0.input.description",
       "message.content.0.input.file_path",
       "message.content.0.input.max_results",
       "message.content.0.input.new_string",
@@ -138,7 +137,6 @@
       "permission_denials.0",
       "permission_denials.0.tool_input",
       "permission_denials.0.tool_input.command",
-      "permission_denials.0.tool_input.description",
       "permission_denials.0.tool_name",
       "permission_denials.0.tool_use_id",
       "plugins",
@@ -174,7 +172,6 @@
       "request.display_name",
       "request.input",
       "request.input.command",
-      "request.input.description",
       "request.input.plan",
       "request.input.planFilePath",
       "request.mode",
@@ -772,22 +769,21 @@
       "tool_result_meta.0.non_execution_kind",
       "tool_use_result",
       "tool_use_result.content",
-      "tool_use_result.file",
-      "tool_use_result.file.content",
-      "tool_use_result.file.filePath",
-      "tool_use_result.file.numLines",
-      "tool_use_result.file.startLine",
-      "tool_use_result.file.totalLines",
       "tool_use_result.filePath",
+      "tool_use_result.interrupted",
       "tool_use_result.isAgent",
+      "tool_use_result.isImage",
       "tool_use_result.matches",
       "tool_use_result.matches.0",
       "tool_use_result.newString",
+      "tool_use_result.noOutputExpected",
       "tool_use_result.oldString",
       "tool_use_result.originalFile",
       "tool_use_result.plan",
       "tool_use_result.query",
       "tool_use_result.replaceAll",
+      "tool_use_result.stderr",
+      "tool_use_result.stdout",
       "tool_use_result.structuredPatch",
       "tool_use_result.structuredPatch.0",
       "tool_use_result.structuredPatch.0.lines",
@@ -800,8 +796,6 @@
       "tool_use_result.structuredPatch.0.lines.14",
       "tool_use_result.structuredPatch.0.lines.15",
       "tool_use_result.structuredPatch.0.lines.16",
-      "tool_use_result.structuredPatch.0.lines.17",
-      "tool_use_result.structuredPatch.0.lines.18",
       "tool_use_result.structuredPatch.0.lines.2",
       "tool_use_result.structuredPatch.0.lines.3",
       "tool_use_result.structuredPatch.0.lines.4",
@@ -1025,11 +1019,11 @@
   },
   "redaction": {
     "secrets": 0,
-    "machine_paths": 52,
+    "machine_paths": 46,
     "personal_identifiers": 2
   },
   "session_ids": [
-    "0da19eb5-31de-43b4-ac0a-a36dd37b86a8"
+    "020256dc-b7d7-471b-b395-b83ccb943d79"
   ],
   "provider_extra": {}
 }

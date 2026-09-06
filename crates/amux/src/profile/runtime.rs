@@ -987,7 +987,7 @@ mod tests {
                 .await
                 .unwrap();
             let debug: serde_json::Value = serde_json::from_str(&dump).unwrap();
-            assert_eq!(debug["has_cloud_credentials"], false);
+            assert_eq!(debug["has_credential_provider"], false);
             assert!(debug["config"].get("enable_cloud_mode").is_none());
 
             crate::installation::ProfileAdmin::for_test(runtime.services.client.clone())

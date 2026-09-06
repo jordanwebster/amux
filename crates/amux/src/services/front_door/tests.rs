@@ -11,6 +11,17 @@ use crate::installation::{
 };
 use crate::protocol::wire::profile_service_server::ProfileService;
 
+struct NoCredentials;
+
+#[async_trait::async_trait]
+impl crate::auth::CredentialProvider for NoCredentials {
+    async fn access_token(&self) -> Result<crate::auth::AccessToken, crate::auth::AuthError> {
+        Err(crate::auth::AuthError::Unauthenticated)
+    }
+
+    fn invalidate(&self, _: &crate::auth::AccessToken) {}
+}
+
 fn op() -> String {
     OperationId::new().0.to_string()
 }
@@ -20,7 +31,7 @@ async fn front(listeners: Listeners) -> (FrontDoor, tempfile::TempDir) {
         Installation::open(InstallationOptions {
             root: InstallationRoot::OnDisk(root.path().into()),
             listeners,
-            credentials: CredentialSource::ProfileFiles,
+            credentials: CredentialSource::HostProvided(Arc::new(|_| Arc::new(NoCredentials))),
             identity_http: reqwest::Client::new(),
             settings: InstallationSettings {
                 repository_roots: Vec::new(),
@@ -491,7 +502,7 @@ async fn installation_info_debug_and_shutdown_are_separate_from_client_service()
     );
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "local-agents"))]
 #[tokio::test]
 async fn unix_front_door_discovers_profile_socket_and_refuses_socket_theft() {
     use std::os::unix::fs::PermissionsExt;

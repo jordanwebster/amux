@@ -9,7 +9,7 @@ use replay_support::{
     replay_transport_with_controller, strict_replay,
 };
 use semver::Version;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
 fn event(us: u64, direction: IoDirection, line: &str, transport_id: &str) -> IoEvent {
     IoEvent {
@@ -407,4 +407,79 @@ async fn strict_replay_named_transport_mismatch_reports_its_own_expectation() {
     assert_eq!(mismatch.index, 1);
     assert_eq!(mismatch.expected, "beta-write");
     assert_eq!(mismatch.actual, "wrong-beta-write");
+}
+
+#[tokio::test]
+async fn closing_named_replay_reads_delivers_eof_while_clock_stays_alive() {
+    let mut replay = strict_replay(
+        &recording(vec![
+            event(1, IoDirection::Read, "terminal", "pty"),
+            event(2, IoDirection::Read, "hook", "hook"),
+        ]),
+        ReplayOptions::default(),
+    );
+    replay.controller.drive().await;
+    replay.controller.close_reads().await.unwrap();
+    for (name, expected) in [("pty", "terminal\n"), ("hook", "hook\n")] {
+        let mut transport = replay.transports.remove(name).unwrap();
+        let mut received = String::new();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            transport.reader.read_to_string(&mut received),
+        )
+        .await
+        .expect("closed replay did not deliver EOF")
+        .unwrap();
+        assert_eq!(received, expected);
+    }
+    assert!(replay.controller.finish().unwrap().is_complete());
+    assert_eq!(replay.clock.advance_one().await, ReplayAdvance::Exhausted);
+}
+
+#[tokio::test]
+async fn closing_replay_reads_preserves_missing_write_failures() {
+    let (mut reader, _writer, controller) = replay_transport_with_controller(
+        vec![event(1, IoDirection::Write, "required", "pty")],
+        ReplayOptions::default(),
+    );
+    controller.close_reads().await.unwrap();
+    let mut line = String::new();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line))
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert_eq!(controller.finish().unwrap_err().report.remaining_writes, 1);
+}
+
+#[tokio::test]
+async fn replay_driver_waits_for_expected_writes_then_resumes() {
+    let (mut reader, mut writer, controller) = replay_transport_with_controller(
+        vec![
+            event(1, IoDirection::Write, "request", "pty"),
+            event(2, IoDirection::Read, "response", "pty"),
+        ],
+        ReplayOptions::default(),
+    );
+    let driver = controller.drive();
+    tokio::pin!(driver);
+    assert!(
+        std::future::poll_fn(|cx| {
+            std::task::Poll::Ready(std::future::Future::poll(driver.as_mut(), cx))
+        })
+        .await
+        .is_pending()
+    );
+    writer.write_all(b"request\n").await.unwrap();
+    writer.flush().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), driver)
+        .await
+        .unwrap();
+    controller.close_reads().await.unwrap();
+    let mut received = String::new();
+    reader.read_to_string(&mut received).await.unwrap();
+    assert_eq!(received, "response\n");
+    assert!(controller.finish().unwrap().is_complete());
 }

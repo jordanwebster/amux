@@ -335,7 +335,10 @@ fn mobile_projection_keeps_the_feed_of_an_agent_whose_host_has_gone_away() {
     ] {
         update(&mut model, msg);
         phone.apply_events(&collect(&mut projection, &model));
-        assert_eq!(phone.rows, held, "the rows went while the machine came back");
+        assert_eq!(
+            phone.rows, held,
+            "the rows went while the machine came back"
+        );
     }
 
     // The replay is what replaces them: the same rows once, never both copies.

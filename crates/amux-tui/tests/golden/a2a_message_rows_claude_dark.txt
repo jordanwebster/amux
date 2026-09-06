@@ -32,11 +32,11 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
-                                                                                                                        
   ◐ working · 0s · ctx unknown · ctrl+x interrupt                                                                       
                                                                                                                         
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     send gated while working · ? help                                                                    shift+tab mode 
 --- styles ---
@@ -73,10 +73,10 @@ AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
-........................................................................................................................
-........................................................................................................................
 ................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.......................................................................
 ........................................................................................................................
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm....................................................................mmmmmmmmmmmmmm.

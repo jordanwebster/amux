@@ -244,7 +244,7 @@ async fn watch_snapshot_ordered_changes_removed_and_lagged() {
 
 #[tokio::test]
 async fn pause_survives_restart_and_preserves_identity_and_local_calls() {
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let open = || {
         Installation::open(options(
             InstallationRoot::OnDisk(root.path().into()),
@@ -280,7 +280,7 @@ async fn pause_survives_restart_and_preserves_identity_and_local_calls() {
 #[cfg(unix)]
 #[tokio::test]
 async fn startup_failure_leaves_other_profile_serving_and_delete_closes_socket_clients() {
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let first = ProfileId::new();
     let second = ProfileId::new();
     {
@@ -379,7 +379,7 @@ async fn cancelling_a_caller_does_not_cancel_or_duplicate_its_mutation() {
 
 #[tokio::test]
 async fn failed_delete_remains_unavailable_after_restart_and_cleanup_is_retryable() {
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let open = || {
         Installation::open(options(
             InstallationRoot::OnDisk(root.path().into()),
@@ -521,7 +521,7 @@ async fn bound_profiles_start_independently_and_pause_cancels_only_its_connector
         .await
         .unwrap();
     }
-    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let root = crate::test_fixtures::short_installation_root();
     let ids = [ProfileId::new(), ProfileId::new()];
     {
         let mut registry = Registry::open(InstallationRoot::OnDisk(root.path().into())).unwrap();

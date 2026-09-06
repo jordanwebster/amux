@@ -428,7 +428,9 @@ impl Projection {
                 // than the conversation. A session that was really cleared
                 // names a new session and evicts through the window rule
                 // below.
-                if layer.entry_count() == 0 && layer.session_id().is_none() && !state.rows.is_empty()
+                if layer.entry_count() == 0
+                    && layer.session_id().is_none()
+                    && !state.rows.is_empty()
                 {
                     None
                 } else {

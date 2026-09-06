@@ -191,6 +191,140 @@ fn recorded_task_lifecycle_updates_one_entry_with_completion_and_usage() {
     assert_eq!(tasks[0].summary.as_deref(), Some("ONE TWO THREE"));
     assert_eq!(tasks[0].usage.as_ref().unwrap().total_tokens, Some(1440));
     assert_eq!(tasks[0].usage.as_ref().unwrap().duration_ms, Some(2375));
+
+    // The launch row and the task are one subagent, so they are one entry:
+    // the `Agent` tool use is taken over where it sat, and the subagent's
+    // own rows arrive marked with that launch.
+    let layer = claude_sdk_layer(&model, AGENT);
+    assert_eq!(
+        tasks[0].tool_use_id.as_deref(),
+        Some("toolu_011tXt8wWZsDcqNkmr2GAzYp")
+    );
+    assert!(
+        !layer
+            .entries()
+            .any(|e| matches!(&e.kind, FeedEntryKind::Tool(t) if t.name == "Agent")),
+        "the launch tool row must not survive beside its task"
+    );
+    let subagent_rows: Vec<_> = layer
+        .entries()
+        .filter(|e| e.parent_tool_use_id() == Some("toolu_011tXt8wWZsDcqNkmr2GAzYp"))
+        .collect();
+    assert!(
+        subagent_rows
+            .iter()
+            .any(|e| matches!(&e.kind, FeedEntryKind::Message(m) if m.text.contains("ONE"))),
+        "the subagent's own reply arrives marked with its launch: {subagent_rows:?}"
+    );
+    // The session repeated the result in its own words; that reply is the
+    // session's, and stays unmarked.
+    assert!(
+        layer
+            .entries()
+            .filter(|e| e.parent_tool_use_id().is_none())
+            .any(|e| matches!(&e.kind, FeedEntryKind::Message(m) if m.text == "ONE TWO THREE")),
+        "the session's own reply stays the session's"
+    );
+}
+
+/// The prompt a parent hands its subagent arrives as a `user` row marked
+/// with the launch; it is the task's description, not something the
+/// person said, so it makes no prompt entry. The subagent's tool results
+/// still pair with its own tool rows.
+#[test]
+fn a_subagents_prompt_row_is_not_the_persons_prompt() {
+    let model = feed(vec![
+        json!({"type":"user","uuid":"u1","parent_tool_use_id":"toolu_launch",
+               "message":{"role":"user","content":"Count to three and report the result."}}),
+        json!({"type":"assistant","uuid":"u2","parent_tool_use_id":"toolu_launch",
+        "message":{"id":"msg_child","role":"assistant","content":[
+            {"type":"tool_use","id":"toolu_child_read","name":"Read","input":{"file_path":"a.rs"}}
+        ]}}),
+        json!({"type":"user","uuid":"u3","parent_tool_use_id":"toolu_launch",
+        "message":{"role":"user","content":[
+            {"type":"tool_result","tool_use_id":"toolu_child_read","content":"fn main() {}"}
+        ]}}),
+    ]);
+    let layer = claude_sdk_layer(&model, AGENT);
+    assert!(
+        !layer
+            .entries()
+            .any(|e| matches!(e.kind, FeedEntryKind::Prompt(_))),
+        "no prompt entry for the subagent's own prompt"
+    );
+    let read = layer
+        .entries()
+        .find_map(|e| match &e.kind {
+            FeedEntryKind::Tool(t) if t.tool_use_id == "toolu_child_read" => Some((e, t)),
+            _ => None,
+        })
+        .expect("the subagent's read");
+    assert_eq!(read.0.parent_tool_use_id(), Some("toolu_launch"));
+    assert_eq!(
+        read.1.result.as_ref().map(|r| r.text.as_str()),
+        Some("fn main() {}")
+    );
+}
+
+/// A task row can land while the launching tool block is still streaming,
+/// and the task list can name the task before any row carries its launch
+/// id. The entry stays the task through all of it: the final row for the
+/// block adds nothing the lifecycle rows do not state, and the launch
+/// tool's own result is not the task's outcome.
+#[test]
+fn a_task_keeps_its_launch_row_through_late_tool_rows_and_results() {
+    let stream =
+        |event: Value| json!({"type": "stream_event", "parent_tool_use_id": null, "event": event});
+    let model = feed(vec![
+        stream(json!({"type": "message_start", "message": {"id": "msg_launch"}})),
+        stream(
+            json!({"type": "content_block_start", "index": 0, "content_block": {
+                "type": "tool_use", "id": "toolu_launch", "name": "Task", "input": {}
+            }}),
+        ),
+        stream(json!({"type": "content_block_delta", "index": 0, "delta": {
+            "type": "input_json_delta", "partial_json": "{\"description\": \"count to three\""
+        }})),
+        // The task list names the task before its launch id is known.
+        json!({"type":"system","subtype":"background_tasks_changed","tasks":[
+            {"task_id":"t1","description":"count to three","task_type":"local_agent"}
+        ]}),
+        json!({"type":"system","subtype":"task_started","task_id":"t1","tool_use_id":"toolu_launch",
+               "description":"count to three","subagent_type":"counter"}),
+        stream(json!({"type": "content_block_delta", "index": 0, "delta": {
+            "type": "input_json_delta", "partial_json": ", \"subagent_type\": \"counter\"}"
+        }})),
+        stream(json!({"type": "content_block_stop", "index": 0})),
+        json!({
+            "type": "assistant",
+            "uuid": "u1",
+            "parent_tool_use_id": null,
+            "message": {"id": "msg_launch", "role": "assistant", "content": [{
+                "type": "tool_use", "id": "toolu_launch", "name": "Task",
+                "input": {"description": "count to three", "subagent_type": "counter"}
+            }]},
+        }),
+        json!({"type":"user","uuid":"u3","parent_tool_use_id":null,"message":{"role":"user","content":[
+            {"type":"tool_result","tool_use_id":"toolu_launch","content":"Agent launched."}
+        ]}}),
+        json!({"type":"system","subtype":"task_notification","task_id":"t1","tool_use_id":"toolu_launch",
+               "status":"completed","summary":"THREE"}),
+    ]);
+    let layer = claude_sdk_layer(&model, AGENT);
+    let entries: Vec<_> = layer.entries().collect();
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|e| matches!(e.kind, FeedEntryKind::Task(_) | FeedEntryKind::Tool(_)))
+            .count(),
+        1,
+        "one entry for one subagent: {entries:?}"
+    );
+    let task = layer.tasks().next().expect("the task");
+    assert_eq!(task.description, "count to three");
+    assert_eq!(task.subagent_type.as_deref(), Some("counter"));
+    assert_eq!(task.state, TaskState::Completed);
+    assert_eq!(task.summary.as_deref(), Some("THREE"));
 }
 
 #[test]
@@ -563,4 +697,90 @@ fn capture(model: &Model, name: &str) {
         )
         .unwrap();
     }
+}
+
+/// A replay tail can begin at the task rows, after the launch block was
+/// evicted or never retained. The launch's final row then arrives for a
+/// task that has no block: it attaches to the task rather than adding a
+/// tool beside it, and the launch tool's result pairs with the task.
+#[test]
+fn a_lifecycle_first_tail_attaches_the_late_launch_block_to_its_task() {
+    let model = feed(vec![
+        json!({"type":"system","subtype":"task_started","task_id":"t1","tool_use_id":"toolu_launch",
+               "description":"count to three","subagent_type":"counter"}),
+        json!({
+            "type": "assistant",
+            "uuid": "u1",
+            "parent_tool_use_id": null,
+            "message": {"id": "msg_launch", "role": "assistant", "content": [{
+                "type": "tool_use", "id": "toolu_launch", "name": "Task",
+                "input": {"description": "count to three", "subagent_type": "counter"}
+            }]},
+        }),
+        json!({"type":"user","uuid":"u2","parent_tool_use_id":null,"message":{"role":"user","content":[
+            {"type":"tool_result","tool_use_id":"toolu_launch","content":"Agent launched."}
+        ]}}),
+    ]);
+    let layer = claude_sdk_layer(&model, AGENT);
+    let entries: Vec<_> = layer.entries().collect();
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|e| matches!(e.kind, FeedEntryKind::Task(_) | FeedEntryKind::Tool(_)))
+            .count(),
+        1,
+        "one entry for one subagent: {entries:?}"
+    );
+    let task = entries
+        .iter()
+        .find(|e| matches!(e.kind, FeedEntryKind::Task(_)))
+        .expect("the task");
+    assert_eq!(
+        task.block.as_ref().map(|b| b.message_id.as_str()),
+        Some("msg_launch"),
+        "the late launch block now belongs to the task"
+    );
+}
+
+/// A subagent's tool result can arrive without its invocation — a tail
+/// that starts at the result, or an evicted launch. The retained result
+/// still says whose it was.
+#[test]
+fn a_result_only_tail_keeps_its_subagent_attribution() {
+    let model = feed(vec![json!({
+        "type":"user","uuid":"u1","parent_tool_use_id":"toolu_launch",
+        "message":{"role":"user","content":[
+            {"type":"tool_result","tool_use_id":"toolu_orphan","content":"done"}
+        ]}
+    })]);
+    let entry = claude_sdk_layer(&model, AGENT)
+        .entries()
+        .find(|e| matches!(&e.kind, FeedEntryKind::Tool(t) if t.tool_use_id == "toolu_orphan"))
+        .expect("the result-only tool row");
+    assert!(entry.block.is_none());
+    assert_eq!(entry.parent_tool_use_id(), Some("toolu_launch"));
+}
+
+/// A clipped lifecycle row leaves the task marked as clipped; the launch
+/// block's own small final row does not clear that.
+#[test]
+fn a_late_launch_row_does_not_clear_a_tasks_clipped_content_flag() {
+    let huge = "x".repeat(CONTENT_BYTES_RETAINED + 1);
+    let model = feed(vec![
+        json!({"type":"system","subtype":"task_started","task_id":"t1","tool_use_id":"toolu_launch",
+               "description": huge, "subagent_type":"counter"}),
+        json!({
+            "type": "assistant",
+            "uuid": "u1",
+            "parent_tool_use_id": null,
+            "message": {"id": "msg_launch", "role": "assistant", "content": [{
+                "type": "tool_use", "id": "toolu_launch", "name": "Task", "input": {}
+            }]},
+        }),
+    ]);
+    let task = claude_sdk_layer(&model, AGENT)
+        .entries()
+        .find(|e| matches!(e.kind, FeedEntryKind::Task(_)))
+        .expect("the task");
+    assert!(task.content_truncated);
 }

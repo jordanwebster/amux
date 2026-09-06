@@ -4,6 +4,28 @@ use std::path::Path;
 use amux_tui::replay;
 use amux_ui::report::ReplayVerdict;
 
+/// Re-record the captured frame of every committed fixture from its own
+/// trace, with `UPDATE_GOLDENS=1`.
+///
+/// A fixture holds the frame a person was looking at when they captured a
+/// report, and the trace that reproduces it. A deliberate change to how a
+/// frame is drawn makes every committed frame stale at once — the trace
+/// still replays, but into a screen that no longer matches the one filed
+/// beside it. Re-recording rewrites the captured frame from the replay,
+/// which is the same thing the original capture did.
+fn rerecord(fixture: &Path) {
+    let mut replay = replay::Replay::load(fixture)
+        .unwrap_or_else(|error| panic!("failed to load {}: {error}", fixture.display()));
+    replay
+        .step_to_end()
+        .unwrap_or_else(|error| panic!("failed to replay {}: {error}", fixture.display()));
+    let frame = replay
+        .frame()
+        .unwrap_or_else(|error| panic!("failed to draw {}: {error}", fixture.display()));
+    fs::write(fixture.join("frame.txt"), frame.text).expect("write frame.txt");
+    fs::write(fixture.join("frame.styles"), frame.styles).expect("write frame.styles");
+}
+
 #[test]
 fn every_committed_report_fixture_reproduces() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/reports");
@@ -21,6 +43,9 @@ fn every_committed_report_fixture_reproduces() {
 
     let hostname = gethostname::gethostname().to_string_lossy().into_owned();
     for fixture in fixtures {
+        if std::env::var_os("UPDATE_GOLDENS").is_some() {
+            rerecord(&fixture);
+        }
         let verdict = replay::verify(&fixture)
             .unwrap_or_else(|error| panic!("failed to replay {}: {error}", fixture.display()));
         assert_eq!(

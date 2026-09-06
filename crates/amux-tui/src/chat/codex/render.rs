@@ -20,14 +20,17 @@ use ratatui::text::{Line, Span};
 use serde_json::Value;
 
 use super::View;
-use crate::chat::attachments::{attachment_key, described, prose};
+use crate::chat::attachments::{attachment_key, described, prose, words};
 use crate::chat::blocks::{
-    self, paint_agent_message, paint_ask_fact, paint_ask_panel, paint_assistant, paint_attachment,
-    paint_compaction_rule, paint_composer_block, paint_error, paint_header, paint_mcp_startup,
-    paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
+    self, Carrier, fmt_thousands, fmt_tokens, paint_agent_message, paint_ask_fact, paint_ask_panel,
+    paint_assistant, paint_attachment, paint_compaction_rule, paint_composer_block, paint_error,
+    paint_header, paint_mcp_startup, paint_thinking, paint_tool_line, paint_turn_rule,
+    paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude_shared::reader;
-use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
+use crate::chat::frame::{
+    BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
+};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph};
 use crate::markdown;
@@ -238,9 +241,9 @@ fn meter_text(usage: Option<&TokenUsage>) -> String {
 ///
 /// Codex reports thread-wide totals, not a per-tool accounting, so this
 /// states input and output and says so — a coarse answer named as coarse
-/// is more useful than a fine one nobody can produce. Cached input and
-/// reasoning are shares of those two, shown underneath them, so the
-/// column never sums past the title. Nothing is fetched: the numbers
+/// is more useful than a fine one nobody can produce. Cached input, cache
+/// writes and reasoning are shares of those two, shown underneath them,
+/// so the column never sums past the title. Nothing is fetched: the numbers
 /// arrived with the last turn.
 fn context_overlay(
     model: &Model,
@@ -282,9 +285,10 @@ fn context_overlay(
             // part of the output count, so they are indented under the
             // total they belong to. Four flat rows would invite the
             // reader to add them up and get more than the title's total.
-            let categories: [(usize, &str, Option<u64>); 4] = [
+            let categories: [(usize, &str, Option<u64>); 5] = [
                 (0, "input", usage.input_tokens),
                 (1, "of it cached", usage.cached_input_tokens),
+                (1, "of it written to cache", usage.cache_write_input_tokens),
                 (0, "output", usage.output_tokens),
                 (1, "of it reasoning", usage.reasoning_output_tokens),
             ];
@@ -320,12 +324,6 @@ fn context_overlay(
         }
     }
 
-    let body_h = height.saturating_sub(5).max(1);
-    rows.truncate(body_h);
-    while rows.len() < body_h {
-        rows.push(Line::default());
-    }
-
     let footer = if chat.quit_guard.is_armed() {
         crate::chat::claude_shared::armed_quit_line(theme)
     } else {
@@ -338,46 +336,7 @@ fn context_overlay(
         );
         line
     };
-
-    let mut title_line = Line::default();
-    push_span(&mut title_line, GLYPH_COL, title, theme.emphasis());
-    crate::render::push_right(
-        &mut title_line,
-        "esc close".to_string(),
-        width,
-        theme.muted(),
-    );
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
-    lines.push(title_line);
-    lines.push(Line::default());
-    lines.push(reader::rule_line(width, theme));
-    lines.extend(rows);
-    lines.push(reader::rule_line(width, theme));
-    lines.push(footer);
-    lines.truncate(height);
-    lines
-}
-
-/// `128,000` — the overlay counts in full, where the meter abbreviates.
-fn fmt_thousands(count: u64) -> String {
-    let digits = count.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, ch) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
-
-/// `31.6k` / `421` token counts (the compaction rule).
-fn fmt_tokens(count: u64) -> String {
-    if count >= 1000 {
-        format!("{:.1}k", count as f64 / 1000.0)
-    } else {
-        count.to_string()
-    }
+    reader::overlay_frame(title, rows, footer, width, height, theme)
 }
 
 fn active_phase(phase: &CodexPhase) -> bool {
@@ -919,10 +878,12 @@ fn feed_blocks(
                 .get_or_paint(
                     BlockKey(entry.id),
                     entry,
-                    width,
-                    theme,
-                    chat.reports_open,
-                    || entry_block(entry, theme, width, reports),
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: chat.reports_open,
+                    },
+                    || entry_block(entry, layer.attachments(), theme, width, reports),
                 )
                 .clone(),
         );
@@ -932,9 +893,22 @@ fn feed_blocks(
             let key = attachment_key(entry.id, index);
             blocks.push(
                 cache
-                    .get_or_paint(key, attachment, width, theme, false, || {
-                        paint_attachment(key, attachment, theme, width)
-                    })
+                    .get_or_paint(
+                        key,
+                        attachment,
+                        PaintInputs {
+                            width,
+                            theme,
+                            expanded: false,
+                        },
+                        || {
+                            let carrier = match &entry.kind {
+                                FeedEntryKind::Prompt(_) => Carrier::Person,
+                                _ => Carrier::Agent,
+                            };
+                            paint_attachment(key, attachment, carrier, theme, width)
+                        },
+                    )
                     .clone(),
             );
         }
@@ -969,6 +943,7 @@ fn merged(mut block: PaintedBlock, tail: PaintedBlock) -> PaintedBlock {
 
 fn entry_block(
     entry: &FeedEntry,
+    index: &amux_ui::attachments::AttachmentIndex,
     theme: Theme,
     width: usize,
     reports: MessageView<'_>,
@@ -980,7 +955,7 @@ fn entry_block(
                 PromptSource::Protocol => String::new(),
                 PromptSource::SteerEcho => "steer · ".to_string(),
             };
-            text.push_str(&prompt_body(prompt));
+            text.push_str(&prompt_body(prompt, index));
             paint_user_prompt(
                 key,
                 &text,
@@ -1390,12 +1365,11 @@ fn resolution_label(reason: ApprovalResolution) -> &'static str {
     }
 }
 
-/// The prompt's words: its text parts with their attachment elements
-/// removed, then whatever the protocol sent that was not text. The
-/// elements have their own rows, so leaving them in the body would say
-/// everything twice.
-fn prompt_body(prompt: &PromptEntry) -> String {
-    let mut pieces = vec![prose(&prompt.content)];
+/// The prompt's words: its text parts with each attachment element shown
+/// as the token it was typed as, then whatever the protocol sent that was
+/// not text.
+fn prompt_body(prompt: &PromptEntry, index: &amux_ui::attachments::AttachmentIndex) -> String {
+    let mut pieces = vec![words(index, &prompt.content)];
     pieces.extend(prompt.parts.iter().filter_map(non_text_part));
     pieces.retain(|piece| !piece.is_empty());
     pieces.join(" ")

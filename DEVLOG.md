@@ -4,6 +4,52 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Refresh the phone branch from main.** Merged main at 713d5476
+into this branch as a merge commit, keeping both parents; both dependency
+branches this work already carries were ancestors, so what landed is the 22
+commits main gained beyond them: the stream-JSON chat's one-entry-per-subagent
+folding and parentless spawn, Codex resuming a thread with its history before
+it says it is ready, the profile sharp-edge fixes, the subprocess setup and
+replay cleanup work, and the Windows portability fixes.
+
+Eight files conflicted. The chat frame took both sides: this branch made the
+activity slot a list of lines so a queued message can sit beside the working
+row, and main gave that row air above it, so the geometry now counts the whole
+block and the painter writes the gap before the slot. The replay controller
+took main's drive and its new close_reads, and the recorded-Codex driver in the
+e2e runner now calls drive, which is the same loop this branch had named run.
+The workspace recipes gained main's opt-in real-Codex suite and kept this
+branch's mobile check, which checks both phone targets rather than one. The
+attachment viewer, the daemon's data directory comment and the SDK
+configuration doc took main's wording. The protobuf descriptor was not resolved
+by hand: the .proto files merged cleanly, so it was regenerated from them.
+
+Git also merged a conflict it could not see: both sides had added a Claude
+settings field to the installation config and to the settings a runtime is
+started with, at different places in the same struct, so every definition and
+every literal carried it twice and nothing compiled. Deduplicated across the
+workspace; where the two copies differed, the surviving one passes the config's
+Claude settings through instead of a default, so the driver preference reaches
+the installations those tests open.
+
+Proof, all local: fmt, lint, the workspace suite, the specs, the testnet smoke,
+the mobile check and the end-to-end runner at 22 of 22 pass. The first
+workspace run stopped at the recipe's own fifteen-minute limit while linking
+cold test binaries; the suite it stopped in passes in six seconds on its own and
+the warm rerun passes whole. On the phone: the loopback smoke passes and still
+reports unpaired hosts kept out of the fleet and discovery confirmed through the
+snapshot, the home and conversation journeys pass against a real host, and every
+locked photograph is unchanged — main's subagent folding adds fields to a feed
+row but moves nothing the phone draws in a locked state, so no baseline was
+retaken.
+
+2026-09-06 — **Integrate fast provider tests with current main.** Keep the
+existing-shell subprocess fixture and main's separate five-second initialization
+budget; the bounded-output close assertion retains its one-second deadline.
+Preserve the profile documentation and workspace test guide together. The merged
+workspace suite passes 2,033 tests with zero failures and one ignored test;
+all-target lint also passes.
+
 2026-09-06 — **A transcript survives the machine that owns it going away.**
 Against a real host, losing the machine emptied the conversation: the chrome
 said "unreachable", the panel offered Retry Now, and every row vanished from
@@ -1238,6 +1284,59 @@ executed iOS verification step. Unit tests cover stale heads, missing/running/
 failed/skipped jobs and verification lists with no Rust checks. Command-level
 tests check JSON output and stop-on-failure behavior. Existing formatting drift
 is corrected so the unchanged format job can pass on this branch.
+2026-09-06 — **Merge main into the stream-JSON chat branch.** Main brought the
+profiles work (one installation, many accounts, a switcher in the fleet), the
+settled look for every chat surface, and the in-process provider test fixtures.
+The default Claude driver moved with the other shared preferences into the
+installation config, so every profile launches new Claude agents the same way;
+`ClaudeSettings` travels through `InstallationSettings` into each profile
+runtime's service config. The stream-JSON chat renderer now paints through the
+paint-inputs cache key and the block kinds the settled look introduced, its
+subagent one-liners are activity rows so they chain like other tool work, and
+its prompts show landed attachments as the tokens the composer gave them, as
+the terminal chat does. The provider-test conflicts resolved to main's
+in-process fixtures; the argv-file and transcript-permission checks they
+replaced went with them. `unsupported.rs` stays deleted. Goldens re-recorded
+under the new look; the protocol descriptor regenerated.
+
+---
+
+2026-09-06 — **Handoff follow-ups: one subagent per entry, spawn without a
+parent, and the small things the review named.** The stream-JSON chat's task
+rows carry the `tool_use_id` of the `Task`/`Agent` call that launched them, so
+the first task row now takes that launch row over where it sits instead of
+adding a second entry for the same subagent; the launch tool's own result is
+not the task's outcome, and a late final row for the tool block cannot turn
+the task back into a tool. A subagent's own rows, which arrive on the parent's
+stream marked with that id, paint as one muted attributed line each (`└ scan
+the sync client · Read sync/client.rs`) and never fold into the session's
+exploration runs: the run predecessor check now requires the same context, so
+a subagent's last read and the session's next one stay two entries. An
+in-flight prompt or answer projects Working on the fleet badge at once, as the
+terminal and Codex chats already did, with the projection invariant amended to
+expect it. The MCP `spawn` tool no longer sends the prompt after creating a
+parentless agent — that send raced a Claude SDK session's startup and failed —
+the daemon accepts an initial prompt without a parent, waits for readiness,
+delivers it with human provenance, and rolls the agent back if it never
+becomes ready, exactly the child path; a remote host's best-effort drop of an
+agent-authored message no longer applies to a delivery something waits on, so
+a remote spawn cannot report success after losing its prompt. Smaller: a permission request with no
+suggested rule offers allow-once and deny only (the panel and the menu agree,
+as the docs already said, and Esc from the deny reason returns to whichever
+row Deny is); the inline child panel no longer repeats its escape
+hint; the Codex context breakdown states cache writes as the fifth share the
+app-server reports; `thread/goal/*` notices fold silently; token formatting
+and the context overlay frame are shared by all three renderers; the stale
+"unsupported placeholder" comment on SDK chat entry is gone; the SDK
+exploration fixture's patch hunk carries its line ranges; the live fixture's
+provenance says how a replacement capture is adopted. New coverage: PTY
+session facts (model and context tokens, latest wins) in the spec, a Codex
+parent hosting a stream-JSON child's request, interrupting an inline
+stream-JSON child, the parentless spawn's readiness wait and rollback. The
+Claude spec's manual plan approval now sends the explicit session `setMode
+default` the design calls for and asserts the mode the session reports after
+each approval; `tools/plan_reviewed` was re-recorded live to carry it.
+
 2026-09-05 — **Live fleet captures verify Claude labels and chat-only entry.**
 The configuration harness now opens an unfiltered 120×40 fleet while its
 default and configured Claude agents coexist, selects the configured agent,
@@ -1771,6 +1870,125 @@ accepts a closed `claude.driver` setting with `pty` as the shipped default and
 before configuration, and the command-line, fleet create action, and managed
 agent spawn tool all use it. Focused tests cover absent configuration, SDK
 configuration, explicit PTY override, and rejected Claude-section keys.
+2026-09-06 — **Keep CLI profile tests portable on Windows.**
+Profile selection and installation-update fixtures now use the shared temporary
+root helper, which keeps Unix socket paths short and uses the system temporary
+directory on Windows. The global profile-selector parser test exercises the
+relay command only where that command exists, while retaining UI and
+administration coverage on every platform. Profile-filtered tests, the
+installation-update marker test, formatting and workspace lint pass locally.
+
+2026-09-06 — **Open installations on Windows without directory-file syncing.**
+Configuration creation now syncs its parent directory only on Unix, matching
+registry, credential and update-journal writes. Windows had returned AccessDenied
+after the configuration was already written, preventing installation startup.
+Registry replacement tests now cover each platform's open-reader behavior:
+Unix retains the old reader across replacement; Windows refuses replacement,
+preserves both memory and disk, cleans staging files and succeeds after the
+reader closes. All 40 installation tests pass locally, along with formatting
+and workspace lint.
+
+2026-09-06 — **Replay cleanup drains trailing events until delivery completes.**
+A recorded tail larger than the transport buffers must still drain after the
+scenario's assertions finish. Cleanup now consumes pending events while the
+replay driver delivers the remainder, keeping backpressure from turning into
+a shutdown timeout without reintroducing a quiet-period sleep. A virtual-clock
+regression appends an eight-megabyte transcript tail; it fails before this
+correction and checks complete replay accounting after it. All 29 provider
+replay checks and workspace lint pass; the 21 PTY checks finish in 0.27 seconds
+with one test thread.
+
+2026-09-06 — **Recorded PTY tests complete without live terminal waits.**
+Replays now wait for screen updates, explicitly close their recorded streams,
+and require shutdown to finish. The previous runner silently spent five
+seconds per recording waiting for an exit that could not arrive while its
+output remained open. Its replay driver now waits for write notifications
+inside the runner's own future instead of spinning in a detached task.
+Tool results are matched by ID across independent hook and transcript streams,
+so faster delivery cannot discard a result that arrives before its hook.
+All eighteen scenarios have separate selectable tests, with registry coverage
+and virtual-time checks. The recorded tests pass in 0.07 seconds concurrently
+and 0.23 seconds with one test thread, compared with the captured 110-second
+run. Added regression coverage for EOF with retained controllers, incomplete
+replay accounting, and resuming the driver after an expected write.
+
+2026-09-06 — **Test recipes return Cargo's result directly.**
+Removed the Python output guard and its result-parsing checks. Empty test
+selections again retain Cargo's normal successful exit status; the recipes
+no longer interpret human-readable test summaries. The provider fixture
+corrections and explicit Cargo target selection remain. Four lightweight
+argument-forwarding checks continue to cover workspace target selection.
+
+2026-09-06 — **Empty test selections fail instead of reporting a false success.**
+The workspace and spec recipes share a result guard that forwards Cargo's
+output and requires at least one executed Rust test across all selected
+harnesses. Empty unrelated harnesses remain valid, but unmatched filters and
+ignored-only selections fail. Existing Cargo failures retain their status;
+help, listing, and build-only invocations keep their normal behavior. The
+guard leaves compilation, target selection, process startup, and the outer
+timeout with the existing recipes. Recipe checks cover both entry points.
+
+2026-09-05 — **Provider test coverage includes startup composition and complete output.**
+Small startup-failure checks run the existing system `false` binary through
+the complete Claude backend and Codex connection paths, resolving it through
+PATH so the checks do not depend on a Unix system's binary layout. The fork
+fixture now collects every frame through EOF, so its count detects duplicate prompts.
+Backend cleanup waits are bounded, and the Codex TERM fixture polls briefly
+so the shell can dispatch its trap and be released before the production
+grace period expires. Recipe
+argument checks run automatically before `wt test`. These checks preserve
+the separation between startup and protocol behavior without adding fresh
+executable fixtures or changing production deadlines.
+
+2026-09-05 — **Provider tests time the behavior they own.** Fresh temporary
+executables were queueing behind other worktrees' macOS security assessments,
+so subprocess startup consumed deadlines intended to catch protocol or
+shutdown bugs. Session identity, resume ordering, CLI construction, and
+version-cache assertions now use prepared commands and in-memory streams.
+Tests for pipes, stderr, exit status, and shutdown still use real children,
+with script text passed to the existing system shell and an explicit startup
+readiness check before timing protocol behavior. Codex shutdown tests hold
+the child in its TERM handler, prove close remains pending, then release it
+and verify it has been reaped. No provider deadline or host security setting
+changes. The workspace test recipe now honors explicit Cargo target selection
+while retaining full coverage by default and workspace feature unification;
+`docs/TESTING.md` explains both the commands and the test boundaries.
+2026-09-06 — **Keep profile inventory coverage on Windows.** The presence
+spec's local inventory comparison still called the Unix-only socket helper.
+It now uses the in-process profile client on Windows and retains socket coverage
+on Unix. Imports belonging to Unix-only profile specs follow the same guards.
+The focused presence spec, formatting and workspace lint pass.
+
+2026-09-06 — **Keep the full-output shutdown test focused on shutdown.**
+The real-subprocess SDK test could fail during its one-second initialization
+budget before it filled the output queue or exercised close. Allow five seconds
+for subprocess setup while preserving the one-second bounds on filling the
+queue and completing shutdown. The startup timeout reproduced in isolation;
+with setup separated, the full-output close regression passes. Final validation
+passes all 2006 workspace tests, 399 embedded library tests and 22 E2E
+scenarios, plus formatting and workspace lint.
+
+2026-09-06 — **Repair CI after the account-profile merge.** The E2E job now
+runs its already-built binaries explicitly, avoiding a second build through
+`wt`, which is not installed on GitHub runners. Socket test helpers and the
+specs that require Unix IPC are gated to Unix; installation fixtures use a
+portable temporary root. Desktop configuration and file-credential tests follow
+the `local-agents` feature, while in-process front-door and host-credential tests
+remain available in embedded builds. `wt run client-test` reproduces CI's
+no-default-features library suite in the existing isolated embedded target.
+
+2026-09-05 — **Retire three sharp edges left by the profiles work.**
+`default_cache_dir` is gone: with profile paths landed it had no product caller,
+and an exported default was how the artifact cache root drifted away from
+configuration in the first place. The daemon diagnostic `has_cloud_credentials`
+is now `has_credential_provider`, because every profile receives a credential
+store whether or not it holds a token, so the old name reported a login on a
+freshly created unbound profile. The relay test fixture returns the account it
+already registered for a label instead of minting a new tenant, since the token
+is derived from the label and a second registration silently repointed the
+first. Lint passes; the config-split daemon test and all three embedding tests
+pass.
+
 2026-09-05 — **Verify complete account profiles across every supported surface.**
 The installation hosts independent account devices behind one administrative
 socket, with profile selection in the CLI and TUI and an in-process host API.
@@ -2247,6 +2465,123 @@ and subscription backoff, while an explicit stop still interrupts either
 wait immediately. Stop also cancels credential and connection-detail
 preparation, so a stalled cloud API request cannot block profile teardown;
 an established routing connector still shuts down through link cleanup.
+2026-09-05 — **Fresh Codex agents resume before becoming ready.** With
+codex-cli 0.153.4, naming a paginated thread updates metadata without writing
+its rollout, so the vanilla TUI's first resume failed before any message was
+sent. Startup now explicitly requests a history-inclusive resume of the same
+thread and adopts its replacement SDK event registration before publishing
+readiness. Failed resume requests retry the same id; naming remains separately
+reconciled metadata. This relies on the current provider's persistence behavior
+and is documented as a compatibility workaround, not a durable-creation API.
+Regression coverage checks naming success followed by resume failure, events
+arriving during resume, failed naming, and transport loss during bootstrap.
+The opt-in `wt run codex-live -- raw_unnamed raw_named unnamed_reconnect`
+scenarios verify actual `/status` responses before any model turn, including
+detach/reattach and recovery of the same thread after server restart. The
+previous ANSI-only check could accept the startup screen of a failing TUI.
+The documented offline command runs the full suite: filtering by `codex`
+would skip replay tests whose names do not contain the provider name.
+
+2026-09-05 — **Three raw-attach papercuts.** `<leader>s` from `amux new` or
+`amux attach` was treated as a detach and dropped the person at the shell;
+it now opens the fleet, the same place it leads from an attach started in
+the fleet. Killing an agent under a fleet-started attach produced a "press
+any key to return to the fleet" prompt and then the fleet. Neither was
+wanted: someone who just killed their agent asked to be out, and the fleet
+is one chord away when they want it. The prompt existed because the fleet
+path returned instead of exiting, and the stdin reader is parked in a
+blocking read that only a keypress or the process ending can finish. The
+fleet-started attach now ends the way `amux attach` always has: the session
+being over exits the process, a detach returns to the shell, and only
+`<leader>s` leads to the fleet. (A polling reader was tried first so the
+fleet could resume without the keypress; it was the wrong destination and
+is gone.) And every way out of the passthrough now writes the
+terminal-hygiene reset unconditionally — mouse and focus reporting,
+bracketed paste, kitty keyboard flags, cursor, alternate screen, text
+style — because the agent's own restore travels over the pty, which nobody
+is watching after a detach and which is gone entirely when the agent is
+killed. That was the shell filling with `35;30;33M` mouse-motion reports
+after leaving a session. The focus and style resets joined the shared
+restore sequence, so the signal handler covers them too when a signal
+lands mid-attach.
+
+2026-09-05 — **The attachment guide is a byte contract on Windows too.** The
+guide's canonical review example is compiled into a test that compares it
+against the formatter's LF-joined output, and a Windows checkout translated
+its line endings, so the test could not even find the example's code fence.
+`.gitattributes` pins the file to LF alongside the golden frames and replay
+recordings that are byte contracts for the same reason. The failure had been
+hiding behind an earlier job: fail-fast cancelled the Windows tests before
+they ran.
+
+2026-09-05 — **The daemon makes its data directory before asking the
+filesystem to resolve it.** Canonicalizing `data_dir`, added so managed
+Claude sees a stable artifact root, assumed the directory already existed —
+true on a machine that has run amux before, false on a fresh one. Every
+test that builds the PTY host from the default config failed on CI with
+`NotFound`, and a first run on a new machine would have failed the same
+way; `AgentDeps::new` now creates the directory before canonicalizing it.
+Alongside: only the macOS attachment viewer reads the artifact kind, so the
+other platforms discard `meta` explicitly rather than trip `-D warnings`,
+and three files that had drifted from rustfmt were reformatted.
+
+2026-09-05 — **Attachments stay with the message that carried them.** A
+sent message's attachment rows were painted as machinery: a blank row below
+the person's words, then rows on the bare ground chained to whatever tool
+calls followed, so a review someone attached read as the first thing the
+agent did. Attachment rows are now a block kind of their own that hangs
+directly under its message with no air, on the person's surface with the
+bar when the person sent it and plain when the agent did, and the chain
+ignores them. The message also keeps the token the person typed —
+`[Image #1]`, `[Pasted #1 · 240 lines]`, `[Review · 1 comment]` — where
+the composer had it, instead of dropping the element and leaving a hole in
+the sentence; the row underneath is still the thing that opens.
+
+2026-09-05 — **amux asks the terminal what colours it is using.** The
+derived palette needs three facts a terminal will report about itself, and
+until now nothing asked. `query_terminal_colors` sends OSC 11, 10 and 4 for
+the ground, the text and the sixteen slots, reads the answers off stdin in
+raw mode before the chrome takes the terminal, and gives a silent terminal a
+quarter of a second. The queries end with a primary-device-attributes request,
+which every terminal answers and answers last, so the read stops on that
+reply rather than on a clock and nothing is left in the input for the key
+reader to take as typing; a slot the terminal stays quiet about takes xterm's colour,
+while a silent ground or text means no palette is derived. `ui.theme`
+gained `terminal`, now the default, which derives from those answers and
+falls back to the shipped dark palette when there are none. The reply
+parser copes with replies split across reads, either OSC terminator, one to
+four hex digits per channel, and keystrokes mixed into the stream. Not yet
+exercised against a live terminal from this session — the parser and the
+fallback are unit-tested, and the whole path wants a person to start
+`amux` in their own terminal and see their own ground.
+
+2026-09-05 — **The TUI's new look, ported without the harness that found it.**
+A design pass on a separate branch rendered every screen to PNG, compared
+palettes and layouts, and settled a look. This branch carries only what the
+running program needs to draw it. Colour: `Theme::from_terminal` derives a
+whole palette from a terminal's reported ground, text colour and sixteen
+slots — surfaces are the ground moved toward the text, de-emphasis is the
+text pulled back toward the ground, accents are the terminal's own hues with
+the same contrast repair imported schemes get — and a `Token` can be
+borrowed, resolving to the terminal's default so a translucent ground stays
+translucent. Conversation: consecutive tool calls stack with no blank row and
+a hairline down the mark column ties the run together; the composer carries a
+row of air above and below its text while the person's message stays tight;
+the working row is a block with air above it. Diffs: `@@` headers are gone —
+`RowKind::Meta` split into a blank `Boundary` between hunks and a `Note` for
+`\ No newline at end of file` — one number column with the side the sign
+says, a spine between numbers and code that holds under a wrapped line,
+tints that run to the edge, and no surface of their own on context rows or
+the gutter, so outside a panel they sit on the bare page. Panels run to the
+left edge, keep a row of air above their key hints, and a mark written into a
+surface's first cell keeps that surface's background. The review page draws
+one full-width header band per file and a row of air between files. Goldens
+re-recorded (144 files); the five assertions that encoded the old gutter and
+geometry now encode the new ones. Independent review caught the sixteen-colour
+path judging a derived palette by the conventional ANSI values: the contrast
+repair now measures faces by what the terminal said each slot paints as, and
+a token that is one of those slots keeps it — swapping slots changes what a
+colour means, and the terminal's red is red everywhere else in the session.
 
 2026-09-04 — **Kept the attachment guide's review syntax executable.** The
 canonical review element now includes the `name="review"` attribute emitted by

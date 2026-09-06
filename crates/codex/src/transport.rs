@@ -102,9 +102,14 @@ pub(crate) struct OutgoingErrorResponse {
 
 // ── Process spawning ─────────────────────────────────────────────
 
-pub(crate) fn spawn_process(
-    config: &CodexConfig,
-) -> Result<(Child, ChildStdin, BufReader<ChildStdout>, ChildStderr)> {
+pub(crate) struct Process {
+    pub(crate) child: Child,
+    pub(crate) stdin: ChildStdin,
+    pub(crate) stdout: BufReader<ChildStdout>,
+    pub(crate) stderr: ChildStderr,
+}
+
+pub(crate) fn process_command(config: &CodexConfig) -> tokio::process::Command {
     let program = config
         .codex_path
         .as_deref()
@@ -138,6 +143,10 @@ pub(crate) fn spawn_process(
         }
     }
 
+    cmd
+}
+
+pub(crate) fn spawn_process(mut cmd: tokio::process::Command) -> Result<Process> {
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -158,7 +167,12 @@ pub(crate) fn spawn_process(
         .take()
         .context("failed to capture codex stderr")?;
 
-    Ok((child, stdin, BufReader::new(stdout), stderr))
+    Ok(Process {
+        child,
+        stdin,
+        stdout: BufReader::new(stdout),
+        stderr,
+    })
 }
 
 // ── Background tasks ─────────────────────────────────────────────
@@ -356,35 +370,48 @@ pub(crate) async fn terminate_child_group(child: &mut Child) {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::os::unix::fs::PermissionsExt as _;
 
     use super::*;
 
-    #[tokio::test]
-    async fn spawn_places_the_explicit_model_before_app_server() {
-        let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("fake-codex");
-        let marker = temp.path().join("argv.txt");
-        std::fs::write(&script, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$MARKER\"\n").unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    #[test]
+    fn command_places_the_explicit_model_before_app_server() {
         let config = CodexConfig {
-            codex_path: Some(script),
+            codex_path: Some("custom-codex".into()),
             model: Some("gpt-5.6-luna".to_string()),
+            cwd: Some("workspace".into()),
             env: Some(HashMap::from([(
                 "MARKER".to_string(),
-                marker.to_string_lossy().into_owned(),
+                "scenario".to_string(),
             )])),
             ..CodexConfig::default()
         };
 
-        let (mut child, _stdin, _stdout, _stderr) = spawn_process(&config).unwrap();
-        assert!(child.wait().await.unwrap().success());
+        let command = process_command(&config);
+        let command = command.as_std();
+        assert_eq!(command.get_program(), "custom-codex");
         assert_eq!(
-            std::fs::read_to_string(marker).unwrap(),
-            "--model\ngpt-5.6-luna\napp-server\n--listen\nstdio://\n"
+            command.get_current_dir(),
+            Some(std::path::Path::new("workspace"))
+        );
+        assert_eq!(
+            command.get_envs().collect::<Vec<_>>(),
+            vec![(
+                std::ffi::OsStr::new("MARKER"),
+                Some(std::ffi::OsStr::new("scenario"))
+            )]
+        );
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "--model",
+                "gpt-5.6-luna",
+                "app-server",
+                "--listen",
+                "stdio://"
+            ]
         );
     }
 }

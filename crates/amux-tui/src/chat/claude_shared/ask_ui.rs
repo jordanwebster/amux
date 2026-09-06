@@ -33,8 +33,17 @@ pub(crate) struct AskUi {
     pub stage: AskStage,
     /// Deny-feedback draft (C2): survives Esc back to the menu.
     pub deny_feedback: Composer,
+    /// The menu row Deny sits on, so Esc from its feedback stage lands
+    /// back on it: the last of three rows with a suggested rule, the last
+    /// of two without one.
+    #[serde(default = "default_deny_row")]
+    pub deny_row: usize,
     /// Request-changes draft (C3): survives Esc back to the action row.
     pub plan_feedback: Composer,
+}
+
+fn default_deny_row() -> usize {
+    2
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -103,6 +112,7 @@ impl AskUi {
             ask_id: ask.id,
             stage,
             deny_feedback: Composer::default(),
+            deny_row: menu_rows(ask).len().saturating_sub(1),
             plan_feedback: Composer::default(),
         }
     }
@@ -138,7 +148,9 @@ impl AskUi {
         match &mut self.stage {
             AskStage::Menu { .. } => false,
             AskStage::DenyFeedback => {
-                self.stage = AskStage::Menu { cursor: 2 };
+                self.stage = AskStage::Menu {
+                    cursor: self.deny_row,
+                };
                 true
             }
             AskStage::PlanFeedback => {
@@ -241,6 +253,7 @@ impl AskUi {
                     AskAnswer::Permission(PermissionAnswer::AllowScoped { suggestion: 0 }),
                 )),
                 Some(MenuRow::Deny) => {
+                    self.deny_row = *cursor;
                     self.stage = AskStage::DenyFeedback;
                     AskKeyOutcome::Handled
                 }
@@ -316,6 +329,11 @@ pub(crate) fn menu_rows(ask: &SharedAsk<'_>) -> Vec<MenuRow> {
                 .chain(std::iter::once(MenuRow::DialogCancel))
                 .collect(),
         },
+        // No suggested rule, no row offering to apply one: the digits a
+        // person reads on the panel are the answers Enter gives.
+        SharedAskKind::Permission {
+            suggestions: [], ..
+        } => vec![MenuRow::AllowOnce, MenuRow::Deny],
         _ => vec![MenuRow::AllowOnce, MenuRow::AllowScoped, MenuRow::Deny],
     }
 }

@@ -6,10 +6,9 @@
                                                                                                                         
     The cap belongs in RetryConfig; I'll thread it through SyncOptions.                                                 
                                                                                                                         
-  ✔ Read sync/config.rs                                                                                                 
-                                                                                                                        
-  ▸ Bash cargo check -p amux-sync                                                                                       
-    └ running                                                                                                           
+│ ✔ Read sync/config.rs                                                                                                 
+│ ▸ Bash cargo check -p amux-sync                                                                                       
+│   └ running                                                                                                           
                                                                                                                         
                                                                                                                         
                                                                                                                         
@@ -37,4 +36,5 @@
       2. [ ] session index     bounded tail metadata                                                                    
     › 3. [x] recorder dumps    panic-hook recordings                                                                    
       4. [ ] Other…            type your own answer                                                                     
+                                                                                                                        
     1-4/↑↓ select · space toggle · tab next question · enter advance · esc back (never answers)                         

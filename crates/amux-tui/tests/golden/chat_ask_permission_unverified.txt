@@ -6,10 +6,9 @@
                                                                                                                         
     The cap belongs in RetryConfig; I'll thread it through SyncOptions.                                                 
                                                                                                                         
-  ✔ Read sync/config.rs                                                                                                 
-                                                                                                                        
-  ▸ Bash cargo check -p amux-sync                                                                                       
-    └ running                                                                                                           
+│ ✔ Read sync/config.rs                                                                                                 
+│ ▸ Bash cargo check -p amux-sync                                                                                       
+│   └ running                                                                                                           
                                                                                                                         
                                                                                                                         
                                                                                                                         
@@ -33,8 +32,9 @@
                                                                                                                         
     permission — Edit sync/config.rs (+1 -1)                                                                            
                                                                                                                         
-     -a                                                                                                                 
-     +b                                                                                                                 
+    -a                                                                                                                  
+    +b                                                                                                                  
                                                                                                                         
     ✗ unverified menu shape — refusing to guess keystrokes: permission menu with 2 suggestions (verified for exactly 1) 
+                                                                                                                        
     answer from the raw attach · f open document · ctrl+x interrupt                                                     

@@ -31,10 +31,10 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
-                                                                                                                        
     ctx unknown                                                                                                         
                                                                                                                         
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     enter send · ctrl+j newline · C-a r review diff · ? help                                             shift+tab mode 

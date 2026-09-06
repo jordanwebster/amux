@@ -304,12 +304,20 @@ fn stream(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
 
 /// The entry this block follows: the one before it where it already
 /// sits, otherwise the feed's last entry, since a new block is appended.
-fn predecessor(layer: &ClaudeSdkLayer, existing: Option<usize>) -> Option<&FeedEntry> {
+/// Only an entry from the same context counts — a subagent's last read
+/// and the session's next one are adjacent on the stream, but they are
+/// not one exploration.
+fn predecessor<'a>(
+    layer: &'a ClaudeSdkLayer,
+    existing: Option<usize>,
+    parent: &Option<String>,
+) -> Option<&'a FeedEntry> {
     let index = match existing {
         Some(index) => index.checked_sub(1)?,
         None => layer.entries.len().checked_sub(1)?,
     };
-    layer.entries.get(index)
+    let entry = layer.entries.get(index)?;
+    (entry.parent_tool_use_id() == parent.as_deref()).then_some(entry)
 }
 
 fn block_matches(kind: &FeedEntryKind, block: &Value) -> bool {
@@ -320,6 +328,8 @@ fn block_matches(kind: &FeedEntryKind, block: &Value) -> bool {
             Some("thinking" | "redacted_thinking")
         ),
         FeedEntryKind::Tool(tool) => block["id"].as_str() == Some(tool.tool_use_id.as_str()),
+        // The launch row that became its task still answers for its block.
+        FeedEntryKind::Task(task) => block["id"].as_str() == task.tool_use_id.as_deref(),
         _ => false,
     }
 }
@@ -332,10 +342,25 @@ fn upsert_block(
     finality: Finality,
     row_id: Option<String>,
 ) {
-    let existing = layer
+    let mut existing = layer
         .entries
         .iter()
         .position(|e| e.block.as_ref() == Some(&key));
+    // A replay tail can start at the task rows, so the task may stand
+    // without the block that launched it. The block arriving now is that
+    // launch: attach it to the task rather than adding a tool beside it.
+    if existing.is_none()
+        && block["type"] == "tool_use"
+        && let Some(tool_use_id) = block["id"].as_str()
+        && let Some(index) = layer.entries.iter().position(|e| {
+            e.block.is_none()
+                && matches!(&e.kind, FeedEntryKind::Task(t) if t.tool_use_id.as_deref() == Some(tool_use_id))
+        })
+    {
+        layer.entries[index].block = Some(key.clone());
+        layer.entries[index].parent_tool_use_id = key.parent_tool_use_id.clone();
+        existing = Some(index);
+    }
     if finality != Finality::Complete
         && existing.is_some_and(|i| {
             matches!(
@@ -390,7 +415,7 @@ fn upsert_block(
             // have arrived, or been rewritten, since the block opened.
             let group_with_previous = runs::groupable(&invocation)
                 && matches!(
-                    predecessor(layer, existing).map(|entry| &entry.kind),
+                    predecessor(layer, existing, &key.parent_tool_use_id).map(|entry| &entry.kind),
                     Some(FeedEntryKind::Tool(previous)) if runs::groupable(&previous.invocation)
                 );
             FeedEntryKind::Tool(ToolEntry {
@@ -419,12 +444,22 @@ fn upsert_block(
     };
     if let Some(index) = existing {
         let entry = &mut layer.entries[index];
-        entry.kind = kind;
-        entry.content_truncated = oversized(block);
+        // A launch row that has already become its task stays the task:
+        // the lifecycle rows own it from the first one onward, and a late
+        // final row for the tool block adds nothing they do not state.
+        if matches!(entry.kind, FeedEntryKind::Task(_)) {
+            // The task's own rows may already have been clipped; the
+            // launch block's size does not undo that.
+            entry.content_truncated |= oversized(block);
+        } else {
+            entry.kind = kind;
+            entry.content_truncated = oversized(block);
+        }
         entry.final_row_id = row_id;
     } else {
         push(layer, seq, kind, oversized(block));
         let entry = layer.entries.back_mut().expect("just pushed");
+        entry.parent_tool_use_id = key.parent_tool_use_id.clone();
         entry.block = Some(key);
         entry.final_row_id = row_id;
     }
@@ -481,6 +516,13 @@ fn user(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
             Some("tool_result") => tool_result(layer, seq, row, block),
             _ => unknown(layer, seq, "user.content", "unrecognized content block"),
         }
+    }
+    // A subagent's user rows are its tool results and the prompt its
+    // parent gave it; the results pair with its tool entries above, and
+    // the prompt is what the task block already states as its description.
+    // Neither is something the person said.
+    if !row["parent_tool_use_id"].is_null() {
+        return;
     }
     if text.is_empty() && images == 0 {
         return;
@@ -549,19 +591,32 @@ fn tool_result(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value, block: &Value)
         details,
         edit: crate::claude::facts::landed_edit(&row["tool_use_result"]),
     };
-    if let Some(entry) = layer.entries.iter_mut().rev().find(|entry| {
-        matches!(&entry.kind, FeedEntryKind::Tool(t) if t.tool_use_id == tool_id)
-            && entry
-                .block
-                .as_ref()
-                .is_none_or(|b| b.parent_tool_use_id == parent)
-    }) {
+    if let Some(entry) = layer
+        .entries
+        .iter_mut()
+        .rev()
+        .find(|entry| match &entry.kind {
+            FeedEntryKind::Tool(t) => {
+                t.tool_use_id == tool_id
+                    && entry
+                        .block
+                        .as_ref()
+                        .is_none_or(|b| b.parent_tool_use_id == parent)
+            }
+            FeedEntryKind::Task(t) => t.tool_use_id.as_deref() == Some(tool_id.as_str()),
+            _ => false,
+        })
+    {
+        // A task's outcome is what its lifecycle rows report; the launch
+        // tool's own result ("Agent launched.") adds nothing to it.
         if let FeedEntryKind::Tool(tool) = &mut entry.kind {
             tool.result = Some(result);
         }
         entry.content_truncated |= truncated;
     } else {
-        // A tail may start at the result. Preserve it without inventing an invocation.
+        // A tail may start at the result. Preserve it without inventing an
+        // invocation, and keep whose it was: a subagent's result stays the
+        // subagent's even with no launch block to say so.
         push(
             layer,
             seq,
@@ -581,6 +636,11 @@ fn tool_result(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value, block: &Value)
             }),
             truncated,
         );
+        layer
+            .entries
+            .back_mut()
+            .expect("just pushed")
+            .parent_tool_use_id = parent;
     }
 }
 
@@ -632,32 +692,64 @@ fn task(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
         unknown(layer, seq, "system.task", "missing task id");
         return;
     };
-    let index = layer
+    let tool_use_id = id(row, "tool_use_id");
+    let existing = layer
         .entries
         .iter()
         .position(|e| matches!(&e.kind, FeedEntryKind::Task(t) if t.task_id == task_id));
-    let index = index.unwrap_or_else(|| {
-        push(
-            layer,
-            seq,
-            FeedEntryKind::Task(TaskEntry {
-                task_id,
-                description: String::new(),
-                subagent_type: None,
-                state: TaskState::Running,
-                last_tool: None,
-                summary: None,
-                usage: None,
-            }),
-            false,
-        );
-        layer.entries.len() - 1
+    // The `Task`/`Agent` tool use that launched this task is the same
+    // subagent: the lifecycle rows take that row over where it sits,
+    // starting from what the launch already said, so the feed shows one
+    // entry per subagent rather than a launch and a task. The task list
+    // row can name a task before any row carries its launch id, so a task
+    // that already stands on its own moves into the launch row when the
+    // id arrives.
+    let launch = tool_use_id.as_ref().and_then(|tool_use_id| {
+        layer.entries.iter().position(
+            |e| matches!(&e.kind, FeedEntryKind::Tool(t) if &t.tool_use_id == tool_use_id),
+        )
     });
+    let index = match (existing, launch) {
+        (Some(existing), None) => existing,
+        (Some(existing), Some(launch)) => {
+            let standalone = layer.entries.remove(existing).expect("indexed entry");
+            let launch = if launch > existing {
+                launch - 1
+            } else {
+                launch
+            };
+            let FeedEntryKind::Task(mut task) = standalone.kind else {
+                unreachable!("existing task entry")
+            };
+            adopt_launch(&mut task, &layer.entries[launch].kind);
+            layer.entries[launch].kind = FeedEntryKind::Task(task);
+            layer.entries[launch].content_truncated |= standalone.content_truncated;
+            launch
+        }
+        (None, Some(launch)) => {
+            let mut task = new_task(task_id, tool_use_id.clone());
+            adopt_launch(&mut task, &layer.entries[launch].kind);
+            layer.entries[launch].kind = FeedEntryKind::Task(task);
+            launch
+        }
+        (None, None) => {
+            push(
+                layer,
+                seq,
+                FeedEntryKind::Task(new_task(task_id, tool_use_id.clone())),
+                false,
+            );
+            layer.entries.len() - 1
+        }
+    };
     let entry = &mut layer.entries[index];
     entry.content_truncated |= oversized(row);
     let FeedEntryKind::Task(task) = &mut entry.kind else {
         unreachable!()
     };
+    if task.tool_use_id.is_none() {
+        task.tool_use_id = tool_use_id;
+    }
     let fields = if row["subtype"] == "task_updated" {
         &row["patch"]
     } else {
@@ -690,6 +782,40 @@ fn task(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
             tool_uses: usage["tool_uses"].as_u64(),
             duration_ms: usage["duration_ms"].as_u64(),
         });
+    }
+}
+
+fn new_task(task_id: String, tool_use_id: Option<String>) -> TaskEntry {
+    TaskEntry {
+        task_id,
+        tool_use_id,
+        description: String::new(),
+        subagent_type: None,
+        state: TaskState::Running,
+        last_tool: None,
+        summary: None,
+        usage: None,
+    }
+}
+
+/// What the launch already said about the subagent, where the task rows
+/// have not said it yet.
+fn adopt_launch(task: &mut TaskEntry, launch: &FeedEntryKind) {
+    if let FeedEntryKind::Tool(tool) = launch
+        && let ToolInvocation::Task {
+            description,
+            subagent_type,
+            ..
+        } = &tool.invocation
+    {
+        if task.description.is_empty()
+            && let Some(description) = description
+        {
+            task.description = description.clone();
+        }
+        if task.subagent_type.is_none() {
+            task.subagent_type = subagent_type.clone();
+        }
     }
 }
 
@@ -772,6 +898,7 @@ fn push(layer: &mut ClaudeSdkLayer, seq: u64, kind: FeedEntryKind, content_trunc
         seq,
         kind,
         block: None,
+        parent_tool_use_id: None,
         content_truncated,
         final_row_id: None,
     });

@@ -104,9 +104,13 @@ impl SdkCondition {
             SdkConditionState::Unavailable
             | SdkConditionState::Replaying
             | SdkConditionState::Unknown => Attention::Unknown,
-            SdkConditionState::Idle
-            | SdkConditionState::Interrupted
-            | SdkConditionState::Exited => Attention::Idle,
+            SdkConditionState::Exited => Attention::Idle,
+            // A prompt or answer on its way is work the person just asked
+            // for: the badge says so from the keystroke, as the other two
+            // chats do, rather than one round trip later when the session
+            // reports its turn.
+            _ if self.input_in_flight => Attention::Working,
+            SdkConditionState::Idle | SdkConditionState::Interrupted => Attention::Idle,
             SdkConditionState::Working => Attention::Working,
             SdkConditionState::Finished | SdkConditionState::Errored => {
                 Attention::NeedsYou { why: Why::Finished }
@@ -311,16 +315,22 @@ pub(crate) fn check_projection_invariant(model: &Model, agent: AgentId, out: &mu
             SendGate::NeedsYou,
         ),
     };
+    let settled = !matches!(
+        phase,
+        SdkPhase::Unavailable | SdkPhase::Exited | SdkPhase::Unknown | SdkPhase::Replaying
+    );
+    let input_in_flight = card
+        .claude_sdk()
+        .is_some_and(|l| l.in_flight.is_some() || l.echo.is_some());
+    let expected_attention = if settled && input_in_flight {
+        Attention::Working
+    } else {
+        expected_attention
+    };
     let expected_gate =
         if !matches!(phase, SdkPhase::Unavailable | SdkPhase::Exited) && card.agent.readonly {
             SendGate::ReadOnly
-        } else if !matches!(
-            phase,
-            SdkPhase::Unavailable | SdkPhase::Exited | SdkPhase::Unknown | SdkPhase::Replaying
-        ) && card
-            .claude_sdk()
-            .is_some_and(|l| l.in_flight.is_some() || l.echo.is_some())
-        {
+        } else if settled && input_in_flight {
             SendGate::InputInFlight
         } else {
             expected_gate

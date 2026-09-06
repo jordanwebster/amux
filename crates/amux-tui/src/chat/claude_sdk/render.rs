@@ -19,16 +19,17 @@ use amux_ui::claude_sdk::{
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::chat::attachments::{attachment_key, described, echo_owner, prose};
+use crate::chat::attachments::{attachment_key, described, echo_owner, prose, words};
 use crate::chat::blocks::{
-    self, paint_agent_message, paint_assistant, paint_attachment, paint_compaction_rule,
-    paint_composer_block, paint_error, paint_file_change, paint_header, paint_plan, paint_thinking,
-    paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
+    self, Carrier, fmt_thousands, fmt_tokens, paint_agent_message, paint_assistant,
+    paint_attachment, paint_compaction_rule, paint_composer_block, paint_error, paint_file_change,
+    paint_header, paint_plan, paint_subagent_activity, paint_thinking, paint_tool_line,
+    paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude_sdk::{View, is_open, reader_context, shared_ask};
 use crate::chat::claude_shared::{armed_quit_line, panel, reader};
 use crate::chat::frame::{
-    BlockKey, CacheView, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock,
+    BlockKey, CacheView, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
 };
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{
@@ -404,12 +405,6 @@ fn context_overlay(
         }
     }
 
-    let body_h = height.saturating_sub(5).max(1);
-    rows.truncate(body_h);
-    while rows.len() < body_h {
-        rows.push(Line::default());
-    }
-
     let footer = if chat.quit_guard.is_armed() {
         armed_quit_line(theme)
     } else {
@@ -426,24 +421,7 @@ fn context_overlay(
         );
         line
     };
-
-    let mut title_line = Line::default();
-    push_span(&mut title_line, blocks::GLYPH_COL, title, theme.emphasis());
-    crate::render::push_right(
-        &mut title_line,
-        "esc close".to_string(),
-        width,
-        theme.muted(),
-    );
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
-    lines.push(title_line);
-    lines.push(Line::default());
-    lines.push(reader::rule_line(width, theme));
-    lines.extend(rows);
-    lines.push(reader::rule_line(width, theme));
-    lines.push(footer);
-    lines.truncate(height);
-    lines
+    reader::overlay_frame(title, rows, footer, width, height, theme)
 }
 
 fn push_row(rows: &mut Vec<Line<'static>>, col: usize, text: &str, style: Style) {
@@ -709,11 +687,17 @@ fn feed_blocks(
     let mut blocks = Vec::new();
     for item in layer.feed_items() {
         match item {
+            FeedItem::Entry(entry) if entry.parent_tool_use_id().is_some() => {
+                if let Some(block) = subagent_block(layer, entry, cache, theme, width) {
+                    blocks.push(block);
+                }
+            }
             FeedItem::Entry(entry) => {
                 let content = entry_content(layer, entry);
                 let Some(block) = entry_block_cached(
                     entry,
                     &content,
+                    layer.attachments(),
                     cache,
                     theme,
                     width,
@@ -729,6 +713,7 @@ fn feed_blocks(
                     cache,
                     entry.id,
                     &described(layer.attachments(), &content),
+                    carrier_of(entry),
                     theme,
                     width,
                 );
@@ -763,24 +748,41 @@ fn feed_blocks(
                 );
                 blocks.push(
                     cache
-                        .get_or_paint(BlockKey(key.0), &content, width, theme, expanded, || {
-                            let painted: Vec<PaintedBlock> = members
-                                .iter()
-                                .map(|entry| {
-                                    entry_block(entry, &[], theme, width, plan_hint, reports)
-                                })
-                                .collect();
-                            blocks::paint_exploration_run(
-                                BlockKey(key.0),
-                                key,
-                                &summary,
-                                &painted,
-                                expanded,
-                                &hint,
-                                theme,
+                        .get_or_paint(
+                            BlockKey(key.0),
+                            &content,
+                            PaintInputs {
                                 width,
-                            )
-                        })
+                                theme,
+                                expanded,
+                            },
+                            || {
+                                let painted: Vec<PaintedBlock> = members
+                                    .iter()
+                                    .map(|entry| {
+                                        entry_block(
+                                            entry,
+                                            &[],
+                                            layer.attachments(),
+                                            theme,
+                                            width,
+                                            plan_hint,
+                                            reports,
+                                        )
+                                    })
+                                    .collect();
+                                blocks::paint_exploration_run(
+                                    BlockKey(key.0),
+                                    key,
+                                    &summary,
+                                    &painted,
+                                    expanded,
+                                    &hint,
+                                    theme,
+                                    width,
+                                )
+                            },
+                        )
                         .clone(),
                 );
             }
@@ -794,9 +796,24 @@ fn feed_blocks(
         let content = layer.attachments().segments(&echo.text);
         blocks.push(
             cache
-                .get_or_paint(key, echo, width, theme, false, || {
-                    paint_user_prompt(key, &prose(&content), true, theme, width)
-                })
+                .get_or_paint(
+                    key,
+                    echo,
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: false,
+                    },
+                    || {
+                        paint_user_prompt(
+                            key,
+                            &words(layer.attachments(), &content),
+                            true,
+                            theme,
+                            width,
+                        )
+                    },
+                )
                 .clone(),
         );
         push_attachment_blocks(
@@ -804,6 +821,7 @@ fn feed_blocks(
             cache,
             echo_owner(0),
             &described(layer.attachments(), &content),
+            Carrier::Person,
             theme,
             width,
         );
@@ -850,6 +868,7 @@ impl CacheView for EntryKeyView<'_> {
 fn entry_block_cached(
     entry: &FeedEntry,
     content: &[Segment],
+    index: &amux_ui::attachments::AttachmentIndex,
     cache: &mut PaintCache,
     theme: Theme,
     width: usize,
@@ -865,13 +884,85 @@ fn entry_block_cached(
             .get_or_paint_view(
                 BlockKey(entry.id),
                 EntryKeyView { entry, content },
-                width,
-                theme,
-                reports_open,
-                || entry_block(entry, content, theme, width, plan_hint, reports),
+                PaintInputs {
+                    width,
+                    theme,
+                    expanded: reports_open,
+                },
+                || entry_block(entry, content, index, theme, width, plan_hint, reports),
             )
             .clone(),
     )
+}
+
+/// One line for a row a subagent produced, attributed to its task. The
+/// session's own rows paint in full; a subagent's are its own timeline,
+/// and what a person needs from them here is that they happened and
+/// whose they were.
+fn subagent_block(
+    layer: &amux_ui::claude_sdk::ClaudeSdkLayer,
+    entry: &FeedEntry,
+    cache: &mut PaintCache,
+    theme: Theme,
+    width: usize,
+) -> Option<PaintedBlock> {
+    let parent = entry.parent_tool_use_id()?;
+    let what = subagent_activity(entry)?;
+    let owner = layer
+        .tasks()
+        .find(|task| task.tool_use_id.as_deref() == Some(parent))
+        .map(task_owner)
+        .unwrap_or_else(|| "subagent".to_string());
+    let key = BlockKey(entry.id);
+    let content = (owner.clone(), what.clone());
+    Some(
+        cache
+            .get_or_paint(
+                key,
+                &content,
+                PaintInputs {
+                    width,
+                    theme,
+                    expanded: false,
+                },
+                || paint_subagent_activity(key, &owner, &what, theme, width),
+            )
+            .clone(),
+    )
+}
+
+/// How a task is named where its rows are attributed: what it was asked
+/// to do, or failing that what kind of subagent it is.
+fn task_owner(task: &TaskEntry) -> String {
+    let description = task.description.trim();
+    if !description.is_empty() {
+        return description.to_string();
+    }
+    task.subagent_type
+        .clone()
+        .unwrap_or_else(|| "subagent".to_string())
+}
+
+/// What one subagent row did, in a phrase. Thinking and bookkeeping rows
+/// say nothing a person is waiting on from a child, so they paint nothing.
+fn subagent_activity(entry: &FeedEntry) -> Option<String> {
+    Some(match &entry.kind {
+        FeedEntryKind::Message(message) => {
+            let mut head = first_line(&message.text);
+            if message.text.lines().count() > 1 {
+                head.push_str(" …");
+            }
+            head
+        }
+        FeedEntryKind::Tool(tool) => {
+            let mut text = tool_main_text(tool);
+            if tool.result.as_ref().is_some_and(|result| result.is_error) {
+                text.push_str(" ✗");
+            }
+            text
+        }
+        _ => return None,
+    })
 }
 
 /// Whether this row says anything to a person.
@@ -896,11 +987,20 @@ fn entry_content(layer: &amux_ui::claude_sdk::ClaudeSdkLayer, entry: &FeedEntry)
     }
 }
 
+/// Whose message this is, for the surface its attachment rows take.
+fn carrier_of(entry: &FeedEntry) -> Carrier {
+    match &entry.kind {
+        FeedEntryKind::Prompt(_) => Carrier::Person,
+        _ => Carrier::Agent,
+    }
+}
+
 fn push_attachment_blocks(
     blocks: &mut Vec<PaintedBlock>,
     cache: &mut PaintCache,
     owner: u64,
     attachments: &[amux_ui::attachments::AttachmentLine],
+    carrier: Carrier,
     theme: Theme,
     width: usize,
 ) {
@@ -908,9 +1008,16 @@ fn push_attachment_blocks(
         let key = attachment_key(owner, index);
         blocks.push(
             cache
-                .get_or_paint(key, attachment, width, theme, false, || {
-                    paint_attachment(key, attachment, theme, width)
-                })
+                .get_or_paint(
+                    key,
+                    attachment,
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: false,
+                    },
+                    || paint_attachment(key, attachment, carrier, theme, width),
+                )
                 .clone(),
         );
     }
@@ -923,9 +1030,11 @@ fn effective(chat: &View) -> crate::bindings::Effective {
     crate::bindings::Effective::new(chat.kitty, chat.leader)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn entry_block(
     entry: &FeedEntry,
     content: &[Segment],
+    index: &amux_ui::attachments::AttachmentIndex,
     theme: Theme,
     width: usize,
     plan_hint: bool,
@@ -933,7 +1042,9 @@ fn entry_block(
 ) -> PaintedBlock {
     let key = BlockKey(entry.id);
     match &entry.kind {
-        FeedEntryKind::Prompt(_) => paint_user_prompt(key, &prose(content), false, theme, width),
+        FeedEntryKind::Prompt(_) => {
+            paint_user_prompt(key, &words(index, content), false, theme, width)
+        }
         // A block still arriving carries the caret a person reads as
         // "more is coming"; a block the session gave up on says so.
         FeedEntryKind::Message(message) => {
@@ -1311,20 +1422,6 @@ fn fmt_secs(total: u64) -> String {
     }
 }
 
-/// `34,102` — the overlay's own accounting, where a person is comparing
-/// categories and the rounding the feed uses would hide the differences.
-fn fmt_thousands(count: u64) -> String {
-    let digits = count.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, ch) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
-
 /// `$0.0213` / `$1.24` — cents matter under a dollar and stop mattering
 /// above one.
 fn fmt_cost(usd: f64) -> String {
@@ -1332,14 +1429,5 @@ fn fmt_cost(usd: f64) -> String {
         format!("${usd:.2}")
     } else {
         format!("${usd:.4}")
-    }
-}
-
-/// `31.6k` / `421` token counts (the compaction rule).
-fn fmt_tokens(count: u64) -> String {
-    if count >= 1000 {
-        format!("{:.1}k", count as f64 / 1000.0)
-    } else {
-        count.to_string()
     }
 }

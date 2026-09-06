@@ -1,4 +1,6 @@
 //! Profile clients have independent selections and no installation administration.
+#![cfg(unix)]
+
 use amux::installation::{FrontDoor, rpc};
 use amux::testnet::{TestNet, Via};
 

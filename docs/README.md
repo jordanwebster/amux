@@ -27,6 +27,8 @@ subject; when two overlap, the owner named here wins.
 - `DEBUGGING.md` — agent workflow for profile debug reports: report locations,
   installation log tails, bundle layout, replay, marked tweaks, redaction,
   graduation and committed fixtures.
+- `TESTING.md` — workspace test commands, focused target selection, and
+  choosing protocol or subprocess boundaries for tests.
 - `CODEX.md` — the OpenAI Codex integration: process ownership, the two
   planes a codex agent exposes, the structured row vocabulary, and the
   client-side layer that folds it.

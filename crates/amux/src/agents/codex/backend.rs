@@ -200,15 +200,8 @@ fn codex_log_source() -> StructuredLogSource {
 
 /// Name a Codex thread, reporting failure rather than swallowing it.
 ///
-/// Naming is also how amux materializes a thread. Codex 0.147's
-/// `thread/start` creates a live thread and reports its prospective rollout
-/// path without materializing that rollout. Operations that need it —
-/// `thread/resume`, which the raw TUI and amux reconnect paths use, and
-/// `thread/archive` — fail with `no rollout found for thread id` until an
-/// unrelated mutation persists it. Upstream exposes no persist call. Naming
-/// is the least invasive universally applicable materializer; memory mode,
-/// Git metadata, injected history, and feature-gated goals also materialize
-/// but carry behavioral or applicability costs. See `docs/CODEX.md`.
+/// Names are metadata only: paginated Codex threads need a separate
+/// history-inclusive resume before they can be published as ready.
 async fn set_thread_name(
     client: &Codex,
     agent_id: Uuid,
@@ -234,9 +227,8 @@ fn bootstrap_thread_name(agent_id: Uuid) -> String {
 
 /// The name every Codex thread is created with.
 ///
-/// Naming materializes a thread, so an unnamed agent must not skip it.
-/// An empty name is treated as absent: upstream rejects it outright, which
-/// would leave the thread unmaterialized.
+/// Keep a recognizable label in Codex's thread list even for unnamed amux
+/// agents. An empty name is treated as absent because upstream rejects it.
 fn thread_name_for(desired_name: Option<&str>, agent_id: Uuid) -> String {
     desired_name
         .filter(|name| !name.is_empty())
@@ -1068,9 +1060,8 @@ async fn run_ingest_supervisor(
             AttachmentProvenance::Resumed => None,
         };
         let id = thread.id().to_string();
-        // Only now is a freshly started id durable: either its naming RPC
-        // completed, or a successful resume authoritatively proved that an
-        // ambiguous response had materialized it.
+        // Publish only after a successful resume. Naming alone does not
+        // persist paginated history and cannot make raw attach safe.
         thread_id = Some(id.clone());
         let ProviderSession {
             mut events,
@@ -1217,11 +1208,14 @@ enum MaterializeStartOutcome {
     Stopped,
 }
 
-/// Keep a fresh thread private until its rollout exists. A failed naming
-/// response is ambiguous, so resume is the authority: success commits this
-/// same id; RPC failure leaves the original in-memory thread available for
-/// retry, while transport loss returns the candidate id to the reconnecting
-/// supervisor.
+/// Keep a fresh thread private until a history-inclusive resume succeeds.
+/// Codex 0.153.4 leaves paginated rollouts unwritten after start and naming.
+/// Its resume handler persists them when history is requested, whereas the
+/// raw TUI's metadata-only resume needs pagination cursors but skips that write.
+/// This is a provider-version workaround, not a public durability guarantee.
+/// Always adopt the returned thread: resume replaces the SDK event registration.
+/// RPC errors retry the same live id; transport loss hands the unconfirmed id
+/// back to the supervisor before any client or suspended state can use it.
 async fn materialize_started_thread(
     client: &Codex,
     agent_id: Uuid,
@@ -1232,7 +1226,11 @@ async fn materialize_started_thread(
     stop_rx: &mut watch::Receiver<bool>,
 ) -> MaterializeStartOutcome {
     let mut retry = 0_usize;
-    let mut registration_replaced = false;
+    let thread_id = thread.id().to_string();
+    let mut resume_config = thread_config.clone();
+    resume_config
+        .extra
+        .insert("excludeTurns".into(), json!(false));
     loop {
         let (desired_name, generation) = {
             let state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -1240,118 +1238,51 @@ async fn materialize_started_thread(
         };
         let label = thread_name_for(desired_name.as_deref(), agent_id);
         let naming = tokio::select! {
-            result = set_thread_name(client, agent_id, thread.id(), &label) => Some(result),
-            changed = stop_rx.changed() => {
-                let _ = changed;
-                None
+            result = set_thread_name(client, agent_id, &thread_id, &label) => result,
+            _ = stop_rx.changed() => return MaterializeStartOutcome::Stopped,
+        };
+        let applied_name_generation = match naming {
+            Ok(()) => Some(generation),
+            Err(CodexError::TransportClosed) => {
+                return MaterializeStartOutcome::TransportLost {
+                    message: format!(
+                        "Codex transport closed while naming fresh thread {thread_id}"
+                    ),
+                    candidate_thread_id: thread_id,
+                };
             }
+            // Naming is retryable metadata work. A successful resume can make
+            // this thread usable even when its name update failed.
+            Err(_) => None,
         };
-        let Some(naming) = naming else {
-            return MaterializeStartOutcome::Stopped;
+        let resumed = tokio::select! {
+            result = client.resume_thread(&thread_id, resume_config.clone()) => result,
+            _ = stop_rx.changed() => return MaterializeStartOutcome::Stopped,
         };
-        match naming {
-            Ok(()) => {
-                if registration_replaced {
-                    let resumed = tokio::select! {
-                        result = client.resume_thread(thread.id(), thread_config.clone()) => Some(result),
-                        changed = stop_rx.changed() => {
-                            let _ = changed;
-                            None
-                        }
-                    };
-                    let Some(resumed) = resumed else {
-                        return MaterializeStartOutcome::Stopped;
-                    };
-                    match resumed {
-                        Ok(thread) => {
-                            return MaterializeStartOutcome::Ready(MaterializedStart {
-                                thread,
-                                applied_name_generation: Some(generation),
-                            });
-                        }
-                        Err(CodexError::TransportClosed) => {
-                            return MaterializeStartOutcome::TransportLost {
-                                candidate_thread_id: thread.id().to_string(),
-                                message: format!(
-                                    "Codex transport closed while restoring fresh thread {} after naming",
-                                    thread.id()
-                                ),
-                            };
-                        }
-                        Err(error) => {
-                            let message = format!(
-                                "fresh Codex thread was named but its event registration could \
-                                 not be restored with thread/resume: {error}"
-                            );
-                            runtime
-                                .lock()
-                                .unwrap_or_else(|poison| poison.into_inner())
-                                .startup_error = Some(message.clone());
-                            write_reconnect_error(log_source, &message).await;
-                        }
-                    }
-                } else {
-                    return MaterializeStartOutcome::Ready(MaterializedStart {
-                        thread,
-                        applied_name_generation: Some(generation),
-                    });
-                }
+        match resumed {
+            Ok(thread) => {
+                return MaterializeStartOutcome::Ready(MaterializedStart {
+                    thread,
+                    applied_name_generation,
+                });
             }
             Err(CodexError::TransportClosed) => {
                 return MaterializeStartOutcome::TransportLost {
-                    candidate_thread_id: thread.id().to_string(),
                     message: format!(
-                        "Codex transport closed while materializing fresh thread {}",
-                        thread.id()
+                        "Codex transport closed while persisting fresh thread {thread_id}"
                     ),
+                    candidate_thread_id: thread_id,
                 };
             }
-            Err(name_error) => {
-                // codex replaces the thread's event registration before
-                // issuing resume, even when that RPC fails. Once attempted,
-                // a later naming success must resume again to obtain the live
-                // registration that will be published.
-                registration_replaced = true;
-                let resume = tokio::select! {
-                    result = client.resume_thread(thread.id(), thread_config.clone()) => Some(result),
-                    changed = stop_rx.changed() => {
-                        let _ = changed;
-                        None
-                    }
-                };
-                let Some(resume) = resume else {
-                    return MaterializeStartOutcome::Stopped;
-                };
-                match resume {
-                    Ok(resumed) => {
-                        return MaterializeStartOutcome::Ready(MaterializedStart {
-                            thread: resumed,
-                            // Resume proves the rollout exists, but not which
-                            // desired-name generation won an ambiguous reply.
-                            applied_name_generation: None,
-                        });
-                    }
-                    Err(CodexError::TransportClosed) => {
-                        return MaterializeStartOutcome::TransportLost {
-                            candidate_thread_id: thread.id().to_string(),
-                            message: format!(
-                                "Codex transport closed while checking materialization of fresh thread {}",
-                                thread.id()
-                            ),
-                        };
-                    }
-                    Err(resume_error) => {
-                        let message = format!(
-                            "failed to materialize fresh Codex thread: {name_error}; \
-                             authoritative resume check failed: {resume_error}"
-                        );
-                        runtime
-                            .lock()
-                            .unwrap_or_else(|poison| poison.into_inner())
-                            .startup_error = Some(message.clone());
-                        write_reconnect_error(log_source, &message).await;
-                    }
-                }
+            Err(error) => {
+                let message = format!(
+                    "failed to resume fresh Codex thread {thread_id} with history: {error}"
+                );
+                runtime
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .startup_error = Some(message.clone());
+                write_reconnect_error(log_source, &message).await;
             }
         }
         if wait_for_retry(stop_rx, retry).await {
@@ -1455,8 +1386,8 @@ async fn reconcile_thread_name(
 /// Connect, attach the persistent thread, and take its continuous event stream.
 ///
 /// The provenance is load-bearing: a resumed thread has an authoritative
-/// rollout already, while a started thread must remain private until naming
-/// materializes it.
+/// rollout already, while a started thread stays private until its initial
+/// history-inclusive resume succeeds.
 async fn attach_thread(
     shared_client: &CodexClient,
     thread_config: &ThreadConfig,
@@ -3179,6 +3110,19 @@ mod tests {
             state.desired_name_generation = 1;
         }
         write_response(&mut writer, &first, json!({})).await;
+        let resume = read_request(&mut reader).await;
+        assert_eq!(resume["method"], "thread/resume");
+        assert_eq!(resume["params"]["excludeTurns"], false);
+        assert!(
+            !materialize.is_finished(),
+            "naming must not publish a fresh thread"
+        );
+        write_response(
+            &mut writer,
+            &resume,
+            thread_session("thread-1", Some("bootstrap-snapshot")),
+        )
+        .await;
         let materialized = materialize.await.unwrap();
         let applied_name_generation = materialized.applied_name_generation;
         let ProviderSession { control, .. } = codex::open(materialized.thread).await.unwrap();
@@ -3309,7 +3253,10 @@ mod tests {
             match materialize_started_thread(
                 &materialize_client,
                 Uuid::from_u128(1),
-                &ThreadConfig::default(),
+                &ThreadConfig {
+                    extra: HashMap::from([("excludeTurns".into(), json!(true))]),
+                    ..ThreadConfig::default()
+                },
                 thread,
                 &materialize_runtime,
                 &materialize_source,
@@ -3323,10 +3270,12 @@ mod tests {
         });
         let first_name = read_request(&mut reader).await;
         assert_eq!(first_name["method"], "thread/name/set");
-        write_rpc_error(&mut writer, &first_name, "injected materialization failure").await;
+        write_response(&mut writer, &first_name, json!({})).await;
         let resume = read_request(&mut reader).await;
         assert_eq!(resume["method"], "thread/resume");
         assert_eq!(resume["params"]["threadId"], "thread-1");
+        assert_eq!(resume["params"]["excludeTurns"], false);
+        assert!(!materialize.is_finished());
         write_rpc_error(
             &mut writer,
             &resume,
@@ -3341,6 +3290,7 @@ mod tests {
         write_response(&mut writer, &retry_name, json!({})).await;
         let registration_resume = read_request(&mut reader).await;
         assert_eq!(registration_resume["method"], "thread/resume");
+        writer.write_all(b"{\"method\":\"warning\",\"params\":{\"threadId\":\"thread-1\",\"message\":\"during resume\"}}\n").await.unwrap();
         write_response(
             &mut writer,
             &registration_resume,
@@ -3349,6 +3299,13 @@ mod tests {
         .await;
         let materialized = materialize.await.unwrap();
         assert_eq!(materialized.thread.id(), "thread-1");
+        let mut events = materialized.thread.events().await.unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(1), events.next())
+            .await
+            .expect("replacement registration lost resume events")
+            .unwrap()
+            .unwrap();
+        assert_eq!(event.params["message"], "during resume");
         assert!(runtime.lock().unwrap().attached.is_none());
         let _ = stop_tx.send(true);
         client.close().await;
@@ -3451,7 +3408,7 @@ mod tests {
         reconnected_client.close().await;
     }
 
-    async fn bootstrap_naming_transport_loss_recovers(candidate_resumes: bool) {
+    async fn bootstrap_transport_loss_recovers(candidate_resumes: bool, during_resume: bool) {
         let (initial_client, mut initial_reader, mut initial_writer) = mock_codex().await;
         let (fresh_client, mut fresh_reader, mut fresh_writer) = mock_codex().await;
         let shared = Arc::new(CodexClient::new(PathBuf::from("/tmp/test-codex.sock")));
@@ -3501,6 +3458,15 @@ mod tests {
         assert_eq!(naming["params"]["threadId"], "thread-candidate");
         assert!(runtime.lock().unwrap().attached.is_none());
 
+        if during_resume {
+            write_response(&mut initial_writer, &naming, json!({})).await;
+            let resume = read_request(&mut initial_reader).await;
+            assert_eq!(resume["method"], "thread/resume");
+            assert_eq!(resume["params"]["threadId"], "thread-candidate");
+            assert_eq!(resume["params"]["excludeTurns"], false);
+            assert!(runtime.lock().unwrap().attached.is_none());
+        }
+
         initial_client.clone().close().await;
         install_test_connection(&shared, fresh_client.clone(), Path::new("/tmp/fresh.sock")).await;
 
@@ -3542,9 +3508,22 @@ mod tests {
             assert_eq!(replacement_name["params"]["threadId"], "thread-replacement");
             assert!(
                 runtime.lock().unwrap().attached.is_none(),
-                "replacement published before naming materialized it"
+                "replacement published before initial resume"
             );
             write_response(&mut fresh_writer, &replacement_name, json!({})).await;
+            let replacement_resume = read_request(&mut fresh_reader).await;
+            assert_eq!(replacement_resume["method"], "thread/resume");
+            assert_eq!(
+                replacement_resume["params"]["threadId"],
+                "thread-replacement"
+            );
+            assert_eq!(replacement_resume["params"]["excludeTurns"], false);
+            write_response(
+                &mut fresh_writer,
+                &replacement_resume,
+                thread_session("thread-replacement", Some("amux-00000000")),
+            )
+            .await;
             "thread-replacement"
         };
 
@@ -3588,12 +3567,57 @@ mod tests {
 
     #[tokio::test]
     async fn naming_transport_loss_reconnects_and_publishes_resumable_candidate() {
-        bootstrap_naming_transport_loss_recovers(true).await;
+        bootstrap_transport_loss_recovers(true, false).await;
     }
 
     #[tokio::test]
     async fn naming_transport_loss_reconnects_and_replaces_missing_candidate() {
-        bootstrap_naming_transport_loss_recovers(false).await;
+        bootstrap_transport_loss_recovers(false, false).await;
+    }
+
+    #[tokio::test]
+    async fn initial_resume_transport_loss_recovers_the_same_thread() {
+        bootstrap_transport_loss_recovers(true, true).await;
+    }
+
+    #[tokio::test]
+    async fn initial_resume_transport_loss_replaces_only_a_missing_thread() {
+        bootstrap_transport_loss_recovers(false, true).await;
+    }
+
+    #[tokio::test]
+    async fn initial_resume_succeeds_despite_naming_failure() {
+        let (client, mut reader, mut writer) = mock_codex().await;
+        let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
+        let session = session();
+        let task = tokio::spawn({
+            let client = client.clone();
+            let runtime = session.runtime.clone();
+            let mut stop_rx = session.stop_tx.subscribe();
+            async move {
+                materialize_started_thread(
+                    &client,
+                    Uuid::from_u128(1),
+                    &ThreadConfig::default(),
+                    thread,
+                    &runtime,
+                    &StructuredLogSource::new(8),
+                    &mut stop_rx,
+                )
+                .await
+            }
+        });
+        let naming = read_request(&mut reader).await;
+        write_rpc_error(&mut writer, &naming, "name update rejected").await;
+        let resume = read_request(&mut reader).await;
+        assert_eq!(resume["method"], "thread/resume");
+        write_response(&mut writer, &resume, thread_session("thread-1", None)).await;
+        let MaterializeStartOutcome::Ready(materialized) = task.await.unwrap() else {
+            panic!("successful resume must allow name reconciliation after startup");
+        };
+        assert_eq!(materialized.thread.id(), "thread-1");
+        assert_eq!(materialized.applied_name_generation, None);
+        client.close().await;
     }
 
     #[test]

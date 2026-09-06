@@ -6,7 +6,9 @@
 //! Claude's feed and Codex's, and the element that carries it is the
 //! same element, so neither chat gets to decide what an image row says.
 
-use amux_ui::attachments::{AttachmentIndex, AttachmentLine, Mention, MentionKind, Segment};
+use amux_ui::attachments::{
+    AttachmentIndex, AttachmentKind, AttachmentLine, Mention, MentionKind, Segment,
+};
 use amux_ui::{AgentId, Model};
 
 use super::frame::BlockKey;
@@ -46,6 +48,53 @@ pub(crate) fn prose(content: &[Segment]) -> String {
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+/// The message as the person saw it in the composer: its prose with each
+/// attachment standing in as the token it was typed as — `[Image #1]`,
+/// `[Pasted #1 · 240 lines]` — rather than removed. The element itself is
+/// still never shown; the row under the message is where it opens from.
+pub(crate) fn words(index: &AttachmentIndex, content: &[Segment]) -> String {
+    let mut ordinals = [0usize; 4];
+    let mut text = String::new();
+    for segment in content {
+        match segment {
+            Segment::Prose(prose) => text.push_str(prose),
+            Segment::Mention(mention) => {
+                let line = index.describe(mention);
+                let slot = match line.kind {
+                    AttachmentKind::Image => 0,
+                    AttachmentKind::File => 1,
+                    AttachmentKind::Text => 2,
+                    AttachmentKind::Review => 3,
+                };
+                ordinals[slot] += 1;
+                text.push_str(&token_label(&line, ordinals[slot]));
+            }
+        }
+    }
+    text.trim().to_string()
+}
+
+/// The token a landed attachment shows in its message, in the same shape
+/// the composer gave it before it was sent.
+fn token_label(line: &AttachmentLine, ordinal: usize) -> String {
+    match line.kind {
+        AttachmentKind::Image => format!("[Image #{ordinal}]"),
+        AttachmentKind::File => format!("[File #{ordinal} {}]", line.name),
+        AttachmentKind::Text => {
+            let lines = line.lines.unwrap_or(0) as usize;
+            let unit = if lines == 1 { "line" } else { "lines" };
+            format!("[Pasted #{ordinal} \u{b7} {lines} {unit}]")
+        }
+        AttachmentKind::Review => match line.comments {
+            Some(comments) => {
+                let unit = if comments == 1 { "comment" } else { "comments" };
+                format!("[Review \u{b7} {comments} {unit}]")
+            }
+            None => "[Review]".to_string(),
+        },
+    }
 }
 
 /// The attachments a message carries, in the order it carries them.

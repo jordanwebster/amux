@@ -834,11 +834,6 @@ impl wire::client_service_server::ClientService for ClientService {
                 }
                 Some(agent)
             }
-            None if initial_prompt.is_some() => {
-                return Err(tonic::Status::invalid_argument(
-                    "initial_prompt requires a parent agent",
-                ));
-            }
             None => None,
         };
         if let Some(parent) = parent_agent.as_ref() {
@@ -872,22 +867,32 @@ impl wire::client_service_server::ClientService for ClientService {
             })
         };
 
-        if let (Some(parent), Some(text)) = (parent_agent, initial_prompt) {
+        // The initial prompt is delivered once the new agent can take it,
+        // and an agent that never can is removed again: creating with a
+        // prompt is one act, not a create followed by a hopeful send. A
+        // parent speaks for itself; a spawn from outside the fleet speaks
+        // as the person, the same sender an ordinary send without an agent
+        // identity carries.
+        if let Some(text) = initial_prompt {
             let child = agent_from_remote_response(
                 response.get_ref().agent.clone(),
                 "CreateAgentResponse.agent",
             )?;
+            let from = match parent_agent {
+                Some(parent) => envelope::Sender::Agent(envelope::AgentSender {
+                    agent_id: parent.id,
+                    host_id: parent.host_id,
+                    name: parent.name.unwrap_or_else(|| parent.id.to_string()),
+                    kind: parent.kind.provider().to_string(),
+                }),
+                None => envelope::Sender::Human,
+            };
             let delivery = self
                 .deliver_envelope(
                     envelope::Envelope {
                         id: Uuid::new_v4(),
                         context: None,
-                        from: envelope::Sender::Agent(envelope::AgentSender {
-                            agent_id: parent.id,
-                            host_id: parent.host_id,
-                            name: parent.name.unwrap_or_else(|| parent.id.to_string()),
-                            kind: parent.kind.provider().to_string(),
-                        }),
+                        from,
                         to: AgentParent {
                             agent_id: child.id,
                             host_id: child.host_id,
@@ -2124,7 +2129,11 @@ impl ClientService {
                     error = %status,
                     "agent message recipient host unavailable"
                 );
-                if agent_authored {
+                // An agent's ordinary send is fire-and-forget: an unreachable
+                // host drops it and the sender is not told. A delivery
+                // someone waits on — a spawn's initial prompt — must fail
+                // instead, so the spawn can roll the new agent back.
+                if agent_authored && !wait_for_readiness {
                     Ok(tonic::Response::new(wire::SendMessageResponse {
                         envelope_id: envelope_id.as_bytes().to_vec(),
                     }))
@@ -3238,6 +3247,23 @@ mod tests {
             agent_id: parent_id.as_bytes().to_vec(),
             host_id: Uuid::from_u128(1).as_bytes().to_vec(),
         });
+        request.initial_prompt = Some("inspect delivery readiness".to_string());
+        let Some(wire::client_create_agent_request::Agent::TestAgent(config)) = &mut request.agent
+        else {
+            unreachable!("test agent helper always builds a test agent")
+        };
+        config.command = command.to_string();
+        request
+    }
+
+    /// A creation from outside the fleet that still carries a prompt: the
+    /// same request a child spawn makes, without the parent.
+    fn root_with_initial_prompt(
+        agent_id: Uuid,
+        name: &str,
+        command: &str,
+    ) -> wire::ClientCreateAgentRequest {
+        let mut request = test_agent_create_request(agent_id, name, None);
         request.initial_prompt = Some("inspect delivery readiness".to_string());
         let Some(wire::client_create_agent_request::Agent::TestAgent(config)) = &mut request.agent
         else {
@@ -4842,6 +4868,49 @@ mod tests {
         );
         assert!(!agents.iter().any(|agent| agent.id == unavailable_id));
         assert!(!agents.iter().any(|agent| agent.id == failed_delivery_id));
+    }
+
+    /// A spawn from outside the fleet carries its prompt the same way a
+    /// child spawn does: the daemon waits for the new agent to take it and
+    /// removes an agent that never can. A separate send after creation
+    /// would race a Claude SDK session's startup and fail.
+    #[tokio::test(start_paused = true)]
+    async fn a_parentless_spawn_waits_for_readiness_and_rolls_back_an_undeliverable_agent() {
+        let service = client_service_for_tests();
+        let delayed_id = Uuid::from_u128(170);
+        let unavailable_id = Uuid::from_u128(171);
+
+        let started = tokio::time::Instant::now();
+        let created = <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(root_with_initial_prompt(
+                delayed_id,
+                "delayed-root",
+                TEST_DELAYED_DELIVERY_COMMAND,
+            )),
+        )
+        .await
+        .expect("a parentless spawn waits for its delivery target to become live");
+        assert!(started.elapsed() >= Duration::from_millis(150));
+        let created = created.into_inner().agent.expect("the created agent");
+        assert!(created.parent.is_none());
+
+        let error = <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(root_with_initial_prompt(
+                unavailable_id,
+                "unavailable-root",
+                TEST_UNAVAILABLE_DELIVERY_COMMAND,
+            )),
+        )
+        .await
+        .expect_err("a parentless spawn fails when its target never becomes live");
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert!(error.message().contains("did not become ready within 30s"));
+
+        let agents = service.list_agents().await;
+        assert!(agents.iter().any(|agent| agent.id == delayed_id));
+        assert!(!agents.iter().any(|agent| agent.id == unavailable_id));
     }
 
     #[tokio::test]

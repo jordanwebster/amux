@@ -64,42 +64,49 @@ One app-server serves every codex agent in the daemon. Threads are the
 unit of identity: an agent *is* a thread id, which is why suspend and
 resume survive a restart of both amux and the server.
 
-### A started thread has no rollout yet
+### A fresh thread must be resumed before publication
 
-`thread/start` creates a live, non-ephemeral thread and reports the
-prospective rollout path, but does not materialize that rollout. (Starting
-the app-server can write other Codex-home state.) Operations that require
-the rollout — including `thread/resume`, which the raw TUI runs at
-bootstrap, and `thread/archive` — fail with `no rollout found for thread
-id` until an unrelated mutation persists it.
+`thread/start` creates a live, non-ephemeral thread and reports a prospective
+rollout path before writing its history file. The existing amux connection can
+use that thread immediately, but the vanilla TUI opens a second connection and
+calls `thread/resume` for the same id. amux also resumes by id after transport
+loss, suspension, and app-server restart. A ready agent must support those
+paths even before its first message.
 
-Codex 0.147 exposes no persist call. Several side effects materialize a
-thread: naming, memory mode, Git metadata updates, injected history, and
-feature-gated goals all do; settings updates do not. Naming is the least
-invasive option that applies universally. Memory mode is experimental and
-behavioral, Git metadata is neither universal nor inert, injected items
-alter the transcript, and goals are feature-gated and can start work. A
-name is standard, visible, and replaceable, though 0.147 cannot restore it
-to `None`.
+Previously amux named the thread to force Codex to persist its rollout.
+Codex 0.153.4's paginated history stores the name in SQLite and the name index
+without writing the rollout. Naming succeeds, but the TUI's metadata-only
+resume (`excludeTurns: true`) fails while constructing pagination cursors:
+`invalid paginated history lineage ... missing source rollout`. Sending a
+first message through amux's structured UI writes the history and makes later
+raw attachment work.
 
-So **every codex thread amux creates is named**, whether or not the agent
-is. The two names are separate: an unnamed agent gets the bootstrap label
-`amux-<first 8 hex of the agent id>` on its *thread*, and stays unnamed
-itself, showing the usual `name → provider label → short id` fallback in
-the clients. Naming the agent later overwrites the bootstrap label;
-clearing the name restores it.
+amux therefore follows fresh creation with `thread/resume` on the same
+connection and thread id, explicitly setting `excludeTurns: false`. In this
+Codex version, the loaded paginated-thread resume handler persists the rollout
+when history is requested. No user message is injected, no model turn starts,
+and no second conversation is created.
 
-The initial structured attachment can use the live in-memory thread, but
-that does not remove the need for eager materialization: amux's structured
-reconnect, suspend/resume, and daemon-recovery paths all issue
-`thread/resume`. Fresh attachments therefore materialize before publishing
-their durable thread id. A successful resume is already authoritative, so
-later naming failure remains retryable metadata work and never disables raw
-attach.
+The resume returns a replacement SDK handle and event registration. Startup
+adopts that handle, including events staged before the response, before it
+publishes the id, emits readiness, or allows a raw PTY or suspended state to
+use it. A resume RPC failure keeps startup private and retries the same id.
+Transport loss carries the unconfirmed id into reconnect recovery, which tries
+that id before considering a replacement. The bootstrap resume does not mark a
+new agent as a previously resumed conversation in the UI.
 
-This is a workaround for upstream behaviour that is arguably a defect — a
-server that hands you a thread and then refuses to resume it — and should
-be revisited if codex grows a real persist call.
+Naming remains metadata. Every thread keeps its existing recognizable label:
+the agent's name or `amux-<first 8 hex of the agent id>` for an unnamed agent.
+The latter stays unnamed in amux itself. A failed name update does not block a
+successful resume; the serialized name reconciler retries it after publication.
+
+This is a version-specific compatibility workaround, not a documented Codex
+durable-creation API. The regression suite must prove zero-turn raw attachment
+and recovery against the installed provider version. Revisit the extra resume
+when upstream supports this lifecycle explicitly or fixes metadata-only resume
+to satisfy its own history-cursor prerequisites. Owning a private app-server
+does not change this requirement: both shared and private modes use the same
+thread creation and TUI attachment protocol.
 
 ## The two planes
 
@@ -364,9 +371,9 @@ thread costs against the window the session reported (`ctx 30.0k/272.0k`).
 That number is what the context holds after the most recent turn, not
 every turn's tokens added together — the app-server reports both, and
 only the first can be read against a window. `<leader> c` opens the
-totals behind it: input and output, with cached input and reasoning
-indented as shares of those two rather than listed beside them, which is
-all the app-server reports, and the overlay says so. `<leader> o` on a pasted attachment or a sent review
+totals behind it: input and output, with cached input, cache writes and
+reasoning indented as shares of those two rather than listed beside them,
+which is all the app-server reports, and the overlay says so. `<leader> o` on a pasted attachment or a sent review
 opens the same fullscreen reader the Claude chats use. Raw mode is
 `codex resume` on a PTY, byte-identical for every subscriber.
 Because both current creation modes open interactively, `amux new codex`
@@ -401,12 +408,17 @@ Four tiers, in increasing cost:
    inert when no scenario is named.
 
 ```sh
-timeout 900 cargo test --workspace --test spec_replay
-timeout 900 cargo test -p amux --test derived_rows codex
-cargo build -p amux-cli
-AMUX_CODEX_LIVE_MODEL=gpt-5.6-luna \
-  timeout 1500 cargo test -p amux --test codex_live -- all
+wt test
+AMUX_CODEX_LIVE_MODEL=gpt-5.6-luna wt run codex-live -- all
 ```
+
+The live suite is pinned to codex-cli 0.153.4. To check startup without model
+turns, run `wt run codex-live -- raw_unnamed raw_named unnamed_reconnect`.
+These scenarios require the vanilla TUI's local `/status` command to identify
+the expected thread, including after detach/reattach and app-server restart.
+Initial ANSI output alone is insufficient: Codex draws its startup screen
+before a failed resume exits. Put the intended Codex installation first on
+`PATH` when several versions are installed; captures record the actual version.
 
 Two standing rules, both bought with pain elsewhere in this repo:
 

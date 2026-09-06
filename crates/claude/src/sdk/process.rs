@@ -51,12 +51,33 @@ impl CliProcess {
 
 // ── Spawning ───────────────────────────────────────────────────────
 
-/// Spawn `claude` CLI for an interactive session.
-///
-/// Launches with `--output-format stream-json --input-format stream-json`
-/// and the given session ID. Returns a `CliProcess` handle for bidirectional
-/// message passing.
-pub(crate) fn spawn_query(session_id: &str, options: &QueryOptions) -> Result<CliProcess, Error> {
+/// Spawn a prepared CLI command with owned, bidirectional process I/O.
+pub(crate) fn spawn_command(mut cmd: Command) -> Result<CliProcess, Error> {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Process(format!("failed to spawn claude: {e}")))?;
+
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| Error::Process("failed to capture stdin".into()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| Error::Process("failed to capture stdout".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| Error::Process("failed to capture stderr".into()))?;
+
+    Ok(CliProcess::new(child, stdin, stdout, stderr))
+}
+
+/// Build the CLI invocation independently of starting the process.
+pub(crate) fn query_command(session_id: &str, options: &QueryOptions) -> Result<Command, Error> {
     let cli = options
         .cli_path
         .as_deref()
@@ -101,32 +122,11 @@ pub(crate) fn spawn_query(session_id: &str, options: &QueryOptions) -> Result<Cl
 
     apply_common_options(&mut cmd, options)?;
 
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
     if let Some(cwd) = &options.cwd {
         cmd.current_dir(cwd);
     }
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| Error::Process(format!("failed to spawn claude: {e}")))?;
-
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| Error::Process("failed to capture stdin".into()))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| Error::Process("failed to capture stdout".into()))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| Error::Process("failed to capture stderr".into()))?;
-
-    Ok(CliProcess::new(child, stdin, stdout, stderr))
+    Ok(cmd)
 }
 
 // ── Shared option builders ──────────────────────────────────────────
@@ -474,6 +474,38 @@ mod tests {
             .get_args()
             .map(|a| a.to_string_lossy().into_owned())
             .collect()
+    }
+
+    #[test]
+    fn new_and_resumed_commands_preserve_identity_and_stream_transport() {
+        for resumed in [false, true] {
+            let options = QueryOptions {
+                cli_path: Some("custom-claude".into()),
+                cwd: Some("workspace".into()),
+                env: Some(HashMap::from([("SCENARIO".into(), "test".into())])),
+                resume: resumed.then(|| "source-session".to_owned()),
+                ..QueryOptions::default()
+            };
+            let command = query_command("target-session", &options).unwrap();
+            let args = collect_args(&command);
+            assert_eq!(command.as_std().get_program(), "custom-claude");
+            assert!(command.as_std().get_envs().any(|(key, value)| {
+                key == "SCENARIO" && value == Some(std::ffi::OsStr::new("test"))
+            }));
+            assert_eq!(
+                command.as_std().get_current_dir(),
+                Some(std::path::Path::new("workspace"))
+            );
+            assert_eq!(arg_value(&args, "--input-format"), Some("stream-json"));
+            assert_eq!(arg_value(&args, "--output-format"), Some("stream-json"));
+            if resumed {
+                assert_eq!(arg_value(&args, "--resume"), Some("source-session"));
+                assert_eq!(arg_value(&args, "--session-id"), None);
+            } else {
+                assert_eq!(arg_value(&args, "--session-id"), Some("target-session"));
+                assert_eq!(arg_value(&args, "--resume"), None);
+            }
+        }
     }
 
     #[test]

@@ -83,8 +83,9 @@ installation suspend/resume operations support binary updates.
 
 The installation configuration defaults to `$XDG_CONFIG_HOME/amux/config.yaml`
 (fallback `~/.config/amux/config.yaml`). It owns `root`, `front_door_socket`,
-device name, keep-awake, keybindings, UI preferences, keymaps directory, update
-manifest URL and an optional shared reports directory. The root defaults to
+device name, keep-awake, keybindings, UI preferences, the default Claude
+driver, keymaps directory, update manifest URL and an optional shared reports
+directory. The root defaults to
 `$XDG_DATA_HOME/amux` (fallback `~/.local/share/amux`). A UUID, independent of
 the account or label, names each profile's directory and socket:
 

@@ -94,7 +94,7 @@ pub use pairing::ssh::{
 };
 #[cfg(unix)]
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
-pub use paths::{default_cache_dir, default_data_dir, default_log_path, keymap_dir};
+pub use paths::{default_data_dir, default_log_path, keymap_dir};
 pub use protocol::{PROTOCOL_VERSION, ProtocolError};
 pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
 pub use server::{

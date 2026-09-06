@@ -440,7 +440,10 @@ impl ToolBackend for ClientBackend {
                         Vec::new(),
                     ),
                 };
-                let managed_prompt = parent.is_some().then_some(prompt.clone());
+                // The daemon delivers the prompt once the new agent can
+                // take it and removes the agent if it never can, whether or
+                // not a parent is spawning. A separate send after creation
+                // would race a Claude SDK session's startup and fail.
                 let agent = client
                     .create_agent(CreateAgentRequest {
                         agent_id: Uuid::new_v4(),
@@ -451,29 +454,13 @@ impl ToolBackend for ClientBackend {
                         terminal_size: None,
                         args,
                         parent,
-                        initial_prompt: managed_prompt,
+                        initial_prompt: Some(prompt),
                     })
                     .await?;
-                let mut result = json!({
+                Ok(json!({
                     "name": display_agent_name(&agent),
                     "id": agent.id
-                });
-                if caller.is_none()
-                    && let Err(error) = client
-                        .send_message(send_request(
-                            None,
-                            AgentIdentifier::Id(agent.id),
-                            prompt,
-                            None,
-                        ))
-                        .await
-                {
-                    result["initial_prompt_delivery"] = json!({
-                        "status": "uncertain",
-                        "error": format!("{error:#}")
-                    });
-                }
-                Ok(result)
+                }))
             }
             ToolRequest::Stop { name } => {
                 let (target, caller) = stop_request(caller, name)?;
@@ -1268,7 +1255,7 @@ mod attach_tests {
     }
 
     #[tokio::test]
-    async fn a2a_mcp_standalone_spawn_creates_an_orphan_then_delivers_the_prompt() {
+    async fn a2a_mcp_standalone_spawn_hands_the_prompt_to_the_daemon_with_creation() {
         let daemon = Arc::new(FakeDaemon::new(Vec::new()));
         let backend = ClientBackend {
             connector: Arc::new(FakeConnector::new(daemon.clone(), 0)),
@@ -1289,62 +1276,13 @@ mod attach_tests {
         assert!(Uuid::parse_str(result["id"].as_str().unwrap()).is_ok());
         assert!(result.get("initial_prompt_delivery").is_none());
         assert_eq!(daemon.create_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(daemon.send_calls.load(Ordering::SeqCst), 1);
+        // No separate send: the prompt rides the creation so the daemon
+        // can wait for the agent's readiness before delivering it.
+        assert_eq!(daemon.send_calls.load(Ordering::SeqCst), 0);
         assert_eq!(
             *daemon.standalone_spawn_shape.lock().unwrap(),
-            Some((None, None))
+            Some((None, Some("inspect this".to_string())))
         );
-        let sent = daemon.last_send.lock().unwrap();
-        let sent = sent.as_ref().unwrap();
-        assert_eq!(
-            sent.to,
-            AgentIdentifier::Id(Uuid::parse_str(result["id"].as_str().unwrap()).unwrap())
-        );
-        assert_eq!(sent.text, "inspect this");
-        assert_eq!(sent.from_agent_id, None);
-    }
-
-    #[tokio::test]
-    async fn a2a_mcp_standalone_spawn_reports_uncertain_delivery_without_inviting_a_retry() {
-        let daemon = Arc::new(FakeDaemon::new(Vec::new()));
-        daemon.fail_send.store(true, Ordering::SeqCst);
-        let backend = ClientBackend {
-            connector: Arc::new(FakeConnector::new(daemon.clone(), 0)),
-            identity: None,
-        };
-        let request = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {
-                "name": "spawn",
-                "arguments": {
-                    "kind": "codex",
-                    "prompt": "inspect this",
-                    "name": "probe",
-                    "cwd": "/work"
-                }
-            }
-        })
-        .to_string();
-
-        let response = handle_line(&request, &backend).await.unwrap();
-        let result: Value =
-            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
-                .unwrap();
-
-        assert_eq!(response["result"]["isError"], false);
-        assert_eq!(result["name"], "spawned");
-        assert!(Uuid::parse_str(result["id"].as_str().unwrap()).is_ok());
-        assert_eq!(result["initial_prompt_delivery"]["status"], "uncertain");
-        assert!(
-            result["initial_prompt_delivery"]["error"]
-                .as_str()
-                .unwrap()
-                .contains("response lost after mutation")
-        );
-        assert_eq!(daemon.create_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(daemon.send_calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

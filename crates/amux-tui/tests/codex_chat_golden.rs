@@ -238,7 +238,7 @@ fn idle_rows() -> Vec<Value> {
         json!({"type":"item/completed","turnId":"turn-done","item":{"id":"user-2","type":"userMessage","content":[{"type":"text","text":"Run the focused tests."}]}}),
         json!({"type":"item/completed","item":{"id":"cmd-2","type":"commandExecution","command":"cargo test -p amux-ui","cwd":"/work/amux","status":"completed","exitCode":0,"aggregatedOutput":"42 passed"}}),
         json!({"type":"item/completed","item":{"id":"msg-2","type":"agentMessage","text":"All focused tests pass.","phase":"final_answer"}}),
-        json!({"type":"thread/tokenUsage/updated","tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":40,"outputTokens":18,"reasoningOutputTokens":5,"totalTokens":138},"modelContextWindow":128000}}),
+        json!({"type":"thread/tokenUsage/updated","tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":40,"cacheWriteInputTokens":0,"outputTokens":18,"reasoningOutputTokens":5,"totalTokens":138},"modelContextWindow":128000}}),
         json!({"type":"turn/completed","turn":{"id":"turn-done","status":"completed"}}),
     ]
 }

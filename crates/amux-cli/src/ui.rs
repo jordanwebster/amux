@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use amux::{ColorSetting, Config, DebugFormat, ThemeSetting, UiSettings};
 use amux_tui::{
-    ColorPreference, Theme, ThemeError, TuiConfig, detect_color_mode, parse_theme_file, run_fleet,
-    theme_from_file,
+    ColorPreference, TerminalColors, Theme, ThemeError, TuiConfig, detect_color_mode,
+    parse_theme_file, query_terminal_colors, run_fleet, theme_from_file,
 };
 use amux_ui::{ConnectFailure, Connector, Runtime, RuntimeOptions};
 use anyhow::{Context, Result};
@@ -21,6 +21,11 @@ use crate::init::{self, InitContext};
 use crate::update::MarkerFileReporter;
 
 const GIT_SHA: &str = env!("GIT_SHA");
+
+/// How long to wait for a terminal to say what colours it is painting with.
+/// Terminals that answer do so in a few milliseconds; the bound is for the
+/// ones that never will, over a slow remote connection.
+const TERMINAL_COLOR_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub async fn run(config: Config) -> Result<()> {
     run_inner(config, None, None).await
@@ -55,7 +60,15 @@ async fn run_inner(
                 .expect("default config path has a parent")
                 .to_path_buf()
         });
-    let theme = resolve_theme(&config.ui, &config_dir, &ColorEnv::capture())
+    // Asked before the alternate screen is entered, because the answers
+    // arrive on stdin and nothing else may be reading it yet. A terminal
+    // that stays silent costs this much startup once and gets the shipped
+    // palette.
+    let terminal = match config.ui.theme {
+        ThemeSetting::Terminal => query_terminal_colors(TERMINAL_COLOR_QUERY_TIMEOUT),
+        _ => None,
+    };
+    let theme = resolve_theme(&config.ui, &config_dir, &ColorEnv::capture(), terminal)
         .context("failed to resolve ui.theme")?;
 
     let connector: Connector = {
@@ -228,10 +241,14 @@ impl ColorEnv {
     }
 }
 
+/// The palette for this session. `terminal` is what the terminal reported
+/// about its own colours, when it was asked and answered; the `terminal`
+/// setting derives from that and falls back to the shipped dark palette.
 pub(crate) fn resolve_theme(
     settings: &UiSettings,
     config_dir: &Path,
     env: &ColorEnv,
+    terminal: Option<TerminalColors>,
 ) -> std::result::Result<Theme, ThemeError> {
     let preference = match settings.color {
         ColorSetting::Auto => ColorPreference::Auto,
@@ -246,6 +263,10 @@ pub(crate) fn resolve_theme(
     );
 
     match &settings.theme {
+        ThemeSetting::Terminal => Ok(match terminal {
+            Some(colors) => Theme::from_terminal(colors, mode),
+            None => Theme::dark(mode),
+        }),
         ThemeSetting::Dark => Ok(Theme::dark(mode)),
         ThemeSetting::Light => Ok(Theme::light(mode)),
         ThemeSetting::File(path) => {
@@ -312,6 +333,7 @@ mod tests {
             &settings,
             Path::new("/unused"),
             &env(Some("truecolor"), false),
+            None,
         )
         .expect("resolve built-in theme");
         assert_eq!(theme.name, amux_tui::ThemeName::Light);
@@ -325,6 +347,7 @@ mod tests {
             &settings,
             Path::new("/unused"),
             &env(Some("truecolor"), false),
+            None,
         )
         .expect("resolve truecolor theme");
         assert_eq!(truecolor.mode, ColorMode::TrueColor);
@@ -333,9 +356,39 @@ mod tests {
             &settings,
             Path::new("/unused"),
             &env(Some("truecolor"), true),
+            None,
         )
         .expect("resolve NO_COLOR theme");
         assert_eq!(ansi.mode, ColorMode::Ansi);
+    }
+
+    #[test]
+    fn the_terminal_setting_derives_when_answered_and_ships_dark_when_not() {
+        let settings = UiSettings::default();
+        let silent = resolve_theme(
+            &settings,
+            Path::new("/unused"),
+            &env(Some("truecolor"), false),
+            None,
+        )
+        .expect("resolve the fallback");
+        assert_eq!(silent.name, amux_tui::ThemeName::Dark);
+
+        let reported = TerminalColors {
+            background: (0xfd, 0xf6, 0xe3),
+            foreground: (0x65, 0x7b, 0x83),
+            ansi: [(0x80, 0x80, 0x80); 16],
+        };
+        let derived = resolve_theme(
+            &settings,
+            Path::new("/unused"),
+            &env(Some("truecolor"), false),
+            Some(reported),
+        )
+        .expect("derive from the terminal");
+        assert_eq!(derived.name, amux_tui::ThemeName::Adopted);
+        assert_eq!(derived.tokens.background.rgb, reported.background);
+        assert_eq!(derived.tokens.text.rgb, reported.foreground);
     }
 
     #[test]
@@ -352,7 +405,7 @@ mod tests {
         };
 
         let config_dir = config.parent().expect("temporary config has a parent");
-        let theme = resolve_theme(&settings, config_dir, &ColorEnv::default())
+        let theme = resolve_theme(&settings, config_dir, &ColorEnv::default(), None)
             .expect("resolve committed sample relative to config");
         assert_eq!(theme.name, amux_tui::ThemeName::Imported);
         assert_eq!(theme.tokens.background.rgb, (0x10, 0x10, 0x10));
@@ -369,7 +422,7 @@ mod tests {
         };
 
         assert!(matches!(
-            resolve_theme(&settings, directory.path(), &ColorEnv::default()),
+            resolve_theme(&settings, directory.path(), &ColorEnv::default(), None),
             Err(ThemeError::BadColor { key, value }) if key == "base00" && value == "nope"
         ));
     }

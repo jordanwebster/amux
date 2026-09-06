@@ -731,3 +731,54 @@ fn claude_sdk_ask_control_keys_reach_past_the_panel() {
         "the typed reason is gone: {text}"
     );
 }
+
+/// A request that suggests no rule offers two actions, and its digits are
+/// those two. Esc from the deny reason lands back on Deny — the second row
+/// here, not the third — so Enter goes straight back in.
+#[test]
+fn claude_sdk_ask_without_suggestions_offers_two_rows_and_esc_returns_to_deny() {
+    let model = session_asking(json!({
+        "type": "amux.claude_sdk.permission_required",
+        "request_id": "bare-1",
+        "tool_name": "Bash",
+        "input": {"command": "cargo fmt --all"},
+        "suggestions": []
+    }));
+    let text = assert_surface("sdk_ask_permission_bare", &model, open_chat);
+    assert!(
+        text.contains("1. Allow once") && text.contains("2. Deny"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("suggested rule") && text.contains("1-2/"),
+        "{text}"
+    );
+
+    let mut chat = open_chat(&model);
+    assert!(press(&mut chat, &model, KeyCode::Char('2')).is_none());
+    assert!(
+        press(&mut chat, &model, KeyCode::Enter).is_none(),
+        "the reason stage opens"
+    );
+    assert!(
+        press(&mut chat, &model, KeyCode::Esc).is_none(),
+        "Esc answers nothing"
+    );
+    assert!(
+        press(&mut chat, &model, KeyCode::Enter).is_none(),
+        "Enter reopens the reason stage from the Deny row"
+    );
+    assert_eq!(
+        answered(press(&mut chat, &model, KeyCode::Enter)),
+        SdkAnswer::Permission(PermissionAnswer::Deny { feedback: None })
+    );
+
+    // A digit past the last row selects nothing, and Enter still answers
+    // the row under the cursor.
+    let mut chat = open_chat(&model);
+    assert!(press(&mut chat, &model, KeyCode::Char('3')).is_none());
+    assert_eq!(
+        answered(press(&mut chat, &model, KeyCode::Enter)),
+        SdkAnswer::Permission(PermissionAnswer::AllowOnce)
+    );
+}

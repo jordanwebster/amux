@@ -42,6 +42,14 @@ fn read(id: &str, path: &str) -> Value {
     tool_use(id, "Read", json!({"file_path": path}))
 }
 
+/// An assistant row a subagent produced: the same shape, marked with the
+/// tool use that launched it.
+fn subagent_assistant(index: u64, parent: &str, content: Vec<Value>) -> Value {
+    let mut row = assistant(index, content);
+    row["parent_tool_use_id"] = json!(parent);
+    row
+}
+
 fn search(id: &str, pattern: &str) -> Value {
     tool_use(id, "Grep", json!({"pattern": pattern}))
 }
@@ -176,5 +184,43 @@ fn a_run_forms_while_the_tool_inputs_are_still_streaming() {
             searches: 1,
             read_paths: Vec::new(),
         }]
+    );
+}
+
+/// A subagent's reads arrive on the same stream as the session's, marked
+/// with the tool use that launched them. They are that subagent's own
+/// timeline: they never join the session's run on either side of them,
+/// and they form no run of their own, since each paints as one
+/// attributed line.
+#[test]
+fn a_subagents_reads_never_fold_into_the_sessions_exploration() {
+    assert_eq!(
+        items(vec![
+            assistant(1, vec![read("toolu_1", "a.rs"), read("toolu_2", "b.rs")]),
+            subagent_assistant(
+                2,
+                "toolu_task",
+                vec![read("toolu_3", "c.rs"), read("toolu_4", "d.rs")],
+            ),
+            assistant(3, vec![read("toolu_5", "e.rs"), search("toolu_6", "retry")]),
+        ]),
+        vec![
+            Item::Run {
+                id: 0,
+                member_ids: vec![0, 1],
+                reads: 2,
+                searches: 0,
+                read_paths: vec!["a.rs".into(), "b.rs".into()],
+            },
+            Item::Entry(2),
+            Item::Entry(3),
+            Item::Run {
+                id: 4,
+                member_ids: vec![4, 5],
+                reads: 1,
+                searches: 1,
+                read_paths: vec!["e.rs".into()],
+            },
+        ]
     );
 }

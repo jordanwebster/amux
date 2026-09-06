@@ -104,6 +104,11 @@ async fn plan_reviewed(session: &mut SpecSession) {
         session.permission_request_count("ExitPlanMode") == 1,
         "the automatically approved plan arrived as one permission request"
     );
+    expect!(
+        automatic.permission_modes().last() == Some(&PermissionMode::AcceptEdits),
+        "automatic approval leaves the session in accept-edits: {:?}",
+        automatic.permission_modes()
+    );
 
     session
         .set_permission_mode(PermissionMode::Plan)
@@ -124,6 +129,13 @@ async fn plan_reviewed(session: &mut SpecSession) {
     expect!(
         session.permission_request_count("ExitPlanMode") == 2,
         "the manually approved plan added one permission request"
+    );
+    // Without the explicit mode the CLI would leave plan mode into
+    // accept-edits on its own; the session must end the turn in default.
+    expect!(
+        manual.permission_modes().last() == Some(&PermissionMode::Default),
+        "manual approval leaves the session in default mode: {:?}",
+        manual.permission_modes()
     );
 
     session
@@ -153,8 +165,9 @@ async fn plan_reviewed(session: &mut SpecSession) {
         "the requested changes reached the plan tool result: {:?}",
         revision.tool_results()
     );
-    session.advance_to("system.thinking_tokens").await;
-    let _ = session.take();
+    // The revised plan's turn is left running; whatever the session has
+    // said by the time it goes quiet is recorded, and replay consumes it.
+    let _ = session.drain().await;
 }
 
 fn permission_setup() -> SessionSetup {

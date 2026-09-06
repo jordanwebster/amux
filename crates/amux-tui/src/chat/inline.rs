@@ -228,10 +228,9 @@ pub(crate) fn panel_lines(
                 theme,
                 quit_guard_armed,
             );
+            // The shared panel's own hints already end in the escape
+            // route, so the attribution goes in the title alone.
             parts.title = format!("answering {name} — {}", parts.title);
-            if !parts.hints.is_empty() {
-                parts.hints.push_str(" · esc back");
-            }
             panel::paint(&shared, parts, theme, width)
         }
         Ui::ClaudeSession(ui) => {
@@ -252,10 +251,9 @@ pub(crate) fn panel_lines(
                 theme,
                 quit_guard_armed,
             );
+            // The shared panel's own hints already end in the escape
+            // route, so the attribution goes in the title alone.
             parts.title = format!("answering {name} — {}", parts.title);
-            if !parts.hints.is_empty() {
-                parts.hints.push_str(" · esc back");
-            }
             panel::paint(&shared, parts, theme, width)
         }
         Ui::Codex { cursor } => {

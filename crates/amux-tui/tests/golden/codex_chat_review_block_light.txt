@@ -2,8 +2,8 @@
   codex-retry · codex @ mbp                                               gpt-5.4 · on-request · workspace-write · idle 
                                                                                                                         
 ▎   three things before this lands                                                                                      
-                                                                                                                        
-  ⌗ review · 3 comments · 2 files                                                                                       
+▎   [Review · 3 comments]                                                                                               
+▎ ⌗ review · 3 comments · 2 files                                                                                       
                                                                                                                         
   ─ turn completed ─────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                                         
@@ -32,19 +32,19 @@
                                                                                                                         
                                                                                                                         
                                                                                                                         
-                                                                                                                        
-                                                                                                                        
     ctx unknown                                                                                                         
                                                                                                                         
+▎                                                                                                                       
 ▎   Type a message▌                                                                                                     
+▎                                                                                                                       
                                                                                                                         
     enter send · ctrl+j newline · ? help                                                                                
 --- styles ---
 ..eeeeeeeeeeemmmmmmmmmmmmmm...............................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.
 ........................................................................................................................
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
-........................................................................................................................
-..........mmmmmmmmmmmmmmmmmmmmmmm.......................................................................................
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
 ........................................................................................................................
@@ -73,10 +73,10 @@ AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ........................................................................................................................
 ........................................................................................................................
-........................................................................................................................
-........................................................................................................................
 ....mmmmmmmmmmm.........................................................................................................
 ........................................................................................................................
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
 ....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm................................................................................

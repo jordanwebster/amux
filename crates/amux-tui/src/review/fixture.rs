@@ -144,9 +144,9 @@ pub fn sample_review_against(base: DiffBase) -> ReviewView {
 pub fn sample_review_with_comments() -> ReviewView {
     let mut view = sample_review();
     for (file, row, text) in [
-        (0usize, 3usize, "Say why the store had to go."),
-        (2, 1, "Name the crate this belongs to."),
-        (2, 3, "Give it a doc comment."),
+        (0usize, 2usize, "Say why the store had to go."),
+        (2, 0, "Name the crate this belongs to."),
+        (2, 2, "Give it a doc comment."),
     ] {
         let at = RowRef { file, row };
         let anchor = anchor(view.review().document(), at, at).expect("fixture row anchors");

@@ -394,7 +394,7 @@ fn installation_options(config: &Config, listeners: Listeners) -> InstallationOp
         root: InstallationRoot::OnDisk(config.state_path.parent().unwrap().join("installation")),
         settings: InstallationSettings {
             repository_roots: Vec::new(),
-            claude: amux::ClaudeSettings::default(),
+            claude: config.claude.clone(),
             host_name: config.host_name.clone(),
             prevent_idle_sleep: Some(false),
             keybinds: config.keybinds.clone(),
