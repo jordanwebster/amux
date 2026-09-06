@@ -11,6 +11,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Keep CLI profile tests portable on Windows.**
+Profile selection and installation-update fixtures now use the shared temporary
+root helper, which keeps Unix socket paths short and uses the system temporary
+directory on Windows. The global profile-selector parser test exercises the
+relay command only where that command exists, while retaining UI and
+administration coverage on every platform. Profile-filtered tests, the
+installation-update marker test, formatting and workspace lint pass locally.
+
 2026-09-06 — **Open installations on Windows without directory-file syncing.**
 Configuration creation now syncs its parent directory only on Unix, matching
 registry, credential and update-journal writes. Windows had returned AccessDenied
