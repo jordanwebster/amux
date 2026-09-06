@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Provider subprocess fixtures pass after SDK integration.**
+The default parallel workspace suite passes with the integrated SDK, including
+launch-setting capture, closing a session with a full subprocess-output channel,
+semantic-version probing and the one-probe cache. No test, timeout or production
+code changed for this verification. The imported SDK changes already wait for
+atomically published launch captures and use bounded initialization and shutdown
+deadlines that accommodate subprocess scheduling. The version fixtures retain
+their original names; no filename-based workaround is needed in this run.
+This is one successful full-suite run, not a claim that intermittent scheduling
+failures are impossible.
+
 2026-09-06 — **Claude SDK model choices come from session initialization.**
 The daemon now publishes each initialized model's selectable value, resolved
 name, display name and advertised effort levels in every session-facts snapshot.
