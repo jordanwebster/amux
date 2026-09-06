@@ -203,6 +203,40 @@ fn facts() -> Vec<Msg> {
             .collect(),
     ])
 }
+
+#[test]
+fn claude_sdk_initialized_commands_reach_provider_facts_without_a_turn() {
+    let rows =
+        include_str!("../../../amux/tests/fixtures/rows/claude-sdk/introspection.rows.jsonl")
+            .lines()
+            .take(2)
+            .map(|row| serde_json::from_str::<Value>(row).unwrap())
+            .collect::<Vec<_>>();
+    assert_eq!(rows[0]["type"], "amux.claude_sdk.ready");
+    assert_eq!(rows[1]["type"], "amux.claude_sdk.session_facts");
+    let expected = rows[1]["slash_commands"].as_array().unwrap().clone();
+    assert!(!expected.is_empty());
+    let model = fold(seq([claude_sdk_base(AGENT), vec![batch(AGENT, 1, rows)]]));
+    let provider = amux_ui::provider::facts(&model, agent_id(AGENT));
+    assert_eq!(
+        provider
+            .commands
+            .iter()
+            .map(|command| json!(command.name))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    if let Some(directory) = std::env::var_os("CLAUDE_SDK_RUNTIME_EVIDENCE") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("initialized-provider.json"),
+            serde_json::to_string_pretty(&provider).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
 #[test]
 fn claude_sdk_session_facts_survive_feed_rows_and_clear_stale_context() {
     let mut model = fold(facts());
@@ -212,6 +246,7 @@ fn claude_sdk_session_facts_survive_feed_rows_and_clear_stale_context() {
     assert!(layer.context_breakdown().is_some());
     let before = layer.session().clone();
     let slash_commands = before.slash_commands.clone();
+    let terminal_slash_commands = before.terminal_slash_commands.clone();
     amux_ui::update(
         &mut model,
         batch(
@@ -229,7 +264,7 @@ fn claude_sdk_session_facts_survive_feed_rows_and_clear_stale_context() {
             AGENT,
             100,
             vec![
-                json!({"type":"amux.claude_sdk.session_facts","model":"new-model","permission_mode":"plan","context":{"used_tokens":23,"window_tokens":200000,"source":"assistant_usage"},"mcp_servers":[{"name":"amux","status":"connected"}]}),
+                json!({"type":"amux.claude_sdk.session_facts","model":"new-model","effort":"high","slash_commands":slash_commands,"terminal_slash_commands":terminal_slash_commands,"permission_mode":"plan","context":{"used_tokens":23,"window_tokens":200000,"source":"assistant_usage"},"mcp_servers":[{"name":"amux","status":"connected"}]}),
             ],
         ),
     );
@@ -239,6 +274,52 @@ fn claude_sdk_session_facts_survive_feed_rows_and_clear_stale_context() {
     assert_eq!(session.context.as_ref().unwrap().used_tokens, 23);
     assert_eq!(session.mcp_servers[0].name, "amux");
     assert_eq!(session.slash_commands, slash_commands);
+    let provider = amux_ui::provider::facts(&model, agent_id(AGENT));
+    assert_eq!(provider.effort.as_deref(), Some("high"));
+    assert_eq!(
+        provider
+            .commands
+            .iter()
+            .map(|command| command.name.clone())
+            .collect::<Vec<_>>(),
+        slash_commands
+    );
+    assert!(
+        provider
+            .commands
+            .iter()
+            .all(|command| command.source == amux_ui::provider::CommandSource::Claude)
+    );
+    assert_eq!(
+        provider
+            .commands
+            .iter()
+            .filter(|command| command.terminal_only)
+            .map(|command| command.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["doctor", "color"]
+    );
+    assert!(
+        provider
+            .commands
+            .iter()
+            .any(|command| command.name == "compact" && !command.terminal_only)
+    );
+    let latest_facts =
+        include_str!("../../../amux/tests/fixtures/rows/claude-sdk/introspection.rows.jsonl")
+            .lines()
+            .rev()
+            .map(|row| serde_json::from_str::<Value>(row).unwrap())
+            .find(|row| row["type"] == "amux.claude_sdk.session_facts")
+            .unwrap();
+    let tail = fold(seq([
+        claude_sdk_base(AGENT),
+        vec![batch(AGENT, 1, vec![ready(), latest_facts])],
+    ]));
+    assert_eq!(
+        amux_ui::provider::facts(&tail, agent_id(AGENT)).commands,
+        provider.commands
+    );
     amux_ui::update(
         &mut model,
         batch(AGENT, 101, vec![json!({"type":"conversation_reset"})]),
@@ -279,6 +360,7 @@ fn claude_sdk_runtime_sequences_replay_and_capture_public_state() {
             std::fs::create_dir_all(&path).unwrap();
             let (model, effects) = fold_with_effects(msgs);
             let capture = json!({"session":model.claude_sdk(agent_id(AGENT)).map(|l|l.session()),
+                "provider": amux_ui::provider::facts(&model, agent_id(AGENT)),
                 "context_breakdown":model.claude_sdk(agent_id(AGENT)).and_then(|l|l.context_breakdown()),
                 "attachments":model.claude_sdk(agent_id(AGENT)).map(|l|l.attachments()),
                 "effects":effects,"family_needs":model.family_needs(agent_id("lead")).iter().map(|n|json!({"agent":n.card.agent.name,"why":n.why})).collect::<Vec<_>>()});

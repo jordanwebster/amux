@@ -1363,13 +1363,40 @@ selection. Host settings rows confirm the selection without adding feed entries;
 the configuration survives reconnect and applies to subsequent turns, including
 empty turns. Claude PTY reports its observed permission mode, but refuses these
 settings commands with `PtySettingsUnavailable`. Its existing semantic permission
-cycle remains separate. Claude SDK chat is still unsupported in this build.
+cycle remains separate.
+
+Claude SDK sessions accept `ClaudeSdkV1Input::SetEffort` on the same live
+control channel as model and permission changes. It sends
+`apply_flag_settings` with `settings.effortLevel`; there is no invented
+`set_effort` provider subtype. The upstream SDK documents this runtime control
+and nullable override clearing, including `max` support before the recorded
+0.3.247 revision (see the [SDK changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md),
+0.3.214 and 0.2.132). A failed control leaves the published selection unchanged.
+An acknowledgement publishes the selected effort for subsequent work. Clearing
+the override publishes unknown effort until the provider reports a concrete
+value; it does not guess the model's default. These controls do not restart the
+session or rewrite user settings.
+
+The SDK initialization reply's `Session::supported_commands()` supplies command
+names in the first synthesized session-facts row, before a prompt is sent.
+The shared client retains them independently of transcript eviction and exposes
+them as `ProviderFacts.commands`, attributed to Claude because this reply does
+not identify a command's plugin source. The provider's system-init terminal-only
+list supplies command flags when reported. Every later synthesized facts row
+carries those flags, including when a client opens only the retained tail.
+A selected SDK command uses the existing
+`Prompt` input containing `/name` followed by its arguments. Claude's headless
+stream-JSON protocol dispatches slash prompts; the recorded compact and clear
+sessions exercise that route. It has no dedicated command control request.
+The SDK backend's duplex test observes `/compact keep the decisions` at the
+provider stdin boundary, alongside successful, rejected and cleared effort
+controls. This proves protocol dispatch, not a new authenticated provider run.
 
 Codex command discovery lists enabled, uniquely named skills in the session's
 working directory. Each `ProviderCommand` names its source (`Claude`, `Codex`
 or a plugin) and whether it is terminal-only. Claude PTY reports an empty list.
-A selected command is a `DraftSegment::CommandToken` followed by text arguments,
-not slash-prefixed prompt text. The token must be first and unique; the host
+A selected Codex command is a `DraftSegment::CommandToken` followed by text
+arguments. The token must be first and unique; the host
 resolves the skill path and sends a typed provider skill item with the exact
 arguments. Unknown, disabled, ambiguous, terminal-only or stale choices refuse
 delivery. Queue replacement, cancellation and delivery preserve that token;

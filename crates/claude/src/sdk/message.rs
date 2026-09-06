@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::sdk::error::ProtocolError;
 use crate::sdk::types::{
     ApiKeySource, ApiMessage, AssistantMessageError, CompactTrigger, Extensions, MessageParam,
-    ModelUsage, PermissionDenial, PermissionMode, RawFrame, StreamEvent, Usage,
+    ModelUsage, PermissionDenial, PermissionMode, RawFrame, StreamEvent, Usage, present_nullable,
 };
 
 macro_rules! wire_struct {
@@ -445,7 +445,7 @@ wire_struct!(SystemInitMessage {
     #[serde(default,skip_serializing_if="Option::is_none")] pub terminal_slash_commands:Option<Vec<String>>,
     pub output_style:String,pub skills:Vec<String>,pub plugins:Vec<PluginInfo>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub capabilities:Option<Vec<String>>,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub effort:Option<String>,
+    #[serde(default,deserialize_with="present_nullable",skip_serializing_if="Option::is_none")] pub effort:Option<Option<String>>,
 });
 wire_struct!(McpServerInfo { pub name:String,pub status:String, });
 wire_struct!(PluginInfo { pub name:String,pub path:String,#[serde(default,skip_serializing_if="Option::is_none")] pub version:Option<String>, });

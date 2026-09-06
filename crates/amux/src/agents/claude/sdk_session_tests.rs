@@ -36,7 +36,7 @@ async fn claude_sdk_controls_publish_facts_and_only_explicit_context_requests() 
         acknowledge(
             &mut stdout,
             &init,
-            json!({"commands": [], "agents": [], "models": [],
+            json!({"commands": [{"name": "compact", "description": "Compact context", "argumentHint": "[instructions]"}], "agents": [], "models": [],
             "account": {}, "output_style": "default", "available_output_styles": []}),
         )
         .await;
@@ -60,8 +60,23 @@ async fn claude_sdk_controls_publish_facts_and_only_explicit_context_requests() 
         let reset = read_json_line(&mut stdin).await;
         assert_eq!(reset["request"], json!({"subtype": "set_model"}));
         acknowledge(&mut stdout, &reset, json!({})).await;
+        for effort in [json!("high"), json!("max"), json!(null)] {
+            let request = read_json_line(&mut stdin).await;
+            assert_eq!(
+                request["request"],
+                json!({"subtype": "apply_flag_settings", "settings": {"effortLevel": effort}})
+            );
+            if effort == "max" {
+                write_json_line(&mut stdout, json!({"type": "control_response", "response": {
+                    "subtype": "error", "request_id": request["request_id"], "error": "effort unavailable"
+                }})).await;
+            } else {
+                acknowledge(&mut stdout, &request, json!({})).await;
+            }
+        }
         let prompt = read_json_line(&mut stdin).await;
         assert_eq!(prompt["type"], "user");
+        assert_eq!(prompt["message"]["content"], "/compact keep the decisions");
         write_json_line(&mut stdout, json!({"type": "assistant", "uuid": id, "session_id": id.to_string(),
             "parent_tool_use_id": null, "message": {"id": "msg", "type": "message", "role": "assistant",
             "model": "launch", "content": [{"type": "text", "text": "done"}],
@@ -117,7 +132,7 @@ async fn claude_sdk_controls_publish_facts_and_only_explicit_context_requests() 
     assert_eq!(
         rows[1],
         json!({"type": "amux.claude_sdk.session_facts", "model": "launch",
-        "permission_mode": "default", "context": null, "mcp_servers": []})
+        "effort": null, "slash_commands": ["compact"], "terminal_slash_commands": [], "permission_mode": "default", "context": null, "mcp_servers": []})
     );
     for (name, command, expected_model, expected_mode, ok) in [
         (
@@ -187,11 +202,42 @@ async fn claude_sdk_controls_publish_facts_and_only_explicit_context_requests() 
         );
         rows.push(result);
     }
+    for (effort, expected, ok) in [
+        (Some(claude::sdk::Effort::High), Some("high"), true),
+        (Some(claude::sdk::Effort::Max), Some("high"), false),
+        (None, None, true),
+    ] {
+        input
+            .send(StructuredInputEvent::ClaudeSdk {
+                input_id: b"effort".to_vec(),
+                input: ClaudeSdkV1Input::SetEffort { effort },
+            })
+            .await
+            .unwrap();
+        if ok {
+            let facts = reader.read().await.unwrap().payload;
+            assert_eq!(facts["type"], "amux.claude_sdk.session_facts");
+            assert_eq!(facts["effort"], json!(expected));
+            assert_eq!(facts["slash_commands"], json!(["compact"]));
+            rows.push(facts);
+        }
+        let result = reader.read().await.unwrap().payload;
+        assert_eq!(result["type"], "amux.claude_sdk.input_result");
+        assert_eq!(result["outcome"] == "ok", ok);
+        assert_eq!(
+            backend.runtime.lock().unwrap().facts.effort.as_deref(),
+            expected
+        );
+        rows.push(result);
+    }
     input
         .send(StructuredInputEvent::ClaudeSdk {
             input_id: b"prompt".to_vec(),
             input: ClaudeSdkV1Input::Prompt {
-                text: "go".into(),
+                text: format!(
+                    "/{} keep the decisions",
+                    rows[1]["slash_commands"][0].as_str().unwrap()
+                ),
                 image_blocks: vec![],
             },
         })

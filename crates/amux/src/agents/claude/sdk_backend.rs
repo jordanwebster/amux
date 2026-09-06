@@ -462,6 +462,9 @@ async fn ingest_session(
     {
         let mut state = runtime.lock().expect("Claude SDK runtime poisoned");
         state.session_id = session_id.parse().ok();
+        state
+            .facts
+            .initialize_commands(control.supported_commands().unwrap_or_default());
         state.control = Some(control.clone());
     }
     if resumed {
@@ -759,6 +762,15 @@ impl ClaudeSdkInputTarget {
                     let mut state = self.runtime.lock().expect("Claude SDK runtime poisoned");
                     state.facts.model = model.or_else(|| state.facts.launch_model.clone());
                 }
+                write_session_facts(&self.runtime, &self.log).await;
+            }
+            ClaudeSdkV1Input::SetEffort { effort } => {
+                control.set_effort(effort.clone()).await?;
+                self.runtime
+                    .lock()
+                    .expect("Claude SDK runtime poisoned")
+                    .facts
+                    .effort = effort.map(|effort| effort.as_str().to_owned());
                 write_session_facts(&self.runtime, &self.log).await;
             }
             ClaudeSdkV1Input::RequestContextBreakdown => {

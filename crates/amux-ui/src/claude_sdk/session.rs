@@ -9,10 +9,12 @@ use super::ClaudeSdkLayer;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SessionFacts {
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub permission_mode: Option<String>,
     pub context: Option<ContextMeter>,
     pub mcp_servers: Vec<McpServerFact>,
     pub slash_commands: Vec<String>,
+    pub terminal_slash_commands: Vec<String>,
 }
 
 pub(super) fn observe(layer: &mut ClaudeSdkLayer, row: &Value) {
@@ -22,6 +24,11 @@ pub(super) fn observe(layer: &mut ClaudeSdkLayer, row: &Value) {
     match row["type"].as_str().unwrap_or("") {
         "amux.claude_sdk.session_facts" => {
             layer.session.model = row["model"].as_str().map(str::to_owned);
+            layer.session.effort = row["effort"].as_str().map(str::to_owned);
+            layer.session.terminal_slash_commands =
+                serde_json::from_value(row["terminal_slash_commands"].clone()).unwrap_or_default();
+            layer.session.slash_commands =
+                serde_json::from_value(row["slash_commands"].clone()).unwrap_or_default();
             layer.session.permission_mode = row["permission_mode"].as_str().map(str::to_owned);
             layer.session.context = serde_json::from_value(row["context"].clone()).ok();
             layer.session.mcp_servers =
@@ -34,6 +41,8 @@ pub(super) fn observe(layer: &mut ClaudeSdkLayer, row: &Value) {
                 serde_json::from_value(row["mcp_servers"].clone()).unwrap_or_default();
             layer.session.slash_commands =
                 serde_json::from_value(row["slash_commands"].clone()).unwrap_or_default();
+            layer.session.terminal_slash_commands =
+                serde_json::from_value(row["terminal_slash_commands"].clone()).unwrap_or_default();
         }
         "amux.claude_sdk.context_breakdown" => {
             layer.context_breakdown = serde_json::from_value(row["usage"].clone()).ok();

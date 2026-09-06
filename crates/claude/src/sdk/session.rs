@@ -185,6 +185,12 @@ impl Control {
         Ok(())
     }
 
+    /// Change effort for subsequent work; `None` clears the session override.
+    pub async fn set_effort(&self, effort: Option<crate::sdk::Effort>) -> Result<(), Error> {
+        self.apply_flag_settings(serde_json::json!({ "effortLevel": effort }))
+            .await
+    }
+
     pub async fn set_mcp_permission_mode_override(
         &self,
         server_name: &str,

@@ -52,6 +52,9 @@ pub enum ClaudeSdkV1Input {
     SetModel {
         model: Option<String>,
     },
+    SetEffort {
+        effort: Option<claude::sdk::Effort>,
+    },
     RequestContextBreakdown,
     PermissionDecision {
         request_id: String,
@@ -113,6 +116,9 @@ pub enum ClaudeSdkSynthesized {
     #[serde(rename = "amux.claude_sdk.session_facts")]
     SessionFacts {
         model: Option<String>,
+        effort: Option<String>,
+        slash_commands: Vec<String>,
+        terminal_slash_commands: Vec<String>,
         permission_mode: Option<String>,
         context: Option<ContextMeter>,
         mcp_servers: Vec<McpServerFact>,
@@ -264,6 +270,15 @@ pub(crate) fn decode_claude_sdk_v1_input(
         wire::claude_sdk_v1_input::Input::SetModel(input) => {
             Ok(ClaudeSdkV1Input::SetModel { model: input.model })
         }
+        wire::claude_sdk_v1_input::Input::SetEffort(input) => Ok(ClaudeSdkV1Input::SetEffort {
+            effort: input
+                .effort
+                .map(|value| {
+                    serde_json::from_value(Value::String(value))
+                        .map_err(|error| invalid_input(format!("invalid effort: {error}")))
+                })
+                .transpose()?,
+        }),
         wire::claude_sdk_v1_input::Input::RequestContextBreakdown(_) => {
             Ok(ClaudeSdkV1Input::RequestContextBreakdown)
         }
@@ -337,6 +352,11 @@ pub fn encode_claude_sdk_v1_input(input: ClaudeSdkV1Input) -> Result<Vec<u8>, Pr
         }
         ClaudeSdkV1Input::SetModel { model } => {
             wire::claude_sdk_v1_input::Input::SetModel(wire::ClaudeSdkSetModel { model })
+        }
+        ClaudeSdkV1Input::SetEffort { effort } => {
+            wire::claude_sdk_v1_input::Input::SetEffort(wire::ClaudeSdkSetEffort {
+                effort: effort.map(|effort| effort.as_str().to_owned()),
+            })
         }
         ClaudeSdkV1Input::RequestContextBreakdown => {
             wire::claude_sdk_v1_input::Input::RequestContextBreakdown(
@@ -634,6 +654,16 @@ mod tests {
                 vec![130, 1, 2, 10, 0],
             ),
             (ClaudeSdkV1Input::RequestContextBreakdown, vec![138, 1, 0]),
+            (
+                ClaudeSdkV1Input::SetEffort {
+                    effort: Some(claude::sdk::Effort::High),
+                },
+                vec![146, 1, 6, 10, 4, b'h', b'i', b'g', b'h'],
+            ),
+            (
+                ClaudeSdkV1Input::SetEffort { effort: None },
+                vec![146, 1, 0],
+            ),
         ] {
             let shape = input_as_json(&input);
             let bytes = encode_claude_sdk_v1_input(input).unwrap();
@@ -641,6 +671,43 @@ mod tests {
             assert_eq!(
                 input_as_json(&decode_claude_sdk_v1_input(&bytes).unwrap()),
                 shape
+            );
+        }
+    }
+
+    #[test]
+    fn claude_sdk_effort_rejects_unknown_wire_values() {
+        for effort in ["", "turbo"] {
+            let payload = wire::ClaudeSdkV1Input {
+                input: Some(wire::claude_sdk_v1_input::Input::SetEffort(
+                    wire::ClaudeSdkSetEffort {
+                        effort: Some(effort.into()),
+                    },
+                )),
+            }
+            .encode_to_vec();
+            assert!(
+                decode_claude_sdk_v1_input(&payload)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("invalid effort")
+            );
+        }
+        for effort in [
+            claude::sdk::Effort::Low,
+            claude::sdk::Effort::Medium,
+            claude::sdk::Effort::High,
+            claude::sdk::Effort::Xhigh,
+            claude::sdk::Effort::Max,
+        ] {
+            let input = ClaudeSdkV1Input::SetEffort {
+                effort: Some(effort),
+            };
+            let expected = input_as_json(&input);
+            let bytes = encode_claude_sdk_v1_input(input).unwrap();
+            assert_eq!(
+                input_as_json(&decode_claude_sdk_v1_input(&bytes).unwrap()),
+                expected
             );
         }
     }
@@ -708,6 +775,9 @@ mod tests {
             (
                 ClaudeSdkSynthesized::SessionFacts {
                     model: Some("model".into()),
+                    effort: Some("high".into()),
+                    slash_commands: vec!["compact".into()],
+                    terminal_slash_commands: vec![],
                     permission_mode: Some("plan".into()),
                     context: Some(ContextMeter {
                         used_tokens: 42,
@@ -719,18 +789,21 @@ mod tests {
                         status: "connected".into(),
                     }],
                 },
-                json!({"type": "amux.claude_sdk.session_facts", "model": "model", "permission_mode": "plan",
+                json!({"type": "amux.claude_sdk.session_facts", "model": "model", "effort": "high", "slash_commands": ["compact"], "terminal_slash_commands": [], "permission_mode": "plan",
                     "context": {"used_tokens": 42, "window_tokens": 200000, "source": "assistant_usage"},
                     "mcp_servers": [{"name": "tools", "status": "connected"}]}),
             ),
             (
                 ClaudeSdkSynthesized::SessionFacts {
                     model: None,
+                    effort: None,
+                    slash_commands: vec![],
+                    terminal_slash_commands: vec![],
                     permission_mode: None,
                     context: None,
                     mcp_servers: vec![],
                 },
-                json!({"type": "amux.claude_sdk.session_facts", "model": null, "permission_mode": null, "context": null, "mcp_servers": []}),
+                json!({"type": "amux.claude_sdk.session_facts", "model": null, "effort": null, "slash_commands": [], "terminal_slash_commands": [], "permission_mode": null, "context": null, "mcp_servers": []}),
             ),
             (
                 ClaudeSdkSynthesized::Ready {
@@ -893,6 +966,9 @@ mod tests {
                 json!({"type": "set_permission_mode", "mode": mode})
             }
             ClaudeSdkV1Input::SetModel { model } => json!({"type": "set_model", "model": model}),
+            ClaudeSdkV1Input::SetEffort { effort } => {
+                json!({"type": "set_effort", "effort": effort})
+            }
             ClaudeSdkV1Input::RequestContextBreakdown => {
                 json!({"type": "request_context_breakdown"})
             }

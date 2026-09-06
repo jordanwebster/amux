@@ -102,6 +102,22 @@ pub fn settings_gate(model: &Model, agent: AgentId) -> SettingsGate {
     }
 }
 pub fn facts(model: &Model, agent: AgentId) -> ProviderFacts {
+    if let Some(layer) = model.claude_sdk(agent) {
+        let session = layer.session();
+        return ProviderFacts {
+            effort: session.effort.clone(),
+            commands: session
+                .slash_commands
+                .iter()
+                .map(|name| ProviderCommand {
+                    name: name.clone(),
+                    source: CommandSource::Claude,
+                    terminal_only: session.terminal_slash_commands.contains(name),
+                })
+                .collect(),
+            ..ProviderFacts::default()
+        };
+    }
     if let Some(layer) = model.codex(agent) {
         return layer.provider_facts().clone();
     }

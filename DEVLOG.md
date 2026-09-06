@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Claude SDK sessions expose effort changes and initialized commands.**
+The existing SDK layer now accepts a typed effort input and dispatches the
+provider's `apply_flag_settings` control with `effortLevel`. Successful controls
+publish session facts; rejection preserves the previous selection, and clearing
+the override leaves the default unknown until Claude reports it. Provider init
+messages preserve the distinction between omitted effort and explicit null.
+The initialization command list reaches shared provider facts before the first
+turn, and later snapshots retain provider-reported terminal-only flags even when
+a client opens only the retained tail. Selected slash commands use the existing SDK prompt route. Wire tests,
+duplex provider tests and client replay tests cover the controls and facts;
+the recorded session outputs include the new fields without changing existing
+provider messages. Protocol bindings are regenerated. Formatting, lint, the SDK
+tests and all 408 host/client prose specifications pass locally. Shared mobile SDK actions
+and queue integration remain separate work.
+
 2026-09-06 — **The Claude SDK chat joins the native app’s shared core.**
 The reviewed SDK implementation now lives beside the phone’s queue, typed
 Codex settings and commands, confirmed Claude task lists, repository discovery,

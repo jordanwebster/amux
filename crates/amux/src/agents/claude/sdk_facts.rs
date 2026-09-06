@@ -10,6 +10,9 @@ use super::sdk_io::{ClaudeSdkSynthesized, ContextMeter, ContextMeterSource, McpS
 pub(super) struct SessionFacts {
     pub model: Option<String>,
     pub launch_model: Option<String>,
+    pub effort: Option<String>,
+    pub slash_commands: Vec<String>,
+    terminal_slash_commands: Vec<String>,
     pub permission_mode: Option<String>,
     pub bypass_granted: bool,
     context: Option<ContextMeter>,
@@ -19,6 +22,13 @@ pub(super) struct SessionFacts {
 }
 
 impl SessionFacts {
+    pub fn initialize_commands(&mut self, commands: &[claude::sdk::init::SlashCommand]) {
+        self.slash_commands = commands
+            .iter()
+            .map(|command| command.name.clone())
+            .collect();
+    }
+
     pub fn from_args(args: &[String]) -> Self {
         let value = |flag: &str| {
             args.iter().enumerate().find_map(|(index, arg)| {
@@ -38,6 +48,7 @@ impl SessionFacts {
         Self {
             model: launch_model.clone(),
             launch_model,
+            effort: value("--effort"),
             permission_mode: if skip {
                 Some("bypassPermissions".into())
             } else {
@@ -61,6 +72,9 @@ impl SessionFacts {
     pub fn row(&self) -> ClaudeSdkSynthesized {
         ClaudeSdkSynthesized::SessionFacts {
             model: self.model.clone(),
+            effort: self.effort.clone(),
+            slash_commands: self.slash_commands.clone(),
+            terminal_slash_commands: self.terminal_slash_commands.clone(),
             permission_mode: self.permission_mode.clone(),
             context: self.context.clone(),
             mcp_servers: self.mcp_servers.clone(),
@@ -75,6 +89,11 @@ impl SessionFacts {
                     self.launch_model = Some(init.model.clone());
                 }
                 self.model = Some(init.model.clone());
+                self.terminal_slash_commands =
+                    init.terminal_slash_commands.clone().unwrap_or_default();
+                if let Some(effort) = &init.effort {
+                    self.effort = effort.clone();
+                }
                 self.permission_mode = Some(init.permission_mode.as_str().into());
                 self.mcp_servers = init
                     .mcp_servers
@@ -168,6 +187,49 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn claude_sdk_facts_publish_initialized_commands_before_any_turn() {
+        let reply: claude::sdk::InitializationResult = serde_json::from_value(json!({
+            "commands": [
+                {"name": "compact", "description": "Compact context", "argumentHint": "[instructions]"},
+                {"name": "tools:review", "description": "Review changes", "argumentHint": ""}
+            ],
+            "agents": [], "models": [], "account": {},
+            "output_style": "default", "available_output_styles": []
+        })).unwrap();
+        let mut facts = SessionFacts::from_args(&["--effort=low".into()]);
+        facts.initialize_commands(&reply.commands);
+        let row = serde_json::to_value(facts.row()).unwrap();
+        assert_eq!(row["slash_commands"], json!(["compact", "tools:review"]));
+        assert_eq!(row["effort"], "low");
+        let observed = Message::parse(json!({
+            "type": "system", "subtype": "init", "uuid": uuid::Uuid::nil(),
+            "session_id": "session", "apiKeySource": "none", "claude_code_version": "2.1.247",
+            "cwd": "/", "tools": [], "mcp_servers": [], "model": "model",
+            "permissionMode": "default", "slash_commands": [], "output_style": "default",
+            "terminal_slash_commands": ["tools:review"],
+            "skills": [], "plugins": [], "effort": "medium"
+        }))
+        .unwrap();
+        assert!(facts.observe(&observed));
+        let row = serde_json::to_value(facts.row()).unwrap();
+        assert_eq!(row["effort"], "medium");
+        assert_eq!(row["slash_commands"], json!(["compact", "tools:review"]));
+        assert_eq!(row["terminal_slash_commands"], json!(["tools:review"]));
+        let mut raw = serde_json::to_value(&observed).unwrap();
+        raw.as_object_mut().unwrap().remove("effort");
+        facts.observe(&Message::parse(raw.clone()).unwrap());
+        assert_eq!(facts.effort.as_deref(), Some("medium"));
+        raw["effort"] = json!(null);
+        let cleared = Message::parse(raw).unwrap();
+        assert_eq!(
+            serde_json::to_value(&cleared).unwrap()["effort"],
+            json!(null)
+        );
+        facts.observe(&cleared);
+        assert!(facts.effort.is_none());
+    }
 
     #[test]
     fn claude_sdk_bypass_requires_an_explicit_launch_grant() {

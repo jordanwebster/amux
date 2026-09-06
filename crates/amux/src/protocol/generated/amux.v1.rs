@@ -198,7 +198,7 @@ pub struct ClaudeSdkV1Output {
 pub struct ClaudeSdkV1Input {
     #[prost(
         oneof = "claude_sdk_v1_input::Input",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18"
     )]
     pub input: ::core::option::Option<claude_sdk_v1_input::Input>,
 }
@@ -222,6 +222,8 @@ pub mod claude_sdk_v1_input {
         SetModel(super::ClaudeSdkSetModel),
         #[prost(message, tag = "17")]
         RequestContextBreakdown(super::ClaudeSdkRequestContextBreakdown),
+        #[prost(message, tag = "18")]
+        SetEffort(super::ClaudeSdkSetEffort),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -295,6 +297,12 @@ pub struct ClaudeSdkSetModel {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkRequestContextBreakdown {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkSetEffort {
+    /// Absent clears the session effort override.
+    #[prost(string, optional, tag = "1")]
+    pub effort: ::core::option::Option<::prost::alloc::string::String>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ClaudeDriver {
