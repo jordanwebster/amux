@@ -11,6 +11,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-06 — **Open installations on Windows without directory-file syncing.**
+Configuration creation now syncs its parent directory only on Unix, matching
+registry, credential and update-journal writes. Windows had returned AccessDenied
+after the configuration was already written, preventing installation startup.
+Registry replacement tests now cover each platform's open-reader behavior:
+Unix retains the old reader across replacement; Windows refuses replacement,
+preserves both memory and disk, cleans staging files and succeeds after the
+reader closes. All 40 installation tests pass locally, along with formatting
+and workspace lint.
+
 2026-09-06 — **Replay cleanup drains trailing events until delivery completes.**
 A recorded tail larger than the transport buffers must still drain after the
 scenario's assertions finish. Cleanup now consumes pending events while the
