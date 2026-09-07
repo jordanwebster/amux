@@ -157,6 +157,18 @@ def forget_cache(udid: str) -> None:
         shutil.rmtree(cache, ignore_errors=True)
 
 
+def forget_pairings(udid: str) -> None:
+    """Gives the phone a new identity, trusting nobody.
+
+    The trust a pairing writes lives beside the runtime's key in the app's
+    container and outlives the run that wrote it, so a simulator that has been
+    through many journeys is a phone paired with every machine any of them
+    started. A journey that asserts what a paired phone shows has to say which
+    machines those are, and the only way to say it is to begin with none.
+    """
+    shutil.rmtree(container(udid) / "tmp/door-data", ignore_errors=True)
+
+
 def scratch_repository(name: str, committed: dict[str, str], edited: dict[str, str]) -> Path:
     """A repository with one commit in it and an uncommitted change on top.
 
@@ -581,12 +593,19 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     identities for those agents and machines, so the file on disk is what a
     previous run would have left rather than something invented beside it.
 
-    Five launches, because there are five situations and each one is a launch
-    of the application rather than a state somebody set: remembering with the
-    relay dead, reaching the machines, reaching them again after one of them
-    has been made to say something, remembering nothing at all, and opening a
-    conversation and the drawer over it. The last one is a UI test rather than
-    a door conversation, because it is the one made of taps.
+    The phone pairs with both machines first, through the protocol itself:
+    each machine is asked to offer, the phone authenticates that offer against
+    the machine that made it, and trust is written only against the attempt
+    the machine answered with. Nothing is copied into the simulator — an
+    unpaired phone is disowned by every machine on the relay, so a journey
+    that skipped this would be asserting about an empty screen.
+
+    Six launches, because there are six situations and each one is a launch of
+    the application rather than a state somebody set: pairing, remembering with
+    the relay dead, reaching the machines, reaching them again after one of
+    them has been made to say something, remembering nothing at all, and
+    opening a conversation and the drawer over it. The last one is a UI test
+    rather than a door conversation, because it is the one made of taps.
     """
     daemons = {daemon["name"]: daemon["host_id"] for daemon in ready["daemons"]}
     running = {agent["name"]: agent for agent in ready["agents"]}
@@ -635,7 +654,36 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
 
     install(udid)
 
-    # MARK: One — what a phone remembers when it cannot reach anything.
+    # MARK: Zero — the phone pairs with both machines, in the two phases the
+    # protocol has. The trust is written into the runtime's own directory, so
+    # every launch after this one is a launch of a paired phone.
+    control(ready["control"], "CloudOnline")
+    forget_cache(udid)
+    forget_pairings(udid)
+    codes = {name: answer(ready["control"],
+                          {"StartPinPairing": {"daemon": name, "ttl_secs": 600}})["pin"]
+             for name in sorted(daemons)}
+    answers = speak(journey, "pairing", [
+        {"kind": "connect", "relay": relay, "token": token, "user": "journey-phone"},
+        # A machine can only be asked to prove it printed a code once the relay
+        # carrying the question is up, and the phone only learns which machines
+        # are offering from that same relay. A connection returns before its
+        # session does, so the first thing a pairing waits for is the link.
+        {"kind": "awaitReconciled", "seconds": 90},
+        *[{"kind": "pairByCode", "host": daemons[name], "pin": code}
+          for name, code in codes.items()],
+        {"kind": "shutdown"},
+    ])
+    refused(journey, answers)
+    trusted = sorted(reply["host"] for reply in answers if reply["kind"] == "paired")
+    journey.expect(trusted == sorted(daemons),
+                   f"the phone paired with {trusted} and the runner is running "
+                   f"{sorted(daemons)}")
+    journey.say(f"paired with {' and '.join(trusted)} by the codes they printed, each in the "
+                f"two phases the protocol has: the code authenticated against the machine that "
+                f"printed it, then the trust written against the attempt it answered with")
+
+    # MARK: One — what a paired phone shows when it cannot reach anything.
     control(ready["control"], "CloudOffline")
     seed()
     journey.say(f"the runner is running {len(running)} agents on "
@@ -702,24 +750,17 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     # The relay is down and the connection says so rather than hanging.
     journey.expect(dead["connection"] == "disconnected",
                    f"the connection did not report itself gone: {dead}")
-    # What a phone that cannot pair is left with, said plainly because it is
-    # not what the screen is meant to do. Opening a connection at all — to a
-    # dead relay as much as to a live one — makes this phone's own runtime
-    # report a fleet with nothing in it, and the shared cache reads a card
-    # whose machine is absent from a settled model as one this device is no
-    # longer paired with, so every remembered row is dropped. The one line
-    # that says a phone is offline lives above the rows, so it cannot be shown
-    # until a row can survive a connection, which is until a phone can pair.
-    journey.expect(named(unreachable, "home.empty.title") is not None,
-                   f"a failed connection left something other than the empty home: "
-                   f"{[element['identifier'] for element in unreachable['elements']]}")
-    journey.expect(not rows(unreachable),
-                   f"{len(rows(unreachable))} rows survived a connection this phone is not "
-                   f"paired for")
-    journey.say("the relay is down and the connection reports itself gone; opening one at all "
-                "drops what this phone remembered, because it is paired with neither machine "
-                "and its own runtime answers for no agents — so the line that says a phone is "
-                "offline, which lives above the rows, waits on pairing too")
+    # A relay nobody can reach is not a reason to throw away what this phone
+    # knows. The rows are still the rows, in the order they were in, and the
+    # one line a home is allowed above them says the one thing that is wrong.
+    placed(unreachable, "the relay going down moved the rows this phone remembers")
+    line = named(unreachable, "home.exceptions")
+    journey.expect(line is not None and (line.get("value") or "").startswith("Offline"),
+                   f"the offline exceptions line is not above the rows: "
+                   f"{None if line is None else line.get('value')!r}")
+    journey.say(f"the relay is down and the connection reports itself gone; all "
+                f"{len(rows(unreachable))} remembered rows are still on screen in the same "
+                f"order, under {line['value']!r}")
 
     # MARK: Two — the machines answer.
     control(ready["control"], "CloudOnline")
@@ -747,29 +788,24 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect(set(reached["discovered"]) == set(daemons),
                    f"the phone saw {reached['discovered']} and the runner is running "
                    f"{sorted(daemons)}")
-    surviving = [row["identifier"] for row in rows(confirmed)]
-    journey.expect(surviving == [row for row in expected if row in surviving],
-                   f"confirming the fleet moved the list: it was {expected} and is now "
-                   f"{surviving}")
+    # Every row this phone remembered is confirmed by the machine that owns
+    # it, and confirming it does not move it: the list is the same list, in
+    # the same order, with nothing left shimmering.
+    surviving = placed(confirmed, "confirming the fleet moved the list")
     journey.expect(confirmed["shimmering"] == 0,
                    f"{confirmed['shimmering']} rows were still drawn as remembered after the "
                    f"fleet was confirmed")
+    journey.expect(confirmed["reconciled"],
+                   "the fleet was drawn as confirmed by no machine")
+    journey.expect(named(confirmed, "home.exceptions") is None,
+                   f"a home with both machines answering still showed an exceptions line: "
+                   f"{(named(confirmed, 'home.exceptions') or {}).get('value')!r}")
     for signpost in ("streamConnected", "reconciled"):
         journey.expect(any(mark["signpost"] == signpost for mark in marks),
                        f"{signpost} was never marked: {[mark['signpost'] for mark in marks]}")
-    # Said plainly, because it is the one thing this journey cannot yet show:
-    # a remembered row goes solid when the machine that owns it answers for it,
-    # and a machine only answers for a device it is paired with. Pairing from
-    # the phone is not built, so both machines disown everything this phone
-    # remembered and the confirmed list is empty. What survives keeps its
-    # place, which is all this can assert until a phone can pair; that a row
-    # confirms on its own machine's answer is proven where it happens, in the
-    # shared library's cache tests and the fleet store's own tests.
-    journey.expect(named(confirmed, "home.empty.title") is not None,
-                   "the confirmed fleet is not empty and the empty screen is not on show")
     journey.say(f"connected to the relay, reached {', '.join(sorted(reached['discovered']))}, "
-                f"fleet confirmed with {len(surviving)} of {len(remembered)} rows left — this "
-                f"phone is paired with neither machine, so both disown what it remembered")
+                f"and all {len(surviving)} remembered rows went solid where they stood as "
+                f"their own machines answered for them — nothing moved, nothing was dropped")
 
     # MARK: Three — one of the machines says something, and nothing regroups.
     control(ready["control"], {"AgentEmit": {"agent": "fix-login",

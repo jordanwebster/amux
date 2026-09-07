@@ -10,7 +10,7 @@
       "id": "home",
       "stage": 5,
       "topology": "e2e-tests/topologies/home-fleet.json",
-      "claim": "Six agents on two machines the runner is running: before it has reached anything the phone draws the ones it remembers, the two that need an answer at the top and the one waiting longest first; a real connection reaches both machines and confirms the fleet without moving what survives, and a turn emitted by one of them changes nothing about the order; a phone that remembers nothing shows the home empty; and opening the row at the top reaches the whole fleet from a drawer over the conversation and comes back."
+      "claim": "Six agents on two machines the runner is running, on a phone that pairs with both of them through the protocol itself: before it has reached anything the phone draws the ones it remembers, the two that need an answer at the top and the one waiting longest first; a real connection reaches both machines and every remembered row goes solid where it stands as its own machine answers for it, a turn emitted by one of them changes nothing about the order, and taking the relay away leaves every row on screen under the one line that says the phone is offline; a phone that remembers nothing shows the home empty; and opening the row at the top reaches the whole fleet from a drawer over the conversation and comes back."
     },
     {
       "id": "conversation",

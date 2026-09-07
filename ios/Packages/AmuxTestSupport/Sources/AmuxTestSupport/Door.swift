@@ -77,10 +77,21 @@ public enum DoorRequest: Sendable, Equatable {
     /// already connected to.
     ///
     /// A person pairs a phone by reading a code off a machine, on a screen
-    /// that names the host and its fingerprint before anything is written. A
-    /// driver proving what a paired phone shows needs the trust rather than
-    /// the ceremony, and needs it before that screen exists.
+    /// that names the host and its fingerprint before anything is written.
+    /// This takes both of the steps that screen takes — authenticate the
+    /// payload against the machine, then write trust against the attempt the
+    /// machine answered with — and skips only the person in the middle of
+    /// them. A driver proving what a paired phone shows gets the trust the
+    /// product's own path writes, not a shortcut around it.
     case pair(qr: String)
+    /// Pair with one machine by the six-digit code it printed, over the relay
+    /// this app is already connected to.
+    ///
+    /// The same two steps and the same store the pairing screen uses, driven
+    /// from the machine the relay offered rather than from a tap: a code
+    /// proves possession of one machine's offer, so the machine is found among
+    /// the ones the relay is offering before its code is tried against it.
+    case pairByCode(host: String, pin: String)
     /// Ask the host holding an agent for the changes its working tree has
     /// against a base — a branch or a commit, or the working tree itself when
     /// the base is empty. The host computes the diff; the phone draws it.
@@ -294,7 +305,7 @@ extension DoorRequest: Codable {
     private enum Key: String, CodingKey {
         case kind, screen, fixture, cloud, relay, token, user, appearance, size, path
         case identifier, text, seconds, qr, agent, base, prose, from, to
-        case attachment, name, mime, base64
+        case attachment, name, mime, base64, host, pin
     }
 
     public init(from decoder: any Decoder) throws {
@@ -352,6 +363,10 @@ extension DoorRequest: Codable {
                 base64: try fields.decode(String.self, forKey: .base64))
         case "pair":
             self = .pair(qr: try fields.decode(String.self, forKey: .qr))
+        case "pairByCode":
+            self = .pairByCode(
+                host: try fields.decode(String.self, forKey: .host),
+                pin: try fields.decode(String.self, forKey: .pin))
         case "requestChanges":
             self = .requestChanges(
                 agent: try fields.decode(String.self, forKey: .agent),
@@ -448,6 +463,10 @@ extension DoorRequest: Codable {
         case .pair(let qr):
             try fields.encode("pair", forKey: .kind)
             try fields.encode(qr, forKey: .qr)
+        case .pairByCode(let host, let pin):
+            try fields.encode("pairByCode", forKey: .kind)
+            try fields.encode(host, forKey: .host)
+            try fields.encode(pin, forKey: .pin)
         case .requestChanges(let agent, let base):
             try fields.encode("requestChanges", forKey: .kind)
             try fields.encode(agent, forKey: .agent)

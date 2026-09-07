@@ -11025,3 +11025,32 @@ card with no list has no chevron.
 When the machine says the agent exists, it goes into the fleet directly rather
 than waiting for the next inventory, and the conversation that opens can name
 where it runs from the first frame.
+
+2026-09-07 — **The home journey runs on a phone that really paired.** It used
+to say, in its own transcript, that it could not show the thing it was for: an
+unpaired phone is disowned by every machine on the relay, so connecting dropped
+every remembered row and the screen went empty. Now the journey pairs first,
+with both machines, by the six-digit codes they print — the code is
+authenticated against the machine that printed it, and trust is written only
+against the attempt that machine answered with. Nothing is copied into the
+simulator.
+
+What that makes assertable is what the home is for. Six rows drawn from memory
+before anything has been reached; each one goes solid where it stands as its
+own machine answers for it, with the order unmoved and nothing left shimmering;
+a turn one machine emits changes neither list; and taking the relay away leaves
+all six on screen under the one line a home is allowed above its rows.
+
+Two things the harness had wrong came out of it. The door could only pair in
+one step, through a debug entry point that wrote trust without ever showing
+anybody a fingerprint — it now takes both of the steps the pairing screen
+takes, through the same store, and can also pair by a code against a machine
+the relay is offering. And a phone the driver had handed a relay credential
+still drew itself as signed out, so the line above the rows reported a sign-in
+that never failed instead of the connection that did; a connection through the
+door now signs its account in, which is where every screen reads that from.
+
+The trust a pairing writes outlives the run that wrote it, so a simulator that
+had been through many journeys was a phone paired with every machine any of
+them ever started. The journey now begins by giving the phone a new identity,
+trusting nobody.

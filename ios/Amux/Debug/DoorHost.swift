@@ -40,6 +40,10 @@ final class DoorHost {
     /// is reachable at all is an account fact, not a fleet fact, so the two
     /// gated home states need this as much as they need empty stores.
     private(set) var accounts = AccountRegistry()
+    /// The app's own accounts, when the door is driving the app rather than a
+    /// fixture. A connection signs one in here, because that is where every
+    /// screen reads whether this phone can reach anything.
+    private var composed: AccountRegistry?
 
     /// What the screen on show has named, in the order it draws it. SwiftUI
     /// builds its accessibility tree only for an attached accessibility
@@ -117,6 +121,7 @@ final class DoorHost {
         case .attach(let agent, let kind, let name, let mime, let base64):
             return attach(to: agent, kind: kind, name: name, mime: mime, base64: base64)
         case .pair(let qr): return await pair(with: qr)
+        case .pairByCode(let host, let pin): return await pair(with: pin, on: host)
         case .send(let agent, let text): return send(text, to: agent)
         case .sendDraft(let agent, let prose): return sendDraft(prose, to: agent)
         case .watch(let agent):
@@ -140,9 +145,10 @@ final class DoorHost {
     /// that is on it. When nothing has been opened by name, that is the app's
     /// own home — filled from this phone's remembered fleet — so the door reads
     /// and connects to the same bundle rather than a spare one nobody can see.
-    func adopt(_ stores: StoreBundle) {
+    func adopt(_ stores: StoreBundle, accounts: AccountRegistry) {
         guard screen == nil else { return }
         self.stores = stores
+        self.composed = accounts
     }
 
     private func open(screen name: String, fixture: String?) -> DoorReply {
@@ -213,6 +219,21 @@ final class DoorHost {
             return .error("no relay at \(relay)")
         }
         stop()
+        // A phone the driver handed a relay credential is a signed-in phone,
+        // and the app's own account is where the screens read that from. The
+        // one line a home is allowed above its rows says which of the things
+        // that can be wrong is wrong; without this it would report a sign-in
+        // that never failed instead of the connection that did, and a driver
+        // reading the screen would be reading a state the harness invented.
+        if let composed {
+            composed.add(
+                SignedInAccount(
+                    id: AccountId(user), email: "\(user)@example.com", displayName: user),
+                entitlement: .active(source: .appStore, renews: nil))
+            // Signing in is what gives an account its own stores, so the ones
+            // this connection fills are the ones the screens are now reading.
+            if let signedIn = composed.stores { stores = signedIn }
+        }
         let directories = FileManager.default
         let data = directories.temporaryDirectory.appendingPathComponent("door-data", isDirectory: true)
         let cache = directories.temporaryDirectory.appendingPathComponent("door-cache", isDirectory: true)
@@ -292,28 +313,87 @@ final class DoorHost {
         }
     }
 
-    /// Trusts a machine from the payload its QR code carries.
+    /// Trusts a machine from the payload its pairing code carries, by the same
+    /// two steps the pairing screen takes.
     ///
-    /// The handshake is the shared runtime's and takes a round trip through
-    /// the relay, so it is run off the main actor: the screen stays live while
-    /// it happens, which is what a driver photographing the wait would want
-    /// and what a person watching it would get.
+    /// Not a way past the protocol. The payload is authenticated against the
+    /// machine that issued it, the machine answers with its own account of
+    /// itself, and trust is written only by a second call naming that
+    /// authenticated attempt — which is what makes the fingerprint a person
+    /// reads a fingerprint the machine gave rather than one the payload
+    /// claimed. What a driver skips here is the screen, not the handshake.
     private func pair(with qr: String) async -> DoorReply {
-        guard let bridge else { return .error("nothing has been connected") }
-        let answered = await Task.detached {
-            bridge.withRuntime { handle -> String? in
-                guard let owned = qr.withCString({ amux_mobile_pair_qr(handle, $0) }) else {
-                    return nil
-                }
-                defer { amux_mobile_free(owned) }
-                return String(cString: owned)
-            } ?? nil
-        }.value
-        guard let answered, let data = answered.data(using: .utf8),
-            let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return .error("the runtime did not answer the pairing") }
-        if let host = reply["host"] as? String { return .paired(host: host) }
-        return .error(reply["error"] as? String ?? "the pairing was refused")
+        guard bridge != nil else { return .error("nothing has been connected") }
+        stores.pairing.open()
+        guard stores.pair(link: qr) else {
+            return .error("there was no runtime to authenticate the pairing with")
+        }
+        let authenticated = await pairingSettles(within: 60)
+        guard case .confirming(let peer) = authenticated else {
+            return .error("the machine did not authenticate the pairing: \(authenticated)")
+        }
+        guard stores.confirmPairing(peer) else {
+            return .error("there was no runtime to write the trust with")
+        }
+        let written = await pairingSettles(within: 60)
+        guard case .trusted(let host) = written else {
+            return .error("the machine did not write the trust: \(written)")
+        }
+        return .paired(host: host)
+    }
+
+    /// Trusts a machine by the six-digit code it printed, through the store the
+    /// pairing screen drives.
+    ///
+    /// The machine is found among the ones the relay is offering, because that
+    /// is where a code's machine comes from: a code proves possession of one
+    /// machine's offer and says nothing about which machine that is. From
+    /// there it is the screen's own two calls — the digits go as they complete,
+    /// and the trust is written against the attempt the machine answered with.
+    private func pair(with pin: String, on host: String) async -> DoorReply {
+        guard bridge != nil else { return .error("nothing has been connected") }
+        guard let identity = HostId(host) else { return .error("no machine named \(host)") }
+        guard let machine = await offered(identity, within: 60) else {
+            return .error("the relay never offered \(host)")
+        }
+        stores.pairing.open(machine: machine)
+        stores.pair(digits: pin)
+        let authenticated = await pairingSettles(within: 60)
+        guard case .confirming(let peer) = authenticated else {
+            return .error("the machine did not authenticate the code: \(authenticated)")
+        }
+        guard stores.confirmPairing(peer) else {
+            return .error("there was no runtime to write the trust with")
+        }
+        let written = await pairingSettles(within: 60)
+        guard case .trusted(let name) = written else {
+            return .error("the machine did not write the trust: \(written)")
+        }
+        return .paired(host: name)
+    }
+
+    /// Waits until the relay has offered this machine to pair with.
+    private func offered(_ host: HostId, within seconds: Double) async -> HostEntry? {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let entry = stores.hosts.known(host) { return entry }
+            await DoorFrames.next()
+        }
+        return nil
+    }
+
+    /// Waits until the pairing attempt is no longer with the machine.
+    ///
+    /// Polled a frame at a time, for the reason the other waits here are: the
+    /// event stream is already being drained into the stores on this actor,
+    /// and a second reader would take batches away from them.
+    private func pairingSettles(within seconds: Double) async -> PairingStore.Phase {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if stores.pairing.phase != .checking { return stores.pairing.phase }
+            await DoorFrames.next()
+        }
+        return stores.pairing.phase
     }
 
     /// Waits until an agent's conversation will take a message.
