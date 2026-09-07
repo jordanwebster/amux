@@ -1686,6 +1686,119 @@ async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
     net.shutdown().await;
 }
 
+/// Pairing by the link a machine printed, which names the cloud it was issued
+/// for.
+///
+/// The machine refuses an invitation issued for a different cloud than the one
+/// this device is on — that is the point of the link carrying it — so a phone
+/// has to know which cloud it is on. An embedded runtime has no configuration
+/// file to read it from: the cloud it is on is the relay it was opened with,
+/// and this is what proves the two agree.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_pairing_by_link_authenticates_against_the_relay_this_phone_is_on() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let host = net.daemon("workstation");
+    let (_, token) = net.user_credentials("owner");
+    let root = tempfile::tempdir().unwrap();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &config(
+                root.path(),
+                format!("http://{}", net.relay_addr()),
+                json!({ "Static": token }),
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    let dispatch = |command: Value| -> String {
+        let json = CString::new(command.to_string()).unwrap();
+        let id = unsafe { amux_mobile_dispatch(running.handle, json.as_ptr()) };
+        assert!(!id.is_null(), "{command} was not dispatched");
+        let op = unsafe { CStr::from_ptr(id) }.to_str().unwrap().to_owned();
+        unsafe { amux_mobile_free(id) };
+        op
+    };
+    let answered = async |receive: &mut mpsc::UnboundedReceiver<Value>, op: String| -> Value {
+        until(receive, running.handle, &token, |e| {
+            e["OpResult"]["op"] == op.as_str()
+        })
+        .await["OpResult"]["outcome"]
+            .clone()
+    };
+    until(&mut receive, running.handle, &token, |e| {
+        e["Connection"]["state"] == "connected"
+    })
+    .await;
+
+    // The invitation the machine prints, for the relay it is reachable over.
+    let mut offer = host.pairing_admin().await.start_qr_pairing().await.unwrap();
+    offer.cloud_url = format!("http://{}", net.relay_addr());
+    let amux::PairingSecret::QrSecret(secret) = &offer.secret else {
+        panic!("QR pairing returned a PIN")
+    };
+    let payload = amux::encode_qr_pairing_payload(&offer, secret).unwrap();
+
+    // An invitation for some other cloud is refused without reaching anybody.
+    let elsewhere = payload.replace(
+        &format!("http://{}", net.relay_addr()),
+        "https://somewhere.else",
+    );
+    let wrong = answered(
+        &mut receive,
+        dispatch(json!({"command": "begin_pair_link", "payload": elsewhere})),
+    )
+    .await;
+    assert_eq!(
+        wrong,
+        json!({"outcome": "pairing_refused"}),
+        "an invitation issued for another cloud was authenticated anyway"
+    );
+
+    // And the invitation for this one authenticates and stops there, with the
+    // machine's own name and key to look at and nothing written.
+    let pending = answered(
+        &mut receive,
+        dispatch(json!({"command": "begin_pair_link", "payload": payload})),
+    )
+    .await;
+    assert_eq!(pending["outcome"], "pairing_pending", "{pending}");
+    assert_eq!(pending["name"], "workstation", "{pending}");
+    assert_eq!(
+        host.pairing_admin().await.list_peers().await.unwrap().len(),
+        0,
+        "authenticating a link wrote trust"
+    );
+    let confirmed = answered(
+        &mut receive,
+        dispatch(json!({"command": "confirm", "pending": pending["pending"]})),
+    )
+    .await;
+    assert_eq!(confirmed["outcome"], "paired", "{confirmed}");
+    assert_eq!(
+        host.pairing_admin().await.list_peers().await.unwrap().len(),
+        1,
+        "confirming a link wrote no trust"
+    );
+    println!("link pairing: {pending}, {confirmed}");
+
+    drop(running);
+    net.shutdown().await;
+}
+
 /// A phone that always has the same token. The relay's own credentials, not an
 /// account's.
 struct StaticToken(String);

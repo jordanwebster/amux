@@ -419,6 +419,17 @@ impl ProfileRuntime {
         self.status.subscribe()
     }
 
+    /// Records which cloud this runtime is on.
+    ///
+    /// An embedded runtime is opened with a relay rather than told to find
+    /// one, so the cloud it is on is that relay and nothing in the
+    /// configuration file knows it. It matters beyond bookkeeping: a pairing
+    /// link names the cloud it was issued for, and a device compares that
+    /// against this before it will authenticate one.
+    pub(crate) async fn set_cloud_url(&self, cloud_url: String) {
+        self.state.write().await.config.cloud_url = cloud_url;
+    }
+
     pub(crate) async fn configure_credentials(
         &self,
         cloud_url: String,

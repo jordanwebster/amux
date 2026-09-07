@@ -187,7 +187,39 @@ pub enum Control {
         #[serde(default)]
         user: Option<String>,
     },
+    /// What a machine itself says it is holding: every agent on it with the
+    /// kind and driver that machine recorded, and every device it trusts.
+    ///
+    /// This is the far side's own account, not a client's. A driver proving
+    /// what an agent it started really is has to read it here: a phone
+    /// reporting the kind it asked for would be quoting its own request back,
+    /// and the whole question is whether the machine agrees.
+    Inventory {
+        daemon: String,
+    },
     Shutdown,
+}
+
+/// One agent as the machine running it describes it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InventoryAgent {
+    pub id: Uuid,
+    pub name: String,
+    pub working_dir: String,
+    /// `claude`, `codex` or `test-agent`.
+    pub kind: String,
+    /// `pty` or `sdk` for Claude, and nothing for the layers that have no
+    /// driver to choose. The machine refuses a create request that leaves this
+    /// unspecified, so what stands here is what the request named.
+    pub driver: Option<String>,
+}
+
+/// One device the machine holds a key for.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InventoryDevice {
+    pub host: Uuid,
+    pub name: String,
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -200,6 +232,10 @@ pub enum Reply {
         /// One entry per host, as `"<host id>: <links>"`, sorted. Present for
         /// a `Connections` about a cloud user.
         links: Vec<String>,
+        /// What a machine says it is running, for an `Inventory`.
+        agents: Vec<InventoryAgent>,
+        /// What a machine says it trusts, for an `Inventory`.
+        devices: Vec<InventoryDevice>,
     },
     Error {
         message: String,
@@ -214,6 +250,8 @@ impl Reply {
             observed: Vec::new(),
             connections: None,
             links: Vec::new(),
+            agents: Vec::new(),
+            devices: Vec::new(),
         }
     }
 }
@@ -648,6 +686,47 @@ async fn apply(
                 *links = per_host;
             }
         }
+        Control::Inventory { daemon: name } => {
+            let machine = daemon(&name)?;
+            let running = machine.admin_client().await.list_agents().await?;
+            let trusted = machine.pairing_admin().await.list_peers().await?;
+            if let Reply::Ack {
+                agents, devices, ..
+            } = &mut reply
+            {
+                *agents = running
+                    .into_iter()
+                    .map(|agent| InventoryAgent {
+                        id: agent.id,
+                        name: agent.name.unwrap_or_default(),
+                        working_dir: agent.working_dir.display().to_string(),
+                        kind: match agent.kind {
+                            amux::AgentKind::Claude { .. } => "claude",
+                            amux::AgentKind::Codex => "codex",
+                            amux::AgentKind::TestAgent => "test-agent",
+                        }
+                        .to_string(),
+                        driver: match agent.kind {
+                            amux::AgentKind::Claude {
+                                driver: amux::ClaudeDriver::Pty,
+                            } => Some("pty".to_string()),
+                            amux::AgentKind::Claude {
+                                driver: amux::ClaudeDriver::Sdk,
+                            } => Some("sdk".to_string()),
+                            _ => None,
+                        },
+                    })
+                    .collect();
+                *devices = trusted
+                    .into_iter()
+                    .map(|peer| InventoryDevice {
+                        host: peer.host_id,
+                        name: peer.name,
+                        fingerprint: peer.fingerprint,
+                    })
+                    .collect();
+            }
+        }
         Control::Shutdown => unreachable!("shutdown is handled by the server loop"),
     }
     Ok(reply)
@@ -941,6 +1020,21 @@ mod tests {
             assert!(!observer.pairing_is_active().await.unwrap());
             c.can_call(&b).await;
 
+            // What 'b' itself says it is holding, which is where a driver
+            // reads the far side's own account of a pairing or a creation
+            // rather than the asking client's.
+            let held = control.ack(json!({"Inventory":{"daemon":"b"}})).await;
+            assert_eq!(
+                held["devices"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|device| device["host"].as_str().unwrap().to_owned())
+                    .collect::<Vec<_>>(),
+                [c.host_id().to_string()]
+            );
+            assert!(held["agents"].as_array().unwrap().is_empty());
+
             let qr = control.ack(json!({"StartQrPairing":{"daemon":"a"}})).await["qr"]
                 .as_str()
                 .unwrap()
@@ -961,6 +1055,7 @@ mod tests {
                 json!({"EstablishDirect":{"a":"a","b":"b"}}),
                 json!({"StartPinPairing":{"daemon":"b","ttl_secs":0}}),
                 json!({"Latency":{"millis":1001}}),
+                json!({"Inventory":{"daemon":"missing"}}),
             ] {
                 assert!(control.request(invalid).await.get("Error").is_some());
             }

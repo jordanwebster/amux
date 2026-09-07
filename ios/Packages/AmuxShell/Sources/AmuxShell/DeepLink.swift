@@ -11,13 +11,14 @@ public struct PairingInvitation: Hashable, Sendable, CustomStringConvertible {
     public let host: HostId
     public let cloudURL: String
     public let secret: [UInt8]
-    /// The payload exactly as the link carried it.
+    /// The offer the machine wrote, whole, as the link carried it once the
+    /// URL's own encoding is undone.
     ///
-    /// Kept whole rather than re-encoded from the parts above, because it is
-    /// what the machine authenticates: a payload this phone rebuilt would be a
-    /// different string the moment a field is added, and the machine would be
-    /// right to refuse it. Reading it into parts is only so the app can refuse
-    /// a malformed link before it becomes a screen.
+    /// Kept whole rather than rebuilt from the parts above: it is what the
+    /// runtime reads to authenticate, and a payload this phone reassembled
+    /// would lose any field this build has no name for. The parts are read out
+    /// of it only so the app can refuse a malformed link before it becomes a
+    /// screen.
     public let payload: String
 
     public init(host: HostId, cloudURL: String, secret: [UInt8], payload: String) {
@@ -72,11 +73,14 @@ extension PairingInvitation {
     /// wrote, in URL-safe base64 without padding.
     init?(payload: String) {
         guard let json = Data(base64URLEncoded: payload),
+            let offer = String(data: json, encoding: .utf8),
             let wire = try? JSONDecoder().decode(Wire.self, from: json),
             let host = HostId(wire.hostID)
         else { return nil }
+        // The base64 is the URL's, not the machine's: what the machine wrote
+        // and what the runtime parses is the JSON inside it.
         self.init(
-            host: host, cloudURL: wire.cloudURL, secret: wire.secret, payload: payload)
+            host: host, cloudURL: wire.cloudURL, secret: wire.secret, payload: offer)
     }
 
     private struct Wire: Decodable {

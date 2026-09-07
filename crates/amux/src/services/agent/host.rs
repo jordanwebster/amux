@@ -410,6 +410,19 @@ impl LocalAgentHost for PtyAgentHost {
         operations: &crate::installation::OperationGate,
     ) -> Result<Agent, ProtocolError> {
         let req = create_rpc_to_domain_request(request.agent_id, request)?;
+        // An agent runs in a directory, and one that is not here is a typo or
+        // a path from another machine. Refused now, in the words of the host
+        // that owns the path: started anyway, the session dies the moment its
+        // process cannot enter its own working directory, and whoever asked
+        // for it gets a conversation that vanishes instead of a reason.
+        if !req.working_dir.is_dir() {
+            return Err(ProtocolError::FailedPrecondition {
+                message: format!(
+                    "There is no directory at {} on this machine.",
+                    req.working_dir.display()
+                ),
+            });
+        }
         if matches!(req.agent_type, AgentType::Codex { .. }) {
             #[cfg(unix)]
             {

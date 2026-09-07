@@ -198,6 +198,7 @@ pub(crate) async fn start_daemon_runtime(
         (None, Some(addr)) => Some(bind_addr_with_retries(addr).await),
         (None, None) => None,
     };
+    let config_path = inner.data_dir.join("config.yaml");
     let config = crate::config::Config {
         host_name: inner.name.clone(),
         repository_roots: inner.repository_roots.clone(),
@@ -205,10 +206,24 @@ pub(crate) async fn start_daemon_runtime(
         state_path: inner.data_dir.join("state.yaml"),
         data_dir: inner.data_dir.clone(),
         tcp_port: inner.tcp_addr.map(|addr| addr.port()),
+        path: Some(config_path.clone()),
 
         prevent_idle_sleep: Some(false),
         ..crate::config::Config::default()
     };
+    // A daemon's profile config exists on disk, and an agent it starts needs
+    // it there: every managed session launches this host's MCP server by
+    // pointing a fresh amux at this profile, so a runtime whose configuration
+    // only ever lived in memory can create no agent at all. Written where the
+    // rest of this profile's directory is.
+    std::fs::create_dir_all(&inner.data_dir)
+        .unwrap_or_else(|error| panic!("make daemon '{}' data directory: {error}", inner.name));
+    std::fs::write(
+        &config_path,
+        serde_yaml::to_string(&config)
+            .unwrap_or_else(|error| panic!("write daemon '{}' config: {error}", inner.name)),
+    )
+    .unwrap_or_else(|error| panic!("write daemon '{}' config: {error}", inner.name));
     let mut options = ProfileRuntimeOptions::from_legacy_config(
         config,
         None,

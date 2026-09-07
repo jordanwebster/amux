@@ -11153,3 +11153,65 @@ The trust a pairing writes outlives the run that wrote it, so a simulator that
 had been through many journeys was a phone paired with every machine any of
 them ever started. The journey now begins by giving the phone a new identity,
 trusting nobody.
+
+2026-09-07 — **A journey for giving a phone machines to work on, and keeping
+two accounts apart.** Three machines the runner really runs across two cloud
+accounts on one relay, and a finger on every act: a pairing link the launch
+itself carries, landing on a phone nobody has signed in on and claiming
+nothing until signing in puts it to the machine; the machine's name and the
+whole of its key read and turned down, and the same invitation — still on
+offer — opened again and agreed to. On the keypad a code nobody issued and a
+code that has run out are refused in the same sentence with the digits gone,
+and the code the machine printed leads to that machine's own name and key
+before any trust is written. Three agents started on one machine, from a
+directory it had been used in, from a repository it listed and from a path
+typed by hand; the machine itself reports every one as Claude on the SDK
+driver and no terminal Claude session appears anywhere. A key revoked while
+one of that machine's agents is open lets go of the stream that conversation
+was reading. The relay is taken away and put back with a machine restarted
+underneath, and the phone recovers with nobody pressing anything. And the
+second account reaches only its own machine and sees none of the first's.
+
+What it found.
+
+A machine took a create for a working directory that was not there, answered
+with an agent, and then lost it the moment the session could not enter its own
+directory — so a typo on the phone opened a conversation that quietly
+vanished. The host now refuses that create in its own words, with the path in
+them, and starts nothing.
+
+A daemon in the runner's testnet had no profile config file on disk, and the
+managed MCP server every session launches is started by pointing a fresh amux
+at that file, so no agent could be created on one at all. Testnet daemons now
+write their profile config where the rest of the profile lives.
+
+Two identifiers named containers rather than the things inside them. The
+confirmation's "paired" and "did not work" were on stacks the system never
+surfaced, so a driver could not see either state; and New Agent's Start named
+the bar it sits in, which is pinned to the foot of a full-height stack — a
+finger aimed at the middle of what that name covered landed nowhere near the
+button. Both now name what they are about.
+
+New Agent's floating foot bar rides up with the keyboard the directory
+chooser raises, which puts it over the two layer cards; when the chooser
+closes and the bar slides back down, a press aimed at Start lands on Codex's
+card instead. The agent that started was then Codex with nothing on screen
+afterwards looking wrong. The journey waits for the button to be still before
+pressing it and reads the layer cards the moment before, so the screen and the
+machine have to agree on what was started.
+
+An embedded runtime is one of the hosts in its own inventory, because it
+trusts itself, and it was being listed on the phone as a machine to work on
+and offered for pairing. Nothing runs on a phone: the runtime is now told
+which host it is and the projection leaves it out of both lists.
+
+An embedded runtime also had no idea which cloud it was on — there is no
+configuration file behind one — and a device refuses to authenticate a pairing
+link issued for a different cloud, so every link was refused. The cloud is now
+the relay the runtime was opened with, which is the only thing that could have
+told it.
+
+Revoking is one-sided as this build stands: the phone stops trusting the key
+and closes the link with the reason on it, and the machine's own record of the
+phone stays until it is removed there. The journey says so rather than
+asserting it away.

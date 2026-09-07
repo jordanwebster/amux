@@ -120,6 +120,7 @@ final class DoorHost {
         case .capture(let path): return await capture(to: path)
         case .tap(let identifier): return tap(identifier)
         case .type(let identifier, let text): return type(text, into: identifier)
+        case .clear(let identifier): return clear(identifier)
         case .paste(let identifier, let text): return paste(text, into: identifier)
         case .move(let identifier, let from, let to):
             return move(from: from, to: to, in: identifier)
@@ -240,7 +241,14 @@ final class DoorHost {
             if let signedIn = composed.stores { stores = signedIn }
         }
         let directories = FileManager.default
-        let data = directories.temporaryDirectory.appendingPathComponent("door-data", isDirectory: true)
+        // One runtime directory per account. Trust and this phone's identity
+        // are an account's own — a machine admits a device, and which device
+        // that is differs between the accounts on one phone — so two accounts
+        // sharing a directory would let one account's pairings decide what the
+        // other one sees.
+        let data = directories.temporaryDirectory
+            .appendingPathComponent("door-data", isDirectory: true)
+            .appendingPathComponent(user, isDirectory: true)
         let cache = directories.temporaryDirectory.appendingPathComponent("door-cache", isDirectory: true)
         try? directories.createDirectory(at: data, withIntermediateDirectories: true)
         try? directories.createDirectory(at: cache, withIntermediateDirectories: true)
@@ -284,6 +292,27 @@ final class DoorHost {
         return .ack
     }
 
+    /// What the launch said after `-name`, or nothing where it did not say it.
+    ///
+    /// Read off the arguments themselves rather than through the defaults. The
+    /// defaults parse an argument's value as a property list, so a pairing
+    /// payload — which is JSON, and JSON braces are a plist dictionary — comes
+    /// back as a dictionary and `string(forKey:)` answers nothing at all.
+    /// Everything here is somebody else's text.
+    static func said(_ name: String) -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flag = arguments.firstIndex(of: "-\(name)"),
+            arguments.index(after: flag) < arguments.endIndex
+        else { return nil }
+        return arguments[arguments.index(after: flag)]
+    }
+
+    /// A link the launch carried, for the app to open as if the system had
+    /// handed it one. Nothing for an ordinary launch.
+    static var linkAsLaunchAsks: URL? {
+        said(Door.linkArgument).flatMap(URL.init(string:))
+    }
+
     /// Connects and pairs as the launch itself asked, once.
     ///
     /// A driver speaking through the door connects by asking. A UI test cannot
@@ -293,27 +322,15 @@ final class DoorHost {
     /// A launch that says nothing about a relay is a launch of the app as
     /// itself and nothing here happens.
     func connectAsLaunchAsks() {
-        // Read off the arguments themselves rather than through the defaults.
-        // The defaults parse an argument's value as a property list, so a
-        // pairing payload — which is JSON, and JSON braces are a plist
-        // dictionary — comes back as a dictionary and `string(forKey:)`
-        // answers nothing at all. Everything here is somebody else's text.
-        let arguments = ProcessInfo.processInfo.arguments
-        func said(_ name: String) -> String? {
-            guard let flag = arguments.firstIndex(of: "-\(name)"),
-                arguments.index(after: flag) < arguments.endIndex
-            else { return nil }
-            return arguments[arguments.index(after: flag)]
-        }
         guard bridge == nil,
-            let relay = said(Door.relayArgument),
-            let token = said(Door.tokenArgument),
-            let user = said(Door.userArgument)
+            let relay = Self.said(Door.relayArgument),
+            let token = Self.said(Door.tokenArgument),
+            let user = Self.said(Door.userArgument)
         else { return }
         guard case .ack = connect(relay: relay, token: token, user: user) else {
             fatalError("the launch was told to connect to \(relay) and could not")
         }
-        guard let payload = said(Door.pairArgument) else { return }
+        guard let payload = Self.said(Door.pairArgument) else { return }
         Task { @MainActor in
             if case .error(let complaint) = await pair(with: payload) {
                 fatalError("the launch was told to pair and could not: \(complaint)")
@@ -828,6 +845,33 @@ final class DoorHost {
             return .error("\(identifier) does not take text")
         }
         input.insertText(text)
+        return .ack
+    }
+
+    /// Empties a named field, one character at a time through the field's own
+    /// delete.
+    ///
+    /// Not by writing an empty string into it: a field's text is drawn from a
+    /// draft the field itself keeps, and setting that from outside skips
+    /// whatever the field does as characters leave — which for the composer is
+    /// the whole of how a token comes apart. Deleting is what a finger does.
+    private func clear(_ identifier: String) -> DoorReply {
+        guard let window = DoorWindow.current else { return .error("no window on screen") }
+        guard element(named: identifier, in: window) != nil else {
+            return .error("no element named \(identifier)")
+        }
+        guard let input = writable(named: identifier, in: window) else {
+            return .error("\(identifier) does not take text")
+        }
+        if !input.isFirstResponder { _ = input.becomeFirstResponder() }
+        // Bounded, because a field that answers "still has text" after every
+        // delete would otherwise hang the driver rather than fail it.
+        var deletions = 0
+        while input.hasText && deletions < 4096 {
+            input.deleteBackward()
+            deletions += 1
+        }
+        guard !input.hasText else { return .error("\(identifier) would not empty") }
         return .ack
     }
 

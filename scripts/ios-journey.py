@@ -16,6 +16,7 @@ Each run writes what it did to target/ios/journeys/<id>/journey.txt beside the
 screens it photographed, so a failure can be read after the fact.
 """
 
+import base64
 import contextlib
 import copy
 from datetime import datetime, timedelta, timezone
@@ -1654,6 +1655,234 @@ def hosts_lifecycle(journey: Journey, udid: str, ready: dict) -> None:
                 f"the phone is streaming {seen.get('watchingAtTheEnd')}")
 
 
+def hosts(journey: Journey, udid: str, ready: dict) -> None:
+    """Giving a phone machines to work on, and keeping two accounts apart.
+
+    Everything here is a finger on a screen, against three machines the runner
+    is really running for two accounts on one relay: a pairing link the launch
+    itself carried while nobody had signed in, six digits typed on the keypad
+    three times over, a fingerprint read and turned down and later agreed to,
+    three agents started on a machine, a key revoked, and the second account
+    seeing nothing of the first one's.
+
+    What the machines then hold is read back from the machines. A phone
+    reporting the kind of agent it asked for would be quoting its own request,
+    and the question this journey exists to answer — whether this app starts
+    Claude on the SDK layer and never on the terminal one — is a question about
+    what the far side actually did.
+    """
+    daemons = {daemon["name"]: daemon for daemon in ready["daemons"]}
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    tokens = {user["label"]: user["token"] for user in ready["users"]}
+    relay = f"http://{ready['relay']}"
+    control_address = ready["control"]
+    projects = (OUTPUT / "hosts-projects").resolve()
+
+    install(udid)
+    forget_cache(udid)
+    forget_pairings(udid)
+
+    # The link the launch carries, made the way the machine's own `amux pair
+    # --qr` makes one: the payload the machine issued, in the URL-safe base64
+    # the deep link spells it in.
+    offer = answer(control_address, {"StartQrPairing": {"daemon": "desktop"}})["qr"]
+    link = "amux://pair?payload=" + base64.urlsafe_b64encode(offer.encode()).decode().rstrip("=")
+    journey.say("desktop printed an invitation and laptop is waiting to print codes; the phone "
+                "trusts nobody and the work account's machine is a stranger to both")
+
+    port = free_port()
+    read = journey.directory / "hosts.json"
+    photographs = {name: journey.directory / f"{name}.png"
+                   for name in ("hosts", "pin", "confirm", "new-agent")}
+    perform(
+        journey, udid, "AmuxUITests/HostsTests",
+        {"hosts.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_RELAY": relay,
+            "AMUX_TOKEN": tokens["personal"],
+            "AMUX_WORK_TOKEN": tokens["work"],
+            "AMUX_USER": "personal",
+            "AMUX_CONTROL": control_address,
+            "AMUX_DOOR_PORT": str(port),
+            "AMUX_AGENT": running["fix-login"]["agent_id"],
+            "AMUX_DESKTOP_AGENT": running["release-notes"]["agent_id"],
+            "AMUX_HOST": "laptop",
+            "AMUX_LAPTOP": daemons["laptop"]["host_id"],
+            "AMUX_DESKTOP": daemons["desktop"]["host_id"],
+            "AMUX_WORKSTATION": daemons["workstation"]["host_id"],
+            "AMUX_LAPTOP_FINGERPRINT": daemons["laptop"]["fingerprint"],
+            "AMUX_DESKTOP_FINGERPRINT": daemons["desktop"]["fingerprint"],
+            "AMUX_LINK": link,
+            "AMUX_RECENT": "alpha",
+            "AMUX_REPOSITORY": "gamma",
+            "AMUX_TYPED_PATH": str(projects / "delta"),
+            "AMUX_REFUSED_PATH": str(projects / "nowhere-at-all"),
+        })
+    seen = json.loads(read.read_text())
+
+    # MARK: A link that landed before anybody had signed in.
+    journey.expect(seen.get("desktopDevicesBeforeSigningIn") == 0,
+                   "a link that had only arrived was already trusted")
+    journey.expect(seen.get("linkOfferedMachine") == "desktop",
+                   f"the invitation named {seen.get('linkOfferedMachine')!r}")
+    journey.expect(seen.get("linkOfferedFingerprint", "").replace(" ", "")
+                   == daemons["desktop"]["fingerprint"],
+                   f"the key on screen was {seen.get('linkOfferedFingerprint')!r} and desktop "
+                   f"holds {daemons['desktop']['fingerprint']}")
+    journey.expect(seen.get("desktopDevicesAfterCancelling") == 0,
+                   "a machine turned down on the confirmation was trusted anyway")
+    journey.say("a launch opened by a pairing link with nobody signed in trusted nothing and "
+                "claimed nothing; signing in put the held invitation to desktop, which answered "
+                "with its own name and the whole of its key; turned down, it still holds no key "
+                "to this phone")
+
+    # MARK: Three codes on the keypad.
+    journey.expect(seen.get("digitsAfterAWrongCode") == ""
+                   and seen.get("digitsAfterAnExpiredCode") == "",
+                   "a refused code was left on the keypad")
+    journey.expect(seen.get("refusedAfterAWrongCode")
+                   == seen.get("refusedAfterAnExpiredCode") != "",
+                   f"a code nobody issued and a code that ran out are told apart: "
+                   f"{seen.get('refusedAfterAWrongCode')!r} against "
+                   f"{seen.get('refusedAfterAnExpiredCode')!r}")
+    journey.expect(seen.get("codeOfferedMachine") == "laptop",
+                   f"the code was answered by {seen.get('codeOfferedMachine')!r}")
+    journey.expect(seen.get("laptopDevicesAfterTheCode") and
+                   len(seen["laptopDevicesAfterTheCode"]) == 1,
+                   f"laptop holds {seen.get('laptopDevicesAfterTheCode')} after one phone "
+                   f"paired with it")
+    journey.say(f"a code nobody issued and a code that had run out were refused in the same "
+                f"sentence — {seen.get('refusedAfterAWrongCode')!r} — with the digits gone both "
+                f"times; the code laptop printed reached laptop's own name and key, and trusting "
+                f"it left laptop holding exactly one device")
+
+    # MARK: The invitation taken up the second time.
+    journey.expect(seen.get("desktopDevicesAfterConfirming") == 1,
+                   f"desktop holds {seen.get('desktopDevicesAfterConfirming')} keys after its "
+                   f"invitation was accepted")
+    journey.expect(seen.get("machinesAfterTheLink") == ["desktop"],
+                   f"the phone shows {seen.get('machinesAfterTheLink')} after trusting desktop")
+    journey.expect(seen.get("machinesAfterBothPairings") == ["desktop", "laptop"],
+                   f"the phone shows {seen.get('machinesAfterBothPairings')} after pairing with "
+                   f"both machines")
+    journey.say("the same invitation the machine was still offering was opened again and agreed "
+                "to, and after the code as well the phone has both of the account's machines")
+
+    # MARK: Three agents, and what the machine says they are.
+    started = seen.get("createdAgents") or []
+    journey.expect(len(started) == 3,
+                   f"three agents were started from the phone and laptop reports {started}")
+    for agent in started:
+        journey.expect(agent.get("kind") == "claude" and agent.get("driver") == "sdk",
+                       f"laptop says the agent this phone started is {agent}")
+    journey.expect(
+        len(seen.get("layersWhenStarted") or []) >= 4
+        and all("new-agent.provider.claude=chosen" in reading
+                for reading in seen.get("layersWhenStarted") or []),
+        f"Start was pressed with the layer cards reading "
+        f"{seen.get('layersWhenStarted')}")
+    (journey.directory / "created-agents.json").write_text(
+        json.dumps(started, indent=2, sort_keys=True) + "\n")
+    journey.expect(set(agent["name"] for agent in started)
+                   <= set(seen.get("fleetAfterStartingThree") or []),
+                   f"laptop is running {started} and the phone shows "
+                   f"{seen.get('fleetAfterStartingThree')}")
+    journey.expect("transcript.unsupported" in (seen.get("rowsOnTheCreatedAgent") or []),
+                   f"a session on the SDK layer was drawn as "
+                   f"{seen.get('rowsOnTheCreatedAgent')}")
+    journey.expect("transcript.prose" in (seen.get("rowsOnTheSeededAgent") or []),
+                   f"the terminal session the topology seeded drew "
+                   f"{seen.get('rowsOnTheSeededAgent')}")
+    journey.say(f"three agents started from the phone — from a directory laptop had been used "
+                f"in, from a repository it listed and from a path typed by hand, with a path it "
+                f"refused saying so on screen and starting nothing — and laptop reports every "
+                f"one of them as claude on the sdk driver: "
+                f"{', '.join(agent['name'] + ' ' + agent['kind'] + '/' + agent['driver'] for agent in started)}. "
+                f"A create request that named no driver would have been refused by the machine, "
+                f"so the driver in each of those is the one the request named, and the screen "
+                f"read Claude as the chosen layer at every one of the presses. The machine's "
+                f"whole inventory afterwards is "
+                f"{seen.get('agentsAfterStartingThree')}, and no terminal Claude session "
+                f"appeared on any of the three machines. The one the phone started opens as the "
+                f"SDK layer's own typed state and the one the topology seeded still opens as a "
+                f"transcript.")
+
+    # MARK: A key taken away.
+    journey.expect(seen.get("desktopKeyOnScreen") == daemons["desktop"]["fingerprint"],
+                   f"the key beside desktop on this phone was {seen.get('desktopKeyOnScreen')!r}")
+    journey.expect(seen.get("machinesAfterRevoking") == ["laptop"],
+                   f"revoking desktop left the phone showing {seen.get('machinesAfterRevoking')}")
+    watched = running["release-notes"]["agent_id"]
+    journey.expect(watched in (seen.get("watchingBeforeRevoking") or []),
+                   f"the agent on desktop was not being read when its machine's key went: "
+                   f"{seen.get('watchingBeforeRevoking')}")
+    journey.expect(watched not in (seen.get("watchingAfterRevoking") or []),
+                   f"the phone is still reading the revoked machine's agent: "
+                   f"{seen.get('watchingAfterRevoking')}")
+    journey.expect("release-notes" not in (seen.get("fleetAfterRevoking") or []),
+                   f"an agent on the revoked machine is still readable: "
+                   f"{seen.get('fleetAfterRevoking')}")
+    journey.say(f"the key desktop held was read whole on the phone and revoked while one of "
+                f"desktop's agents was open: the stream that conversation was reading was let go "
+                f"at once, and what desktop was running left the fleet with it. Desktop's own "
+                f"record of this phone is desktop's to remove and it still holds "
+                f"{seen.get('desktopDevicesAfterRevoking')}: withdrawing a key ends what this "
+                f"phone can reach, not what the far side has written down.")
+
+    # MARK: Disturbance.
+    journey.expect(seen.get("whileTheRelayWasGone") == "disconnected",
+                   f"taking the relay away did not reach the phone: "
+                   f"{seen.get('whileTheRelayWasGone')!r}")
+    journey.expect(seen.get("afterTheRelayCameBack") == ["laptop"]
+                   and seen.get("afterTheMachineRestarted") == ["laptop"],
+                   f"the phone came out of the disturbance showing "
+                   f"{seen.get('afterTheRelayCameBack')} and "
+                   f"{seen.get('afterTheMachineRestarted')}")
+    journey.say("the relay was taken away and put back and the machine restarted underneath, and "
+                "the phone recovered both with nobody pressing anything")
+
+    # MARK: Two accounts.
+    journey.expect(seen.get("workReached") == ["workstation"],
+                   f"the work account reached {seen.get('workReached')}")
+    journey.expect(seen.get("workSawBeforePairing") == [],
+                   f"the work account started with {seen.get('workSawBeforePairing')}")
+    journey.expect(seen.get("workSawAfterPairing") == ["workstation"],
+                   f"the work account sees {seen.get('workSawAfterPairing')}")
+    journey.expect(seen.get("workstationDevices") == 1,
+                   f"workstation holds {seen.get('workstationDevices')} keys")
+    journey.expect(seen.get("personalSawAfterTheOtherAccount") == ["laptop"],
+                   f"the first account sees {seen.get('personalSawAfterTheOtherAccount')} after "
+                   f"the second one signed in on the same phone")
+    journey.say("the second account on the same phone reached only its own machine, paired with "
+                "it under an identity of its own, and saw none of the first account's; the first "
+                "account came back to exactly what it had paired with")
+
+    holdings = {label: answer(control_address, {"Connections": {"user": label}})["links"]
+                for label in ("personal", "work")}
+    (journey.directory / "connections.json").write_text(
+        json.dumps(holdings, indent=2, sort_keys=True) + "\n")
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs)))
+    forget_cache(udid)
+    forget_pairings(udid)
+
+
+def prepare_hosts() -> None:
+    """Three repositories for the machines to offer, so what a person picks on
+    New Agent is a directory that really exists on the far side.
+
+    Named rather than found: this checkout is one repository and a journey that
+    pointed at it could not tell a directory chosen from recents apart from one
+    chosen out of the machine's listing. Two of them hold an agent the topology
+    seeded, which is what makes them the machine's recent directories; the
+    other two it only offers.
+    """
+    for name in ("alpha", "beta", "gamma", "delta"):
+        scratch_repository(f"hosts-projects/{name}", {"README.md": f"{name}\n"}, {})
+
+
 def prepare_asks() -> None:
     scratch_repository(
         "asks-repository",
@@ -1679,10 +1908,11 @@ def prepare_writing() -> None:
 
 JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
             "conversation": conversation, "asks": asks, "review": review,
-            "writing": writing, "hosts-lifecycle": hosts_lifecycle}
+            "writing": writing, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts}
 # What has to exist before the daemons start: the runner resolves an
 # agent's working directory when it loads the topology.
-PREPARE = {"asks": prepare_asks, "review": prepare_review, "writing": prepare_writing}
+PREPARE = {"asks": prepare_asks, "review": prepare_review, "writing": prepare_writing,
+           "hosts": prepare_hosts}
 
 
 def declared() -> list[dict]:

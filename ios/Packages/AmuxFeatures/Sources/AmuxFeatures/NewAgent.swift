@@ -63,6 +63,12 @@ public struct NewAgent: View {
                     .transition(.move(edge: .bottom))
             }
         }
+        // A screen is a container of the things on it, not a name for all of
+        // them. Without this the system spreads this identifier over every
+        // element underneath — the title, the buttons, the rows — so
+        // everything on the screen answers to the screen's own name, for
+        // VoiceOver and for anything driving the app alike.
+        .accessibilityElement(children: .contain)
         .identified("new-agent", value: model.directory)
     }
 
@@ -319,15 +325,20 @@ public struct NewAgent: View {
             .buttonStyle(.plain)
             .disabled(!model.ready)
             .opacity(model.ready ? 1 : 0.4)
+            // On the button and not on the bar it sits in: the bar is pinned
+            // to the foot of a full-height stack, so a name given to it covers
+            // everything from here to the top of the page and a finger aimed
+            // at the middle of what that name covers lands nowhere near the
+            // one thing on it anybody presses.
+            .identified(
+                "new-agent.start", label: "Start on \(machineName)",
+                value: model.starting ? "starting" : "ready", enabled: model.ready)
             .padding(14)
             .frame(maxWidth: .infinity)
             .frosted(RoundedRectangle(
                 cornerRadius: design.metrics.floatRadius, style: .continuous))
             .padding(.horizontal, design.metrics.gutter)
             .padding(.bottom, 8)
-            .identified(
-                "new-agent.start", label: "Start on \(machineName)",
-                value: model.starting ? "starting" : "ready", enabled: model.ready)
         }
     }
 }

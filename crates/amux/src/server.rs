@@ -425,9 +425,18 @@ impl EmbeddedBuilder {
         let runtime = crate::profile::runtime::start(options)
             .await
             .map_err(|e| ServerError::State(e.to_string()))?;
-        let relay_task = self
-            .relay
-            .map(|relay| relay.spawn(runtime.services.link_connector_ctx()));
+        let relay_task = match self.relay {
+            Some(relay) => {
+                // The cloud an embedded runtime is on is the relay it was
+                // opened with. Nothing else tells it: there is no
+                // configuration file behind an embedded device, and a pairing
+                // link it is asked to authenticate names the cloud it was
+                // issued for and is refused when that is not this one.
+                runtime.set_cloud_url(relay.endpoint.url()).await;
+                Some(relay.spawn(runtime.services.link_connector_ctx()))
+            }
+            None => None,
+        };
         Ok(EmbeddedRuntime {
             runtime: Some(runtime),
             relay_task,
@@ -448,6 +457,17 @@ impl EmbeddedRuntime {
             .as_ref()
             .expect("embedded runtime is open")
             .client()
+    }
+
+    /// The identity this device presents. What it is for is telling this
+    /// device apart from the machines it talks to: an embedded runtime is one
+    /// of the hosts in its own inventory, and a phone is not a machine
+    /// anything runs on.
+    pub fn host_id(&self) -> crate::HostId {
+        self.runtime
+            .as_ref()
+            .expect("embedded runtime is open")
+            .host_id
     }
 
     pub fn admin(&self) -> crate::ProfileAdmin {

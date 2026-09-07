@@ -124,6 +124,10 @@ impl MobileRuntime {
             embedded.client(),
             RuntimeOptions {
                 host_inventory: Some(embedded.admin()),
+                // Which host is this device. Nothing infers it for an
+                // embedded runtime, and without it this phone cannot tell
+                // itself from the machines it is paired with.
+                local_host_id: Some(embedded.host_id()),
                 report_dir: Some(config.data_dir.join("reports")),
                 log_path: Some(config.log_path.clone()),
                 artifact_cache: Some(config.cache_dir.join("artifacts")),

@@ -50,6 +50,12 @@ public struct PairByCode: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, design.metrics.gutter)
         }
+        // A screen is a container of the things on it, not a name for all of
+        // them. Without this the system spreads this identifier over every
+        // element underneath — the title, the buttons, the rows — so
+        // everything on the screen answers to the screen's own name, for
+        // VoiceOver and for anything driving the app alike.
+        .accessibilityElement(children: .contain)
         .identified("pin", value: model.digits)
     }
 
@@ -277,6 +283,12 @@ public struct PairConfirmation: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, design.metrics.gutter)
         }
+        // A screen is a container of the things on it, not a name for all of
+        // them. Without this the system spreads this identifier over every
+        // element underneath — the title, the buttons, the rows — so
+        // everything on the screen answers to the screen's own name, for
+        // VoiceOver and for anything driving the app alike.
+        .accessibilityElement(children: .contain)
         .identified("pair-confirm", value: state)
     }
 
@@ -371,9 +383,13 @@ public struct PairConfirmation: View {
 
     private var refused: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // The name goes on the sentence rather than on everything under
+            // it: an identifier put on this stack would be spread over the
+            // button as well, which is the one thing here anybody presses.
             Text("That invitation did not work")
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
+                .identified("pair-confirm.refused", value: "That invitation did not work")
             Explain("Ask the machine for a new one. Nothing was trusted.")
             Button { actions(.cancel) } label: {
                 ActionLabel("Back to Hosts", kind: .outline)
@@ -382,14 +398,17 @@ public struct PairConfirmation: View {
             .identified("pair-confirm.back", label: "Back to Hosts")
         }
         .padding(.top, 26)
-        .identified("pair-confirm.refused", value: "That invitation did not work")
     }
 
     private func settled(_ name: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            // The name goes on the sentence rather than on everything under
+            // it: an identifier put on this stack would be spread over the
+            // button as well, which is the one thing here anybody presses.
             Text("\(name) is paired")
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
+                .identified("pair-confirm.trusted", value: name)
             Explain("Its agents are on the Agents tab.")
             Button { actions(.cancel) } label: {
                 ActionLabel("Done", kind: .outline)
@@ -398,7 +417,6 @@ public struct PairConfirmation: View {
             .identified("pair-confirm.done", label: "Done")
         }
         .padding(.top, 26)
-        .identified("pair-confirm.trusted", value: name)
     }
 
     /// When the offer runs out, as a length of time rather than a clock face:

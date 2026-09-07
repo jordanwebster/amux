@@ -110,10 +110,11 @@ final class DeepLinkTests: XCTestCase {
     ///
     /// The route is pushed straight away — the page has to be there for the
     /// launch to land on — and it pairs with nobody, because arriving is not
-    /// confirming. The invitation keeps the payload it arrived with, which is
-    /// what the machine authenticates: a payload rebuilt from the parts read
-    /// out of it would be a different string the moment a field is added.
-    func testAColdLaunchedLinkKeepsThePayloadItArrivedWith() throws {
+    /// confirming. The invitation keeps the whole offer the machine wrote,
+    /// which is what the runtime reads to authenticate; an offer rebuilt from
+    /// the parts read out of it would lose any field this build has no name
+    /// for. The base64 around it belongs to the URL and is undone here.
+    func testAColdLaunchedLinkKeepsTheOfferItArrivedWith() throws {
         let router = Router()
         let parsed = try XCTUnwrap(router.open(link))
         guard case .pair(let invitation) = parsed else {
@@ -121,10 +122,13 @@ final class DeepLinkTests: XCTestCase {
         }
 
         XCTAssertEqual(router.path, [.pairConfirmation(invitation)])
+        let encoded = try XCTUnwrap(URLComponents(url: link, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "payload" })?.value)
         XCTAssertEqual(
             invitation.payload,
-            try XCTUnwrap(URLComponents(url: link, resolvingAgainstBaseURL: false)?
-                .queryItems?.first(where: { $0.name == "payload" })?.value))
+            String(data: try XCTUnwrap(Data(base64URLEncoded: encoded)), encoding: .utf8))
+        XCTAssertTrue(invitation.payload.hasPrefix("{"),
+                      "the offer handed on is the machine's own JSON")
     }
 
     /// A sign-in in between does not lose the invitation.

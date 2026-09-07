@@ -60,14 +60,30 @@ class JourneyCase: XCTestCase {
 
     /// The app, launched already told what to connect to and which machine to
     /// trust, so everything on screen afterwards arrived over a real relay.
-    func launch(_ runner: Runner) -> XCUIApplication {
+    ///
+    /// - Parameters:
+    ///   - signedIn: whether the launch carries an account's relay credential.
+    ///     A launch without one is the app as somebody who has not signed in
+    ///     opens it, which is the only way to reach what the app does with a
+    ///     link that lands before there is an account to put it to.
+    ///   - link: a link the launch was opened with, handed over before the
+    ///     first frame exactly as the system hands one over.
+    ///   - user: which account the credential belongs to, where a test signs
+    ///     in as more than one.
+    func launch(
+        _ runner: Runner, signedIn: Bool = true, link: String? = nil,
+        as user: String? = nil, token: String? = nil
+    ) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = [
-            "-amux-door-port", runner.doorPort,
+        let credential = signedIn ? [
             "-amux-relay", runner.relay,
-            "-amux-token", runner.token,
-            "-amux-user", runner.user,
-        ] + (runner.pairing.map { ["-amux-pair", $0] } ?? [])
+            "-amux-token", token ?? runner.token,
+            "-amux-user", user ?? runner.user,
+        ] : []
+        app.launchArguments = ["-amux-door-port", runner.doorPort]
+            + credential
+            + (runner.pairing.map { ["-amux-pair", $0] } ?? [])
+            + (link.map { ["-amux-link", $0] } ?? [])
         app.launch()
         return app
     }
@@ -193,6 +209,11 @@ class JourneyCase: XCTestCase {
         var identifier: String?
         var host: String?
         var pin: String?
+        /// What a launch that did not sign in signs in with: the same three
+        /// the launch itself would have carried.
+        var relay: String?
+        var token: String?
+        var user: String?
         var attachment: String?
         var name: String?
         var mime: String?
@@ -211,6 +232,9 @@ class JourneyCase: XCTestCase {
             if let identifier { fields["identifier"] = identifier }
             if let host { fields["host"] = host }
             if let pin { fields["pin"] = pin }
+            if let relay { fields["relay"] = relay }
+            if let token { fields["token"] = token }
+            if let user { fields["user"] = user }
             if let attachment { fields["attachment"] = attachment }
             if let name { fields["name"] = name }
             if let mime { fields["mime"] = mime }

@@ -182,6 +182,63 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
     expect_client_closed(&client).await;
 }
 
+/// A create in a directory the host does not have is refused, and refused with
+/// the path in it.
+///
+/// The path in a create is somebody else's text — typed on a phone, or carried
+/// over from another machine — and only the host that would run the agent can
+/// say whether it is there. Started anyway, the session dies as soon as its
+/// process cannot enter the directory, so whoever asked would watch a
+/// conversation open and disappear with nothing said.
+#[tokio::test]
+#[cfg(debug_assertions)]
+async fn embedded_create_refuses_a_working_directory_that_is_not_there() {
+    let dir = short_tempdir();
+    let config = Config {
+        state_path: dir.path().join("state.yaml"),
+        socket_path: dir.path().join("amux.sock"),
+
+        prevent_idle_sleep: Some(false),
+        ..Config::default()
+    };
+
+    let (installation, id) = owned_installation(&config, Listeners::InProcessOnly).await;
+    let client = installation.client(id).unwrap();
+
+    let absent = dir.path().join("nowhere-at-all");
+    let refusal = client
+        .create_agent(CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: Some("typo".to_string()),
+            agent_type: AgentType::TestAgent {
+                command: "cat".to_string(),
+            },
+            working_dir: absent.clone(),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        })
+        .await
+        .expect_err("a create in a directory that is not there was accepted");
+    let said = refusal.to_string();
+    assert!(
+        said.contains(&absent.display().to_string()),
+        "the refusal does not say which path: {said}"
+    );
+
+    // And nothing was started, so nothing has to be cleaned up afterwards.
+    assert!(
+        client.list_agents().await.unwrap().is_empty(),
+        "a refused create left an agent behind"
+    );
+
+    installation
+        .shutdown(amux::ShutdownReason::UserRequested)
+        .await;
+}
+
 #[tokio::test]
 #[cfg(debug_assertions)]
 #[cfg_attr(

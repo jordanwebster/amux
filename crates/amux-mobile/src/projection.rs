@@ -219,9 +219,10 @@ pub struct ProjectDto {
 /// How withdrawing trust from a machine ended.
 ///
 /// Revoking is not a request the machine can decline: this device stops
-/// trusting its key and closes every link it holds to it, and it is told so it
-/// can drop its own side. A machine that is away is revoked anyway — the
-/// access that ends immediately is the access through this phone.
+/// trusting its key and closes every link it holds to it, with the reason on
+/// the close so the machine knows why. What ends is what this phone could
+/// reach; the machine's own record of this device is the machine's to remove,
+/// and a machine that is away is revoked here anyway.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum DevicesOutcome {
@@ -585,6 +586,11 @@ impl Projection {
                 .collect(),
             hosts: model
                 .hosts()
+                // This device is not one of the machines. It is trusted by
+                // itself and so arrives in its own inventory, but nothing runs
+                // on a phone: the Hosts tab lists places agents live and says
+                // what this phone is in a section of its own.
+                .filter(|host| model.is_local(host.entry.id) != Some(true))
                 .filter(|host| host.entry.trust_status == amux::HostTrustStatus::Trusted)
                 .cloned()
                 .collect(),
@@ -603,6 +609,7 @@ impl Projection {
         }
         let discovered: Vec<_> = model
             .hosts()
+            .filter(|host| model.is_local(host.entry.id) != Some(true))
             .filter(|host| host.entry.trust_status == amux::HostTrustStatus::UntrustedButOnline)
             .map(|host| host.entry.clone())
             .collect();

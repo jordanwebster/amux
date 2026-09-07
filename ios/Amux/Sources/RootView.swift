@@ -35,6 +35,11 @@ struct RootView: View {
                 .onAppear {
                     DoorHost.shared.adopt(composition.stores, accounts: composition.accounts)
                     DoorHost.shared.connectAsLaunchAsks()
+                    // A link the launch carried goes through the same door the
+                    // system's own links go through, before anything else has
+                    // happened — which is what a cold start opened by a link
+                    // is, and the case where nobody has signed in yet.
+                    if let link = DoorHost.linkAsLaunchAsks { composition.router.open(link) }
                 }
         }
         #else

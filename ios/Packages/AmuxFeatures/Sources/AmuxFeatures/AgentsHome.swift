@@ -65,6 +65,12 @@ public struct AgentsHome: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .onAppear { actions(.refresh) }
+        // A screen is a container of the things on it, not a name for all of
+        // them. Without this the system spreads this identifier over every
+        // element underneath — the title, the buttons, the rows — so
+        // everything on the screen answers to the screen's own name, for
+        // VoiceOver and for anything driving the app alike.
+        .accessibilityElement(children: .contain)
         .identified("home", value: accounts.gate.name)
     }
 

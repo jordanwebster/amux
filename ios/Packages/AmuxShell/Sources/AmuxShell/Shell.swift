@@ -438,28 +438,68 @@ private struct NewAgentPage: View {
     }
 }
 
-/// Typing a machine's six-digit code.
+/// Typing a machine's six-digit code, and then deciding about the machine that
+/// answered it.
 ///
 /// The page opens the attempt rather than the screen doing it, because opening
 /// one is what clears the last one: a refusal left on screen from the code
 /// somebody typed a minute ago would be read as this code failing.
+///
+/// A code that authenticates leads to the same confirmation a link leads to,
+/// on this page rather than on another one. Pairing is two acts on purpose —
+/// knowing the code proves possession of the offer and nothing about which
+/// machine made it — so the digits are never the end of it: what the machine
+/// said its name and its key are has to be read and agreed to before any trust
+/// is written. Keeping both halves here means the person who typed the code
+/// stays where they typed it, and going back from either is going back to
+/// Hosts.
 private struct PairByCodePage: View {
     let host: HostId?
     let router: Router
     let stores: StoreBundle
 
     var body: some View {
+        page
+            .toolbar(.hidden, for: .navigationBar)
+            .onAppear { stores.pairing.open(machine: host.flatMap { stores.hosts.known($0) }) }
+    }
+
+    @ViewBuilder
+    private var page: some View {
+        switch stores.pairing.phase {
+        // A refusal belongs to the digits: it is the code that did not work,
+        // and the next thing to do is type another one.
+        case .entering, .checking, .refused: digits
+        case .confirming, .trusted: decision
+        }
+    }
+
+    private var digits: some View {
         PairByCode(model: stores.pairing) { action in
             switch action {
             case .digits(let typed): stores.pair(digits: typed)
-            // A code cannot reach either of these — nothing on this screen
-            // authenticates, so there is never an attempt here to answer.
+            // A code cannot reach either of these — nothing on the keypad
+            // authenticates, so there is never an attempt there to answer.
             case .confirm, .abandon: break
             case .cancel: router.pop()
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
-        .onAppear { stores.pairing.open(machine: host.flatMap { stores.hosts.known($0) }) }
+    }
+
+    private var decision: some View {
+        PairConfirmation(model: stores.pairing) { action in
+            switch action {
+            case .confirm(let peer): stores.confirmPairing(peer)
+            // Turning the machine away is a message to it, not just a way off
+            // the screen: told, it can release the attempt now rather than
+            // holding it open until it expires. What is left behind is an
+            // empty keypad, because the next thing somebody does after
+            // refusing a machine is try the code for the right one.
+            case .abandon(let peer): stores.abandonPairing(peer)
+            case .cancel: router.pop()
+            case .digits: break
+            }
+        }
     }
 }
 
@@ -497,10 +537,23 @@ private struct PairConfirmationPage: View {
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { ask() }
         .onChange(of: stores.account) { _, _ in ask() }
+        .onChange(of: stores.fleet.connection.state) { _, _ in ask() }
     }
 
+    /// Puts the invitation to the machine, once there is anything to put it
+    /// with.
+    ///
+    /// A link is authenticated over the relay it names, so a phone with no
+    /// account and a phone whose connection has not finished opening are the
+    /// same thing here: there is nobody to ask. Asking anyway comes back as a
+    /// refusal within the second, and "that invitation did not work" is a
+    /// verdict about the machine — saying it about a connection that was still
+    /// being made would send somebody back to a machine that is fine to ask it
+    /// for another code.
     private func ask() {
-        guard asked.shouldAsk(stores.account) else { return }
+        guard stores.fleet.connection.state == .connected,
+              asked.shouldAsk(stores.account)
+        else { return }
         stores.pairing.open()
         if stores.pair(link: invitation.payload) { asked.asked(stores.account) }
     }

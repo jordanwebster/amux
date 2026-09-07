@@ -48,6 +48,13 @@ public enum DoorRequest: Sendable, Equatable {
     case capture(path: String)
     case tap(identifier: String)
     case type(identifier: String, text: String)
+    /// Empty a named field, through the field's own delete.
+    ///
+    /// Typing adds to what a field is already holding, which is what typing
+    /// does; a driver that wants the field to hold one thing has to take the
+    /// last thing out of it first, exactly as the person whose typo it was
+    /// would.
+    case clear(identifier: String)
     /// Put this text on the system's clipboard and paste it into the named
     /// field, which is the message the system's own Paste menu item sends.
     ///
@@ -359,6 +366,8 @@ extension DoorRequest: Codable {
             self = .type(
                 identifier: try fields.decode(String.self, forKey: .identifier),
                 text: try fields.decode(String.self, forKey: .text))
+        case "clear":
+            self = .clear(identifier: try fields.decode(String.self, forKey: .identifier))
         case "paste":
             self = .paste(
                 identifier: try fields.decode(String.self, forKey: .identifier),
@@ -458,6 +467,9 @@ extension DoorRequest: Codable {
             try fields.encode("type", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)
             try fields.encode(text, forKey: .text)
+        case .clear(let identifier):
+            try fields.encode("clear", forKey: .kind)
+            try fields.encode(identifier, forKey: .identifier)
         case .paste(let identifier, let text):
             try fields.encode("paste", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)
@@ -625,6 +637,17 @@ public enum Door {
     public static let tokenArgument = "amux-token"
     public static let userArgument = "amux-user"
     public static let pairArgument = "amux-pair"
+
+    /// `-amux-link URL`: a link the launch was opened with, handed to the app
+    /// before its first frame exactly as the system hands one over.
+    ///
+    /// Not another way to pair. It is how a driver reaches the cold start
+    /// itself: the system opens an app with a URL by launching it, and a UI
+    /// test cannot launch the app that way and still say which relay and
+    /// which door to use. So the link travels in the launch beside them, and
+    /// what happens to it afterwards is the app's own routing — including a
+    /// link that lands before anybody has signed in.
+    public static let linkArgument = "amux-link"
 
     /// What the ready file holds.
     public struct Ready: Codable, Sendable, Equatable {

@@ -57,6 +57,25 @@ impl RelayEndpoint {
         })
     }
 
+    /// The cloud this endpoint is, written the way a configuration and a
+    /// pairing link write it.
+    ///
+    /// An embedded runtime has no cloud of its own beyond the relay it was
+    /// opened with, and a pairing link names the cloud it was issued for — so
+    /// the two are compared as strings and this is the one string this side
+    /// has to offer.
+    pub fn url(&self) -> String {
+        #[cfg(feature = "debug-tools")]
+        if let Some(address) = self.plain {
+            return format!("http://{address}");
+        }
+        if self.port == 443 {
+            format!("https://{}", self.host)
+        } else {
+            format!("https://{}:{}", self.host, self.port)
+        }
+    }
+
     fn channel(&self) -> Result<Channel, ServerError> {
         #[cfg(feature = "debug-tools")]
         if let Some(address) = self.plain {

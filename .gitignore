@@ -36,3 +36,6 @@ overnight_cleanup.py
 # Xcode and SwiftPM per-user state beside the generated iOS project
 ios/**/.swiftpm/
 ios/**/xcuserdata/
+
+# Bytecode Python leaves beside the scripts it runs
+__pycache__/

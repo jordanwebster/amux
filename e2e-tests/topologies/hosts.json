@@ -1,0 +1,62 @@
+{
+  "users": [
+    "personal",
+    "work"
+  ],
+  "daemons": [
+    {
+      "name": "laptop",
+      "user": "personal",
+      "repository_roots": [
+        "../../target/ios/journeys/hosts-projects"
+      ]
+    },
+    {
+      "name": "desktop",
+      "user": "personal",
+      "repository_roots": [
+        "../../target/ios/journeys/hosts-projects"
+      ]
+    },
+    {
+      "name": "workstation",
+      "user": "work",
+      "repository_roots": [
+        "../../target/ios/journeys/hosts-projects"
+      ]
+    }
+  ],
+  "paired": [],
+  "agents": [
+    {
+      "name": "fix-login",
+      "daemon": "laptop",
+      "working_dir": "../../target/ios/journeys/hosts-projects/alpha",
+      "provider": {
+        "Claude": {
+          "script": "../scripts/idle.json"
+        }
+      }
+    },
+    {
+      "name": "port-the-parser",
+      "daemon": "laptop",
+      "working_dir": "../../target/ios/journeys/hosts-projects/beta",
+      "provider": {
+        "Claude": {
+          "script": "../scripts/idle.json"
+        }
+      }
+    },
+    {
+      "name": "release-notes",
+      "daemon": "desktop",
+      "working_dir": "../../target/ios/journeys/hosts-projects/alpha",
+      "provider": {
+        "Claude": {
+          "script": "../scripts/idle.json"
+        }
+      }
+    }
+  ]
+}
