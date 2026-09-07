@@ -122,13 +122,7 @@ final class WritingTests: JourneyCase {
         photograph(app, "writing-tokens")
 
         // MARK: Nothing kept, and the field is empty again.
-        //
-        // Pressed through the app's own door rather than by coordinate. The
-        // cross sits in the composer, and the composer sits under an open
-        // keyboard: a tap aimed at where the tree says the control is lands on
-        // a letter key and types it into the message being cleared. The door
-        // does to it what VoiceOver does, which is the same press.
-        try door(runner, .init(kind: "tap", identifier: "composer.clear"))
+        press(app, "composer.clear")
         try waitUntil(runner, "clearing left something in the field") {
             self.said($0, "composer")?.value.isEmpty == true
         }
@@ -196,7 +190,7 @@ final class WritingTests: JourneyCase {
         //
         // The cross empties the field and the turn goes on, which is what the
         // placeholder still says afterwards.
-        try door(runner, .init(kind: "tap", identifier: "composer.clear"))
+        press(app, "composer.clear")
         XCTAssertEqual(try spoken(runner), "", "the cross did not empty the field")
         XCTAssertEqual(said(try declared(runner), "composer")?.label, "Queue a message",
                        "emptying the field stopped the turn as well")
