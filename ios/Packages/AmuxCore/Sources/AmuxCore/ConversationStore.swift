@@ -218,7 +218,17 @@ public final class ConversationStore {
         guard !update.append.isEmpty else { return }
         if entries.isEmpty { firstPosition = update.base }
         let end = firstPosition + UInt64(entries.count)
-        if update.base < end {
+        if update.base < firstPosition {
+            // A replay from further back than anything still held. A stream
+            // released while nobody was reading it is sent again from its
+            // start when the conversation is reopened, and by then this may
+            // have dropped an evicted prefix that the replay still carries.
+            // Nothing held sits inside what is arriving, so it all goes and
+            // the replay becomes the feed; keeping any of it would put rows
+            // after positions that are about to be rewritten.
+            entries.removeAll()
+            firstPosition = update.base
+        } else if update.base < end {
             entries.removeLast(Int(end - update.base))
         } else if update.base > end {
             invariants.append("feed gap between \(end) and \(update.base)")

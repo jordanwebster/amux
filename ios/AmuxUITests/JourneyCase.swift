@@ -32,11 +32,6 @@ class JourneyCase: XCTestCase {
         let relay: String
         let token: String
         let user: String
-        /// A machine's own pairing offer, for a launch that is told to trust
-        /// one before anything else happens. A journey that pairs some other
-        /// way — by the code a machine printed, through the door — passes
-        /// none, and the launch trusts nobody.
-        let pairing: String?
         let control: String
         let doorPort: String
         let agent: String
@@ -50,7 +45,6 @@ class JourneyCase: XCTestCase {
             relay = try required("AMUX_RELAY")
             token = try required("AMUX_TOKEN")
             user = try required("AMUX_USER")
-            pairing = environment["AMUX_PAIR"]
             control = try required("AMUX_CONTROL")
             doorPort = try required("AMUX_DOOR_PORT")
             agent = try required("AMUX_AGENT")
@@ -58,8 +52,12 @@ class JourneyCase: XCTestCase {
         }
     }
 
-    /// The app, launched already told what to connect to and which machine to
-    /// trust, so everything on screen afterwards arrived over a real relay.
+    /// The app, launched already told what to connect to, so everything on
+    /// screen afterwards arrived over a real relay.
+    ///
+    /// The launch trusts no machine. A phone is admitted by a machine, never
+    /// the other way round, so a journey pairs after the launch — with
+    /// `pairThroughTheDoor`, or by whatever the journey is itself about.
     ///
     /// - Parameters:
     ///   - signedIn: whether the launch carries an account's relay credential.
@@ -82,10 +80,26 @@ class JourneyCase: XCTestCase {
         ] : []
         app.launchArguments = ["-amux-door-port", runner.doorPort]
             + credential
-            + (runner.pairing.map { ["-amux-pair", $0] } ?? [])
             + (link.map { ["-amux-link", $0] } ?? [])
         app.launch()
         return app
+    }
+
+    /// Trusts the machine the journey named, by the code that machine
+    /// printed.
+    ///
+    /// A phone nobody has admitted is disowned by every machine on the relay,
+    /// so its fleet comes back empty and there is nothing to open. The screens
+    /// that read a code belong to the journey about pairing; every other
+    /// journey takes the same two steps against the same machine through the
+    /// app's own door, which leaves behind the trust the product's own path
+    /// writes.
+    func pairThroughTheDoor(_ runner: Runner) throws {
+        let environment = ProcessInfo.processInfo.environment
+        let machine = try XCTUnwrap(
+            environment["AMUX_HOST_ID"], "the journey did not pass AMUX_HOST_ID")
+        let code = try XCTUnwrap(environment["AMUX_PIN"], "the journey did not pass AMUX_PIN")
+        try door(runner, .init(kind: "pairByCode", host: machine, pin: code))
     }
 
     // MARK: - Talking to the runner and to the app

@@ -45,6 +45,7 @@ final class WritingTests: JourneyCase {
             ProcessInfo.processInfo.environment["AMUX_CODEX_AGENT"],
             "the journey did not pass AMUX_CODEX_AGENT")
         let app = launch(runner)
+        try pairThroughTheDoor(runner)
 
         // MARK: The conversation, opened.
         waitFor(app, "home.row.\(runner.agent)",

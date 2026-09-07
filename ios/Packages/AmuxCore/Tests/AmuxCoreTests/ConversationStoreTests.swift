@@ -63,6 +63,30 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(text(store), ["row-2", "corrected", "row-4"])
     }
 
+    func testAReplayFromBeforeWhatIsHeldBecomesTheWholeFeed() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: (0..<4).map { row($0, seq: $0 + 1, text: "row-\($0)") },
+            replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 4, append: [row(4, seq: 5, text: "row-4")],
+            replace: [], evicted: 3)))
+        XCTAssertEqual(store.firstPosition, 3)
+
+        // Reopening a conversation whose stream was released replays it from
+        // the start, which is further back than the prefix this had already
+        // dropped. The replay is the feed; nothing of the shorter tail
+        // survives it, and nothing about it is a hole.
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: (0..<5).map { row($0, seq: $0 + 1, text: "row-\($0)") },
+            replace: [], evicted: 0)))
+        XCTAssertEqual(text(store), ["row-0", "row-1", "row-2", "row-3", "row-4"])
+        XCTAssertEqual(store.firstPosition, 0)
+        XCTAssertTrue(store.invariants.isEmpty, "\(store.invariants)")
+    }
+
     func testAFeedForAnotherAgentIsIgnored() {
         let store = ConversationStore(agent: agent)
         store.apply(.feed(FeedUpdate(

@@ -29,6 +29,7 @@ final class AskTests: JourneyCase {
         let runner = try Runner()
         let control = try Lines(address: runner.control)
         let app = launch(runner)
+        try pairThroughTheDoor(runner)
 
         // MARK: The agent, opened.
         waitFor(app, "home.row.\(runner.agent)",

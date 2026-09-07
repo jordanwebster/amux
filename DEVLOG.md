@@ -4,6 +4,36 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **Four journeys pair by code again, and a replayed feed no longer
+crashes the phone.**
+
+The conversation, asks, review and writing journeys had stopped running at
+all. Each opened a pairing invitation on its machine and then handed the test
+a code and a host id it had never worked out, so the driver raised a
+NameError before the simulator was touched. Behind that, the phone no longer
+accepts an invitation at launch: a machine admits a device, and the app now
+takes the two steps the pairing screen takes, so a launch told to trust
+somebody refuses. All four now ask their machine for a code and pass it with
+that machine's identity, and each test trusts the machine through the app's
+own door before it asserts anything — the same path the hosts journeys use.
+Nothing anywhere still passes a pairing payload into a test, so the launch
+argument for one is gone from the journey harness.
+
+Two things the conversation journey had drifted past while it was dead. It
+looked for a changes page under a name no screen has ever declared; the page
+is the review, and it has its own way back rather than a navigation bar. And
+it read the panel that says a machine has gone away without first putting
+away the offer of the changes the finished turn left — that offer sits in the
+composer's place and outranks it, so the claim about losing a machine was
+being made against a screen showing something else.
+
+It also crashed the app, which was a real defect and not a test's. A
+conversation whose stream was released while nobody was reading it is
+replayed from its start when it is reopened, and a phone that had already
+dropped an evicted prefix would try to rewind further than it held any rows
+and trap. A replay from before the first row still held now replaces
+everything held, which is what such a replay is.
+
 2026-09-07 — **A journey can be re-entered at one of its acts.**
 
 Diagnosing a failure in the hosts journey cost a whole run of it, because the

@@ -23,6 +23,7 @@ final class ReviewTests: JourneyCase {
     func testAReviewIsWrittenAndSentWithItsPatch() throws {
         let runner = try Runner()
         let app = launch(runner)
+        try pairThroughTheDoor(runner)
 
         // MARK: The agent, opened, and its changes asked for.
         waitFor(app, "home.row.\(runner.agent)",

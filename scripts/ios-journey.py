@@ -900,8 +900,9 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     """One conversation with an agent the runner is really running.
 
     Everything on screen arrived over the relay from a real host: the app is
-    launched already told what to connect to and which machine to trust, and
-    the scripted provider then plays every kind of step it has. What a finger
+    launched already told what to connect to, trusts the machine by the code
+    that machine printed, and the scripted provider then plays every kind of
+    step it has. What a finger
     does is a UI test, because unfolding a run of reads and reaching the
     changes are taps. What a finger cannot do yet is send a message — the
     composer is chunk eight — so the attempts go through the app's own door,
@@ -910,8 +911,8 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
 
     The phone pairs first. An unpaired device is discovered by the relay and
     disowned by every machine on it, so its fleet confirms empty and there is
-    no conversation to open; the screens that pair a phone are later work, so
-    the trust is taken through the debug bridge instead of through them.
+    no conversation to open; the screens that read a code are later work, so
+    the code goes through the debug bridge instead of through them.
     """
     daemon = ready["daemons"][0]
     running = {agent["name"]: agent for agent in ready["agents"]}
@@ -921,9 +922,11 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
 
     install(udid)
     forget_cache(udid)
-    pairing = answer(control_address, {"StartQrPairing": {"daemon": daemon["name"]}})["qr"]
-    journey.say(f"{daemon['name']} is offering to pair; the phone will be given that offer at "
-                f"launch, because the screen that reads one is later work")
+    forget_pairings(udid)
+    pin = answer(control_address,
+                 {"StartPinPairing": {"daemon": daemon["name"], "ttl_secs": 600}})["pin"]
+    journey.say(f"{daemon['name']} printed a pairing code; the phone trusts it by that code "
+                f"once it is up, because the screen that reads one is later work")
 
     port = free_port()
     photographs = {
@@ -956,7 +959,7 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_TOKEN": token,
             "AMUX_USER": "journey-phone",
             "AMUX_PIN": pin,
-            "AMUX_HOST_ID": machine["host_id"],
+            "AMUX_HOST_ID": daemon["host_id"],
             "AMUX_CONTROL": control_address,
             "AMUX_DOOR_PORT": str(port),
             "AMUX_AGENT": running["carry-on"]["agent_id"],
@@ -1143,9 +1146,9 @@ def asks(journey: Journey, udid: str, ready: dict) -> None:
     which is read back from the scripted provider afterwards and compared
     answer by answer.
 
-    The phone pairs first, through the debug bridge: an unpaired device is
-    disowned by every machine on the relay, and the screens that pair one are
-    later work.
+    The phone pairs first, by the code the machine printed, through the debug
+    bridge: an unpaired device is disowned by every machine on the relay, and
+    the screens that read a code are later work.
     """
     daemon = ready["daemons"][0]
     running = {agent["name"]: agent for agent in ready["agents"]}
@@ -1154,8 +1157,10 @@ def asks(journey: Journey, udid: str, ready: dict) -> None:
 
     install(udid)
     forget_cache(udid)
-    pairing = answer(control_address, {"StartQrPairing": {"daemon": daemon["name"]}})["qr"]
-    journey.say(f"{daemon['name']} is offering to pair, and holds "
+    forget_pairings(udid)
+    pin = answer(control_address,
+                 {"StartPinPairing": {"daemon": daemon["name"], "ttl_secs": 600}})["pin"]
+    journey.say(f"{daemon['name']} printed a pairing code, and holds "
                 f"{', '.join(sorted(running))} in a repository this journey left for it")
 
     photographs = {
@@ -1194,7 +1199,7 @@ def asks(journey: Journey, udid: str, ready: dict) -> None:
                 "AMUX_TOKEN": token,
                 "AMUX_USER": "journey-phone",
                 "AMUX_PIN": pin,
-            "AMUX_HOST_ID": machine["host_id"],
+                "AMUX_HOST_ID": daemon["host_id"],
                 "AMUX_CONTROL": control_address,
                 "AMUX_DOOR_PORT": str(free_port()),
                 "AMUX_AGENT": running["mind-the-gap"]["agent_id"],
@@ -1308,9 +1313,12 @@ def review(journey: Journey, udid: str, ready: dict) -> None:
 
     install(udid)
     forget_cache(udid)
-    pairing = answer(control_address, {"StartQrPairing": {"daemon": daemon["name"]}})["qr"]
-    journey.say(f"{daemon['name']} holds {', '.join(sorted(running))} in a repository this "
-                f"journey left with one uncommitted change in it")
+    forget_pairings(udid)
+    pin = answer(control_address,
+                 {"StartPinPairing": {"daemon": daemon["name"], "ttl_secs": 600}})["pin"]
+    journey.say(f"{daemon['name']} printed a pairing code and holds "
+                f"{', '.join(sorted(running))} in a repository this journey left with one "
+                f"uncommitted change in it")
 
     photographs = {"review-diff.png": "diff.png", "review-comment.png": "comment.png",
                    "review-sent.png": "sent.png"}
@@ -1324,7 +1332,7 @@ def review(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_TOKEN": token,
             "AMUX_USER": "journey-phone",
             "AMUX_PIN": pin,
-            "AMUX_HOST_ID": machine["host_id"],
+            "AMUX_HOST_ID": daemon["host_id"],
             "AMUX_CONTROL": control_address,
             "AMUX_DOOR_PORT": str(free_port()),
             "AMUX_AGENT": running["tidy-the-parser"]["agent_id"],
@@ -1418,9 +1426,12 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
 
     install(udid)
     forget_cache(udid)
-    pairing = answer(control_address, {"StartQrPairing": {"daemon": daemon["name"]}})["qr"]
-    journey.say(f"{daemon['name']} holds {', '.join(sorted(running))}: one session this "
-                f"journey writes to and one that offers models, effort levels and commands")
+    forget_pairings(udid)
+    pin = answer(control_address,
+                 {"StartPinPairing": {"daemon": daemon["name"], "ttl_secs": 600}})["pin"]
+    journey.say(f"{daemon['name']} printed a pairing code and holds "
+                f"{', '.join(sorted(running))}: one session this journey writes to and one "
+                f"that offers models, effort levels and commands")
 
     photographs = {
         "writing-tokens.png": "tokens.png",
@@ -1441,7 +1452,7 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_TOKEN": token,
             "AMUX_USER": "journey-phone",
             "AMUX_PIN": pin,
-            "AMUX_HOST_ID": machine["host_id"],
+            "AMUX_HOST_ID": daemon["host_id"],
             "AMUX_CONTROL": control_address,
             "AMUX_DOOR_PORT": str(free_port()),
             "AMUX_AGENT": running["talk-me-through-it"]["agent_id"],

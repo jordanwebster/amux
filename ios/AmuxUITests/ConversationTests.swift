@@ -5,9 +5,10 @@ import XCTest
 ///
 /// This is a UI test rather than a door conversation because everything it
 /// claims is about pressing things: opening an agent, unfolding a run of reads,
-/// reaching the changes. The app is launched already told what to connect to
-/// and which machine to trust, so every row on screen arrived over a real relay
-/// from a real host, and nothing here fills a store.
+/// reaching the changes. The app is launched already told what to connect to and
+/// then trusts one machine by the code that machine printed, so every row on
+/// screen arrived over a real relay from a real host, and nothing here fills a
+/// store.
 ///
 /// Three sockets, all on the loopback the simulator shares with the Mac:
 /// XCUITest for what a finger does, the runner's control channel for what the
@@ -28,7 +29,10 @@ final class ConversationTests: XCTestCase {
         let relay: String
         let token: String
         let user: String
-        let pairing: String
+        /// The machine this phone is admitted by, and the code it printed to
+        /// admit it with.
+        let machine: String
+        let code: String
         let control: String
         let doorPort: String
         let agent: String
@@ -45,7 +49,8 @@ final class ConversationTests: XCTestCase {
             relay = try required("AMUX_RELAY")
             token = try required("AMUX_TOKEN")
             user = try required("AMUX_USER")
-            pairing = try required("AMUX_PAIR")
+            machine = try required("AMUX_HOST_ID")
+            code = try required("AMUX_PIN")
             control = try required("AMUX_CONTROL")
             doorPort = try required("AMUX_DOOR_PORT")
             agent = try required("AMUX_AGENT")
@@ -68,9 +73,15 @@ final class ConversationTests: XCTestCase {
             "-amux-relay", runner.relay,
             "-amux-token", runner.token,
             "-amux-user", runner.user,
-            "-amux-pair", runner.pairing,
         ]
         app.launch()
+
+        // Trusting the machine by the code it printed, through the same two
+        // steps and the same store the pairing screen drives. The launch
+        // trusts nobody: a phone no machine has admitted is disowned by every
+        // machine on the relay, so its fleet comes back empty and there is no
+        // conversation to open.
+        try door(runner, .init(kind: "pairByCode", host: runner.machine, pin: runner.code))
 
         // MARK: The fleet a paired phone is given.
         let row = element(app, "home.row.\(runner.agent)")
@@ -175,17 +186,16 @@ final class ConversationTests: XCTestCase {
         // claimed here is that a real diff, computed by the host that holds
         // the repository, put the chip on screen and that pressing it goes to
         // the changes rather than nowhere.
-        XCTAssertTrue(element(app, "page.changes").waitForExistence(timeout: waiting),
+        XCTAssertTrue(element(app, "review").waitForExistence(timeout: waiting),
                       "pressing the changes chip did not go to the changes")
         photograph(app, "conversation-changes")
-        // The bar's own button and nothing else. A drag from the left edge is
+        // The page's own button and nothing else. A drag from the left edge is
         // the system's way back, but it is also the drawer's way out, and the
         // drawer wins: the fleet slides over the conversation and everything
         // asked about it afterwards is asked of a screen nobody is looking at.
-        let back = app.navigationBars.buttons.element(boundBy: 0)
-        XCTAssertTrue(back.waitForExistence(timeout: waiting),
+        XCTAssertTrue(element(app, "review.back").waitForExistence(timeout: waiting),
                       "the changes have no way back")
-        back.tap()
+        press(app, "review.back")
         XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
                       "coming back from the changes did not come back to the conversation")
         XCTAssertTrue(identifiers(app, startingWith: "drawer.row.").isEmpty,
@@ -300,6 +310,16 @@ final class ConversationTests: XCTestCase {
         press(app, "home.row.\(runner.agent)")
         XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
                       "reopening the running agent did not lead to its conversation")
+        // The turn has ended and its changes are still on offer, in the place
+        // the composer sits. That offer is put away first, the way somebody
+        // who has already looked at the patch puts it away, so what is claimed
+        // below is about the panel that says the machine has gone rather than
+        // about the one that was covering it.
+        if element(app, "conversation.finished").waitForExistence(timeout: waiting) {
+            press(app, "ask.later")
+            XCTAssertTrue(waitUntil { !self.element(app, "conversation.finished").exists },
+                          "the changes on offer would not be put away")
+        }
         // What is on screen before the machine goes, to compare against what
         // is on screen after it has.
         let readable = try waitForRows(app)
@@ -693,14 +713,21 @@ final class ConversationTests: XCTestCase {
     /// One request for the app's own door, whose fields are the door's.
     private struct DoorRequest {
         var kind: String
-        var agent: String
+        /// Which conversation the request is about, where it is about one.
+        /// Pairing is about a machine instead.
+        var agent: String?
         var text: String?
         var base: String?
         var seconds: Double?
         var path: String?
+        var host: String?
+        var pin: String?
 
         var body: [String: Any] {
-            var fields: [String: Any] = ["kind": kind, "agent": agent]
+            var fields: [String: Any] = ["kind": kind]
+            if let agent { fields["agent"] = agent }
+            if let host { fields["host"] = host }
+            if let pin { fields["pin"] = pin }
             if let text { fields["text"] = text }
             if let base { fields["base"] = base }
             if let seconds { fields["seconds"] = seconds }
