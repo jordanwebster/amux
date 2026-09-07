@@ -439,16 +439,35 @@ public struct MessageDraft: Sendable, Equatable {
         return token.label
     }
 
-    private var wire: Wire.Body {
+    /// This draft in the shared vocabulary a held message is written in.
+    ///
+    /// The command names itself and the rest of the message is its arguments,
+    /// in that order, because that is the order the core reads them in. The
+    /// stand-in the command occupies spells nothing, so the arguments are
+    /// simply what is left.
+    ///
+    /// Everything that has to read a draft back as one sentence reads it from
+    /// here — the wire it is sent on and the row drawn the instant it is sent
+    /// alike — so a message cannot be spelled one way going out and another
+    /// way on screen.
+    public var held: HeldDraft {
         guard let name = command else {
-            return .init(segments: [.init(text: text)], attachments: attachments)
+            return HeldDraft(segments: [.text(text)], attachments: attachments)
         }
-        // The command names itself and the rest of the message is its
-        // arguments, in that order, because that is the order the core reads
-        // them in. The stand-in the command occupies spells nothing, so the
-        // arguments are simply what is left.
+        return HeldDraft(
+            segments: [.command(name: name), .text(text)], attachments: attachments)
+    }
+
+    private var wire: Wire.Body {
+        let draft = held
         return .init(
-            segments: [.command(name), .init(text: text)], attachments: attachments)
+            segments: draft.segments.map { segment in
+                switch segment {
+                case .text(let text): .text(text)
+                case .command(let name): .command(name)
+                }
+            },
+            attachments: draft.attachments)
     }
 
     private struct Wire: Encodable {

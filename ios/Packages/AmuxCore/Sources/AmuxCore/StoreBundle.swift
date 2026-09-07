@@ -146,7 +146,11 @@ public final class StoreBundle {
                 : store.draft.command(to: agent),
               let op = dispatch?(command)
         else { return false }
-        if !hold { store.sent(store.draft.text) }
+        // The optimistic row is folded the way a held message folds, so a
+        // draft that is a command reads as the command it is rather than as
+        // its arguments alone — and reads the same as the host's own echo of
+        // it, which is all the two rows have to match on.
+        if !hold { store.sent(store.draft.held.text) }
         store.dispatched(op)
         store.draft.clear()
         return true

@@ -4,6 +4,37 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **A command sent twice on the screen, and a radio spending a
+colour the sheet had already spent.** Three repairs found by reading the
+writing journey's own evidence back.
+
+A message is drawn the instant Send is pressed, before anything has left the
+phone, and it goes again when the host's own row for it arrives — matched on
+the text, because that is all the two rows share. A draft whose first token is
+a command was recording that optimistic row as its arguments alone: the
+command travels as its own segment of the draft and spells nothing into the
+text, so `/plan the parser…` was drawn as ` the parser…` and the host's echo
+never matched it. Both rows stayed, and the feed showed the same message
+twice. There is now one place a draft is folded into a sentence — the shape a
+held message is written in — and the wire and the optimistic row are both read
+from it, so the two cannot disagree again. The journey counts the prompt rows
+after the command turn and fails at two.
+
+The permissions sheet is achromatic except for the mode that stops asking,
+because colour in this app means something needs you and there is exactly one
+thing on that sheet worth spending it on. The selection mark was drawn in the
+accent regardless, so every mode in turn carried a colour competing with the
+warning. The mark is ink there now; the model card, whose only mark is the
+accent's own, is unchanged.
+
+And the journey's narration said four kinds of token stood in the sentence it
+photographs, where three do: the photograph is attached and then taken back
+out by the one backspace that proves a token is one character to the caret,
+before the file and the review arrive. It now says what stands there and
+records the photograph's part separately.
+
+---
+
 2026-09-07 — **A keyboard that outlives its screen.** Writing a message,
 opening the patch from the chip and attaching the review came back to a
 conversation with the composer nowhere on it: the box was drawn where it would

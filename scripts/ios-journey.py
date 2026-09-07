@@ -1393,7 +1393,12 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
                    f"the stored file is not in the message: {seen.get('afterFile')!r}")
     journey.expect("[Review" in seen.get("afterReview", ""),
                    f"the attached review is not in the message: {seen.get('afterReview')!r}")
-    journey.say(f"four kinds of token stand in one sentence: {seen['afterReview']!r}")
+    journey.say(f"three tokens stand in the sentence that is photographed — the paste, the "
+                f"stored file and the review: {seen['afterReview']!r}")
+    journey.say(f"the fourth kind, the stored photograph, stood in the same sentence earlier "
+                f"({seen['afterPhoto']!r}) and was taken back out by the one backspace that "
+                f"proves a token is one character to the caret, before the file and the "
+                f"review were attached")
     journey.expect(seen.get("afterMove", "").endswith(
         "[parser.rs][Pasted text \u00b7 14 lines][Review \u00b7 1 comment]"),
         f"moving one token left {seen.get('afterMove')!r}")
@@ -1453,6 +1458,10 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
                    f"the command the slash raised came from {seen.get('commandOffered')!r}")
     journey.expect("[plan]" in seen.get("command", ""),
                    f"picking a command left {seen.get('command')!r} in the field")
+    journey.expect(seen.get("commandPrompts") == 1,
+                   f"the command turn left {seen.get('commandPrompts')} prompt rows in the "
+                   f"feed, so the row drawn on the send and the machine's echo of it are "
+                   f"both still there")
     journey.expect(seen.get("modelBefore") == "Model A \u00b7 low",
                    f"the session started on {seen.get('modelBefore')!r}")
     journey.expect(seen.get("model") == "Model B \u00b7 medium",
@@ -1460,7 +1469,9 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect(seen.get("effort") == "Model B \u00b7 high",
                    f"choosing an effort left the chip reading {seen.get('effort')!r}")
     journey.say(f"the slash raised the session's own commands, and one was sent as a token "
-                f"and answered; the chip "
+                f"and answered, leaving one prompt row in the feed — the row drawn on the "
+                f"send reads as the command it is, so the machine's echo of it replaced "
+                f"that row rather than standing beside it; the chip "
                 f"went from {seen['modelBefore']!r} to {seen['model']!r} — the model's own "
                 f"default effort, which the machine chose — and then to {seen['effort']!r}")
 

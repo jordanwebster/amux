@@ -807,6 +807,9 @@ the app's answer.
   needs you, and a permanent coloured label in every conversation would spend
   it on nothing. Bypass permissions is the exception, because being in the mode
   that will not ask again is not a state anybody should be in without seeing it.
+  The mark beside the mode the session is in is ink rather than the accent for
+  the same reason: a coloured mark on every mode in turn would compete with the
+  one warning this sheet exists to carry.
 - **The list is the provider's and the current one is the session's.** The core
   reports which mode an agent is under, not the set of them, because the set is
   closed and belongs to Claude. A mode reported that is not one of the five

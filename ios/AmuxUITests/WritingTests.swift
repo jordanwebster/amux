@@ -326,6 +326,10 @@ final class WritingTests: JourneyCase {
             waitUntil { self.transcriptRows(app).contains("transcript.prose") },
             "the command was sent and the session never answered; the feed shows "
             + "\(transcriptRows(app))")
+        // One prompt row, not two. The row drawn the instant the command was
+        // sent and the machine's own echo of it are the same message, so the
+        // feed has to be left holding one of them.
+        record["commandPrompts"] = transcriptRows(app).filter { $0 == "transcript.prompt" }.count
 
         // MARK: The model and the effort, changed and read back off the host.
         //

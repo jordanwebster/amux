@@ -144,6 +144,34 @@ final class ComposerTests: XCTestCase {
         XCTAssertEqual(store.rows().first?.id, "claude_pty:0")
     }
 
+    /// A message that is a command is drawn as the command it is, not as its
+    /// arguments on their own — which is also the only way the host's echo of
+    /// it can ever match the row already on screen.
+    func testACommandsOwnRowReplacesTheOptimisticOne() {
+        let bundle = StoreBundle(account: AccountId("test"))
+        bundle.dispatch = { _ in OpId(UUID()) }
+        let store = bundle.conversation(agent)
+        store.apply(.session(SessionSnapshot(
+            agent: agent, gate: .claudePty(.ready), phase: .unavailable, stream: .live,
+            asks: [], facts: .unavailable, provider: ProviderFacts(),
+            settingsGate: .unavailable, queue: nil, family: [])))
+        store.draft.body = "/plan"
+        store.draft.pick(ProviderCommand(name: "plan", source: .null))
+        store.draft.insert(text: " the parser before the wire format")
+        XCTAssertTrue(bundle.send(to: agent))
+        XCTAssertEqual(
+            store.unacknowledged.map(\.text),
+            ["/plan the parser before the wire format"])
+
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: [prompt(0, seq: 1, text: "/plan the parser before the wire format")],
+            replace: [], evicted: 0)))
+        XCTAssertTrue(store.unacknowledged.isEmpty)
+        XCTAssertEqual(store.rows().count, 1)
+        XCTAssertEqual(store.rows().first?.id, "claude_pty:0")
+    }
+
     /// A row arriving that is not the message that was sent leaves the
     /// optimistic one where it is. Dropping it on any traffic at all would
     /// take a message off the screen the host had not taken yet.

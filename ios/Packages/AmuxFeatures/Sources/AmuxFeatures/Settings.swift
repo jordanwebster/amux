@@ -133,18 +133,25 @@ struct SettingsCard: View {
 }
 
 /// The mark beside the thing that is chosen.
+///
+/// Drawn in the accent, except where the screen around it has already spent
+/// its one colour on something else: on the permissions card the only
+/// coloured thing is the mode that stops asking, and a second coloured mark
+/// there would compete with the warning for the eye.
 struct Radio: View {
     @Environment(\.design) private var design
     let chosen: Bool
+    var mark: Ramp?
 
     var body: some View {
-        ZStack {
+        let mark = (mark ?? design.accent).color
+        return ZStack {
             Circle()
                 .strokeBorder(
-                    chosen ? design.accent.color : design.hairline.color, lineWidth: chosen ? 2 : 1)
+                    chosen ? mark : design.hairline.color, lineWidth: chosen ? 2 : 1)
                 .frame(width: 20, height: 20)
             if chosen {
-                Circle().fill(design.accent.color).frame(width: 10, height: 10)
+                Circle().fill(mark).frame(width: 10, height: 10)
             }
         }
         .frame(width: 22, height: 22)
@@ -256,7 +263,7 @@ struct PermissionsCard: View {
     private func row(_ choice: PermissionChoice) -> some View {
         Button { change(.permission(choice.id)) } label: {
             HStack(spacing: 14) {
-                Radio(chosen: choice.selected)
+                Radio(chosen: choice.selected, mark: design.ink)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(choice.name)
                         .designFont(.body, design)
