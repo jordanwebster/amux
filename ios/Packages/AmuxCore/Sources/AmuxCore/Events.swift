@@ -1615,6 +1615,8 @@ public enum OfflineReason: String, Codable, Sendable, Equatable {
     case ended
     /// The client itself stopped, so nothing is trying.
     case stopped
+    /// The app is not in front of anybody, so it holds no connection.
+    case suspended
 
     /// The one line a home shows above its rows, in full.
     public var sentence: String {
@@ -1624,6 +1626,7 @@ public enum OfflineReason: String, Codable, Sendable, Equatable {
         case .timedOut: "Offline · amux isn't answering — trying again"
         case .ended: "Offline · reconnecting"
         case .stopped: "Offline · amux stopped — reopen the app"
+        case .suspended: "Offline · reconnecting"
         }
     }
 }

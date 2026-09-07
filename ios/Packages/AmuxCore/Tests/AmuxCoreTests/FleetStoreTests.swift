@@ -146,12 +146,40 @@ final class FleetStoreTests: XCTestCase {
 
         // Every kind the core can send has words of its own; none of them is
         // a transport error read out to somebody looking at their agents.
-        for reason in [OfflineReason.rejected, .timedOut, .ended, .stopped] {
+        for reason in [OfflineReason.rejected, .timedOut, .ended, .stopped, .suspended] {
             store.apply(.connection(ConnectionUpdate(state: .disconnected, reason: reason)))
             let line = store.exceptions ?? ""
             XCTAssertTrue(line.hasPrefix("Offline · "), "\(reason) reads \(line)")
             XCTAssertFalse(line.contains("::") || line.contains("error"), "\(reason) reads \(line)")
         }
+    }
+
+    /// Put away and brought back. The phone holds no connection while it is
+    /// away and says so; coming back confirms the same list where it stood,
+    /// rather than emptying the home and drawing it again.
+    func testGoingAwayAndComingBackConfirmsTheSameListInPlace() {
+        let store = FleetStore(now: now)
+        let cards = (1...3).map { Made.card($0, name: "agent-\($0)", minutesAgo: Double($0), now: now) }
+        store.apply(.connection(ConnectionUpdate(state: .connected)))
+        store.apply(Made.fleet(cards, reconciled: true))
+        let placed = store.rows.map(\.name)
+        XCTAssertTrue(store.reconciled)
+
+        // Away: no link, and nothing this phone knows is confirmed by anybody.
+        store.apply(.connection(ConnectionUpdate(state: .disconnected, reason: .suspended)))
+        store.apply(Made.fleet(cards, reconciled: false))
+        XCTAssertEqual(store.exceptions, "Offline · reconnecting")
+        XCTAssertFalse(store.reconciled)
+        XCTAssertEqual(store.rows.map(\.name), placed,
+                       "being put away moved what this phone remembers")
+
+        // Back: the connection returns and the machines answer for the same
+        // rows, in the same order, with nothing left unconfirmed.
+        store.apply(.connection(ConnectionUpdate(state: .connected)))
+        store.apply(Made.fleet(cards, reconciled: true))
+        XCTAssertNil(store.exceptions)
+        XCTAssertTrue(store.reconciled)
+        XCTAssertEqual(store.rows.map(\.name), placed)
     }
 
     func testOpeningAnAgentClearsItsUnreadWeight() {

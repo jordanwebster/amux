@@ -451,12 +451,10 @@ async fn mobile_lifecycle_stop_cancels_unanswered_token_and_bad_reply() {
         e["Connection"]["state"] == "disconnected"
     })
     .await;
-    assert!(
-        event["Connection"]["reason"]
-            .as_str()
-            .unwrap()
-            .contains("invalid token reply")
-    );
+    // A credential the app could not answer with is the relay refusing this
+    // device, which is what the screen has to be able to say. The reply that
+    // could not be read is a diagnostic and goes to the log.
+    assert_eq!(event["Connection"]["reason"], json!("rejected"), "{event}");
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let event = receive.recv().await.unwrap();
@@ -2191,4 +2189,111 @@ async fn mobile_a_refused_relay_reports_itself_unreachable() {
         json!("unreachable"),
         "{offline}"
     );
+}
+
+/// Put away, the phone holds no connection at all: the link is severed at
+/// once, nothing dials while it is away, and the machine it was watching sees
+/// it leave rather than holding a socket nobody is reading. Coming back dials
+/// immediately and the fleet is confirmed again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_going_away_releases_the_link_and_coming_back_reconciles() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("host")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let host = net.daemon("host");
+    let (_, token) = net.user_credentials("owner");
+    let root = tempfile::tempdir().unwrap();
+    let static_config = config(
+        root.path(),
+        format!("http://{}", net.relay_addr()),
+        json!({"Static":token}),
+    );
+    let parsed = serde_json::from_value::<StartConfig>(static_config.clone()).unwrap();
+    let (requests, _receive) = mpsc::channel(1);
+    let credentials = Arc::new(Credentials {
+        source: parsed.relay.token.clone(),
+        requests,
+        next_id: AtomicU64::new(1),
+    });
+    // Pairing first, through a seed runtime, so what the phone reconciles
+    // afterwards is a machine that trusts it.
+    let mut seed = MobileRuntime::open(&parsed, credentials).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while *seed.relay.borrow_and_update() != RelayConnection::Connected {
+            seed.relay.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
+    let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
+        panic!("QR expected")
+    };
+    seed.embedded
+        .admin()
+        .pair_qr_cloud_peer(host.host_id(), secret)
+        .await
+        .unwrap();
+    seed.embedded.shutdown().await;
+
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(&static_config, &events),
+        _events: &events,
+    };
+    let handle = running.handle;
+    assert!(!handle.is_null());
+    until(&mut receive, handle, &token, |event| {
+        event["Fleet"]["reconciled"] == true
+    })
+    .await;
+
+    // Away. The connection says which kind of offline this is, and the
+    // machine stops seeing the phone.
+    unsafe { amux_mobile_set_active(handle, false) };
+    let away = until(&mut receive, handle, &token, |event| {
+        event["Connection"]["state"] == "disconnected"
+    })
+    .await;
+    assert_eq!(away["Connection"]["reason"], json!("suspended"), "{away}");
+    let admin = host.admin_client().await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let hosts = admin.list_hosts().await.unwrap();
+            if !hosts.iter().any(|entry| entry.name == "phone" && entry.online) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("the machine still saw the phone after it was put away");
+
+    // And nothing dials while it is away: a suspended phone is not a client
+    // with a network problem, so there is nothing for a backoff to retry.
+    let idle = until(&mut receive, handle, &token, |event| {
+        event["Fleet"]["reconciled"] == false
+    })
+    .await;
+    assert_eq!(idle["Fleet"]["reconciled"], json!(false), "{idle}");
+
+    // Back. The dial happens at once and the fleet is confirmed again.
+    unsafe { amux_mobile_set_active(handle, true) };
+    until(&mut receive, handle, &token, |event| {
+        event["Connection"]["state"] == "connected"
+    })
+    .await;
+    until(&mut receive, handle, &token, |event| {
+        event["Fleet"]["reconciled"] == true
+    })
+    .await;
 }

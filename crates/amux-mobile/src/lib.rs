@@ -66,6 +66,8 @@ enum Control {
         reply: std::sync::mpsc::SyncSender<Option<String>>,
     },
     FrameInterval(Duration),
+    /// Whether the app is in front of somebody.
+    Active(bool),
     Dispatch {
         op: OpId,
         command: Result<CommandDto, String>,
@@ -437,6 +439,25 @@ pub unsafe extern "C" fn amux_mobile_set_frame_interval(handle: *mut Handle, int
             let _ = handle
                 .commands
                 .send(Control::FrameInterval(Duration::from_nanos(interval_ns)));
+        }
+    }));
+}
+
+/// Says whether the app is in front of somebody.
+///
+/// Going away severs this phone's link to the relay at once and stops it
+/// dialling: a phone in a pocket is not a client with a network problem, and
+/// leaving the socket for the system to freeze would leave every machine it
+/// was watching holding a link nobody is reading. Coming back dials
+/// immediately and the ordinary reconciliation follows.
+///
+/// # Safety
+/// handle must be live for this call and may not race stop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_set_active(handle: *mut Handle, active: bool) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if let Some(handle) = unsafe { handle.as_ref() } {
+            let _ = handle.commands.send(Control::Active(active));
         }
     }));
 }
@@ -996,6 +1017,7 @@ async fn run(
                     });
                 }
                 Some(Control::FrameInterval(interval)) => cadence.set_interval(interval),
+                Some(Control::Active(active)) => runtime.retry.set_active(active),
                 Some(Control::Dispatch { op, command }) => {
                     match command {
                         Ok(CommandDto::Shared(command)) => runtime.ui.dispatch_with_id(op, command),

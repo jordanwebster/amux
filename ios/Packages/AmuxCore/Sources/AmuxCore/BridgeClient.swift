@@ -144,6 +144,17 @@ public final class BridgeClient: Sendable {
     /// One batch of projected events per callback, in arrival order.
     public let events: AsyncStream<[Event]>
 
+    /// The runtime this process is running, if it has one.
+    ///
+    /// A phone holds one link to the relay, and whether anybody is looking at
+    /// the screen is a fact about the app rather than about any one account's
+    /// stores — so the scene tells the runtime directly. Weak, because the
+    /// client is owned by whoever started it and stopping it must be enough
+    /// to end it.
+    private struct Weak: Sendable { weak var client: BridgeClient? }
+    private static let current = Locked<Weak>(Weak())
+    public static var running: BridgeClient? { current.withLock { $0.client } }
+
     private let delivery: Delivery
     private let state: Locked<State>
     private let tokenProvider: @Sendable (UInt64) async -> ConnectToken?
@@ -173,6 +184,7 @@ public final class BridgeClient: Sendable {
         }
         state.withLock { $0.handle = handle }
         delivery.client = self
+        Self.current.withLock { $0 = Weak(client: self) }
     }
 
     /// Enqueues a command and answers with the identifier its result will
@@ -213,6 +225,18 @@ public final class BridgeClient: Sendable {
             guard let reply else { return nil }
             defer { amux_mobile_free(reply) }
             return OpId(String(cString: reply))
+        }
+    }
+
+    /// Says whether the app is in front of somebody.
+    ///
+    /// Going away severs this phone's link to the relay rather than leaving a
+    /// socket for the system to freeze, so the machines it was watching see it
+    /// leave. Coming back dials at once and reconciles.
+    public func setActive(_ active: Bool) {
+        state.withLock { state in
+            guard let handle = state.handle else { return }
+            amux_mobile_set_active(handle, active)
         }
     }
 

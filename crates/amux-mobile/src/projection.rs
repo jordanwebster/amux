@@ -159,6 +159,7 @@ pub enum OfflineReasonDto {
     TimedOut,
     Ended,
     Stopped,
+    Suspended,
 }
 
 impl From<DisconnectReason> for OfflineReasonDto {
@@ -169,6 +170,7 @@ impl From<DisconnectReason> for OfflineReasonDto {
             DisconnectReason::TimedOut => Self::TimedOut,
             DisconnectReason::Ended => Self::Ended,
             DisconnectReason::Stopped => Self::Stopped,
+            DisconnectReason::Suspended => Self::Suspended,
         }
     }
 }

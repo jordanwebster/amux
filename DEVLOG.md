@@ -4,6 +4,23 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **A phone put away holds no connection.**
+
+Backgrounding used to leave the link to the relay exactly where it was, for
+the system to freeze whenever it got round to it. Every machine the phone was
+watching went on believing in a connection nobody was reading, and what
+happened on the way back depended on how a frozen socket died.
+
+The scene now tells the runtime whether anybody is looking. Going away closes
+the link politely and stops dialling — a phone in a pocket is not a client
+with a network problem, so there is nothing for a backoff to retry — and the
+machines it was watching see it leave immediately. Coming back dials at once,
+without waiting out a backoff nothing was serving, and the ordinary
+reconciliation follows: the same rows, in the same order, going solid where
+they stand.
+
+---
+
 2026-09-07 — **The offline line is written, not printed.**
 
 The one line the home shows above its rows when the relay cannot be reached

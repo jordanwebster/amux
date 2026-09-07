@@ -10,8 +10,21 @@ import SwiftUI
 /// installs, is the app itself.
 struct RootView: View {
     @State private var composition = Composition()
+    @Environment(\.scenePhase) private var phase
 
     var body: some View {
+        scene
+            // Whether anybody is looking at this phone is a fact about the app,
+            // so it is said to the runtime rather than to any one screen. Put
+            // away, the link is released at once: a socket left for the system
+            // to freeze leaves every machine this phone was watching holding a
+            // connection nobody is reading.
+            .onChange(of: phase) { _, now in
+                BridgeClient.running?.setActive(now != .background)
+            }
+    }
+
+    @ViewBuilder private var scene: some View {
         #if AMUX_DEBUG_TOOLS
         if let probe = ColdStartProbe.requested {
             ColdStartProbe.view(probe)
