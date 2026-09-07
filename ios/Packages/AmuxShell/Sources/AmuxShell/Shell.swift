@@ -151,6 +151,10 @@ private struct ConversationPage: View {
                 // The controls are on the screen they belong to rather than
                 // arriving with the wiring, and neither pretends to have run.
                 case .attach, .attaching, .dictate: break
+                // Picking a command is a change to the draft the conversation
+                // already made; there is nothing for the shell to do with it
+                // until the runtime that carries a message is wired here.
+                case .picking: break
                 // The cards these open are the conversation's own state and
                 // are already on the screen. What they change — a model, an
                 // effort, a permission mode, a name, a deletion — is a write

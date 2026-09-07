@@ -172,13 +172,20 @@ public struct ReviewToken: Sendable, Equatable {
 /// and it is spelled by the shared library rather than here: an element that
 /// escaped its own body wrongly would be prose on every other client.
 public struct DraftToken: Sendable, Equatable {
-    /// Which of amux's four closed attachment kinds this is. It decides the
-    /// glyph and nothing else; what the token says is `label`.
+    /// Which of amux's four closed attachment kinds this is, or the command
+    /// a message can be. It decides the glyph and nothing else; what the token
+    /// says is `label`.
     public enum Kind: String, Sendable, Equatable {
         case photo
         case file
         case text
         case review
+        /// A provider command the message *is*, rather than something the
+        /// message carries. It is a token for the same reason the others are —
+        /// one object to the caret, one backspace to be rid of — but it spells
+        /// no element into the text: it travels as its own segment of the
+        /// draft, first and alone, which is the only shape the core accepts.
+        case command
     }
 
     public let kind: Kind
@@ -378,8 +385,29 @@ public struct MessageDraft: Sendable, Equatable {
         Wire(command: "queue", action: "hold", agent: agent, draft: wire).shared
     }
 
+    /// The command this draft is, where it is one.
+    ///
+    /// Only the token standing at the very front counts. The core takes a
+    /// command token first and alone, so a `/compact` dropped into the middle
+    /// of a sentence is not a command that got misplaced — it is prose, and
+    /// the composer never makes one anywhere else.
+    public var command: String? {
+        guard let first = written.first, let token = tokens[first],
+              token.kind == .command
+        else { return nil }
+        return token.label
+    }
+
     private var wire: Wire.Body {
-        .init(segments: [.init(text: text)], attachments: attachments)
+        guard let name = command else {
+            return .init(segments: [.init(text: text)], attachments: attachments)
+        }
+        // The command names itself and the rest of the message is its
+        // arguments, in that order, because that is the order the core reads
+        // them in. The stand-in the command occupies spells nothing, so the
+        // arguments are simply what is left.
+        return .init(
+            segments: [.command(name), .init(text: text)], attachments: attachments)
     }
 
     private struct Wire: Encodable {
@@ -393,9 +421,29 @@ public struct MessageDraft: Sendable, Equatable {
             let attachments: [DraftAttachment]
         }
 
-        struct TextSegment: Encodable {
-            let segment = "text"
-            let text: String
+        /// One piece of the shared draft: what was written, or the command
+        /// the message is. Written by hand for the same reason `Wire` is —
+        /// each shape carries its own field and nothing else, and a null
+        /// beside the tag is a field the core never wrote.
+        enum TextSegment: Encodable {
+            case text(String)
+            case command(String)
+
+            private enum Key: String, CodingKey { case segment, text, name }
+
+            init(text: String) { self = .text(text) }
+
+            func encode(to encoder: any Encoder) throws {
+                var container = encoder.container(keyedBy: Key.self)
+                switch self {
+                case .text(let text):
+                    try container.encode("text", forKey: .segment)
+                    try container.encode(text, forKey: .text)
+                case .command(let name):
+                    try container.encode("command_token", forKey: .segment)
+                    try container.encode(name, forKey: .name)
+                }
+            }
         }
 
         private enum Key: String, CodingKey { case command, action, agent, draft }

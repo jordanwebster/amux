@@ -33,6 +33,9 @@ public enum ConversationAction: Equatable, Sendable {
     case attaching(AttachChoice)
     /// Speak the message instead of typing it.
     case dictate
+    /// A command raised by typing a slash, picked. The draft has it already;
+    /// this is so a driver and a journey can see which.
+    case picking(ProviderCommand)
     /// The model and effort sheet, asked for from the footer chip.
     case openSettings
     /// How this agent runs, changed: a model, an effort level or what it may
@@ -331,6 +334,17 @@ public struct Conversation: View {
             } else if let composer = ComposerState(
                 gate: model.gate, tail: model.tailRow, elapsed: subject.working) {
                 VStack(spacing: 8) {
+                    // Raised by what is being written rather than opened, so
+                    // it stacks with the cards rather than replacing them:
+                    // nothing can be open over the composer while a command is
+                    // being typed, because typing is what closes them.
+                    if let commands = SlashCommands.offered(
+                        for: model.draft, facts: model.facts, provider: model.provider) {
+                        SlashRows(commands: commands) { picked in
+                            model.draft.pick(picked)
+                            actions(.picking(picked))
+                        }
+                    }
                     opened
                     ComposerBox(
                         state: composer, agent: subject.name, provider: model.provider,

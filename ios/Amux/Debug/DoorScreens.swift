@@ -67,7 +67,10 @@ enum DoorScreens {
         // of the conversation and is handed in, the way the drawer's own
         // openness is, so what is photographed is the real screen with the
         // real card over it rather than the card on bare ground.
-        case .plus, .settings, .overflow, .agentDelete:
+        // Typing a command raises rows over the box from the draft the
+        // fixture wrote, so this is the ordinary conversation and nothing is
+        // handed in: what is photographed is what somebody typing would see.
+        case .plus, .settings, .overflow, .agentDelete, .slashTyping:
             let agent = host.stores.conversations.keys.contains(Scenario.focus)
                 ? Scenario.focus : Scenario.agentId("spec-suite")
             Conversation(

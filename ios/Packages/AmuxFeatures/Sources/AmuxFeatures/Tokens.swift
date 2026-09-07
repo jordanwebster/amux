@@ -58,6 +58,7 @@ extension DraftToken {
         case .file: "doc"
         case .text: "text.alignleft"
         case .review: "checkmark.bubble"
+        case .command: "chevron.forward"
         }
     }
 

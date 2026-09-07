@@ -63,6 +63,27 @@ beside the text that names them.
 
 ---
 
+2026-09-07 — **A command is what the message is, so it is one token at the
+front of it.** Typing a slash at the start of a draft raises the session's own
+commands over the box — at most five, filtered by what follows, each naming
+where it came from, because two sessions can both offer `/compact` and mean
+different things by it and one of them can be a plugin somebody installed.
+Picking one takes what was typed away and stands the command in its place, as
+one object the caret steps over and one backspace removes, exactly like an
+attachment; everything written after it is its arguments.
+
+That shape is the core's, not an invention: the core takes a command as its own
+segment of the draft, first and unique, with the rest of the message following
+as text. So a draft that holds a command now sends two segments instead of one,
+and a draft that does not is unchanged.
+
+Nothing is offered on a Claude session driven over a PTY. The core refuses a
+command token on one outright, and a menu of things that will be refused is
+worse than no menu. A command that only means something in a terminal is
+dropped the same way rather than shown and then refused.
+
+---
+
 2026-09-07 — **The photographed clock now reads the region it is pinned to.**
 Every capture keeps the simulator's status bar, pinned to 9:41 so two runs a
 minute apart do not differ over the time. Thirty-six baselines nonetheless read

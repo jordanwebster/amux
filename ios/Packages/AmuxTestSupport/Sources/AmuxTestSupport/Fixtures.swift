@@ -56,6 +56,7 @@ public enum Fixtures {
         Built(.run, "host-lost"),
         Built(.typing, "typing"),
         Built(.typing, "tokens"),
+        Built(.slashTyping, "slash-typing"),
         Built(.plus, "plus"),
         Built(.settings, "settings"),
         Built(.settings, "permissions-claude"),
@@ -203,8 +204,15 @@ public enum Fixtures {
                 bundle, entries: Transcript.codexTurn, agent: Scenario.agentId("spec-suite"),
                 session: Sessions.codex())
         },
+        // A command being typed. It is photographed on a Codex agent because
+        // a command is only a command on a layer that takes one: the core
+        // refuses a command token on a PTY Claude session outright, so that
+        // session is offered nothing and there is no picture of it to take.
         Fixture(id: "slash-typing", screen: .slashTyping) { bundle in
-            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            States.open(
+                bundle, entries: Transcript.codexTurn, agent: Scenario.agentId("spec-suite"),
+                session: Sessions.codex())
+            bundle.conversation(Scenario.agentId("spec-suite")).draft.body = "/co"
         },
         // A turn in flight: the command is still running, the fleet says so
         // and says when it started, and the composer names both.

@@ -100,6 +100,21 @@ public enum Sessions {
                       defaultEffort: "low"),
         ],
         efforts: ["low", "medium", "high"],
+        // A session's own list, in the order it reported it, with one command
+        // from an installed plugin and one that only means anything in a
+        // terminal. Both are here so that what the phone drops and what it
+        // names are visible rather than asserted.
+        commands: [
+            ProviderCommand(name: "code-review", source: .string("codex")),
+            ProviderCommand(
+                name: "stripe:connect-recommend",
+                source: .object(["plugin": .string("stripe")])),
+            ProviderCommand(name: "compact", source: .string("codex")),
+            ProviderCommand(name: "context", source: .string("codex")),
+            ProviderCommand(name: "copy-transcript", source: .string("codex"),
+                            terminalOnly: true),
+            ProviderCommand(name: "handoff", source: .string("codex")),
+        ],
         permission: .object([
             "provider": .string("codex"),
             "approval": .string("on-request"),

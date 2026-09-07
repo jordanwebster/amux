@@ -606,6 +606,40 @@ screen would render, and moving one token visibly changes this image.
 
 There is no design reference for it, so there is nothing to depart from.
 
+## slash-typing
+
+A command being typed: `/co` in the field, and the commands still matching
+raised on a card directly over the box.
+
+- **It is photographed on a Codex agent, not the reference's Claude one.** A
+  command is only a command on a layer that takes one. The core refuses a
+  command token on a Claude session driven over a PTY outright — "provider
+  commands are unavailable for this agent" — so that session is offered
+  nothing at all and there is no picture of it to take. Offering a menu of
+  things that will be refused is worse than offering none.
+- **Each row names where its command came from**, which the reference does
+  not. Two sessions can both offer `/compact` and mean different things by it,
+  and one of them can be a plugin somebody installed; picking the wrong one is
+  not a mistake the app can undo for you. So the source sits at the right of
+  the row, faint: `Codex` for the session's own, and the plugin's name for a
+  plugin's.
+- **The four rows are the reference's four, in its order**, including the
+  plugin's `/stripe:connect-recommend` for `/co`. A plugin's command is named
+  for its plugin first, and nobody typing `/co` is thinking of the plugin, so
+  the name after the namespace counts as a start of its own. Anywhere else
+  inside a name does not: a list that matched the middle of every word would
+  rank a command by nothing the typist can see.
+- **At most five are raised.** The rows sit over the conversation being written
+  about, and a list long enough to scroll would take the screen to save a few
+  keystrokes.
+- **A terminal-only command is dropped rather than shown and refused.** The
+  session reports which of its commands only mean something in a terminal, and
+  this is not one.
+- **The feed behind is not dimmed.** These rows are raised by what is being
+  written rather than opened by a press, and they go away by themselves when
+  the writing stops matching, so there is nothing here to dismiss — unlike the
+  cards in `plus` and `settings`, which are.
+
 ## plus
 
 The plus, opened over the conversation it belongs to: one card holding two
