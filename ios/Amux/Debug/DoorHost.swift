@@ -553,7 +553,20 @@ final class DoorHost {
             agents: stores.fleet.rows.map(\.name).sorted(),
             relayAttempts: relay().attempts,
             relayRetries: relay().shortened,
-            discovered: discovered())
+            discovered: discovered(),
+            watching: watching())
+    }
+
+    /// The agents the runtime is holding a stream for, read off its own model
+    /// rather than off the screens: a screen that has been left says nothing
+    /// about whether the stream behind it was released.
+    private func watching() -> [String] {
+        guard let bridge, let json = bridge.snapshot(),
+            let data = json.data(using: .utf8),
+            let model = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let attached = model["attached"] as? [String: Any]
+        else { return [] }
+        return attached.keys.sorted()
     }
 
     /// What the runtime's link to the relay has done: every dial, and how many

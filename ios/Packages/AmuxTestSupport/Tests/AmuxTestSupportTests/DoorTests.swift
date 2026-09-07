@@ -118,7 +118,7 @@ final class DoorTests: XCTestCase {
         let bridge = BridgeState(
             build: "0.1.0+debug-tools", started: true, connection: "connected",
             reconciled: true, hosts: [], agents: ["helper"], relayAttempts: 3, relayRetries: 1,
-            discovered: ["desktop", "laptop"])
+            discovered: ["desktop", "laptop"], watching: ["6f1c1f8e-0000-4000-8000-000000000001"])
         let replies: [DoorReply] = [
             .ack,
             .state(state),

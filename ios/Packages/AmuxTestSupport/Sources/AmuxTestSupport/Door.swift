@@ -248,11 +248,18 @@ public struct BridgeState: Codable, Sendable, Equatable {
     /// that tells a connection which reached a host from one which only
     /// started.
     public let discovered: [String]
+    /// The agents this phone is holding a stream for, by identifier.
+    ///
+    /// A stream exists because a conversation asked for it, so a conversation
+    /// somebody closed should not be here — including after an outage, where
+    /// a phone that reopened everything it once watched would be reading a
+    /// machine on behalf of nobody.
+    public let watching: [String]
 
     public init(
         build: String, started: Bool, connection: String, reconciled: Bool,
         hosts: [String], agents: [String], relayAttempts: UInt64, relayRetries: UInt64,
-        discovered: [String]
+        discovered: [String], watching: [String] = []
     ) {
         self.build = build
         self.started = started
@@ -263,6 +270,7 @@ public struct BridgeState: Codable, Sendable, Equatable {
         self.relayAttempts = relayAttempts
         self.relayRetries = relayRetries
         self.discovered = discovered
+        self.watching = watching
     }
 }
 
