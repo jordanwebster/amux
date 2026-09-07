@@ -158,6 +158,37 @@ pub enum OpOutcomeDto {
     Pairing(PairingOutcome),
     Connection(ConnectionOutcome),
     Devices(DevicesOutcome),
+    Creation(CreationOutcome),
+}
+
+/// How asking a machine what it has to offer ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum CreationOutcome {
+    /// What the machine says it has: what it was used in recently, the
+    /// repositories under its roots, and the roots themselves. Kept apart
+    /// because a directory somebody worked in yesterday is a different kind of
+    /// suggestion from one that merely exists.
+    Repositories {
+        host: amux::HostId,
+        recent: Vec<ProjectDto>,
+        repositories: Vec<ProjectDto>,
+        roots: Vec<String>,
+    },
+    /// The machine could not be asked, or would not answer. It carries no
+    /// detail: a screen that cannot list directories offers a typed path, and
+    /// which RPC failed does not change that.
+    RepositoriesUnavailable { host: amux::HostId },
+}
+
+/// One directory a new agent could be started in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProjectDto {
+    pub path: String,
+    pub name: String,
+    /// When an agent last ran here, or nothing where none has. It is what
+    /// makes a directory "recent" rather than merely present.
+    pub last_used: Option<DateTime<Utc>>,
 }
 
 /// How withdrawing trust from a machine ended.

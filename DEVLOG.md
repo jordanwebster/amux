@@ -10978,3 +10978,22 @@ Two repairs came with it. A door reply gained the relay's attempt counters last
 commit and the test that round-trips every reply was never rebuilt, so it had
 been failing to compile since; and the test that asserts a state can be
 declared unbuilt was using `devices` as its example, which is now built.
+
+2026-09-07 — **The phone can ask a machine what it has, and start an agent
+there under a named layer.** Two bridge commands: one asks a machine for the
+projects it was used in recently, the repositories under its roots and the
+roots themselves; the other starts an agent in a directory.
+
+The driver is a required field with no default anywhere on the way in. This
+device drives Claude through the SDK, and the failure a default would allow is
+silent — a request that left the driver unsaid would start a PTY session that
+looks like every other agent until somebody asks it to do something only the
+SDK can do. So a Claude create names its driver or is refused where the JSON is
+read, and nothing downstream ever has to decide. Two tests hold that: one reads
+the shared command the runtime would hand the client and finds `Claude { driver:
+Sdk }` in it, the other tries four ways of not saying and is refused each time,
+including a driver the runtime does not have.
+
+Starting an agent is otherwise an ordinary shared command, so its answer
+arrives as the same `AgentCreated` every other client already gets. What the
+bridge arm adds is only that the layer was named.

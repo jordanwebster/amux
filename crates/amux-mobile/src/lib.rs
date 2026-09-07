@@ -6,6 +6,7 @@ mod runtime;
 
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::{CStr, CString, c_char, c_void};
+use std::path::PathBuf;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,8 +16,8 @@ use std::time::{Duration, SystemTime};
 use amux::{AccessToken, AuthError, CredentialProvider, RelayConnection};
 use amux_ui::{AgentId, Command, OpError, OpId, OpOutcome};
 use projection::{
-    Cadence, ConnectionOutcome, DeviceIdentityDto, DevicesOutcome, Event, OpOutcomeDto,
-    PairedDeviceDto, PairingOutcome, Projection, SubscriptionOutcome,
+    Cadence, ConnectionOutcome, CreationOutcome, DeviceIdentityDto, DevicesOutcome, Event,
+    OpOutcomeDto, PairedDeviceDto, PairingOutcome, ProjectDto, Projection, SubscriptionOutcome,
 };
 use runtime::{MobileRuntime, StartConfig, TokenSource};
 use serde::{Deserialize, Serialize};
@@ -242,7 +243,84 @@ enum CommandDto {
     Pairing(PairingCommand),
     Connection(ConnectionCommand),
     Devices(DevicesCommand),
+    Creation(CreationCommand),
     Shared(Command),
+}
+
+/// Starting an agent on a machine, and finding somewhere to start it.
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+enum CreationCommand {
+    /// What a machine has to offer as a working directory: the projects it was
+    /// used in recently, the repositories under its roots, and the roots.
+    ListRepositories {
+        host: amux::HostId,
+        #[serde(default)]
+        query: Option<String>,
+        /// A combined maximum, recent first. The host caps it; zero asks for
+        /// the roots alone.
+        limit: u32,
+    },
+    /// Start an agent on a machine, in a directory, under a named layer.
+    CreateAgent {
+        host: amux::HostId,
+        directory: PathBuf,
+        name: String,
+        agent: NewAgent,
+    },
+}
+
+/// Which layer a new agent runs under, said in full.
+///
+/// Claude's driver is a required field with no default anywhere on the way in.
+/// This device drives Claude through the SDK, and the failure a default would
+/// allow is silent: a request that left the driver unsaid would start a PTY
+/// session that looks like every other agent until somebody tries to do
+/// something only the SDK can do. Naming it costs one word and removes the
+/// whole class.
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
+enum NewAgent {
+    Claude {
+        driver: amux::ClaudeDriver,
+    },
+    Codex {
+        #[serde(default)]
+        model: Option<String>,
+    },
+}
+
+impl NewAgent {
+    fn agent_type(self) -> amux::AgentType {
+        match self {
+            NewAgent::Claude { driver } => amux::AgentType::Claude { driver },
+            NewAgent::Codex { model } => amux::AgentType::Codex {
+                model,
+                approval_policy: None,
+                sandbox_policy: None,
+                resume_thread_id: None,
+            },
+        }
+    }
+}
+
+/// The shared command a bridge creation asks for, so what the runtime hands
+/// the client can be read without a running runtime.
+fn creation(command: CreationCommand) -> Option<Command> {
+    match command {
+        CreationCommand::CreateAgent {
+            host,
+            directory,
+            name,
+            agent,
+        } => Some(Command::CreateAgent {
+            host: Some(host),
+            name,
+            agent_type: agent.agent_type(),
+            working_dir: directory,
+        }),
+        CreationCommand::ListRepositories { .. } => None,
+    }
 }
 
 /// Something asked of this device's own trust store.
@@ -848,6 +926,7 @@ async fn run(
     // something the inventory carries.
     let (devices_reads, mut devices_results) = mpsc::unbounded_channel::<DevicesRead>();
     let (revocations, mut revoked) = mpsc::unbounded_channel::<(OpId, DevicesOutcome)>();
+    let (listings, mut listed) = mpsc::unbounded_channel::<(OpId, CreationOutcome)>();
     let mut devices: Option<DevicesRead> = None;
     let mut trusted: BTreeSet<amux::HostId> = BTreeSet::new();
     read_devices(&runtime, devices_reads.clone());
@@ -940,6 +1019,25 @@ async fn run(
                         Ok(CommandDto::Devices(DevicesCommand::Revoke { host })) => {
                             revoke(op, host, &runtime, revocations.clone(), devices_reads.clone());
                         }
+                        // Starting an agent is an ordinary shared command once
+                        // the layer has been named, so it goes down the same
+                        // path every other write does and its answer arrives
+                        // as the same AgentCreated. What this arm adds is that
+                        // the layer was named at all.
+                        Ok(CommandDto::Creation(CreationCommand::CreateAgent {
+                            host, directory, name, agent,
+                        })) => {
+                            let command = creation(CreationCommand::CreateAgent {
+                                host, directory, name, agent,
+                            })
+                            .expect("a create names a shared command");
+                            runtime.ui.dispatch_with_id(op, command);
+                        }
+                        Ok(CommandDto::Creation(CreationCommand::ListRepositories {
+                            host, query, limit,
+                        })) => {
+                            list_repositories(op, host, query, limit, &runtime, listings.clone());
+                        }
                         Ok(CommandDto::Connection(ConnectionCommand::RetryNow)) => {
                             // The connection is a loop of its own; this only
                             // interrupts the wait it is in. Whether that wait
@@ -1002,6 +1100,10 @@ async fn run(
             },
             Some((op, outcome)) = revoked.recv() => {
                 events.push(Event::OpResult { op, outcome: OpOutcomeDto::Devices(outcome) });
+                dirty = true;
+            },
+            Some((op, outcome)) = listed.recv() => {
+                events.push(Event::OpResult { op, outcome: OpOutcomeDto::Creation(outcome) });
                 dirty = true;
             },
             Some(read) = devices_results.recv() => {
@@ -1075,7 +1177,7 @@ async fn current_devices(admin: &amux::ProfileAdmin) -> Option<DevicesRead> {
         })
         .collect();
     // The store's order is its own; the list a person reads is theirs.
-    devices.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    devices.sort_by_key(|device| device.name.to_lowercase());
     Some(DevicesRead {
         identity: DeviceIdentityDto {
             host: identity.host_id,
@@ -1113,6 +1215,49 @@ fn revoke(
             let _ = reads.send(read);
         }
     });
+}
+
+/// Asks a machine what it has to offer as a working directory, off the loop.
+///
+/// Off the loop because it is a round trip to a machine that may be slow, and
+/// because somebody is looking at a screen that has to keep drawing while they
+/// type into its search box.
+fn list_repositories(
+    op: OpId,
+    host: amux::HostId,
+    query: Option<String>,
+    limit: u32,
+    runtime: &MobileRuntime,
+    results: mpsc::UnboundedSender<(OpId, CreationOutcome)>,
+) {
+    let client = runtime.embedded.client();
+    tokio::spawn(async move {
+        let listing = client
+            .list_repositories(amux::ListRepositoriesRequest { host, query, limit })
+            .await;
+        let outcome = match listing {
+            Ok(listing) => CreationOutcome::Repositories {
+                host,
+                recent: listing.recent.iter().map(project).collect(),
+                repositories: listing.repositories.iter().map(project).collect(),
+                roots: listing
+                    .roots
+                    .iter()
+                    .map(|root| root.to_string_lossy().into_owned())
+                    .collect(),
+            },
+            Err(_) => CreationOutcome::RepositoriesUnavailable { host },
+        };
+        let _ = results.send((op, outcome));
+    });
+}
+
+fn project(entry: &amux::ProjectEntry) -> ProjectDto {
+    ProjectDto {
+        path: entry.path.to_string_lossy().into_owned(),
+        name: entry.name.clone(),
+        last_used: entry.last_used,
+    }
 }
 
 /// Runs one pairing step off the event loop and reports it back.

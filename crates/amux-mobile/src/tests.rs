@@ -243,6 +243,7 @@ fn the_phones_agent_writes_decode_as_the_commands_they_name() {
         CommandDto::Pairing(_) => panic!("an agent write decoded as a pairing step"),
         CommandDto::Connection(_) => panic!("an agent write decoded as a connection command"),
         CommandDto::Devices(_) => panic!("an agent write decoded as a trust change"),
+        CommandDto::Creation(_) => panic!("an agent write decoded as a creation"),
     };
 
     assert_eq!(
@@ -2042,4 +2043,111 @@ async fn mobile_revoking_a_machine_closes_the_stream_its_conversation_held() {
 
     drop(running);
     net.shutdown().await;
+}
+
+/// A Claude agent started from the phone is an SDK session, said out loud.
+///
+/// The driver is not a preference this device happens to hold: it is the whole
+/// difference between a conversation the app can drive and a terminal it
+/// cannot. So it is a required field with no default on the way in, and this
+/// reads the command the runtime would hand the client to prove the word
+/// survives the boundary rather than being filled in downstream.
+#[test]
+fn mobile_creating_a_claude_agent_names_the_sdk_driver() {
+    let json = serde_json::json!({
+        "command": "create_agent",
+        "host": "2d3a0659-4f51-440a-a224-54240cfea36b",
+        "directory": "/Users/ada/src/amux",
+        "name": "fix-login",
+        "agent": {"provider": "claude", "driver": "sdk"},
+    });
+    let command = match serde_json::from_value::<CommandDto>(json).unwrap() {
+        CommandDto::Creation(command) => creation(command).expect("a create is a shared command"),
+        other => panic!("a create decoded as something else: {:?}", serde_json::to_value(other)),
+    };
+    let Command::CreateAgent {
+        host,
+        name,
+        agent_type,
+        working_dir,
+    } = command
+    else {
+        panic!("a create did not become a CreateAgent")
+    };
+    assert_eq!(
+        agent_type,
+        amux::AgentType::Claude {
+            driver: amux::ClaudeDriver::Sdk
+        },
+        "the phone started a Claude agent on a driver it did not name"
+    );
+    assert_eq!(name, "fix-login");
+    assert_eq!(working_dir, std::path::Path::new("/Users/ada/src/amux"));
+    assert_eq!(
+        host,
+        Some("2d3a0659-4f51-440a-a224-54240cfea36b".parse().unwrap())
+    );
+
+    // Codex carries its model where the type has somewhere to put one, and
+    // nothing else is assumed on its behalf.
+    let codex = serde_json::json!({
+        "command": "create_agent",
+        "host": "2d3a0659-4f51-440a-a224-54240cfea36b",
+        "directory": "/Users/ada/src/amux",
+        "name": "spec-suite",
+        "agent": {"provider": "codex", "model": "gpt-5.2"},
+    });
+    let CommandDto::Creation(command) = serde_json::from_value::<CommandDto>(codex).unwrap() else {
+        panic!("a create decoded as something else")
+    };
+    let Some(Command::CreateAgent { agent_type, .. }) = creation(command) else {
+        panic!("a create did not become a CreateAgent")
+    };
+    assert_eq!(
+        agent_type,
+        amux::AgentType::Codex {
+            model: Some("gpt-5.2".into()),
+            approval_policy: None,
+            sandbox_policy: None,
+            resume_thread_id: None,
+        }
+    );
+}
+
+/// A create that does not say which driver is refused, not defaulted.
+///
+/// This is the failure worth a test of its own: a default would make a PTY
+/// session by omission, and a PTY session looks like every other agent until
+/// somebody asks it to do something only the SDK can do. It is refused where
+/// the JSON is read, so nothing downstream ever has to decide.
+#[test]
+fn mobile_a_create_without_a_driver_is_refused_at_the_boundary() {
+    for silent in [
+        serde_json::json!({"provider": "claude"}),
+        serde_json::json!({"provider": "claude", "driver": null}),
+    ] {
+        let json = serde_json::json!({
+            "command": "create_agent",
+            "host": "2d3a0659-4f51-440a-a224-54240cfea36b",
+            "directory": "/Users/ada/src/amux",
+            "name": "fix-login",
+            "agent": silent,
+        });
+        let refused = serde_json::from_value::<CommandDto>(json.clone());
+        assert!(
+            refused.is_err(),
+            "a Claude create with no driver was accepted: {json}"
+        );
+    }
+
+    // And a request that names a driver the runtime does not have is refused
+    // in the same place rather than becoming the other one.
+    let nonsense = serde_json::json!({
+        "command": "create_agent",
+        "host": "2d3a0659-4f51-440a-a224-54240cfea36b",
+        "directory": "/Users/ada/src/amux",
+        "name": "fix-login",
+        "agent": {"provider": "claude", "driver": "carrier-pigeon"},
+    });
+    assert!(serde_json::from_value::<CommandDto>(nonsense).is_err());
 }
