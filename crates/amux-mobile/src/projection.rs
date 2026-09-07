@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use amux::RelayConnection;
+use amux::{DisconnectReason, RelayConnection};
 use amux_ui::{
     Agent, AgentId, AgentPhase, Attention, Command, HostState, Model, OpId, OpOutcome, StreamPhase,
     StructuredProtocol, Why, claude, codex, review,
@@ -148,6 +148,29 @@ pub enum ConnectionDto {
     Connecting,
     Connected,
     Disconnected,
+}
+
+/// Why the phone is offline. The screen owns the words; this owns the kinds.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfflineReasonDto {
+    Unreachable,
+    Rejected,
+    TimedOut,
+    Ended,
+    Stopped,
+}
+
+impl From<DisconnectReason> for OfflineReasonDto {
+    fn from(reason: DisconnectReason) -> Self {
+        match reason {
+            DisconnectReason::Unreachable => Self::Unreachable,
+            DisconnectReason::Rejected => Self::Rejected,
+            DisconnectReason::TimedOut => Self::TimedOut,
+            DisconnectReason::Ended => Self::Ended,
+            DisconnectReason::Stopped => Self::Stopped,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -305,7 +328,9 @@ pub enum Event {
     },
     Connection {
         state: ConnectionDto,
-        reason: Option<String>,
+        /// Why, in the closed set a screen can word. Absent while connecting
+        /// or connected.
+        reason: Option<OfflineReasonDto>,
     },
     TokenRequest {
         request_id: u64,
@@ -351,7 +376,7 @@ impl Event {
             RelayConnection::Connecting => (ConnectionDto::Connecting, None),
             RelayConnection::Connected => (ConnectionDto::Connected, None),
             RelayConnection::Disconnected { reason } => {
-                (ConnectionDto::Disconnected, Some(reason.clone()))
+                (ConnectionDto::Disconnected, Some((*reason).into()))
             }
         };
         Self::Connection { state, reason }

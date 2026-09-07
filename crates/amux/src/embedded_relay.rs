@@ -76,7 +76,43 @@ impl RelayEndpoint {
 pub enum RelayConnection {
     Connecting,
     Connected,
-    Disconnected { reason: String },
+    Disconnected { reason: DisconnectReason },
+}
+
+/// Why the relay is not connected, in the few kinds a person can be told apart.
+///
+/// Deliberately a closed set rather than the transport's own error. What a
+/// screen has to say about being offline is whether the network is the
+/// problem, whether the account is, or whether there is nothing to do but
+/// wait — and a formatted `tonic::Status` answers none of those while reading
+/// like a crash. The words belong to whoever is drawing; this says only which
+/// of them applies. Diagnostic detail stays in the log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisconnectReason {
+    /// The relay could not be dialled: no network, no route, refused.
+    Unreachable,
+    /// The relay answered and would not take this device's credentials.
+    Rejected,
+    /// Dialled, but nothing came back before the handshake deadline.
+    TimedOut,
+    /// A connection that was up has ended; the loop will dial again.
+    Ended,
+    /// The client itself stopped running, so nothing is dialling.
+    Stopped,
+}
+
+impl DisconnectReason {
+    /// Classify a failure the relay loop saw. Codes rather than messages: the
+    /// message is a sentence from somewhere below us and changes with the
+    /// dependency.
+    fn of(status: &tonic::Status) -> Self {
+        match status.code() {
+            tonic::Code::Unauthenticated | tonic::Code::PermissionDenied => Self::Rejected,
+            tonic::Code::Unavailable => Self::Unreachable,
+            tonic::Code::DeadlineExceeded => Self::TimedOut,
+            _ => Self::Ended,
+        }
+    }
 }
 
 pub struct EmbeddedRelay {
@@ -205,9 +241,9 @@ impl EmbeddedRelay {
                 let reason = match result {
                     Ok(()) => {
                         backoff = Duration::from_millis(250);
-                        "relay closed".into()
+                        DisconnectReason::Ended
                     }
-                    Err(error) => error,
+                    Err(reason) => reason,
                 };
                 self.connection
                     .send_replace(RelayConnection::Disconnected { reason });
@@ -217,13 +253,16 @@ impl EmbeddedRelay {
         })
     }
 
-    async fn connect(&self, context: LinkConnectorCtx) -> Result<(), String> {
+    async fn connect(&self, context: LinkConnectorCtx) -> Result<(), DisconnectReason> {
         let credentials = Arc::new(RoutingCredentials(self.credentials.clone()));
-        let token = credentials
-            .refresh_routing_token()
-            .await
-            .map_err(|e| e.to_string())?;
-        let channel = self.endpoint.channel().map_err(|e| e.to_string())?;
+        let token = credentials.refresh_routing_token().await.map_err(|e| {
+            tracing::debug!(error = %e, "relay credentials refused");
+            DisconnectReason::of(&e)
+        })?;
+        let channel = self.endpoint.channel().map_err(|e| {
+            tracing::debug!(error = %e, "relay endpoint unusable");
+            DisconnectReason::Unreachable
+        })?;
         let (_shutdown, shutdown_rx) = watch::channel(false);
         let (task, established) = spawn_connector_to_channel_with_auth_establishment_and_shutdown(
             context.with_link_role(LinkRole::CloudRelay),
@@ -234,12 +273,16 @@ impl EmbeddedRelay {
         let _guard = AbortOnDrop(task.abort_handle());
         tokio::time::timeout(Duration::from_secs(10), established)
             .await
-            .map_err(|_| "relay handshake timed out".to_string())?
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+            .map_err(|_| DisconnectReason::TimedOut)?
+            .map_err(|_| DisconnectReason::Ended)?
+            .map_err(|e| {
+                tracing::debug!(error = %e, "relay handshake failed");
+                DisconnectReason::of(&e)
+            })?;
         self.connection.send_replace(RelayConnection::Connected);
-        task.await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())
+        task.await.map_err(|_| DisconnectReason::Ended)?.map_err(|e| {
+            tracing::debug!(error = %e, "relay connection ended");
+            DisconnectReason::of(&e)
+        })
     }
 }

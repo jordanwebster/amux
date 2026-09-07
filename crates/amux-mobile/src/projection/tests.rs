@@ -193,7 +193,7 @@ fn mobile_projection_schema_snapshot() {
     row(&mut sdk, 1, facts);
     events.extend(collect(&mut subscribed(), &sdk));
     events.push(Event::connection(&RelayConnection::Disconnected {
-        reason: "relay unavailable".into(),
+        reason: amux::DisconnectReason::Unreachable,
     }));
     events.push(Event::Invariant {
         detail: "example diagnostic".into(),

@@ -36,7 +36,7 @@ public final class FleetStore {
     /// otherwise. Silence here means there is nothing to say.
     public var exceptions: String? {
         if connection.state == .disconnected {
-            return connection.reason.map { "Offline · \($0)" } ?? "Offline"
+            return connection.reason?.sentence ?? "Offline"
         }
         let offline = hosts.values.filter { !$0.online }.map(\.name).sorted()
         switch offline.count {

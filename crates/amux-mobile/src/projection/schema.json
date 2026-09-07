@@ -818,7 +818,7 @@
   {
     "Connection": {
       "state": "disconnected",
-      "reason": "relay unavailable"
+      "reason": "unreachable"
     }
   },
   {

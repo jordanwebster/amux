@@ -755,8 +755,18 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     # one line a home is allowed above them says the one thing that is wrong.
     placed(unreachable, "the relay going down moved the rows this phone remembers")
     line = named(unreachable, "home.exceptions")
-    journey.expect(line is not None and (line.get("value") or "").startswith("Offline"),
-                   f"the offline exceptions line is not above the rows: "
+    # And it says it in words somebody can read. The core tells the app which
+    # kind of failure this is; the sentence is the app's, so what stands above
+    # a person's agents is never a transport error read out loud.
+    worded = {
+        "Offline · can't reach amux — check your connection",
+        "Offline · sign in again to reconnect",
+        "Offline · amux isn't answering — trying again",
+        "Offline · reconnecting",
+        "Offline · amux stopped — reopen the app",
+    }
+    journey.expect(line is not None and (line.get("value") or "") in worded,
+                   f"the offline exceptions line is not one of the sentences the app writes: "
                    f"{None if line is None else line.get('value')!r}")
     journey.say(f"the relay is down and the connection reports itself gone; all "
                 f"{len(rows(unreachable))} remembered rows are still on screen in the same "

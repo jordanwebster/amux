@@ -75,7 +75,9 @@ pub use config::{
     resolve_claude_driver,
 };
 pub use debug::DebugFormat;
-pub use embedded_relay::{EmbeddedRelay, RelayConnection, RelayEndpoint, RelayRetry};
+pub use embedded_relay::{
+    DisconnectReason, EmbeddedRelay, RelayConnection, RelayEndpoint, RelayRetry,
+};
 pub use installation::{
     BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,

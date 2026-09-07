@@ -1590,11 +1590,41 @@ public enum DiffBase: Sendable, Equatable, Codable {
 
 public struct ConnectionUpdate: Codable, Sendable, Equatable {
     public var state: ConnectionState
-    public var reason: String?
+    public var reason: OfflineReason?
 
-    public init(state: ConnectionState, reason: String? = nil) {
+    public init(state: ConnectionState, reason: OfflineReason? = nil) {
         self.state = state
         self.reason = reason
+    }
+}
+
+/// Why the phone is offline, in the kinds the core distinguishes.
+///
+/// The core sends a kind, never a message: a transport error is a sentence
+/// written for whoever is reading a log, and putting it above the fleet tells
+/// a person nothing they can act on. The words are written here, once, where
+/// the rest of the screen's copy lives.
+public enum OfflineReason: String, Codable, Sendable, Equatable {
+    /// Nothing answered the dial: no network, no route, or refused.
+    case unreachable
+    /// The relay answered and would not take this device.
+    case rejected
+    /// Dialled, and nothing came back in time.
+    case timedOut = "timed_out"
+    /// A connection that was up has ended; another attempt is coming.
+    case ended
+    /// The client itself stopped, so nothing is trying.
+    case stopped
+
+    /// The one line a home shows above its rows, in full.
+    public var sentence: String {
+        switch self {
+        case .unreachable: "Offline · can't reach amux — check your connection"
+        case .rejected: "Offline · sign in again to reconnect"
+        case .timedOut: "Offline · amux isn't answering — trying again"
+        case .ended: "Offline · reconnecting"
+        case .stopped: "Offline · amux stopped — reopen the app"
+        }
     }
 }
 

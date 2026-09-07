@@ -198,8 +198,16 @@ pub unsafe extern "C" fn amux_mobile_start(
                 }));
                 match result {
                     Ok(Ok(())) => {}
-                    Ok(Err(reason)) => callback
-                        .send(&[Event::connection(&RelayConnection::Disconnected { reason })]),
+                    // The worker is gone, so the phone is offline and stays
+                    // that way. The screen is told which kind of offline that
+                    // is; the error itself goes out as a diagnostic, because
+                    // it is a sentence for a log and not for a home screen.
+                    Ok(Err(detail)) => callback.send(&[
+                        Event::Invariant { detail },
+                        Event::connection(&RelayConnection::Disconnected {
+                            reason: amux::DisconnectReason::Stopped,
+                        }),
+                    ]),
                     Err(_) => callback.send(&[Event::Invariant {
                         detail: "mobile worker panicked".into(),
                     }]),

@@ -156,7 +156,7 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(events[0], .connection(ConnectionUpdate(state: .connecting)))
         XCTAssertEqual(
             events[14],
-            .connection(ConnectionUpdate(state: .disconnected, reason: "relay unavailable")))
+            .connection(ConnectionUpdate(state: .disconnected, reason: .unreachable)))
     }
 
     func testEveryPinnedEventSurvivesARoundTrip() throws {

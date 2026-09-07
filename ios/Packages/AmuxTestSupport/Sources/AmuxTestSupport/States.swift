@@ -19,7 +19,7 @@ public enum States {
         .feed(FeedUpdate(agent: agent, base: 0, append: entries, replace: [], evicted: 0))
     }
 
-    public static func offline(_ reason: String = "relay unavailable") -> Event {
+    public static func offline(_ reason: OfflineReason = .unreachable) -> Event {
         .connection(ConnectionUpdate(state: .disconnected, reason: reason))
     }
 
@@ -146,7 +146,7 @@ public enum States {
             bundle, hosts: lost, entries: Transcript.pairingCopy,
             session: Sessions.claude(gate: .unknown, stream: .closed(
                 reason: .object(["reason": .string("host_unreachable")]))),
-            extra: [offline("Studio is not reachable")])
+            extra: [offline()])
     }
 
     /// A review already part-way through: the two files nobody is reading

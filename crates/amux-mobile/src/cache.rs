@@ -222,7 +222,7 @@ mod tests {
         let mut projection = Projection::default();
         let mut model = Model::default();
         let connection = RelayConnection::Disconnected {
-            reason: "offline".into(),
+            reason: amux::DisconnectReason::Unreachable,
         };
         let mut previous_live_fleet = None;
         check(&cache.initial(), &[11], false);

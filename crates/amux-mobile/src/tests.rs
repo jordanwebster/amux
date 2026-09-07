@@ -2151,3 +2151,44 @@ fn mobile_a_create_without_a_driver_is_refused_at_the_boundary() {
     });
     assert!(serde_json::from_value::<CommandDto>(nonsense).is_err());
 }
+
+/// A relay nothing is listening on is a refused connection, and the phone is
+/// told which kind of failure that is rather than being handed the transport's
+/// own error to print. The screen writes the sentence; this fixes the word it
+/// writes it from.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_a_refused_relay_reports_itself_unreachable() {
+    // A port that was bound and released: connecting to it is refused at once
+    // rather than hanging, so the failure under test is the dial itself.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = closed.local_addr().unwrap();
+    drop(closed);
+    let root = tempfile::tempdir().unwrap();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &config(
+                root.path(),
+                format!("http://{address}"),
+                json!({"Static":"token"}),
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    let offline = until(&mut receive, running.handle, "token", |event| {
+        event["Connection"]["state"] == "disconnected"
+    })
+    .await;
+    assert_eq!(
+        offline["Connection"]["reason"],
+        json!("unreachable"),
+        "{offline}"
+    );
+}

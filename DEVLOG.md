@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **The offline line is written, not printed.**
+
+The one line the home shows above its rows when the relay cannot be reached
+was the transport's own error: `Offline · code: "The service is currently
+unavailable", message: "tcp connect error", source: tonic::transport::Error(…)`.
+That is a sentence for a log. Above somebody's agents it says nothing they can
+act on, and it says it in a shape that reads like a crash.
+
+What crosses the boundary now is which kind of failure it was — the dial found
+nothing, the relay refused this device, the handshake ran out of time, a live
+connection ended, or the client itself stopped — and the app writes the words.
+The relay loop classifies by status code rather than by message, because the
+message is written somewhere below us and changes with the dependency; the
+detail it used to hand the screen goes to the log instead.
+
+A refused dial is pinned in the core, each kind's wording is pinned on the
+phone, and the home journey now requires the line above its rows to be one of
+the sentences the app writes.
+
+---
+
 2026-09-07 — **Retry Now asks the connection to dial now.**
 
 The offer on an unreachable machine's conversation reached nothing. It drew a

@@ -141,8 +141,17 @@ final class FleetStoreTests: XCTestCase {
             reconciled: true))
         XCTAssertEqual(store.exceptions, "mini offline")
 
-        store.apply(.connection(ConnectionUpdate(state: .disconnected, reason: "relay unavailable")))
-        XCTAssertEqual(store.exceptions, "Offline · relay unavailable")
+        store.apply(.connection(ConnectionUpdate(state: .disconnected, reason: .unreachable)))
+        XCTAssertEqual(store.exceptions, "Offline · can't reach amux — check your connection")
+
+        // Every kind the core can send has words of its own; none of them is
+        // a transport error read out to somebody looking at their agents.
+        for reason in [OfflineReason.rejected, .timedOut, .ended, .stopped] {
+            store.apply(.connection(ConnectionUpdate(state: .disconnected, reason: reason)))
+            let line = store.exceptions ?? ""
+            XCTAssertTrue(line.hasPrefix("Offline · "), "\(reason) reads \(line)")
+            XCTAssertFalse(line.contains("::") || line.contains("error"), "\(reason) reads \(line)")
+        }
     }
 
     func testOpeningAnAgentClearsItsUnreadWeight() {
