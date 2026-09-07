@@ -12,7 +12,7 @@ import SwiftUI
 /// Inline styling is resolved here too, into `AttributedString`, because that
 /// resolution is the expensive half and it must not happen while a finger is
 /// on the screen. See ``MarkdownDocument``.
-public enum MarkdownBlock: Equatable, Sendable, Identifiable {
+public enum MarkdownBlock: Equatable, Sendable {
     case heading(level: Int, text: AttributedString)
     case paragraph(AttributedString)
     /// A list. `ordered` decides whether the marker is a number or a dot, and
@@ -36,20 +36,6 @@ public enum MarkdownBlock: Equatable, Sendable, Identifiable {
             self.depth = depth
             self.marker = marker
             self.text = text
-        }
-    }
-
-    /// Position in the document. Two identical paragraphs are two blocks, so
-    /// identity is where it is rather than what it says; the parser stamps it.
-    public var id: Int {
-        switch self {
-        case .heading(_, let text): text.hashValue
-        case .paragraph(let text): text.hashValue
-        case .list(_, let items): items.first?.id ?? 0
-        case .code(_, let text): text.hashValue
-        case .quote(let lines): lines.first?.hashValue ?? 0
-        case .table(let header, _): header.first?.hashValue ?? 0
-        case .rule: 0
         }
     }
 }

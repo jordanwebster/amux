@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **A markdown block no longer claims an identity it does not
+have.** Its `Identifiable` conformance said identity was position in the
+document and that the parser stamped it, while the code hashed the block's own
+text — so two identical paragraphs were one block by that measure. Nothing
+read it: the transcript walks the blocks by offset. The conformance is gone
+rather than replaced, because building a positional identity for something
+with no consumer is inventing a second way to be wrong. List items keep theirs,
+which the parser really does stamp in order and which `ForEach` really does use.
+
+---
+
 2026-09-07 — **The Hosts tab, and a machine that says what it is.**
 
 The Hosts tab draws the paired machines, grouped by whether the phone can
