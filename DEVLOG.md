@@ -4,6 +4,54 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **Signing in happens on amux.sh, and the app talks to the real
+account service.**
+
+The sign-in screen is the app's whole part in signing in: a sentence saying
+what an account buys, two facts, and a button that hands off. There is no
+field on it — no address, no password, no "forgot" link — because none of
+that is this app's to hold. What it does own is naming where it is sending
+you, so the host appears in the first row, on the button and in the caption
+under it. The hand-off opens `ASWebAuthenticationSession`, which draws the
+address it opened above the page and which this app cannot read; a plain web
+view inside the app would look the same and be neither.
+
+Behind it, `AmuxCloudService` is the production cloud boundary. Sign-in is an
+authorization code with PKCE against `connect/authorize` and `connect/token`
+as the registered mobile client, redirecting to `amux://callback`; a callback
+that names an error, carries no code, or answers a request this phone did not
+make is refused rather than redeemed. `connect/userinfo` says who signed in,
+`api/connect` mints the relay credential, and an expired access token is
+refreshed from the rotating refresh token rather than sending somebody back
+to a browser every hour. Entitlement is read from the subscription itself —
+provider, whether it renews and when the paid-for period ends — because the
+screen has to say which store a subscription came from, which the tier claim
+in the token cannot. An entitlement past its period is lapsed whatever the
+billing system still calls it, and one riding out a cancelled period is
+active with no renewal date.
+
+Deletion checks the typed address against what the cloud says the account is,
+before anything leaves the phone: the account service authenticates deletion
+by token alone and takes no address, so typing it is the person proving which
+account they are about to lose. A deletion the billing system blocks names
+where to go and stop it — the App Store's own subscriptions page for a
+subscription bought there, a billing-portal session for one bought on the web.
+
+Three sign-in outcomes are designed and each is reachable in a test. Success
+adds the account with what it is entitled to, and an entitlement the cloud
+will not answer for leaves the account signed in with the gate closed rather
+than calling the sign-in a failure. A refusal is said in the cloud's own
+words, at the foot beside the button that tries again. Coming back from the
+browser without finishing is not a failure at all and leaves nothing on the
+screen to dismiss.
+
+The adapter's whole suite runs offline against a transport seam, so no test
+reaches a network, and the two states have baselines in both appearances. The
+one departure from the drawing is written down: the rule between the two
+facts starts past the glyph, the way every other list in the app draws one.
+
+---
+
 2026-09-08 — **Four journeys pair by code again, and a replayed feed no longer
 crashes the phone.**
 

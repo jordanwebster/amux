@@ -13,6 +13,13 @@ import Observation
 final class Composition {
     let accounts = AccountRegistry()
     let router = Router()
+    /// The one sign-in this phone has in flight. It outlives the page that
+    /// shows it, so a person who leaves the screen while the browser is up
+    /// comes back to the attempt rather than to a fresh one.
+    let signIn = SignInStore()
+    /// The real account service. Every screen sees it as `CloudService` and
+    /// none of them knows there is HTTP behind it.
+    private let cloud: any CloudService = AmuxCloudService()
 
     /// Where a fleet goes before anybody has signed in. The app runs signed
     /// out — it shows an empty home rather than a login wall — so there has to
@@ -44,12 +51,20 @@ final class Composition {
         switch action {
         case .selectAccount(let id):
             accounts.select(id)
-        // Signing in, adding an account and subscribing all leave the app for
-        // the web or the store. Until those journeys are built there is
-        // nowhere to send somebody, and inventing a local sign-in that the
-        // real one would have to undo would be worse than the button doing
-        // nothing.
-        case .addAccount, .signIn, .subscribe:
+        // Signing in is a page, pushed onto whichever stack asked for it so
+        // going back leads where the person came from.
+        case .signIn:
+            router.open(.signIn(router.tab))
+        // The hand-off itself. It leaves for a browser this app cannot read
+        // and comes back with an account or with what went wrong; the store
+        // holds which, and the screen draws it.
+        case .handOffSignIn:
+            Task { await signIn.signIn(with: cloud, presenting: WebSignIn(), into: accounts) }
+        // Adding an account and subscribing leave the app for the web or the
+        // store. Until those journeys are built there is nowhere to send
+        // somebody, and inventing a local one that the real one would have to
+        // undo would be worse than the button doing nothing.
+        case .addAccount, .subscribe:
             break
         }
     }
@@ -65,7 +80,8 @@ extension Composition: RouteLoader {
         switch route {
         case .conversation(let agent), .changes(let agent):
             stores.openConversation(agent)
-        case .newAgent, .pairByCode, .pairConfirmation, .host, .accounts, .appearance, .help:
+        case .newAgent, .pairByCode, .pairConfirmation, .host, .signIn, .accounts,
+             .appearance, .help:
             break
         }
     }
@@ -81,8 +97,8 @@ extension Composition: RouteLoader {
         switch route {
         case .conversation(let agent):
             stores.releaseStream(agent)
-        case .changes, .newAgent, .pairByCode, .pairConfirmation, .host, .accounts,
-             .appearance, .help:
+        case .changes, .newAgent, .pairByCode, .pairConfirmation, .host, .signIn,
+             .accounts, .appearance, .help:
             break
         }
     }

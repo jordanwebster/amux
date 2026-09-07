@@ -122,6 +122,31 @@ the same: nothing is reachable yet.
 
 No departures.
 
+## sign-in
+
+The hand-off. It owns almost nothing, because the signing-in happens on
+amux.sh: what an account buys, and a button that says where it is sending you.
+The host is named three times — in the first row, on the button and in the
+caption under it — because this is the moment a password gets typed, and a
+hand-off that does not say where it points is indistinguishable from one that
+is lying.
+
+- **The rule between the two rows starts past the glyph.** The reference runs
+  it the full width of the block, from the icon's own left edge. Every other
+  list in the app indents its rules to where the text starts, and two
+  separator rules in one app would read as two kinds of list.
+
+## sign-in-failed
+
+The same screen having been turned away once. What went wrong and the button
+that tries again are one block at the foot, where the hand is already: the
+refusal is the cloud's own sentence, because this app does not know what
+happened on amux.sh and a friendlier sentence invented here would be guessing
+on somebody else's behalf. The button reads *Try Again*; the caption still says
+where it opens, because that has not changed.
+
+There is no reference for this state.
+
 ## drawer
 
 The fleet as a panel over the screen it was opened from: two groups, a name and

@@ -11,6 +11,11 @@ import Foundation
 public enum Fixtures {
     public static let all: [Fixture] = catalogue + states
 
+    /// What the cloud says when it turns a sign-in away. Written once because
+    /// two states read it: what the scripted cloud throws, and what the screen
+    /// that has already been thrown at draws.
+    public static let refusedSignIn = "that address is not recognised"
+
     public static func named(_ id: String) -> Fixture? {
         all.first { $0.id == id }
     }
@@ -81,6 +86,8 @@ public enum Fixtures {
         Built(.comment, "comment"),
         Built(.firstRun, "first-run"),
         Built(.firstRunPaid, "first-run-paid"),
+        Built(.signIn, "sign-in"),
+        Built(.signIn, "sign-in-failed"),
         Built(.hosts, "hosts"),
         Built(.hosts, "devices"),
         Built(.pin, "pin"),
@@ -420,9 +427,13 @@ public enum Fixtures {
                 cloud: ScriptedCloudState(upload: .offline)) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
+        // Signing in, having pressed the button once and been turned away.
+        // The screen says what the cloud said, so the words on it and the
+        // words the scripted cloud would throw are one string.
         Fixture(id: "sign-in-failed", screen: .signIn,
-                cloud: ScriptedCloudState(signIn: .refused("that address is not recognised"),
-                                          entitlement: .none, token: nil)),
+                cloud: ScriptedCloudState(signIn: .refused(Fixtures.refusedSignIn),
+                                          entitlement: .none, token: nil),
+                signIn: .failed(Fixtures.refusedSignIn)),
         // A machine on the account running a newer amux than the phone: one of
         // its agents arrives under a provider name this build has never heard
         // of. It is listed under that name, said to be unreadable, and the

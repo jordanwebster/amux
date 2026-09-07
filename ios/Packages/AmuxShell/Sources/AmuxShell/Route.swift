@@ -44,6 +44,11 @@ public enum Route: Hashable, Sendable {
     /// abandoned. Arriving here pairs with nobody.
     case pairConfirmation(PairingInvitation)
     case host(HostId)
+    /// Signing in, pushed onto whichever stack asked for it. The empty Agents
+    /// home and the You tab both offer it, so where it was opened from is a
+    /// fact about the push rather than about the screen — and it is what the
+    /// back button is allowed to name.
+    case signIn(Tab)
     case accounts
     case appearance
     case help
@@ -54,6 +59,7 @@ public enum Route: Hashable, Sendable {
         switch self {
         case .conversation, .changes, .newAgent: .agents
         case .pairByCode, .pairConfirmation, .host: .hosts
+        case .signIn(let from): from
         case .accounts, .appearance, .help: .you
         }
     }
@@ -68,6 +74,7 @@ public enum Route: Hashable, Sendable {
         case .pairByCode: "pin"
         case .pairConfirmation: "pair-confirm"
         case .host: "host"
+        case .signIn: "sign-in"
         case .accounts: "profiles"
         case .appearance: "appearance"
         case .help: "help"

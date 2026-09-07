@@ -114,6 +114,12 @@ enum DoorScreens {
             PairByCode(model: host.stores.pairing) { _ in }
         case .pairConfirm:
             PairConfirmation(model: host.stores.pairing) { _ in }
+        // Signing in. What the screen shows is where the one attempt this
+        // phone has in flight stands — nothing yet, the browser up, refused,
+        // or done — so the state decides the picture and this is the one arm
+        // for all four.
+        case .signIn:
+            SignIn(model: host.signIn) { _ in }
         // Starting an agent. The chooser over it is a state of this screen
         // rather than a screen beside it, so the fixture decides whether it is
         // open and this is the one arm either way.

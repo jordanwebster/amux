@@ -40,6 +40,9 @@ final class DoorHost {
     /// is reachable at all is an account fact, not a fleet fact, so the two
     /// gated home states need this as much as they need empty stores.
     private(set) var accounts = AccountRegistry()
+    /// The sign-in a driven screen is in the middle of. Its own store rather
+    /// than one of the account's: there is no account until it finishes.
+    private(set) var signIn = SignInStore()
     /// The app's own accounts, when the door is driving the app rather than a
     /// fixture. A connection signs one in here, because that is where every
     /// screen reads whether this phone can reach anything.
@@ -175,6 +178,7 @@ final class DoorHost {
         Scenario.reading = Scenario.now
         stores = StoreBundle(account: AccountId("door"), clock: { Scenario.reading })
         accounts = AccountRegistry()
+        signIn = SignInStore(phase: fixture.signIn)
         for entry in fixture.accounts {
             accounts.add(entry.account, entitlement: entry.entitlement)
         }

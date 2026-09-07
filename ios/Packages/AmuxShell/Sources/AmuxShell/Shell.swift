@@ -25,7 +25,12 @@ private func copy(_ text: String) {
 public enum ShellAction: Equatable, Sendable {
     case selectAccount(AccountId)
     case addAccount
+    /// Somebody asked to sign in. Where that leads is a page; what it does
+    /// when it gets there is the cloud's, which is why both leave the shell.
     case signIn
+    /// The press on the sign-in screen itself: hand off to the account
+    /// service. The shell does not do this because it reaches nothing.
+    case handOffSignIn
     case subscribe
 }
 
@@ -39,17 +44,22 @@ public struct Shell: View {
     private let router: Router
     private let accounts: AccountRegistry
     private let stores: StoreBundle
+    /// The one sign-in this phone has in flight. It is not an account's store
+    /// because there is no account until it finishes.
+    private let signIn: SignInStore
     private let actions: @MainActor (ShellAction) -> Void
 
     public init(
         router: Router,
         accounts: AccountRegistry,
         stores: StoreBundle,
+        signIn: SignInStore,
         actions: @escaping @MainActor (ShellAction) -> Void
     ) {
         self.router = router
         self.accounts = accounts
         self.stores = stores
+        self.signIn = signIn
         self.actions = actions
     }
 
@@ -110,6 +120,8 @@ public struct Shell: View {
             PairByCodePage(host: host, router: router, stores: stores)
         case .pairConfirmation(let invitation):
             PairConfirmationPage(invitation: invitation, router: router, stores: stores)
+        case .signIn(let from):
+            SignInPage(from: from, router: router, model: signIn, actions: actions)
         default:
             UnbuiltPage(route: route)
         }
@@ -373,6 +385,29 @@ private struct AgentsTab: View {
             // The one place the list is allowed to regroup. Data arriving
             // never reorders what a thumb is already travelling towards.
             case .refresh: stores.fleet.refreshOrder(now: Date())
+            }
+        }
+        // The screen draws its own header, so the bar would be a second one.
+        .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+/// Signing in.
+///
+/// The page navigates and the composition reaches the cloud: leaving is a pop
+/// either way, and the hand-off is handed out of the shell because a browser,
+/// a token and an account are none of the shell's business.
+private struct SignInPage: View {
+    let from: Tab
+    let router: Router
+    let model: SignInStore
+    let actions: @MainActor (ShellAction) -> Void
+
+    var body: some View {
+        SignIn(model: model, back: from.title) { action in
+            switch action {
+            case .cancel, .done: router.pop()
+            case .start: actions(.handOffSignIn)
             }
         }
         // The screen draws its own header, so the bar would be a second one.

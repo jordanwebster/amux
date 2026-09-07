@@ -16,6 +16,10 @@ public struct Fixture: Identifiable, Sendable {
     /// signed-in, subscribed account; the two gated states are the ones that
     /// are not, and they are the reason this is stated rather than assumed.
     public let accounts: [AccountEntry]
+    /// Where a sign-in stands in this state. It is declared here rather than
+    /// applied to a bundle because it is not an account's fact: signing in is
+    /// what makes an account, so there is none to hang it on yet.
+    public let signIn: SignInStore.Phase
     /// The type size to render at, in the door's own words. Absent means the
     /// device's own setting.
     public let typeSize: String?
@@ -33,6 +37,7 @@ public struct Fixture: Identifiable, Sendable {
         screen: Screen,
         cloud: ScriptedCloudState = ScriptedCloudState(),
         accounts: [AccountEntry] = [Fixture.subscribed],
+        signIn: SignInStore.Phase = .ready,
         typeSize: String? = nil,
         overlay: ConversationOverlay? = nil,
         apply: @escaping @Sendable @MainActor (StoreBundle) -> Void = { _ in }
@@ -41,6 +46,7 @@ public struct Fixture: Identifiable, Sendable {
         self.screen = screen
         self.cloud = cloud
         self.accounts = accounts
+        self.signIn = signIn
         self.typeSize = typeSize
         self.overlay = overlay
         self.apply = apply

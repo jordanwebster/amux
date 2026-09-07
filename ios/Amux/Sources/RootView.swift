@@ -52,6 +52,7 @@ struct RootView: View {
             router: composition.router,
             accounts: composition.accounts,
             stores: composition.stores,
+            signIn: composition.signIn,
             actions: { composition.handle($0) }
         )
         .onOpenURL { composition.router.open($0) }
