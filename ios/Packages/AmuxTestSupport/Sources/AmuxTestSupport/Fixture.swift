@@ -16,6 +16,12 @@ public struct Fixture: Identifiable, Sendable {
     /// signed-in, subscribed account; the two gated states are the ones that
     /// are not, and they are the reason this is stated rather than assumed.
     public let accounts: [AccountEntry]
+    /// What the App Store answers while this state is on screen.
+    public let store: ScriptedStoreState
+    /// Where a purchase stands in this state. Like the sign-in phase, it is
+    /// declared rather than reached, because a store sheet belongs to another
+    /// process and cannot be pressed from here.
+    public let paywall: PaywallStore.Phase
     /// Where a sign-in stands in this state. It is declared here rather than
     /// applied to a bundle because it is not an account's fact: signing in is
     /// what makes an account, so there is none to hang it on yet.
@@ -38,6 +44,8 @@ public struct Fixture: Identifiable, Sendable {
         cloud: ScriptedCloudState = ScriptedCloudState(),
         accounts: [AccountEntry] = [Fixture.subscribed],
         signIn: SignInStore.Phase = .ready,
+        store: ScriptedStoreState = ScriptedStoreState(),
+        paywall: PaywallStore.Phase = .ready,
         typeSize: String? = nil,
         overlay: ConversationOverlay? = nil,
         apply: @escaping @Sendable @MainActor (StoreBundle) -> Void = { _ in }
@@ -47,6 +55,8 @@ public struct Fixture: Identifiable, Sendable {
         self.cloud = cloud
         self.accounts = accounts
         self.signIn = signIn
+        self.store = store
+        self.paywall = paywall
         self.typeSize = typeSize
         self.overlay = overlay
         self.apply = apply

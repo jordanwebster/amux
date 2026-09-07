@@ -44,6 +44,7 @@
 		BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 7841E9EA7855115C8262F599 /* Localizable.xcstrings */; };
 		C09FEF55EDD6530C94D3E862 /* Instruments.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E1FE40B447768ED3E301C2 /* Instruments.swift */; };
 		CC47E088696AFFB5355CC755 /* AmuxFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = 5DAB04E1049B001BF097770B /* AmuxFeatures */; };
+		CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */; };
 		D1A7249247B147B6A897D074 /* HostsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71AECE15627BD11A3278E26C /* HostsTests.swift */; };
 		D6110EDBF7C482ED12425744 /* Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11108752C34ADBDF5089E372 /* Fixtures.swift */; };
 		DDDED99192D1F649C8282E0A /* Perturbation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D67FA937AF3288820FA3464 /* Perturbation.swift */; };
@@ -76,6 +77,7 @@
 		11108752C34ADBDF5089E372 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
 		1E66BD0F085353353B013CB1 /* AmuxCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxCore; path = Packages/AmuxCore; sourceTree = SOURCE_ROOT; };
 		21A4FC885DCA537FD2ABD0FD /* Trace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trace.swift; sourceTree = "<group>"; };
+		27DA3C92A79D8C1B57236EC2 /* Amux.storekit */ = {isa = PBXFileReference; path = Amux.storekit; sourceTree = "<group>"; };
 		2D67FA937AF3288820FA3464 /* Perturbation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Perturbation.swift; sourceTree = "<group>"; };
 		2DA38C20C8560FEE2BB88D9F /* Door.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Door.swift; sourceTree = "<group>"; };
 		2DE7599AB005A8225918A3EF /* Fixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixture.swift; sourceTree = "<group>"; };
@@ -107,6 +109,7 @@
 		BE1CD31C989C5DC52354A7AE /* WritingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingTests.swift; sourceTree = "<group>"; };
 		C0FF4DBFB3F554EC2761318D /* Sessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sessions.swift; sourceTree = "<group>"; };
 		C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedCloud.swift; sourceTree = "<group>"; };
+		CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedStore.swift; sourceTree = "<group>"; };
 		D0E455E43044DD55EB8662D4 /* Transcript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transcript.swift; sourceTree = "<group>"; };
 		D140E97565E0C456B57BB601 /* DebugTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugTools.swift; sourceTree = "<group>"; };
 		D5E1FE40B447768ED3E301C2 /* Instruments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Instruments.swift; sourceTree = "<group>"; };
@@ -220,6 +223,7 @@
 		64DAC62299FAA0DD1E9445EA /* Amux */ = {
 			isa = PBXGroup;
 			children = (
+				27DA3C92A79D8C1B57236EC2 /* Amux.storekit */,
 				6B58A624FCE2BFEB88AF23F9 /* Debug */,
 				7C9196A3EDC8707B2657D3CD /* Resources */,
 				0F43E47BAFD6271888A5F0B5 /* Sources */,
@@ -287,6 +291,7 @@
 				11108752C34ADBDF5089E372 /* Fixtures.swift */,
 				7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */,
 				C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */,
+				CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */,
 				C0FF4DBFB3F554EC2761318D /* Sessions.swift */,
 				66609895E99B406673EEADA3 /* States.swift */,
 				21A4FC885DCA537FD2ABD0FD /* Trace.swift */,
@@ -462,6 +467,7 @@
 				F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */,
 				9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */,
 				05DFFA86753B995BB850DE4C /* ScriptedCloud.swift in Sources */,
+				CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */,
 				E2141E4F9E984ECACF441955 /* Sessions.swift in Sources */,
 				0F3AC52183DBFF753C52B8CF /* States.swift in Sources */,
 				894FA032EAF19BFC5E92664F /* Trace.swift in Sources */,

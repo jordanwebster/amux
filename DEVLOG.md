@@ -4,6 +4,44 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **The paywall sells through StoreKit, and a subscription bought
+anywhere else is honoured.**
+
+One sentence about what the subscription is, the two plans with their prices,
+and what is true of both. No list of perks, because a list implies a version
+without them and there is not one: without a subscription nothing is reachable
+at all. The prices are the store's own strings in the person's own currency —
+an app that formatted a number itself would eventually print a price the App
+Store does not charge — and what the year saves is worked out from the two
+prices rather than written down, so it cannot go on claiming two months after
+a price change made it one.
+
+`AppStoreFront` is the only place StoreKit appears. A purchase is verified,
+finished so it is not offered again on the next launch, and an unverified
+transaction is refused rather than trusted. Restore asks the store to look
+again and then reads this Apple Account's entitlements; finding nothing is an
+answer and is said as one. Every branch a person can reach is designed and
+reachable in a test through a scripted store: closing the sheet leaves the
+screen exactly where it was with the same plan chosen, a purchase the store
+has taken but cannot finish stops offering to buy so nobody is charged twice,
+and a refusal says what the store said.
+
+A subscription bought on the web through the CLI is honoured. The paywall
+opened by somebody who already pays says where the subscription came from and
+how to manage it instead of selling a second one, and after a purchase the
+entitlement is read back from the account service rather than assumed from the
+receipt — which is the same read a web subscription arrives through. The You
+tab's subscription row states the same thing, so which store this device's
+entitlement came from is on screen wherever it matters.
+
+The two subscriptions are declared in a StoreKit configuration the scheme
+names, on both the run and the test action, so a purchase can be driven on the
+simulator without a sandbox account. XcodeGen writes the reference into the
+launch action only and Xcode reads the two separately, so the build recipe
+copies it across after generating the project.
+
+---
+
 2026-09-08 — **Signing in happens on amux.sh, and the app talks to the real
 account service.**
 

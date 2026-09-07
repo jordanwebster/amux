@@ -16,6 +16,11 @@ public enum Fixtures {
     /// that has already been thrown at draws.
     public static let refusedSignIn = "that address is not recognised"
 
+    /// What the App Store says when it will not take a payment. Written once
+    /// for the same reason: the scripted store throws it and the screen that
+    /// has already been thrown at draws it.
+    public static let refusedPurchase = "your payment method was declined"
+
     public static func named(_ id: String) -> Fixture? {
         all.first { $0.id == id }
     }
@@ -88,6 +93,10 @@ public enum Fixtures {
         Built(.firstRunPaid, "first-run-paid"),
         Built(.signIn, "sign-in"),
         Built(.signIn, "sign-in-failed"),
+        Built(.paywall, "paywall"),
+        Built(.paywall, "paywall-web"),
+        Built(.paywall, "paywall-pending"),
+        Built(.paywall, "paywall-failed"),
         Built(.hosts, "hosts"),
         Built(.hosts, "devices"),
         Built(.pin, "pin"),
@@ -333,7 +342,11 @@ public enum Fixtures {
         Fixture(id: "sign-in", screen: .signIn, cloud: .firstRun, accounts: []),
         Fixture(id: "first-run-paid", screen: .firstRunPaid, cloud: .unsubscribed,
                 accounts: [Fixture.unsubscribed]),
-        Fixture(id: "paywall", screen: .paywall, cloud: .unsubscribed),
+        // Nothing bought: the two plans and the price of each. The account
+        // is signed in and unsubscribed, because an account that already pays
+        // is not shown a paywall at all.
+        Fixture(id: "paywall", screen: .paywall, cloud: .unsubscribed,
+                accounts: [Fixture.unsubscribed]),
 
         // 7 · When it goes wrong
         Fixture(id: "shake", screen: .shake) { bundle in
@@ -430,6 +443,18 @@ public enum Fixtures {
         // Signing in, having pressed the button once and been turned away.
         // The screen says what the cloud said, so the words on it and the
         // words the scripted cloud would throw are one string.
+        // A subscription bought on the web, through the CLI, honoured here.
+        // The screen says where it came from instead of selling a second one.
+        Fixture(id: "paywall-web", screen: .paywall),
+        // The store has taken the purchase and cannot finish it: a child
+        // waiting on a parent, or a bank asking for a second factor. Nothing
+        // is charged and nothing is bought.
+        Fixture(id: "paywall-pending", screen: .paywall, accounts: [Fixture.unsubscribed],
+                paywall: .awaitingApproval),
+        // The store refused it. What it said is what the screen says.
+        Fixture(id: "paywall-failed", screen: .paywall, accounts: [Fixture.unsubscribed],
+                store: ScriptedStoreState(purchase: .fails(Fixtures.refusedPurchase)),
+                paywall: .failed(Fixtures.refusedPurchase)),
         Fixture(id: "sign-in-failed", screen: .signIn,
                 cloud: ScriptedCloudState(signIn: .refused(Fixtures.refusedSignIn),
                                           entitlement: .none, token: nil),

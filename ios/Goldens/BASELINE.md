@@ -147,6 +147,27 @@ where it opens, because that has not changed.
 
 There is no reference for this state.
 
+## paywall
+
+The subscription, and nothing dressed up around it: one sentence saying what it
+is, the two plans with their prices, and what is true of both. There is no list
+of perks, because a list implies a version without them and there is not one —
+without a subscription nothing is reachable at all.
+
+- **The rule between the two plans starts past the mark.** The same departure
+  as the sign-in rows, for the same reason: every list in the app indents its
+  rules to where the text starts.
+- **The title sits on one line.** The reference breaks it after "agents". The
+  app draws it at the design's own screen-title size, which fits the whole
+  phrase across the gutter; forcing the break would be typesetting the title
+  by hand.
+
+Three more states are drawn from the same screen and have no reference of their
+own: the account that already pays, which says where the subscription came from
+instead of selling a second one; the purchase the store has taken and cannot
+finish, which stops offering to buy so nobody is charged twice; and the one the
+store refused, which says what the store said.
+
 ## drawer
 
 The fleet as a panel over the screen it was opened from: two groups, a name and

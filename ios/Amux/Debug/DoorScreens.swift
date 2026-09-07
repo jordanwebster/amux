@@ -120,6 +120,12 @@ enum DoorScreens {
         // for all four.
         case .signIn:
             SignIn(model: host.signIn) { _ in }
+        // Subscribing. What is on offer, what is chosen and how a purchase
+        // went are all facts of the one attempt this phone has in flight, so
+        // the state decides the picture and this is the one arm for all of
+        // them — including the account that already pays.
+        case .paywall:
+            Paywall(model: host.paywall) { _ in }
         // Starting an agent. The chooser over it is a state of this screen
         // rather than a screen beside it, so the fixture decides whether it is
         // open and this is the one arm either way.

@@ -17,9 +17,15 @@ final class Composition {
     /// shows it, so a person who leaves the screen while the browser is up
     /// comes back to the attempt rather than to a fresh one.
     let signIn = SignInStore()
+    /// What the App Store has to sell and how a purchase went. One per app:
+    /// the store sells to an Apple Account, not to an amux one.
+    let paywall = PaywallStore()
     /// The real account service. Every screen sees it as `CloudService` and
     /// none of them knows there is HTTP behind it.
     private let cloud: any CloudService = AmuxCloudService()
+    /// The real App Store. The paywall sees it as `StoreFront` and does not
+    /// know StoreKit is behind it.
+    private let store: any StoreFront = AppStoreFront()
 
     /// Where a fleet goes before anybody has signed in. The app runs signed
     /// out — it shows an empty home rather than a login wall — so there has to
@@ -60,13 +66,47 @@ final class Composition {
         // holds which, and the screen draws it.
         case .handOffSignIn:
             Task { await signIn.signIn(with: cloud, presenting: WebSignIn(), into: accounts) }
-        // Adding an account and subscribing leave the app for the web or the
-        // store. Until those journeys are built there is nowhere to send
-        // somebody, and inventing a local one that the real one would have to
-        // undo would be worse than the button doing nothing.
-        case .addAccount, .subscribe:
+        // Subscribing is a page too, and it asks the store what it has on the
+        // way: the screen is useful before the answer arrives and nothing
+        // waits on it.
+        case .subscribe:
+            paywall.entitled(accounts.selectedAccount?.entitlement ?? .none)
+            router.open(.paywall(router.tab))
+            Task { await paywall.load(from: store) }
+        case .buySubscription:
+            Task {
+                guard await paywall.buy(store) == .bought else { return }
+                // The store says this Apple Account paid; the account service
+                // is where the subscription actually lives, so what this
+                // account may do is read back from it rather than assumed.
+                await refreshEntitlement()
+            }
+        case .restorePurchases:
+            Task {
+                guard await paywall.restore(store) == .bought else { return }
+                await refreshEntitlement()
+            }
+        // Adding an account leaves the app for the web. Until that journey is
+        // built there is nowhere to send somebody, and inventing a local one
+        // the real one would have to undo would be worse than the button
+        // doing nothing.
+        case .addAccount:
             break
         }
+    }
+    /// Reads what the account service says this account may do, after
+    /// something changed what that is.
+    ///
+    /// The App Store's receipt reaches the account service through its own
+    /// webhook, so this is asked of the cloud rather than worked out from the
+    /// purchase: a subscription bought on the web through the CLI has to be
+    /// honoured by exactly the same read.
+    private func refreshEntitlement() async {
+        guard let id = accounts.selected else { return }
+        guard let entitlement = try? await cloud.entitlement(id) else { return }
+        guard let accepted = accounts.accept(entitlement, for: id) else { return }
+        accounts.entitlement(accepted, for: id)
+        paywall.entitled(accepted)
     }
 }
 
@@ -80,8 +120,8 @@ extension Composition: RouteLoader {
         switch route {
         case .conversation(let agent), .changes(let agent):
             stores.openConversation(agent)
-        case .newAgent, .pairByCode, .pairConfirmation, .host, .signIn, .accounts,
-             .appearance, .help:
+        case .newAgent, .pairByCode, .pairConfirmation, .host, .signIn, .paywall,
+             .accounts, .appearance, .help:
             break
         }
     }
@@ -98,7 +138,7 @@ extension Composition: RouteLoader {
         case .conversation(let agent):
             stores.releaseStream(agent)
         case .changes, .newAgent, .pairByCode, .pairConfirmation, .host, .signIn,
-             .accounts, .appearance, .help:
+             .paywall, .accounts, .appearance, .help:
             break
         }
     }

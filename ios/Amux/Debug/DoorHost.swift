@@ -43,6 +43,15 @@ final class DoorHost {
     /// The sign-in a driven screen is in the middle of. Its own store rather
     /// than one of the account's: there is no account until it finishes.
     private(set) var signIn = SignInStore()
+    /// Subscribing, as a driven screen has it: what is on offer, what is
+    /// chosen and how a purchase went. Its own store because a subscription is
+    /// bought before there is anything for an account's stores to hold.
+    private(set) var paywall = PaywallStore()
+
+    /// What the App Store answers while the door is driving. The paywall is
+    /// handed this rather than the real store, so no capture and no journey
+    /// ever reaches StoreKit.
+    let store = ScriptedStoreFront()
     /// The app's own accounts, when the door is driving the app rather than a
     /// fixture. A connection signs one in here, because that is where every
     /// screen reads whether this phone can reach anything.
@@ -179,6 +188,11 @@ final class DoorHost {
         stores = StoreBundle(account: AccountId("door"), clock: { Scenario.reading })
         accounts = AccountRegistry()
         signIn = SignInStore(phase: fixture.signIn)
+        store.scripted = fixture.store
+        store.reset()
+        paywall = PaywallStore(
+            entitlement: fixture.accounts.first?.entitlement ?? .none,
+            plans: fixture.store.plans, phase: fixture.paywall)
         for entry in fixture.accounts {
             accounts.add(entry.account, entitlement: entry.entitlement)
         }

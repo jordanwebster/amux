@@ -32,6 +32,10 @@ public enum ShellAction: Equatable, Sendable {
     /// service. The shell does not do this because it reaches nothing.
     case handOffSignIn
     case subscribe
+    /// Buy the plan the paywall has selected.
+    case buySubscription
+    /// Put back a subscription this Apple Account already has.
+    case restorePurchases
 }
 
 /// The app: three tabs, a stack under each, and a title menu on the Agents
@@ -47,6 +51,9 @@ public struct Shell: View {
     /// The one sign-in this phone has in flight. It is not an account's store
     /// because there is no account until it finishes.
     private let signIn: SignInStore
+    /// What is on offer and how a purchase went. One per app, not per account:
+    /// the App Store sells to an Apple Account, not to an amux one.
+    private let paywall: PaywallStore
     private let actions: @MainActor (ShellAction) -> Void
 
     public init(
@@ -54,12 +61,14 @@ public struct Shell: View {
         accounts: AccountRegistry,
         stores: StoreBundle,
         signIn: SignInStore,
+        paywall: PaywallStore,
         actions: @escaping @MainActor (ShellAction) -> Void
     ) {
         self.router = router
         self.accounts = accounts
         self.stores = stores
         self.signIn = signIn
+        self.paywall = paywall
         self.actions = actions
     }
 
@@ -122,6 +131,8 @@ public struct Shell: View {
             PairConfirmationPage(invitation: invitation, router: router, stores: stores)
         case .signIn(let from):
             SignInPage(from: from, router: router, model: signIn, actions: actions)
+        case .paywall(let from):
+            PaywallPage(from: from, router: router, model: paywall, actions: actions)
         default:
             UnbuiltPage(route: route)
         }
@@ -408,6 +419,31 @@ private struct SignInPage: View {
             switch action {
             case .cancel, .done: router.pop()
             case .start: actions(.handOffSignIn)
+            }
+        }
+        // The screen draws its own header, so the bar would be a second one.
+        .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+/// Subscribing.
+///
+/// Choosing a plan is the screen's own state and is settled here; buying and
+/// restoring leave the shell, because both are the App Store's and the shell
+/// reaches nothing.
+private struct PaywallPage: View {
+    let from: Tab
+    let router: Router
+    let model: PaywallStore
+    let actions: @MainActor (ShellAction) -> Void
+
+    var body: some View {
+        Paywall(model: model, back: from.title) { action in
+            switch action {
+            case .cancel, .done: router.pop()
+            case .choose(let period): model.choose(period)
+            case .buy: actions(.buySubscription)
+            case .restore: actions(.restorePurchases)
             }
         }
         // The screen draws its own header, so the bar would be a second one.

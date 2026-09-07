@@ -21,9 +21,19 @@ struct YouPlaceholder: View {
             if accounts.accounts.isEmpty {
                 Button("Sign In") { actions(.signIn) }
                     .identified("you.signIn", label: "Sign In")
-                Button("Subscribe") { actions(.subscribe) }
-                    .identified("you.subscribe", label: "Subscribe")
             }
+            // What this account is entitled to and where that came from. A
+            // subscription bought on the web through the CLI is honoured, and
+            // this is the line that says so — the same one the You screen will
+            // carry when it lands.
+            Button { actions(.subscribe) } label: {
+                HStack {
+                    Text("Subscription")
+                    Spacer()
+                    Text(entitlement.summary)
+                }
+            }
+            .identified("you.subscription", label: "Subscription", value: entitlement.summary)
             Button("Accounts") { router.open(.accounts) }
                 .identified("you.accounts", label: "Accounts")
             Button("Appearance") { router.open(.appearance) }
@@ -32,6 +42,10 @@ struct YouPlaceholder: View {
                 .identified("you.help", label: "Help")
         }
         .identified("you")
+    }
+
+    private var entitlement: Entitlement {
+        accounts.selectedAccount?.entitlement ?? .none
     }
 }
 

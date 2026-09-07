@@ -55,6 +55,12 @@ targets:
       - path: Packages/AmuxCore/Sources/Instrumentation
       - path: Amux/Resources
         buildPhase: resources
+      # The two subscriptions, as the App Store would describe them, so a
+      # purchase can be driven on the simulator without a sandbox account.
+      # Named by the scheme rather than compiled in: it is a debugger setting,
+      # and a build a person installs never sees it.
+      - path: Amux/Amux.storekit
+        buildPhase: none
     info:
       path: Amux/Info.plist
       properties:
@@ -155,6 +161,7 @@ schemes:
         AmuxUITests: [test]
     run:
       config: Debug
+      storeKitConfiguration: Amux/Amux.storekit
     test:
       config: Debug
       # The package unit suites run from their own package schemes (see

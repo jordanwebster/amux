@@ -53,6 +53,7 @@ struct RootView: View {
             accounts: composition.accounts,
             stores: composition.stores,
             signIn: composition.signIn,
+            paywall: composition.paywall,
             actions: { composition.handle($0) }
         )
         .onOpenURL { composition.router.open($0) }

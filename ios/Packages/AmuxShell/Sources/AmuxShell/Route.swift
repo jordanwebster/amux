@@ -49,6 +49,9 @@ public enum Route: Hashable, Sendable {
     /// fact about the push rather than about the screen — and it is what the
     /// back button is allowed to name.
     case signIn(Tab)
+    /// Subscribing, pushed onto whichever stack asked for it, for the same
+    /// reason signing in is.
+    case paywall(Tab)
     case accounts
     case appearance
     case help
@@ -59,7 +62,7 @@ public enum Route: Hashable, Sendable {
         switch self {
         case .conversation, .changes, .newAgent: .agents
         case .pairByCode, .pairConfirmation, .host: .hosts
-        case .signIn(let from): from
+        case .signIn(let from), .paywall(let from): from
         case .accounts, .appearance, .help: .you
         }
     }
@@ -75,6 +78,7 @@ public enum Route: Hashable, Sendable {
         case .pairConfirmation: "pair-confirm"
         case .host: "host"
         case .signIn: "sign-in"
+        case .paywall: "paywall"
         case .accounts: "profiles"
         case .appearance: "appearance"
         case .help: "help"
