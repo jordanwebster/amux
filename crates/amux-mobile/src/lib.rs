@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 
 use amux::{AccessToken, AuthError, CredentialProvider, RelayConnection};
 use amux_ui::{AgentId, Command, OpError, OpId, OpOutcome};
-use projection::{Cadence, Event, OpOutcomeDto, Projection, SubscriptionOutcome};
+use projection::{Cadence, Event, OpOutcomeDto, PairingOutcome, Projection, SubscriptionOutcome};
 use runtime::{MobileRuntime, StartConfig, TokenSource};
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
@@ -234,6 +234,7 @@ pub unsafe extern "C" fn amux_mobile_stop(handle: *mut Handle) {
 #[serde(untagged)]
 enum CommandDto {
     Subscription(SubscriptionCommand),
+    Pairing(PairingCommand),
     Shared(Command),
 }
 
@@ -242,6 +243,34 @@ enum CommandDto {
 enum SubscriptionCommand {
     Subscribe { agent: AgentId },
     Unsubscribe { agent: AgentId },
+}
+
+/// One step of pairing this device with a machine.
+///
+/// Two phases, never one. Beginning authenticates the secret and answers with
+/// the machine's own account of itself; nothing is trusted until a separate
+/// confirmation naming that attempt arrives. A caller that begins and never
+/// answers has paired with nobody — the attempt expires on the machine.
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+enum PairingCommand {
+    /// A six-digit code, against the one machine that issued it.
+    BeginPairPin { host: amux::HostId, pin: String },
+    /// The payload an `amux://pair` link carries, which names its own machine.
+    BeginPairLink { payload: String },
+    Confirm { pending: String },
+    Abandon { pending: String },
+}
+
+/// A pairing step that finished on a task of its own, on its way back to the
+/// event loop that dispatched it.
+struct PairingDone {
+    op: OpId,
+    outcome: PairingOutcome,
+    /// An authenticated attempt to hold until it is answered. The capability
+    /// the machine issued stays in this process; what crosses the boundary is
+    /// the key to this map.
+    hold: Option<(String, amux::PendingPeer)>,
 }
 
 /// Enqueues a shared UI command or {"command":"subscribe","agent":"UUID"}
@@ -754,6 +783,11 @@ async fn run(
     });
     let mut runtime = MobileRuntime::open(&config, credentials).await?;
     let mut pending: HashMap<u64, oneshot::Sender<Result<AccessToken, AuthError>>> = HashMap::new();
+    // Authenticated pairing attempts waiting for a person to say yes. Held
+    // here rather than handed to the app: the capability the machine issued is
+    // what commits trust, so it never crosses the boundary.
+    let mut pending_peers: HashMap<String, amux::PendingPeer> = HashMap::new();
+    let (pairings, mut pairing_results) = mpsc::unbounded_channel::<PairingDone>();
     let mut projection = Projection::default();
     let mut last_connection = RelayConnection::Connecting;
     let mut events = vec![Event::connection(&last_connection)];
@@ -827,6 +861,9 @@ async fn run(
                             };
                             events.push(Event::OpResult { op, outcome: OpOutcomeDto::Subscription(outcome) });
                         }
+                        Ok(CommandDto::Pairing(command)) => {
+                            pair(op, command, &runtime, &mut pending_peers, pairings.clone());
+                        }
                         Err(message) => events.push(Event::OpResult { op, outcome: OpOutcomeDto::Shared(Box::new(OpOutcome::Error {
                             error: OpError::general(message),
                         })) }),
@@ -860,6 +897,11 @@ async fn run(
                 }
                 dirty = false;
             },
+            Some(done) = pairing_results.recv() => {
+                if let Some((id, peer)) = done.hold { pending_peers.insert(id, peer); }
+                events.push(Event::OpResult { op: done.op, outcome: OpOutcomeDto::Pairing(done.outcome) });
+                dirty = true;
+            },
             Some(request) = token_requests.recv() => {
                 pending.retain(|_, sender| !sender.is_closed());
                 pending.insert(request.id, request.reply);
@@ -881,6 +923,115 @@ async fn run(
     // transport tasks, including in-flight connection and token work.
     let _ = tokio::time::timeout(Duration::from_secs(1), runtime.embedded.shutdown()).await;
     Ok(())
+}
+
+/// Runs one pairing step off the event loop and reports it back.
+///
+/// Off the loop because every step is a round trip to a machine that may be
+/// slow or gone, and the loop is what keeps every other screen drawing.
+fn pair(
+    op: OpId,
+    command: PairingCommand,
+    runtime: &MobileRuntime,
+    holding: &mut HashMap<String, amux::PendingPeer>,
+    results: mpsc::UnboundedSender<PairingDone>,
+) {
+    let admin = runtime.embedded.admin();
+    // Confirming and abandoning both consume the attempt, so it leaves the map
+    // before the round trip: a second tap on either has nothing to answer with
+    // and says so rather than spending the capability twice.
+    let held = match &command {
+        PairingCommand::Confirm { pending } | PairingCommand::Abandon { pending } => {
+            match holding.remove(pending) {
+                Some(peer) => Some(peer),
+                None => {
+                    let _ = results.send(PairingDone {
+                        op,
+                        outcome: PairingOutcome::PairingLost,
+                        hold: None,
+                    });
+                    return;
+                }
+            }
+        }
+        _ => None,
+    };
+    tokio::spawn(async move {
+        let done = match command {
+            PairingCommand::BeginPairPin { host, pin } => {
+                began(op, admin.begin_pair_pin(host, &pin).await)
+            }
+            PairingCommand::BeginPairLink { payload } => {
+                match amux::parse_qr_pairing_payload(&payload) {
+                    Ok(payload) => began(op, admin.begin_pair_qr(&payload).await),
+                    // A link that will not parse is refused in the same words
+                    // a wrong code is: what an unreadable link proves about the
+                    // machine that issued it is nothing.
+                    Err(_) => PairingDone {
+                        op,
+                        outcome: PairingOutcome::PairingRefused,
+                        hold: None,
+                    },
+                }
+            }
+            PairingCommand::Confirm { .. } => {
+                let peer = held.expect("a confirm reaching here holds its attempt");
+                let outcome = match admin.confirm_pair(peer).await {
+                    Ok(peer) => PairingOutcome::Paired {
+                        host: peer.host_id,
+                        name: peer.name,
+                    },
+                    Err(_) => PairingOutcome::PairingRefused,
+                };
+                PairingDone {
+                    op,
+                    outcome,
+                    hold: None,
+                }
+            }
+            PairingCommand::Abandon { .. } => {
+                let peer = held.expect("an abandon reaching here holds its attempt");
+                // The machine is told, and the answer it gives is not a reason
+                // to keep the attempt: this device wrote nothing either way.
+                let _ = admin.abandon_pair(peer).await;
+                PairingDone {
+                    op,
+                    outcome: PairingOutcome::PairingAbandoned,
+                    hold: None,
+                }
+            }
+        };
+        let _ = results.send(done);
+    });
+}
+
+/// The first phase's answer: the machine as it describes itself, kept under a
+/// handle, or the one refusal every wrong secret shares.
+fn began(op: OpId, result: Result<amux::PendingPeer, amux::PairingError>) -> PairingDone {
+    match result {
+        Ok(peer) => {
+            let id = uuid::Uuid::new_v4().to_string();
+            PairingDone {
+                op,
+                outcome: PairingOutcome::PairingPending {
+                    pending: id.clone(),
+                    host: peer.host_id,
+                    name: peer.name.clone(),
+                    fingerprint: peer.fingerprint.clone(),
+                    expires_at: peer.expires_at,
+                },
+                hold: Some((id, peer)),
+            }
+        }
+        // Mistyped, already used, expired, never issued, or the machine did
+        // not answer: one shape for all of them. Telling them apart is exactly
+        // what somebody guessing codes would want.
+        Err(_) => PairingDone {
+            op,
+            outcome: PairingOutcome::PairingRefused,
+            hold: None,
+        },
+    }
 }
 
 #[cfg(test)]

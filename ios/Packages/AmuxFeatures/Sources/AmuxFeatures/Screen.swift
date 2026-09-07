@@ -39,6 +39,7 @@ public enum Screen: String, Sendable, CaseIterable, Codable {
     // 5 · Machines and agents
     case hosts
     case pin
+    case pairConfirm = "pair-confirm"
     case newAgent = "new-agent"
     case offline
     case exited

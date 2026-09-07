@@ -231,12 +231,39 @@ final class FixtureTests: XCTestCase {
         XCTAssertEqual(conversation.changesArtifact, Transcript.changesArtifact)
     }
 
+    /// An untrusted machine is an offer, not a host: it is discovered, it is
+    /// not in the fleet, and nothing of its runs anywhere this phone can read.
     func testTheUnpairedMachineIsAnOfferRatherThanAHost() {
         let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("pair-confirm")!.apply(bundle)
-        let homelab = bundle.hosts.host(Scenario.homelab)
-        XCTAssertEqual(homelab?.trustStatus, .untrustedButOnline)
+        XCTAssertEqual(
+            bundle.hosts.discovered.first(where: { $0.id == Scenario.homelab })?.trustStatus,
+            .untrustedButOnline)
+        XCTAssertNil(bundle.hosts.host(Scenario.homelab))
         XCTAssertTrue(bundle.fleet.rows.allSatisfy { $0.hostId != Scenario.homelab })
+    }
+
+    /// Landing on the confirmation is not pairing. The machine has answered —
+    /// it has said its name and the fingerprint of the key it would be trusted
+    /// by — and the decision is still the person's.
+    func testTheConfirmationHasTrustedNobody() {
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
+        Fixtures.named("pair-confirm")!.apply(bundle)
+        guard case .confirming(let peer) = bundle.pairing.phase else {
+            return XCTFail("expected a machine waiting to be confirmed, got \(bundle.pairing.phase)")
+        }
+        XCTAssertEqual(peer.name, "homelab")
+        XCTAssertEqual(peer.fingerprint.count, 64)
+        XCTAssertNil(bundle.hosts.host(Scenario.homelab))
+    }
+
+    /// The code screen knows which machine the code it is taking belongs to.
+    func testTheCodeIsTypedAgainstOneNamedMachine() {
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
+        Fixtures.named("pin")!.apply(bundle)
+        XCTAssertEqual(bundle.pairing.machine?.name, "homelab")
+        XCTAssertEqual(bundle.pairing.digits, "419")
+        XCTAssertEqual(bundle.pairing.phase, .entering)
     }
 
     func testScenarioIdentifiersAreStable() {

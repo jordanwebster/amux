@@ -6,7 +6,9 @@ import SwiftUI
 /// nothing; it says what the person did and the shell decides where that leads.
 public enum HostsAction: Equatable, Sendable {
     case open(HostId)
-    case pair
+    /// Start pairing with a machine, or — from the header, where no machine
+    /// has been pointed at — with whichever one is on offer.
+    case pair(HostId?)
     case newAgent
 }
 
@@ -61,7 +63,7 @@ public struct HostsTab: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             // Pairing, not New Agent. The plus on a screen adds one of the
             // things the screen lists, and what this screen lists is machines.
-            Button { actions(.pair) } label: {
+            Button { actions(.pair(model.discovered.count == 1 ? model.discovered[0].id : nil)) } label: {
                 GlassIcon(glyph: "plus", prominent: true)
             }
             .accessibilityLabel("Pair a Machine")
@@ -93,13 +95,75 @@ public struct HostsTab: View {
                         title: "Offline", hosts: model.offline,
                         caption: "Agents on an offline host report their state as unknown.")
                 }
-                if model.hosts.isEmpty { empty }
+                if !model.discovered.isEmpty { offers }
+                if model.hosts.isEmpty && model.discovered.isEmpty { empty }
             }
             .padding(.horizontal, design.metrics.gutter)
             .padding(.top, 6)
             .padding(.bottom, 120)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// Machines on the network this phone has not paired with.
+    ///
+    /// Their own section rather than grey rows among the hosts, because they
+    /// are not hosts: nothing of theirs is readable and nothing can be started
+    /// on them. What each one is, is an offer, so each carries the one thing
+    /// there is to do with an offer.
+    private var offers: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHead(title: "Not Paired")
+            RowGroup(items: model.discovered, prominence: .subject) { host in
+                offer(host)
+            }
+            Explain("Run `amux pair` on one of these and enter the code it prints.")
+                .identified("hosts.caption.unpaired")
+        }
+    }
+
+    private func offer(_ host: HostEntry) -> some View {
+        HStack(spacing: 11) {
+            Image(systemName: glyph(host))
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(design.inkFaint.color)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(host.name)
+                    .designFont(.identifier, design)
+                    .foregroundStyle(design.ink.color)
+                Text(offered(host))
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
+            }
+            Spacer(minLength: 6)
+            Button { actions(.pair(host.id)) } label: {
+                ActionLabel("Pair", kind: .outline)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Pair with \(host.name)")
+            .identified("hosts.pair.\(host.id)", label: "Pair with \(host.name)")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .contain)
+        .identified("hosts.offer.\(host.id)", label: spokenOffer(host), value: "not paired")
+    }
+
+    /// "Linux · not paired", and only the half that is known.
+    private func offered(_ host: HostEntry) -> String {
+        var parts: [String] = []
+        if let platform = host.platform { parts.append(platform) }
+        parts.append("not paired")
+        return parts.joined(separator: " · ")
+    }
+
+    private func spokenOffer(_ host: HostEntry) -> String {
+        var parts = [host.name]
+        if let platform = host.platform { parts.append(platform) }
+        parts.append("not paired")
+        return parts.joined(separator: ", ")
     }
 
     private func group(title: String, hosts: [HostEntry], caption: String?) -> some View {
@@ -123,7 +187,7 @@ public struct HostsTab: View {
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
             Explain("Run `amux pair` on a machine and enter the code it prints.")
-            Button { actions(.pair) } label: {
+            Button { actions(.pair(model.discovered.first?.id)) } label: {
                 ActionLabel("Pair a Machine", kind: .outline)
             }
             .buttonStyle(.plain)

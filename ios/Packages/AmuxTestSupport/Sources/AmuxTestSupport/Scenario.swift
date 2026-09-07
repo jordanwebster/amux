@@ -81,6 +81,19 @@ public enum Scenario {
         id: homelab, name: "homelab", online: true, trustStatus: .untrustedButOnline,
         platform: "Linux")
 
+    /// That machine, having answered an invitation: it has proved it issued
+    /// the offer and said who it is, and nothing has been trusted. The
+    /// fingerprint is a real one's shape — SHA-256 of a key, sixty-four hex
+    /// characters — because how long it is is most of what the screen has to
+    /// cope with.
+    @MainActor public static var offered: PendingPeer {
+        PendingPeer(
+            pending: "0f9d5a2c-4e11-4a76-9f2b-6b1c0d3e8a54",
+            host: homelab, name: "homelab",
+            fingerprint: "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0",
+            expiresAt: reading.addingTimeInterval(4 * 60 + 30))
+    }
+
     // MARK: - Agents
 
     public static func card(

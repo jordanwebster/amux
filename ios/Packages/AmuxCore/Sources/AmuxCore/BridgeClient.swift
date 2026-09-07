@@ -326,19 +326,47 @@ public func applyBatches(
 public enum BridgeCommand: Sendable, Equatable, Codable {
     case subscribe(agent: AgentId)
     case unsubscribe(agent: AgentId)
+    /// Authenticate a six-digit code against the one machine that issued it.
+    /// This never trusts anybody: what comes back is that machine's account of
+    /// itself, for a person to look at.
+    case beginPairPin(host: HostId, pin: String)
+    /// The same first phase from the payload an `amux://pair` link carries,
+    /// which names its own machine.
+    case beginPairLink(payload: String)
+    /// Trust the machine an authenticated attempt named.
+    case confirmPair(pending: String)
+    /// Turn it away. Nothing is written on either side.
+    case abandonPair(pending: String)
     /// A shared UI command, exactly as the core spells it.
     case shared(JSONValue)
 
-    private enum Key: String, CodingKey { case command, agent }
+    private enum Key: String, CodingKey { case command, agent, host, pin, payload, pending }
 
     public init(from decoder: any Decoder) throws {
         let body = try JSONValue(from: decoder)
         if let container = try? decoder.container(keyedBy: Key.self),
-           let command = try? container.decode(String.self, forKey: .command),
-           command == "subscribe" || command == "unsubscribe" {
-            let agent = try container.decode(AgentId.self, forKey: .agent)
-            self = command == "subscribe" ? .subscribe(agent: agent) : .unsubscribe(agent: agent)
-            return
+           let command = try? container.decode(String.self, forKey: .command) {
+            switch command {
+            case "subscribe", "unsubscribe":
+                let agent = try container.decode(AgentId.self, forKey: .agent)
+                self = command == "subscribe" ? .subscribe(agent: agent) : .unsubscribe(agent: agent)
+                return
+            case "begin_pair_pin":
+                self = .beginPairPin(
+                    host: try container.decode(HostId.self, forKey: .host),
+                    pin: try container.decode(String.self, forKey: .pin))
+                return
+            case "begin_pair_link":
+                self = .beginPairLink(payload: try container.decode(String.self, forKey: .payload))
+                return
+            case "confirm":
+                self = .confirmPair(pending: try container.decode(String.self, forKey: .pending))
+                return
+            case "abandon":
+                self = .abandonPair(pending: try container.decode(String.self, forKey: .pending))
+                return
+            default: break
+            }
         }
         self = .shared(body)
     }
@@ -353,6 +381,23 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("unsubscribe", forKey: .command)
             try container.encode(agent, forKey: .agent)
+        case .beginPairPin(let host, let pin):
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("begin_pair_pin", forKey: .command)
+            try container.encode(host, forKey: .host)
+            try container.encode(pin, forKey: .pin)
+        case .beginPairLink(let payload):
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("begin_pair_link", forKey: .command)
+            try container.encode(payload, forKey: .payload)
+        case .confirmPair(let pending):
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("confirm", forKey: .command)
+            try container.encode(pending, forKey: .pending)
+        case .abandonPair(let pending):
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("abandon", forKey: .command)
+            try container.encode(pending, forKey: .pending)
         case .shared(let body):
             try body.encode(to: encoder)
         }

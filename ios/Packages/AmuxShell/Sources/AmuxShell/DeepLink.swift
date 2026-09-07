@@ -11,11 +11,20 @@ public struct PairingInvitation: Hashable, Sendable, CustomStringConvertible {
     public let host: HostId
     public let cloudURL: String
     public let secret: [UInt8]
+    /// The payload exactly as the link carried it.
+    ///
+    /// Kept whole rather than re-encoded from the parts above, because it is
+    /// what the machine authenticates: a payload this phone rebuilt would be a
+    /// different string the moment a field is added, and the machine would be
+    /// right to refuse it. Reading it into parts is only so the app can refuse
+    /// a malformed link before it becomes a screen.
+    public let payload: String
 
-    public init(host: HostId, cloudURL: String, secret: [UInt8]) {
+    public init(host: HostId, cloudURL: String, secret: [UInt8], payload: String) {
         self.host = host
         self.cloudURL = cloudURL
         self.secret = secret
+        self.payload = payload
     }
 
     /// The invitation is a secret, so it prints as the machine it came from
@@ -66,7 +75,8 @@ extension PairingInvitation {
             let wire = try? JSONDecoder().decode(Wire.self, from: json),
             let host = HostId(wire.hostID)
         else { return nil }
-        self.init(host: host, cloudURL: wire.cloudURL, secret: wire.secret)
+        self.init(
+            host: host, cloudURL: wire.cloudURL, secret: wire.secret, payload: payload)
     }
 
     private struct Wire: Decodable {

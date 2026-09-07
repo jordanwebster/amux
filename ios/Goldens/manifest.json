@@ -458,7 +458,7 @@
     {
       "id": "pair-confirm",
       "stage": 9,
-      "screen": "pin",
+      "screen": "pair-confirm",
       "fixture": "pair-confirm",
       "origin": "added_state",
       "reason": "the confirmation an amux://pair link arrives at, which never pairs on arrival",

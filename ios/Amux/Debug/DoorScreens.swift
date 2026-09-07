@@ -107,6 +107,13 @@ enum DoorScreens {
         // because what the tab bar looks like is the shell's own journey.
         case .hosts:
             HostsTab(model: host.stores.hosts) { _ in }
+        // The two pairing screens. Both are functions of the one pairing
+        // attempt the account's stores hold, so a capture opens the screen and
+        // the fixture decides which moment of the attempt it is.
+        case .pin:
+            PairByCode(model: host.stores.pairing) { _ in }
+        case .pairConfirm:
+            PairConfirmation(model: host.stores.pairing) { _ in }
         default: EmptyView()
         }
     }

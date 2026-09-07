@@ -8,6 +8,9 @@ import Foundation
 /// One projected event. The bridge delivers them in arrays, in order.
 public enum Event: Sendable, Equatable, Codable {
     case fleet(Fleet)
+    /// Machines on this account's relay that this phone has not paired with.
+    /// Never part of the fleet: an untrusted machine is an offer, not a host.
+    case discovered([HostEntry])
     case feed(FeedUpdate)
     case session(SessionSnapshot)
     case opResult(OpResult)
@@ -18,6 +21,7 @@ public enum Event: Sendable, Equatable, Codable {
 
     private enum Key: String, CodingKey {
         case fleet = "Fleet"
+        case discovered = "Discovered"
         case feed = "Feed"
         case session = "Session"
         case opResult = "OpResult"
@@ -29,6 +33,10 @@ public enum Event: Sendable, Equatable, Codable {
 
     private struct RequestId: Codable, Sendable, Equatable {
         var request_id: UInt64
+    }
+
+    private struct Discovery: Codable, Sendable, Equatable {
+        var hosts: [HostEntry]
     }
 
     private struct Detail: Codable, Sendable, Equatable {
@@ -44,6 +52,8 @@ public enum Event: Sendable, Equatable, Codable {
         }
         switch key {
         case .fleet: self = .fleet(try container.decode(Fleet.self, forKey: key))
+        case .discovered:
+            self = .discovered(try container.decode(Discovery.self, forKey: key).hosts)
         case .feed: self = .feed(try container.decode(FeedUpdate.self, forKey: key))
         case .session: self = .session(try container.decode(SessionSnapshot.self, forKey: key))
         case .opResult: self = .opResult(try container.decode(OpResult.self, forKey: key))
@@ -60,6 +70,8 @@ public enum Event: Sendable, Equatable, Codable {
         var container = encoder.container(keyedBy: Key.self)
         switch self {
         case .fleet(let value): try container.encode(value, forKey: .fleet)
+        case .discovered(let hosts):
+            try container.encode(Discovery(hosts: hosts), forKey: .discovered)
         case .feed(let value): try container.encode(value, forKey: .feed)
         case .session(let value): try container.encode(value, forKey: .session)
         case .opResult(let value): try container.encode(value, forKey: .opResult)
@@ -1122,10 +1134,26 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     case queueRemoved
     case subscribed(agent: AgentId)
     case unsubscribed(agent: AgentId)
+    /// A pairing secret authenticated. The machine has said who it is and
+    /// nothing has been trusted; `pending` is what the answer names.
+    case pairingPending(PendingPeer)
+    /// Trust written, on this phone and on the machine.
+    case paired(host: HostId, name: String)
+    /// Abandoned by the person. Nothing was written anywhere.
+    case pairingAbandoned
+    /// The secret did not authenticate. Mistyped, already used, expired and
+    /// never issued all arrive here, in the same shape and with nothing else
+    /// said, because telling them apart is what guessing codes would need.
+    case pairingRefused
+    /// The attempt an answer names is not one the runtime is holding: it was
+    /// answered already, or the app has been restarted since.
+    case pairingLost
     case failed(OpFailure)
     case other(outcome: String, body: JSONValue)
 
-    private enum Key: String, CodingKey { case outcome, agent, error, attachment }
+    private enum Key: String, CodingKey {
+        case outcome, agent, error, attachment, host, name
+    }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: Key.self)
@@ -1140,6 +1168,14 @@ public enum OpOutcome: Sendable, Equatable, Codable {
         case "queue_removed": self = .queueRemoved
         case "subscribed": self = .subscribed(agent: try container.decode(AgentId.self, forKey: .agent))
         case "unsubscribed": self = .unsubscribed(agent: try container.decode(AgentId.self, forKey: .agent))
+        case "pairing_pending": self = .pairingPending(try PendingPeer(from: decoder))
+        case "paired":
+            self = .paired(
+                host: try container.decode(HostId.self, forKey: .host),
+                name: try container.decode(String.self, forKey: .name))
+        case "pairing_abandoned": self = .pairingAbandoned
+        case "pairing_refused": self = .pairingRefused
+        case "pairing_lost": self = .pairingLost
         case "error": self = .failed(try container.decode(OpFailure.self, forKey: .error))
         default: self = .other(outcome: outcome, body: try JSONValue(from: decoder))
         }
@@ -1149,6 +1185,10 @@ public enum OpOutcome: Sendable, Equatable, Codable {
         switch self {
         case .other(_, let body):
             try body.encode(to: encoder)
+        case .pairingPending(let pending):
+            try pending.encode(to: encoder)
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("pairing_pending", forKey: .outcome)
         default:
             var container = encoder.container(keyedBy: Key.self)
             switch self {
@@ -1170,12 +1210,54 @@ public enum OpOutcome: Sendable, Equatable, Codable {
             case .unsubscribed(let agent):
                 try container.encode("unsubscribed", forKey: .outcome)
                 try container.encode(agent, forKey: .agent)
+            case .paired(let host, let name):
+                try container.encode("paired", forKey: .outcome)
+                try container.encode(host, forKey: .host)
+                try container.encode(name, forKey: .name)
+            case .pairingAbandoned: try container.encode("pairing_abandoned", forKey: .outcome)
+            case .pairingRefused: try container.encode("pairing_refused", forKey: .outcome)
+            case .pairingLost: try container.encode("pairing_lost", forKey: .outcome)
+            case .pairingPending: break
             case .failed(let failure):
                 try container.encode("error", forKey: .outcome)
                 try container.encode(failure, forKey: .error)
             case .other: break
             }
         }
+    }
+}
+
+/// A machine that has authenticated a pairing secret and is waiting to be
+/// trusted or turned away.
+///
+/// It is what a person looks at before deciding: the name the machine calls
+/// itself and the fingerprint of the key this phone would be trusting. The
+/// capability that would actually commit the trust is not here — it stays in
+/// the runtime, and `pending` is only the handle an answer names — so nothing
+/// that reads or logs this value can pair with anybody.
+public struct PendingPeer: Codable, Sendable, Equatable, Identifiable {
+    public var pending: String
+    public var host: HostId
+    public var name: String
+    public var fingerprint: String
+    /// When the machine stops holding this attempt open.
+    public var expiresAt: Date
+
+    public var id: String { pending }
+
+    private enum CodingKeys: String, CodingKey {
+        case pending, host, name, fingerprint
+        case expiresAt = "expires_at"
+    }
+
+    public init(
+        pending: String, host: HostId, name: String, fingerprint: String, expiresAt: Date
+    ) {
+        self.pending = pending
+        self.host = host
+        self.name = name
+        self.fingerprint = fingerprint
+        self.expiresAt = expiresAt
     }
 }
 

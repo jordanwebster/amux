@@ -82,6 +82,8 @@ public enum Fixtures {
         Built(.firstRun, "first-run"),
         Built(.firstRunPaid, "first-run-paid"),
         Built(.hosts, "hosts"),
+        Built(.pin, "pin"),
+        Built(.pairConfirm, "pair-confirm"),
         Built(.offline, "offline"),
     ]
 
@@ -259,8 +261,14 @@ public enum Fixtures {
             States.open(bundle, hosts: Scenario.reachableHosts)
             States.lostHost(bundle, Scenario.air, minutesAgo: 8)
         },
+        // Half a code typed against the machine that printed it. The next box
+        // is outlined and nothing blinks: there is no keyboard coming, so a
+        // caret would be a promise the screen cannot keep.
         Fixture(id: "pin", screen: .pin) { bundle in
             States.open(bundle)
+            States.offering(bundle)
+            bundle.pairing.open(machine: Scenario.unpaired)
+            bundle.pairing.enter("419")
         },
         Fixture(id: "new-agent", screen: .newAgent) { bundle in
             States.open(bundle)
@@ -343,10 +351,13 @@ public enum Fixtures {
                 bundle, agents: read, entries: Transcript.pairingCopy,
                 session: Sessions.claude(), changes: Transcript.changes)
         },
-        // A link that landed on a confirmation. It names the host and never
-        // pairs on arrival.
-        Fixture(id: "pair-confirm", screen: .pin) { bundle in
-            States.open(bundle, hosts: Scenario.hosts + [HostState(entry: Scenario.unpaired, epoch: 1)])
+        // Where a pairing link lands. Reaching it means a secret authenticated
+        // and means nothing else: no trust has been written on this phone or
+        // on the machine, and leaving writes none.
+        Fixture(id: "pair-confirm", screen: .pairConfirm) { bundle in
+            States.open(bundle)
+            States.offering(bundle)
+            States.offered(bundle)
         },
         // The host went away mid-turn. The feed stays readable and says so.
         // The same state the `offline` screen is photographed in: one is the

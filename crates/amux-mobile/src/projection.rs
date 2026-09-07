@@ -155,6 +155,7 @@ pub enum ConnectionDto {
 pub enum OpOutcomeDto {
     Shared(Box<OpOutcome>),
     Subscription(SubscriptionOutcome),
+    Pairing(PairingOutcome),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -162,6 +163,41 @@ pub enum OpOutcomeDto {
 pub enum SubscriptionOutcome {
     Subscribed { agent: AgentId },
     Unsubscribed { agent: AgentId },
+}
+
+/// How one step of a two-phase pairing ended.
+///
+/// The first step never grants trust: it returns the machine's own account of
+/// itself — its name, the fingerprint of the key it will be trusted by, and
+/// when the offer runs out — for a person to look at. Only `Paired` means a
+/// trust store was written.
+///
+/// Every way a secret can be wrong is `PairingRefused` carrying nothing.
+/// Whether the code was mistyped, already used, expired or never issued is
+/// exactly what a caller guessing codes would want to learn, so the answer is
+/// the same shape in all four cases.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum PairingOutcome {
+    /// Authenticated and waiting for a person to say yes.
+    PairingPending {
+        /// The handle this attempt is confirmed or abandoned by. The capability
+        /// the host issued never leaves the runtime.
+        pending: String,
+        host: amux::HostId,
+        name: String,
+        fingerprint: String,
+        expires_at: DateTime<Utc>,
+    },
+    /// Trust written, on this device and on the machine.
+    Paired { host: amux::HostId, name: String },
+    /// Abandoned by the person, with nothing written anywhere.
+    PairingAbandoned,
+    /// The secret did not authenticate, in the one shape every such failure has.
+    PairingRefused,
+    /// The attempt this refers to is not one this runtime is holding — it was
+    /// already answered, or the app was restarted since.
+    PairingLost,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -197,6 +233,17 @@ pub enum Event {
         /// file, name it, or say which file a comment is about cannot do any
         /// of that from hunks alone.
         document: review::ReviewDocument,
+    },
+    /// Machines on the account's relay that this device has not paired with.
+    ///
+    /// Deliberately not part of the fleet. An untrusted machine is an offer,
+    /// not a host: nothing runs on it, no agent of its is readable, and it
+    /// exists on the phone only so a person can point at it and start pairing.
+    /// It is the pairing screens' only source of a machine to name, because
+    /// authenticating a six-digit code is done against one machine and the
+    /// phone has to know which.
+    Discovered {
+        hosts: Vec<amux::HostEntry>,
     },
     Connection {
         state: ConnectionDto,
@@ -331,6 +378,10 @@ impl FeedState {
 #[derive(Default)]
 pub struct Projection {
     fleet: Option<Event>,
+    /// The machines last reported as discovered. A plain list rather than the
+    /// event, so a phone that has discovered nothing — which is every phone
+    /// until one is found — never sends an event saying so.
+    discovered: Vec<amux::HostEntry>,
     synchronized: bool,
     remote_inventories: BTreeMap<amux::HostId, BTreeSet<AgentId>>,
     feeds: BTreeMap<AgentId, FeedState>,
@@ -434,6 +485,15 @@ impl Projection {
             self.remote_inventories = model.remote_inventories().clone();
             self.fleet = Some(fleet.clone());
             events.push(fleet);
+        }
+        let discovered: Vec<_> = model
+            .hosts()
+            .filter(|host| host.entry.trust_status == amux::HostTrustStatus::UntrustedButOnline)
+            .map(|host| host.entry.clone())
+            .collect();
+        if self.discovered != discovered {
+            self.discovered = discovered.clone();
+            events.push(Event::Discovered { hosts: discovered });
         }
         for agent in &self.subscribed {
             let session = session(model, *agent);

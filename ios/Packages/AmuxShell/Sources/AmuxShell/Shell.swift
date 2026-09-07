@@ -104,6 +104,10 @@ public struct Shell: View {
             ConversationPage(agent: agent, router: router, stores: stores)
         case .changes(let agent):
             ChangesPage(agent: agent, router: router, stores: stores)
+        case .pairByCode(let host):
+            PairByCodePage(host: host, router: router, stores: stores)
+        case .pairConfirmation(let invitation):
+            PairConfirmationPage(invitation: invitation, router: router, stores: stores)
         default:
             UnbuiltPage(route: route)
         }
@@ -382,13 +386,98 @@ private struct HostsTabRoot: View {
         HostsTab(model: stores.hosts) { action in
             switch action {
             case .open(let host): router.open(.host(host))
-            case .pair: router.open(.pairByCode)
+            case .pair(let host): router.open(.pairByCode(host))
             case .newAgent: router.open(.newAgent)
             }
         }
         // The screen draws its own header, so the bar would be a second one.
         .toolbar(.hidden, for: .navigationBar)
     }
+}
+
+/// Typing a machine's six-digit code.
+///
+/// The page opens the attempt rather than the screen doing it, because opening
+/// one is what clears the last one: a refusal left on screen from the code
+/// somebody typed a minute ago would be read as this code failing.
+private struct PairByCodePage: View {
+    let host: HostId?
+    let router: Router
+    let stores: StoreBundle
+
+    var body: some View {
+        PairByCode(model: stores.pairing) { action in
+            switch action {
+            case .digits(let typed): stores.pair(digits: typed)
+            // A code cannot reach either of these — nothing on this screen
+            // authenticates, so there is never an attempt here to answer.
+            case .confirm, .abandon: break
+            case .cancel: router.pop()
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear { stores.pairing.open(machine: host.flatMap { stores.hosts.known($0) }) }
+    }
+}
+
+/// Where a pairing link lands.
+///
+/// Arriving here authenticates the invitation and nothing else. The machine is
+/// asked to prove it issued the link and to say who it is; the trust is written
+/// only when the person presses, and leaving instead tells the machine so.
+///
+/// The authentication is asked for whenever this page has something to ask
+/// with, which is what carries a link across a cold start and a sign-in: a
+/// launch that opened on this page with no account yet asks again the moment
+/// an account arrives, rather than stranding the person on a screen that can
+/// never say who it is confirming.
+private struct PairConfirmationPage: View {
+    let invitation: PairingInvitation
+    let router: Router
+    let stores: StoreBundle
+    @State private var asked = LinkAsked()
+
+    var body: some View {
+        PairConfirmation(model: stores.pairing) { action in
+            switch action {
+            case .confirm(let peer): stores.confirmPairing(peer)
+            // Turning the machine away is a message to it, not just a way off
+            // the screen: told, it can release the attempt now instead of
+            // holding it open until it expires.
+            case .abandon(let peer):
+                stores.abandonPairing(peer)
+                router.pop()
+            case .cancel: router.pop()
+            case .digits: break
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear { ask() }
+        .onChange(of: stores.account) { _, _ in ask() }
+    }
+
+    private func ask() {
+        guard asked.shouldAsk(stores.account) else { return }
+        stores.pairing.open()
+        if stores.pair(link: invitation.payload) { asked.asked(stores.account) }
+    }
+}
+
+/// Which account a pairing invitation has been put to.
+///
+/// A link can arrive before this phone has an account at all: a cold start
+/// hands the URL over before the first frame, and the person may sign in
+/// afterwards. That does not spend the invitation — it was never asked about —
+/// so it is put to whichever account is on show, once each. Signing in asks;
+/// an ordinary redraw does not; and switching to a second account asks again,
+/// because trust is per account and the first account's answer is not the
+/// second's.
+struct LinkAsked {
+    private var account: AccountId?
+
+    func shouldAsk(_ current: AccountId) -> Bool { account != current }
+
+    mutating func asked(_ current: AccountId) { account = current }
 }
 
 private struct YouTabRoot: View {

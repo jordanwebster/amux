@@ -930,6 +930,67 @@ under the group rather than implied on every row.
   rather than about machines, and they are established with the `devices`
   capture; this baseline will be retaken when they land.
 
+## pin
+
+Half of a six-digit code typed against the machine that printed it: three
+digits in, the fourth box outlined, and what happens if the code goes stale
+said under the boxes.
+
+- **The instruction names the machine.** The reference reads "Run `amux pair`
+  on the host to get one." A code proves possession of one machine's offer and
+  is authenticated against that machine alone, so this app always knows which
+  one, and saying "homelab" is the difference between a person retyping a code
+  and a person typing it into the wrong machine's screen forever.
+- **Five minutes, not two.** The reference reads "The code expires after two
+  minutes." The pairing window in this protocol is five, so the reference's
+  sentence would be false on the third minute — when a code that was still
+  good would look like a code that had been mistyped, which is exactly the
+  confusion the sentence exists to prevent.
+- **The keypad is the app's own, not the system's.** The reference draws what
+  looks like the system number pad. A screen whose whole content is six digits
+  has nothing to edit, nothing to select and nowhere else to go, and the
+  system pad brings a keyboard's worth of behaviour for none of it. Drawing it
+  also means the digits and the keys they came from are one picture, so this
+  capture is of the whole screen rather than of a screen with a keyboard
+  animating over the bottom half of it.
+- **Digits are typed, not sent.** There is no button under the boxes and the
+  reference has none either. A six-digit code has one length, so the sixth
+  digit is the decision; a second tap to confirm it would only ever spend one
+  of the attempts the machine allows.
+- **A refused code is not this picture.** Every way a code can fail — mistyped,
+  expired, already used, never issued — replaces the expiry line with one
+  sentence and clears the boxes. That state is not captured separately because
+  it is this screen with a different caption; what makes it right is that all
+  four failures reach it, which the bridge's pairing test proves rather than a
+  photograph.
+
+## pair-confirm
+
+Where a pairing link lands. The design left no reference for it, because the
+whole screen exists to hold the protocol's second phase open: reaching it means
+a secret authenticated and means nothing else, and the trust is written only
+when the person presses.
+
+- **The machine and the fingerprint are what the machine said**, not what the
+  link said. A link is a thing anybody can send this phone; the name and the
+  fingerprint here come back from the machine over an authenticated exchange,
+  which is why arriving is not pairing.
+- **The fingerprint is drawn in fours.** It is sixty-four hex characters and
+  the only thing to do with it is compare it against the one the machine shows.
+  An unbroken run of sixty-four is where an eye loses its place. The
+  characters and their order are untouched.
+- **The offer's remaining life is a length, not a clock face.** The machine
+  started the offer, so what matters is how long is left; "in 4m" reads the
+  same way every other elapsed time in this app does.
+- **"Not Now" is an outline beside a filled "Trust homelab".** They are the
+  same size on purpose: turning a machine away is an ordinary answer to the
+  question the screen asks, not a way out of it. It is also a message rather
+  than a dismissal — the machine is told, so it can release the attempt now
+  instead of holding it until it expires.
+- **No back chevron.** The two buttons are the two answers; a third way off the
+  screen that answered neither would leave the machine holding an attempt for
+  no reason.
+
 ## offline
 
 A conversation whose machine went away mid-turn. Both things that are true are

@@ -4,6 +4,50 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **Pairing a phone with a machine, in the two phases it has.**
+
+The phone can now add a machine. Typing the six-digit code the machine
+printed authenticates it and nothing else: what comes back is that machine's
+own account of itself — its name and the fingerprint of the key it would be
+trusted by — and trust is written only when the person looking at the
+fingerprint says so. An `amux://pair` link lands on the same confirmation and
+pairs with nobody on arrival, which is the whole point of the second phase:
+a link is a thing anybody can send a phone.
+
+Machines this phone has not paired with now reach it as a discovery of their
+own rather than as members of the fleet. They were already in the shared
+model and deliberately kept out of the fleet event, so there was no way for a
+screen to name one — and a six-digit code is authenticated against exactly one
+machine, so the screen that takes the digits has to know which. They arrive as
+`Discovered`, sit in their own section on the Hosts tab, and each carries the
+one thing there is to do with an offer.
+
+Four pairing commands cross the bridge: begin from a code, begin from a link,
+confirm, abandon. The capability the machine issues never crosses it — the
+runtime holds the authenticated attempt and hands the app a handle — so
+nothing that reads or logs an event can pair with anybody. Confirming and
+abandoning both consume the attempt before the round trip, so a second tap on
+either has nothing to spend.
+
+Every way a secret can fail is one answer with nothing else in it. Mistyped,
+expired, already used, never issued and the machine not answering all reach
+the same sentence and clear the digits, because telling them apart is exactly
+what somebody guessing codes would want. The screen states the offer's real
+five-minute window rather than the reference's two, so a code that has quietly
+gone stale does not look like a code that was mistyped.
+
+A link that arrives before this phone has signed in is not spent by that. It
+is put to whichever account is on show, once each, so a cold start followed by
+a sign-in still reaches a confirmation that can name who it is confirming, and
+a second account is asked separately because trust is per account.
+
+Proof: a bridge test drives all three endings against a real relay and a real
+machine — abandoned, refused and confirmed — and checks the trust store after
+each, `pin` and `pair-confirm` baselines in both appearances, and Swift tests
+over the code entry, the failures, the wire spelling and the link's survival.
+
+---
+
 2026-09-07 — **A conversation opens at its newest row.**
 
 The transcript rested at the top: opening a conversation put you at the

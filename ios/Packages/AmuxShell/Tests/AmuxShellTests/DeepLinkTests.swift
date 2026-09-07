@@ -105,4 +105,64 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(Data(base64URLEncoded: "YWJj"), Data("abc".utf8))
         XCTAssertNil(Data(base64URLEncoded: "not base64"))
     }
+
+    /// A link handed over during a cold start, before this phone has signed in.
+    ///
+    /// The route is pushed straight away — the page has to be there for the
+    /// launch to land on — and it pairs with nobody, because arriving is not
+    /// confirming. The invitation keeps the payload it arrived with, which is
+    /// what the machine authenticates: a payload rebuilt from the parts read
+    /// out of it would be a different string the moment a field is added.
+    func testAColdLaunchedLinkKeepsThePayloadItArrivedWith() throws {
+        let router = Router()
+        let parsed = try XCTUnwrap(router.open(link))
+        guard case .pair(let invitation) = parsed else {
+            return XCTFail("expected a pairing invitation, got \(parsed)")
+        }
+
+        XCTAssertEqual(router.path, [.pairConfirmation(invitation)])
+        XCTAssertEqual(
+            invitation.payload,
+            try XCTUnwrap(URLComponents(url: link, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "payload" })?.value))
+    }
+
+    /// A sign-in in between does not lose the invitation.
+    ///
+    /// Signing in swaps the stores under the page. The page has been asked
+    /// nothing yet, because a signed-out phone has no runtime to ask the
+    /// machine with, so the arrival of an account is what puts the invitation
+    /// to the machine — once, and once more for a second account, because
+    /// trust is per account.
+    func testAnInvitationIsPutToEachAccountOnceAndSurvivesSigningIn() {
+        var asked = LinkAsked()
+        let signedOut = AccountId("signed-out")
+        let ada = AccountId("ada")
+        let grace = AccountId("grace")
+
+        XCTAssertTrue(asked.shouldAsk(signedOut))
+        // Nothing could be asked while signed out, so nothing is recorded and
+        // the invitation is still unspent.
+        XCTAssertTrue(asked.shouldAsk(signedOut))
+
+        asked.asked(ada)
+        XCTAssertFalse(asked.shouldAsk(ada), "a redraw asked the machine again")
+        XCTAssertTrue(asked.shouldAsk(grace), "a second account inherited the first's answer")
+    }
+
+    /// A malformed link is refused before it can become a screen, so no page
+    /// ever has to say it cannot name who it is confirming.
+    func testAnUnreadableLinkIsNotAConfirmation() {
+        let router = Router()
+        for text in [
+            "amux://pair",
+            "amux://pair?payload=not-base64!!",
+            "amux://pair?payload=eyJoZWxsbyI6IndvcmxkIn0",
+            "amux://elsewhere?payload=abc",
+        ] {
+            XCTAssertNil(router.open(URL(string: text)!), text)
+        }
+        XCTAssertEqual(router.path, [])
+    }
+
 }

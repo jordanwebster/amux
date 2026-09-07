@@ -82,6 +82,28 @@ public enum States {
         Scenario.reading = Scenario.now
     }
 
+    /// A machine on the network this phone has not paired with.
+    @MainActor
+    public static func offering(_ bundle: StoreBundle, _ hosts: [HostEntry] = [Scenario.unpaired]) {
+        bundle.apply([.discovered(hosts)])
+    }
+
+    /// An invitation the machine has answered: authenticated, waiting on a
+    /// person, nothing trusted anywhere.
+    ///
+    /// Played as the operation and its result rather than written into the
+    /// store, because that is the only way the app ever reaches this state —
+    /// a pending peer is what a machine says about itself, and a fixture that
+    /// set the phase directly could show a confirmation the protocol could
+    /// never produce.
+    @MainActor
+    public static func offered(_ bundle: StoreBundle, _ peer: PendingPeer = Scenario.offered) {
+        let op = OpId(UUID())
+        bundle.pairing.open()
+        bundle.pairing.awaits(op)
+        bundle.apply([.opResult(OpResult(op: op, outcome: .pairingPending(peer)))])
+    }
+
     /// The conversation whose machine went away mid-turn.
     ///
     /// Studio stops answering while a turn is running: the session's stream

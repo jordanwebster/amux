@@ -240,6 +240,7 @@ fn the_phones_agent_writes_decode_as_the_commands_they_name() {
     let decoded = |value: Value| match serde_json::from_value::<CommandDto>(value).unwrap() {
         CommandDto::Shared(command) => command,
         CommandDto::Subscription(_) => panic!("an agent write decoded as a subscription"),
+        CommandDto::Pairing(_) => panic!("an agent write decoded as a pairing step"),
     };
 
     assert_eq!(
@@ -1511,6 +1512,175 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
     println!(
         "mobile unsubscribe: closed {closed} released its stream and stayed released across a relay outage; {kept} undisturbed"
     );
+    drop(running);
+    net.shutdown().await;
+}
+
+/// Pairing by a six-digit code, in two phases, from the phone's own commands.
+///
+/// The first phase is the whole point of the design: the code authenticates,
+/// the machine says who it is, and nothing is trusted. So this drives it three
+/// times — abandoned, refused, and confirmed — and after each of the first two
+/// asks the phone's trust store and its fleet whether anything was written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let host = net.daemon("workstation");
+    let host_id = host.host_id();
+    let (_, token) = net.user_credentials("owner");
+    let root = tempfile::tempdir().unwrap();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &config(
+                root.path(),
+                format!("http://{}", net.relay_addr()),
+                json!({ "Static": token }),
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    let dispatch = |command: Value| -> String {
+        let json = CString::new(command.to_string()).unwrap();
+        let id = unsafe { amux_mobile_dispatch(running.handle, json.as_ptr()) };
+        assert!(!id.is_null(), "{command} was not dispatched");
+        let op = unsafe { CStr::from_ptr(id) }.to_str().unwrap().to_owned();
+        unsafe { amux_mobile_free(id) };
+        op
+    };
+    // The machine this phone has not paired with reaches it as a discovery
+    // rather than as a member of the fleet, which is the only way the pairing
+    // screens learn a host id to authenticate against.
+    let discovered = until(&mut receive, running.handle, &token, |e| {
+        e["Discovered"]["hosts"]
+            .as_array()
+            .is_some_and(|hosts| !hosts.is_empty())
+    })
+    .await;
+    assert_eq!(discovered["Discovered"]["hosts"][0]["name"], "workstation");
+    assert_eq!(
+        discovered["Discovered"]["hosts"][0]["id"],
+        host_id.to_string()
+    );
+    // Every fleet this phone has been sent so far, and none of them may carry
+    // the machine it has only discovered.
+    let fleets_carry_no_host = || {
+        for event in events.captured.lock().unwrap().iter() {
+            if let Some(fleet) = event.get("Fleet") {
+                for host in fleet["hosts"].as_array().unwrap() {
+                    assert_eq!(
+                        host["entry"]["name"], "phone",
+                        "a discovered machine entered the fleet before it was paired: {fleet}"
+                    );
+                }
+            }
+        }
+    };
+    fleets_carry_no_host();
+
+    let begin = |pin: &str| -> Value {
+        json!({"command": "begin_pair_pin", "host": host_id.to_string(), "pin": pin})
+    };
+    let answered = async |receive: &mut mpsc::UnboundedReceiver<Value>, op: String| -> Value {
+        until(receive, running.handle, &token, |e| {
+            e["OpResult"]["op"] == op.as_str()
+        })
+        .await["OpResult"]["outcome"]
+            .clone()
+    };
+    let paired_peers = async || -> usize {
+        host.pairing_admin()
+            .await
+            .list_peers()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|peer| peer.name == "phone")
+            .count()
+    };
+
+    // One offer on the machine, answered three ways: abandoning releases the
+    // attempt rather than spending the offer, so the same code is still the
+    // code afterwards.
+    let started = host
+        .pairing_admin()
+        .await
+        .start_pin_pairing()
+        .await
+        .unwrap();
+    let amux::PairingSecret::Pin(pin) = started.secret else {
+        panic!("PIN pairing returned a QR secret")
+    };
+
+    // 1 · A correct code, abandoned. The machine names itself; nothing is written.
+    let pending = answered(&mut receive, dispatch(begin(&pin))).await;
+    assert_eq!(pending["outcome"], "pairing_pending", "{pending}");
+    assert_eq!(pending["name"], "workstation", "{pending}");
+    assert!(
+        pending["fingerprint"].as_str().is_some_and(|f| !f.is_empty()),
+        "a pending peer arrived without the fingerprint to look at: {pending}"
+    );
+    assert!(pending["expires_at"].is_string(), "{pending}");
+    assert_eq!(paired_peers().await, 0, "beginning a pairing wrote trust");
+    let handle = pending["pending"].as_str().unwrap().to_owned();
+    let abandoned = answered(
+        &mut receive,
+        dispatch(json!({"command": "abandon", "pending": handle})),
+    )
+    .await;
+    assert_eq!(abandoned["outcome"], "pairing_abandoned", "{abandoned}");
+    assert_eq!(paired_peers().await, 0, "abandoning a pairing wrote trust");
+    fleets_carry_no_host();
+    // The attempt is spent: answering it a second time has nothing to answer.
+    let again = answered(
+        &mut receive,
+        dispatch(json!({"command": "confirm", "pending": handle})),
+    )
+    .await;
+    assert_eq!(again["outcome"], "pairing_lost", "{again}");
+
+    // 2 · A wrong code, in the one shape every wrong code has.
+    let refused = answered(&mut receive, dispatch(begin("000000"))).await;
+    assert_eq!(
+        refused,
+        json!({"outcome": "pairing_refused"}),
+        "a refusal said more than that it was refused"
+    );
+    assert_eq!(paired_peers().await, 0);
+
+    // 3 · A correct code, confirmed. Now trust exists on both sides and the
+    // machine is a host rather than an offer.
+    let pending = answered(&mut receive, dispatch(begin(&pin))).await;
+    assert_eq!(pending["outcome"], "pairing_pending", "{pending}");
+    let confirmed = answered(
+        &mut receive,
+        dispatch(json!({"command": "confirm", "pending": pending["pending"]})),
+    )
+    .await;
+    assert_eq!(confirmed["outcome"], "paired", "{confirmed}");
+    assert_eq!(confirmed["name"], "workstation", "{confirmed}");
+    assert_eq!(paired_peers().await, 1, "confirming wrote no trust");
+    let fleet = until(&mut receive, running.handle, &token, |e| {
+        e["Fleet"]["hosts"]
+            .as_array()
+            .is_some_and(|hosts| hosts.iter().any(|host| host["entry"]["name"] == "workstation"))
+    })
+    .await;
+    println!("pending: {pending}, confirmed: {confirmed}, fleet: {fleet}");
+
     drop(running);
     net.shutdown().await;
 }

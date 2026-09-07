@@ -12,6 +12,10 @@ public final class StoreBundle {
     public let account: AccountId
     public let fleet: FleetStore
     public let hosts: HostsStore
+    /// The one pairing attempt this phone has in flight, if any. It lives with
+    /// the account's other stores because pairing is per account: which
+    /// machines this phone trusts is a fact about who is signed in.
+    public let pairing: PairingStore
     public private(set) var conversations: [AgentId: ConversationStore] = [:]
     /// One review per agent, opened the first time its changes are read.
     private var reviews: [AgentId: ReviewStore] = [:]
@@ -55,6 +59,7 @@ public final class StoreBundle {
         self.account = account
         self.fleet = FleetStore(now: clock(), unread: unread)
         self.hosts = HostsStore(clock: clock)
+        self.pairing = PairingStore(clock: clock)
     }
 
     public func apply(_ batch: [Event]) {
@@ -65,6 +70,7 @@ public final class StoreBundle {
     public func apply(_ event: Event) {
         fleet.apply(event)
         hosts.apply(event)
+        pairing.apply(event)
         switch event {
         case .feed(let update): conversation(update.agent).apply(event)
         case .session(let session): conversation(session.agent).apply(event)
@@ -72,7 +78,7 @@ public final class StoreBundle {
         // Nothing here names an agent, so every open conversation is offered
         // the event and decides for itself. A result is claimed only by the
         // conversation that dispatched the operation it answers.
-        case .opResult, .fleet, .connection, .tokenRequest, .invariant:
+        case .opResult, .fleet, .discovered, .connection, .tokenRequest, .invariant:
             for store in conversations.values { store.apply(event) }
         }
     }
@@ -120,6 +126,59 @@ public final class StoreBundle {
         guard let command = panel.command(decision, agent: agent),
               let op = dispatch?(.shared(command)) else { return false }
         conversation(agent).dispatched(op)
+        return true
+    }
+
+    // MARK: - Pairing
+
+    /// Takes the digits somebody has typed, and sends the code the moment it
+    /// is complete.
+    ///
+    /// Sending is not the person's separate act. A six-digit code has exactly
+    /// one length, so a "done" button would only ever be a second tap on a
+    /// decision already made — and every wrong extra tap is one of the
+    /// attempts the machine allows.
+    @discardableResult
+    public func pair(digits typed: String) -> Bool {
+        pairing.enter(typed)
+        guard pairing.digits.count == PairingStore.codeLength,
+              let host = pairing.machine?.id
+        else { return false }
+        pairing.awaits(dispatch?(.beginPairPin(host: host, pin: pairing.digits)))
+        return true
+    }
+
+    /// Authenticates the payload a pairing link carried.
+    ///
+    /// This trusts nobody. It asks the machine to prove it issued the link and
+    /// to say who it is, so the confirmation can show a name and a fingerprint
+    /// that came from the machine rather than from the link — a link is a
+    /// thing anybody can send this phone.
+    ///
+    /// False means there was nothing to ask with: no account signed in, no
+    /// runtime yet. The invitation is not spent by that, so the page can ask
+    /// again when there is.
+    @discardableResult
+    public func pair(link payload: String) -> Bool {
+        guard let op = dispatch?(.beginPairLink(payload: payload)) else { return false }
+        pairing.awaits(op)
+        return true
+    }
+
+    /// Writes the trust. The only call in this app that does.
+    @discardableResult
+    public func confirmPairing(_ peer: PendingPeer) -> Bool {
+        guard let op = dispatch?(.confirmPair(pending: peer.pending)) else { return false }
+        pairing.awaits(op)
+        return true
+    }
+
+    /// Turns the machine away and tells it so, which is what lets it release
+    /// the attempt rather than hold it until it expires.
+    @discardableResult
+    public func abandonPairing(_ peer: PendingPeer) -> Bool {
+        guard let op = dispatch?(.abandonPair(pending: peer.pending)) else { return false }
+        pairing.awaits(op)
         return true
     }
 

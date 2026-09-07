@@ -35,7 +35,11 @@ public enum Route: Hashable, Sendable {
     /// The changes one agent has made, opened from its conversation.
     case changes(AgentId)
     case newAgent
-    case pairByCode
+    /// Typing the six-digit code one machine printed. It carries that machine,
+    /// because a code proves possession of one machine's offer and is
+    /// authenticated against it alone; nothing when this phone has not
+    /// discovered a machine to pair with, and the page says so.
+    case pairByCode(HostId?)
     /// A pairing invitation that arrived as a link, waiting to be confirmed or
     /// abandoned. Arriving here pairs with nobody.
     case pairConfirmation(PairingInvitation)

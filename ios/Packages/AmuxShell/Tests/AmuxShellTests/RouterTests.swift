@@ -100,10 +100,10 @@ final class RouterTests: XCTestCase {
         let router = Router()
         XCTAssertEqual(router.tab, .agents)
 
-        router.open(.pairByCode)
+        router.open(.pairByCode(nil))
 
         XCTAssertEqual(router.tab, .hosts)
-        XCTAssertEqual(router.path, [.pairByCode])
+        XCTAssertEqual(router.path, [.pairByCode(nil)])
         // The tab that was on show is where it was left.
         XCTAssertEqual(router.path(.agents), [])
     }
@@ -144,7 +144,7 @@ final class RouterTests: XCTestCase {
         let router = Router()
         let agent = agent()
         router.open(.conversation(agent))
-        router.open(.pairByCode)
+        router.open(.pairByCode(nil))
 
         router.popToRoot()
 
@@ -181,7 +181,7 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(Route.conversation(agent()).tab, .agents)
         XCTAssertEqual(Route.changes(agent()).tab, .agents)
         XCTAssertEqual(Route.newAgent.tab, .hosts)
-        XCTAssertEqual(Route.pairByCode.tab, .hosts)
+        XCTAssertEqual(Route.pairByCode(nil).tab, .hosts)
         XCTAssertEqual(Route.host(HostId(UUID())).tab, .hosts)
         XCTAssertEqual(Route.accounts.tab, .you)
         XCTAssertEqual(Route.appearance.tab, .you)
