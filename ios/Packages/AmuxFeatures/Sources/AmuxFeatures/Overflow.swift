@@ -7,7 +7,12 @@ public enum OverflowChoice: Equatable, Sendable {
     case rename
     /// The agent's address on the fleet, on the clipboard, so it can be
     /// written to from somewhere else — another agent, a script, a terminal.
-    case copyAddress
+    ///
+    /// The address travels with the choice rather than being worked out again
+    /// wherever it lands: what goes on the clipboard is exactly what the row
+    /// showed, and a second rule for spelling an agent's address would be a
+    /// second chance for the two to disagree.
+    case copyAddress(String)
     case delete
 }
 
@@ -27,7 +32,7 @@ struct OverflowMenu: View {
         VStack(alignment: .leading, spacing: 0) {
             row(.rename, glyph: "pencil", label: "Rename")
             Divider().overlay(design.hairline.color).padding(.leading, 56)
-            row(.copyAddress, glyph: "at", label: "Copy Address", detail: address)
+            row(.copyAddress(address), glyph: "at", label: "Copy Address", detail: address)
             Divider().overlay(design.hairline.color).padding(.leading, 56)
             row(.delete, glyph: "trash", label: "Delete Agent", destructive: true)
         }
@@ -70,6 +75,98 @@ struct OverflowMenu: View {
         .identified(
             "overflow.\(label.lowercased().replacingOccurrences(of: " ", with: "-"))",
             label: label, value: detail ?? "")
+    }
+}
+
+/// Renaming an agent: the name it has, in a field, and nothing else.
+///
+/// The field opens holding the current name rather than empty, because
+/// renaming is almost always editing what is there — and an empty field would
+/// make somebody retype a name they only wanted to correct. Confirming with
+/// nothing in it is refused rather than sending a nameless agent to the host.
+struct RenameCard: View {
+    @Environment(\.design) private var design
+    let current: String
+    let cancel: @MainActor () -> Void
+    let confirm: @MainActor (String) -> Void
+    @State private var name: String
+    @FocusState private var writing: Bool
+
+    init(
+        current: String, cancel: @escaping @MainActor () -> Void,
+        confirm: @escaping @MainActor (String) -> Void
+    ) {
+        self.current = current
+        self.cancel = cancel
+        self.confirm = confirm
+        _name = State(initialValue: current)
+    }
+
+    private var chosen: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Rename \(current)")
+                .designFont(.screenTitle, design)
+                .foregroundStyle(design.ink.color)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Name", text: $name)
+                .textFieldStyle(.plain)
+                .designFont(.body, design)
+                .foregroundStyle(design.ink.color)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.done)
+                .focused($writing)
+                .onSubmit { if !chosen.isEmpty { confirm(chosen) } }
+                .padding(.horizontal, 14)
+                .frame(height: 52)
+                .background {
+                    RoundedRectangle(
+                        cornerRadius: design.metrics.controlRadius, style: .continuous)
+                        .fill(design.sunken.color)
+                }
+                .identified("rename.field", label: "Name", value: name)
+            HStack(spacing: 10) {
+                Button(action: cancel) {
+                    Text("Cancel")
+                        .designFont(.bodyEmphasis, design)
+                        .foregroundStyle(design.ink.color)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background {
+                            RoundedRectangle(
+                                cornerRadius: design.metrics.controlRadius, style: .continuous)
+                                .fill(design.sunken.color)
+                        }
+                }
+                .buttonStyle(.plain)
+                .identified("rename.cancel", label: "Cancel")
+                Button { confirm(chosen) } label: {
+                    Text("Rename")
+                        .designFont(.bodyEmphasis, design)
+                        .foregroundStyle(design.onAccent.color)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background {
+                            RoundedRectangle(
+                                cornerRadius: design.metrics.controlRadius, style: .continuous)
+                                .fill(design.accent.color)
+                        }
+                }
+                .buttonStyle(.plain)
+                .disabled(chosen.isEmpty)
+                .opacity(chosen.isEmpty ? 0.4 : 1)
+                .identified("rename.confirm", label: "Rename")
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .identified("rename", value: current)
     }
 }
 

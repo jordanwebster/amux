@@ -226,6 +226,66 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
     net.shutdown().await;
 }
 
+/// Every write the phone makes about an agent rather than to it, in the exact
+/// bytes it puts on the wire.
+///
+/// The phone spells these by hand — it has no Rust in front of it at dispatch
+/// time — so a rename of a field or a tag on this side would be a control that
+/// silently stopped working over there. Held here against the real decoder, a
+/// drift fails in this crate's own suite instead.
+#[test]
+fn the_phones_agent_writes_decode_as_the_commands_they_name() {
+    let agent = "6d1f2c34-0000-4000-8000-00000000ab01";
+    let id: AgentId = agent.parse().unwrap();
+    let decoded = |value: Value| match serde_json::from_value::<CommandDto>(value).unwrap() {
+        CommandDto::Shared(command) => command,
+        CommandDto::Subscription(_) => panic!("an agent write decoded as a subscription"),
+    };
+
+    assert_eq!(
+        decoded(json!({"command":"set_model","agent":agent,"model":"gpt-5.6-luna"})),
+        Command::SetModel {
+            agent: id,
+            model: "gpt-5.6-luna".into()
+        }
+    );
+    assert_eq!(
+        decoded(json!({"command":"set_effort","agent":agent,"effort":"high"})),
+        Command::SetEffort {
+            agent: id,
+            effort: "high".into()
+        }
+    );
+    assert_eq!(
+        decoded(json!({"command":"set_preset","agent":agent,
+                       "approval":"never","sandbox":"danger-full-access"})),
+        Command::SetPreset {
+            agent: id,
+            approval: amux_ui::provider::ApprovalPolicy::Never,
+            sandbox: amux_ui::provider::SandboxPolicy::DangerFullAccess,
+        }
+    );
+    assert_eq!(
+        decoded(json!({"command":"claude_sdk","claude_sdk_command":"set_permission_mode",
+                       "agent":agent,"mode":"plan"})),
+        Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::SetPermissionMode {
+            agent: id,
+            mode: "plan".into()
+        })
+    );
+    assert_eq!(
+        decoded(json!({"command":"rename_agent","agent":agent,"name":"tidy-the-parser"})),
+        Command::RenameAgent {
+            agent: id,
+            name: "tidy-the-parser".into()
+        }
+    );
+    assert_eq!(
+        decoded(json!({"command":"delete_agent","agent":agent})),
+        Command::DeleteAgent { agent: id }
+    );
+}
+
 #[test]
 fn build_marker_names_the_debug_tools_library() {
     // The suffix is how an application binary is told apart from one that

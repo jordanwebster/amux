@@ -2,6 +2,21 @@ import AmuxCore
 import AmuxDesign
 import AmuxFeatures
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+
+/// Puts text on the system clipboard.
+///
+/// The clipboard is the system's and not this app's, so it is reached from
+/// here rather than from a screen: a screen that touched UIKit would be a
+/// screen that could not be photographed or replayed away from a device.
+@MainActor
+private func copy(_ text: String) {
+    #if canImport(UIKit)
+    UIPasteboard.general.string = text
+    #endif
+}
 
 /// What the shell cannot do for itself and hands back to whoever assembled the
 /// app: anything that reaches the cloud, the store or another account.
@@ -155,21 +170,49 @@ private struct ConversationPage: View {
                 // arriving with the wiring, and neither pretends to have run.
                 case .attach, .attaching, .dictate: break
                 // Picking a command is a change to the draft the conversation
-                // already made; there is nothing for the shell to do with it
-                // until the runtime that carries a message is wired here.
+                // already made, and the draft is what a send carries: there is
+                // nothing here to do about it that sending will not do.
                 case .picking: break
-                // The cards these open are the conversation's own state and
-                // are already on the screen. What they change — a model, an
-                // effort, a permission mode, a name, a deletion — is a write
-                // to the host, and the runtime that would carry it is not
-                // wired here yet. Nothing pretends to have run.
-                case .openSettings, .setting, .overflowing, .deleteAgent: break
+                // How this agent runs is the layer's to decide and the host's
+                // to keep. The bundle spells each change in the provider's own
+                // vocabulary — Claude has a mode, Codex has a pair of axes —
+                // and refuses one the layer said it would refuse, which is the
+                // same sentence the sheet is already printing.
+                case .setting(let change):
+                    switch change {
+                    case .model(let model): stores.setModel(model, of: agent)
+                    case .effort(let effort): stores.setEffort(effort, of: agent)
+                    case .permission(let choice): stores.setPermission(choice, of: agent)
+                    }
+                // Opening the sheet is the conversation's own state; there is
+                // nothing outside it that has to know.
+                case .openSettings: break
+                // Copying is the one thing on this screen that goes to the
+                // system rather than to a host. The address travels with the
+                // choice, so what lands on the clipboard is the string the row
+                // showed and not a second spelling made here.
+                case .overflowing(let choice):
+                    if case .copyAddress(let address) = choice { copy(address) }
+                case .renamed(let name): stores.rename(name, of: agent)
+                // Asking is not the same as it having happened. The write goes
+                // out and the screen stays; leaving is what the confirmation
+                // below does, when the host says the agent is gone.
+                case .deleteAgent: stores.delete(agent)
                 }
             }
         }
         // A conversation has no bar. The feed runs to the top of the display
         // and the way out is the drawer control on its own chrome.
         .toolbar(.hidden, for: .navigationBar)
+        // A deleted agent has no conversation to be in. Leaving is driven by
+        // the host's confirmation rather than by the press, so a deletion the
+        // host refused leaves the person where they were, reading why.
+        .onChange(of: stores.conversation(agent).deleted) { _, gone in
+            if gone {
+                router.pop()
+                stores.closeConversation(agent)
+            }
+        }
     }
 
     private var drawer: AgentsDrawer {

@@ -735,7 +735,7 @@ tiles and a row, with the composer still under it.
   dimming is also the way out — a press anywhere on the feed closes whatever is
   open, which a card with no visible dismissal otherwise would not have. The
   same layer is under `settings`, `permissions-claude`, `permissions-codex`,
-  `overflow` and `agent-delete`.
+  `overflow`, `rename` and `agent-delete`.
 - The differing conversation and the thinking line carry over from `run`.
 
 ## tokens
@@ -851,6 +851,24 @@ The ellipsis, opened: everything the agent can be done to rather than said to.
   what lands on the clipboard is visible before it is copied.
 - **Delete Agent is the only coloured row**, and it is last, because it is the
   only one that cannot be undone.
+- The differing conversation carries over from `run`, and the dimmed feed from
+  `plus`.
+
+## rename
+
+The Rename row, opened: the name the agent has, in a field, and nothing else.
+
+- **The design names the row but not the card**, so this capture is owed rather
+  than compared: nothing was drawn for what pressing Rename opens.
+- **The field opens holding the current name** rather than empty. Renaming is
+  almost always correcting what is there, and an empty field would make
+  somebody retype a name they only wanted to fix.
+- **Rename is filled in the accent and Delete is not.** Renaming is reversible,
+  so it takes the ordinary confirming colour; the deletion card's red is spent
+  on the thing that cannot be undone.
+- **The card covers the composer**, for the same reason the deletion card does:
+  a rename field and a message field on screen together are two fields, and
+  only one of them is being typed into.
 - The differing conversation carries over from `run`, and the dimmed feed from
   `plus`.
 

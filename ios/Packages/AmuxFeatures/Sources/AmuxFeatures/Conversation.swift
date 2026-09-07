@@ -46,6 +46,10 @@ public enum ConversationAction: Equatable, Sendable {
     case overflowing(OverflowChoice)
     /// Delete this agent, confirmed after being told what that does.
     case deleteAgent
+    /// A new name for this agent, confirmed in the rename card. The host keeps
+    /// the name, so what is drawn afterwards is what the host answers with and
+    /// not what was typed.
+    case renamed(String)
     /// Take the message that was waiting back into the field. Not a discard:
     /// what was queued becomes an ordinary unsent message, and abandoning it
     /// is clearing the field like any other.
@@ -70,6 +74,8 @@ public enum ConversationOverlay: Equatable, Sendable {
     case overflow
     /// Deleting it, with the consequences named.
     case deleteAgent
+    /// Giving it another name, from the row in the overflow.
+    case rename
     /// The task list, grown out of the strip above the composer. It is here
     /// with the rest because only one thing is open at a time, and because
     /// this is how a capture asks for the strip already open.
@@ -236,12 +242,30 @@ public struct Conversation: View {
             // question about the conversation as a whole.
             if showing == .overflow {
                 OverflowMenu(address: address) { choice in
-                    showing = choice == .delete ? .deleteAgent : nil
+                    switch choice {
+                    case .rename: showing = .rename
+                    case .delete: showing = .deleteAgent
+                    // Copying happens outside this screen and leaves nothing
+                    // open behind it: the menu did what it said it would.
+                    case .copyAddress: showing = nil
+                    }
                     actions(.overflowing(choice))
                 }
                 .padding(.horizontal, design.metrics.gutter)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .padding(.top, 108)
+            }
+            if showing == .rename {
+                RenameCard(
+                    current: subject.name,
+                    cancel: { showing = nil },
+                    confirm: { name in
+                        showing = nil
+                        actions(.renamed(name))
+                    })
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, 10)
             }
             if showing == .deleteAgent {
                 DeleteAgentCard(
@@ -323,7 +347,9 @@ public struct Conversation: View {
             // whether this conversation is about to stop existing, and a
             // composer left under the card would be a message you could start
             // writing to something you are deleting.
-            if showing == .deleteAgent {
+            // Being asked for a name is the same: one field at a time, and a
+            // composer under the card would be a second one.
+            if showing == .deleteAgent || showing == .rename {
                 EmptyView()
             // An unanswered ask outranks everything else down here. Whatever
             // else is true — a machine that has gone quiet, a layer catching
@@ -442,7 +468,7 @@ public struct Conversation: View {
         // composer rather than in its place: it is a fact about the turn and
         // not a card, so growing it does not close what somebody else opened
         // and opening a card does not take it away.
-        case .overflow, .deleteAgent, .tasks, nil:
+        case .overflow, .deleteAgent, .rename, .tasks, nil:
             EmptyView()
         }
     }

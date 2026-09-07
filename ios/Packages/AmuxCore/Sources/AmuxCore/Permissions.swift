@@ -105,20 +105,37 @@ public struct PermissionChoice: Equatable, Sendable, Identifiable {
         return choices
     }
 
+    /// Codex's three presets: what each is called, the pair of axes it stands
+    /// for, and whether it is the one that stops asking.
+    ///
+    /// One description, read both by the sheet that offers them and by the
+    /// write that is sent when one is picked — a second table would be a
+    /// second chance for a person to press "Full Access" and get something
+    /// else.
+    static let codexPresets: [(id: String, name: String, approval: String,
+                               sandbox: String, stopsAsking: Bool)] = [
+        ("read-only", "Read Only", "untrusted", "read-only", false),
+        ("auto", "Auto", "on-request", "workspace-write", false),
+        ("full-access", "Full Access", "never", "danger-full-access", true),
+    ]
+
+    /// The two axes a preset stands for, or nothing where the identity names
+    /// no preset — "custom" is a configuration being reported, not one that
+    /// can be chosen.
+    static func codexAxes(_ id: String) -> (approval: String, sandbox: String)? {
+        codexPresets.first { $0.id == id }.map { ($0.approval, $0.sandbox) }
+    }
+
     /// Codex's three presets, with the approval policy and the sandbox named
     /// under each.
     static func codex(approval: String?, sandbox: String?) -> [PermissionChoice] {
-        let presets = [
-            ("read-only", "Read Only", "untrusted", "read-only", false),
-            ("auto", "Auto", "on-request", "workspace-write", false),
-            ("full-access", "Full Access", "never", "danger-full-access", true),
-        ]
-        var choices = presets.map { preset in
+        var choices = codexPresets.map { preset in
             PermissionChoice(
-                id: preset.0, name: preset.1,
-                detail: "Approval \(spelled(preset.2)) \u{00B7} Sandbox \(spelled(preset.3))",
-                selected: preset.2 == approval && preset.3 == sandbox,
-                stopsAsking: preset.4)
+                id: preset.id, name: preset.name,
+                detail: "Approval \(spelled(preset.approval)) \u{00B7} "
+                    + "Sandbox \(spelled(preset.sandbox))",
+                selected: preset.approval == approval && preset.sandbox == sandbox,
+                stopsAsking: preset.stopsAsking)
         }
         // A pair the presets do not cover is a real configuration and is said
         // so, rather than being rounded to the nearest preset.

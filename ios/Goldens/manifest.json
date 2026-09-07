@@ -209,6 +209,19 @@
       ]
     },
     {
+      "id": "rename",
+      "stage": 8,
+      "screen": "overflow",
+      "fixture": "rename",
+      "origin": "added_state",
+      "reason": "the design names the row that renames an agent but not the card it opens; a name is typed into it, so it is owed a capture of its own",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "agent-delete",
       "stage": 8,
       "screen": "agent-delete",

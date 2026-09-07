@@ -4,6 +4,43 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **What the conversation says about the agent now reaches the
+host.** Picking a model, moving the effort axis, choosing what the agent may do
+without asking, renaming it, copying its address and deleting it were all
+controls on the screen with nothing behind them. Each one is now a write.
+
+The two providers do not agree about what a permission is, and the phone keeps
+that rather than inventing a common word: Claude runs under one named mode and
+is told about it as a mode; Codex runs under an approval policy and a sandbox
+at once, so pressing a preset sends both axes together — half a preset would
+leave an agent in a pair nobody chose. The preset table that the sheet draws
+its rows from is now the same table the write reads, so "Full Access" cannot
+mean one thing on screen and another on the wire. A configuration the presets
+do not name is drawn as Custom and cannot be picked: it is the sheet reporting
+where the agent is, not somewhere it can be sent.
+
+A change is refused where the layer says it would refuse it — the same sentence
+the sheet is already printing under the rows. Renaming and deleting are not
+settings and are not gated by it: they are about the agent as a thing that
+exists rather than about how it runs.
+
+Deleting asks and does not assume. The card confirms, the write goes out and
+the screen stays; the conversation is left only when the host's own answer says
+the agent is gone, so a deletion the host refused leaves the person where they
+were. Copying is the one thing here that goes to the system rather than to a
+machine, and the address travels out with the choice, so what lands on the
+clipboard is exactly the string the row showed.
+
+Every one of these six commands is spelled by hand on the phone, which has no
+Rust in front of it when it dispatches. So the exact JSON documents it writes
+are now decoded by the real decoder in `amux-mobile`'s own test: a renamed
+field or a changed tag fails there instead of turning into a control that
+silently stopped working.
+
+Baseline: `rename` is new — the design names the row but never drew the card it
+opens.
+
+
 2026-09-07 — **The strip above the composer, and one message held per agent.**
 Between the feed and the box a message is written in there is now one surface
 carrying whatever is true about the running turn: the count and the task the

@@ -62,6 +62,7 @@ public enum Fixtures {
         Built(.settings, "permissions-claude"),
         Built(.settings, "permissions-codex"),
         Built(.overflow, "overflow"),
+        Built(.overflow, "rename"),
         Built(.agentDelete, "agent-delete"),
         Built(.working, "working"),
         Built(.queued, "queued"),
@@ -239,6 +240,9 @@ public enum Fixtures {
                     queue: Sessions.heldMessage, family: Sessions.started))
         },
         Fixture(id: "overflow", screen: .overflow) { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+        },
+        Fixture(id: "rename", screen: .overflow, overlay: .rename) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
         Fixture(id: "agent-delete", screen: .agentDelete) { bundle in

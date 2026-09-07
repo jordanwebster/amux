@@ -181,6 +181,65 @@ public final class StoreBundle {
         return true
     }
 
+    /// The model this agent's next turn runs under.
+    ///
+    /// Refused where the layer says it would refuse it. The sheet still opens
+    /// on a session that cannot be changed — what an agent runs under is worth
+    /// reading either way — so the rows are still there to press, and the gate
+    /// the sheet prints its refusal from is the same one consulted here.
+    @discardableResult
+    public func setModel(_ model: String, of agent: AgentId) -> Bool {
+        settings(AgentWrite.model(model, of: agent), of: agent)
+    }
+
+    /// How hard it thinks, as one of the levels the layer reported.
+    @discardableResult
+    public func setEffort(_ effort: String, of agent: AgentId) -> Bool {
+        settings(AgentWrite.effort(effort, of: agent), of: agent)
+    }
+
+    /// What this agent may do without asking, named as its own provider names
+    /// it. The provider decides the shape of the write, so the facts this
+    /// conversation was last told are what spell it.
+    @discardableResult
+    public func setPermission(_ choice: String, of agent: AgentId) -> Bool {
+        let store = conversation(agent)
+        guard let command = ProviderPermission(store.provider.permission)
+            .command(choosing: choice, agent: agent) else { return false }
+        return settings(command, of: agent)
+    }
+
+    /// Every write behind the two sheets, sent only where the layer would
+    /// take it.
+    private func settings(_ command: BridgeCommand, of agent: AgentId) -> Bool {
+        let store = conversation(agent)
+        guard store.settingsGate.refusal == nil, let op = dispatch?(command) else { return false }
+        store.dispatched(op)
+        return true
+    }
+
+    /// What this agent is called. The name is the host's to keep: it answers
+    /// with the agent it renamed, and the fleet redraws from that rather than
+    /// from what was typed here.
+    @discardableResult
+    public func rename(_ name: String, of agent: AgentId) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let op = dispatch?(AgentWrite.rename(trimmed, of: agent)) else { return false }
+        conversation(agent).dispatched(op)
+        return true
+    }
+
+    /// Deletes the agent. Nothing is closed here: the conversation stays until
+    /// the host says the agent is gone, because a screen that vanished on the
+    /// press would be this phone claiming something it has not been told.
+    @discardableResult
+    public func delete(_ agent: AgentId) -> Bool {
+        guard let op = dispatch?(AgentWrite.delete(agent)) else { return false }
+        conversation(agent).dispatched(op)
+        return true
+    }
+
     public func closeConversation(_ agent: AgentId) {
         reviews.removeValue(forKey: agent)
         guard conversations.removeValue(forKey: agent) != nil else { return }

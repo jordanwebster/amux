@@ -57,6 +57,13 @@ public final class ConversationStore {
     /// drawing it here would put a host's sentence about one agent under
     /// another agent's name.
     public private(set) var results: [OpResult] = []
+    /// Set once the host has confirmed this agent is gone.
+    ///
+    /// The confirmation and not the press: pressing Delete asks, and a screen
+    /// that closed on the asking would be the phone claiming an outcome it has
+    /// not been told. Whoever is showing this conversation leaves when this
+    /// turns true.
+    public private(set) var deleted = false
     /// A batch the bridge could not place. Kept rather than hidden: a hole in
     /// the transcript is a fact the report screen has to be able to state.
     public private(set) var invariants: [String] = []
@@ -155,6 +162,7 @@ public final class ConversationStore {
             changesArtifact = update.diff
         case .opResult(let result):
             guard pendingOps.remove(result.op) != nil else { break }
+            if case .agentDeleted = result.outcome { deleted = true }
             results.append(result)
             if results.count > Self.remembered {
                 results.removeFirst(results.count - Self.remembered)
