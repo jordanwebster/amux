@@ -56,15 +56,54 @@ def ensure(name: str) -> str:
     return run("xcrun", "simctl", "create", name, device_type, RUNTIME)
 
 
+# What the pinned region is, as a `defaults read` would print it back. The
+# 12-hour clock is pinned explicitly rather than left to the region: a device
+# created on a Mac set to 24-hour time inherits that setting and would
+# photograph 09:41 where every baseline reads 9:41.
+REGION = {
+    "AppleLanguages": ("-array", ["en-US"], "en-US"),
+    "AppleLocale": ("-string", ["en_US"], "en_US"),
+    "AppleICUForce24HourTime": ("-bool", ["false"], "0"),
+}
+
+
+def read_default(udid: str, key: str) -> str | None:
+    """What the device says the key is, or None when it has never been set."""
+    try:
+        printed = run("xcrun", "simctl", "spawn", udid, "defaults", "read",
+                      ".GlobalPreferences", key)
+    except subprocess.CalledProcessError:
+        return None
+    # An array prints over several lines wrapped in parentheses; every value
+    # this module writes is a single one, so the punctuation is noise.
+    return printed.strip().strip("()").strip().strip('"')
+
+
+def write_region(udid: str) -> bool:
+    """Pin language, region and clock; say whether anything actually moved."""
+    changed = False
+    for key, (kind, arguments, settled) in REGION.items():
+        if read_default(udid, key) == settled:
+            continue
+        run("xcrun", "simctl", "spawn", udid, "defaults", "write",
+            ".GlobalPreferences", key, kind, *arguments)
+        changed = True
+    return changed
+
+
 def pin(udid: str) -> None:
     """Boot the device and fix everything a capture would otherwise vary on."""
     run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=600)
     # Language and region are read by an app at launch, so they are set before
     # anything under test is installed rather than between screens.
-    run("xcrun", "simctl", "spawn", udid, "defaults", "write",
-        ".GlobalPreferences", "AppleLanguages", "-array", "en-US")
-    run("xcrun", "simctl", "spawn", udid, "defaults", "write",
-        ".GlobalPreferences", "AppleLocale", "-string", "en_US")
+    if write_region(udid):
+        # SpringBoard reads the region once, when it starts, and it drew the
+        # status bar before these values existed. Without a second boot the
+        # very first capture on a newly created device carries the Mac's own
+        # clock format rather than the pinned one, and a baseline photographed
+        # then disagrees with every later run.
+        run("xcrun", "simctl", "shutdown", udid, timeout=300)
+        run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=600)
     run("xcrun", "simctl", "ui", udid, "appearance", "light")
     run(
         "xcrun", "simctl", "status_bar", udid, "override",

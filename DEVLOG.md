@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **The photographed clock now reads the region it is pinned to.**
+Every capture keeps the simulator's status bar, pinned to 9:41 so two runs a
+minute apart do not differ over the time. Thirty-six baselines nonetheless read
+`09:41`: the language and region are written into a device that is already
+running, and the system draws its status bar once when it starts, so a
+simulator created and photographed in the same pass still formats the time the
+way the Mac does — here, a twenty-four-hour clock. Every later run on that
+device, after any restart, wrote `9:41`, and the whole catalogue went red on a
+leading zero nobody had changed.
+
+Pinning a device now writes the region and the twelve-hour clock, and restarts
+it when any of those values actually moved, before the status bar is overridden
+— so a device is never photographed in the one state where it disagrees with
+itself, and a device already pinned is not restarted for nothing. The
+thirty-six affected baselines were re-photographed. Each one differs from the
+baseline it replaces only inside the clock's own rectangle: 2903 pixels on the
+iPhone 17 Pro captures and 1042 on the small one, plus two dithered pixels of
+glass on one dark ask panel, far under the count a difference has to reach to
+fail. What the clock reads and why the older captures read otherwise is written
+down in ios/Goldens/BASELINE.md.
+
+---
+
 2026-09-07 — **A message can be written to an agent from the phone.** The
 bottom of a conversation was a place where refusals were reported and nothing
 else; it is now the composer the whole app was shaped around. A box with a

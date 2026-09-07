@@ -49,6 +49,16 @@ draws rather than the app:
 - **Still no tab bar.** A capture opens one screen directly rather than the
   whole shell. What the tab bar looks like is proven by the shell's own journey,
   not by a still.
+- **The clock reads `9:41`, not `09:41`.** The pinned time is the same either
+  way; how it is written is the device's region. The simulators are pinned to
+  `en_US`, which writes a twelve-hour clock with no leading zero, and the pin
+  is now applied and the device rebooted before any screen is photographed —
+  the system draws the status bar once when it starts, so a device set up and
+  captured in the same pass would keep whatever format the Mac uses. Captures
+  taken before 2026-09-07 read `09:41` because they were photographed on a
+  device that had been set up but not restarted, and so inherited a Mac set to
+  a twenty-four-hour clock. Those thirty-six were re-photographed; nothing else
+  about them moved.
 
 A screen the door is showing knows it is being photographed rather than used,
 and anything that runs on a timer of its own draws its resting state while it
