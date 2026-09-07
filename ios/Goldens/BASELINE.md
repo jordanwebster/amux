@@ -170,14 +170,15 @@ pill's leading edge and the overflow beside it.
   the agent spent before it spoke, so the transcript says so. The reference
   omits it; leaving out a row the core sends would mean the screen is not
   showing what arrived.
-- **The composer carries no model chip yet.** The reference draws the model and
-  its effort as a chip in the footer between the plus and the microphone.
-  Changing either is a write to the provider and it lands with the sheet that
-  makes the change; until then the footer holds the three controls that do
-  work, because a chip that names a model and cannot change it is a label
-  pretending to be a control. The rest of the box is the reference's: the field
-  grows with what is written, the plus is at the bottom left, and dictation and
-  send are at the bottom right.
+- **The model chip reads "opus 4.6", where the reference reads
+  "opus 4.6 · high".** The chip is in the footer between the plus and the
+  microphone, as the reference draws it, and it opens the sheet that changes
+  what it names. It says the effort too wherever the layer reports one — the
+  Codex captures read "gpt-5.2 · medium" — but a Claude session driven over a
+  PTY reports no effort levels, and naming a level nobody stated would be the
+  app inventing a fact about how hard the agent is thinking. The rest of the
+  box is the reference's: the field grows with what is written, the plus is at
+  the bottom left, and dictation and send are at the bottom right.
 - **The send button is drawn hollow until there is something to send.** The
   reference draws it that way here and filled on `typing`, which is the same
   rule; it is worth stating because it is the only thing on the box that
@@ -623,6 +624,14 @@ tiles and a row, with the composer still under it.
   nothing where the layer reports none. The reference reads "Accept Edits"; the
   conversation photographed here is under Claude's default mode, so it reads
   "Ask me", which is what that mode is called.
+- **The feed goes back behind it and the pill and the composer do not.** The
+  reference dims the transcript under every one of these cards and leaves the
+  chrome and the box at full strength, and so does this: what has opened came
+  *from* the composer and the composer is still what you are working in. The
+  dimming is also the way out — a press anywhere on the feed closes whatever is
+  open, which a card with no visible dismissal otherwise would not have. The
+  same layer is under `settings`, `permissions-claude`, `permissions-codex`,
+  `overflow` and `agent-delete`.
 - The differing conversation and the thinking line carry over from `run`.
 
 ## tokens
@@ -678,6 +687,8 @@ Model and effort, on one card over the composer whose chip opened it.
   alone, from the plus. The model and the effort are one choice about how hard
   this thinks; the permission mode is the safety setting, and the two may not
   share an entry point.
+- The dimmed feed behind the card, and the pill and composer left bright in
+  front of it, carry over from `plus`.
 
 ## permissions-claude
 
@@ -697,9 +708,12 @@ the app's answer.
   closed and belongs to Claude. A mode reported that is not one of the five
   would be shown as it was reported and marked current, rather than dropped.
 - **The refusal is stated rather than hidden.** This is a PTY session, which
-  will not take a mode change, so the card says so in the core's own sentence
-  and still shows what the agent is running under — which is worth reading even
-  where it cannot be changed from here.
+  will not take a mode change, so the card says so and still shows what the
+  agent is running under, which is worth reading even where it cannot be
+  changed from here. The sentence is lowercase because it is the shared
+  library's own, spelled once and read by the terminal and the phone alike; a
+  second, prettier copy of it here would be a second thing to keep true.
+- The dimmed feed carries over from `plus`.
 
 ## permissions-codex
 
@@ -715,6 +729,10 @@ and the sandbox named under each.
 - **A pair of policies the three presets do not cover is drawn as Custom**, with
   both axes named, rather than rounded to the nearest preset. Not visible in
   this capture, which is on the workspace-write preset the fixture reports.
+- **The two axes wrap onto a second line rather than truncating.** A sandbox
+  shortened to "danger full…" is a preset hidden behind its name after all,
+  which is the one thing this sheet exists to stop.
+- The dimmed feed carries over from `plus`.
 
 ## overflow
 
@@ -729,7 +747,8 @@ The ellipsis, opened: everything the agent can be done to rather than said to.
   what lands on the clipboard is visible before it is copied.
 - **Delete Agent is the only coloured row**, and it is last, because it is the
   only one that cannot be undone.
-- The differing conversation carries over from `run`.
+- The differing conversation carries over from `run`, and the dimmed feed from
+  `plus`.
 
 ## agent-delete
 
@@ -742,4 +761,7 @@ readable behind it.
 - **The buttons are the reference's too** — Cancel and Delete side by side,
   Delete filled in the diff's own red rather than in the accent, which is this
   app's one word for "something is waiting for you" and is not this.
-- The differing conversation carries over from `run`.
+- **The card covers the composer rather than sitting above it**, as the
+  reference draws it. Nothing is being written while this question is open.
+- The differing conversation carries over from `run`, and the dimmed feed from
+  `plus`.

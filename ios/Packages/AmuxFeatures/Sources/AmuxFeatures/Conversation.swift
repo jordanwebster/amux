@@ -287,6 +287,12 @@ public struct Conversation: View {
         // to make it fade stops it sampling what is behind it, so it renders
         // as a pane you can read straight through; this samples correctly.
         .scrollEdgeEffectStyle(.soft, for: .top)
+        // Anything open over the conversation takes the transcript back and
+        // gives a press anywhere on it somewhere to land. It goes on the feed
+        // rather than on the whole screen on purpose: the pill and the
+        // composer stay where they were and stay bright, because what has
+        // opened is *from* them and they are still what you are working in.
+        .overlay { if showing != nil { Scrim { showing = nil } } }
         .safeAreaInset(edge: .top, spacing: 0) { chrome }
         .safeAreaInset(edge: .bottom, spacing: 0) { foot }
     }
@@ -301,11 +307,18 @@ public struct Conversation: View {
     @ViewBuilder
     private var foot: some View {
         Group {
+            // Being asked whether to delete the agent outranks even an ask:
+            // nothing down here is worth offering while the question is
+            // whether this conversation is about to stop existing, and a
+            // composer left under the card would be a message you could start
+            // writing to something you are deleting.
+            if showing == .deleteAgent {
+                EmptyView()
             // An unanswered ask outranks everything else down here. Whatever
             // else is true — a machine that has gone quiet, a layer catching
             // up — the agent has stopped and is waiting on one answer, and
             // that answer is the only thing worth offering.
-            if let panel = model.asks.panel {
+            } else if let panel = model.asks.panel {
                 AskPanelView(panel: panel) { actions(.answer(panel, $0)) }
             } else if let changes = model.changes, !changes.isEmpty,
                       subject.finished, !deferred {

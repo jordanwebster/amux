@@ -264,12 +264,15 @@ struct PermissionsCard: View {
                             choice.stopsAsking ? design.removed.color : design.ink.color)
                     // The two axes are named under the preset rather than
                     // hidden behind it: what a sandbox permits is the thing
-                    // being chosen, and a preset name does not say it.
+                    // being chosen, and a preset name does not say it. It
+                    // wraps rather than truncating for the same reason — a
+                    // sandbox shortened to "danger full…" is a preset that
+                    // has been hidden behind its name after all.
                     if let detail = choice.detail {
                         Text(detail)
                             .designFont(.monoSmall, design)
                             .foregroundStyle(design.inkFaint.color)
-                            .lineLimit(1)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 0)

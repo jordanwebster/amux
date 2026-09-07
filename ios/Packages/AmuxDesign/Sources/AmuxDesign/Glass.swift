@@ -54,6 +54,38 @@ public enum Glass {
     /// would otherwise show through.
     public static let wash: Double = 0.78
     public static let openWash: Double = 0.88
+    /// How far back the content goes when something opens over it.
+    ///
+    /// Black rather than a colour resolved per appearance, and the same amount
+    /// in both: on a light ground it takes the content back a quarter of the
+    /// way and on a dark one it does almost nothing, which is right, because a
+    /// dark screen already reads the floating surface as nearer.
+    public static let scrim: Double = 0.25
+}
+
+/// Content pushed back because something has opened over it.
+///
+/// It is a view of its own rather than a modifier because it is also the way
+/// out: everything in this app that opens over the conversation closes by a
+/// press anywhere else, and a card with no visible dismissal and no dimmed
+/// ground is a trap. Nothing about it moves — it is drawn on screens that are
+/// photographed, and a fade is a clock.
+public struct Scrim: View {
+    private let dismiss: () -> Void
+
+    public init(dismiss: @escaping () -> Void) {
+        self.dismiss = dismiss
+    }
+
+    public var body: some View {
+        Color.black
+            .opacity(Glass.scrim)
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture(perform: dismiss)
+            .accessibilityLabel("Close")
+            .accessibilityAddTraits(.isButton)
+    }
 }
 
 /// A raised surface. How it separates from the ground is a decision about the

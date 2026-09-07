@@ -45,6 +45,22 @@ anybody should be in without seeing it. The overflow offers rename, the agent's
 address and deletion, and deleting says what it does: the edits stay, the
 session ends, the conversation goes from every device.
 
+All five of those cards take the conversation behind them back a quarter of the
+way and leave the pill and the composer bright in front, which the design drew
+and nothing had implemented. It earns more than the resemblance: it is the way
+out. Each of these opens from a control that closes it again, and a card
+floating over an undimmed screen with no other dismissal is a trap for anyone
+who does not think to press the same button a second time. The one place the
+composer is not left in front is the deletion, where it is not drawn at all —
+nothing is worth writing to an agent while the question on screen is whether
+that agent is about to stop existing.
+
+An agent's own attachment is drawn as the chip a person's attachment draws,
+which is now in the picture rather than only in the code: the capture of a
+message being written carries the agent's file above the box and the person's
+inside it, read back through the same shared parser rather than remembered
+beside the text that names them.
+
 ---
 
 2026-09-07 — **The photographed clock now reads the region it is pinned to.**
