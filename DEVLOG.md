@@ -4,6 +4,41 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **A keyboard that outlives its screen.** Writing a message,
+opening the patch from the chip and attaching the review came back to a
+conversation with the composer nowhere on it: the box was drawn where it would
+sit with no keyboard at all, which is behind the keys. Neither a finger nor the
+UI journey could reach the cross, the plus or Send, and a tap aimed at the
+cross landed on a letter key and typed into the message it was meant to empty.
+
+The composer's placement was never wrong. Driving the same conversation
+directly and raising the keyboard on it puts the whole box above the keys, and
+it stays there through every layer the app wraps it in — the tab bar, the
+navigation stack, a pushed page and the drawer. What breaks it is arriving at a
+screen that a keyboard is already standing over: the patch's remark sheet takes
+the keyboard when it opens and nothing hands it back, so the conversation is
+rebuilt underneath one, and a screen built that way is laid out as though the
+bottom of the display were free.
+
+So leaving a screen puts the keyboard down — at the press, not in a lifecycle
+callback afterwards, which is the only moment that is certain. A conversation
+reaching for the patch, a child or the fleet puts it down; the remark sheet
+puts it down when either of its buttons closes it; and attaching a review puts
+it down on the way back. Written in the text field's own file because UIKit is
+the only place that knows what holds the keyboard: SwiftUI can say which of the
+fields it drew is focused, and the one that has to let go is usually on a
+screen that has already gone.
+
+Two things in the driving tools were repaired alongside it. Typing into a field
+by name could not reach the composer at all — SwiftUI draws a screen into a
+handful of views and hit-tests inside them itself, so what UIKit reports under
+a control's stated middle is a plain container with no field in it — and the
+door now falls back to the screen's sole text input. And writing a draft
+through the door set the whole body, which drops every token whose stand-in is
+not in the new text: a review attached and then written about was sent as
+prose with no review in it, which is what the review journey had been failing
+on.
+
 2026-09-07 — **The plus attaches something.** Photo and File were tiles that
 did nothing: there was no route from a picked file to the machine at all, since
 a draft's bytes are deliberately dropped when a command is serialized and every

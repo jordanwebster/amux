@@ -216,6 +216,7 @@ public struct Conversation: View {
     /// What this conversation has opened over itself, if anything.
     @State private var showing: ConversationOverlay?
 
+
     public init(
         model: ConversationStore,
         subject: ConversationSubject,
@@ -360,7 +361,7 @@ public struct Conversation: View {
             } else if let changes = model.changes, !changes.isEmpty,
                       subject.finished, !deferred {
                 FinishedPanel(
-                    changes: changes, review: { actions(.openChanges) },
+                    changes: changes, review: { leaving(.openChanges) },
                     later: { deferred = true })
             } else if let state = ConversationFootState(
                 gate: model.gate, results: model.results, subject: subject) {
@@ -406,6 +407,20 @@ public struct Conversation: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 10)
+    }
+
+    /// Goes somewhere else, keyboard first.
+    ///
+    /// The composer is often being written in when a person reaches for the
+    /// patch, a child or the fleet, and the keyboard it raised does not belong
+    /// to any of those. Left standing it outlives this screen and covers the
+    /// next one — including this one on the way back, which is rebuilt while
+    /// the keys are already there and so is laid out as though the bottom of
+    /// the display were free. Putting it down here rather than in a lifecycle
+    /// callback ties it to the press, which is the one moment that is certain.
+    private func leaving(_ action: ConversationAction) {
+        Keyboard.putDown()
+        actions(action)
     }
 
     /// What this agent answers to elsewhere: "refactor-auth/studio". It is
@@ -481,7 +496,7 @@ public struct Conversation: View {
                 pill
                 Spacer(minLength: 6)
                 if let changes = model.changes, !changes.isEmpty {
-                    ChangesChip(changes: changes) { actions(.openChanges) }
+                    ChangesChip(changes: changes) { leaving(.openChanges) }
                 }
                 Button {
                     showing = showing == .overflow ? nil : .overflow
@@ -515,7 +530,7 @@ public struct Conversation: View {
                         ChildChip(child: child, explaining: unopenable == child.id) {
                             if let agent = child.openable {
                                 unopenable = nil
-                                actions(.openChild(agent))
+                                leaving(.openChild(agent))
                             } else {
                                 unopenable = unopenable == child.id ? nil : child.id
                             }
@@ -555,7 +570,7 @@ public struct Conversation: View {
     /// the control is how you go to another one.
     private var pill: some View {
         HStack(spacing: 10) {
-            Button { actions(.openDrawer) } label: {
+            Button { leaving(.openDrawer) } label: {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(design.inkMuted.color)

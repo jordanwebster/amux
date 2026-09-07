@@ -25,7 +25,6 @@ struct TokenTextField: UIViewRepresentable {
     let photographed: Bool
     /// How far the field grows before it scrolls inside itself.
     let lines: Int
-
     func makeUIView(context: Context) -> UITextView {
         let view = PastingTextView()
         view.delegate = context.coordinator
@@ -326,5 +325,29 @@ final class PastingTextView: UITextView {
             super.paste(sender)
             return
         }
+    }
+}
+
+/// Putting the keyboard down, which SwiftUI has no word for.
+///
+/// A field gives the keyboard back when it stops being written in, but a
+/// keyboard raised on one screen can outlive that screen: the patch's remark
+/// sheet closes, the review is attached, and the keys are still standing over
+/// the conversation underneath with nothing on it being written into. That
+/// conversation is laid out while they are already there, so it is laid out as
+/// though the bottom of the display were free — and the composer, which sits
+/// against that bottom, ends up beneath the keys where no finger can reach it.
+///
+/// So leaving a screen puts the keyboard down, at the moment the person
+/// presses rather than at some point in the layout afterwards. Written here
+/// because this is the file that is allowed to know UIKit exists, and because
+/// UIKit is the only place that knows what holds the keyboard: SwiftUI can
+/// only say which of the fields *it* drew is focused, and the one that has to
+/// let go is often on a screen that has already gone.
+enum Keyboard {
+    @MainActor
+    static func putDown() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }

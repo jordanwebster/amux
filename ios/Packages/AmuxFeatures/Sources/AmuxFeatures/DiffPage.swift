@@ -248,7 +248,12 @@ public struct DiffPage: View {
     }
 
     private var attach: some View {
-        Button { actions(.attachReview) } label: {
+        Button {
+            // The remark sheet's keyboard does not belong to the conversation
+            // this review is about to land in. See `Keyboard`.
+            Keyboard.putDown()
+            actions(.attachReview)
+        } label: {
             ActionLabel(attachTitle, kind: .primary, fill: true)
         }
         .buttonStyle(.plain)
@@ -519,14 +524,14 @@ private struct CommentSheet: View {
                 .tint(photographed ? .clear : design.accentColor)
                 .identified("review.commentField", value: model.draft)
             HStack(spacing: 10) {
-                Button { add(model.draft) } label: {
+                Button { done { add(model.draft) } } label: {
                     ActionLabel("Add to Review", kind: .primary, fill: true)
                 }
                 .buttonStyle(.plain)
                 .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("Add to Review")
                 .identified("review.addComment", label: "Add to Review")
-                Button(action: cancel) {
+                Button { done(cancel) } label: {
                     ActionLabel("Cancel", kind: .outline, fill: true)
                 }
                 .buttonStyle(.plain)
@@ -546,6 +551,22 @@ private struct CommentSheet: View {
         .onAppear { writing = true }
         .accessibilityElement(children: .contain)
         .identified("review.commentSheet", label: model.describe(range) ?? "", value: lines)
+    }
+
+    /// Gives the keyboard back, then does the thing that closes the sheet.
+    ///
+    /// The sheet takes the keyboard when it arrives and is the only thing on
+    /// this page that wants one, so it has to hand it back before it goes.
+    /// A keyboard left standing after the view that asked for it is gone
+    /// belongs to nothing: it stays up over whatever comes next — the
+    /// conversation this review is attached to — and that screen, built while
+    /// it was already on show, is laid out as though the bottom of the display
+    /// were free. Its composer ends up underneath the keys, where neither a
+    /// finger nor a driver can reach it.
+    private func done(_ act: @MainActor @escaping () -> Void) {
+        writing = false
+        Keyboard.putDown()
+        act()
     }
 
     /// The lines in the file's own numbering, which is what a comment is

@@ -22,6 +22,15 @@ enum DoorWindow {
         return nil
     }
 
+    /// Every text input in a view, in the order they are drawn.
+    @MainActor
+    static func allTextViews(in view: UIView) -> [UIView] {
+        var found: [UIView] = []
+        if view is any UIKeyInput { found.append(view) }
+        for subview in view.subviews { found += allTextViews(in: subview) }
+        return found
+    }
+
     /// The text input that already has the keyboard.
     ///
     /// A name declared on a SwiftUI screen reaches the accessibility tree as

@@ -399,7 +399,11 @@ final class DoorHost {
         guard let conversation = stores.conversations[identity] else {
             return .error("no conversation is open with \(agent)")
         }
-        conversation.draft.body = prose
+        // Written at the caret, not over the whole draft: setting the body
+        // drops every token whose stand-in is not in the new text, so a driver
+        // that wrote its sentence that way would send a review or a photograph
+        // it had just attached as an empty message.
+        conversation.draft.insert(text: prose)
         let subject = ConversationSubject(agent: identity, in: stores.fleet)
         guard conversation.gate.accepts else {
             let state = ConversationFootState(
@@ -749,6 +753,13 @@ final class DoorHost {
     /// all: the view under it is found by hit-testing where the screen said
     /// the name is, and failing that the field is whichever one already has
     /// the keyboard — which is where a keystroke or a paste would land anyway.
+    ///
+    /// Hit-testing misses more often than it looks like it should: SwiftUI
+    /// draws a screen into a handful of views and does its own hit testing
+    /// inside them, so what UIKit reports under a control's stated middle is
+    /// usually a plain container with the field nowhere in it. When nothing
+    /// holds the keyboard yet and the screen has exactly one text input, that
+    /// input is unambiguously the field a name on that screen means.
     private func writable(
         named identifier: String, in window: UIWindow
     ) -> (any UIKeyInput & UIResponder)? {
@@ -762,7 +773,12 @@ final class DoorHost {
            let input = DoorWindow.textInput(in: under) {
             return input
         }
-        return DoorWindow.focused(in: window)
+        if let focused = DoorWindow.focused(in: window) { return focused }
+        let inputs = DoorWindow.allTextViews(in: window)
+        if inputs.count == 1, let sole = inputs.first as? (any UIKeyInput & UIResponder) {
+            return sole
+        }
+        return nil
     }
 
     /// The object behind a name: the accessibility tree first, and otherwise
