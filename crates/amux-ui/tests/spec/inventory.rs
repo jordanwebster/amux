@@ -303,3 +303,59 @@ fn attached_remote_conversations_rejoin_after_an_outage() {
         }
     }
 }
+
+/// Closing a conversation gives back the stream it asked for — and only that.
+///
+/// The eager inventory policy keeps a stream open for every agent on this
+/// machine that is not readonly, because its badge is worth one whether or
+/// not anybody is reading it, so closing a conversation on one of those
+/// changes nothing but the attachment. Everything else — an agent on another
+/// machine, or a readonly one, which the eager policy skips — has a stream
+/// only because somebody opened it, so closing the conversation closes the
+/// stream and a later inventory upsert does not bring it back.
+#[test]
+fn a_closed_conversation_lets_go_of_the_stream_it_asked_for() {
+    use amux_ui::{Effect, update};
+
+    // The host the agent runs on, whether it is readonly, and whether the
+    // eager policy would have opened its stream without anybody asking.
+    for (on, readonly, eager) in [
+        ("hetzner", false, false),
+        ("hetzner", true, false),
+        ("nova", false, true),
+        ("nova", true, false),
+    ] {
+        let mut agent = an_agent(&format!("chat-{on}-{readonly}"), on);
+        agent.readonly = readonly;
+        let mut model = fold(seq([base(), vec![host_up(&a_host("hetzner"))]]));
+
+        let inventory = update(&mut model, agent_up(&agent));
+        assert_eq!(inventory.len(), usize::from(eager), "{on} readonly={readonly}");
+        update(&mut model, Msg::UserAttached { agent: agent.id });
+        assert!(model.is_attached(agent.id));
+        assert!(model.stream(agent.id).is_some(), "{on} readonly={readonly}");
+
+        let released = update(&mut model, Msg::UserDetached { agent: agent.id });
+        assert!(
+            !model.is_attached(agent.id),
+            "a closed conversation is not open: {on} readonly={readonly}"
+        );
+        if eager {
+            assert!(released.is_empty(), "the badge still wants this stream");
+            assert!(model.stream(agent.id).is_some());
+            continue;
+        }
+        assert!(
+            matches!(released.as_slice(), [Effect::CloseStream { agent: closed }] if *closed == agent.id),
+            "the stream nobody asked for any more stays open: {released:?}"
+        );
+        assert!(model.stream(agent.id).is_none());
+        // The inventory keeps arriving; it must not re-open what was closed.
+        assert!(update(&mut model, agent_up(&agent)).is_empty());
+        assert!(model.stream(agent.id).is_none());
+        // Opening it again is ordinary.
+        let reopened = update(&mut model, Msg::UserAttached { agent: agent.id });
+        assert_eq!(reopened.len(), 1, "{on} readonly={readonly}");
+        assert!(model.is_attached(agent.id));
+    }
+}

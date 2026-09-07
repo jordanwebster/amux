@@ -4,6 +4,32 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **A conversation the phone closes gives its stream back.**
+
+Opening a conversation widens the subscription policy: the agent is recorded
+as attached and a session stream opens for it. There was no counterpart.
+Closing a conversation dropped the phone's projection of it and left both the
+attachment and the stream, so every reconnection for the rest of the session
+re-opened a conversation nobody was reading — and nothing about the phone's
+state ever said it had been closed.
+
+The reducer now takes a detach: the agent leaves `attached`, and its stream is
+let go unless the eager inventory policy would have opened it anyway. On a
+desktop that policy keeps a stream up for every agent on this machine that is
+not readonly, because its badge is worth one whether or not anybody is
+reading; on a phone nothing runs on this device, so a closed conversation
+always gives its stream back. The TUI is untouched: it never sends a detach,
+and leaving an attach behind there is deliberate — attention stays fresh after
+you leave a chat.
+
+Proven against a running relay: two conversations opened over the cloud, one
+closed, the relay taken away and brought back. The one still open comes back;
+the closed one is gone from the attachments, gone from the streams, absent
+from the recorder's checkpoint, and stays gone while the inventory keeps
+arriving — and opening it again is ordinary.
+
+---
+
 2026-09-07 — **A markdown block no longer claims an identity it does not
 have.** Its `Identifiable` conformance said identity was position in the
 document and that the parser stamped it, while the code hashed the block's own

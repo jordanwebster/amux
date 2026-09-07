@@ -811,6 +811,12 @@ impl Model {
         self.agents.len()
     }
 
+    /// Whether a conversation is open: the user asked for this agent and has
+    /// not closed it. The subscription policy widens for exactly these.
+    pub fn is_attached(&self, id: AgentId) -> bool {
+        self.attached.contains_key(&id)
+    }
+
     pub fn stream(&self, id: AgentId) -> Option<&StreamState> {
         self.streams.get(&id)
     }

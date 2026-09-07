@@ -39,6 +39,10 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
                 .into_iter()
                 .collect()
         }
+        Msg::UserDetached { agent } => {
+            model.attached.remove(&agent);
+            release_stream(model, agent).into_iter().collect()
+        }
         Msg::Tick { now } => {
             model.now = Some(now);
             Vec::new()
@@ -61,6 +65,30 @@ enum StreamWanted {
 /// has a layer this build folds, and none is already live. Emits at most one effect;
 /// re-upserts are idempotent. Retryable closes (transport loss) reopen on
 /// the next inventory event; terminal closes (deleted, exited) do not.
+/// Let go of a stream this build was holding only because somebody asked for
+/// it.
+///
+/// The inventory policy opens a stream for every agent on this machine that is
+/// not readonly, so its badge stays current whether or not anyone is reading
+/// it; closing a conversation on one of those changes nothing but the
+/// attachment. Everything else — an agent on another machine, or a readonly
+/// one, which is not in the fleet at all — has a stream only because of the
+/// interaction that just ended, so the stream ends with it.
+fn release_stream(model: &mut Model, agent_id: amux::AgentId) -> Option<Effect> {
+    if let Some(card) = model.agents.get(&agent_id)
+        && model.local_host_id == Some(card.agent.host_id)
+        && !card.agent.readonly
+    {
+        return None;
+    }
+    let stream = model.streams.remove(&agent_id)?;
+    refresh_attention(model, agent_id);
+    if matches!(stream.phase, StreamPhase::Closed { .. }) {
+        return None;
+    }
+    Some(Effect::CloseStream { agent: agent_id })
+}
+
 fn ensure_stream(
     model: &mut Model,
     agent_id: amux::AgentId,

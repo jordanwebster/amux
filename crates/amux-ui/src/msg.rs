@@ -53,6 +53,13 @@ pub enum Msg {
     /// subscription policy widens to any agent the user interacts with, so
     /// its attention stays fresh after detach.
     UserAttached { agent: AgentId },
+    /// The user closed a conversation they had opened. The interaction that
+    /// widened the policy is over, so the agent leaves `attached` and its
+    /// stream is let go unless the inventory policy would have opened it
+    /// anyway. The TUI never sends this: leaving an attach there deliberately
+    /// leaves the stream up so attention stays fresh. The phone does, because
+    /// a conversation it has closed is one nobody is reading.
+    UserDetached { agent: AgentId },
     /// Observed time for time-dependent display. Data, not a timer: the shell
     /// schedules ticks only while something on screen needs them.
     Tick { now: DateTime<Utc> },
@@ -65,7 +72,8 @@ impl Msg {
             Msg::Command { .. }
             | Msg::Server(_)
             | Msg::OpResult { .. }
-            | Msg::UserAttached { .. } => FlowClass::Lossless,
+            | Msg::UserAttached { .. }
+            | Msg::UserDetached { .. } => FlowClass::Lossless,
             Msg::Stream { event, .. } => match event {
                 StreamMsg::Batch { .. } => FlowClass::Coalescable,
                 StreamMsg::Opened { .. } | StreamMsg::ReplayComplete | StreamMsg::Closed { .. } => {

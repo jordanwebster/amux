@@ -813,7 +813,15 @@ async fn run(
                                     SubscriptionOutcome::Subscribed { agent }
                                 }
                                 SubscriptionCommand::Unsubscribe { agent } => {
+                                    // The projection stops first, then the
+                                    // runtime is told the interaction is over:
+                                    // the phone holds a stream only because a
+                                    // conversation was open, and one that has
+                                    // been closed must not come back after
+                                    // every reconnection for the rest of the
+                                    // session.
                                     projection.unsubscribe(agent);
+                                    runtime.ui.note_detached(agent);
                                     SubscriptionOutcome::Unsubscribed { agent }
                                 }
                             };

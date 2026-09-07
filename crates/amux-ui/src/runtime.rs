@@ -269,7 +269,7 @@ impl LateResult {
             } => Some(Self::Attachment),
             Msg::OpResult { .. } | Msg::Command { .. } => Some(Self::Command),
             // Folded straight from the caller's thread, never through a task.
-            Msg::Tick { .. } | Msg::UserAttached { .. } => None,
+            Msg::Tick { .. } | Msg::UserAttached { .. } | Msg::UserDetached { .. } => None,
         }
     }
 }
@@ -578,6 +578,12 @@ impl Runtime {
     /// user interacts with.
     pub fn note_attached(&mut self, agent: AgentId) {
         self.process(Msg::UserAttached { agent });
+    }
+
+    /// Reify a user detach: a conversation nobody has open no longer widens
+    /// the subscription policy, and the stream it asked for is let go.
+    pub fn note_detached(&mut self, agent: AgentId) {
+        self.process(Msg::UserDetached { agent });
     }
 
     /// Await the next Msg, then fold everything already pending (up to a

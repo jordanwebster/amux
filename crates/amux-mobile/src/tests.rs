@@ -1315,3 +1315,202 @@ async fn mobile_pairing_over_the_relay_admits_the_hosts_agents_to_the_fleet() {
     drop(admin);
     net.shutdown().await;
 }
+
+/// Closing a conversation on the phone gives back the stream it opened.
+///
+/// The phone holds a stream only because somebody opened a conversation:
+/// nothing here runs on this device, so the badge policy that keeps a local
+/// agent's stream up on a desktop never applies. A conversation the user has
+/// closed must therefore not come back after every reconnection for the rest
+/// of the session — and the one still open must be undisturbed by its going.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("chat-host")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let host = net.daemon("chat-host");
+    let (_, token) = net.user_credentials("owner");
+    let root = tempfile::tempdir().unwrap();
+    let config = config(
+        root.path(),
+        format!("http://{}", net.relay_addr()),
+        json!({"Static":token}),
+    );
+    let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
+    let (requests, _tokens) = mpsc::channel(1);
+    let mut seed = MobileRuntime::open(
+        &parsed,
+        Arc::new(Credentials {
+            source: parsed.relay.token.clone(),
+            requests,
+            next_id: AtomicU64::new(1),
+        }),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while *seed.relay.borrow_and_update() != RelayConnection::Connected {
+            seed.relay.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
+    let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
+        panic!("QR expected")
+    };
+    seed.embedded
+        .admin()
+        .pair_qr_cloud_peer(host.host_id(), secret)
+        .await
+        .unwrap();
+    // Claude agents rather than echo ones: only an agent whose kind names a
+    // structured layer has a session stream to open at all.
+    let kept = uuid::Uuid::from_u128(201);
+    let closed = uuid::Uuid::from_u128(202);
+    for (id, name) in [(kept, "Kept"), (closed, "Closed")] {
+        host.register_scripted_claude_agent(id, name, root.path())
+            .await;
+    }
+    seed.embedded.shutdown().await;
+
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(&config, &events),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    let dispatch = |command: &str, agent: uuid::Uuid| {
+        let json = CString::new(format!(r#"{{"command":"{command}","agent":"{agent}"}}"#)).unwrap();
+        let id = unsafe { amux_mobile_dispatch(running.handle, json.as_ptr()) };
+        assert!(!id.is_null(), "{command} was not dispatched");
+        unsafe { amux_mobile_free(id) };
+    };
+    // What the model says right now, once it says what was asked of it.
+    let settled = async |predicate: &dyn Fn(&Value) -> bool, why: &str| -> Value {
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                let snapshot = owned_json(unsafe { amux_mobile_snapshot(running.handle) });
+                if predicate(&snapshot) {
+                    return snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "{why}: {}",
+                owned_json(unsafe { amux_mobile_snapshot(running.handle) })
+            )
+        })
+    };
+    let open = |snapshot: &Value, agent: uuid::Uuid| -> bool {
+        !snapshot["streams"][agent.to_string()].is_null()
+    };
+    let attached = |snapshot: &Value, agent: uuid::Uuid| -> bool {
+        !snapshot["attached"][agent.to_string()].is_null()
+    };
+
+    until(&mut receive, running.handle, &token, |e| {
+        e["Fleet"]["reconciled"] == true
+            && e["Fleet"]["agents"].as_array().is_some_and(|a| a.len() == 2)
+    })
+    .await;
+    for agent in [kept, closed] {
+        dispatch("subscribe", agent);
+    }
+    settled(
+        &|s| open(s, kept) && open(s, closed) && attached(s, kept) && attached(s, closed),
+        "both conversations did not open",
+    )
+    .await;
+
+    dispatch("unsubscribe", closed);
+    until(&mut receive, running.handle, &token, |e| {
+        e["OpResult"]["outcome"]["outcome"] == "unsubscribed"
+            && e["OpResult"]["outcome"]["agent"] == closed.to_string()
+    })
+    .await;
+    let after = settled(
+        &|s| !open(s, closed),
+        "the closed conversation kept its stream",
+    )
+    .await;
+    assert!(!attached(&after, closed), "{after}");
+    assert!(
+        open(&after, kept) && attached(&after, kept),
+        "closing one conversation disturbed the other: {after}"
+    );
+
+    // Disturb the relay: everything the phone holds is rebuilt from the
+    // inventory that follows, which is where a stream nobody asked for any
+    // more would come back.
+    net.cloud_offline().await;
+    until(&mut receive, running.handle, &token, |e| {
+        e["Connection"]["state"] == "disconnected"
+    })
+    .await;
+    net.cloud_online().await;
+    until(&mut receive, running.handle, &token, |e| {
+        e["Connection"]["state"] == "connected"
+    })
+    .await;
+    let recovered = settled(
+        &|s| open(s, kept) && s["Fleet"].is_null(),
+        "the open conversation did not come back",
+    )
+    .await;
+    assert!(
+        !open(&recovered, closed) && !attached(&recovered, closed),
+        "a closed conversation came back after the outage: {recovered}"
+    );
+    // And stays gone while the inventory keeps arriving.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let later = owned_json(unsafe { amux_mobile_snapshot(running.handle) });
+    assert!(
+        !open(&later, closed) && !attached(&later, closed),
+        "a later inventory re-opened a closed conversation: {later}"
+    );
+    assert!(open(&later, kept), "the open conversation was lost: {later}");
+
+    let report = owned_json(unsafe { amux_mobile_report_snapshot(running.handle) });
+    assert!(
+        report["msgs"]["checkpoint"]["attached"][closed.to_string()].is_null(),
+        "the recorder checkpoint still holds the closed conversation: {}",
+        report["msgs"]["checkpoint"]
+    );
+    assert!(
+        report["msgs"]["msgs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|msg| msg.as_str().is_some_and(|line| line
+                .contains("user_detached")
+                && line.contains(&closed.to_string()))),
+        "the recorder never saw the conversation close"
+    );
+
+    // Opening it again is ordinary.
+    dispatch("subscribe", closed);
+    let reopened = settled(
+        &|s| open(s, closed) && attached(s, closed),
+        "a conversation closed once could not be opened again",
+    )
+    .await;
+    assert!(open(&reopened, kept), "{reopened}");
+    println!(
+        "mobile unsubscribe: closed {closed} released its stream and stayed released across a relay outage; {kept} undisturbed"
+    );
+    drop(running);
+    net.shutdown().await;
+}
