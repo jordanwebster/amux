@@ -214,3 +214,100 @@ async fn testnet_codex_recording_unrecorded_prompt_fails_without_hanging() {
 async fn testnet_codex_recording_unrecorded_answer_fails_without_hanging() {
     journey(false, true).await;
 }
+
+/// A topology whose recording answers the catalogue requests gives the phone
+/// something to press: models with their effort levels, and commands to raise
+/// under a slash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client() {
+    let topology = Topology::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e-tests/topologies/writing.json"),
+    )
+    .unwrap();
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let (net, ready, agents) = start(&topology, listener.local_addr().unwrap())
+        .await
+        .unwrap();
+    let agent = ready.agents[0].agent_id;
+    let client = amux::testnet::connect_user(ready.relay, ready.users[0].token.clone())
+        .await
+        .unwrap();
+    let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
+    let server = serve_net(net, listener, ["studio".into()].into(), agents);
+    let exercise = async {
+        let mut control = tests::ControlClient::connect(ready.control).await;
+        let qr = control
+            .ack(json!({"StartQrPairing":{"daemon":"studio"}}))
+            .await["qr"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let qr = amux::parse_qr_pairing_payload_for_cloud(&qr, &format!("http://{}", ready.relay))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match client
+                    .admin()
+                    .pair_qr_cloud_peer(qr.host_id, qr.secret.clone())
+                    .await
+                {
+                    Ok(_) => break,
+                    Err(amux::ClientError::Protocol(amux::ProtocolError::Unreachable {
+                        ..
+                    })) => tokio::time::sleep(Duration::from_millis(20)).await,
+                    Err(error) => panic!("pair recorded host: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("client relay route becomes ready");
+        wait_for(&mut runtime, "Codex inventory", |model| {
+            model.agent(agent).is_some()
+        })
+        .await;
+        runtime.note_attached(agent);
+        wait_for(&mut runtime, "reported catalogue", |model| {
+            !amux_ui::provider::facts(model, agent).models.is_empty()
+        })
+        .await;
+        let facts = amux_ui::provider::facts(runtime.model(), agent);
+        assert_eq!(
+            facts.models.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            ["model-a", "model-b"]
+        );
+        assert_eq!(facts.model.as_deref(), Some("model-a"));
+        assert_eq!(facts.effort.as_deref(), Some("low"));
+        assert_eq!(facts.efforts, ["low", "medium"]);
+        assert_eq!(
+            facts.models[1].efforts,
+            ["medium", "high"],
+            "each model reports its own effort levels"
+        );
+        assert_eq!(
+            facts
+                .commands
+                .iter()
+                .map(|command| (command.name.as_str(), command.terminal_only))
+                .collect::<Vec<_>>(),
+            [("plan", false), ("review", false)]
+        );
+        assert!(
+            facts
+                .commands
+                .iter()
+                .all(|command| command.source == amux_ui::provider::CommandSource::Codex)
+        );
+        assert_eq!(
+            amux_ui::provider::settings_gate(runtime.model(), agent).refusal(),
+            None,
+            "the settings card is pressable"
+        );
+        println!(
+            "Reported Codex facts: {}",
+            serde_json::to_string(&facts).unwrap()
+        );
+        control.ack(json!("Shutdown")).await;
+    };
+    let (result, ()) = tokio::join!(server, exercise);
+    result.unwrap();
+}

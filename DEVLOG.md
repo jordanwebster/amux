@@ -4,6 +4,25 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **A test agent that offers models, efforts and commands.** The
+settings card and the slash menu draw rows from what a session reports, and a
+session running against the recorded Codex corpus reports none of it: nothing
+in that corpus ever asked the app-server for its model catalogue or its skills,
+so there was nothing to press and nothing to raise.
+
+Those two exchanges now exist as their own recording, written by hand rather
+than captured — no provider was contacted and no credentials were used — and a
+manifest can now say so. `SourceKind::Scripted` carries a note explaining what
+a recording stands in for and why, and the live corpora assert against it, so a
+scripted file can never drift into a place that claims to hold captures.
+
+The runner asks a recorded session for its catalogue only when the recording
+carries the exchange, in the order a live host asks. What an agent offers still
+comes off a wire; it is never handed to the session behind the protocol's back.
+A topology declaring such an agent now reports two models with their own effort
+levels and two commands to a connected client, and the client's own settings
+gate says the card is pressable.
+
 2026-09-07 — **What the conversation says about the agent now reaches the
 host.** Picking a model, moving the effort axis, choosing what the agent may do
 without asking, renaming it, copying its address and deleting it were all

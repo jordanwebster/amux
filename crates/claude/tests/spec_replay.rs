@@ -266,6 +266,9 @@ fn sdk_corpus_is_inventoried_current_and_unorphaned() {
                     recording.manifest.recorded.version
                 )
             }
+            SourceKind::Scripted { .. } => {
+                panic!("{} is scripted; the spec corpus holds captures only", entry.name)
+            }
         }
         assert!(recording.manifest.content.contains_key("io.jsonl"));
         assert!(recording.manifest.content.contains_key("spawn.jsonl"));

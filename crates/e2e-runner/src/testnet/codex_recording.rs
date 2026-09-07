@@ -13,6 +13,8 @@ pub struct Prepared {
     recording: Recording,
     initialize: Value,
     thread: Value,
+    discovers_models: bool,
+    discovers_commands: bool,
 }
 
 impl Prepared {
@@ -36,11 +38,13 @@ impl Prepared {
             .io
             .iter()
             .filter(|entry| entry.direction == IoDirection::Write)
-            .take(3)
             .map(|entry| serde_json::from_str::<Value>(&entry.line))
             .collect::<Result<Vec<_>, _>>()?;
+        let asks_for = |method: &str| writes.iter().any(|write| write["method"] == method);
+        let discovers_models = asks_for("model/list");
+        let discovers_commands = asks_for("skills/list");
         ensure!(
-            writes.len() == 3
+            writes.len() >= 3
                 && writes[0]["method"] == "initialize"
                 && writes[1]["method"] == "initialized"
                 && writes[2]["method"] == "thread/start",
@@ -58,6 +62,8 @@ impl Prepared {
             initialize: writes[0]["params"].clone(),
             thread: writes[2]["params"].clone(),
             recording,
+            discovers_models,
+            discovers_commands,
         })
     }
 
@@ -120,7 +126,17 @@ impl Prepared {
         )
         .await
         .context("recorded Codex thread start timed out")??;
-        Ok((codex::open(thread).await?, recorded))
+        let session = codex::open(thread).await?;
+        // A recording that carries the catalogue exchanges is asked for them in
+        // the same order the live host asks, so what the agent offers comes off
+        // the wire rather than being handed to the session.
+        if self.discovers_models {
+            session.control.discover_models().await?;
+        }
+        if self.discovers_commands {
+            session.control.discover_commands().await?;
+        }
+        Ok((session, recorded))
     }
 }
 

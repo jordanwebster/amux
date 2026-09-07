@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "spec": "codex_offers",
+  "recorded": {
+    "provider": "codex",
+    "version": "0.150.1",
+    "model": "model-a",
+    "at": "2026-09-07T00:00:00Z",
+    "source_kind": {
+      "scripted": {
+        "note": "hand-written app-server traffic offering two models, their effort levels and two skills; the live corpus carries no model/list or skills/list exchange"
+      }
+    }
+  },
+  "verified": [],
+  "content": {
+    "io.jsonl": "sha256:ba4d6f910d8c63498ddaf8ee35d7eb434889a6da1e1191c702f0737d8de1fe0d",
+    "spawn.jsonl": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
