@@ -481,10 +481,80 @@ it has been doing it, a segment travelling under it, and a button that stops it.
   of the screen mid-turn. Writing something turns it back into a send — which
   holds the message rather than delivering it, exactly as the field says it
   will.
-- **No queue row and no facts strip.** The reference draws the current task and
-  its count on a row above the box. That strip is its own screen, `strip`, and
-  the queued message is `queued`; neither is part of this one.
+- **The strip above the box carries one row, as the reference draws it.** This
+  session reported a task list and nothing else, so the strip is the count and
+  the current task and no more. Nothing this agent started and nothing waiting
+  to go means no second row and no chip: a row appears only while its fact is
+  true. `queued` is the same strip with every fact true and `strip` is that one
+  opened.
 - The differing conversation and the thinking line carry over from `run`.
+
+## queued
+
+A message waiting for the turn to end, on the strip above the composer, with
+everything else that is true about the turn beside it.
+
+- **One strip, four facts, in the order they are read.** The count and the task
+  being worked on, the number of agents this one started, and the message
+  waiting to go. A row appears only while its fact is true, so `working` — the
+  same conversation with no children and nothing queued — draws one row, and an
+  ordinary quiet conversation draws no strip at all.
+- **What the agent is doing this second is not on the strip.** It is the line at
+  the top of the composer, one plate below: "Running 8s". The reference puts the
+  current *task* on the strip and the current *activity* in the box, which are
+  two different facts from two different places — the provider's list and the
+  transcript's open row. Saying either of them twice would truncate the second
+  copy, and the truncated one is the version a person would try to read.
+- **The number of started agents is coloured because one of them is stuck.**
+  `spec-fixer` is waiting on a permission, and the accent is this app's one word
+  for "something is waiting for you". Nothing else on the strip is coloured —
+  not the task being worked on, because an agent working through its own list is
+  not waiting for anybody.
+- **The agents themselves are named in the chrome, not in the strip.** Three
+  chips above the feed, the stuck one carrying the mark, which is where this
+  build has drawn children since `voices`. The strip adds their number in the
+  one place a person is already looking mid-turn; it does not repeat their
+  names. The reference draws children as rows in the feed instead and so has no
+  chips here.
+- **Tapping the queued row unqueues it.** The text lands in the field, the row
+  goes, and what is in front of you is an ordinary unsent message. There is no
+  edit mode, no banner naming what is being changed and no discard — abandoning
+  it is clearing the field, the way every other unsent message is abandoned.
+  The pencil says so; it is absent while a message is already on its way, which
+  is the one state the core refuses to touch.
+- **The stop button is still there.** Nothing is written, so the composer's one
+  round control stops the turn. Stopping the agent and revising what you will
+  say next are different intentions, and the control that stops a running
+  command is never the one that gets crowded out.
+- The differing conversation carries over from `run`.
+
+## strip
+
+The same strip opened: the provider's whole list, with the line that summarises
+it exactly where it was.
+
+- **Not in the design's captures.** The design pictures the folded strip and
+  says the open one grows in place rather than flying a panel out of it. What
+  the list looks like is this build's answer.
+- **It grows upward and the summary line does not move.** What was tapped stays
+  under the thumb, and the chevron turns over. The list overlays the feed rather
+  than pushing it up, and the feed dims behind it like everything else a
+  conversation opens over itself — the strip, the composer and the pill stay
+  bright, because they are what you are working in.
+- **The panel is exactly as tall as the list, up to a cap.** A list left to grow
+  would push the composer off the display; a panel that took the cap whether or
+  not the list filled it would leave a band of empty glass under the last task,
+  which reads as tasks that failed to load. Past the cap it scrolls.
+- **The list is marked, not coloured.** A tick for what is done, a filled ring
+  for what is being worked on, an empty one for what has not started, with done
+  work receding and the current line in full ink and weight. The accent stays
+  reserved for the one child that cannot continue.
+- **The count is the provider's own two numbers.** "3/7" is what the host
+  reported, never recomputed from the seven items. A list whose items disagree
+  with its own count is the host's disagreement to resolve, and papering over it
+  here would hide it.
+- The queued row, the coloured count and the differing conversation carry over
+  from `queued`.
 
 ## exited
 

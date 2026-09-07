@@ -940,10 +940,16 @@ public enum SettingsGate: Sendable, Equatable, Codable {
     }
 }
 
+/// The one message this agent is holding until its turn ends.
+///
+/// One per agent, and the core holds it rather than the phone: a phone that
+/// goes to sleep, loses its network or is put away must not take the message
+/// with it, and only the machine the agent runs on can be sure the turn ended
+/// exactly once.
 public struct QueuedMessage: Codable, Sendable, Equatable {
-    public var draft: JSONValue
+    public var draft: HeldDraft
     public var heldAt: Date
-    public var delivery: JSONValue
+    public var delivery: QueueDelivery
 
     private enum CodingKeys: String, CodingKey {
         case draft
@@ -951,10 +957,124 @@ public struct QueuedMessage: Codable, Sendable, Equatable {
         case delivery
     }
 
-    public init(draft: JSONValue, heldAt: Date, delivery: JSONValue) {
+    public init(draft: HeldDraft, heldAt: Date, delivery: QueueDelivery) {
         self.draft = draft
         self.heldAt = heldAt
         self.delivery = delivery
+    }
+
+    /// What the message says, which is the only thing a strip has room for
+    /// and the whole of what goes back into the field when it is unqueued.
+    public var text: String { draft.text }
+
+    /// Whether it can still be changed. A message already on its way cannot:
+    /// the core refuses to replace or cancel one, and offering the gesture
+    /// anyway would be a control whose only outcome is a refusal.
+    public var changeable: Bool {
+        if case .sending = delivery { return false }
+        return true
+    }
+}
+
+/// A held message as the core spells it: the segments it is made of and the
+/// artifacts that travel with it.
+///
+/// The same shape as a draft on its way out, because it is the same draft —
+/// held rather than sent. Mirrored here rather than kept as loose JSON so a
+/// change to the shared vocabulary fails in the schema test instead of at a
+/// strip that quietly stops saying anything.
+public struct HeldDraft: Codable, Sendable, Equatable {
+    public var segments: [HeldSegment]
+    public var attachments: [DraftAttachment]
+
+    public init(segments: [HeldSegment], attachments: [DraftAttachment] = []) {
+        self.segments = segments
+        self.attachments = attachments
+    }
+
+    /// The message read back as one string, folded the way the shared library
+    /// folds it: a command token reads as the command it is, and everything
+    /// else is what was written.
+    public var text: String {
+        segments.map { segment in
+            switch segment {
+            case .text(let text): text
+            case .command(let name): "/\(name)"
+            }
+        }.joined()
+    }
+}
+
+/// One piece of a held message.
+public enum HeldSegment: Codable, Sendable, Equatable {
+    case text(String)
+    /// The command the message is, which travels as its own segment rather
+    /// than as typed characters.
+    case command(name: String)
+
+    private enum Key: String, CodingKey { case segment, text, name }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: Key.self)
+        switch try container.decode(String.self, forKey: .segment) {
+        case "text": self = .text(try container.decode(String.self, forKey: .text))
+        case "command_token": self = .command(name: try container.decode(String.self, forKey: .name))
+        case let other:
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "unknown draft segment \(other)"))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: Key.self)
+        switch self {
+        case .text(let text):
+            try container.encode("text", forKey: .segment)
+            try container.encode(text, forKey: .text)
+        case .command(let name):
+            try container.encode("command_token", forKey: .segment)
+            try container.encode(name, forKey: .name)
+        }
+    }
+}
+
+/// Where a held message has got to.
+public enum QueueDelivery: Codable, Sendable, Equatable {
+    /// Waiting for the turn to end.
+    case held
+    /// The turn ended and it is on its way.
+    case sending(op: OpId)
+    /// It went and was refused. The core keeps it rather than dropping it, so
+    /// what was written is not lost to a failure.
+    case failed(OpFailure)
+
+    private enum Key: String, CodingKey { case state, op, error }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: Key.self)
+        switch try container.decode(String.self, forKey: .state) {
+        case "held": self = .held
+        case "sending": self = .sending(op: try container.decode(OpId.self, forKey: .op))
+        case "failed": self = .failed(try container.decode(OpFailure.self, forKey: .error))
+        case let other:
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "unknown queue delivery \(other)"))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: Key.self)
+        switch self {
+        case .held: try container.encode("held", forKey: .state)
+        case .sending(let op):
+            try container.encode("sending", forKey: .state)
+            try container.encode(op, forKey: .op)
+        case .failed(let error):
+            try container.encode("failed", forKey: .state)
+            try container.encode(error, forKey: .error)
+        }
     }
 }
 

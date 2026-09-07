@@ -127,13 +127,42 @@ public final class StoreBundle {
         let store = conversation(agent)
         guard !store.draft.isEmpty else { return false }
         let hold = !store.gate.accepts
-        guard let command = hold ? store.draft.holdCommand(to: agent)
-                                 : store.draft.command(to: agent),
+        // A second hold is refused: one message is queued, not a queue. So
+        // writing another while one waits replaces it, which is the gesture
+        // a person is actually making — the old text is theirs to get back by
+        // unqueueing, and this is the other half of the same pair.
+        let held = store.queued != nil
+        guard let command = hold
+                ? (held ? store.draft.replaceCommand(to: agent)
+                        : store.draft.holdCommand(to: agent))
+                : store.draft.command(to: agent),
               let op = dispatch?(command)
         else { return false }
         if !hold { store.sent(store.draft.text) }
         store.dispatched(op)
         store.draft.clear()
+        return true
+    }
+
+    /// Takes the held message back out of the queue and into the field.
+    ///
+    /// There is no edit mode and no discard. What was queued becomes an
+    /// ordinary unsent message in front of the person who wrote it, and
+    /// abandoning it is clearing the field the way every other unsent message
+    /// is abandoned. The text goes into the draft before the cancellation is
+    /// dispatched, so nothing is lost if the host refuses.
+    ///
+    /// False means nothing left the phone: no message held, one already on
+    /// its way, or no connection.
+    @discardableResult
+    public func unqueue(_ agent: AgentId) -> Bool {
+        let store = conversation(agent)
+        guard let queued = store.queued, queued.changeable else { return false }
+        store.draft = MessageDraft(prose: queued.text)
+        store.draft.place(caret: queued.text.count)
+        guard let command = MessageDraft.cancelQueue(agent),
+              let op = dispatch?(command) else { return false }
+        store.dispatched(op)
         return true
     }
 

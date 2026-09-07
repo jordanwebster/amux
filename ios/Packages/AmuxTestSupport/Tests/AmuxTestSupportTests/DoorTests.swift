@@ -128,9 +128,10 @@ final class DoorTests: XCTestCase {
         XCTAssertTrue(Fixtures.isBuilt(.run, state: "host-lost"))
         XCTAssertFalse(Fixtures.isBuilt(.run, state: "run-accessibility"))
         // A state with no fixture behind it is unbuilt rather than unknown, so
-        // asking for it names work still to come.
-        XCTAssertFalse(Fixtures.isBuilt(.run, state: "strip"))
-        XCTAssertNil(Fixtures.named("strip"))
+        // asking for it names work still to come. The machines screen expects
+        // a picture of paired devices and nothing fills one yet.
+        XCTAssertFalse(Fixtures.isBuilt(.hosts, state: "devices"))
+        XCTAssertNil(Fixtures.named("devices"))
         // The home screen has two states built, so this is about the pair and
         // not about a screen being all-or-nothing either way.
         XCTAssertTrue(Fixtures.isBuilt(.home, state: "home"))

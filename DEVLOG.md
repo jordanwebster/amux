@@ -4,6 +4,50 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **The strip above the composer, and one message held per agent.**
+Between the feed and the box a message is written in there is now one surface
+carrying whatever is true about the running turn: the count and the task the
+provider says it is on, how many agents this one started, and the message
+waiting for the turn to end. A row appears only while its fact is true, so an
+ordinary quiet conversation has no strip at all and nothing down there is
+permanent chrome.
+
+Two facts were kept apart on purpose. What the agent is doing *this second* is
+the line at the top of the composer, one plate below, and what task it is on
+comes from the provider's own list — the transcript's open row and the
+provider's fold are different things from different places, and drawing either
+of them twice would truncate the second copy, which is the one a person would
+try to read. Started agents keep their names in the chrome, one chip each, and
+the strip adds only their number; the number is the one coloured thing on the
+strip, and only when one of those agents has stopped and cannot go on without
+somebody.
+
+Opened, the strip grows in place: the list appears above the summary line,
+which does not move, and the panel is exactly as tall as the list up to a cap
+past which it scrolls. The alternative — a panel that always took the cap —
+left a band of empty glass under the last task, which reads as tasks that
+failed to load.
+
+The queue is the core's, not the phone's. A phone that goes to sleep, loses its
+network or is put away must not take a held message with it, and only the
+machine the agent runs on can be sure a turn ended exactly once, so the core
+holds one message per agent and delivers it at the first turn end. The phone
+learnt the other two halves of that: writing a second message while one waits
+replaces the first, because a second hold is refused outright, and tapping the
+queued row unqueues it — the text lands in the field as an ordinary unsent
+message and the host is told to stop holding it. There is no edit mode, no
+banner naming what is being changed and no discard; abandoning a queued message
+is clearing the field, the way every other unsent message is abandoned. The
+held draft's shape is pinned by the projection's own `queue.json`, read by the
+Rust snapshot test that writes it and by the Swift suite that has to decode it,
+so the two cannot drift.
+
+Baselines: `queued` and `strip` are new and `working` grew its one true row.
+`ios/Goldens/BASELINE.md` says what each picture is and where it departs from
+the design's own capture.
+
+---
+
 2026-09-07 — **Attachments are tokens inside the message, and the phone can
 change how an agent runs.** A message can carry a photo, a file, a long paste
 and a written review, and each of them lives *in* the text rather than in a

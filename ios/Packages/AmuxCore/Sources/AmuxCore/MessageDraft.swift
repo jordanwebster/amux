@@ -385,6 +385,28 @@ public struct MessageDraft: Sendable, Equatable {
         Wire(command: "queue", action: "hold", agent: agent, draft: wire).shared
     }
 
+    /// The same draft, put in the place of one already held.
+    ///
+    /// A second hold is refused by the core outright — one message is queued,
+    /// not a queue — so writing another one while one waits is a replacement
+    /// and is spelled as one. The old text is gone because unqueueing is how
+    /// you get it back, and this is the other gesture.
+    public func replaceCommand(to agent: AgentId) -> BridgeCommand? {
+        Wire(command: "queue", action: "replace", agent: agent, draft: wire).shared
+    }
+
+    /// Dropping the held message, which carries no draft: one is queued per
+    /// agent and the core knows which. It is a static because it is not about
+    /// any draft — the message being cancelled is the one the host is holding,
+    /// not the one in front of you.
+    public static func cancelQueue(_ agent: AgentId) -> BridgeCommand? {
+        .shared(.object([
+            "command": .string("queue"),
+            "action": .string("cancel"),
+            "agent": .string(agent.description),
+        ]))
+    }
+
     /// The command this draft is, where it is one.
     ///
     /// Only the token standing at the very front counts. The core takes a

@@ -169,6 +169,26 @@ public enum Scenario {
              headline: "Running the spec suite"),
     ] + agents.dropFirst()
 
+    /// The same morning with the three agents `refactor-auth` started on the
+    /// fleet as well.
+    ///
+    /// They are here because the fleet owns an agent's name and the
+    /// conversation does not: a child the fleet has never heard of is drawn
+    /// with the identity it was started under, which is true but unreadable.
+    /// One of them is waiting on somebody, which is the fact the strip above
+    /// the composer colours for.
+    public static let startedWork: [AgentCard] = working + [
+        card("spec-fixer", host: studio, directory: "~/src/amux", kind: claude,
+             attention: .needsYou(why: .permission), minutesAgo: 1,
+             headline: "Rewriting the three assertions"),
+        card("docs-sweep", host: studio, directory: "~/src/amux", kind: claude,
+             attention: .working, minutesAgo: 2,
+             headline: "Reading docs/PAIRING.md"),
+        card("changelog-line", host: studio, directory: "~/src/amux", kind: claude,
+             attention: .working, minutesAgo: 3,
+             headline: "Drafting the changelog line"),
+    ]
+
     /// The same morning, later: everything that was blocked has been answered
     /// and every finished turn has been read.
     ///

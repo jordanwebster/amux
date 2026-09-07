@@ -64,6 +64,8 @@ public enum Fixtures {
         Built(.overflow, "overflow"),
         Built(.agentDelete, "agent-delete"),
         Built(.working, "working"),
+        Built(.queued, "queued"),
+        Built(.run, "strip"),
         Built(.runLive, "run-live"),
         Built(.working, "send-refused"),
         Built(.exited, "exited"),
@@ -221,17 +223,20 @@ public enum Fixtures {
                 bundle, agents: Scenario.working, entries: Transcript.live,
                 session: Sessions.claude(
                     gate: .working, phase: "running",
-                    provider: ProviderFacts(
-                        model: Sessions.claudeProvider.model,
-                        models: Sessions.claudeProvider.models,
-                        commands: Sessions.claudeProvider.commands,
-                        permission: Sessions.claudeProvider.permission,
-                        todos: Sessions.todos)))
+                    provider: Sessions.claudeProvider(running: Sessions.todos)))
         },
+        // A message waiting for the turn to end, with everything else that is
+        // true about the turn beside it: the task being worked on and its
+        // count, and the three agents this one started, one of which cannot
+        // continue. All four facts in one picture, which is how the design
+        // draws the strip.
         Fixture(id: "queued", screen: .queued) { bundle in
-            States.open(bundle, entries: Transcript.live,
-                        session: Sessions.claude(gate: .working, phase: "running",
-                                                 queue: Sessions.heldMessage))
+            States.open(
+                bundle, agents: Scenario.startedWork, entries: Transcript.live,
+                session: Sessions.claude(
+                    gate: .working, phase: "running",
+                    provider: Sessions.claudeProvider(running: Sessions.todos),
+                    queue: Sessions.heldMessage, family: Sessions.started))
         },
         Fixture(id: "overflow", screen: .overflow) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
@@ -347,6 +352,19 @@ public enum Fixtures {
             States.open(
                 bundle, entries: [], agent: Scenario.agentId("legacy-port"),
                 session: Sessions.unreadable())
+        },
+        // The same strip grown: the provider's whole list above the line that
+        // summarises it, with the count, the started agents and the queued
+        // message still where they were. The design pictures the folded strip
+        // and not this, so what the list looks like open is this build's
+        // answer.
+        Fixture(id: "strip", screen: .run, overlay: .tasks) { bundle in
+            States.open(
+                bundle, agents: Scenario.startedWork, entries: Transcript.live,
+                session: Sessions.claude(
+                    gate: .working, phase: "running",
+                    provider: Sessions.claudeProvider(running: Sessions.todos),
+                    queue: Sessions.heldMessage, family: Sessions.started))
         },
         // A send the layer refused, with the reason visible and no input
         // reaching the host. It is a state of the screen the composer lives

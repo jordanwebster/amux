@@ -1,0 +1,66 @@
+{
+  "Session": {
+    "agent": "00000000-0000-0000-0000-000000000001",
+    "gate": {
+      "layer": "claude_pty",
+      "value": "working"
+    },
+    "phase": {
+      "layer": "claude_pty",
+      "value": {
+        "phase": "working"
+      }
+    },
+    "stream": {
+      "stream_phase": "live"
+    },
+    "asks": [],
+    "facts": {
+      "layer": "claude_pty",
+      "session": {
+        "permission_mode": null,
+        "model": null,
+        "context_used_tokens": null,
+        "ai_title": null,
+        "agent_name": null
+      },
+      "accepted_plans": [],
+      "echoes": []
+    },
+    "provider": {
+      "model": null,
+      "effort": null,
+      "models": [],
+      "efforts": [],
+      "commands": [],
+      "permission": {
+        "provider": "claude",
+        "mode": null
+      },
+      "todos": null
+    },
+    "settings_gate": {
+      "gate": "pty_settings_unavailable"
+    },
+    "queue": {
+      "draft": {
+        "segments": [
+          {
+            "segment": "text",
+            "text": "next step"
+          }
+        ],
+        "attachments": []
+      },
+      "held_at": "2023-11-14T22:13:20Z",
+      "delivery": {
+        "state": "held"
+      },
+      "op": "00000000-0000-0000-0000-000000000001",
+      "after_seq": 2,
+      "eligible": false,
+      "retry": false
+    },
+    "family": []
+  }
+}

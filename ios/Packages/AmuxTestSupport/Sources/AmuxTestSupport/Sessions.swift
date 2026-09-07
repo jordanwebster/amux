@@ -243,19 +243,42 @@ public enum Sessions {
     ]))
 
     /// A message held until the turn ends.
+    ///
+    /// Spelled the way the core spells one — segments and attachments, with a
+    /// held delivery — because that is what arrives over the bridge. The shape
+    /// is pinned by the projection's own `queue.json`, which the schema suite
+    /// reads.
     public static let heldMessage = QueuedMessage(
-        draft: .object([
-            "text": .string("Also update the changelog line once the suite is green."),
-            "attachments": .array([]),
+        draft: HeldDraft(segments: [
+            .text("Once the suite is green, squash it into one commit and push."),
         ]),
         heldAt: Scenario.now.addingTimeInterval(-45),
-        delivery: .object(["delivery": .string("held")]))
+        delivery: .held)
 
     /// The agents this one started, and the one that is stuck.
     public static let family: [FamilyMember] = [
         FamilyMember(agent: Scenario.agentId("spec-fixer"), depth: 1, needs: .permission),
         FamilyMember(agent: Scenario.agentId("docs-sweep"), depth: 1, needs: nil),
     ]
+
+    /// Three started agents, one of them stuck, for the screens whose subject
+    /// is the number in the strip rather than the chips in the chrome. Kept
+    /// apart from ``family`` so a count photographed on one screen cannot be
+    /// changed by work on the other.
+    public static let started: [FamilyMember] = family + [
+        FamilyMember(agent: Scenario.agentId("changelog-line"), depth: 1, needs: nil),
+    ]
+
+    /// Claude's own facts with the provider's task list folded into them.
+    ///
+    /// The list is the provider's and the arithmetic is the shared library's;
+    /// this only carries it, which is why it is a copy of the ordinary facts
+    /// with one field set rather than a second set of facts.
+    public static func claudeProvider(running todos: TaskList) -> ProviderFacts {
+        var facts = claudeProvider
+        facts.todos = todos
+        return facts
+    }
 
     public static let planMarkdown = """
         The client maps gRPC statuses onto distinct strings in three places. The protocol \

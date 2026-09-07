@@ -46,6 +46,10 @@ public enum ConversationAction: Equatable, Sendable {
     case overflowing(OverflowChoice)
     /// Delete this agent, confirmed after being told what that does.
     case deleteAgent
+    /// Take the message that was waiting back into the field. Not a discard:
+    /// what was queued becomes an ordinary unsent message, and abandoning it
+    /// is clearing the field like any other.
+    case unqueue
 }
 
 /// Something the conversation opens over itself.
@@ -66,6 +70,10 @@ public enum ConversationOverlay: Equatable, Sendable {
     case overflow
     /// Deleting it, with the consequences named.
     case deleteAgent
+    /// The task list, grown out of the strip above the composer. It is here
+    /// with the rest because only one thing is open at a time, and because
+    /// this is how a capture asks for the strip already open.
+    case tasks
 }
 
 /// Who this conversation is with and where it runs.
@@ -334,6 +342,13 @@ public struct Conversation: View {
             } else if let composer = ComposerState(
                 gate: model.gate, tail: model.tailRow, elapsed: subject.working) {
                 VStack(spacing: 8) {
+                    // Whatever is true about the turn, furthest from the box
+                    // and above anything opened from it. It is not a card
+                    // somebody opened, so it is never replaced by one: a
+                    // permission sheet does not stop a message being queued or
+                    // a task being worked on, and a card belongs against the
+                    // composer it was opened from.
+                    strip
                     // Raised by what is being written rather than opened, so
                     // it stacks with the cards rather than replacing them:
                     // nothing can be open over the composer while a command is
@@ -375,6 +390,26 @@ public struct Conversation: View {
         [subject.name, subject.host?.lowercased()].compactMap { $0 }.joined(separator: "/")
     }
 
+    /// The facts about the running turn, where there are any.
+    ///
+    /// Absent when nothing is true, which is most conversations: a band along
+    /// the bottom of every quiet screen would cost the feed a row to say
+    /// nothing. Whether the list is grown is this screen's own state, like
+    /// everything else the bottom of the conversation opens.
+    @ViewBuilder
+    private var strip: some View {
+        let facts = ConversationFacts(model)
+        if !facts.isEmpty {
+            FactsStrip(
+                facts: facts, open: showing == .tasks,
+                grow: { showing = showing == .tasks ? nil : .tasks },
+                unqueue: {
+                    showing = nil
+                    actions(.unqueue)
+                })
+        }
+    }
+
     /// Whatever the composer has opened over itself.
     ///
     /// One at a time, and each replaces the last: the permissions sheet opens
@@ -403,7 +438,11 @@ public struct Conversation: View {
                 refusal: model.settingsGate.refusal) { change in
                     actions(.setting(change))
                 }
-        case .overflow, .deleteAgent, nil:
+        // The strip is drawn by `strip`, below whatever is opened over the
+        // composer rather than in its place: it is a fact about the turn and
+        // not a card, so growing it does not close what somebody else opened
+        // and opening a card does not take it away.
+        case .overflow, .deleteAgent, .tasks, nil:
             EmptyView()
         }
     }

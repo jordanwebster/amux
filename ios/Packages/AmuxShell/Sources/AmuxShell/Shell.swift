@@ -112,9 +112,7 @@ private struct ConversationPage: View {
             Conversation(
                 model: stores.conversation(agent),
                 subject: ConversationSubject(agent: agent, in: stores.fleet),
-                naming: { child in
-                    stores.fleet.rows.first { $0.id == child }?.name ?? child.description
-                }
+                naming: { stores.fleet.name(of: $0) }
             ) { action in
                 switch action {
                 case .openDrawer: open = true
@@ -147,6 +145,11 @@ private struct ConversationPage: View {
                 // has the gate; the screen only says that the person pressed.
                 case .send: stores.send(to: agent)
                 case .interrupt: stores.interrupt(agent)
+                // Taking the held message back is a write too: the host is
+                // holding it and only the host can stop holding it. The
+                // bundle puts the text in the field before it dispatches, so
+                // a refusal leaves the paragraph in front of whoever wrote it.
+                case .unqueue: stores.unqueue(agent)
                 // The picker and the system's own dictation are not wired yet.
                 // The controls are on the screen they belong to rather than
                 // arriving with the wiring, and neither pretends to have run.

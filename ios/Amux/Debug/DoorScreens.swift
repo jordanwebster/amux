@@ -52,17 +52,24 @@ enum DoorScreens {
                     subject: ConversationSubject(
                         agent: Scenario.focus, in: host.stores.fleet)) { _ in }
             }
-        // One screen, seven names. Whether a turn is still running, who else has
-        // spoken in it, whether the layer will take a message and whether the
-        // run has ended are all facts the conversation reads off its own store
-        // rather than screens of their own: `run-live`, `voices`,
-        // `review-cta`, `working`, `typing` and `exited` are `run` with a
-        // different feed, session, draft and fleet in it.
-        case .run, .runLive, .voices, .reviewCta, .working, .exited, .typing:
+        // One screen, eight names. Whether a turn is still running, who else
+        // has spoken in it, whether a message is waiting to go, whether the
+        // layer will take one and whether the run has ended are all facts the
+        // conversation reads off its own store rather than screens of their
+        // own: `run-live`, `voices`, `review-cta`, `working`, `queued`,
+        // `typing` and `exited` are `run` with a different feed, session,
+        // draft and fleet in it.
+        //
+        // The overlay is handed in here as well, because the strip above the
+        // composer grows into the task list and a capture of the grown strip
+        // has to be able to ask for it open.
+        case .run, .runLive, .voices, .reviewCta, .working, .queued, .exited, .typing:
             Conversation(
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(
-                    agent: Scenario.focus, in: host.stores.fleet)) { _ in }
+                    agent: Scenario.focus, in: host.stores.fleet),
+                naming: { host.stores.fleet.name(of: $0) },
+                showing: host.overlay) { _ in }
         // The plus, opened. Which overlay a conversation is showing is a state
         // of the conversation and is handed in, the way the drawer's own
         // openness is, so what is photographed is the real screen with the

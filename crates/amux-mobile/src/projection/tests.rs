@@ -580,6 +580,30 @@ fn queue_mobile_projection_exposes_hold_and_cancellation() {
         "mobile held queue callback:\n{}",
         serde_json::to_string_pretty(&held).unwrap()
     );
+    // Pinned to a file rather than only asserted, because a reader on the
+    // other side of the bridge has to know how a held draft is spelled: its
+    // segments, its delivery state and the moment it was held. The iOS test
+    // bundle reads this same file.
+    let pinned = format!(
+        "{}\n",
+        serde_json::to_string_pretty(
+            held.iter()
+                .filter(|event| matches!(event, Event::Session(_)))
+                .collect::<Vec<_>>()
+                .last()
+                .expect("a session carrying the held queue")
+        )
+        .unwrap()
+    );
+    if std::env::var_os("UPDATE_MOBILE_PROJECTION").is_some() {
+        std::fs::write(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/src/projection/queue.json"),
+            &pinned,
+        )
+        .unwrap();
+    } else {
+        assert_eq!(pinned, include_str!("queue.json"));
+    }
     update(
         &mut model,
         Msg::Command {

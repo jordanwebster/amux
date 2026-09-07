@@ -106,6 +106,17 @@ public final class FleetStore {
 
     public func host(_ id: HostId) -> HostEntry? { hosts[id] }
 
+    /// What this agent is called, for a screen that has an identity and needs
+    /// a name.
+    ///
+    /// The fleet owns names, so every screen that shows one asks here. An
+    /// agent the fleet has not heard of yet is named with the identity it was
+    /// reached by, which is at least true — a blank where a name belongs reads
+    /// as something that failed to load.
+    public func name(of agent: AgentId) -> String {
+        rows.first { $0.id == agent }?.name ?? agent.description
+    }
+
     /// Places arrivals and forgets departures without moving what is already
     /// on screen.
     private func reconcileOrder() {
