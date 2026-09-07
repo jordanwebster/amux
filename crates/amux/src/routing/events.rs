@@ -54,6 +54,10 @@ pub struct HostEntry {
     /// `!online && last_dial_error.is_none()`, derived client-side if
     /// anyone cares.
     pub last_dial_error: Option<String>,
+    /// The machine's kind as it announced itself in the handshake, unset for a
+    /// host nothing has ever been adjacent to.
+    #[serde(default)]
+    pub platform: Option<String>,
 }
 
 /// Client-facing host inventory events.

@@ -38,7 +38,7 @@ final class Harness {
             relay: BridgeConfiguration.Relay(
                 url: "https://127.0.0.1:1", tls: .system, token: .fixed("measured")),
             logPath: data.appendingPathComponent("perf.log")))
-        stores = StoreBundle(account: AccountId("performance"), now: Workloads.now)
+        stores = StoreBundle(account: AccountId("performance"), clock: { Workloads.now })
         let stores = stores
         pump = Task { @MainActor in
             for await batch in bridge.events { stores.apply(batch) }

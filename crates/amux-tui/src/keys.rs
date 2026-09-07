@@ -577,6 +577,7 @@ mod tests {
             capabilities: None,
             trust_status: amux_ui::HostTrustStatus::Trusted,
             last_dial_error: (!online).then(|| "connection refused".to_string()),
+            platform: None,
         };
         let agent = amux_ui::Agent {
             id: agent_id(),

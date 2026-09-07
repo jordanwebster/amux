@@ -398,9 +398,13 @@ public struct HostEntry: Codable, Sendable, Equatable, Identifiable {
     public var capabilities: JSONValue?
     public var trustStatus: HostTrustStatus
     public var lastDialError: String?
+    /// What kind of machine it is, in its own words: the operating system its
+    /// daemon announced in the handshake. Absent for a host nothing has been
+    /// adjacent to, and for one running a build from before hosts said so.
+    public var platform: String?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, online, version, capabilities
+        case id, name, online, version, capabilities, platform
         case trustStatus = "trust_status"
         case lastDialError = "last_dial_error"
     }
@@ -408,7 +412,7 @@ public struct HostEntry: Codable, Sendable, Equatable, Identifiable {
     public init(
         id: HostId, name: String, online: Bool, version: String? = nil,
         capabilities: JSONValue? = nil, trustStatus: HostTrustStatus = .trusted,
-        lastDialError: String? = nil
+        lastDialError: String? = nil, platform: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -417,6 +421,7 @@ public struct HostEntry: Codable, Sendable, Equatable, Identifiable {
         self.capabilities = capabilities
         self.trustStatus = trustStatus
         self.lastDialError = lastDialError
+        self.platform = platform
     }
 }
 

@@ -83,7 +83,7 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     /// "2m", "5h", "2d". One unit only — a row is scanned, not read, and
     /// "2d 3h" is two numbers where one would do.
     public func age(at now: Date) -> String {
-        Self.spell(max(0, now.timeIntervalSince(card.lastActivity)))
+        Elapsed.spelled(max(0, now.timeIntervalSince(card.lastActivity)))
     }
 
     /// How long this agent has been on the piece of work it announced, in the
@@ -91,10 +91,16 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     /// doing, which is the only honest answer to "how long has it been at it".
     public func working(at now: Date) -> String? {
         guard let since = card.agent.workingOn?.updatedAt else { return nil }
-        return Self.spell(max(0, now.timeIntervalSince(since)))
+        return Elapsed.spelled(max(0, now.timeIntervalSince(since)))
     }
+}
 
-    private static func spell(_ seconds: TimeInterval) -> String {
+/// How long ago something happened, in the one vocabulary the whole app uses.
+///
+/// The shortest true unit and nothing else: "14s", "2m", "5h", "2d". A row is
+/// scanned rather than read, and "2d 3h" is two numbers where one would do.
+public enum Elapsed {
+    public static func spelled(_ seconds: TimeInterval) -> String {
         switch seconds {
         case ..<60: "\(Int(seconds))s"
         case ..<3600: "\(Int(seconds / 60))m"

@@ -1075,6 +1075,7 @@ mod tests {
 
     fn remote_host(id: u128) -> Host {
         Host {
+            platform: None,
             id: Uuid::from_u128(id),
             name: format!("host-{id}"),
             version: "test".to_string(),

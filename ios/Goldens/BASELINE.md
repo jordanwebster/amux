@@ -128,8 +128,8 @@ The fleet as a panel over the screen it was opened from: two groups, a name and
 one line each, the conversation you are in marked, and Hosts, You and how many
 machines are reachable along the foot.
 
-The design has no preserved capture of this, so there is nothing to compare it
-against. Three things about the picture are worth knowing:
+The design's preserved capture of this screen is filed under the name
+`offline`, which is the same state under the catalogue's own name. Three things about the picture are worth knowing:
 
 - **What is behind the panel is the conversation it was opened from.** It is
   the real one, filled from the same state as `run`, rather than a stand-in:
@@ -890,3 +890,63 @@ readable behind it.
   reference draws it. Nothing is being written while this question is open.
 - The differing conversation carries over from `run`, and the dimmed feed from
   `plus`.
+
+## hosts
+
+The machines, grouped by whether this phone can reach them: two answering and
+one that stopped answering eight minutes ago, with the agents on it said once
+under the group rather than implied on every row.
+
+- **Three machines, not four.** The reference lists Studio, mini, homelab and
+  air. The scenario every capture is a state of has three paired machines;
+  homelab is the one that has been found on the network and not paired, which
+  is what the pairing screens are about, and listing it here as a machine you
+  have would contradict them.
+- **The reachable machines are in alphabetical order**, so mini is above
+  Studio; the reference draws Studio first. Order is the store's, and it puts a
+  machine you can use above one you cannot and then follows the alphabet, which
+  is the only order that does not change under a sync.
+- **The kind is the operating system, not the model.** The reference reads
+  "Mac Studio", "Mac mini", "Linux". A machine announces what it is in the
+  link handshake, and what a daemon can honestly say about itself is the
+  system it runs — reading a marketing name like "Mac Studio" needs a table of
+  hardware identifiers, and a table like that is this program guessing what
+  computer it is on. So all three read "macOS", and a machine that has never
+  been adjacent — nothing has heard it say anything — has no kind on its row
+  at all rather than a guess.
+- **"offline for 8m", not "offline since 08:12".** Nothing in the inventory
+  says when a machine went away; presence is a boolean derived from routing.
+  The only honest answer is the moment this phone watched it change, and the
+  app says every other elapsed time as an age in one unit, so this one is an
+  age too. It also stays true: "08:12" on a machine that went three days ago
+  would read as this morning. A machine that was already gone the first time
+  the phone heard of it says only "offline".
+- **The plus pairs a machine.** The reference draws a plus with nothing said
+  about what it does. The plus on a screen adds one of the things the screen
+  lists, and this screen lists machines; New Agent is the plus on the Agents
+  home, which is what that screen lists.
+- **No "This phone" section yet.** The reference ends with the phone's own
+  identity and its paired devices. Both are about identity and revocation
+  rather than about machines, and they are established with the `devices`
+  capture; this baseline will be retaken when they land.
+
+## offline
+
+A conversation whose machine went away mid-turn. Both things that are true are
+said at once: the connection is gone, and everything already on screen is
+still the last thing that was true, so the feed stays readable and the
+composer — the one control that would lie by staying usable — becomes where
+the failure is reported.
+
+This is the same state as `stale`, photographed under the name the design
+catalogue gives it. It is one picture because it is one thing that happened;
+the two ids are the two lists it belongs to.
+
+- **The header keeps its glyph and its overflow.** The reference's own drawing
+  of this screen is a partly-drawn frame with the title overlapping the feed.
+  What is drawn here is the conversation this build draws everywhere else,
+  with the place line reading "unreachable".
+- **The panel is the reference's**, sentence for sentence: which machine is
+  unreachable, that reconnecting is happening, how long ago the last update
+  was, and Retry Now beneath.
+- The differing conversation and the stale place line carry over from `stale`.

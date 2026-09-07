@@ -879,6 +879,7 @@ mod tests {
         let tunnels = Arc::new(TunnelPool::new(host_id, routing.clone(), incoming_tx));
         let connector_ctx = LinkConnectorCtx::new(
             Host {
+                platform: None,
                 id: host_id,
                 name: "local".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),

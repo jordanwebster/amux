@@ -30,7 +30,7 @@ final class FixtureTests: XCTestCase {
     /// on it — a golden, a journey, the door — can be trusted either.
     func testEveryFixtureLoadsIntoFreshStores() {
         for fixture in Fixtures.all {
-            let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+            let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
             fixture.apply(bundle)
             // The catalogue, as loading it actually goes: what each named
             // state puts on screen, printed so a reader can see the whole set
@@ -59,7 +59,7 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheHomeFixtureShowsTheMorningTheDesignDescribes() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("home")!.apply(bundle)
 
         XCTAssertEqual(bundle.fleet.rows.count, 10)
@@ -75,7 +75,7 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheQuietHomeSaysNothingNeedsYouAndNamesTheMissingMachine() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("home-quiet")!.apply(bundle)
         XCTAssertTrue(bundle.fleet.subtitle.hasPrefix("Nothing needs you · "))
         XCTAssertEqual(bundle.fleet.exceptions, "air offline")
@@ -83,14 +83,14 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheCachedHomeIsShownBeforeItIsConfirmed() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("home-cached")!.apply(bundle)
         XCTAssertFalse(bundle.fleet.reconciled)
         XCTAssertTrue(bundle.fleet.rows.allSatisfy { !$0.confirmed })
     }
 
     func testTheEmptyHomeIsEmptyRatherThanLoading() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("home-empty")!.apply(bundle)
         XCTAssertTrue(bundle.fleet.rows.isEmpty)
         XCTAssertTrue(bundle.fleet.reconciled)
@@ -101,7 +101,7 @@ final class FixtureTests: XCTestCase {
     /// fixture that carried one would be a picture of the ask panel rather
     /// than of the chrome and the feed this state is about.
     func testTheConversationFixturesCarryTheirRows() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("run")!.apply(bundle)
         let conversation = bundle.conversation(Scenario.focus)
         XCTAssertEqual(conversation.entries.count, Transcript.pairingCopy.count)
@@ -119,7 +119,7 @@ final class FixtureTests: XCTestCase {
             ("plan", Scenario.focus, "permission"),
         ]
         for (name, agent, kind) in expected {
-            let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+            let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
             Fixtures.named(name)!.apply(bundle)
             let conversation = bundle.conversation(agent)
             XCTAssertEqual(conversation.gate, .claudePty(.needsYou), name)
@@ -134,7 +134,7 @@ final class FixtureTests: XCTestCase {
     /// rather than off the gate: an agent that ended a turn nobody has read is
     /// one of the things that need you.
     func testTheFinishedTurnIsOfferedForReview() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("finished")!.apply(bundle)
         XCTAssertEqual(
             bundle.fleet.rows.first(where: { $0.id == Scenario.focus })?.attention,
@@ -143,13 +143,13 @@ final class FixtureTests: XCTestCase {
     }
 
     func testBothPermissionVocabulariesStayApart() {
-        let claudeBundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let claudeBundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("ask-permission")!.apply(claudeBundle)
         let claudeAsk = claudeBundle.conversation(Scenario.focus).asks.first
         XCTAssertEqual(claudeAsk?.layer, .claudePty)
         XCTAssertEqual(claudeAsk?.body["kind"]?["ask"]?.stringValue, "permission")
 
-        let codexBundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let codexBundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("ask-permission-codex")!.apply(codexBundle)
         let codexAsk = codexBundle.conversation(Scenario.agentId("spec-suite")).asks.first
         XCTAssertEqual(codexAsk?.layer, .codex)
@@ -167,7 +167,7 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheUnreadableAgentSaysSoRatherThanLookingIdle() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("unreadable")!.apply(bundle)
         let conversation = bundle.conversation(Scenario.agentId("legacy-port"))
         XCTAssertEqual(conversation.facts, .claudeSdk(supported: false))
@@ -176,7 +176,7 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheRefusedSendCarriesTheReasonTheCoreGave() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("send-refused")!.apply(bundle)
         let conversation = bundle.conversation(Scenario.focus)
         XCTAssertFalse(conversation.gate.accepts)
@@ -187,7 +187,7 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheLostHostLeavesTheFeedReadable() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("host-lost")!.apply(bundle)
         XCTAssertFalse(bundle.conversation(Scenario.focus).entries.isEmpty)
         XCTAssertEqual(bundle.hosts.offline.map(\.name), ["air", "Studio"])
@@ -195,7 +195,7 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheExitedAgentStatesItsCode() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("exited")!.apply(bundle)
         XCTAssertEqual(bundle.fleet.rows.first { $0.name == "refactor-auth" }?.phase,
                        .exited(exitCode: 1))
@@ -203,7 +203,7 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheWorkingFixtureCarriesTheProvidersOwnTaskList() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("working")!.apply(bundle)
         let todos = bundle.conversation(Scenario.focus).provider.todos
         XCTAssertEqual(todos?.done, 3)
@@ -212,7 +212,7 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheQueuedFixtureHoldsOneMessage() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("queued")!.apply(bundle)
         XCTAssertNotNil(bundle.conversation(Scenario.focus).queued)
     }
@@ -220,7 +220,7 @@ final class FixtureTests: XCTestCase {
     /// The frozen patch is two files with their own paths, and the chip's
     /// arithmetic is the patch's own.
     func testTheReviewFixtureCarriesTheChanges() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("review-cta")!.apply(bundle)
         let conversation = bundle.conversation(Scenario.focus)
         XCTAssertEqual(conversation.changes?.files.map(\.path), [
@@ -232,7 +232,7 @@ final class FixtureTests: XCTestCase {
     }
 
     func testTheUnpairedMachineIsAnOfferRatherThanAHost() {
-        let bundle = StoreBundle(account: AccountId("ada"), now: Scenario.now)
+        let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("pair-confirm")!.apply(bundle)
         let homelab = bundle.hosts.host(Scenario.homelab)
         XCTAssertEqual(homelab?.trustStatus, .untrustedButOnline)

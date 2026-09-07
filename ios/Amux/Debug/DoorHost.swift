@@ -35,7 +35,7 @@ final class DoorHost {
     /// What the conversation on show has opened over itself, where the state
     /// asked for one the screen name does not imply.
     private(set) var overlay: ConversationOverlay?
-    private(set) var stores = StoreBundle(account: AccountId("door"), now: Scenario.now)
+    private(set) var stores = StoreBundle(account: AccountId("door"), clock: { Scenario.reading })
     /// The accounts a driven screen believes this phone has. Whether anything
     /// is reachable at all is an account fact, not a fleet fact, so the two
     /// gated home states need this as much as they need empty stores.
@@ -157,8 +157,10 @@ final class DoorHost {
         }
         guard let fixture = Fixtures.named(wanted) else { return .error("no state named \(wanted)") }
         // A fresh bundle every time: a screen opened after another one must
-        // not inherit the conversation the last one left behind.
-        stores = StoreBundle(account: AccountId("door"), now: Scenario.now)
+        // not inherit the conversation the last one left behind — nor the
+        // moment a fixture wound the clock back to.
+        Scenario.reading = Scenario.now
+        stores = StoreBundle(account: AccountId("door"), clock: { Scenario.reading })
         accounts = AccountRegistry()
         for entry in fixture.accounts {
             accounts.add(entry.account, entitlement: entry.entitlement)
@@ -519,7 +521,7 @@ final class DoorHost {
     private func replay(from path: String) -> DoorReply {
         stop()
         let directory = URL(fileURLWithPath: path, isDirectory: true)
-        let rebuilt = StoreBundle(account: AccountId("replay"), now: Scenario.now)
+        let rebuilt = StoreBundle(account: AccountId("replay"), clock: { Scenario.now })
         let events: [Event]
         let recorded: [TraceEvent]
         do {

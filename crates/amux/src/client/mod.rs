@@ -1239,6 +1239,7 @@ pub(crate) fn host_entry_from_wire(
         capabilities,
         trust_status,
         last_dial_error: host.last_dial_error,
+        platform: host.platform,
     })
 }
 

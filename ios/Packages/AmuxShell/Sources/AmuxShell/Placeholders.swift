@@ -10,34 +10,6 @@ import SwiftUI
 // does — the Agents tab and the conversation have already been replaced this
 // way. Nothing here is a golden's subject; captures open a screen by name.
 
-/// The Hosts tab until the hosts screen lands.
-struct HostsPlaceholder: View {
-    @Environment(\.design) private var design
-    let router: Router
-    let stores: StoreBundle
-
-    var body: some View {
-        List {
-            ForEach(stores.hosts.hosts) { host in
-                Button {
-                    router.open(.host(host.id))
-                } label: {
-                    Text(host.name)
-                        .designFont(.identifier, design)
-                        .foregroundStyle(design.ink.color)
-                }
-                .identified("hosts.row.\(host.id)", label: host.name,
-                            value: host.online ? "online" : "offline")
-            }
-            Button("Pair by Code") { router.open(.pairByCode) }
-                .identified("hosts.pairByCode", label: "Pair by Code")
-            Button("New Agent") { router.open(.newAgent) }
-                .identified("hosts.newAgent", label: "New Agent")
-        }
-        .identified("hosts")
-    }
-}
-
 /// The You tab until its screens land.
 struct YouPlaceholder: View {
     let router: Router

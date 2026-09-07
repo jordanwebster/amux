@@ -963,6 +963,7 @@ fn host() -> HostEntry {
         capabilities: Some(amux_ui::Capabilities::default()),
         trust_status: HostTrustStatus::Trusted,
         last_dial_error: None,
+        platform: None,
     }
 }
 

@@ -852,6 +852,11 @@ pub struct Host {
     pub version: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "4")]
     pub capabilities: ::core::option::Option<Capabilities>,
+    /// What kind of machine this is, in the host's own words: the operating
+    /// system it runs, as it named itself when it was built. A host that
+    /// predates this field says nothing rather than guessing.
+    #[prost(string, optional, tag = "5")]
+    pub platform: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PairMessage {
@@ -982,6 +987,10 @@ pub struct HostEntry {
     /// `!online && last_dial_error` unset, derived client-side if needed.
     #[prost(string, optional, tag = "7")]
     pub last_dial_error: ::core::option::Option<::prost::alloc::string::String>,
+    /// The machine's kind, as it announced itself in the handshake. Unset for a
+    /// host that has never been adjacent, because nothing else knows it.
+    #[prost(string, optional, tag = "8")]
+    pub platform: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Agent {

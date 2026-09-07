@@ -45,10 +45,16 @@ public final class StoreBundle {
     /// fixture, a replay — leaves it alone and nothing is stored anywhere.
     @ObservationIgnored public var store: (@MainActor (PickedAttachment, Data) -> OpId?)?
 
-    public init(account: AccountId, now: Date = Date(), unread: UnreadWeights = UnreadWeights()) {
+    /// The clock every store in the bundle reads. A photograph pins it, so
+    /// two runs of the same fixture put the same time on the screen.
+    public init(
+        account: AccountId,
+        clock: @escaping @MainActor () -> Date = { Date() },
+        unread: UnreadWeights = UnreadWeights()
+    ) {
         self.account = account
-        self.fleet = FleetStore(now: now, unread: unread)
-        self.hosts = HostsStore()
+        self.fleet = FleetStore(now: clock(), unread: unread)
+        self.hosts = HostsStore(clock: clock)
     }
 
     public func apply(_ batch: [Event]) {

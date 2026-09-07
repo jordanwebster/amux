@@ -81,6 +81,8 @@ public enum Fixtures {
         Built(.comment, "comment"),
         Built(.firstRun, "first-run"),
         Built(.firstRunPaid, "first-run-paid"),
+        Built(.hosts, "hosts"),
+        Built(.offline, "offline"),
     ]
 
     /// The screens the design catalogue describes, in its own order.
@@ -250,8 +252,12 @@ public enum Fixtures {
         },
 
         // 5 · Machines and agents
+        // The phone was watching when air stopped answering: that is why the
+        // row can say how long it has been gone. A machine that was already
+        // away the first time the phone heard of it says only that it is.
         Fixture(id: "hosts", screen: .hosts) { bundle in
-            States.open(bundle)
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.lostHost(bundle, Scenario.air, minutesAgo: 8)
         },
         Fixture(id: "pin", screen: .pin) { bundle in
             States.open(bundle)
@@ -259,10 +265,12 @@ public enum Fixtures {
         Fixture(id: "new-agent", screen: .newAgent) { bundle in
             States.open(bundle)
         },
+        // A conversation whose machine went away mid-turn. Both things are
+        // true at once and both are said: the feed is the last thing that was
+        // true and stays readable, and the composer — the one control that
+        // would lie by staying usable — becomes where the failure is reported.
         Fixture(id: "offline", screen: .offline) { bundle in
-            // One machine unreachable: the agent on it is genuinely unknown,
-            // which is not the same as idle and must never be drawn as idle.
-            States.open(bundle, extra: [States.offline("air is not reachable")])
+            States.hostLost(bundle)
         },
         Fixture(id: "exited", screen: .exited) { bundle in
             var ended = Scenario.agents
@@ -341,15 +349,11 @@ public enum Fixtures {
             States.open(bundle, hosts: Scenario.hosts + [HostState(entry: Scenario.unpaired, epoch: 1)])
         },
         // The host went away mid-turn. The feed stays readable and says so.
+        // The same state the `offline` screen is photographed in: one is the
+        // design's screen and one is the state list's, and they are one
+        // picture because they are one thing that happened.
         Fixture(id: "host-lost", screen: .run) { bundle in
-            var lost = Scenario.hosts
-            lost[0].entry.online = false
-            lost[0].entry.lastDialError = "connection reset"
-            States.open(
-                bundle, hosts: lost, entries: Transcript.pairingCopy,
-                session: Sessions.claude(gate: .unknown, stream: .closed(
-                    reason: .object(["reason": .string("host_unreachable")]))),
-                extra: [States.offline("Studio is not reachable")])
+            States.hostLost(bundle)
         },
         // An agent this build cannot read. It is not offered to open.
         Fixture(id: "unreadable", screen: .run) { bundle in

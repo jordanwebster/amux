@@ -506,6 +506,7 @@ impl ClientService {
                 HostTrustStatus::UntrustedButOnline
             },
             last_dial_error: self.stored_last_dial_error(host_id).await,
+            platform: host.platform,
         }
     }
 
@@ -518,6 +519,9 @@ impl ClientService {
             capabilities: None,
             trust_status: HostTrustStatus::Trusted,
             last_dial_error: self.stored_last_dial_error(host_id).await,
+            // Nothing has been adjacent to it, so nothing has heard it say
+            // what it is.
+            platform: None,
         }
     }
 
@@ -1406,6 +1410,7 @@ pub(crate) fn host_entry_to_wire(host: &HostEntry) -> wire::HostEntry {
             HostTrustStatus::UntrustedButOnline => wire::HostTrustStatus::UntrustedButOnline as i32,
         },
         last_dial_error: host.last_dial_error.clone(),
+        platform: host.platform.clone(),
     }
 }
 
@@ -2698,6 +2703,7 @@ mod tests {
 
     fn host(id: u128, supported_agent_types: Vec<SupportedAgentType>) -> Host {
         Host {
+            platform: None,
             id: Uuid::from_u128(id),
             name: format!("host-{id}"),
             version: "test".to_string(),
@@ -2723,6 +2729,7 @@ mod tests {
             capabilities: Some(host.capabilities.clone()),
             trust_status: HostTrustStatus::UntrustedButOnline,
             last_dial_error: None,
+            platform: None,
         }
     }
 
@@ -4513,6 +4520,7 @@ mod tests {
         let direct_peer = host(3, non_relay_types());
         let (cloud_tx, _cloud_rx) = mpsc::channel(8);
         let cloud_relay = Host {
+            platform: None,
             id: Uuid::from_u128(99),
             name: "cloud".to_string(),
             version: "test".to_string(),

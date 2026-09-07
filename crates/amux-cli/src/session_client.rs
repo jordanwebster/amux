@@ -1775,6 +1775,7 @@ mod attach {
             capabilities: None,
             trust_status: amux::HostTrustStatus::Trusted,
             last_dial_error: Some("dial tcp: connection refused".to_string()),
+            platform: None,
         };
         let agent = amux::Agent {
             id: Uuid::from_u128(2),

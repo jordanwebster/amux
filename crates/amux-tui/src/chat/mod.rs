@@ -981,6 +981,7 @@ mod tests {
             capabilities: None,
             trust_status: HostTrustStatus::Trusted,
             last_dial_error: None,
+            platform: None,
         }
     }
 

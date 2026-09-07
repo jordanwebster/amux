@@ -4,6 +4,51 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **The Hosts tab, and a machine that says what it is.**
+
+The Hosts tab draws the paired machines, grouped by whether the phone can
+reach them: what each one is, how the phone is reaching it, and — under the
+group rather than on every row — that agents on an unreachable machine are in
+a state nobody can report.
+
+Saying what a machine *is* needed something nothing carried. A host announced
+its name, its version and its capabilities in the link handshake and nothing
+about the computer it runs on, so the tab had no honest way to tell a Linux
+box from a Mac. Hosts now announce a platform: the operating system the daemon
+was built for, and nothing more. Reading a model name like "Mac Studio" would
+take a table of hardware identifiers, which is a program guessing what
+computer it is on; a machine nothing has ever been adjacent to says nothing at
+all, and its row carries no kind rather than a guess. The field is optional on
+the wire, so a peer that predates it is not misread as claiming to be nothing
+in particular.
+
+How a machine is reached is not guessed either. A phone holds one connection —
+to the relay — and every machine is on the far side of it, so a reachable
+machine reads "via relay" because there is no other way for a phone to reach
+one.
+
+When a machine went away is observed rather than reported. Presence is a
+boolean derived from routing and nothing in it says when it changed, so the
+hosts store records the moment it watched a machine stop answering, against a
+clock it is handed rather than the system's. A machine that was already gone
+the first time the phone heard of it has no answer and its row says only that
+it is offline. The elapsed time is written as an age — "offline for 8m" — in
+the same one-unit vocabulary as every other age in the app, which also stays
+true for a machine that went three days ago.
+
+The bundle of stores now takes a clock rather than a fixed moment, so a
+fixture can wind it back, play the snapshot where a machine stopped answering,
+and put it forward again: that is the only way a phone ever learns a machine
+went away eight minutes ago rather than just now, and it is what makes the
+capture the same picture twice.
+
+Baselines: `hosts`, and `offline` — the conversation whose machine went away
+mid-turn, which is the design's own name for the state already photographed as
+`stale`; both now come from one fixture. Departures from the references are in
+ios/Goldens/BASELINE.md.
+
+---
+
 2026-09-07 — **A command sent twice on the screen, and a radio spending a
 colour the sheet had already spent.** Three repairs found by reading the
 writing journey's own evidence back.

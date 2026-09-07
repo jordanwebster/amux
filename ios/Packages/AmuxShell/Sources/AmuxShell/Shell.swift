@@ -379,8 +379,15 @@ private struct HostsTabRoot: View {
     let stores: StoreBundle
 
     var body: some View {
-        HostsPlaceholder(router: router, stores: stores)
-            .navigationTitle(Tab.hosts.title)
+        HostsTab(model: stores.hosts) { action in
+            switch action {
+            case .open(let host): router.open(.host(host))
+            case .pair: router.open(.pairByCode)
+            case .newAgent: router.open(.newAgent)
+            }
+        }
+        // The screen draws its own header, so the bar would be a second one.
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 

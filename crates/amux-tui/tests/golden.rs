@@ -63,6 +63,7 @@ fn a_host(name: &str) -> HostEntry {
         capabilities: Some(amux_ui::Capabilities::default()),
         trust_status: amux_ui::HostTrustStatus::Trusted,
         last_dial_error: None,
+        platform: None,
     }
 }
 
@@ -72,6 +73,7 @@ fn an_offline_host(name: &str) -> HostEntry {
         version: None,
         capabilities: None,
         last_dial_error: Some("dial tcp: connection refused".to_string()),
+        platform: None,
         ..a_host(name)
     }
 }

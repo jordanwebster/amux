@@ -150,6 +150,7 @@ mod tests {
                 capabilities: None,
                 trust_status: amux::HostTrustStatus::Trusted,
                 last_dial_error: None,
+                platform: None,
             },
         }
     }

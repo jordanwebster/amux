@@ -643,6 +643,7 @@ mod attach_tests {
                     capabilities: Some(amux::Capabilities::default()),
                     trust_status: amux::HostTrustStatus::Trusted,
                     last_dial_error: None,
+                    platform: None,
                 })
                 .collect();
             Self {

@@ -2024,6 +2024,7 @@ mod tests {
 
     fn test_host(id: u128, name: &str) -> amux::HostEntry {
         let host = amux::Host {
+            platform: None,
             id: uuid::Uuid::from_u128(id),
             name: name.to_string(),
             version: "test".to_string(),
@@ -2037,6 +2038,7 @@ mod tests {
             capabilities: Some(host.capabilities.clone()),
             trust_status: amux::HostTrustStatus::UntrustedButOnline,
             last_dial_error: None,
+            platform: None,
         }
     }
 

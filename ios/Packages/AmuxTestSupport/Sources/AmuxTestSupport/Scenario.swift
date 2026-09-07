@@ -45,17 +45,41 @@ public enum Scenario {
     /// The paired machines. `air` is one you cannot reach this morning, which
     /// is why one agent's state is genuinely unknown rather than idle.
     public static let hosts: [HostState] = [
-        HostState(entry: HostEntry(id: studio, name: "Studio", online: true, version: "0.4.0"), epoch: 1),
-        HostState(entry: HostEntry(id: mini, name: "mini", online: true, version: "0.4.0"), epoch: 1),
+        HostState(entry: HostEntry(
+            id: studio, name: "Studio", online: true, version: "0.4.0",
+            platform: "macOS"), epoch: 1),
+        HostState(entry: HostEntry(
+            id: mini, name: "mini", online: true, version: "0.4.0",
+            platform: "macOS"), epoch: 1),
         HostState(entry: HostEntry(
             id: air, name: "air", online: false, version: "0.4.0",
-            lastDialError: "no route to host"), epoch: 1),
+            lastDialError: "no route to host", platform: "macOS"), epoch: 1),
     ]
+
+    /// The same machines on a morning when all three answer. What a phone
+    /// hears before one of them goes away, so a fixture can put a machine's
+    /// departure in the past by playing both.
+    public static let reachableHosts: [HostState] = hosts.map { host in
+        var reachable = host
+        reachable.entry.online = true
+        reachable.entry.lastDialError = nil
+        return reachable
+    }
+
+    /// What the pinned clock reads.
+    ///
+    /// A capture is taken at one fixed moment so two runs draw the same
+    /// picture. A fixture whose state is about something having happened
+    /// earlier winds this back, applies that, and puts it forward again —
+    /// which is the only way this phone ever learns that a machine went away
+    /// eight minutes ago rather than just now.
+    @MainActor public static var reading = now
 
     /// A machine on the network that has not been paired yet. It is never in
     /// the fleet — an untrusted host is an offer, not a host.
     public static let unpaired = HostEntry(
-        id: homelab, name: "homelab", online: true, trustStatus: .untrustedButOnline)
+        id: homelab, name: "homelab", online: true, trustStatus: .untrustedButOnline,
+        platform: "Linux")
 
     // MARK: - Agents
 

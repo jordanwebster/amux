@@ -88,6 +88,7 @@ fn base(readonly: bool) -> Vec<Msg> {
         capabilities: Some(amux_ui::Capabilities::default()),
         trust_status: amux_ui::HostTrustStatus::Trusted,
         last_dial_error: None,
+        platform: None,
     };
     let mut agent = an_sdk_agent();
     agent.readonly = readonly;

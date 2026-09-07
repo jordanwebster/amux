@@ -57,6 +57,48 @@ public enum States {
         bundle.fleet.refreshOrder(now: Scenario.now)
     }
 
+    /// A machine that was answering when the phone last heard from it and is
+    /// not answering now.
+    ///
+    /// Played as two snapshots with time between them, because that is the
+    /// only way a phone ever learns when a machine went away: presence is a
+    /// boolean, and nothing in it says when it changed. The clock is wound
+    /// back for the second snapshot and put forward again, so the departure
+    /// sits in the past of the fixed moment every screen is photographed at.
+    @MainActor
+    public static func lostHost(
+        _ bundle: StoreBundle, _ id: HostId, minutesAgo: Double,
+        agents: [AgentCard] = Scenario.agents
+    ) {
+        let after = Scenario.reachableHosts.map { host -> HostState in
+            guard host.entry.id == id else { return host }
+            var lost = host
+            lost.entry.online = false
+            lost.entry.lastDialError = "no route to host"
+            return lost
+        }
+        Scenario.reading = Scenario.now.addingTimeInterval(-60 * minutesAgo)
+        bundle.apply([fleet(agents, hosts: after)])
+        Scenario.reading = Scenario.now
+    }
+
+    /// The conversation whose machine went away mid-turn.
+    ///
+    /// Studio stops answering while a turn is running: the session's stream
+    /// closes as unreachable, the connection says which machine it lost, and
+    /// the feed keeps every row that was already true.
+    @MainActor
+    public static func hostLost(_ bundle: StoreBundle) {
+        var lost = Scenario.hosts
+        lost[0].entry.online = false
+        lost[0].entry.lastDialError = "connection reset"
+        open(
+            bundle, hosts: lost, entries: Transcript.pairingCopy,
+            session: Sessions.claude(gate: .unknown, stream: .closed(
+                reason: .object(["reason": .string("host_unreachable")]))),
+            extra: [offline("Studio is not reachable")])
+    }
+
     /// A review already part-way through: the two files nobody is reading
     /// folded away, and two remarks written where the change is.
     ///

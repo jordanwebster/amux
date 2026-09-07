@@ -1732,6 +1732,7 @@ mod tests {
             capabilities: None,
             trust_status: amux::HostTrustStatus::Trusted,
             last_dial_error: None,
+            platform: None,
         };
         let mut model = Model::default();
         for msg in [

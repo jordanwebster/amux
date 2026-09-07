@@ -339,6 +339,10 @@ message Host {
   string name = 2;
   string version = 3;
   Capabilities capabilities = 4;
+  // What kind of machine this is, in the host's own words: the operating
+  // system it runs, as it named itself when it was built. A host that
+  // predates this field says nothing rather than guessing.
+  optional string platform = 5;
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +415,9 @@ message HostEntry {
   // daemon honestly knows; "never tried / no news" is
   // `!online && last_dial_error` unset, derived client-side if needed.
   optional string last_dial_error = 7;
+  // The machine's kind, as it announced itself in the handshake. Unset for a
+  // host that has never been adjacent, because nothing else knows it.
+  optional string platform = 8;
 }
 
 message Agent {

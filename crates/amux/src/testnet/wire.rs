@@ -180,6 +180,7 @@ impl WirePeer {
             name: "wire-peer".to_string(),
             version: "0.0.0-wire".to_string(),
             capabilities: Capabilities::default(),
+            platform: None,
         };
         self.send_message(pb::Message {
             body: Some(pb::message::Body::Hello(pb::Hello {

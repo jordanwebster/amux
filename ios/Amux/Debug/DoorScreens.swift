@@ -57,13 +57,13 @@ enum DoorScreens {
         // layer will take one and whether the run has ended are all facts the
         // conversation reads off its own store rather than screens of their
         // own: `run-live`, `voices`, `review-cta`, `working`, `queued`,
-        // `typing` and `exited` are `run` with a different feed, session,
-        // draft and fleet in it.
+        // `typing`, `exited` and `offline` are `run` with a different feed,
+        // session, draft and fleet in it.
         //
         // The overlay is handed in here as well, because the strip above the
         // composer grows into the task list and a capture of the grown strip
         // has to be able to ask for it open.
-        case .run, .runLive, .voices, .reviewCta, .working, .queued, .exited, .typing:
+        case .run, .runLive, .voices, .reviewCta, .working, .queued, .exited, .typing, .offline:
             Conversation(
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(
@@ -103,6 +103,10 @@ enum DoorScreens {
             if let review = host.stores.review(Scenario.focus) {
                 DiffPage(model: review, subject: "refactor-auth") { _ in }
             }
+        // The machines. Captured outside the tab bar like every other screen,
+        // because what the tab bar looks like is the shell's own journey.
+        case .hosts:
+            HostsTab(model: host.stores.hosts) { _ in }
         default: EmptyView()
         }
     }

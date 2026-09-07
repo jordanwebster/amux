@@ -35,6 +35,12 @@ pub struct Host {
     pub version: String,
     /// Host-level protocol and agent creation capabilities.
     pub capabilities: Capabilities,
+    /// What kind of machine this is, in its own words: the operating system
+    /// the daemon was built for. A peer built before this field existed says
+    /// nothing, which is why it is optional — a machine whose kind is unknown
+    /// is not the same as one that claims to be nothing in particular.
+    #[serde(default)]
+    pub platform: Option<String>,
 }
 
 /// Local identity of one link: the authenticated peer plus a connection
@@ -101,6 +107,7 @@ pub(crate) fn host_to_wire(host: &Host) -> pb::Host {
         name: host.name.clone(),
         version: host.version.clone(),
         capabilities: Some(capabilities_to_wire(&host.capabilities)),
+        platform: host.platform.clone(),
     }
 }
 
@@ -110,6 +117,7 @@ pub(crate) fn host_from_wire(host: pb::Host) -> Result<Host, protocol_wire::Deco
         name: host.name,
         version: host.version,
         capabilities: capabilities_from_wire(host.capabilities)?,
+        platform: host.platform,
     })
 }
 

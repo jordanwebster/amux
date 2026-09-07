@@ -1309,6 +1309,7 @@ mod tests {
 
     fn host(id: u128, name: &str) -> Host {
         Host {
+            platform: None,
             id: HostId::from_u128(id),
             name: name.to_string(),
             version: "test".to_string(),

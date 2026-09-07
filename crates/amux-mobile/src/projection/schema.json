@@ -43,7 +43,8 @@
             "version": null,
             "capabilities": null,
             "trust_status": "trusted",
-            "last_dial_error": null
+            "last_dial_error": null,
+            "platform": null
           },
           "epoch": 1
         }
@@ -276,7 +277,8 @@
             "version": null,
             "capabilities": null,
             "trust_status": "trusted",
-            "last_dial_error": null
+            "last_dial_error": null,
+            "platform": null
           },
           "epoch": 1
         }
@@ -391,7 +393,8 @@
             "version": null,
             "capabilities": null,
             "trust_status": "trusted",
-            "last_dial_error": null
+            "last_dial_error": null,
+            "platform": null
           },
           "epoch": 1
         }

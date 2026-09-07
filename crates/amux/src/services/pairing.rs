@@ -2056,6 +2056,7 @@ mod tests {
             .apply_claim_up(
                 relay,
                 Host {
+                    platform: None,
                     id: peer.host_id,
                     name: "peer".to_string(),
                     version: "test".to_string(),
@@ -2323,6 +2324,7 @@ mod tests {
             .apply_claim_up(
                 relay,
                 Host {
+                    platform: None,
                     id: peer.host_id,
                     name: "peer".to_string(),
                     version: "test".to_string(),
@@ -2414,6 +2416,7 @@ mod tests {
             .register(
                 relay_link,
                 Host {
+                    platform: None,
                     id: HostId::from_u128(99),
                     name: "relay".to_string(),
                     version: "test".to_string(),
