@@ -482,6 +482,86 @@ struct AttachmentRequest {
     size: u64,
 }
 
+/// What the phone knows about a file it just picked, before anything is stored.
+/// Its identity is not among them: content identity is computed here from the
+/// bytes, so a client can never name an artifact by an identity it made up.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PickedAttachment {
+    agent: AgentId,
+    kind: amux_ui::ArtifactKind,
+    name: String,
+    mime: String,
+}
+
+/// The command a picked file becomes, or nothing where the description of it
+/// was not readable.
+///
+/// Separate from the FFI entry so the bytes a command carries can be held
+/// against what was picked without a live handle.
+fn picked_command(request_json: &str, bytes: Vec<u8>) -> Option<amux_ui::Command> {
+    let picked: PickedAttachment = serde_json::from_str(request_json).ok()?;
+    Some(amux_ui::Command::PutAttachment {
+        agent: picked.agent,
+        attachment: amux_ui::DraftAttachment::from_bytes(
+            picked.kind,
+            picked.name,
+            picked.mime,
+            bytes,
+        ),
+    })
+}
+
+/// Stores a picked file's bytes on the agent's host, returning an owned
+/// operation UUID string; free it with amux_mobile_free. NULL means the
+/// handle, the JSON, or the worker was unavailable.
+///
+/// The bytes travel here rather than inside a dispatched command for two
+/// reasons: a command is JSON, and a photograph spelled as a JSON array of
+/// numbers is four times its own size; and every dispatched command is written
+/// into the local replay recording, which is not a place for somebody's
+/// photograph. What the recording keeps is the artifact, never its contents.
+///
+/// # Safety
+/// handle must be live and request_json readable and NUL-terminated for this
+/// call; bytes must point at len readable bytes. No pointer may race stop.
+/// Everything is copied before return.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_attach(
+    handle: *mut Handle,
+    request_json: *const c_char,
+    bytes: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { handle.as_ref() }?;
+        let json = unsafe { read_string(request_json) }?;
+        let bytes = match len {
+            0 => Vec::new(),
+            _ => {
+                if bytes.is_null() {
+                    return None;
+                }
+                unsafe { std::slice::from_raw_parts(bytes, len) }.to_vec()
+            }
+        };
+        let command = picked_command(json, bytes)?;
+        let op = OpId(uuid::Uuid::new_v4());
+        let result = CString::new(op.0.to_string()).ok()?;
+        handle
+            .commands
+            .send(Control::Dispatch {
+                op,
+                command: Ok(CommandDto::Shared(command)),
+            })
+            .ok()?;
+        Some(result.into_raw())
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
 /// Spells one artifact attachment as the canonical element a message carries
 /// it in, as owned JSON `{"element":"…"}`; free it with amux_mobile_free.
 /// NULL means the request was not an artifact identity, kind, name and size.

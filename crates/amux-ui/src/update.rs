@@ -136,6 +136,23 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
             text,
             attachments,
         } => update_attachment_prompt(model, op, seq, agent, text, attachments),
+        Command::PutAttachment { agent, attachment } => dispatch_operation(
+            model,
+            op,
+            seq,
+            // The model keeps what the artifact is, never the bytes: pending
+            // operations are recorded, and a recording is not a place for
+            // somebody's photograph.
+            redact_command(Command::PutAttachment {
+                agent,
+                attachment: attachment.clone(),
+            }),
+            Effect::PutAttachment {
+                op,
+                agent,
+                attachment,
+            },
+        ),
         Command::FetchDiff { agent, id } => dispatch_operation(
             model,
             op,
@@ -178,6 +195,9 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
 }
 
 fn redact_command(mut command: Command) -> Command {
+    if let Command::PutAttachment { attachment, .. } = &mut command {
+        attachment.bytes = None;
+    }
     if let Command::SendPromptWithAttachments { attachments, .. }
     | Command::Send {
         draft: crate::Draft { attachments, .. },

@@ -118,6 +118,7 @@ fn blob_path(root: &Path, agent: amux::AgentId, id: &amux::ArtifactId) -> PathBu
 struct AttachmentStub {
     requests: Mutex<Vec<amux::SendInputRequest>>,
     calls: Mutex<Vec<String>>,
+    stored: Mutex<Vec<(String, Vec<u8>)>>,
 }
 
 impl AttachmentClient for AttachmentStub {
@@ -131,6 +132,10 @@ impl AttachmentClient for AttachmentStub {
     ) -> AttachmentClientFuture<'a, amux::ArtifactRef> {
         Box::pin(async move {
             self.calls.lock().unwrap().push(format!("put:{name}"));
+            self.stored
+                .lock()
+                .unwrap()
+                .push((name.to_string(), bytes.clone()));
             if name == "oversized.bin" {
                 return Err(amux::ClientError::Protocol(
                     amux::ProtocolError::AttachmentTooLarge {
@@ -225,6 +230,53 @@ async fn runtime_reflects_daemon_state_in_the_model() {
     installation
         .shutdown(amux::ShutdownReason::UserRequested)
         .await;
+}
+
+/// A picked photograph is stored on its own, before any message exists, and
+/// what comes back is what the composer can name.
+#[tokio::test(flavor = "multi_thread")]
+async fn attaching_stores_the_picked_bytes_and_answers_with_what_a_token_names() {
+    let client = AttachmentStub::default();
+    let agent = Uuid::new_v4();
+    let pixels = b"\x89PNG\r\n\x1a\n and then some pixels".to_vec();
+    let picked = DraftAttachment::from_bytes(
+        ArtifactKind::Image,
+        "reconnect-loop.png",
+        "image/png",
+        pixels.clone(),
+    );
+
+    let outcome = amux_ui::execute_put(&client, agent, picked.clone()).await;
+    assert_eq!(
+        *client.stored.lock().unwrap(),
+        vec![("reconnect-loop.png".to_string(), pixels)],
+        "the host receives the bytes that were picked, unaltered"
+    );
+    let OpOutcome::AttachmentStored { attachment } = outcome else {
+        panic!("a picked photograph is stored: {outcome:?}")
+    };
+    assert_eq!(attachment.id, picked.id);
+    assert_eq!(attachment.name, "reconnect-loop.png");
+    assert_eq!(attachment.size, picked.size);
+    assert!(
+        attachment.bytes.is_none(),
+        "the bytes have done their travelling and do not come back"
+    );
+
+    // A store the host refused never becomes a token: there would be nothing
+    // behind it for whoever reads the message.
+    let too_large = DraftAttachment::from_bytes(
+        ArtifactKind::File,
+        "oversized.bin",
+        "application/octet-stream",
+        b"stub rejects by name".to_vec(),
+    );
+    assert!(matches!(
+        amux_ui::execute_put(&client, agent, too_large).await,
+        OpOutcome::Error {
+            error: OpError::AttachmentTooLarge { ref name, .. }
+        } if name == "oversized.bin"
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]

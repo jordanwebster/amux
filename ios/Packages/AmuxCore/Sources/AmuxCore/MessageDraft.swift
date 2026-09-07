@@ -136,6 +136,25 @@ public struct DraftAttachment: Codable, Sendable, Equatable {
     }
 }
 
+/// What the phone knows about a file the moment it is picked.
+///
+/// No identity: an artifact is named by its contents, and the contents are
+/// hashed by the shared library from the bytes it is handed. A phone that
+/// chose the identity could name something nobody can fetch.
+public struct PickedAttachment: Codable, Sendable, Equatable {
+    public var agent: AgentId
+    public var kind: ArtifactKind
+    public var name: String
+    public var mime: String
+
+    public init(agent: AgentId, kind: ArtifactKind, name: String, mime: String) {
+        self.agent = agent
+        self.kind = kind
+        self.name = name
+        self.mime = mime
+    }
+}
+
 public enum ArtifactKind: String, Codable, Sendable, Equatable {
     case image
     case file

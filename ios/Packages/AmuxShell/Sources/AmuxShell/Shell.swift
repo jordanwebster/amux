@@ -1,7 +1,9 @@
 import AmuxCore
 import AmuxDesign
 import AmuxFeatures
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -121,6 +123,13 @@ private struct ConversationPage: View {
     /// Whose screen this is while it is out: view state, because a drawer is
     /// something this page is doing and not somewhere the app has gone.
     @State private var open = false
+    /// The system's own pickers, asked for from the plus. They are presented
+    /// here rather than from the conversation because they are the system's
+    /// screens: a conversation that could raise one could not be photographed
+    /// or replayed away from a device.
+    @State private var pickingPhoto = false
+    @State private var pickingFile = false
+    @State private var picked: PhotosPickerItem?
 
     var body: some View {
         DrawerOverlay(open: $open, drawer: drawer) {
@@ -165,10 +174,17 @@ private struct ConversationPage: View {
                 // bundle puts the text in the field before it dispatches, so
                 // a refusal leaves the paragraph in front of whoever wrote it.
                 case .unqueue: stores.unqueue(agent)
-                // The picker and the system's own dictation are not wired yet.
-                // The controls are on the screen they belong to rather than
-                // arriving with the wiring, and neither pretends to have run.
-                case .attach, .attaching, .dictate: break
+                // Opening the plus is the conversation's own state; the two
+                // tiles inside it are the system's screens, raised from here.
+                // Permissions is neither: it opens as a card in the
+                // conversation, which the conversation has already done.
+                case .attaching(.photo): pickingPhoto = true
+                case .attaching(.file): pickingFile = true
+                case .attach, .attaching(.permissions): break
+                // The system's own dictation is not wired yet. The control is
+                // on the screen it belongs to rather than arriving with the
+                // wiring, and it does not pretend to have run.
+                case .dictate: break
                 // Picking a command is a change to the draft the conversation
                 // already made, and the draft is what a send carries: there is
                 // nothing here to do about it that sending will not do.
@@ -213,6 +229,52 @@ private struct ConversationPage: View {
                 stores.closeConversation(agent)
             }
         }
+        .photosPicker(isPresented: $pickingPhoto, selection: $picked, matching: .images)
+        .onChange(of: picked) { _, item in
+            guard let item else { return }
+            picked = nil
+            Task { await store(item) }
+        }
+        // Everything, because what an agent is being shown is not this app's
+        // business to narrow: a person attaching a font file to ask about a
+        // font file is doing something ordinary.
+        .fileImporter(isPresented: $pickingFile, allowedContentTypes: [.item]) { result in
+            guard case .success(let url) = result else { return }
+            store(url)
+        }
+    }
+
+    /// Reads a picked photograph and sends its bytes.
+    ///
+    /// The library gives no filename — a picker that never asked for access to
+    /// the whole library cannot know one — so the name is made from the type
+    /// that came back, which is the honest thing to call it.
+    private func store(_ item: PhotosPickerItem) async {
+        guard let bytes = try? await item.loadTransferable(type: Data.self) else { return }
+        let type = item.supportedContentTypes.first ?? .image
+        stores.attach(
+            PickedAttachment(
+                agent: agent, kind: .image,
+                name: "photo.\(type.preferredFilenameExtension ?? "img")",
+                mime: type.preferredMIMEType ?? "application/octet-stream"),
+            bytes: bytes)
+    }
+
+    /// Reads a picked file and sends its bytes.
+    ///
+    /// A file chosen outside this app's own container is reached only inside
+    /// a security scope, and the scope is given back whether or not the read
+    /// worked — an unbalanced one leaks the grant for as long as the app runs.
+    private func store(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let bytes = try? Data(contentsOf: url) else { return }
+        let type = UTType(filenameExtension: url.pathExtension)
+        stores.attach(
+            PickedAttachment(
+                agent: agent, kind: .file, name: url.lastPathComponent,
+                mime: type?.preferredMIMEType ?? "application/octet-stream"),
+            bytes: bytes)
     }
 
     private var drawer: AgentsDrawer {

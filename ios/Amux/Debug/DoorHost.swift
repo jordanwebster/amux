@@ -236,6 +236,9 @@ final class DoorHost {
         // the feed arrives on. Answering an ask is a tap, so the connection
         // has to be reachable from the shell and not only from here.
         stores.dispatch = { [weak client] command in client?.dispatch(command) }
+        // Picked bytes take their own path to the same connection: a
+        // photograph is not JSON and does not belong in a command.
+        stores.store = { [weak client] picked, bytes in client?.attach(picked, bytes: bytes) }
         for agent in stores.conversations.keys { client.dispatch(.subscribe(agent: agent)) }
         pump = Task { @MainActor in
             for await batch in client.events {

@@ -659,6 +659,7 @@ fn command_verb(command: &Command) -> &'static str {
         Command::RenameAgent { .. } => "rename",
         Command::DeleteAgent { .. } => "delete",
         Command::SendPromptWithAttachments { .. } => "send",
+        Command::PutAttachment { .. } => "attach",
         Command::FetchDiff { .. } => "fetch review",
         Command::OpenAttachment { .. } => "open attachment",
         Command::RequestDiff { .. } => "request diff",

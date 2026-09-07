@@ -857,6 +857,23 @@ impl Runtime {
                     let _ = tx.send(Msg::OpResult { op, outcome }).await;
                 });
             }
+            Effect::PutAttachment {
+                op,
+                agent,
+                attachment,
+            } => {
+                let client = self.client.lock().expect("client mutex poisoned").clone();
+                let tx = self.msg_sink.clone();
+                tokio::spawn(async move {
+                    let outcome = match client {
+                        Some(client) => execute_put(&client, agent, attachment).await,
+                        None => OpOutcome::Error {
+                            error: OpError::general(NOT_CONNECTED_ERROR),
+                        },
+                    };
+                    let _ = tx.send(Msg::OpResult { op, outcome }).await;
+                });
+            }
             Effect::FetchDiff { op, agent, id } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
                 let cache = clone_artifact_cache(&self.artifact_cache);
@@ -1136,6 +1153,7 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
         | Command::Claude(_)
         | Command::Codex(_)
         | Command::SendPromptWithAttachments { .. }
+        | Command::PutAttachment { .. }
         | Command::FetchDiff { .. }
         | Command::OpenAttachment { .. }
         | Command::RequestDiff { .. } => OpOutcome::Error {
@@ -1187,6 +1205,46 @@ async fn fetch_through_cache(
         (Ok(value), _) => Ok(value),
         (Err(_), Some(error)) => Err(error),
         (Err(error), None) => Err(map_store_error(error, None)),
+    }
+}
+
+/// Store one picked draft's bytes and answer with what a token can name.
+///
+/// The host computes the artifact's identity from the bytes it received; a
+/// disagreement with the identity computed here means the bytes did not
+/// arrive intact, so the draft is refused rather than named.
+pub async fn execute_put<C: AttachmentClient + ?Sized>(
+    client: &C,
+    agent: AgentId,
+    draft: crate::attachments::DraftAttachment,
+) -> OpOutcome {
+    let Some(bytes) = draft.bytes.clone() else {
+        return OpOutcome::Error {
+            error: OpError::general("an attachment can only be stored with its bytes"),
+        };
+    };
+    match client
+        .put_artifact(
+            AgentIdentifier::Id(agent),
+            draft.kind,
+            &draft.name,
+            &draft.mime,
+            bytes.to_vec(),
+        )
+        .await
+    {
+        Ok(artifact) if artifact.id == draft.id => OpOutcome::AttachmentStored {
+            attachment: crate::attachments::DraftAttachment {
+                bytes: None,
+                ..draft
+            },
+        },
+        Ok(_) => OpOutcome::Error {
+            error: OpError::ArtifactCorrupt { id: draft.id },
+        },
+        Err(error) => OpOutcome::Error {
+            error: map_client_error(&error, Some(&draft.name), std::slice::from_ref(&draft)),
+        },
     }
 }
 

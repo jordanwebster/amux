@@ -69,6 +69,12 @@ pub enum Effect {
         input: InputPayload,
         pin: Vec<ArtifactId>,
     },
+    /// Store one draft's bytes and send nothing.
+    PutAttachment {
+        op: OpId,
+        agent: AgentId,
+        attachment: crate::attachments::DraftAttachment,
+    },
     /// Fetch a review patch for the bounded layer index.
     FetchDiff {
         op: OpId,

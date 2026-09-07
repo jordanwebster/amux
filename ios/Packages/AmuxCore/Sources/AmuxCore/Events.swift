@@ -1111,13 +1111,16 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     case agentCreated(Agent)
     case agentRenamed(Agent)
     case agentDeleted
+    /// A picked file is stored on the agent's host. What comes back is what a
+    /// token names; the bytes stay where they were sent.
+    case attachmentStored(DraftAttachment)
     case queueRemoved
     case subscribed(agent: AgentId)
     case unsubscribed(agent: AgentId)
     case failed(OpFailure)
     case other(outcome: String, body: JSONValue)
 
-    private enum Key: String, CodingKey { case outcome, agent, error }
+    private enum Key: String, CodingKey { case outcome, agent, error, attachment }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: Key.self)
@@ -1127,6 +1130,8 @@ public enum OpOutcome: Sendable, Equatable, Codable {
         case "agent_created": self = .agentCreated(try container.decode(Agent.self, forKey: .agent))
         case "agent_renamed": self = .agentRenamed(try container.decode(Agent.self, forKey: .agent))
         case "agent_deleted": self = .agentDeleted
+        case "attachment_stored":
+            self = .attachmentStored(try container.decode(DraftAttachment.self, forKey: .attachment))
         case "queue_removed": self = .queueRemoved
         case "subscribed": self = .subscribed(agent: try container.decode(AgentId.self, forKey: .agent))
         case "unsubscribed": self = .unsubscribed(agent: try container.decode(AgentId.self, forKey: .agent))
@@ -1144,6 +1149,9 @@ public enum OpOutcome: Sendable, Equatable, Codable {
             switch self {
             case .inputSent: try container.encode("input_sent", forKey: .outcome)
             case .agentDeleted: try container.encode("agent_deleted", forKey: .outcome)
+            case .attachmentStored(let attachment):
+                try container.encode("attachment_stored", forKey: .outcome)
+                try container.encode(attachment, forKey: .attachment)
             case .queueRemoved: try container.encode("queue_removed", forKey: .outcome)
             case .agentCreated(let agent):
                 try container.encode("agent_created", forKey: .outcome)

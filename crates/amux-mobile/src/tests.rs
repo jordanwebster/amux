@@ -286,6 +286,75 @@ fn the_phones_agent_writes_decode_as_the_commands_they_name() {
     );
 }
 
+/// A picked photograph and a picked file become one store apiece, carrying the
+/// bytes that were picked and an identity computed from them.
+///
+/// The bytes never travel as JSON, so they are not covered by the write test
+/// above; this holds the other half — that what the phone hands the library
+/// through the byte pointer is what the command carries, unaltered, and that
+/// the artifact is named by its contents rather than by anything the phone
+/// chose.
+#[test]
+fn a_picked_file_becomes_a_store_of_exactly_the_bytes_that_were_picked() {
+    let agent = "6d1f2c34-0000-4000-8000-00000000ab01";
+    let id: AgentId = agent.parse().unwrap();
+    let png = b"\x89PNG\r\n\x1a\n and then some pixels".to_vec();
+
+    let Some(Command::PutAttachment { agent, attachment }) = crate::picked_command(
+        &json!({"agent":agent,"kind":"image","name":"reconnect-loop.png","mime":"image/png"})
+            .to_string(),
+        png.clone(),
+    ) else {
+        panic!("a picked photograph is a store")
+    };
+    assert_eq!(agent, id);
+    assert_eq!(attachment.kind, amux_ui::ArtifactKind::Image);
+    assert_eq!(attachment.name, "reconnect-loop.png");
+    assert_eq!(attachment.mime, "image/png");
+    assert_eq!(attachment.size, png.len() as u64);
+    assert_eq!(attachment.bytes.as_deref(), Some(png.as_slice()));
+    // Identity is the contents and nothing else: the same bytes under another
+    // name are the same artifact.
+    assert_eq!(
+        attachment.id,
+        amux_ui::DraftAttachment::from_bytes(
+            amux_ui::ArtifactKind::File,
+            "renamed.bin",
+            "application/octet-stream",
+            png.clone(),
+        )
+        .id
+    );
+
+    let trace = b"{\"relay\":\"unreachable\"}".to_vec();
+    let Some(Command::PutAttachment { attachment: file, .. }) = crate::picked_command(
+        &json!({"agent":agent.to_string(),"kind":"file","name":"relay-trace.json",
+                "mime":"application/json"})
+        .to_string(),
+        trace.clone(),
+    ) else {
+        panic!("a picked file is a store")
+    };
+    assert_eq!(file.kind, amux_ui::ArtifactKind::File);
+    assert_eq!(file.bytes.as_deref(), Some(trace.as_slice()));
+    assert_ne!(file.id, attachment.id, "two files, two identities");
+
+    // A description the phone could not have written is refused rather than
+    // guessed at: an artifact stored under an invented identity would be a
+    // token naming something nobody can fetch.
+    assert!(crate::picked_command("{\"agent\":\"not-a-uuid\"}", Vec::new()).is_none());
+    assert!(
+        crate::picked_command(
+            &json!({"agent":agent.to_string(),"kind":"image","name":"a.png","mime":"image/png",
+                    "id":"sha256:0000"})
+            .to_string(),
+            Vec::new()
+        )
+        .is_none(),
+        "a client never names the artifact it is storing"
+    );
+}
+
 #[test]
 fn build_marker_names_the_debug_tools_library() {
     // The suffix is how an application binary is told apart from one that

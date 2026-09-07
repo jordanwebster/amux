@@ -37,6 +37,14 @@ public final class StoreBundle {
     /// alone, and a photograph of a panel answers nobody.
     @ObservationIgnored public var dispatch: (@MainActor (BridgeCommand) -> OpId?)?
 
+    /// How picked bytes reach the machine.
+    ///
+    /// Separate from `dispatch` because a command is JSON and a photograph is
+    /// not: the bytes go to the library through their own entry. Whoever owns
+    /// the connection sets this; a bundle with no connection behind it — a
+    /// fixture, a replay — leaves it alone and nothing is stored anywhere.
+    @ObservationIgnored public var store: (@MainActor (PickedAttachment, Data) -> OpId?)?
+
     public init(account: AccountId, now: Date = Date(), unread: UnreadWeights = UnreadWeights()) {
         self.account = account
         self.fleet = FleetStore(now: now, unread: unread)
@@ -215,6 +223,23 @@ public final class StoreBundle {
         let store = conversation(agent)
         guard store.settingsGate.refusal == nil, let op = dispatch?(command) else { return false }
         store.dispatched(op)
+        return true
+    }
+
+    /// Stores something picked from the system's own pickers, so the message
+    /// being written can name it.
+    ///
+    /// The token is not put in the draft here. It stands at the caret when the
+    /// host says the bytes are stored, because a token is a reference to
+    /// something that exists: one written the instant the picker closed would
+    /// name nothing if the store then failed, and would be sitting in a
+    /// sentence somebody had gone on writing.
+    ///
+    /// False means nothing left the phone: no connection, or nothing picked.
+    @discardableResult
+    public func attach(_ picked: PickedAttachment, bytes: Data) -> Bool {
+        guard !bytes.isEmpty, let op = store?(picked, bytes) else { return false }
+        conversation(picked.agent).dispatched(op)
         return true
     }
 

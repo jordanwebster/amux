@@ -4,6 +4,33 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **The plus attaches something.** Photo and File were tiles that
+did nothing: there was no route from a picked file to the machine at all, since
+a draft's bytes are deliberately dropped when a command is serialized and every
+dispatched command is written into the local replay recording. A photograph
+does not belong in a recording, and a photograph spelled as a JSON array of
+numbers is four times its own size.
+
+So the bytes take their own entry into the shared library, beside the JSON
+commands rather than inside one. What crosses is the description of the file —
+whose agent, what kind, its name and type — and a pointer to the bytes; the
+library computes the artifact's identity from the contents, so a client can
+never name an artifact it made up. What the recording keeps is the artifact and
+never its contents.
+
+Storing is its own operation, finished before the message that will name the
+file exists. The token stands at the caret on the host's own word that the
+bytes are stored: one written when the picker closed would name nothing if the
+store then failed, and would be sitting in a sentence somebody had gone on
+writing. The caret stays after it, so the sentence continues where it was left.
+
+The pickers are the system's own and are raised from the shell rather than from
+the conversation, which keeps every conversation screen photographable away
+from a device. A photo carries no filename — a picker that never asked for the
+whole library cannot know one — so it is named for the type that came back. A
+file chosen outside this app's container is read inside a security scope that
+is given back whether or not the read worked.
+
 2026-09-07 — **A test agent that offers models, efforts and commands.** The
 settings card and the slash menu draw rows from what a session reports, and a
 session running against the recorded Codex corpus reports none of it: nothing

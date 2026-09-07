@@ -115,6 +115,16 @@ pub enum Command {
     DeleteAgent {
         agent: AgentId,
     },
+    /// Store one picked file's bytes so the composer can name it.
+    ///
+    /// A token names an artifact the host already holds, so the bytes travel
+    /// when they are picked rather than when the message is sent: what stands
+    /// at the caret is then something that exists, and a store that failed is
+    /// said so while there is still a message being written.
+    PutAttachment {
+        agent: AgentId,
+        attachment: crate::attachments::DraftAttachment,
+    },
     /// One atomic chat send whose artifact puts complete before input delivery.
     SendPromptWithAttachments {
         agent: AgentId,
@@ -235,6 +245,11 @@ pub enum OpOutcome {
     },
     AttachmentOpened {
         id: ArtifactId,
+    },
+    /// Picked bytes are stored. What comes back is what a token names; the
+    /// bytes are not carried back, having done their travelling.
+    AttachmentStored {
+        attachment: crate::attachments::DraftAttachment,
     },
     DiffReady {
         response: DiffResponse,

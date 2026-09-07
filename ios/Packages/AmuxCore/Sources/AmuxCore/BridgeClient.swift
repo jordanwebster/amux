@@ -191,6 +191,31 @@ public final class BridgeClient: Sendable {
         }
     }
 
+    /// Stores a picked file's bytes on the agent's host and answers with the
+    /// identifier its result will carry.
+    ///
+    /// The bytes go through their own entry rather than inside a command: a
+    /// command is JSON, and a photograph written out as a list of numbers is
+    /// four times its own size, while the local replay recording that keeps
+    /// every command is not a place for somebody's photograph.
+    @discardableResult
+    public func attach(_ picked: PickedAttachment, bytes: Data) -> OpId? {
+        guard let json = try? AmuxJSON.encoder.encode(picked) else { return nil }
+        return state.withLock { state -> OpId? in
+            guard let handle = state.handle else { return nil }
+            let reply = String(decoding: json, as: UTF8.self).withCString { request in
+                bytes.withUnsafeBytes { raw in
+                    amux_mobile_attach(
+                        handle, request,
+                        raw.bindMemory(to: UInt8.self).baseAddress, bytes.count)
+                }
+            }
+            guard let reply else { return nil }
+            defer { amux_mobile_free(reply) }
+            return OpId(String(cString: reply))
+        }
+    }
+
     /// Matches callback cadence to the display the app is actually drawing on.
     public func setFrameInterval(nanoseconds: UInt64) {
         state.withLock { state in

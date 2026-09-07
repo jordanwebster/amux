@@ -163,6 +163,14 @@ public final class ConversationStore {
         case .opResult(let result):
             guard pendingOps.remove(result.op) != nil else { break }
             if case .agentDeleted = result.outcome { deleted = true }
+            // The token stands at the caret only now, on the host's own word
+            // that the bytes are stored. It is spelled by the shared library
+            // from what the host answered with, so what the message carries is
+            // the artifact the host has and not a description made here.
+            if case .attachmentStored(let attachment) = result.outcome,
+               let token = Bridge.token(for: attachment) {
+                draft.insert(token)
+            }
             results.append(result)
             if results.count > Self.remembered {
                 results.removeFirst(results.count - Self.remembered)
