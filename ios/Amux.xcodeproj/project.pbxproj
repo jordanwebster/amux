@@ -34,6 +34,7 @@
 		85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBADB0CC914373F8BD52E715 /* AmuxApp.swift */; };
 		894FA032EAF19BFC5E92664F /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4FC885DCA537FD2ABD0FD /* Trace.swift */; };
 		8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */; };
+		9A0DED937618A8CC258CEFDF /* WritingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE1CD31C989C5DC52354A7AE /* WritingTests.swift */; };
 		9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */; };
 		A3C2080DEA1ECDCA5A1BA441 /* PerformanceSuite.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */; };
 		A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A10C4D43E54FEABB391277E /* PerfRun.swift */; };
@@ -99,6 +100,7 @@
 		B60FB9981D4C68D3915DA21A /* Composition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composition.swift; sourceTree = "<group>"; };
 		B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTests.swift; sourceTree = "<group>"; };
 		BC486A7A07178E55789AE94C /* ReviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewTests.swift; sourceTree = "<group>"; };
+		BE1CD31C989C5DC52354A7AE /* WritingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingTests.swift; sourceTree = "<group>"; };
 		C0FF4DBFB3F554EC2761318D /* Sessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sessions.swift; sourceTree = "<group>"; };
 		C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedCloud.swift; sourceTree = "<group>"; };
 		D0E455E43044DD55EB8662D4 /* Transcript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transcript.swift; sourceTree = "<group>"; };
@@ -192,6 +194,7 @@
 				0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */,
 				31777DF351ACE50870B1C6A5 /* LaunchTests.swift */,
 				BC486A7A07178E55789AE94C /* ReviewTests.swift */,
+				BE1CD31C989C5DC52354A7AE /* WritingTests.swift */,
 			);
 			path = AmuxUITests;
 			sourceTree = "<group>";
@@ -472,6 +475,7 @@
 				8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */,
 				0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */,
 				7D4CF562DADA4EB7723324CD /* ReviewTests.swift in Sources */,
+				9A0DED937618A8CC258CEFDF /* WritingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

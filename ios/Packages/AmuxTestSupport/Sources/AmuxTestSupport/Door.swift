@@ -48,6 +48,22 @@ public enum DoorRequest: Sendable, Equatable {
     case capture(path: String)
     case tap(identifier: String)
     case type(identifier: String, text: String)
+    /// Put this text on the system's clipboard and paste it into the named
+    /// field, which is the message the system's own Paste menu item sends.
+    ///
+    /// The menu itself is the system's, drawn outside this app and reachable
+    /// only by hitting a floating bar nobody can name; the paste it performs
+    /// is the field's own, and that is what this is.
+    case paste(identifier: String, text: String)
+    /// Store an attachment for an agent as though a picker had just handed it
+    /// back: the kind, the name, the type and the bytes, base64 for the wire.
+    ///
+    /// The photo library and the file browser are the system's own screens,
+    /// running outside this app. What they hand back is all this app ever
+    /// sees of them, and it goes from here into the same code the pickers
+    /// call — so the token that appears at the caret appears because a host
+    /// stored the bytes, exactly as it would after a real pick.
+    case attach(agent: String, kind: String, name: String, mime: String, base64: String)
     /// Trust the host a pairing payload names, over the relay this app is
     /// already connected to.
     ///
@@ -253,6 +269,7 @@ extension DoorRequest: Codable {
     private enum Key: String, CodingKey {
         case kind, screen, fixture, cloud, relay, token, user, appearance, size, path
         case identifier, text, seconds, qr, agent, base, prose
+        case attachment, name, mime, base64
     }
 
     public init(from decoder: any Decoder) throws {
@@ -292,6 +309,17 @@ extension DoorRequest: Codable {
             self = .type(
                 identifier: try fields.decode(String.self, forKey: .identifier),
                 text: try fields.decode(String.self, forKey: .text))
+        case "paste":
+            self = .paste(
+                identifier: try fields.decode(String.self, forKey: .identifier),
+                text: try fields.decode(String.self, forKey: .text))
+        case "attach":
+            self = .attach(
+                agent: try fields.decode(String.self, forKey: .agent),
+                kind: try fields.decode(String.self, forKey: .attachment),
+                name: try fields.decode(String.self, forKey: .name),
+                mime: try fields.decode(String.self, forKey: .mime),
+                base64: try fields.decode(String.self, forKey: .base64))
         case "pair":
             self = .pair(qr: try fields.decode(String.self, forKey: .qr))
         case "requestChanges":
@@ -371,6 +399,17 @@ extension DoorRequest: Codable {
             try fields.encode("type", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)
             try fields.encode(text, forKey: .text)
+        case .paste(let identifier, let text):
+            try fields.encode("paste", forKey: .kind)
+            try fields.encode(identifier, forKey: .identifier)
+            try fields.encode(text, forKey: .text)
+        case .attach(let agent, let kind, let name, let mime, let base64):
+            try fields.encode("attach", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+            try fields.encode(kind, forKey: .attachment)
+            try fields.encode(name, forKey: .name)
+            try fields.encode(mime, forKey: .mime)
+            try fields.encode(base64, forKey: .base64)
         case .pair(let qr):
             try fields.encode("pair", forKey: .kind)
             try fields.encode(qr, forKey: .qr)

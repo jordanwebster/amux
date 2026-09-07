@@ -35,6 +35,10 @@ final class DoorTests: XCTestCase {
             .capture(path: "/tmp/home.png"),
             .tap(identifier: "home.row.aurora"),
             .type(identifier: "composer.field", text: "hello"),
+            .paste(identifier: "composer.field", text: "a paste worth naming"),
+            .attach(
+                agent: "6f1c1f8e-0000-4000-8000-000000000001", kind: "image",
+                name: "screenshot.png", mime: "image/png", base64: "iVBORw0KGgo="),
             .pair(qr: #"{"host_id":"…","cloud_url":"http://127.0.0.1:9","secret":[1]}"#),
             .send(agent: "6f1c1f8e-0000-4000-8000-000000000001", text: "carry on"),
             .awaitSendable(agent: "6f1c1f8e-0000-4000-8000-000000000001", seconds: 30),
@@ -79,6 +83,20 @@ final class DoorTests: XCTestCase {
         XCTAssertEqual(attempt["agent"] as? String, "aurora")
         XCTAssertEqual(attempt["text"] as? String, "carry on")
         XCTAssertEqual(try wire(.replay(path: "/tmp/report"))["path"] as? String, "/tmp/report")
+        let pasting = try wire(.paste(identifier: "composer.field", text: "a long paste"))
+        XCTAssertEqual(pasting["identifier"] as? String, "composer.field")
+        XCTAssertEqual(pasting["text"] as? String, "a long paste")
+        // The kind of attachment travels under its own name rather than under
+        // the request's: every request in this door already spells its own
+        // kind, and two "kind" fields in one flat object cannot both be read.
+        let attaching = try wire(.attach(
+            agent: "aurora", kind: "file", name: "parser.rs", mime: "text/x-rust",
+            base64: "cGFyc2Vy"))
+        XCTAssertEqual(attaching["kind"] as? String, "attach")
+        XCTAssertEqual(attaching["attachment"] as? String, "file")
+        XCTAssertEqual(attaching["name"] as? String, "parser.rs")
+        XCTAssertEqual(attaching["mime"] as? String, "text/x-rust")
+        XCTAssertEqual(attaching["base64"] as? String, "cGFyc2Vy")
     }
 
     func testAnUnknownRequestIsRefused() {

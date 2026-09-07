@@ -187,6 +187,11 @@ class JourneyCase: XCTestCase {
         var base: String?
         var seconds: Double?
         var path: String?
+        var identifier: String?
+        var attachment: String?
+        var name: String?
+        var mime: String?
+        var base64: String?
 
         var body: [String: Any] {
             var fields: [String: Any] = ["kind": kind]
@@ -196,6 +201,11 @@ class JourneyCase: XCTestCase {
             if let base { fields["base"] = base }
             if let seconds { fields["seconds"] = seconds }
             if let path { fields["path"] = path }
+            if let identifier { fields["identifier"] = identifier }
+            if let attachment { fields["attachment"] = attachment }
+            if let name { fields["name"] = name }
+            if let mime { fields["mime"] = mime }
+            if let base64 { fields["base64"] = base64 }
             return fields
         }
     }
@@ -232,8 +242,13 @@ class JourneyCase: XCTestCase {
     ///
     /// The screen is let settle first: a query taken mid-animation reads a
     /// frame nobody was looking at.
-    func declared(_ runner: Runner) throws -> [Said] {
-        try door(runner, .init(kind: "settle"))
+    /// - Parameter settling: whether to let the screen come to rest first.
+    ///   A poll that reads the same name every quarter second should not:
+    ///   settling renders the whole window until two frames agree, and a
+    ///   caret blinking in a field means they never do, so every read would
+    ///   cost the full wait. Anything recorded or asserted on should.
+    func declared(_ runner: Runner, settling: Bool = true) throws -> [Said] {
+        if settling { try door(runner, .init(kind: "settle")) }
         let answer = try door(runner, .init(kind: "query"))
         let elements = (answer["state"] as? [String: Any])?["elements"] as? [[String: Any]] ?? []
         return elements.compactMap { element in

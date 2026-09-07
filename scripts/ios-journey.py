@@ -1325,6 +1325,142 @@ def review(journey: Journey, udid: str, ready: dict) -> None:
     forget_cache(udid)
 
 
+def writing(journey: Journey, udid: str, ready: dict) -> None:
+    """Writing to two agents on a phone: the message, and everything in it.
+
+    Two agents because no single layer offers all of it. A Claude session
+    driven over a terminal takes messages, holds one while a turn runs and
+    reports every input it was given, so the sending half is proved against
+    what that machine says it received. A Codex session is the one that offers
+    commands, models and effort levels, so the command token and the two
+    settings are exercised there and read back off the chip the session's own
+    facts relabel.
+
+    Nothing about the tokens is a fixture: the paste goes through the field's
+    own paste, the photograph and the file are stored on the machine before
+    either is named in the sentence, and the review is a patch this machine
+    computed from its own last commit.
+    """
+    daemon = ready["daemons"][0]
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+    control_address = ready["control"]
+
+    install(udid)
+    forget_cache(udid)
+    pairing = answer(control_address, {"StartQrPairing": {"daemon": daemon["name"]}})["qr"]
+    journey.say(f"{daemon['name']} holds {', '.join(sorted(running))}: one session this "
+                f"journey writes to and one that offers models, effort levels and commands")
+
+    photographs = {
+        "writing-tokens.png": "tokens.png",
+        "writing-queued.png": "queued.png",
+        "writing-overflow.png": "overflow.png",
+        "writing-rename.png": "rename.png",
+        "writing-delete.png": "delete.png",
+        "writing-commands.png": "commands.png",
+        "writing-settings.png": "settings.png",
+    }
+    read = journey.directory / "writing.json"
+    perform(
+        journey, udid, "AmuxUITests/WritingTests",
+        {taken: journey.directory / name for taken, name in photographs.items()}
+        | {"writing.json": read},
+        telling={
+            "AMUX_RELAY": f"http://{ready['relay']}",
+            "AMUX_TOKEN": token,
+            "AMUX_USER": "journey-phone",
+            "AMUX_PAIR": pairing,
+            "AMUX_CONTROL": control_address,
+            "AMUX_DOOR_PORT": str(free_port()),
+            "AMUX_AGENT": running["talk-me-through-it"]["agent_id"],
+            "AMUX_CODEX_AGENT": running["codex"]["agent_id"],
+            "AMUX_HOST": daemon["name"],
+        })
+    seen = json.loads(read.read_text())
+
+    # What was written, and what each thing put in it became.
+    journey.expect("\n" in seen.get("typed", ""),
+                   f"the field holds one line where two were typed: {seen.get('typed')!r}")
+    journey.expect("[Pasted text \u00b7 14 lines]" in seen.get("afterPaste", ""),
+                   f"a paste of fourteen lines is not one named token: "
+                   f"{seen.get('afterPaste')!r}")
+    journey.expect("[screenshot.png]" in seen.get("afterPhoto", ""),
+                   f"the stored photograph is not in the message: {seen.get('afterPhoto')!r}")
+    journey.expect("screenshot" not in seen.get("afterRemove", ""),
+                   f"one backspace left part of a token behind: {seen.get('afterRemove')!r}")
+    journey.expect("[parser.rs]" in seen.get("afterFile", ""),
+                   f"the stored file is not in the message: {seen.get('afterFile')!r}")
+    journey.expect("[Review" in seen.get("afterReview", ""),
+                   f"the attached review is not in the message: {seen.get('afterReview')!r}")
+    journey.say(f"four kinds of token stand in one sentence: {seen['afterReview']!r}")
+
+    # Held, replaced, taken back, and the one that was delivered.
+    journey.expect(seen.get("queued") == "And then look at the wire format.",
+                   f"the strip held {seen.get('queued')!r}")
+    journey.expect(seen.get("replaced") == "Actually, look at the wire format first.",
+                   f"writing a second message left {seen.get('replaced')!r} held")
+    journey.expect(seen.get("unqueued", "").endswith(
+        "Actually, look at the wire format first."),
+        f"taking the held message back put {seen.get('unqueued')!r} in the field")
+    journey.expect(seen.get("interruptedNotCleared") == "Wire format after the parser, please.",
+                   f"stopping the turn left {seen.get('interruptedNotCleared')!r} held")
+    journey.say(f"one message was held ({seen['queued']!r}), replaced ({seen['replaced']!r}) "
+                f"and taken back into the field; a third survived the turn being stopped")
+
+    # And the machine's own account of what it was given, which is the point.
+    observed = answer(control_address,
+                      {"AgentObserve": {"agent": "talk-me-through-it"}})["observed"]
+    (journey.directory / "observed-inputs.json").write_text(json.dumps(observed, indent=2))
+    prompts = [entry["text"] for entry in observed if entry["intent"] == "prompt"]
+    journey.expect(prompts == ["Read the parser and tell me where the newline goes.",
+                               "Wire format after the parser, please."],
+                   f"the machine says it was given {prompts}")
+    journey.expect(any(entry["intent"] == "interrupt" for entry in observed),
+                   f"the machine was never told to stop: {observed}")
+    journey.expect("And then look at the wire format." not in prompts
+                   and "Actually, look at the wire format first." not in prompts,
+                   f"a message that was replaced or taken back reached the machine anyway: "
+                   f"{prompts}")
+    journey.say(f"the machine received exactly two messages — the one that was sent and the "
+                f"one it was holding when the turn ended — and was told to stop once; "
+                f"nothing that was replaced or taken back reached it")
+
+    # What the agent can be done to rather than said to.
+    journey.expect(seen.get("address") == "talk-me-through-it/studio",
+                   f"the address offered for copying is {seen.get('address')!r}")
+    journey.expect(seen.get("renamed") == "reads-the-parser",
+                   f"the machine renamed the agent to {seen.get('renamed')!r}")
+    journey.expect(seen.get("deleted") == running["codex"]["agent_id"],
+                   f"the deletion the machine confirmed was {seen.get('deleted')!r}")
+    journey.say(f"the address {seen['address']!r} went to the clipboard, a cancelled rename "
+                f"changed nothing and a confirmed one made the machine call the agent "
+                f"{seen['renamed']!r}, a cancelled deletion left the conversation open and a "
+                f"confirmed one closed it")
+
+    # The Codex session, which is the one that offers these.
+    journey.expect(seen.get("commandOffered") == "codex",
+                   f"the command the slash raised came from {seen.get('commandOffered')!r}")
+    journey.expect("[plan]" in seen.get("command", ""),
+                   f"picking a command left {seen.get('command')!r} in the field")
+    journey.expect(seen.get("modelBefore") == "Model A \u00b7 low",
+                   f"the session started on {seen.get('modelBefore')!r}")
+    journey.expect(seen.get("model") == "Model B \u00b7 medium",
+                   f"choosing a model left the chip reading {seen.get('model')!r}")
+    journey.expect(seen.get("effort") == "Model B \u00b7 high",
+                   f"choosing an effort left the chip reading {seen.get('effort')!r}")
+    journey.say(f"a command was raised by a slash, sent as a token and answered; the chip "
+                f"went from {seen['modelBefore']!r} to {seen['model']!r} — the model's own "
+                f"default effort, which the machine chose — and then to {seen['effort']!r}")
+
+    for capture in photographs.values():
+        written = journey.directory / capture
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs.values())))
+    forget_cache(udid)
+
+
 def prepare_asks() -> None:
     scratch_repository(
         "asks-repository",
@@ -1339,11 +1475,21 @@ def prepare_review() -> None:
         {"parser.rs": PARSER_EDITED, "wire.rs": WIRE_EDITED})
 
 
+def prepare_writing() -> None:
+    """A repository with one uncommitted change, so the review token in the
+    composer is a patch this machine computed rather than a fixture."""
+    scratch_repository(
+        "writing-repository",
+        {"parser.rs": PARSER_COMMITTED, "wire.rs": WIRE_COMMITTED},
+        {"parser.rs": PARSER_EDITED})
+
+
 JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
-            "conversation": conversation, "asks": asks, "review": review}
+            "conversation": conversation, "asks": asks, "review": review,
+            "writing": writing}
 # What has to exist before the daemons start: the runner resolves an
 # agent's working directory when it loads the topology.
-PREPARE = {"asks": prepare_asks, "review": prepare_review}
+PREPARE = {"asks": prepare_asks, "review": prepare_review, "writing": prepare_writing}
 
 
 def declared() -> list[dict]:

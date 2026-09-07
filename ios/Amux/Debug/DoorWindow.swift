@@ -21,6 +21,23 @@ enum DoorWindow {
         }
         return nil
     }
+
+    /// The text input that already has the keyboard.
+    ///
+    /// A name declared on a SwiftUI screen reaches the accessibility tree as
+    /// an element rather than as a view, so a field cannot always be found by
+    /// the name the screen gave it. What has the keyboard can, and it is what
+    /// a keystroke or a paste would reach anyway.
+    @MainActor
+    static func focused(in view: UIView) -> (any UIKeyInput & UIResponder)? {
+        if view.isFirstResponder, let input = view as? (any UIKeyInput & UIResponder) {
+            return input
+        }
+        for subview in view.subviews {
+            if let found = focused(in: subview) { return found }
+        }
+        return nil
+    }
 }
 
 /// Waiting for the display rather than for a duration: a fixed sleep is either

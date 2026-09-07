@@ -221,7 +221,8 @@ async fn testnet_codex_recording_unrecorded_answer_fails_without_hanging() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client() {
     let topology = Topology::load(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e-tests/topologies/writing.json"),
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../e2e-tests/topologies/codex-offers.json"),
     )
     .unwrap();
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -306,6 +307,74 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
             "Reported Codex facts: {}",
             serde_json::to_string(&facts).unwrap()
         );
+
+        // One of the offered commands, sent the way a composer sends one: the
+        // token first and the rest of the message as its arguments. The
+        // recording answers exactly this turn, so a spelling that drifted
+        // would be an unrecorded write and fail here rather than be discovered
+        // on a phone.
+        succeeded(
+            &mut runtime,
+            UiCommand::Send {
+                agent,
+                draft: amux_ui::Draft {
+                    segments: vec![
+                        amux_ui::DraftSegment::CommandToken {
+                            name: "plan".into(),
+                        },
+                        amux_ui::DraftSegment::Text {
+                            text: " the parser before the wire format".into(),
+                        },
+                    ],
+                    attachments: Vec::new(),
+                },
+            },
+        )
+        .await;
+        wait_for(&mut runtime, "the recorded answer to the command", |model| {
+            model.codex(agent).is_some_and(|layer| {
+                layer.entries().any(|entry| {
+                    matches!(&entry.kind, FeedEntryKind::Message(message)
+                        if message.text == "Planning the parser before the wire format.")
+                })
+            })
+        })
+        .await;
+
+        // Model and effort after the turn, not before: they are kept for the
+        // session's next turn, so changing one first would put a model into
+        // the turn parameters the recording never saw. Neither reaches the
+        // app-server at all — the strict replay below is what says so.
+        succeeded(
+            &mut runtime,
+            UiCommand::SetModel {
+                agent,
+                model: "model-b".into(),
+            },
+        )
+        .await;
+        wait_for(&mut runtime, "the model the host now reports", |model| {
+            let facts = amux_ui::provider::facts(model, agent);
+            facts.model.as_deref() == Some("model-b") && facts.effort.as_deref() == Some("medium")
+        })
+        .await;
+        succeeded(
+            &mut runtime,
+            UiCommand::SetEffort {
+                agent,
+                effort: "high".into(),
+            },
+        )
+        .await;
+        wait_for(&mut runtime, "the effort the host now reports", |model| {
+            amux_ui::provider::facts(model, agent).effort.as_deref() == Some("high")
+        })
+        .await;
+
+        let verified = control
+            .ack(json!({"AgentVerifyReplay":{"agent":"codex"}}))
+            .await;
+        println!("Strict replay verified after one command turn: {verified}");
         control.ack(json!("Shutdown")).await;
     };
     let (result, ()) = tokio::join!(server, exercise);

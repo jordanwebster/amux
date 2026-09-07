@@ -111,6 +111,9 @@ final class DoorHost {
         case .capture(let path): return await capture(to: path)
         case .tap(let identifier): return tap(identifier)
         case .type(let identifier, let text): return type(text, into: identifier)
+        case .paste(let identifier, let text): return paste(text, into: identifier)
+        case .attach(let agent, let kind, let name, let mime, let base64):
+            return attach(to: agent, kind: kind, name: name, mime: mime, base64: base64)
         case .pair(let qr): return await pair(with: qr)
         case .send(let agent, let text): return send(text, to: agent)
         case .sendDraft(let agent, let prose): return sendDraft(prose, to: agent)
@@ -683,7 +686,7 @@ final class DoorHost {
         guard let element = element(named: identifier, in: window) else {
             return .error("no element named \(identifier)")
         }
-        if let field = element as? UIView, let input = DoorWindow.textInput(in: field) {
+        if let input = writable(named: identifier, in: window) {
             if !input.isFirstResponder { _ = input.becomeFirstResponder() }
             input.insertText(text)
             return .ack
@@ -693,6 +696,73 @@ final class DoorHost {
         }
         input.insertText(text)
         return .ack
+    }
+
+    /// Pastes text into a named field through the field's own paste.
+    ///
+    /// The clipboard is written first because that is where a paste reads
+    /// from: what happens afterwards is the same `paste(_:)` the system's menu
+    /// item sends, so a field that turns a long paste into a token turns this
+    /// one into a token too.
+    private func paste(_ text: String, into identifier: String) -> DoorReply {
+        guard let window = DoorWindow.current else { return .error("no window on screen") }
+        guard element(named: identifier, in: window) != nil else {
+            return .error("no element named \(identifier)")
+        }
+        guard let input = writable(named: identifier, in: window) else {
+            return .error("\(identifier) does not take a paste")
+        }
+        if !input.isFirstResponder { _ = input.becomeFirstResponder() }
+        UIPasteboard.general.string = text
+        input.paste(nil)
+        return .ack
+    }
+
+    /// Stores bytes for an agent as a picker's result, and answers once the
+    /// runtime has taken them.
+    ///
+    /// Nothing here decides what a token says or where it lands: the store
+    /// call is the one the pickers make, so the token appears at the caret
+    /// when the host says the bytes are kept, and not before.
+    private func attach(
+        to agent: String, kind: String, name: String, mime: String, base64: String
+    ) -> DoorReply {
+        guard bridge != nil else { return .error("nothing has been connected") }
+        guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
+        guard let bytes = Data(base64Encoded: base64), !bytes.isEmpty else {
+            return .error("the attachment carried no bytes")
+        }
+        guard let picked = ArtifactKind(rawValue: kind), picked != .diff else {
+            return .error("no attachment kind named \(kind)")
+        }
+        guard stores.attach(
+            PickedAttachment(agent: identity, kind: picked, name: name, mime: mime),
+            bytes: bytes)
+        else { return .error("the attachment did not leave the phone") }
+        return .ack
+    }
+
+    /// The field a driver means by a name.
+    ///
+    /// A name declared on a SwiftUI screen lands on an accessibility element
+    /// and not on a view, so a field is often not reachable by its own name at
+    /// all: the view under it is found by hit-testing where the screen said
+    /// the name is, and failing that the field is whichever one already has
+    /// the keyboard — which is where a keystroke or a paste would land anyway.
+    private func writable(
+        named identifier: String, in window: UIWindow
+    ) -> (any UIKeyInput & UIResponder)? {
+        if let view = element(named: identifier, in: window) as? UIView,
+           let input = DoorWindow.textInput(in: view) {
+            return input
+        }
+        if let declared = declared.first(where: { $0.identifier == identifier }),
+           let under = window.hitTest(
+               CGPoint(x: declared.frame.midX, y: declared.frame.midY), with: nil),
+           let input = DoorWindow.textInput(in: under) {
+            return input
+        }
+        return DoorWindow.focused(in: window)
     }
 
     /// The object behind a name: the accessibility tree first, and otherwise

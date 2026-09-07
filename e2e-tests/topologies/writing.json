@@ -1,10 +1,11 @@
 {
   "users": ["personal"],
   "daemons": [
-    {"name": "studio", "user": "personal", "repository_roots": ["."]}
+    {"name": "studio", "user": "personal", "repository_roots": ["../../target/ios/journeys"]}
   ],
   "paired": [],
   "agents": [
-    {"name": "codex", "daemon": "studio", "working_dir": ".", "provider": {"Codex": {"recording": "../recordings/codex-offers"}}}
+    {"name": "codex", "daemon": "studio", "working_dir": "../../target/ios/journeys/writing-repository", "provider": {"Codex": {"recording": "../recordings/codex-offers"}}},
+    {"name": "talk-me-through-it", "daemon": "studio", "working_dir": "../../target/ios/journeys/writing-repository", "provider": {"Claude": {"script": "../scripts/writing.json"}}}
   ]
 }

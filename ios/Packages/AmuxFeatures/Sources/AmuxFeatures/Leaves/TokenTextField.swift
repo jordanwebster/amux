@@ -27,8 +27,11 @@ struct TokenTextField: UIViewRepresentable {
     let lines: Int
 
     func makeUIView(context: Context) -> UITextView {
-        let view = UITextView()
+        let view = PastingTextView()
         view.delegate = context.coordinator
+        view.pasted = { [weak coordinator = context.coordinator] text in
+            coordinator?.paste(text) ?? false
+        }
         view.backgroundColor = .clear
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
@@ -117,7 +120,13 @@ struct TokenTextField: UIViewRepresentable {
             self.photographed = photographed
             view.tintColor = photographed
                 ? .clear : design.accent.uiColor(view.appearance)
-            guard restyled || shown?.body != draft.body || shown?.tokens != draft.tokens else {
+            // What is written has changed under the view rather than in it:
+            // the delegate marks its own edits as shown before handing them on,
+            // so anything that reaches here with a different body was put there
+            // by something other than the keyboard — a picker, a paste, a
+            // review coming back from the page it was written on.
+            let rewritten = shown?.body != draft.body || shown?.tokens != draft.tokens
+            guard restyled || rewritten else {
                 shown = draft
                 return
             }
@@ -127,7 +136,12 @@ struct TokenTextField: UIViewRepresentable {
             view.attributedText = attributed(draft, in: view)
             view.typingAttributes = Self.plain(design, view)
             let caret = min(draft.caret, view.text.utf16.count)
-            view.selectedRange = view.isFirstResponder
+            // A token put into the sentence from outside leaves the caret after
+            // it, and the caret a person can see has to be the one the next
+            // token will land at. Only a restyling with the same words keeps
+            // the selection: moving the caret because the appearance changed
+            // would take it out from under a finger mid-sentence.
+            view.selectedRange = view.isFirstResponder && !rewritten
                 ? selection : NSRange(location: caret, length: 0)
             applying = false
         }
@@ -145,6 +159,17 @@ struct TokenTextField: UIViewRepresentable {
                 ? .clear : design.accent.uiColor(view.appearance)
             view.selectedRange = selection
             applying = false
+        }
+
+        /// What a paste means here, rather than what UIKit does with one.
+        ///
+        /// Answering false leaves the platform to insert the clipboard as
+        /// characters, which is what a paste of anything else should do.
+        func paste(_ text: String) -> Bool {
+            var draft = parent.draft
+            draft.paste(text)
+            parent.draft = draft
+            return true
         }
 
         func textViewDidChange(_ view: UITextView) {
@@ -281,5 +306,25 @@ enum TokenChipImage {
         return (image, CGRect(
             x: 0, y: font.descender - (image.size.height - font.lineHeight) / 2,
             width: image.size.width, height: image.size.height))
+    }
+}
+
+/// The field itself, so that a paste can be the thing this app means by one.
+///
+/// UIKit pastes the clipboard as characters. A paste long enough to bury the
+/// sentence around it is not characters here — it is one named token, the same
+/// as a picked file — and the paste command reaches the view before it reaches
+/// anything else, so this is the only place the difference can be made. It is
+/// the whole of the subclass: everything else about the field is the
+/// platform's.
+final class PastingTextView: UITextView {
+    /// Answers whether the paste was taken. False leaves it to the platform.
+    var pasted: ((String) -> Bool)?
+
+    override func paste(_ sender: Any?) {
+        guard let text = UIPasteboard.general.string, pasted?(text) == true else {
+            super.paste(sender)
+            return
+        }
     }
 }

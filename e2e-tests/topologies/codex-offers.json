@@ -1,0 +1,10 @@
+{
+  "users": ["personal"],
+  "daemons": [
+    {"name": "studio", "user": "personal", "repository_roots": ["."]}
+  ],
+  "paired": [],
+  "agents": [
+    {"name": "codex", "daemon": "studio", "working_dir": ".", "provider": {"Codex": {"recording": "../recordings/codex-offers"}}}
+  ]
+}

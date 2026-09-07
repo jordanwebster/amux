@@ -10627,3 +10627,36 @@ answering for. And a relay that comes back brings the connection back before
 it brings the agent's session back; the phone's reconnection is its own later
 work, so the journey ends with the machine away rather than depending on it
 returning.
+
+2026-09-07 — **Writing to an agent, driven end to end.** The composer had every
+part built and nothing proving they worked together against a real machine, so
+this is the journey that writes a message: a paragraph over two lines, four
+kinds of token standing in it, one sent and reconciled, one held while a turn
+ran, and the agent renamed, addressed and deleted.
+
+Two things were missing before it could be driven. A paste was never wired at
+all: `MessageDraft` knew how to turn a long one into a named token and nothing
+ever called it, because the field is a `UITextView` and UIKit's own paste puts
+the clipboard in as characters. The field now takes the paste command itself
+and hands the text to the draft, so a paste past about eight lines becomes one
+token wherever it happens. And a token put into the sentence from outside — a
+picker's, a paste's, a review coming back from the page it was written on —
+left the visible caret where it had been, in front of the thing that had just
+been inserted; the field now follows the draft's own caret whenever the words
+changed underneath it, and only keeps the selection when nothing did but the
+appearance.
+
+Two kinds of thing a journey cannot press reach the app through its driving
+door instead. The photo library and the file browser are the system's own
+screens running outside this app; what they hand back is a kind, a name, a
+type and some bytes, and the door hands exactly that to the code a real pick
+calls — so the token still appears only when the machine says the bytes are
+stored. A paste goes on the system clipboard and the field is sent the same
+message the system's Paste menu item sends.
+
+The recorded Codex session now answers one turn as well as offering its
+catalogue, so a command raised by a slash can actually be sent rather than
+only picked. Model and effort are changed after that turn and not before: they
+are kept for the session's next turn, so changing one first would put a model
+into turn parameters the recording never saw. Neither reaches the app-server
+at all, which is what the strict replay proves.
