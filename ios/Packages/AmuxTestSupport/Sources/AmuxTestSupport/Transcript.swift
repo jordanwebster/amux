@@ -292,6 +292,27 @@ public enum Transcript {
             """),
     ]
 
+    /// The same conversation with the agent's closing message carrying an
+    /// attachment, the way an agent's `attach` tool leaves one: as an element
+    /// in the message text, indistinguishable from one a person wrote.
+    ///
+    /// A fixture that cannot make the element asks the shared library and gets
+    /// nothing back, and then this is the ordinary transcript — a token drawn
+    /// from a string the parser would reject would photograph a lie.
+    public static func pairingCopy(attaching attachment: DraftAttachment) -> [FeedEntry] {
+        guard let token = Bridge.token(for: attachment) else { return pairingCopy }
+        return pairingCopy.dropLast() + [
+            message(7, seq: 8, text: """
+                `cargo check` is clean; the whole of its output is here.
+
+                \(token.element)
+
+                Before I call it done I'd like to run the spec suite — three tests assert on \
+                the old error strings and I want to see them fail loudly rather than guess.
+                """),
+        ]
+    }
+
     /// The same conversation with the turn still open: the person has asked
     /// for the suite and the command is still running.
     public static var live: [FeedEntry] {

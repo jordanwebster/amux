@@ -168,8 +168,13 @@ public enum Fixtures {
         // makes one — the elements are the shared library's, and the review is
         // written on the review store — so what is photographed is a draft the
         // app could actually be holding.
+        //
+        // The agent has attached something too, in the message above the box,
+        // so the two are in one picture: an attachment an agent sent and an
+        // attachment you are writing are the same chip, because they are the
+        // same element in the same text read by the same parser.
         Fixture(id: "tokens", screen: .typing) { bundle in
-            States.open(bundle, entries: Transcript.pairingCopy,
+            States.open(bundle, entries: Transcript.pairingCopy(attaching: Scenario.checkOutput),
                         session: Sessions.claude(), changes: Transcript.review)
             States.reviewed(bundle)
             let conversation = bundle.conversation(Scenario.focus)

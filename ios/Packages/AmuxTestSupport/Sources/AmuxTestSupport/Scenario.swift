@@ -212,6 +212,13 @@ public enum Scenario {
         id: ArtifactId("sha256:" + String(repeating: "9f8e7d6c", count: 8)),
         kind: .file, name: "relay-trace.json", mime: "application/json", size: 20_480)
 
+    /// A file the *agent* attached, through its own attach tool. It is the
+    /// same shape as one a person attaches, because in the message text there
+    /// is no difference between them — which is the thing worth photographing.
+    public static let checkOutput = DraftAttachment(
+        id: ArtifactId("sha256:" + String(repeating: "5e4d3c2b", count: 8)),
+        kind: .file, name: "cargo-check.txt", mime: "text/plain", size: 3_072)
+
     /// A paste past the length at which the shared library makes it a token.
     public static let longPaste = (1...12)
         .map { "  relay: attempt \($0) refused, retrying in \($0 * 250)ms" }

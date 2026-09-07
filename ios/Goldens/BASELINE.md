@@ -650,7 +650,10 @@ everything here is the app's own answer, and this entry is what it is answering.
   through its `attach` tool, and they are elements in the message text exactly
   as yours are. It is one view used twice rather than two that resemble each
   other — inside the field it is rendered to a picture, because a run of text
-  can only carry a picture.
+  can only carry a picture. The capture puts both in one frame on purpose: the
+  agent's `cargo-check.txt` above the box and the person's `relay-trace.json`
+  inside it are the same chip, and neither side of the conversation keeps a
+  record of an attachment beside the text that names it.
 
 ## settings
 
