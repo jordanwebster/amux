@@ -30,15 +30,10 @@ use serde::{Deserialize, Serialize};
 const SLOT_FIRST: char = '\u{e000}';
 const SLOT_LAST: char = '\u{f8ff}';
 
-/// A bracketed paste this many lines long, or this many chars long, is
-/// long enough to bury the sentence around it, so it becomes one atomic
-/// token instead of filling the draft.
-pub const PASTE_TOKEN_LINES: usize = 8;
-pub const PASTE_TOKEN_CHARS: usize = 1000;
-
-/// The `name` a pasted-text attachment carries into the feed. Pasted text
-/// has no source filename, and the mention format requires a name.
-const PASTED_NAME: &str = "pasted text";
+/// The size at which a bracketed paste becomes one atomic token, and the name
+/// it carries. Both are the shared library's, so a paragraph that becomes a
+/// token here becomes one on every other client too.
+pub use amux_ui::{PASTE_TOKEN_CHARS, PASTE_TOKEN_LINES, PASTED_NAME};
 
 fn is_slot(c: char) -> bool {
     (SLOT_FIRST..=SLOT_LAST).contains(&c)
@@ -289,19 +284,15 @@ impl Composer {
     /// sentence around it becomes one atomic token, shorter text lands as
     /// characters. Returns the token's slot when one was made.
     pub fn paste_or_attach(&mut self, text: &str) -> Option<char> {
-        let body = sanitize_paste(text);
-        let lines = body.lines().count().max(1);
-        if lines < PASTE_TOKEN_LINES && body.chars().count() < PASTE_TOKEN_CHARS {
-            self.insert_str(&body);
-            return None;
+        match amux_ui::paste(&sanitize_paste(text)) {
+            amux_ui::Pasted::Prose(body) => {
+                self.insert_str(&body);
+                None
+            }
+            amux_ui::Pasted::Text { body, lines } => Some(
+                self.insert_token(String::new(), TokenAttachment::Text { body, lines }),
+            ),
         }
-        Some(self.insert_token(
-            String::new(),
-            TokenAttachment::Text {
-                body,
-                lines: lines as u32,
-            },
-        ))
     }
 
     /// Inserts an artifact token at the cursor; `renumber` gives its label.
@@ -693,15 +684,10 @@ impl Composer {
                     attachments.push(attachment.clone());
                 }
                 TokenAttachment::Text { body, lines } => {
-                    text.push_str(&format_mention(&Mention {
-                        kind: MentionKind::Text {
-                            body: body.clone(),
-                            lines: *lines,
-                        },
-                        name: PASTED_NAME.to_string(),
-                        size: None,
-                        path: None,
-                    }));
+                    text.push_str(&format_mention(&amux_ui::text_mention(
+                        body.clone(),
+                        *lines,
+                    )));
                 }
                 TokenAttachment::FrozenReview { mention, diff } => {
                     text.push_str(&format_mention(mention));

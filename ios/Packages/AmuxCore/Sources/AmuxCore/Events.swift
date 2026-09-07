@@ -915,6 +915,29 @@ public enum SettingsGate: Sendable, Equatable, Codable {
             try container.encode(reason, forKey: .reason)
         }
     }
+
+    /// Why a change would be refused, in the core's own words, or nothing
+    /// where it would be taken. Spelled here to match `provider::SettingsGate`
+    /// in the shared crate: the phone must not tell a person something
+    /// different about a refusal than the terminal does.
+    public var refusal: String? {
+        switch self {
+        case .ready: nil
+        case .ptySettingsUnavailable:
+            "model, effort and preset changes are unavailable for Claude PTY sessions"
+        case .unavailable: "provider settings unavailable for this agent"
+        // The layer's own gate word, said rather than translated: what a
+        // session refuses for is its vocabulary and this build does not carry
+        // a second set of sentences for it.
+        case .codex(let reason): "settings unavailable: codex reports \(spelled(reason.rawValue))"
+        case .claudeSdk(let reason):
+            "settings unavailable: claude reports \(spelled(reason.rawValue))"
+        }
+    }
+
+    private func spelled(_ gate: String) -> String {
+        gate.replacingOccurrences(of: "_", with: " ")
+    }
 }
 
 public struct QueuedMessage: Codable, Sendable, Equatable {

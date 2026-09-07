@@ -20,11 +20,11 @@ struct ComposerBox: View {
     let state: ComposerState
     /// Whose box this is, which is what the empty field says.
     let agent: String
-    @Binding var text: String
+    /// What the layer reports about how this agent thinks, which is what the
+    /// footer chip names and what its sheet is built from.
+    let provider: ProviderFacts
+    @Binding var draft: MessageDraft
     let actions: @MainActor (ConversationAction) -> Void
-    @FocusState private var writing: Bool
-    /// How tall the prose in the field is, measured off a `Text` of it.
-    @State private var prose: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -38,13 +38,26 @@ struct ComposerBox: View {
         .padding(.vertical, 12)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .accessibilityElement(children: .contain)
-        .identified("composer", label: placeholder, value: text)
+        .identified("composer", label: placeholder, value: spoken)
     }
 
     private var placeholder: String { state.placeholder(agent: agent) }
 
-    private var written: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var written: Bool { !draft.isEmpty }
+
+    /// What the field says, with each token read as the words on it rather
+    /// than as the character it occupies. It is what VoiceOver speaks and what
+    /// a driver reads back, and neither can see a chip.
+    private var spoken: String {
+        var said = ""
+        for character in draft.body {
+            if let token = draft.tokens[character] {
+                said += "[\(token.label)]"
+            } else {
+                said.append(character)
+            }
+        }
+        return said
     }
 
     private var field: some View {
@@ -55,7 +68,7 @@ struct ComposerBox: View {
             // one is about the message, one is about the turn — and a phone
             // has no modifier key to tell two meanings of one button apart.
             if written {
-                Button { text = "" } label: {
+                Button { draft.clear() } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 16, weight: .regular))
                         .foregroundStyle(design.inkFaint.color)
@@ -69,40 +82,24 @@ struct ComposerBox: View {
         }
     }
 
-    /// The field, sized by the prose in it rather than by itself.
+    /// The field, and the placeholder behind it.
     ///
-    /// A vertical `TextField` measures its own height twice: the box holding
-    /// four lines settled two device pixels apart between launches, the whole
-    /// plate moved with it, and a still of a layout with two resting places is
-    /// a coin toss. `Text` is a pure function of the string, the face and the
-    /// width, so the same paragraph is the same height every time. It is
-    /// measured hidden underneath and the field is laid into the height it
-    /// asks for.
+    /// A `UITextView` has no placeholder of its own, and the one the app draws
+    /// is a piece of the design rather than a piece of the field: it is the
+    /// same words in the same face as the ink that will replace them.
     private var growing: some View {
         ZStack(alignment: .topLeading) {
-            Text(text.isEmpty ? placeholder : text)
-                .designFont(.body, design)
-                .lineLimit(Self.lines)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .hidden()
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { prose = $0 }
-            TextField(placeholder, text: $text, axis: .vertical)
-                .designFont(.body, design)
-                .foregroundStyle(design.ink.color)
-                .lineLimit(1...Self.lines)
-                .focused($writing)
-                // A blinking caret is a clock, and a baseline cannot
-                // photograph one: whichever half of the blink the shutter
-                // catches is the picture. See ios/Goldens/BASELINE.md.
-                .tint(photographed ? .clear : design.accentColor)
-                // The predictive strip above the keyboard rewrites itself as
-                // the system thinks about what was typed, which is a second
-                // thing on a photographed screen that will not hold still.
-                .autocorrectionDisabled()
+            if draft.body.isEmpty {
+                Text(placeholder)
+                    .designFont(.body, design)
+                    .foregroundStyle(design.inkFaint.color)
+                    .allowsHitTesting(false)
+            }
+            TokenTextField(
+                draft: $draft, design: design, photographed: photographed, lines: Self.lines)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .identified("composer.field", label: placeholder, value: text)
+                .identified("composer.field", label: placeholder, value: spoken)
         }
-        .frame(height: prose > 0 ? prose : nil)
     }
 
     /// How far the box grows before the field scrolls inside it. Eight lines
@@ -124,6 +121,10 @@ struct ComposerBox: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Attach")
             .identified("composer.attach", label: "Attach")
+            // Between the plus and the microphone, which is where the design
+            // puts it: it is a standing fact about the message you are about
+            // to send rather than an action on it.
+            ModelChip(provider: provider) { actions(.openSettings) }
             Spacer(minLength: 0)
             Button { actions(.dictate) } label: {
                 Image(systemName: "mic")

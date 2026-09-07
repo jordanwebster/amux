@@ -199,6 +199,24 @@ public enum Scenario {
     /// The agent whose conversation every talking screen opens.
     public static let focus = agentId("refactor-auth")
 
+    /// A photo somebody attached. The identity is the shape a stored blob's
+    /// identity really has — a sha256 digest — because the element that names
+    /// it is rejected by the shared parser otherwise, and a fixture that could
+    /// not be parsed would photograph prose pretending to be a token.
+    public static let screenshot = DraftAttachment(
+        id: ArtifactId("sha256:" + String(repeating: "a1b2c3d4", count: 8)),
+        kind: .image, name: "reconnect-loop.png", mime: "image/png", size: 184_320)
+
+    /// A file somebody attached.
+    public static let trace = DraftAttachment(
+        id: ArtifactId("sha256:" + String(repeating: "9f8e7d6c", count: 8)),
+        kind: .file, name: "relay-trace.json", mime: "application/json", size: 20_480)
+
+    /// A paste past the length at which the shared library makes it a token.
+    public static let longPaste = (1...12)
+        .map { "  relay: attempt \($0) refused, retrying in \($0 * 250)ms" }
+        .joined(separator: "\n")
+
     /// Everything the phone has read, so the settled fleet carries no unread
     /// weight of its own.
     public static var allRead: UnreadWeights {

@@ -22,6 +22,10 @@ public enum RegisteredLeaves: String, CaseIterable, Sendable {
     /// room to spare, so this stays a candidate rather than becoming a leaf.
     /// `docs/IOS.md` has the numbers and what would reopen the question.
     case transcriptList
+    /// Measured and answered the other way: SwiftUI's text editing binds a
+    /// string and has nothing that makes a run of one atomic, so the composer's
+    /// field is a `UITextView` behind one representable. This is the app's only
+    /// leaf. `docs/IOS.md` has what was tried and what would reopen it.
     case tokenTextField
     /// Measured by argument rather than by a workload, and answered the same
     /// way: rows report their own frames as they lay out and a drag looks a

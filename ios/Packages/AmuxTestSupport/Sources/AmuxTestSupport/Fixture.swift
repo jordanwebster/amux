@@ -19,6 +19,11 @@ public struct Fixture: Identifiable, Sendable {
     /// The type size to render at, in the door's own words. Absent means the
     /// device's own setting.
     public let typeSize: String?
+    /// What the conversation has opened over itself in this state, where the
+    /// screen name does not say. Two states are the settings screen — the
+    /// model sheet and the permissions sheet — so which one is a fact about
+    /// the state rather than about the screen.
+    public let overlay: ConversationOverlay?
     /// Fills stores directly. A fixture never speaks a protocol: a journey
     /// that claims protocol coverage drives the real relay instead.
     public let apply: @Sendable @MainActor (StoreBundle) -> Void
@@ -29,6 +34,7 @@ public struct Fixture: Identifiable, Sendable {
         cloud: ScriptedCloudState = ScriptedCloudState(),
         accounts: [AccountEntry] = [Fixture.subscribed],
         typeSize: String? = nil,
+        overlay: ConversationOverlay? = nil,
         apply: @escaping @Sendable @MainActor (StoreBundle) -> Void = { _ in }
     ) {
         self.id = id
@@ -36,6 +42,7 @@ public struct Fixture: Identifiable, Sendable {
         self.cloud = cloud
         self.accounts = accounts
         self.typeSize = typeSize
+        self.overlay = overlay
         self.apply = apply
     }
 

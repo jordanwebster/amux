@@ -36,7 +36,7 @@ final class ReviewTokenTests: XCTestCase {
     func testTheRemarkIsProseBesideTheToken() throws {
         var draft = MessageDraft()
         draft.attach(try XCTUnwrap(written().token))
-        draft.prose = "Two small things, otherwise good."
+        draft.insert(text: "\n\nTwo small things, otherwise good.")
 
         let segments = draft.segments
         XCTAssertEqual(segments.count, 2)
@@ -113,9 +113,9 @@ final class ReviewTokenTests: XCTestCase {
     /// is not an attachment stays prose byte for byte.
     func testAMessageWithoutAReviewIsOnlyProse() {
         var draft = MessageDraft()
-        draft.prose = "no review here <amux-attachment kind=\"review\">"
-        XCTAssertEqual(draft.text, draft.prose)
-        XCTAssertEqual(draft.segments, [.prose(draft.prose)])
+        draft.insert(text: "no review here <amux-attachment kind=\"review\">")
+        XCTAssertEqual(draft.text, draft.body)
+        XCTAssertEqual(draft.segments, [.prose(draft.body)])
         XCTAssertTrue(draft.attachments.isEmpty)
     }
 
@@ -124,7 +124,7 @@ final class ReviewTokenTests: XCTestCase {
     func testTheSendCarriesTheMessageAndThePatch() throws {
         var draft = MessageDraft()
         draft.attach(try XCTUnwrap(written().token))
-        draft.prose = "Two small things."
+        draft.insert(text: " Two small things.")
 
         let agent = AgentId(UUID(uuidString: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")!)
         guard case .shared(let body) = try XCTUnwrap(draft.command(to: agent)) else {

@@ -55,6 +55,13 @@ public enum Fixtures {
         Built(.run, "run"),
         Built(.run, "host-lost"),
         Built(.typing, "typing"),
+        Built(.typing, "tokens"),
+        Built(.plus, "plus"),
+        Built(.settings, "settings"),
+        Built(.settings, "permissions-claude"),
+        Built(.settings, "permissions-codex"),
+        Built(.overflow, "overflow"),
+        Built(.agentDelete, "agent-delete"),
         Built(.working, "working"),
         Built(.runLive, "run-live"),
         Built(.working, "send-refused"),
@@ -150,20 +157,45 @@ public enum Fixtures {
         // photographed here is one the app reaches by somebody typing.
         Fixture(id: "typing", screen: .typing) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
-            bundle.conversation(Scenario.focus).draft.prose = """
+            bundle.conversation(Scenario.focus).draft.body = """
                 Before you squash it, check that the relay's reconnect path \
                 doesn't read INVALID_PIN by name \u{2014} I think it might, and if it \
                 does this whole change needs a different shape.
                 """
         },
+        // A message carrying one of each thing a message can carry, with
+        // ordinary words between them. Every token is made the way the app
+        // makes one — the elements are the shared library's, and the review is
+        // written on the review store — so what is photographed is a draft the
+        // app could actually be holding.
+        Fixture(id: "tokens", screen: .typing) { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy,
+                        session: Sessions.claude(), changes: Transcript.review)
+            States.reviewed(bundle)
+            let conversation = bundle.conversation(Scenario.focus)
+            conversation.draft.insert(text: "Same failure as ")
+            if let photo = Bridge.token(for: Scenario.screenshot) {
+                conversation.draft.insert(photo)
+            }
+            conversation.draft.insert(text: ", trace in ")
+            if let file = Bridge.token(for: Scenario.trace) {
+                conversation.draft.insert(file)
+            }
+            conversation.draft.insert(text: ". The log around it:\n")
+            conversation.draft.paste(Scenario.longPaste)
+            conversation.draft.insert(text: "\n")
+            if let review = bundle.review(Scenario.focus)?.token {
+                conversation.draft.attach(review)
+            }
+        },
         Fixture(id: "plus", screen: .plus) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
-        Fixture(id: "settings", screen: .settings) { bundle in
+        Fixture(id: "settings", screen: .settings, overlay: .settings) { bundle in
             // Model and effort on a Codex session, which is the layer this
             // build can actually change them on.
             States.open(
-                bundle, entries: [], agent: Scenario.agentId("spec-suite"),
+                bundle, entries: Transcript.codexTurn, agent: Scenario.agentId("spec-suite"),
                 session: Sessions.codex())
         },
         Fixture(id: "slash-typing", screen: .slashTyping) { bundle in
@@ -258,8 +290,17 @@ public enum Fixtures {
                 bundle, entries: Transcript.codexTurn, agent: Scenario.agentId("spec-suite"),
                 session: Sessions.codex(gate: .needsYou, asks: [Sessions.codexPermission]))
         },
-        Fixture(id: "settings-codex", screen: .settings) { bundle in
-            States.open(bundle, agent: Scenario.agentId("spec-suite"), session: Sessions.codex())
+        // Both permission vocabularies, on the layer that speaks each. Claude
+        // runs under a mode and reports which; Codex runs under a preset over
+        // two axes and both are named. Flattening them into one invented set
+        // would put words in a provider's mouth.
+        Fixture(id: "permissions-claude", screen: .settings, overlay: .permissions) { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+        },
+        Fixture(id: "permissions-codex", screen: .settings, overlay: .permissions) { bundle in
+            States.open(
+                bundle, entries: Transcript.codexTurn, agent: Scenario.agentId("spec-suite"),
+                session: Sessions.codex())
         },
         // The same finished turn once the fleet says nobody has read it: the
         // panel takes the composer's place and offers the page the chip in the

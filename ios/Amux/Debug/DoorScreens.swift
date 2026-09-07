@@ -12,6 +12,19 @@ import SwiftUI
 /// drawn is `Fixtures.isBuilt`, which the door asks before it ever gets here —
 /// one screen can draw several states, and they are built one at a time.
 enum DoorScreens {
+    /// Which overlay a screen name means. A screen is not always one picture:
+    /// the permissions sheet and the model sheet are both `settings`, opened
+    /// on different rows, so the state a capture asks for says which.
+    static func overlay(for screen: Screen) -> ConversationOverlay? {
+        switch screen {
+        case .plus: .plus
+        case .settings: .settings
+        case .overflow: .overflow
+        case .agentDelete: .deleteAgent
+        default: nil
+        }
+    }
+
     @MainActor
     @ViewBuilder
     static func view(for screen: Screen, host: DoorHost) -> some View {
@@ -50,6 +63,17 @@ enum DoorScreens {
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(
                     agent: Scenario.focus, in: host.stores.fleet)) { _ in }
+        // The plus, opened. Which overlay a conversation is showing is a state
+        // of the conversation and is handed in, the way the drawer's own
+        // openness is, so what is photographed is the real screen with the
+        // real card over it rather than the card on bare ground.
+        case .plus, .settings, .overflow, .agentDelete:
+            let agent = host.stores.conversations.keys.contains(Scenario.focus)
+                ? Scenario.focus : Scenario.agentId("spec-suite")
+            Conversation(
+                model: host.stores.conversation(agent),
+                subject: ConversationSubject(agent: agent, in: host.stores.fleet),
+                showing: host.overlay ?? DoorScreens.overlay(for: screen)) { _ in }
         // An ask is a state of the conversation rather than a screen beside
         // it: what replaces the composer is read off the session's own asks,
         // so permission, question and plan are one screen with a different

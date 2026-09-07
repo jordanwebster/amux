@@ -119,8 +119,8 @@ private struct ConversationPage: View {
                 switch action {
                 case .openDrawer: open = true
                 case .openChanges: router.open(.changes(agent))
-                // The overflow's own panel is not built yet, so nothing is
-                // presented and nothing pretends to have been.
+                // The overflow opens over the conversation, which is the
+                // conversation's own doing; nothing is pushed.
                 case .overflow: break
                 // Asking the machine again means asking the runtime, and the
                 // shell has no runtime to ask yet. Reconnecting on its own
@@ -150,7 +150,13 @@ private struct ConversationPage: View {
                 // The picker and the system's own dictation are not wired yet.
                 // The controls are on the screen they belong to rather than
                 // arriving with the wiring, and neither pretends to have run.
-                case .attach, .dictate: break
+                case .attach, .attaching, .dictate: break
+                // The cards these open are the conversation's own state and
+                // are already on the screen. What they change — a model, an
+                // effort, a permission mode, a name, a deletion — is a write
+                // to the host, and the runtime that would carry it is not
+                // wired here yet. Nothing pretends to have run.
+                case .openSettings, .setting, .overflowing, .deleteAgent: break
                 }
             }
         }

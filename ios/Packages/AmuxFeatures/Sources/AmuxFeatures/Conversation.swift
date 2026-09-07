@@ -29,8 +29,40 @@ public enum ConversationAction: Equatable, Sendable {
     case interrupt
     /// Attach something to the message, asked for from the plus.
     case attach
+    /// One of the things the plus offers, chosen.
+    case attaching(AttachChoice)
     /// Speak the message instead of typing it.
     case dictate
+    /// The model and effort sheet, asked for from the footer chip.
+    case openSettings
+    /// How this agent runs, changed: a model, an effort level or what it may
+    /// do without asking. The screen says what was picked and the layer that
+    /// owns the session decides whether it takes.
+    case setting(SettingChange)
+    /// One of the things the overflow offers, chosen.
+    case overflowing(OverflowChoice)
+    /// Delete this agent, confirmed after being told what that does.
+    case deleteAgent
+}
+
+/// Something the conversation opens over itself.
+///
+/// These are states of this screen rather than screens beside it: what the
+/// plus offers and what the overflow offers are both about the conversation
+/// you are in, and neither takes you anywhere. It is a parameter as well as
+/// state so a screen can be opened already showing one — which is how each is
+/// photographed, and how a conversation reached from a notification about a
+/// permission could open on it.
+public enum ConversationOverlay: Equatable, Sendable {
+    case plus
+    /// Model and effort, from the footer chip.
+    case settings
+    /// What the agent may do without asking, from the row in the plus.
+    case permissions
+    /// Everything the agent can be done to, from the ellipsis.
+    case overflow
+    /// Deleting it, with the consequences named.
+    case deleteAgent
 }
 
 /// Who this conversation is with and where it runs.
@@ -164,22 +196,54 @@ public struct Conversation: View {
     /// starts again with the strip as it was.
     @State private var unopenable: ChildRow.ID?
 
+    /// What this conversation has opened over itself, if anything.
+    @State private var showing: ConversationOverlay?
+
     public init(
         model: ConversationStore,
         subject: ConversationSubject,
         naming: @escaping (AgentId) -> String = { $0.description },
+        showing: ConversationOverlay? = nil,
         actions: @escaping @MainActor (ConversationAction) -> Void
     ) {
         self.model = model
         self.subject = subject
         self.naming = naming
         self.actions = actions
+        _showing = State(initialValue: showing)
     }
 
     public var body: some View {
         ZStack {
             Ground()
             transcript
+            // The two surfaces that are not about the message being written:
+            // what the agent can be done to, and doing the one of those that
+            // cannot be undone. They sit over the whole screen rather than in
+            // the foot, because neither replaces the composer — the overflow
+            // hangs from the control that opened it, and a deletion is a
+            // question about the conversation as a whole.
+            if showing == .overflow {
+                OverflowMenu(address: address) { choice in
+                    showing = choice == .delete ? .deleteAgent : nil
+                    actions(.overflowing(choice))
+                }
+                .padding(.horizontal, design.metrics.gutter)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.top, 108)
+            }
+            if showing == .deleteAgent {
+                DeleteAgentCard(
+                    name: subject.name,
+                    cancel: { showing = nil },
+                    confirm: {
+                        showing = nil
+                        actions(.deleteAgent)
+                    })
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, 10)
+            }
         }
         // A name put on a container is handed down to everything under it the
         // system does not already treat as its own, so without this the pill,
@@ -253,13 +317,68 @@ public struct Conversation: View {
                 ConversationFoot(state: state) { actions(.retry) }
             } else if let composer = ComposerState(
                 gate: model.gate, tail: model.tailRow, elapsed: subject.working) {
-                ComposerBox(
-                    state: composer, agent: subject.name,
-                    text: Bindable(model).draft.prose, actions: actions)
+                VStack(spacing: 8) {
+                    opened
+                    ComposerBox(
+                        state: composer, agent: subject.name, provider: model.provider,
+                        draft: Bindable(model).draft) { action in
+                            // What the plus and the chip open is this screen's
+                            // own state: both are about the message being
+                            // written, and nothing outside has to know one is
+                            // open. Pressing the same control again closes it.
+                            switch action {
+                            case .attach: showing = showing == .plus ? nil : .plus
+                            case .openSettings: showing = showing == .settings ? nil : .settings
+                            default: break
+                            }
+                            actions(action)
+                        }
+                }
             }
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 10)
+    }
+
+    /// What this agent answers to elsewhere: "refactor-auth/studio". It is
+    /// what a person copies in order to write to it from another agent, a
+    /// script or a terminal, so it is the name and the machine and nothing
+    /// else.
+    private var address: String {
+        [subject.name, subject.host?.lowercased()].compactMap { $0 }.joined(separator: "/")
+    }
+
+    /// Whatever the composer has opened over itself.
+    ///
+    /// One at a time, and each replaces the last: the permissions sheet opens
+    /// *alone*, from the row in the plus, and a stack of cards over a
+    /// conversation would leave nothing of the conversation to write about.
+    @ViewBuilder
+    private var opened: some View {
+        switch showing {
+        case .plus:
+            PlusCard(permission: ProviderPermission(model.provider.permission)) { choice in
+                if choice == .permissions {
+                    showing = .permissions
+                } else {
+                    showing = nil
+                }
+                actions(.attaching(choice))
+            }
+        case .settings:
+            SettingsCard(
+                provider: model.provider, refusal: model.settingsGate.refusal) { change in
+                    actions(.setting(change))
+                }
+        case .permissions:
+            PermissionsCard(
+                permission: ProviderPermission(model.provider.permission),
+                refusal: model.settingsGate.refusal) { change in
+                    actions(.setting(change))
+                }
+        case .overflow, .deleteAgent, nil:
+            EmptyView()
+        }
     }
 
     // MARK: - The chrome
@@ -272,7 +391,10 @@ public struct Conversation: View {
                 if let changes = model.changes, !changes.isEmpty {
                     ChangesChip(changes: changes) { actions(.openChanges) }
                 }
-                Button { actions(.overflow) } label: {
+                Button {
+                    showing = showing == .overflow ? nil : .overflow
+                    actions(.overflow)
+                } label: {
                     GlassIcon(glyph: "ellipsis")
                 }
                 .accessibilityLabel("More")

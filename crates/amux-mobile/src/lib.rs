@@ -471,6 +471,90 @@ pub unsafe extern "C" fn amux_mobile_review_element(review_json: *const c_char) 
     .unwrap_or(std::ptr::null_mut())
 }
 
+/// What a composer is attaching: an artifact already stored, named by its
+/// identity, kind, display name and size.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttachmentRequest {
+    id: amux_ui::ArtifactId,
+    kind: amux_ui::ArtifactKind,
+    name: String,
+    size: u64,
+}
+
+/// Spells one artifact attachment as the canonical element a message carries
+/// it in, as owned JSON `{"element":"…"}`; free it with amux_mobile_free.
+/// NULL means the request was not an artifact identity, kind, name and size.
+///
+/// Formatted here rather than on the client for the same reason a review is:
+/// the element escapes what would close it early, and a second speller would
+/// be a second thing to keep right.
+///
+/// # Safety
+/// request_json must be a readable NUL-terminated UTF-8 string for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_attachment_element(
+    request_json: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let json = unsafe { read_string(request_json) }?;
+        let request: AttachmentRequest = serde_json::from_str(json).ok()?;
+        let kind = match request.kind {
+            amux_ui::ArtifactKind::Image => amux_ui::MentionKind::Image { id: request.id },
+            _ => amux_ui::MentionKind::File { id: request.id },
+        };
+        let element = amux_ui::format_mention(&amux_ui::Mention {
+            kind,
+            name: request.name,
+            size: Some(request.size),
+            path: None,
+        });
+        let reply = serde_json::json!({ "element": element });
+        Some(
+            CString::new(serde_json::to_string(&reply).ok()?)
+                .ok()?
+                .into_raw(),
+        )
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
+/// Routes a paste by size, as owned JSON; free it with amux_mobile_free.
+/// `{"prose":"…"}` is text short enough to read in place; `{"element":"…",
+/// "lines":n,"name":"…"}` is a paste long enough to bury the sentence around
+/// it, which becomes one atomic Text attachment. NULL means the text was not
+/// readable.
+///
+/// Where the line sits is the shared library's answer, not the client's, so a
+/// paragraph that becomes a token in the terminal becomes one on the phone.
+///
+/// # Safety
+/// text must be a readable NUL-terminated UTF-8 string for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_paste(text: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let text = unsafe { read_string(text) }?;
+        let reply = match amux_ui::paste(text) {
+            amux_ui::Pasted::Prose(body) => serde_json::json!({ "prose": body }),
+            amux_ui::Pasted::Text { body, lines } => serde_json::json!({
+                "element": amux_ui::format_mention(&amux_ui::text_mention(body, lines)),
+                "lines": lines,
+                "name": amux_ui::PASTED_NAME,
+            }),
+        };
+        Some(
+            CString::new(serde_json::to_string(&reply).ok()?)
+                .ok()?
+                .into_raw(),
+        )
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
 /// Splits message text into prose and the attachment elements it carries, as
 /// owned JSON; free it with amux_mobile_free. NULL means the text was not
 /// readable.

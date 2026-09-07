@@ -4,6 +4,49 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **Attachments are tokens inside the message, and the phone can
+change how an agent runs.** A message can carry a photo, a file, a long paste
+and a written review, and each of them lives *in* the text rather than in a
+tray beside it — which is what the format already said and what the terminal
+already does, and it is the only arrangement in which one can be referred to in
+place: "compare this with this".
+
+The cost of inline is ergonomic, so the draft is one string with a private-use
+character standing in for each token, the way the terminal's composer works.
+Every gesture then falls out of ordinary text editing: the picker inserts a
+character where the caret is, one backspace deletes a character and takes the
+whole token with it, and moving a token is moving a character. Nothing has to
+know that a token is several words wide, because in the draft it is not.
+
+That decided the one question this app had left open about UIKit. SwiftUI's
+text editing binds a string, and nothing in a string — or in an
+`AttributedString`, which was the real candidate — makes a run of it one object
+to the caret, or draws a chip between two words. `UITextView` has exactly that
+object already: an attachment is one character wide to the caret and any width
+on the screen. So the composer's field is the app's one UIKit leaf, behind a
+representable that binds the shared draft and keeps no state of its own, and
+`docs/IOS.md` records what was tried and what would reopen it. The chip inside
+the field is the same SwiftUI view the feed draws, rendered to a picture, so an
+attachment you wrote and an attachment an agent sent through its `attach` tool
+are one description used twice.
+
+Where a paste stops being words and becomes a token moved into `amux-ui`, so
+the terminal and the phone read one spelling of it rather than two that could
+drift; the phone asks the shared library to spell every element and to route
+every paste.
+
+Beside that, the three surfaces that say how an agent runs. The footer chip
+names the model and its effort and opens their sheet; permissions open alone
+from the row in the plus, in the provider's own vocabulary — Claude's five
+modes as Claude names them, Codex's three presets with the approval policy and
+the sandbox named under each rather than hidden behind it — achromatic except
+the one mode that stops asking, because being in that one is not a state
+anybody should be in without seeing it. The overflow offers rename, the agent's
+address and deletion, and deleting says what it does: the edits stay, the
+session ends, the conversation goes from every device.
+
+---
+
 2026-09-07 — **The photographed clock now reads the region it is pinned to.**
 Every capture keeps the simulator's status bar, pinned to 9:41 so two runs a
 minute apart do not differ over the time. Thirty-six baselines nonetheless read

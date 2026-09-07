@@ -55,6 +55,63 @@ product question nobody has answered yet. The container is otherwise the
 conversation's own, and when that question is answered these numbers are taken
 again over whatever ships.
 
+## The composer's field is not SwiftUI
+
+`RegisteredLeaves` carries `tokenTextField`, and unlike the other two it has a
+file behind it: `AmuxFeatures/Leaves/TokenTextField.swift`, a `UITextView`
+behind one representable. It is the only UIKit view in the app.
+
+What the field has to do is not a performance budget, so what settled it is not
+a frame time. Attachments in amux are elements *inside* the message text, and
+the design settled three gestures on that: the picker inserts one wherever the
+caret already is, one backspace removes the whole of it, and it can be picked
+up and dropped elsewhere in the sentence. A token therefore has to be one
+object to the caret and several words wide on the screen at the same time.
+
+SwiftUI, as of iOS 26, offers three ways to edit text and none of them does
+that:
+
+| | What it binds | A token in it |
+| --- | --- | --- |
+| `TextField(_:text:axis:)` | `String` | Nothing in a string is a token. A stand-in character draws as a blank; the token's name drawn as letters is letters, and backspace takes one of them. |
+| `TextEditor(text:)` | `String` | The same. |
+| `TextEditor(text:selection:)` with `AttributedString` | `AttributedString` | Runs carry attributes, and an attribute changes how text is *drawn*. There is no attribute that makes a run one object to the caret, and no attachment: `NSTextAttachment` has no `AttributedString` counterpart SwiftUI will render. |
+
+Each of those was tried against the three gestures, and the first one is where
+it stops: there is nothing to draw a chip *with*. A private-use stand-in
+character — the model's own spelling, which is what makes one backspace delete
+a whole token — renders as a missing glyph, so the field shows a blank box
+where the design shows a name. Everything after that is moot.
+
+UIKit does have the object: an `NSTextAttachment` is exactly one character to
+the caret and any width on the screen, which is the property the design asked
+for, stated once. One backspace over it deletes one character; the caret steps
+across it in one press; and `UITextView`'s own drag interaction moves the run
+with its attributes, so moving a token is moving a character. None of that is
+implemented in the leaf — it is what the attachment already is.
+
+What the leaf is allowed to be is deliberately small. `MessageDraft` in
+`AmuxCore` holds the whole draft, stand-ins and all, and the representable
+binds it: the view keeps no state of its own, rebuilds what it draws from the
+draft whenever the two disagree, and hands back a draft. The chip itself is not
+drawn in UIKit either — it is the same SwiftUI `TokenChip` the feed draws,
+rendered to an image through `ImageRenderer`, so an attachment you wrote and an
+attachment an agent sent are one description used twice. The composer stays a
+function of the conversation's state and a screenshot of it is reproducible.
+
+Two costs are real and are the price. A rendered chip does not resolve a
+dynamic colour the way drawn text does, so the leaf redraws them when the
+appearance changes — which is why `TokenChip` can be asked for a specific
+appearance instead of the ambient one. And the field measures itself: a
+`UIViewRepresentable` answers `sizeThatFits` directly, which is a single pass,
+where the SwiftUI field it replaced had to be sized off a hidden `Text` because
+a vertical `TextField` measured itself twice and settled two device pixels
+apart between launches.
+
+What would reopen it: an attributed-text SwiftUI editor that renders
+attachments, or any attribute that makes a run atomic to the caret. The leaf
+would go and the model behind it would not change at all.
+
 ## Selecting a range in a diff is SwiftUI too
 
 `RegisteredLeaves` also carries `diffSelection`, reserved for a UIKit view that

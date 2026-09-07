@@ -39,9 +39,9 @@ pub use amux::{
     HostTrustStatus, Protocol, WorkingOn, claude_io,
 };
 pub use attachments::{
-    ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DraftAttachment, Mention,
-    DIFF_MIME, MentionKind, REVIEW_NAME, Segment, format_mention, review_mention,
-    split_mentions,
+    ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DIFF_MIME, DraftAttachment,
+    Mention, MentionKind, PASTE_TOKEN_CHARS, PASTE_TOKEN_LINES, PASTED_NAME, Pasted, REVIEW_NAME,
+    Segment, format_mention, paste, review_mention, split_mentions, text_mention,
 };
 pub use claude::{ClaudeCommand, SendGate};
 pub use claude_sdk::{ClaudeSdkCommand, ClaudeSdkInput, SdkAnswer};

@@ -429,10 +429,10 @@ The composer with a paragraph in it: the box has grown to hold four lines, the
 send button has filled, and a control for throwing the message away has
 appeared beside the text.
 
-- **The model chip is not in the footer.** The reference puts the model and its
-  effort between the plus and the microphone. Naming them is easy; changing
-  them is a write to the provider, and the chip lands with the sheet that makes
-  the change rather than as a label that cannot be pressed.
+- **The model chip is drawn where the reference draws it**, between the plus
+  and the microphone, and it opens the sheet that changes what it names. It is
+  absent on a conversation whose layer reports no model at all: a chip naming a
+  default nobody stated would be the app inventing a fact.
 - **There is a clear control, which the reference does not draw.** Interrupting
   an agent and throwing away what you wrote are opposite intentions — one is
   about the turn, one is about the message — and the confirmed requirement is
@@ -444,12 +444,13 @@ appeared beside the text.
   comes back to after leaving the app mid-message. The reference draws it the
   same way. What a focused field looks like is proved by the writing journey,
   which types into it.
-- **The box is as tall as the prose in it, measured off the prose.** A field
-  that grows with what is typed measures its own height twice — the same four
-  lines settled two device pixels apart between launches, and the whole plate
-  moved with them — so the height comes from a hidden `Text` of the same string
-  in the same face at the same width, which is the same answer every time. Not
-  visible in the picture; it is why there is a picture at all.
+- **The box is as tall as the prose in it, and the field measures itself.** The
+  field is the app's one UIKit view, and a `UIViewRepresentable` answers the
+  layout's question directly in one pass. The SwiftUI field it replaced could
+  not: it measured its own height twice, the same four lines settled two device
+  pixels apart between launches, and the whole plate moved with them. Not
+  visible in the picture; it is why there is a picture at all. `docs/IOS.md`
+  says why the field is UIKit at all, and it is not this.
 - **Return inserts a newline.** Not visible in a still, and the whole reason
   the box is shaped this way: a message to an agent is usually a paragraph, and
   a keyboard whose return key sends cannot write a second one.
@@ -603,3 +604,139 @@ A capture that renders this correctly is evidence that a capture of a real
 screen would render, and moving one token visibly changes this image.
 
 There is no design reference for it, so there is nothing to depart from.
+
+## plus
+
+The plus, opened over the conversation it belongs to: one card holding two
+tiles and a row, with the composer still under it.
+
+- **The card is the reference's**, down to the two recessed tiles side by side
+  and the permissions row beneath them rather than a third tile. A row is the
+  right shape for it because it is the one thing in the card that does not put
+  something *in* the message.
+- **There is no Paste row and no Slash command row.** Both were cut in the
+  design round that settled this card: the keyboard already pastes — and a
+  paste long enough to bury the sentence becomes a token by itself — and a
+  slash command is typed. A menu row for something the keyboard already does is
+  dead weight.
+- **The permissions row names the mode as the layer reports it**, and says
+  nothing where the layer reports none. The reference reads "Accept Edits"; the
+  conversation photographed here is under Claude's default mode, so it reads
+  "Ask me", which is what that mode is called.
+- The differing conversation and the thinking line carry over from `run`.
+
+## tokens
+
+A message being written that carries one of each thing a message can carry: a
+photo, a file, a long paste and a written review, with ordinary words between
+them. There is no design reference for this state — the design settled that
+attachments are tokens inside the message text and drew none of them — so
+everything here is the app's own answer, and this entry is what it is answering.
+
+- **A token is a chip inside the sentence, not a row above the box.** That is
+  the settled requirement and it is the whole reason the field is a
+  `UITextView`: a chip has to be one object to the caret so that one backspace
+  takes the whole of it, the caret steps across it in one press, and it can be
+  picked up and dropped elsewhere. `docs/IOS.md` records what was tried in
+  SwiftUI first.
+- **The long paste is named and counted, not shown.** "Pasted text · 12 lines".
+  Where that line sits is the shared library's answer, so a paragraph that
+  becomes a token in the terminal becomes one here.
+- **A chip says the kind with a mark and the thing with words.** No thumbnail
+  for the photo, no first line for the paste, no file count for the review.
+  Drawing eighteen kilobytes of log as a wide card was the app disagreeing with
+  its own model, which says a long paste is named rather than shown.
+- **The same chip is drawn in the feed.** An agent can attach things too,
+  through its `attach` tool, and they are elements in the message text exactly
+  as yours are. It is one view used twice rather than two that resemble each
+  other — inside the field it is rendered to a picture, because a run of text
+  can only carry a picture.
+
+## settings
+
+Model and effort, on one card over the composer whose chip opened it.
+
+- **It is photographed on a Codex agent, not the reference's Claude one.** The
+  reference draws Opus, Sonnet and Haiku with an effort axis under them. A
+  Claude session driven over a PTY reports no effort levels at all and refuses a
+  model change outright, so drawing the reference's screen would mean showing
+  controls this build knows will not take. Codex is the layer that reports both
+  and accepts both, so it is the layer the sheet is locked on. When the SDK
+  session lands, this becomes Claude's own list without the card changing.
+- **The furniture is gone, as the design settled.** No sublabels under the
+  model names, and effort is not a row of chips: three settings in one sheet,
+  two of them lists and the third a segmented control, made effort look like a
+  different kind of thing than it is.
+- **The effort axis is drawn rather than a `Slider`.** The platform's control is
+  continuous, and what is being picked is one of the handful of levels the
+  provider reported. A continuous control over three stops promises a precision
+  the setting does not have.
+- **Permissions are not in this card.** The design settled that they open
+  alone, from the plus. The model and the effort are one choice about how hard
+  this thinks; the permission mode is the safety setting, and the two may not
+  share an entry point.
+
+## permissions-claude
+
+What the agent may do without asking, in Claude's vocabulary: its five modes,
+named as Claude names them, with the one the session reports marked.
+
+There is no design reference for the sheet itself — the design settled its
+contents and its entry point and drew the row that opens it — so this entry is
+the app's answer.
+
+- **Five modes, achromatic except one.** Colour in this app means something
+  needs you, and a permanent coloured label in every conversation would spend
+  it on nothing. Bypass permissions is the exception, because being in the mode
+  that will not ask again is not a state anybody should be in without seeing it.
+- **The list is the provider's and the current one is the session's.** The core
+  reports which mode an agent is under, not the set of them, because the set is
+  closed and belongs to Claude. A mode reported that is not one of the five
+  would be shown as it was reported and marked current, rather than dropped.
+- **The refusal is stated rather than hidden.** This is a PTY session, which
+  will not take a mode change, so the card says so in the core's own sentence
+  and still shows what the agent is running under — which is worth reading even
+  where it cannot be changed from here.
+
+## permissions-codex
+
+The same sheet in Codex's vocabulary: three presets, with the approval policy
+and the sandbox named under each.
+
+- **The axes are named under the preset, not hidden behind it.** What a sandbox
+  permits is the thing being chosen, and "Auto" does not say it. This is the
+  settled requirement and it is the one structural difference from Claude's
+  sheet.
+- **Full Access carries the colour**, for the same reason Bypass permissions
+  does on the Claude sheet.
+- **A pair of policies the three presets do not cover is drawn as Custom**, with
+  both axes named, rather than rounded to the nearest preset. Not visible in
+  this capture, which is on the workspace-write preset the fixture reports.
+
+## overflow
+
+The ellipsis, opened: everything the agent can be done to rather than said to.
+
+- **Three rows, where the reference draws four.** Mute is gone. It is a
+  notification setting, and notifications are out of this app's scope — the
+  design's own notification screen is excluded from this manifest for the same
+  reason. A row that turned off something the app does not do would be a
+  control that does nothing.
+- **The address is spelled under Copy Address**, as the reference draws it, so
+  what lands on the clipboard is visible before it is copied.
+- **Delete Agent is the only coloured row**, and it is last, because it is the
+  only one that cannot be undone.
+- The differing conversation carries over from `run`.
+
+## agent-delete
+
+Deleting an agent, with what that does spelled out and the conversation still
+readable behind it.
+
+- **The three consequences are the reference's**, in its order: the edits stay,
+  the session ends, the conversation goes everywhere it was. The reassuring one
+  is first because it is the fear people actually arrive with.
+- **The buttons are the reference's too** — Cancel and Delete side by side,
+  Delete filled in the diff's own red rather than in the accent, which is this
+  app's one word for "something is waiting for you" and is not this.
+- The differing conversation carries over from `run`.

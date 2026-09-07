@@ -172,7 +172,7 @@ final class ComposerTests: XCTestCase {
             agent: agent, gate: .claudePty(.ready), phase: .unavailable, stream: .live,
             asks: [], facts: .unavailable, provider: ProviderFacts(),
             settingsGate: .unavailable, queue: nil, family: [])))
-        store.draft.prose = "Run the suite"
+        store.draft.body = "Run the suite"
         XCTAssertTrue(bundle.send(to: agent))
         XCTAssertEqual(sent.first?["command"]?.stringValue, "send")
         XCTAssertNil(sent.first?["action"])
@@ -196,7 +196,7 @@ final class ComposerTests: XCTestCase {
             agent: agent, gate: .claudePty(.working), phase: .unavailable, stream: .live,
             asks: [], facts: .unavailable, provider: ProviderFacts(),
             settingsGate: .unavailable, queue: nil, family: [])))
-        store.draft.prose = "And then the docs"
+        store.draft.body = "And then the docs"
         XCTAssertTrue(bundle.send(to: agent))
         XCTAssertEqual(sent.first?["command"]?.stringValue, "queue")
         XCTAssertEqual(sent.first?["action"]?.stringValue, "hold")
@@ -219,11 +219,11 @@ final class ComposerTests: XCTestCase {
             agent: agent, gate: .claudePty(.working), phase: .unavailable, stream: .live,
             asks: [], facts: .unavailable, provider: ProviderFacts(),
             settingsGate: .unavailable, queue: nil, family: [])))
-        store.draft.prose = "wait"
+        store.draft.body = "wait"
         XCTAssertTrue(bundle.interrupt(agent))
         XCTAssertEqual(sent.first?["command"]?.stringValue, "claude")
         XCTAssertEqual(sent.first?["claude_command"]?.stringValue, "interrupt")
-        XCTAssertEqual(store.draft.prose, "wait")
+        XCTAssertEqual(store.draft.body, "wait")
     }
 
     func testCodexStopsItsOwnWay() {
@@ -236,7 +236,7 @@ final class ComposerTests: XCTestCase {
     func testAnEmptyDraftSendsNothing() {
         let bundle = StoreBundle(account: AccountId("test"))
         bundle.dispatch = { _ in XCTFail("an empty draft left the phone"); return nil }
-        bundle.conversation(agent).draft.prose = "   \n "
+        bundle.conversation(agent).draft.body = "   \n "
         XCTAssertFalse(bundle.send(to: agent))
     }
 }

@@ -42,7 +42,12 @@ private struct TranscriptRowView: View {
             PromptSurface(text: text)
                 .padding(.vertical, design.metrics.feedGap / 2)
         case .prose(let markdown, let open):
-            Prose(markdown: markdown, open: open)
+            // An agent can attach things too, through its `attach` tool, and
+            // they are elements in the message text exactly as yours are — so
+            // they are read out of it the same way and drawn as the same chip.
+            AttachedText(text: markdown) { said in
+                Prose(markdown: said, open: open)
+            }
                 .padding(.vertical, design.metrics.feedGap / 2)
         case .turnEnd(let meta):
             FeedRule(
@@ -213,10 +218,12 @@ private struct PromptSurface: View {
     var body: some View {
         HStack {
             Spacer(minLength: 36)
-            Text(text)
-                .designFont(.body, design)
-                .foregroundStyle(design.ink.color)
-                .fixedSize(horizontal: false, vertical: true)
+            AttachedText(text: text) { said in
+                Text(said)
+                    .designFont(.body, design)
+                    .foregroundStyle(design.ink.color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .background {

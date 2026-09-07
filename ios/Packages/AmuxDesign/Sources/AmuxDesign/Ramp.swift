@@ -30,6 +30,15 @@ public struct Ramp: Sendable, Equatable {
     public func color(_ appearance: Appearance) -> Color {
         Color(rgb: hex(appearance))
     }
+
+    /// The same token as a platform colour, resolved by value.
+    ///
+    /// For the one view in the app drawn in UIKit, where a colour has to be a
+    /// concrete one: text drawn into a picture cannot resolve a dynamic colour
+    /// later, so it is resolved against the appearance it is being drawn for.
+    public func uiColor(_ appearance: Appearance) -> UIColor {
+        UIColor(rgb: hex(appearance))
+    }
 }
 
 extension Color {

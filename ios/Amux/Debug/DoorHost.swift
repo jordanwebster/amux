@@ -32,6 +32,9 @@ final class DoorHost {
     /// driver has asked for one token to be moved.
     private(set) var design: Design = .app
     private(set) var typeSize: DynamicTypeSize = .large
+    /// What the conversation on show has opened over itself, where the state
+    /// asked for one the screen name does not imply.
+    private(set) var overlay: ConversationOverlay?
     private(set) var stores = StoreBundle(account: AccountId("door"), now: Scenario.now)
     /// The accounts a driven screen believes this phone has. Whether anything
     /// is reachable at all is an account fact, not a fleet fact, so the two
@@ -162,6 +165,7 @@ final class DoorHost {
         // whatever the last fixture left behind: one screen captured at an
         // accessibility size must not silently resize every screen after it.
         typeSize = fixture.typeSize.flatMap(DynamicTypeSize.init(doorName:)) ?? .large
+        overlay = fixture.overlay
         show(screen)
         return .ack
     }
@@ -389,7 +393,7 @@ final class DoorHost {
         guard let conversation = stores.conversations[identity] else {
             return .error("no conversation is open with \(agent)")
         }
-        conversation.draft.prose = prose
+        conversation.draft.body = prose
         let subject = ConversationSubject(agent: identity, in: stores.fleet)
         guard conversation.gate.accepts else {
             let state = ConversationFootState(
