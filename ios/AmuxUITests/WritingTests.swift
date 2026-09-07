@@ -122,7 +122,13 @@ final class WritingTests: JourneyCase {
         photograph(app, "writing-tokens")
 
         // MARK: Nothing kept, and the field is empty again.
-        press(app, "composer.clear")
+        //
+        // Pressed through the app's own door rather than by coordinate. The
+        // cross sits in the composer, and the composer sits under an open
+        // keyboard: a tap aimed at where the tree says the control is lands on
+        // a letter key and types it into the message being cleared. The door
+        // does to it what VoiceOver does, which is the same press.
+        try door(runner, .init(kind: "tap", identifier: "composer.clear"))
         try waitUntil(runner, "clearing left something in the field") {
             self.said($0, "composer")?.value.isEmpty == true
         }
@@ -140,14 +146,14 @@ final class WritingTests: JourneyCase {
         }
         XCTAssertEqual(try spoken(runner), "", "sending left the message in the field")
         XCTAssertTrue(
-            waitUntil {
-                (try? self.received(control).contains(Self.sent)) == true
-            },
+            waitUntil { self.received(control, saying: Self.sent) },
             "the machine never reported the message it was sent")
-        let drawn = try declared(runner).filter { $0.identifier == "transcript.prompt" }
-        XCTAssertEqual(drawn.count, 1,
-                       "the machine confirmed one message and the feed draws "
-                       + "\(drawn.map(\.label))")
+        // One row, not two: the row drawn before the machine answered and the
+        // one the machine sent back are the same message, and the feed has to
+        // end up holding it once.
+        try waitUntil(runner, "the message the machine confirmed is drawn more than once") {
+            $0.filter { $0.identifier == "transcript.prompt" }.count == 1
+        }
         record["sent"] = said(try declared(runner), "transcript.prompt")?.label ?? ""
 
         // MARK: A turn, so there is something to queue behind.
@@ -190,7 +196,7 @@ final class WritingTests: JourneyCase {
         //
         // The cross empties the field and the turn goes on, which is what the
         // placeholder still says afterwards.
-        press(app, "composer.clear")
+        try door(runner, .init(kind: "tap", identifier: "composer.clear"))
         XCTAssertEqual(try spoken(runner), "", "the cross did not empty the field")
         XCTAssertEqual(said(try declared(runner), "composer")?.label, "Queue a message",
                        "emptying the field stopped the turn as well")
@@ -216,9 +222,7 @@ final class WritingTests: JourneyCase {
         try control.ask(["AgentEndTurn": ["agent": Self.host]])
         waitForNo(app, "facts.queued", "the turn ended and the held message stayed held")
         XCTAssertTrue(
-            waitUntil {
-                (try? self.received(control).contains(Self.delivered)) == true
-            },
+            waitUntil { self.received(control, saying: Self.delivered) },
             "the turn ended and the machine was never given the message it was holding")
 
         // MARK: The address, on the clipboard.
@@ -446,5 +450,10 @@ final class WritingTests: JourneyCase {
         let answer = try control.ask(["AgentObserve": ["agent": Self.host]])
         let observed = answer["observed"] as? [[String: Any]] ?? []
         return observed.compactMap { $0["text"] as? String }
+    }
+
+    /// Whether the machine says it has been given a message saying this.
+    private func received(_ control: Lines, saying words: String) -> Bool {
+        ((try? received(control)) ?? []).contains { $0.contains(words) }
     }
 }

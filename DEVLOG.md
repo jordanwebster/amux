@@ -10660,3 +10660,18 @@ only picked. Model and effort are changed after that turn and not before: they
 are kept for the session's next turn, so changing one first would put a model
 into turn parameters the recording never saw. Neither reaches the app-server
 at all, which is what the strict replay proves.
+
+2026-09-07 — **Two things driving the composer turned up.** The cross that
+empties the field reports itself as untouchable while the keyboard is up, so a
+press aimed at where the accessibility tree says it is lands on a letter key
+and types into the message it was meant to clear; a driver reaches it through
+the app's own door instead, which activates it the way VoiceOver does. And a
+scripted agent that answers a message with nothing leaves that message
+unacknowledged, so the composer says so rather than reporting a turn — the
+script behind this journey now answers any prompt by working.
+
+Moving a token is not claimed by that journey. A token is one character and
+UITextView's own drag moves it on a device, but no accessibility client can
+synthesise that drag: the one tried here crossed the keyboard and typed four
+letters into the message. What the model does when a token moves is covered
+where it is decided, in the draft's own tests.
