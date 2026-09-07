@@ -20,13 +20,13 @@ Mac's simulator, five samples each:
 | | Measured | Budget |
 | --- | --- | --- |
 | Hitch time ratio | 0.0 ms/s | ≤ 5 ms/s |
-| Main-thread CPU over the stream | 29.4% of one core (worst 35.1%) | ≤ 60% |
-| Footprint at 2,000 rows | 55.5 MB (worst 67.9 MB) | ≤ 250 MB |
+| Main-thread CPU over the stream | 34.3% of one core (worst 34.5%) | ≤ 60% |
+| Footprint at 2,000 rows | 62.1 MB (worst 67.7 MB) | ≤ 250 MB |
 | Commits over 5 s of idle | 0 | 0 |
 
 Nothing here is close to its limit, and the two numbers a UIKit leaf would be
 bought for are the two furthest from it: the list dropped no frames at all
-under the stream, and a settled screen of a thousand rows draws 28
+under the stream, and a settled screen of a thousand rows draws 15
 of them — the screenful in front of the tail, with the folded runs of reads
 among them still folded. That last part is checked rather than assumed: a run
 that had opened itself would have drawn the lines inside it, and the numbers
@@ -45,15 +45,6 @@ through the Mac's display, so the frame-rate ones are proxies —
 `docs/IOS_PERFORMANCE.md` says which and what for, and holds the
 physical-phone checklist that is still not ticked. Take them again with
 `wt run ios-perf -- --only streaming`.
-
-One caveat about where the numbers were taken. A stream is only a stream if
-the list is following its tail, and a row appended below the fold of a lazy
-stack is never built, so the container the measurement runs in rests at the
-bottom. The shipped conversation does not: where a conversation should rest
-when you open it — at the tail, at the last thing you read, at the top — is a
-product question nobody has answered yet. The container is otherwise the
-conversation's own, and when that question is answered these numbers are taken
-again over whatever ships.
 
 ## The composer's field is not SwiftUI
 

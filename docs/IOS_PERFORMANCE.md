@@ -54,13 +54,11 @@ the same main-thread application a relay-fed run would do.
 rather than hidden by it.
 
 The streaming and idle numbers are taken over the transcript the app ships:
-the same rows, projected by the same code and laid out by the same lazy stack
-the conversation uses. Only the scroll view around them belongs to the bench,
-and the one thing it decides is that the list rests at its tail — a row
-appended below the fold of a lazy stack is never built, so a stream measured
-in a list nobody is looking at would measure nothing. Where a conversation
-rests when a person opens it is a product question that has not been answered;
-when it is, these numbers are taken again over whatever the answer is.
+the same rows, projected by the same code, laid out by the same lazy stack and
+inside the same scroll view the conversation uses. That last part is what makes
+the stream a stream — the shipped container rests at its tail and follows it
+while rows arrive, and a row appended below the fold of a lazy stack is never
+built, so a list resting anywhere else would measure nothing.
 
 A run can be asked for one group of measurements — `wt run ios-perf -- --only
 streaming`, or `cold`, or `reconciliation` — which is for working on that

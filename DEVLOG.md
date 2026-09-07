@@ -4,6 +4,32 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **A conversation opens at its newest row.**
+
+The transcript rested at the top: opening a conversation put you at the
+oldest thing in it and a row arriving during a live turn appeared below the
+fold, where nothing drew attention to it. It now behaves like a chat — the
+feed opens at the latest row and travels with the tail while a turn streams.
+
+Only the starting offset and the reaction to growth are anchored, never the
+alignment, so a transcript shorter than the screen still starts at the top:
+there is no band of empty ground above the first row of a two-row
+conversation. The ground under the last row came down from 120pt to one feed
+gap at the same time, because the composer's own inset already holds the feed
+clear of the box and the surplus was only invisible while the list rested
+somewhere you could not see it.
+
+The scroll view is now one view, `TranscriptContainer`, and the performance
+bench uses it instead of a copy that anchored itself. A stream is only a
+stream if the list is following its tail, and the bench used to be the only
+place that was true. Re-taken over the shipped container the streaming
+numbers still pass with room: no dropped frames, 34.3% of one core, 62 MB at
+two thousand rows, nothing committed over five idle seconds.
+
+Eleven conversation baselines were re-recorded: the ones whose transcripts
+overflow now show their tails. The ones that fit on a screen are unchanged,
+which is the short-content rule holding.
+
 2026-09-07 — **A conversation the phone closes gives its stream back.**
 
 Opening a conversation widens the subscription policy: the agent is recorded

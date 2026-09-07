@@ -9,9 +9,8 @@ import SwiftUI
 /// cold-start number taken over it is a floor. Whatever the designed home
 /// costs, it costs at least this, and a regression there is the list machinery
 /// rather than a decoration. The bench transcript is the opposite: it is the
-/// shipped transcript, in a container that only decides where the list rests,
-/// because the streaming budget is a claim about the rows people actually
-/// read.
+/// shipped transcript, in the shipped container, because the streaming budget
+/// is a claim about the rows people actually read.
 public struct ProbeHomeScreen: View {
     @Environment(\.design) private var design
     private let rows: [AgentRow]
@@ -53,14 +52,12 @@ public struct ProbeHomeScreen: View {
 /// taken here is a number about the product's list rather than about a plainer
 /// one standing in for it.
 ///
-/// The scroll view around them is this bench's, and it copies the
-/// conversation's — the same stack, the same bottom padding, the same full
-/// width, the same hidden indicators — with one addition: it rests at the
-/// bottom. Streaming is defined as rows arriving while the list follows its
-/// tail, and a row appended below the fold of a lazy stack is never built, so
-/// without an anchor the measurement would be of a list nobody is looking at.
-/// The shipped conversation has no anchor because where a conversation rests
-/// when you open it is a product question nobody has answered yet.
+/// The scroll view around them is the conversation's own ``TranscriptContainer``
+/// rather than a copy of it, so the list rests and follows its tail here
+/// exactly as it does in the app. That matters for the number: streaming is
+/// rows arriving while the list follows its tail, and a row appended below the
+/// fold of a lazy stack is never built, so a bench that rested anywhere else
+/// would be measuring a list nobody is looking at.
 public struct BenchTranscriptScreen: View {
     private let model: ConversationStore
     private let drew: (@Sendable ([IdentifiedElement]) -> Void)?
@@ -91,19 +88,9 @@ public struct BenchTranscriptScreen: View {
     }
 
     private var transcript: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                TranscriptFeed(rows: model.entries.transcriptRows())
-            }
-            .padding(.bottom, 120)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        TranscriptContainer {
+            TranscriptFeed(rows: model.entries.transcriptRows())
         }
-        .scrollIndicators(.hidden)
-        // The tail is followed by resting there rather than by asking to
-        // scroll to the last row on every arrival: an explicit scroll makes
-        // the stack measure everything above it, which at a thousand rows
-        // costs more than drawing the frame does.
-        .defaultScrollAnchor(.bottom)
     }
 
     @ViewBuilder

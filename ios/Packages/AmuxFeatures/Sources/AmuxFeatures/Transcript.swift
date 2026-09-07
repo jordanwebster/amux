@@ -30,6 +30,37 @@ struct TranscriptFeed: View {
     }
 }
 
+/// The scroll view a transcript lives in.
+///
+/// A conversation opens at its latest row and follows the tail while a turn
+/// streams, which is what a chat does: what just happened is what you are
+/// looking at, and a row arriving while you read the tail brings you with it.
+/// Only where the list starts and how it reacts to growing are anchored — its
+/// alignment is not — so a transcript shorter than the screen stays at the top
+/// where it began instead of being pushed down against the composer. A
+/// two-row conversation must never open with empty ground above its first row.
+struct TranscriptContainer<Content: View>: View {
+    @Environment(\.design) private var design
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+            // One gap under the last row and no more. The composer inset
+            // already holds the feed clear of the box, so anything further
+            // would open every conversation on a band of empty ground where
+            // the newest row should be.
+            .padding(.bottom, design.metrics.feedGap)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.hidden)
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+    }
+}
+
 /// One row, on the rail or breaking it.
 private struct TranscriptRowView: View {
     @Environment(\.design) private var design

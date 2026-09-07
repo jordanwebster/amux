@@ -296,29 +296,24 @@ public struct Conversation: View {
     /// underneath it when it scrolls, which is the only arrangement in which
     /// frosting the top edge means anything.
     private var transcript: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if case .claudeSdk(let supported) = model.facts, !supported {
-                    UnsupportedLayer(layer: "this agent's transcript")
-                        .padding(.top, design.metrics.feedGap)
-                } else {
-                    TranscriptFeed(rows: model.rows())
-                }
-                // The end of a run belongs in the feed rather than under it.
-                // It is the last thing that happened, in sequence after the
-                // last thing the agent said, and a run that ended is not a
-                // state of the screen you can act on — it is a fact about the
-                // transcript you scroll to the bottom of.
-                if let ended = subject.ended {
-                    EndOfRun(ended: ended, age: subject.age, host: subject.host)
-                        .padding(.horizontal, design.metrics.gutter)
-                        .padding(.top, design.metrics.feedGap)
-                }
+        TranscriptContainer {
+            if case .claudeSdk(let supported) = model.facts, !supported {
+                UnsupportedLayer(layer: "this agent's transcript")
+                    .padding(.top, design.metrics.feedGap)
+            } else {
+                TranscriptFeed(rows: model.rows())
             }
-            .padding(.bottom, 120)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // The end of a run belongs in the feed rather than under it.
+            // It is the last thing that happened, in sequence after the
+            // last thing the agent said, and a run that ended is not a
+            // state of the screen you can act on — it is a fact about the
+            // transcript you scroll to the bottom of.
+            if let ended = subject.ended {
+                EndOfRun(ended: ended, age: subject.age, host: subject.host)
+                    .padding(.horizontal, design.metrics.gutter)
+                    .padding(.top, design.metrics.feedGap)
+            }
         }
-        .scrollIndicators(.hidden)
         // The platform's effect, not a hand-drawn plate. Masking a glass layer
         // to make it fade stops it sampling what is behind it, so it renders
         // as a pane you can read straight through; this samples correctly.
