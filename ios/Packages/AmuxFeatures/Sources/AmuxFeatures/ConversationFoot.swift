@@ -2,7 +2,7 @@ import AmuxCore
 import AmuxDesign
 import SwiftUI
 
-/// What has to be said where the composer will go.
+/// What has to be said in the composer's place.
 ///
 /// The three ways a conversation stops taking messages are not the same thing
 /// and are not drawn as one. A machine that has gone away can be waited for and
@@ -94,9 +94,9 @@ public enum ConversationFootState: Equatable {
 
 /// The panel in the composer's place.
 ///
-/// It is the same plate the composer will be — a frosted card along the bottom
-/// edge — so that when the composer lands the screen does not change shape
-/// under a reader, only what is written on it.
+/// It is the same plate the composer is — a frosted card along the bottom
+/// edge — so a conversation whose layer stops taking messages does not change
+/// shape under a reader, only what is written down there.
 struct ConversationFoot: View {
     @Environment(\.design) private var design
     let state: ConversationFootState

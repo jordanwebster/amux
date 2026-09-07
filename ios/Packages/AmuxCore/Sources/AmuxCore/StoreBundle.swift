@@ -109,6 +109,49 @@ public final class StoreBundle {
         return true
     }
 
+    /// Sends what is being written to an agent, or holds it where a turn is
+    /// already running.
+    ///
+    /// Which of the two it is comes off the layer's own gate rather than off
+    /// anything the screen believes: the composer draws itself from the same
+    /// gate, so a box that says "Queue a message" and a command that says
+    /// `send` cannot disagree. The optimistic row is added only for a message
+    /// that is actually on its way — a held one is not in the transcript yet
+    /// and will not be until the turn ends.
+    ///
+    /// False means nothing left the phone: an empty draft, or no connection.
+    /// The draft is kept in that case, because the alternative is a person
+    /// watching a paragraph they wrote disappear into a failure.
+    @discardableResult
+    public func send(to agent: AgentId) -> Bool {
+        let store = conversation(agent)
+        guard !store.draft.isEmpty else { return false }
+        let hold = !store.gate.accepts
+        guard let command = hold ? store.draft.holdCommand(to: agent)
+                                 : store.draft.command(to: agent),
+              let op = dispatch?(command)
+        else { return false }
+        if !hold { store.sent(store.draft.text) }
+        store.dispatched(op)
+        store.draft.clear()
+        return true
+    }
+
+    /// Stops the turn that is running, in the layer's own words.
+    ///
+    /// Interrupting is not clearing. What is in the field stays in the field:
+    /// stopping an agent that is going the wrong way is usually the first half
+    /// of telling it which way to go instead, and throwing the second half
+    /// away would make the two one gesture.
+    @discardableResult
+    public func interrupt(_ agent: AgentId) -> Bool {
+        let store = conversation(agent)
+        guard let command = store.gate.interrupt(agent),
+              let op = dispatch?(.shared(command)) else { return false }
+        store.dispatched(op)
+        return true
+    }
+
     public func closeConversation(_ agent: AgentId) {
         reviews.removeValue(forKey: agent)
         guard conversations.removeValue(forKey: agent) != nil else { return }

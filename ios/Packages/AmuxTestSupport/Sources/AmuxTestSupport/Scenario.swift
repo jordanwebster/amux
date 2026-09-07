@@ -156,6 +156,19 @@ public enum Scenario {
         return remembered
     }
 
+    /// The same morning with the agent this app opens on mid-turn.
+    ///
+    /// The conversation fixtures put a running command at the end of the feed;
+    /// the fleet has to agree, because the composer names what the transcript
+    /// is doing and counts from when the fleet says it started. A card that
+    /// still said "wants to run a command" would put a screen into a state the
+    /// core never produces.
+    public static let working: [AgentCard] = [
+        card("refactor-auth", host: studio, directory: "~/src/amux", kind: claude,
+             attention: .working, minutesAgo: 8.0 / 60,
+             headline: "Running the spec suite"),
+    ] + agents.dropFirst()
+
     /// The same morning, later: everything that was blocked has been answered
     /// and every finished turn has been read.
     ///

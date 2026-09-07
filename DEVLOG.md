@@ -4,6 +4,42 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **A message can be written to an agent from the phone.** The
+bottom of a conversation was a place where refusals were reported and nothing
+else; it is now the composer the whole app was shaped around. A box with a
+field that grows to hold a paragraph, a footer under it with the attachment
+control at one end and dictation and send at the other, and an empty field that
+names the agent it is about to interrupt. Return inserts a newline and sending
+is the button, because a keyboard whose return key sends cannot write a second
+paragraph and a phone has no modifier to escape that with.
+
+While a turn is running the same box says what the agent is doing and how long
+it has been doing it, with a segment travelling under the words. Both facts are
+the machine's rather than the phone's: the activity is named by the transcript
+row that is still open, and the elapsed time counts from when the agent said
+the work began, so a host that stops answering stops the number rather than
+letting it run on. There is no track behind the segment — a trough is the shape
+of a thing with a known end, and nothing here knows when a turn will finish.
+
+Interrupting and clearing share no gesture. The round button stops the turn
+when there is nothing to say and sends when there is; throwing away what was
+written is its own control inside the field. A message written while a turn
+runs is held by the machine that owns the agent rather than by the phone, which
+is the only place that can be sure the turn ended exactly once.
+
+A sent message is in the feed in the frame the finger lifts in, drawn as the
+prompt it will become, and the host's own row replaces it when it arrives —
+matched on the text, because that is all the two rows share before the host has
+given the prompt a position.
+
+Every conversation screen gains the box, so `run`, `run-live`, `voices`,
+`review-cta` and `drawer` were re-photographed; `typing` and `working` are new.
+An ended run and a session this build cannot read still offer nothing, and an
+unanswered ask, a finished turn's offer and a refusal still take the box's
+place rather than sitting beside it.
+
+---
+
 2026-09-07 — **An answer pressed on a phone reaches the machine.** Answering
 an agent that is waiting was the one thing a conversation screen could do that
 went nowhere: the panel carried the decision out to the shell and the shell had

@@ -159,9 +159,9 @@ public struct ReviewToken: Sendable, Equatable {
 /// nothing else, so the general thing somebody wants to say about it is
 /// ordinary prose in the same message rather than a field of the review.
 ///
-/// The composer is not built yet. What is here is what a composer will hold
-/// and send; until there is one, a review attached from the diff page waits
-/// here for it.
+/// It lives on the conversation rather than in the composer's own view state,
+/// so leaving to read the diff, attaching a review and coming back finds the
+/// paragraph that was half written still there.
 public struct MessageDraft: Sendable, Equatable {
     /// What was said beside the review.
     public var prose: String = ""
@@ -209,12 +209,27 @@ public struct MessageDraft: Sendable, Equatable {
     /// travels separately because the reader has to be able to fetch the
     /// patch, not only read what was said about it.
     public func command(to agent: AgentId) -> BridgeCommand? {
-        Wire(agent: agent, draft: .init(
-            segments: [.init(text: text)], attachments: attachments)).shared
+        Wire(command: "send", action: nil, agent: agent, draft: body).shared
+    }
+
+    /// The same draft, held instead of sent, because a turn is running.
+    ///
+    /// The core holds one message per agent and delivers it at the first turn
+    /// end. Holding is not sending later from the phone: a phone that goes to
+    /// sleep, loses its network or is put away must not take the message with
+    /// it, and the machine the agent runs on is the only place that can be
+    /// sure the turn ended exactly once.
+    public func holdCommand(to agent: AgentId) -> BridgeCommand? {
+        Wire(command: "queue", action: "hold", agent: agent, draft: body).shared
+    }
+
+    private var body: Wire.Body {
+        .init(segments: [.init(text: text)], attachments: attachments)
     }
 
     private struct Wire: Encodable {
-        let command = "send"
+        let command: String
+        let action: String?
         let agent: AgentId
         let draft: Body
 
@@ -226,6 +241,20 @@ public struct MessageDraft: Sendable, Equatable {
         struct TextSegment: Encodable {
             let segment = "text"
             let text: String
+        }
+
+        private enum Key: String, CodingKey { case command, action, agent, draft }
+
+        /// Written by hand so that a send carries no `action` at all. The
+        /// shared command is a tagged union and a null discriminant beside the
+        /// tag is a field the core never wrote and would have to decide what
+        /// to do with.
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode(command, forKey: .command)
+            try container.encodeIfPresent(action, forKey: .action)
+            try container.encode(agent, forKey: .agent)
+            try container.encode(draft, forKey: .draft)
         }
 
         var shared: BridgeCommand? {

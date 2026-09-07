@@ -54,6 +54,8 @@ public enum Fixtures {
         Built(.drawer, "drawer"),
         Built(.run, "run"),
         Built(.run, "host-lost"),
+        Built(.typing, "typing"),
+        Built(.working, "working"),
         Built(.runLive, "run-live"),
         Built(.working, "send-refused"),
         Built(.exited, "exited"),
@@ -143,8 +145,16 @@ public enum Fixtures {
         },
 
         // 4 · Writing to it
+        // A message part-way through being written. The draft is put into the
+        // conversation's own store rather than into the view, so the state
+        // photographed here is one the app reaches by somebody typing.
         Fixture(id: "typing", screen: .typing) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            bundle.conversation(Scenario.focus).draft.prose = """
+                Before you squash it, check that the relay's reconnect path \
+                doesn't read INVALID_PIN by name \u{2014} I think it might, and if it \
+                does this whole change needs a different shape.
+                """
         },
         Fixture(id: "plus", screen: .plus) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
@@ -159,9 +169,11 @@ public enum Fixtures {
         Fixture(id: "slash-typing", screen: .slashTyping) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
+        // A turn in flight: the command is still running, the fleet says so
+        // and says when it started, and the composer names both.
         Fixture(id: "working", screen: .working) { bundle in
             States.open(
-                bundle, entries: Transcript.live,
+                bundle, agents: Scenario.working, entries: Transcript.live,
                 session: Sessions.claude(
                     gate: .working, phase: "running",
                     provider: ProviderFacts(

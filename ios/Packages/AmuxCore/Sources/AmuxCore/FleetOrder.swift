@@ -83,12 +83,23 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     /// "2m", "5h", "2d". One unit only — a row is scanned, not read, and
     /// "2d 3h" is two numbers where one would do.
     public func age(at now: Date) -> String {
-        let seconds = max(0, now.timeIntervalSince(card.lastActivity))
+        Self.spell(max(0, now.timeIntervalSince(card.lastActivity)))
+    }
+
+    /// How long this agent has been on the piece of work it announced, in the
+    /// same units as ``age(at:)``. Absent where it has not said what it is
+    /// doing, which is the only honest answer to "how long has it been at it".
+    public func working(at now: Date) -> String? {
+        guard let since = card.agent.workingOn?.updatedAt else { return nil }
+        return Self.spell(max(0, now.timeIntervalSince(since)))
+    }
+
+    private static func spell(_ seconds: TimeInterval) -> String {
         switch seconds {
-        case ..<60: return "\(Int(seconds))s"
-        case ..<3600: return "\(Int(seconds / 60))m"
-        case ..<86_400: return "\(Int(seconds / 3600))h"
-        default: return "\(Int(seconds / 86_400))d"
+        case ..<60: "\(Int(seconds))s"
+        case ..<3600: "\(Int(seconds / 60))m"
+        case ..<86_400: "\(Int(seconds / 3600))h"
+        default: "\(Int(seconds / 86_400))d"
         }
     }
 }

@@ -141,6 +141,16 @@ private struct ConversationPage: View {
                 case .openChild(let child):
                     stores.fleet.opened(child)
                     router.open(.conversation(child))
+                // Writing to an agent is the other thing on this screen that
+                // leaves the phone. The bundle decides whether the layer will
+                // take the message now or has to hold it, because the bundle
+                // has the gate; the screen only says that the person pressed.
+                case .send: stores.send(to: agent)
+                case .interrupt: stores.interrupt(agent)
+                // The picker and the system's own dictation are not wired yet.
+                // The controls are on the screen they belong to rather than
+                // arriving with the wiring, and neither pretends to have run.
+                case .attach, .dictate: break
                 }
             }
         }

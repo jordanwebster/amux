@@ -25,9 +25,30 @@ public final class ConversationStore {
     /// The artifact that patch is, so a review sent about it names it.
     public private(set) var changesArtifact: ArtifactId?
     /// What is being written to this agent: the review attached from the diff
-    /// page, and whatever is said beside it. The composer is not built yet, so
-    /// this is where a review waits until there is one to hold it.
+    /// page, and whatever is said beside it. It lives here rather than in the
+    /// composer, so a half-written paragraph survives a trip to the diff and
+    /// back.
     public var draft = MessageDraft()
+    /// Messages the person sent that the host has not echoed back yet.
+    ///
+    /// A phone on a train is often a second or more away from the machine it
+    /// is writing to, and a message that vanishes from the field and appears
+    /// nowhere reads as a message that was lost. So a send is on screen in the
+    /// frame the finger is lifted in, drawn as the prompt it will become, and
+    /// the host's own row replaces it when it arrives.
+    public private(set) var unacknowledged: [PendingSend] = []
+
+    /// One sent message, waiting to be replaced by the host's own row.
+    public struct PendingSend: Identifiable, Equatable, Sendable {
+        public let id: UUID
+        public let text: String
+
+        public init(id: UUID = UUID(), text: String) {
+            self.id = id
+            self.text = text
+        }
+    }
+
     /// Results for operations this conversation dispatched, newest last.
     ///
     /// A result names its operation and no agent, so the connection has to
@@ -77,6 +98,44 @@ public final class ConversationStore {
         Signposts.emit(.sendTapped)
     }
 
+    /// The person has sent this text. Called with the tap, so the row is on
+    /// screen before anything has left the phone.
+    public func sent(_ text: String) {
+        unacknowledged.append(PendingSend(text: text))
+        sendTapped()
+    }
+
+    /// The transcript as a reader sees it: what the host has sent, then
+    /// whatever this phone has sent and not seen come back.
+    ///
+    /// The two are drawn the same, because they are the same message and a
+    /// row that changed appearance a second after it appeared would draw the
+    /// eye to the one thing on the screen nobody needs to look at. What
+    /// distinguishes them is that a pending row is named `pending-…`, so a
+    /// test can say which frame it appeared in and which frame it stopped
+    /// being pending in.
+    public func rows() -> [TranscriptRow] {
+        entries.transcriptRows() + unacknowledged.map {
+            TranscriptRow(
+                id: "pending-\($0.id.uuidString)", layer: .claudePty,
+                kind: .prompt(text: $0.text))
+        }
+    }
+
+    /// What the agent is doing, which is whatever its last row is still doing.
+    ///
+    /// Read off the tail rather than the whole feed: naming the open row costs
+    /// nothing per frame this way, and no row before the last few can be the
+    /// one still running.
+    public var tailRow: TranscriptRow? {
+        guard unacknowledged.isEmpty else { return nil }
+        return Array(entries.suffix(Self.tailRead)).transcriptRows().last
+    }
+
+    /// How many entries back the open row can be. A folded run of reads and
+    /// searches is several entries and one row, and nothing else folds.
+    private static let tailRead = 8
+
     public func apply(_ event: Event) {
         switch event {
         case .feed(let update) where update.agent == agent:
@@ -107,6 +166,23 @@ public final class ConversationStore {
         }
     }
 
+    /// Drops the optimistic row for any message the host has now sent back.
+    ///
+    /// Matched on the text, because that is all the two rows share: the phone
+    /// never sees the position or identity the host will give a prompt, and
+    /// guessing one would put a row in the feed at a place the host disagrees
+    /// with. Only the rows that just arrived are examined, so a long feed
+    /// costs nothing.
+    private func reconcile(_ appended: [FeedEntry]) {
+        guard !unacknowledged.isEmpty else { return }
+        let arrived = Set(appended.transcriptRows().compactMap { row -> String? in
+            guard case .prompt(let text) = row.kind else { return nil }
+            return text
+        })
+        guard !arrived.isEmpty else { return }
+        unacknowledged.removeAll { arrived.contains($0.text) }
+    }
+
     private func apply(_ update: FeedUpdate) {
         if update.evicted > firstPosition {
             let gone = Int(min(update.evicted - firstPosition, UInt64(entries.count)))
@@ -132,6 +208,7 @@ public final class ConversationStore {
             invariants.append("feed gap between \(end) and \(update.base)")
         }
         entries.append(contentsOf: update.append)
+        reconcile(update.append)
         for _ in update.append { Signposts.emit(.streamRow) }
         Signposts.emit(.transcriptCommit)
         if awaitingEcho {

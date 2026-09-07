@@ -52,10 +52,11 @@ draws rather than the app:
 
 A screen the door is showing knows it is being photographed rather than used,
 and anything that runs on a timer of its own draws its resting state while it
-is. Today that is the text caret and nothing else; a capture of a focused field
-is otherwise a coin toss over a bar of accent. Whatever is added next that
-blinks or sweeps belongs under the same rule, and any capture it changes is
-named in that screen's entry.
+is. Two things do: the text caret, without which a capture of a focused field
+is a coin toss over a bar of accent, and the composer's moving segment, which
+holds a third of the way along its travel. Whatever is added next that blinks
+or sweeps belongs under the same rule, and any capture it changes is named in
+that screen's entry.
 
 ## home
 
@@ -159,9 +160,18 @@ pill's leading edge and the overflow beside it.
   the agent spent before it spoke, so the transcript says so. The reference
   omits it; leaving out a row the core sends would mean the screen is not
   showing what arrived.
-- **No composer.** The reference draws the message box along the bottom edge.
-  It is built two milestones later, and until then the feed runs to the bottom
-  of the display.
+- **The composer carries no model chip yet.** The reference draws the model and
+  its effort as a chip in the footer between the plus and the microphone.
+  Changing either is a write to the provider and it lands with the sheet that
+  makes the change; until then the footer holds the three controls that do
+  work, because a chip that names a model and cannot change it is a label
+  pretending to be a control. The rest of the box is the reference's: the field
+  grows with what is written, the plus is at the bottom left, and dictation and
+  send are at the bottom right.
+- **The send button is drawn hollow until there is something to send.** The
+  reference draws it that way here and filled on `typing`, which is the same
+  rule; it is worth stating because it is the only thing on the box that
+  changes appearance as you type.
 - **The drawer control sits inside the pill.** The reference draws it there
   too; it is worth saying because it is the only way out of a conversation.
   There is no back chevron, by design, and the tab bar underneath is the other
@@ -180,7 +190,8 @@ the diff's green and red, that opens the changes.
 - **The chip is a little rounder and a little wider than the drawing.** It is
   a control, so it keeps the 44 pt target the guidelines ask for, which at this
   type size is taller than the text needs.
-- The composer is absent here for the same reason as on `run`.
+- The composer is the same box as on `run`, and carries no model chip for the
+  same reason.
 
 ## run-live
 
@@ -191,9 +202,11 @@ whole suite and the command has not come back.
   row whose trailing edge reads `running`, and so does this: a tool with no
   result yet is what "still working" looks like in the transcript, and the app
   says it in the layer's own words rather than animating something.
-- **No composer, so no working strip.** The reference draws the box along the
-  bottom with the elapsed time and "Queue a message" in it. That box is two
-  milestones later; what is above it is the whole of this capture.
+- **The gate says ready, so the box does.** The fleet on this screen has the
+  agent working and the transcript's last row is still open, but the layer's
+  own send gate is the one thing that decides whether a message would go now,
+  and here it says it would. So this is `run`'s box with `run-live`'s feed
+  above it; `working` is where the gate is closed and the box says so.
 - The thinking line and the differing conversation carry over from `run`.
 
 ## voices
@@ -400,6 +413,67 @@ The turn ended, something changed, and nobody has read it yet.
   told.
 - The design has no capture of this state.
 
+## typing
+
+The composer with a paragraph in it: the box has grown to hold four lines, the
+send button has filled, and a control for throwing the message away has
+appeared beside the text.
+
+- **The model chip is not in the footer.** The reference puts the model and its
+  effort between the plus and the microphone. Naming them is easy; changing
+  them is a write to the provider, and the chip lands with the sheet that makes
+  the change rather than as a label that cannot be pressed.
+- **There is a clear control, which the reference does not draw.** Interrupting
+  an agent and throwing away what you wrote are opposite intentions — one is
+  about the turn, one is about the message — and the confirmed requirement is
+  that they share no gesture. A phone has no modifier key to tell two meanings
+  of one button apart, so clearing is its own small control inside the field
+  and appears only when there is something to clear.
+- **The keyboard is not in the picture.** The field holds a draft that was put
+  there rather than typed into a focused field, which is the state a person
+  comes back to after leaving the app mid-message. The reference draws it the
+  same way. What a focused field looks like is proved by the writing journey,
+  which types into it.
+- **The box is as tall as the prose in it, measured off the prose.** A field
+  that grows with what is typed measures its own height twice — the same four
+  lines settled two device pixels apart between launches, and the whole plate
+  moved with them — so the height comes from a hidden `Text` of the same string
+  in the same face at the same width, which is the same answer every time. Not
+  visible in the picture; it is why there is a picture at all.
+- **Return inserts a newline.** Not visible in a still, and the whole reason
+  the box is shaped this way: a message to an agent is usually a paragraph, and
+  a keyboard whose return key sends cannot write a second one.
+- The differing conversation and the thinking line carry over from `run`.
+
+## working
+
+The same conversation with a turn running: what the agent is doing and how long
+it has been doing it, a segment travelling under it, and a button that stops it.
+
+- **The activity is one word.** The reference reads "Thinking 8s". Here it
+  reads "Running 8s", because the transcript's open row is a command rather
+  than a thought, and the command itself is spelled in full on the row directly
+  above. Repeating `cargo test --workspace` inside the box would put the same
+  string on the screen twice and truncate it the second time.
+- **The number is the fleet's arithmetic, not a clock this screen keeps.** It
+  counts from when the agent said the work started. A timer the phone started
+  would go on counting through a host that had stopped answering, and would
+  photograph differently every run.
+- **The segment has no track and is held part-way.** No trough behind it,
+  because a trough is the shape of a thing with a known end and nothing here
+  knows when the turn will finish. It travels back and forth in use; in front
+  of a camera and under Reduce Motion it holds a third of the way along, since
+  a segment pinned to either end reads as a bar that has not started.
+- **The button stops the turn rather than sending.** With nothing written there
+  is nothing to send and stopping is the reason a person reaches for the bottom
+  of the screen mid-turn. Writing something turns it back into a send — which
+  holds the message rather than delivering it, exactly as the field says it
+  will.
+- **No queue row and no facts strip.** The reference draws the current task and
+  its count on a row above the box. That strip is its own screen, `strip`, and
+  the queued message is `queued`; neither is part of this one.
+- The differing conversation and the thinking line carry over from `run`.
+
 ## exited
 
 The same conversation after the run stopped for good: the feed as it was, and
@@ -417,8 +491,9 @@ running.
 - **No exit code is invented.** The code on the card is the one the host
   reported. Where a host never says which, the card reads "Exited" and stops;
   an absent code is not a zero.
-- The differing conversation, the thinking line and the absent composer carry
-  over from `run`.
+- **No composer at all, which the reference agrees with.** A run that has ended
+  will never take another message, so there is no box and nothing in its place.
+- The differing conversation and the thinking line carry over from `run`.
 
 ## stale
 

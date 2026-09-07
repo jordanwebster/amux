@@ -20,6 +20,17 @@ public enum ConversationAction: Equatable, Sendable {
     /// Answering a child's ask happens in the child's own conversation, so
     /// reaching it is going there rather than answering from here.
     case openChild(AgentId)
+    /// Send what is in the composer, or hold it where a turn is running.
+    /// What is written lives in the conversation's own draft, so nothing
+    /// travels with this but the intention.
+    case send
+    /// Stop the turn that is running. Distinct from clearing the field, which
+    /// never leaves the phone and is the composer's own business.
+    case interrupt
+    /// Attach something to the message, asked for from the plus.
+    case attach
+    /// Speak the message instead of typing it.
+    case dictate
 }
 
 /// Who this conversation is with and where it runs.
@@ -44,6 +55,12 @@ public struct ConversationSubject: Equatable, Sendable {
     public let age: String?
     /// Set once the agent has stopped for good.
     public let ended: Ended?
+    /// How long the agent has been on the work it announced, in the shortest
+    /// true unit. This is the number the composer reports while a turn runs,
+    /// and it is the fleet's arithmetic rather than a clock this screen keeps:
+    /// a timer started on the phone would go on counting through a host that
+    /// had stopped answering.
+    public let working: String?
     /// Whether this agent's last turn finished and nobody has read it yet.
     ///
     /// The fleet keeps one vocabulary for everything that needs you, and a
@@ -65,7 +82,7 @@ public struct ConversationSubject: Equatable, Sendable {
     public init(
         name: String, host: String?, directory: String,
         hostReachable: Bool = true, age: String? = nil, ended: Ended? = nil,
-        finished: Bool = false
+        finished: Bool = false, working: String? = nil
     ) {
         self.name = name
         self.host = host
@@ -74,6 +91,7 @@ public struct ConversationSubject: Equatable, Sendable {
         self.age = age
         self.ended = ended
         self.finished = finished
+        self.working = working
     }
 
     /// What the chrome names an agent, gathered from the fleet that owns those
@@ -93,7 +111,8 @@ public struct ConversationSubject: Equatable, Sendable {
             hostReachable: fleet.host(row.hostId)?.online ?? true,
             age: row.age(at: fleet.orderedAt),
             ended: ended,
-            finished: row.attention == .needsYou(why: .finished))
+            finished: row.attention == .needsYou(why: .finished),
+            working: row.working(at: fleet.orderedAt))
     }
 
     /// "Studio · ~/src/amux", or just the directory while the machine that
@@ -183,7 +202,7 @@ public struct Conversation: View {
                     UnsupportedLayer(layer: "this agent's transcript")
                         .padding(.top, design.metrics.feedGap)
                 } else {
-                    TranscriptFeed(rows: model.entries.transcriptRows())
+                    TranscriptFeed(rows: model.rows())
                 }
                 // The end of a run belongs in the feed rather than under it.
                 // It is the last thing that happened, in sequence after the
@@ -232,6 +251,11 @@ public struct Conversation: View {
             } else if let state = ConversationFootState(
                 gate: model.gate, results: model.results, subject: subject) {
                 ConversationFoot(state: state) { actions(.retry) }
+            } else if let composer = ComposerState(
+                gate: model.gate, tail: model.tailRow, elapsed: subject.working) {
+                ComposerBox(
+                    state: composer, agent: subject.name,
+                    text: Bindable(model).draft.prose, actions: actions)
             }
         }
         .padding(.horizontal, 12)

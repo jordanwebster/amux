@@ -39,13 +39,13 @@ enum DoorScreens {
                     subject: ConversationSubject(
                         agent: Scenario.focus, in: host.stores.fleet)) { _ in }
             }
-        // One screen, six names. Whether a turn is still running, who else has
+        // One screen, seven names. Whether a turn is still running, who else has
         // spoken in it, whether the layer will take a message and whether the
         // run has ended are all facts the conversation reads off its own store
         // rather than screens of their own: `run-live`, `voices`,
-        // `review-cta`, `working` and `exited` are `run` with a different
-        // feed, session and fleet in it.
-        case .run, .runLive, .voices, .reviewCta, .working, .exited:
+        // `review-cta`, `working`, `typing` and `exited` are `run` with a
+        // different feed, session, draft and fleet in it.
+        case .run, .runLive, .voices, .reviewCta, .working, .exited, .typing:
             Conversation(
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(
