@@ -46,6 +46,15 @@
       "id": "hosts",
       "stage": 9,
       "topology": "e2e-tests/topologies/hosts.json",
+      "acts": [
+        "link-before-sign-in",
+        "link-agreed-second-time",
+        "code-on-keypad",
+        "agents-started",
+        "key-revoked",
+        "disturbance",
+        "second-account"
+      ],
       "claim": "Giving a phone machines to work on, and keeping two accounts apart, against three machines the runner is really running. A pairing link the launch itself carried lands on a phone nobody has signed in on and trusts nothing; signing in puts it to the machine, which answers with its own name and the whole of its key; turned down it still holds no key, and the same invitation — the machine is still offering it — is opened again and agreed to. On the keypad, a code nobody issued and a code that has run out are refused in one sentence with the digits gone, and the code the machine printed leads to that machine's name and key before any trust is written. Three agents are started on one machine — from a directory it had been used in, from a repository it listed, and from a path typed by hand, with a path it refuses saying so and starting nothing — and the machine itself reports every one of them as Claude on the SDK driver, with no terminal Claude session appearing anywhere; the one the phone started opens as the SDK layer's own typed state and the one the topology seeded still opens as a transcript. A key read whole on the phone is revoked while one of that machine's agents is open, and the access it carried ends at once: the stream that conversation was reading is let go and everything the machine was running leaves the fleet. The relay is taken away and put back and a machine restarted underneath, and the phone recovers with nobody pressing anything. And the second account on the same phone reaches only its own machine, pairs with it under an identity of its own, and sees none of the first account's."
     }
   ]

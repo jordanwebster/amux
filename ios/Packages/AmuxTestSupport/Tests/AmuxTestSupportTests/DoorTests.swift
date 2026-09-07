@@ -41,6 +41,7 @@ final class DoorTests: XCTestCase {
                 name: "screenshot.png", mime: "image/png", base64: "iVBORw0KGgo="),
             .pair(qr: #"{"host_id":"…","cloud_url":"http://127.0.0.1:9","secret":[1]}"#),
             .pairByCode(host: "9f1c1f8e-0000-4000-8000-000000000002", pin: "419507"),
+            .revoke(host: "9f1c1f8e-0000-4000-8000-000000000002"),
             .send(agent: "6f1c1f8e-0000-4000-8000-000000000001", text: "carry on"),
             .awaitSendable(agent: "6f1c1f8e-0000-4000-8000-000000000001", seconds: 30),
             .watch(agent: "6f1c1f8e-0000-4000-8000-000000000001"),
@@ -82,6 +83,7 @@ final class DoorTests: XCTestCase {
         let code = try wire(.pairByCode(host: "workstation", pin: "419507"))
         XCTAssertEqual(code["host"] as? String, "workstation")
         XCTAssertEqual(code["pin"] as? String, "419507")
+        XCTAssertEqual(try wire(.revoke(host: "workstation"))["host"] as? String, "workstation")
         XCTAssertEqual(try wire(.requestChanges(agent: "aurora", base: "HEAD~1"))["base"] as? String, "HEAD~1")
         let attempt = try wire(.send(agent: "aurora", text: "carry on"))
         XCTAssertEqual(attempt["agent"] as? String, "aurora")

@@ -128,6 +128,7 @@ final class DoorHost {
             return attach(to: agent, kind: kind, name: name, mime: mime, base64: base64)
         case .pair(let qr): return await pair(with: qr)
         case .pairByCode(let host, let pin): return await pair(with: pin, on: host)
+        case .revoke(let host): return revoke(host)
         case .send(let agent, let text): return send(text, to: agent)
         case .sendDraft(let agent, let prose): return sendDraft(prose, to: agent)
         case .watch(let agent):
@@ -395,6 +396,17 @@ final class DoorHost {
             return .error("the machine did not write the trust: \(written)")
         }
         return .paired(host: name)
+    }
+
+    /// Stops trusting one machine, by the call the paired devices sheet makes
+    /// when its Revoke is pressed.
+    private func revoke(_ host: String) -> DoorReply {
+        guard bridge != nil else { return .error("nothing has been connected") }
+        guard let identity = HostId(host) else { return .error("no machine named \(host)") }
+        guard stores.revoke(identity) else {
+            return .error("there was no runtime to withdraw the key with")
+        }
+        return .ack
     }
 
     /// Waits until the relay has offered this machine to pair with.

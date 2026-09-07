@@ -99,6 +99,15 @@ public enum DoorRequest: Sendable, Equatable {
     /// proves possession of one machine's offer, so the machine is found among
     /// the ones the relay is offering before its code is tried against it.
     case pairByCode(host: String, pin: String)
+    /// Withdraw the key this phone holds for one machine, through the same
+    /// store the paired devices sheet drives.
+    ///
+    /// The other half of `pairByCode`. A driver that re-enters a journey
+    /// partway through has to leave behind what the acts before it left
+    /// behind, and one of the things a person does on the way through is stop
+    /// trusting a machine. What is skipped is the sheet and the press; the
+    /// withdrawal itself is the app's own.
+    case revoke(host: String)
     /// Ask the host holding an agent for the changes its working tree has
     /// against a base — a branch or a commit, or the working tree itself when
     /// the base is empty. The host computes the diff; the phone draws it.
@@ -390,6 +399,8 @@ extension DoorRequest: Codable {
             self = .pairByCode(
                 host: try fields.decode(String.self, forKey: .host),
                 pin: try fields.decode(String.self, forKey: .pin))
+        case "revoke":
+            self = .revoke(host: try fields.decode(String.self, forKey: .host))
         case "requestChanges":
             self = .requestChanges(
                 agent: try fields.decode(String.self, forKey: .agent),
@@ -493,6 +504,9 @@ extension DoorRequest: Codable {
             try fields.encode("pairByCode", forKey: .kind)
             try fields.encode(host, forKey: .host)
             try fields.encode(pin, forKey: .pin)
+        case .revoke(let host):
+            try fields.encode("revoke", forKey: .kind)
+            try fields.encode(host, forKey: .host)
         case .requestChanges(let agent, let base):
             try fields.encode("requestChanges", forKey: .kind)
             try fields.encode(agent, forKey: .agent)

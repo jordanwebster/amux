@@ -21,6 +21,9 @@ final class HostsTests: JourneyCase {
         let desktopKey: String
         let workToken: String
         let link: String
+        /// The payload that link carries, for taking the same invitation up
+        /// without the screen.
+        let offer: String
         let recent: String
         let repository: String
         let typedPath: String
@@ -39,6 +42,7 @@ final class HostsTests: JourneyCase {
             desktopKey = try required("AMUX_DESKTOP_FINGERPRINT")
             workToken = try required("AMUX_WORK_TOKEN")
             link = try required("AMUX_LINK")
+            offer = try required("AMUX_OFFER")
             recent = try required("AMUX_RECENT")
             repository = try required("AMUX_REPOSITORY")
             typedPath = try required("AMUX_TYPED_PATH")
@@ -63,6 +67,56 @@ final class HostsTests: JourneyCase {
     /// What the layer cards said was chosen each time Start went down, in the
     /// order the presses happened.
     private var layersWhenStarted: [String] = []
+    /// Whether the machines have been asked what they were already running.
+    private var baselineTaken = false
+    /// The one launch every shortcut in a row works through, while there is
+    /// one.
+    private var shortcutApp: XCUIApplication?
+
+    /// One act of this journey: what a person does in it, and the cheapest way
+    /// to leave behind what doing it leaves behind.
+    ///
+    /// The journey is the whole of them in order, and that is the only run its
+    /// claim is made from. A run told which acts to drive drives those and
+    /// takes the shortcut for every act before them, which is how somebody
+    /// reproduces one failing act without paying for the whole story again.
+    private struct Act {
+        let name: String
+        let perform: () throws -> Void
+        /// What the act leaves behind, established without the screen: the
+        /// same trust the same stores write, asked for through the door
+        /// instead of pressed. Nothing, where the act leaves nothing behind.
+        let shortcut: () throws -> Void
+
+        init(_ name: String, _ perform: @escaping () throws -> Void,
+             shortcut: @escaping () throws -> Void = {}) {
+            self.name = name
+            self.perform = perform
+            self.shortcut = shortcut
+        }
+    }
+
+    /// The acts, in the order a person does them.
+    private func script() -> [Act] {
+        [
+            // A link that is only held and then turned down leaves nothing
+            // written on either side, which is what the act itself proves.
+            Act("link-before-sign-in", aLinkThatArrivesBeforeAnybodyHasSignedIn),
+            Act("link-agreed-second-time", theSameLinkAgreedToTheSecondTime,
+                shortcut: { try self.trustByTheInvitation("desktop") }),
+            Act("code-on-keypad", aCodeTypedOnTheKeypad,
+                shortcut: { try self.trustThroughTheDoor("laptop", self.cast.laptop) }),
+            // Nothing later in this journey reads the agents this act starts:
+            // the agent the revocation ends access to is one the topology
+            // seeded on the machine that loses its key.
+            Act("agents-started", agentsStartedOnAMachineThatSaysWhatTheyAre),
+            Act("key-revoked", aKeyRevokedAndTheMachineLost,
+                shortcut: { try self.forgetThroughTheDoor("desktop", self.cast.desktop) }),
+            // Both of these put back what they disturbed.
+            Act("disturbance", theRelayAndAMachineDisturbed),
+            Act("second-account", anAccountThatSeesOnlyItsOwnMachines),
+        ]
+    }
 
     func testTwoAccountsPairCreateRevokeAndSeeOnlyTheirOwnMachines() throws {
         runner = try Runner()
@@ -72,20 +126,133 @@ final class HostsTests: JourneyCase {
         // is understood afterwards, and a run that stopped at the first bad
         // assertion has the most to explain.
         defer { try? write("hosts.json") }
+
+        let acts = script()
+        let asked = (ProcessInfo.processInfo.environment["AMUX_ACTS"] ?? "")
+            .split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        let unknown = asked.filter { name in !acts.contains { $0.name == name } }
+        XCTAssertTrue(unknown.isEmpty,
+                      "this journey has no act called \(unknown.joined(separator: ", ")); "
+                      + "it has \(acts.map { $0.name })")
+        guard unknown.isEmpty else { return }
+        // Everything up to the last act asked for. What comes after it is not
+        // this run's business, and a shortcut nobody will use costs the same
+        // as one somebody does.
+        let last = asked.isEmpty
+            ? acts.count - 1
+            : (acts.lastIndex { asked.contains($0.name) } ?? acts.count - 1)
+        // Said out loud in the record so that a run which took shortcuts can
+        // never be read afterwards as the journey itself.
+        var performed: [String] = []
+        var shortcut: [String] = []
+        record["actsPerformed"] = performed
+        record["actsShortcut"] = shortcut
+        // How long each of them took, to the second. What a shortcut is worth
+        // is the difference between these two lists, and it is only knowable
+        // from a run that measured it.
+        var seconds: [String: Int] = [:]
+        for act in acts[...last] {
+            let began = Date()
+            if asked.isEmpty || asked.contains(act.name) {
+                endShortcuts()
+                try theBaseline()
+                try act.perform()
+                performed.append(act.name)
+            } else {
+                try act.shortcut()
+                shortcut.append(act.name)
+            }
+            seconds[act.name] = Int(Date().timeIntervalSince(began).rounded())
+            record["secondsPerAct"] = seconds
+            record["actsPerformed"] = performed
+            record["actsShortcut"] = shortcut
+        }
+        endShortcuts()
+
+        record["createdAgents"] = created
+    }
+
+    /// What the machines were already running before this run pressed
+    /// anything, so an agent found afterwards can be told from one that was
+    /// always there.
+    ///
+    /// Taken once, in the moment before the first act driven through the
+    /// screen. A run that shortcut its way to an act takes it after those
+    /// shortcuts, which is the same claim about the same moment: whatever the
+    /// shortcuts left behind was already there as far as the act is concerned.
+    private func theBaseline() throws {
+        guard !baselineTaken else { return }
+        baselineTaken = true
         for machine in Self.machines {
             seeded.formUnion(try inventory(machine).agents.compactMap { $0["id"] as? String })
         }
         record["seededAgents"] = seeded.count
+    }
 
-        try aLinkThatArrivesBeforeAnybodyHasSignedIn()
-        try theSameLinkAgreedToTheSecondTime()
-        try aCodeTypedOnTheKeypad()
-        try agentsStartedOnAMachineThatSaysWhatTheyAre()
-        try aKeyRevokedAndTheMachineLost()
-        try theRelayAndAMachineDisturbed()
-        try anAccountThatSeesOnlyItsOwnMachines()
+    // MARK: - The shortcuts
 
-        record["createdAgents"] = created
+    /// Trusts one machine by the code it prints, through the door rather than
+    /// through the keypad or the link.
+    ///
+    /// The door takes the two steps the pairing screen takes, against the same
+    /// machine over the same relay, so what this leaves behind is the trust
+    /// the product's own path writes.
+    private func trustThroughTheDoor(_ machine: String, _ identity: String) throws {
+        standIn()
+        let pin = try code(from: machine)
+        try door(runner, .init(kind: "pairByCode", host: identity, pin: pin))
+        XCTAssertTrue(
+            waitUntil { ((try? self.machinesOnScreen()) ?? []).contains(machine) },
+            "\(machine) never joined the machines after being paired with through the door")
+    }
+
+    /// Trusts the machine that is offering an invitation, by that same
+    /// invitation, through the door rather than off a confirmation screen.
+    ///
+    /// Not by a code: a machine holds one pairing offer at a time, and this
+    /// one is already holding out the invitation the journey's link carries.
+    /// The payload is the one the machine issued, so this is the act's own
+    /// handshake with the person taken out of the middle of it.
+    private func trustByTheInvitation(_ machine: String) throws {
+        standIn()
+        try door(runner, .init(kind: "pair", qr: cast.offer))
+        XCTAssertTrue(
+            waitUntil { ((try? self.machinesOnScreen()) ?? []).contains(machine) },
+            "\(machine) never joined the machines after its invitation was taken through "
+            + "the door")
+    }
+
+    /// Stops trusting one machine, through the door rather than through the
+    /// paired devices sheet.
+    private func forgetThroughTheDoor(_ machine: String, _ identity: String) throws {
+        standIn()
+        try door(runner, .init(kind: "revoke", host: identity))
+        XCTAssertTrue(
+            waitUntil { !((try? self.machinesOnScreen()) ?? [machine]).contains(machine) },
+            "\(machine) is still among the machines after its key was withdrawn")
+    }
+
+    /// The launch the shortcuts work through: one for however many of them run
+    /// in a row.
+    ///
+    /// Every act starts the app itself, because what a person does begins with
+    /// opening it. A shortcut is not that: it is the state the act would have
+    /// left, and a fresh launch and a fresh reconciliation for each one is
+    /// most of what a shortcut run costs. So they share a launch, and it is
+    /// put away the moment a finger takes over.
+    @discardableResult
+    private func standIn() -> XCUIApplication {
+        if let waiting = shortcutApp { return waiting }
+        let app = launch(runner)
+        XCTAssertTrue(waitUntil { (try? self.reconciled()) == true },
+                      "the phone never reached the relay to take the shortcuts")
+        shortcutApp = app
+        return app
+    }
+
+    private func endShortcuts() {
+        shortcutApp?.terminate()
+        shortcutApp = nil
     }
 
     // MARK: - What a machine itself says it holds

@@ -209,6 +209,7 @@ class JourneyCase: XCTestCase {
         var identifier: String?
         var host: String?
         var pin: String?
+        var qr: String?
         /// What a launch that did not sign in signs in with: the same three
         /// the launch itself would have carried.
         var relay: String?
@@ -232,6 +233,7 @@ class JourneyCase: XCTestCase {
             if let identifier { fields["identifier"] = identifier }
             if let host { fields["host"] = host }
             if let pin { fields["pin"] = pin }
+            if let qr { fields["qr"] = qr }
             if let relay { fields["relay"] = relay }
             if let token { fields["token"] = token }
             if let user { fields["user"] = user }

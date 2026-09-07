@@ -4,6 +4,34 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **A journey can be re-entered at one of its acts.**
+
+Diagnosing a failure in the hosts journey cost a whole run of it, because the
+only way to reach the fourth thing a person does was to do the first three.
+The journey now names its acts in `ios/Journeys/manifest.json`, and
+`wt run ios-journey -- hosts --act agents-started` drives that act through the
+screen and replaces everything before it with a shortcut: trust is written
+through the app's own door — the two steps the pairing screen takes, against
+the same machine over the same relay — instead of typed on a keypad or opened
+from a link. The door grew the other half of pairing to make that possible: a
+machine's key can now be withdrawn through it by the same call the paired
+devices sheet makes.
+
+A shortcut run is a diagnosis and never a pass. It writes into a directory of
+its own so it cannot overwrite the journey's evidence, the phone's record
+names every act that was shortcut and every act a finger drove, the driver
+refuses a record whose acts disagree with what was asked for, and the last
+line says the journey has not passed. The inventory baseline the journey takes
+before anything — what the machines were already running — is taken in the
+moment before the first act a finger drives, so an agent found afterwards is
+still told apart from one that was always there.
+
+The mechanism belongs to journeys rather than to this one: the act filter is
+in the script and the acts are declared in the manifest, so the next journey
+gets it by declaring its own acts and writing a shortcut for each.
+
+---
+
 2026-09-07 — **`wt test` compiles under the build task, not under its own
 timeout.**
 
