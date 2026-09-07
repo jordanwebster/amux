@@ -180,7 +180,10 @@ final class RouterTests: XCTestCase {
     func testEveryRouteBelongsToOneTab() {
         XCTAssertEqual(Route.conversation(agent()).tab, .agents)
         XCTAssertEqual(Route.changes(agent()).tab, .agents)
-        XCTAssertEqual(Route.newAgent.tab, .hosts)
+        // Starting an agent is an agent thing, wherever it was reached from:
+        // the machine is one of three answers on the page rather than the
+        // subject of it, and what it leaves behind is a conversation.
+        XCTAssertEqual(Route.newAgent.tab, .agents)
         XCTAssertEqual(Route.pairByCode(nil).tab, .hosts)
         XCTAssertEqual(Route.host(HostId(UUID())).tab, .hosts)
         XCTAssertEqual(Route.accounts.tab, .you)

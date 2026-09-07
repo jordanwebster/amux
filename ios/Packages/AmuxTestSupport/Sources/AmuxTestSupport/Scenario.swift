@@ -124,6 +124,34 @@ public enum Scenario {
             expiresAt: reading.addingTimeInterval(4 * 60 + 30))
     }
 
+    // MARK: - Directories
+
+    /// Where agents have run on Studio lately, most recent first. The one at
+    /// the top is where the last one ran, which is why it is the directory
+    /// standing in the field before anybody chooses anything.
+    public static let recentProjects: [Project] = [
+        Project(path: "~/src/amux", name: "amux", lastUsed: now.addingTimeInterval(-40 * 60)),
+        Project(path: "~/src/amux-docs", name: "amux-docs",
+                lastUsed: now.addingTimeInterval(-4 * 3600)),
+        Project(path: "~/src/legacy", name: "legacy",
+                lastUsed: now.addingTimeInterval(-2 * 24 * 3600)),
+        Project(path: "~/src/amux-a2a", name: "amux-a2a",
+                lastUsed: now.addingTimeInterval(-6 * 24 * 3600)),
+    ]
+
+    /// Repositories under that machine's roots that no agent has run in. A
+    /// directory that is already recent is never repeated here.
+    public static let repositories: [Project] = [
+        Project(path: "~/src/amuxcloud", name: "amuxcloud"),
+        Project(path: "~/src/relay-bench", name: "relay-bench"),
+        Project(path: "~/src/skills", name: "skills"),
+        Project(path: "~/work/atlas", name: "atlas"),
+        Project(path: "~/work/ledger", name: "ledger"),
+    ]
+
+    /// Where that machine looked.
+    public static let roots = ["~/src", "~/work"]
+
     // MARK: - Agents
 
     public static func card(

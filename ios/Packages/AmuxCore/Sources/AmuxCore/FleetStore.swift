@@ -104,6 +104,23 @@ public final class FleetStore {
         rebuild()
     }
 
+    /// Takes in an agent the machine has just started.
+    ///
+    /// The machine has already answered — the agent exists, on the machine
+    /// that named it — so this is not an optimistic row: it is a fact this
+    /// phone was told directly rather than through the next inventory. Putting
+    /// it in now is what lets the conversation it opens name where it runs,
+    /// instead of showing a blank line until the fleet catches up. The next
+    /// inventory replaces it with the machine's own account of it.
+    public func created(_ agent: Agent) {
+        guard cards[agent.id] == nil else { return }
+        cards[agent.id] = AgentCard(
+            agent: agent, displayName: agent.name ?? agent.command,
+            attention: .idle, phase: .running, lastActivity: agent.createdAt)
+        reconcileOrder()
+        rebuild()
+    }
+
     public func host(_ id: HostId) -> HostEntry? { hosts[id] }
 
     /// What this agent is called, for a screen that has an identity and needs

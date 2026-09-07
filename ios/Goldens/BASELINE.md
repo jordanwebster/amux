@@ -1045,3 +1045,38 @@ the two ids are the two lists it belongs to.
   unreachable, that reconnecting is happening, how long ago the last update
   was, and Retry Now beneath.
 - The differing conversation and the stale place line carry over from `stale`.
+
+## new-agent
+
+Starting an agent: one machine, one directory, one layer, on one screen. The
+reference's own picture is followed closely; four things differ, and each is a
+fact about what this app can actually ask a machine for.
+
+- **Three machines, not four.** The reference lists `homelab` among the hosts.
+  It is a machine on the network this phone has not paired with, and nothing
+  can be started on a machine that holds no key for this phone. It is on the
+  Hosts tab under "Not Paired", where it can be paired with, and it is not
+  here.
+- **The second line is what the machine said it is.** "macOS · via relay",
+  because `macOS` is what a host reports as its platform; the reference's "Mac
+  Studio" and "MacBook Air" are model names nothing on the wire carries.
+  Offline reads "offline, cannot start here" as drawn, on the row itself,
+  because it is the reason that one row is grey.
+- **The order is the Hosts tab's order** — reachable first, then by name — so
+  the same machines appear in the same order on both screens.
+- **The model is stated, and only Codex's is a choice.** The reference draws a
+  model with a chevron under each card. A create request names Claude's driver
+  and nothing else, so a model chosen for Claude would be a choice this screen
+  silently dropped; Codex's request does carry one. And the models a layer
+  offers only ever arrive with a running session — nothing can ask a machine
+  what a layer would offer before that layer exists — so the list behind
+  Codex's chevron is the one this account's own Codex sessions reported. A card
+  with no list to open has no chevron, which is why Claude's has none here.
+
+Everything else is the reference: the radio list, the directory row with the
+recent projects as chips beneath it, the two cards with the chosen one
+outlined in the accent, and "Start on Studio" naming the machine at the foot.
+The whole enumeration of that machine's repositories, searchable, and a field
+for a path it did not list, are one tap away on the directory row; they are a
+state of this screen rather than a screen of their own, so the machine, the
+layer and the button that starts it never leave the display.

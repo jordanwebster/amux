@@ -104,6 +104,8 @@ public struct Shell: View {
             ConversationPage(agent: agent, router: router, stores: stores)
         case .changes(let agent):
             ChangesPage(agent: agent, router: router, stores: stores)
+        case .newAgent:
+            NewAgentPage(router: router, stores: stores)
         case .pairByCode(let host):
             PairByCodePage(host: host, router: router, stores: stores)
         case .pairConfirmation(let invitation):
@@ -395,6 +397,44 @@ private struct HostsTabRoot: View {
         }
         // The screen draws its own header, so the bar would be a second one.
         .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+/// Starting an agent on one of this phone's machines.
+///
+/// The page opens the attempt rather than the screen doing it, and asks the
+/// machine it opened on what it has to offer straight away: the answer takes a
+/// round trip and the screen is useful before it arrives, so nothing waits on
+/// it.
+private struct NewAgentPage: View {
+    let router: Router
+    let stores: StoreBundle
+
+    var body: some View {
+        NewAgent(model: stores.newAgent, hosts: stores.hosts) { action in
+            switch action {
+            // A different machine means a different set of directories, so
+            // pointing at one asks it what it has.
+            case .point(let host): stores.point(at: host)
+            case .search: stores.searchDirectories()
+            // Starting is the one thing on this screen that leaves the phone.
+            // Leaving is what the confirmation below does, when the machine
+            // says the agent exists — a screen that left on the press would be
+            // claiming something it has not been told.
+            case .start: stores.startAgent()
+            case .cancel: router.pop()
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear { stores.startNewAgent(on: stores.hosts.online.first?.id) }
+        // The conversation replaces this page rather than sitting on top of it:
+        // going back from an agent that was just started belongs at the list it
+        // joined, not at the form that made it.
+        .onChange(of: stores.newAgent.created) { _, started in
+            guard let started else { return }
+            stores.fleet.opened(started.id)
+            router.show(.conversation(started.id))
+        }
     }
 }
 

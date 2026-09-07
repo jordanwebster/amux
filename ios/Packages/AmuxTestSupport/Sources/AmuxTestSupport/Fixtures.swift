@@ -85,6 +85,7 @@ public enum Fixtures {
         Built(.hosts, "devices"),
         Built(.pin, "pin"),
         Built(.pairConfirm, "pair-confirm"),
+        Built(.newAgent, "new-agent"),
         Built(.offline, "offline"),
     ]
 
@@ -281,8 +282,15 @@ public enum Fixtures {
             bundle.pairing.open(machine: Scenario.unpaired)
             bundle.pairing.enter("419")
         },
+        // Starting an agent on the machine an agent last ran on. The Codex
+        // session is here because the models a layer offers only ever arrive
+        // with a running session — an account with one Codex agent is an
+        // account whose Codex card has a list to open, and one without is not.
         Fixture(id: "new-agent", screen: .newAgent) { bundle in
-            States.open(bundle)
+            States.open(
+                bundle, agent: Scenario.agentId("spec-suite"),
+                session: Sessions.codex())
+            States.offers(bundle)
         },
         // A conversation whose machine went away mid-turn. Both things are
         // true at once and both are said: the feed is the last thing that was

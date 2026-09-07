@@ -341,10 +341,18 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
     case retryNow
     /// Stop trusting a machine, closing every link this phone holds to it.
     case revoke(host: HostId)
+    /// Ask a machine what it has to offer as a working directory. The limit is
+    /// a combined maximum, recent first, which the machine caps.
+    case listRepositories(host: HostId, query: String?, limit: Int)
+    /// Start an agent on a machine, in a directory, under a named layer.
+    case createAgent(host: HostId, directory: String, name: String, agent: NewAgentKind)
     /// A shared UI command, exactly as the core spells it.
     case shared(JSONValue)
 
-    private enum Key: String, CodingKey { case command, agent, host, pin, payload, pending }
+    private enum Key: String, CodingKey {
+        case command, agent, host, pin, payload, pending
+        case query, limit, directory, name
+    }
 
     public init(from decoder: any Decoder) throws {
         let body = try JSONValue(from: decoder)
@@ -374,6 +382,19 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
                 return
             case "revoke":
                 self = .revoke(host: try container.decode(HostId.self, forKey: .host))
+                return
+            case "list_repositories":
+                self = .listRepositories(
+                    host: try container.decode(HostId.self, forKey: .host),
+                    query: try container.decodeIfPresent(String.self, forKey: .query),
+                    limit: try container.decode(Int.self, forKey: .limit))
+                return
+            case "create_agent":
+                self = .createAgent(
+                    host: try container.decode(HostId.self, forKey: .host),
+                    directory: try container.decode(String.self, forKey: .directory),
+                    name: try container.decode(String.self, forKey: .name),
+                    agent: try container.decode(NewAgentKind.self, forKey: .agent))
                 return
             default: break
             }
@@ -415,8 +436,72 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("revoke", forKey: .command)
             try container.encode(host, forKey: .host)
+        case .listRepositories(let host, let query, let limit):
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("list_repositories", forKey: .command)
+            try container.encode(host, forKey: .host)
+            try container.encodeIfPresent(query, forKey: .query)
+            try container.encode(limit, forKey: .limit)
+        case .createAgent(let host, let directory, let name, let agent):
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("create_agent", forKey: .command)
+            try container.encode(host, forKey: .host)
+            try container.encode(directory, forKey: .directory)
+            try container.encode(name, forKey: .name)
+            try container.encode(agent, forKey: .agent)
         case .shared(let body):
             try body.encode(to: encoder)
+        }
+    }
+}
+
+/// Which layer a new agent runs under, said in full.
+///
+/// Claude carries no model and no choice of driver. This device drives Claude
+/// through the SDK and says so on every request, because the failure a silent
+/// default would allow is invisible: a create that left the driver unsaid would
+/// start a terminal session that looks like every other agent until somebody
+/// tries to do something only the SDK can do. There is deliberately no way to
+/// spell the other driver here — an agent already running under it is still
+/// opened under it, but nothing this app starts can be one.
+public enum NewAgentKind: Sendable, Equatable, Codable {
+    case claude
+    /// Codex is asked for by model where one was chosen, and left to the
+    /// machine's own default where none was.
+    case codex(model: String?)
+
+    private enum Key: String, CodingKey { case provider, driver, model }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: Key.self)
+        switch try container.decode(String.self, forKey: .provider) {
+        case "claude":
+            // Read back only as the driver this app writes. Anything else is a
+            // request this app did not make.
+            let driver = try container.decode(ClaudeDriver.self, forKey: .driver)
+            guard driver == .sdk else {
+                throw DecodingError.dataCorrupted(.init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "this app starts Claude through the SDK only"))
+            }
+            self = .claude
+        case "codex":
+            self = .codex(model: try container.decodeIfPresent(String.self, forKey: .model))
+        case let other:
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath, debugDescription: "unknown provider \(other)"))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: Key.self)
+        switch self {
+        case .claude:
+            try container.encode("claude", forKey: .provider)
+            try container.encode(ClaudeDriver.sdk, forKey: .driver)
+        case .codex(let model):
+            try container.encode("codex", forKey: .provider)
+            try container.encodeIfPresent(model, forKey: .model)
         }
     }
 }

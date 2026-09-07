@@ -1166,11 +1166,21 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     /// The machine named is not one this phone trusts, so there was nothing to
     /// withdraw — a second tap, or a screen that had gone stale.
     case revokeRefused
+    /// What a machine has to offer as a working directory: what it was used in
+    /// recently, the repositories under its roots, and the roots themselves.
+    /// The three are kept apart because a directory somebody worked in
+    /// yesterday is a different kind of suggestion from one that merely exists.
+    case repositories(host: HostId, recent: [Project], repositories: [Project], roots: [String])
+    /// The machine could not be asked, or would not answer. It carries no
+    /// detail: a screen that cannot list directories offers a typed path, and
+    /// which call failed does not change that.
+    case repositoriesUnavailable(host: HostId)
     case failed(OpFailure)
     case other(outcome: String, body: JSONValue)
 
     private enum Key: String, CodingKey {
         case outcome, agent, error, attachment, host, name
+        case recent, repositories, roots
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1200,6 +1210,14 @@ public enum OpOutcome: Sendable, Equatable, Codable {
                 host: try container.decode(HostId.self, forKey: .host),
                 name: try container.decode(String.self, forKey: .name))
         case "revoke_refused": self = .revokeRefused
+        case "repositories":
+            self = .repositories(
+                host: try container.decode(HostId.self, forKey: .host),
+                recent: try container.decode([Project].self, forKey: .recent),
+                repositories: try container.decode([Project].self, forKey: .repositories),
+                roots: try container.decode([String].self, forKey: .roots))
+        case "repositories_unavailable":
+            self = .repositoriesUnavailable(host: try container.decode(HostId.self, forKey: .host))
         case "error": self = .failed(try container.decode(OpFailure.self, forKey: .error))
         default: self = .other(outcome: outcome, body: try JSONValue(from: decoder))
         }
@@ -1247,6 +1265,15 @@ public enum OpOutcome: Sendable, Equatable, Codable {
                 try container.encode(host, forKey: .host)
                 try container.encode(name, forKey: .name)
             case .revokeRefused: try container.encode("revoke_refused", forKey: .outcome)
+            case .repositories(let host, let recent, let repositories, let roots):
+                try container.encode("repositories", forKey: .outcome)
+                try container.encode(host, forKey: .host)
+                try container.encode(recent, forKey: .recent)
+                try container.encode(repositories, forKey: .repositories)
+                try container.encode(roots, forKey: .roots)
+            case .repositoriesUnavailable(let host):
+                try container.encode("repositories_unavailable", forKey: .outcome)
+                try container.encode(host, forKey: .host)
             case .pairingPending: break
             case .failed(let failure):
                 try container.encode("error", forKey: .outcome)
@@ -1254,6 +1281,29 @@ public enum OpOutcome: Sendable, Equatable, Codable {
             case .other: break
             }
         }
+    }
+}
+
+/// One directory a new agent could be started in, as the machine that holds it
+/// describes it.
+public struct Project: Codable, Sendable, Equatable, Identifiable {
+    public var path: String
+    public var name: String
+    /// When an agent last ran here, or nothing where none has. It is what makes
+    /// a directory recent rather than merely present.
+    public var lastUsed: Date?
+
+    public var id: String { path }
+
+    private enum CodingKeys: String, CodingKey {
+        case path, name
+        case lastUsed = "last_used"
+    }
+
+    public init(path: String, name: String, lastUsed: Date? = nil) {
+        self.path = path
+        self.name = name
+        self.lastUsed = lastUsed
     }
 }
 

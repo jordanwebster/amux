@@ -110,6 +110,28 @@ public enum States {
         bundle.apply([.opResult(OpResult(op: op, outcome: .pairingPending(peer)))])
     }
 
+    /// A machine asked what it has to offer as a working directory, and its
+    /// answer.
+    ///
+    /// Played as the request and its result rather than written into the
+    /// store, because that is the only way the app ever learns it: the
+    /// directories are the machine's account of itself, and a fixture that set
+    /// them directly could show a list no machine could produce.
+    @MainActor
+    public static func offers(
+        _ bundle: StoreBundle,
+        on host: HostId = Scenario.studio,
+        recent: [Project] = Scenario.recentProjects,
+        repositories: [Project] = Scenario.repositories,
+        roots: [String] = Scenario.roots
+    ) {
+        let op = OpId(UUID())
+        bundle.newAgent.open(on: host)
+        bundle.newAgent.asking(op)
+        bundle.apply([.opResult(OpResult(op: op, outcome: .repositories(
+            host: host, recent: recent, repositories: repositories, roots: roots)))])
+    }
+
     /// The conversation whose machine went away mid-turn.
     ///
     /// Studio stops answering while a turn is running: the session's stream

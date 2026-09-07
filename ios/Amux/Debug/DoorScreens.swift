@@ -114,6 +114,11 @@ enum DoorScreens {
             PairByCode(model: host.stores.pairing) { _ in }
         case .pairConfirm:
             PairConfirmation(model: host.stores.pairing) { _ in }
+        // Starting an agent. The chooser over it is a state of this screen
+        // rather than a screen beside it, so the fixture decides whether it is
+        // open and this is the one arm either way.
+        case .newAgent:
+            NewAgent(model: host.stores.newAgent, hosts: host.stores.hosts) { _ in }
         default: EmptyView()
         }
     }

@@ -52,8 +52,8 @@ public enum Route: Hashable, Sendable {
     /// its tab with it, so the tab bar always agrees with what is on screen.
     public var tab: Tab {
         switch self {
-        case .conversation, .changes: .agents
-        case .newAgent, .pairByCode, .pairConfirmation, .host: .hosts
+        case .conversation, .changes, .newAgent: .agents
+        case .pairByCode, .pairConfirmation, .host: .hosts
         case .accounts, .appearance, .help: .you
         }
     }

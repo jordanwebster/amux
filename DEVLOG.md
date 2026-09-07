@@ -10997,3 +10997,31 @@ including a driver the runtime does not have.
 Starting an agent is otherwise an ordinary shared command, so its answer
 arrives as the same `AgentCreated` every other client already gets. What the
 bridge arm adds is only that the layer was named.
+
+2026-09-07 — **New Agent, on the phone.** One screen: which machine, which
+directory, which layer, and a button naming the machine at the foot. The
+machines are the paired ones, in the Hosts tab's order; an offline one is on
+the list and disabled, saying why on its own row, because a machine you cannot
+start on is still a machine you have.
+
+The directory comes from what the machine answered — the projects an agent last
+ran in, then the repositories under its roots — or from a path somebody types
+for a directory the machine did not list. The chooser is a state of this screen
+rather than a page of its own, so the machine, the layer and the start button
+never leave the display while a directory is being found. Searching filters the
+list the machine already sent; only a machine whose answer stopped at the cap
+is asked again, because below the cap the local list is everything it has.
+
+Claude is always asked for through the SDK. The store's create carries the
+driver as a value, never a default, and there is no fallback of any kind: a
+machine that will not start an SDK session starts nothing and says so in its
+own sentence, which is the only honest way to report a path it rejected.
+
+Only Codex's card offers a model, and the models it offers are the ones this
+account's own Codex sessions reported — nothing can ask a machine what a layer
+would offer before that layer is running, so a made-up list would be a lie. A
+card with no list has no chevron.
+
+When the machine says the agent exists, it goes into the fleet directly rather
+than waiting for the next inventory, and the conversation that opens can name
+where it runs from the first frame.

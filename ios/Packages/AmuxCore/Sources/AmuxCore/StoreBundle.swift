@@ -16,6 +16,10 @@ public final class StoreBundle {
     /// the account's other stores because pairing is per account: which
     /// machines this phone trusts is a fact about who is signed in.
     public let pairing: PairingStore
+    /// The one agent this phone is in the middle of starting, if any. It lives
+    /// with the account's other stores because what it is choosing among —
+    /// machines, their directories — belongs to whoever is signed in.
+    public let newAgent: NewAgentStore
     public private(set) var conversations: [AgentId: ConversationStore] = [:]
     /// One review per agent, opened the first time its changes are read.
     private var reviews: [AgentId: ReviewStore] = [:]
@@ -60,6 +64,7 @@ public final class StoreBundle {
         self.fleet = FleetStore(now: clock(), unread: unread)
         self.hosts = HostsStore(clock: clock)
         self.pairing = PairingStore(clock: clock)
+        self.newAgent = NewAgentStore()
     }
 
     public func apply(_ batch: [Event]) {
@@ -71,6 +76,15 @@ public final class StoreBundle {
         fleet.apply(event)
         hosts.apply(event)
         pairing.apply(event)
+        // An agent the machine has just started is put into the fleet as soon
+        // as the machine says it exists, rather than waiting for the next
+        // inventory: the conversation this phone is about to open names where
+        // it runs, and the fleet is where that is read from.
+        let startedBefore = newAgent.created?.id
+        newAgent.apply(event)
+        if let started = newAgent.created, started.id != startedBefore {
+            fleet.created(started)
+        }
         switch event {
         case .feed(let update): conversation(update.agent).apply(event)
         case .session(let session): conversation(session.agent).apply(event)
@@ -155,6 +169,61 @@ public final class StoreBundle {
     @discardableResult
     public func revoke(_ host: HostId) -> Bool {
         dispatch?(.revoke(host: host)) != nil
+    }
+
+    // MARK: - Starting an agent
+
+    /// Opens New Agent on a machine and asks that machine what it has to offer
+    /// as a working directory.
+    ///
+    /// The machine is pointed at before it is asked, so a screen with no answer
+    /// yet still says which machine it is waiting on.
+    public func startNewAgent(on host: HostId?) {
+        newAgent.open(on: host)
+        guard let host else { return }
+        askForDirectories(on: host)
+    }
+
+    /// Points New Agent at a different machine and asks that one instead.
+    public func point(at host: HostId) {
+        guard newAgent.machine != host else { return }
+        newAgent.point(at: host)
+        askForDirectories(on: host)
+    }
+
+    /// Asks the machine again with what is being searched for.
+    ///
+    /// Only for a machine whose first answer stopped at the limit: below that
+    /// the list this phone holds is everything the machine has, and filtering
+    /// it locally is both faster and exactly as complete.
+    public func searchDirectories() {
+        guard newAgent.searchesTheMachine, let host = newAgent.machine else { return }
+        newAgent.asking(dispatch?(.listRepositories(
+            host: host, query: newAgent.query, limit: NewAgentStore.limit)))
+    }
+
+    private func askForDirectories(on host: HostId) {
+        newAgent.asking(dispatch?(.listRepositories(
+            host: host, query: nil, limit: NewAgentStore.limit)))
+    }
+
+    /// Starts the agent that has been described.
+    ///
+    /// The layer is named in full: Claude is always asked for through the SDK,
+    /// because a request that left the driver unsaid would start a terminal
+    /// session that looks like every other agent until somebody tried to do
+    /// something only the SDK can do. There is no fallback of any kind — a
+    /// machine that will not start an SDK session starts nothing, and says so.
+    ///
+    /// False means nothing left the phone: nothing chosen, or no connection.
+    @discardableResult
+    public func startAgent() -> Bool {
+        guard newAgent.ready, let host = newAgent.machine else { return false }
+        let op = dispatch?(.createAgent(
+            host: host, directory: newAgent.directory, name: newAgent.name,
+            agent: newAgent.kind))
+        newAgent.starts(op)
+        return op != nil
     }
 
     // MARK: - Pairing
