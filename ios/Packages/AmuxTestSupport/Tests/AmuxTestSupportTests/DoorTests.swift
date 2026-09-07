@@ -113,7 +113,8 @@ final class DoorTests: XCTestCase {
             reconciled: true, shimmering: 3)
         let bridge = BridgeState(
             build: "0.1.0+debug-tools", started: true, connection: "connected",
-            reconciled: true, hosts: [], agents: ["helper"], discovered: ["desktop", "laptop"])
+            reconciled: true, hosts: [], agents: ["helper"], relayAttempts: 3, relayRetries: 1,
+            discovered: ["desktop", "laptop"])
         let replies: [DoorReply] = [
             .ack,
             .state(state),
@@ -146,10 +147,10 @@ final class DoorTests: XCTestCase {
         XCTAssertTrue(Fixtures.isBuilt(.run, state: "host-lost"))
         XCTAssertFalse(Fixtures.isBuilt(.run, state: "run-accessibility"))
         // A state with no fixture behind it is unbuilt rather than unknown, so
-        // asking for it names work still to come. The machines screen expects
-        // a picture of paired devices and nothing fills one yet.
-        XCTAssertFalse(Fixtures.isBuilt(.hosts, state: "devices"))
-        XCTAssertNil(Fixtures.named("devices"))
+        // asking for it names work still to come. The permission ask expects a
+        // picture of a Codex approval and nothing fills one yet.
+        XCTAssertFalse(Fixtures.isBuilt(.askPermission, state: "codex-approval"))
+        XCTAssertNil(Fixtures.named("codex-approval"))
         // The home screen has two states built, so this is about the pair and
         // not about a screen being all-or-nothing either way.
         XCTAssertTrue(Fixtures.isBuilt(.home, state: "home"))

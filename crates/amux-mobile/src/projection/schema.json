@@ -825,5 +825,22 @@
     "Invariant": {
       "detail": "example diagnostic"
     }
+  },
+  {
+    "Devices": {
+      "identity": {
+        "host": "00000000-0000-0000-0000-000000000009",
+        "name": "iPhone",
+        "fingerprint": "4f2a91c05b7e8d3a6c14f0928be5d7a3419c60fe2d8b7a05c31e94f2ab7d69c1"
+      },
+      "devices": [
+        {
+          "host": "00000000-0000-0000-0000-000000000001",
+          "name": "studio",
+          "fingerprint": "e04a7b12c98d3f5601ae72b4d8c05913f6a2e7dbc4051829f3b6ad70e91c58d2",
+          "paired_at": "2023-11-14T22:13:20Z"
+        }
+      ]
+    }
   }
 ]

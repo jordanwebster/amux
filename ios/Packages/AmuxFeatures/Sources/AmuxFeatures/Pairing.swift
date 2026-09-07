@@ -308,7 +308,9 @@ public struct PairConfirmation: View {
                 // the person compares against the machine's own screen, and it
                 // is drawn whole rather than shortened, because a fingerprint
                 // with its middle taken out is not one you can check.
-                field("Fingerprint", grouped(peer.fingerprint), mono: true, id: "fingerprint")
+                field(
+                "Fingerprint", Fingerprint.grouped(peer.fingerprint), mono: true,
+                id: "fingerprint")
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -397,19 +399,6 @@ public struct PairConfirmation: View {
         }
         .padding(.top, 26)
         .identified("pair-confirm.trusted", value: name)
-    }
-
-    /// A fingerprint in fours.
-    ///
-    /// It is sixty-four hex characters and the only thing to do with it is
-    /// compare it, character by character, against the one the machine shows.
-    /// An unbroken run of sixty-four is where an eye loses its place; in fours
-    /// the comparison is short hops. The characters and their order are
-    /// untouched, so what is on screen is still the fingerprint.
-    private func grouped(_ fingerprint: String) -> String {
-        stride(from: 0, to: fingerprint.count, by: 4).map { start in
-            String(Array(fingerprint)[start..<min(start + 4, fingerprint.count)])
-        }.joined(separator: " ")
     }
 
     /// When the offer runs out, as a length of time rather than a clock face:

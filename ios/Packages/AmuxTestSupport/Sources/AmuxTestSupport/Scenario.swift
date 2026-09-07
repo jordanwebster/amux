@@ -41,6 +41,9 @@ public enum Scenario {
     public static let mini = hostId("mini")
     public static let air = hostId("air")
     public static let homelab = hostId("homelab")
+    /// This phone. It has a host identity like any other participant — that is
+    /// what a machine trusts when it pairs with it.
+    public static let phone = hostId("phone")
 
     /// The paired machines. `air` is one you cannot reach this morning, which
     /// is why one agent's state is genuinely unknown rather than idle.
@@ -80,6 +83,33 @@ public enum Scenario {
     public static let unpaired = HostEntry(
         id: homelab, name: "homelab", online: true, trustStatus: .untrustedButOnline,
         platform: "Linux")
+
+    /// This phone and the machines that hold a key to it.
+    ///
+    /// The same three machines the fleet has, because trust and reachability
+    /// are two facts about the same set here: `air` is away and still trusted,
+    /// which is the whole point of listing the store rather than the fleet.
+    /// Real fingerprints' shape — SHA-256 of a key, sixty-four hex characters
+    /// — because how long they are is most of what the screen has to cope
+    /// with.
+    public static let roster = DeviceRoster(
+        identity: DeviceIdentity(
+            host: phone, name: "iPhone",
+            fingerprint: "4f2a91c05b7e8d3a6c14f0928be5d7a3419c60fe2d8b7a05c31e94f2ab7d69c1"),
+        devices: [
+            PairedDevice(
+                host: air, name: "air",
+                fingerprint: "9c1d4f77a2e50b83c6194ad0f72b8e5136ca9047db2e18f5a63c0e7419bd82f4",
+                pairedAt: now.addingTimeInterval(-31 * 24 * 3600)),
+            PairedDevice(
+                host: mini, name: "mini",
+                fingerprint: "b73e05c1a94f28d60ba7e31c5f80d924e6a1cb37095fd2e84a1c6b70d53f918a",
+                pairedAt: now.addingTimeInterval(-9 * 24 * 3600)),
+            PairedDevice(
+                host: studio, name: "Studio",
+                fingerprint: "e04a7b12c98d3f5601ae72b4d8c05913f6a2e7dbc4051829f3b6ad70e91c58d2",
+                pairedAt: now.addingTimeInterval(-64 * 24 * 3600)),
+        ])
 
     /// That machine, having answered an invitation: it has proved it issued
     /// the offer and said who it is, and nothing has been trusted. The

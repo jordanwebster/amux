@@ -349,3 +349,34 @@ extension View {
         modifier(Shimmer(active: active))
     }
 }
+
+
+/// How a key is written where a person has to read it.
+///
+/// A fingerprint is sixty-four hex characters and the only thing anybody does
+/// with one is compare it against the same key written somewhere else, so how
+/// it is set is the whole of whether that comparison is possible.
+public enum Fingerprint {
+    /// In fours.
+    ///
+    /// An unbroken run of sixty-four is where an eye loses its place; in fours
+    /// the comparison is short hops. The characters and their order are
+    /// untouched, so what is on screen is still the fingerprint.
+    public static func grouped(_ fingerprint: String) -> String {
+        stride(from: 0, to: fingerprint.count, by: 4).map { start in
+            String(Array(fingerprint)[start..<min(start + 4, fingerprint.count)])
+        }.joined(separator: " ")
+    }
+
+    /// The first four characters and the last four, with the middle said to be
+    /// missing rather than merely absent.
+    ///
+    /// For a row that names a key rather than asks about one. Four and four is
+    /// what somebody can hold in their head while glancing between two
+    /// screens, and it is not a comparison — anywhere a key is actually being
+    /// decided about, the whole of it is shown.
+    public static func short(_ fingerprint: String) -> String {
+        guard fingerprint.count > 11 else { return fingerprint }
+        return "\(fingerprint.prefix(4))…\(fingerprint.suffix(4))"
+    }
+}

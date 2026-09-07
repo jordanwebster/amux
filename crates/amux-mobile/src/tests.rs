@@ -242,6 +242,7 @@ fn the_phones_agent_writes_decode_as_the_commands_they_name() {
         CommandDto::Subscription(_) => panic!("an agent write decoded as a subscription"),
         CommandDto::Pairing(_) => panic!("an agent write decoded as a pairing step"),
         CommandDto::Connection(_) => panic!("an agent write decoded as a connection command"),
+        CommandDto::Devices(_) => panic!("an agent write decoded as a trust change"),
     };
 
     assert_eq!(
@@ -1868,6 +1869,176 @@ async fn mobile_retry_now_reaches_the_connection_through_the_bridge() {
         e["Connection"]["state"] == "connected"
     })
     .await;
+
+    drop(running);
+    net.shutdown().await;
+}
+
+/// Revoking a machine ends the access it already had.
+///
+/// The claim under test is "immediately", not "eventually": a conversation
+/// that is open when the key is withdrawn holds a live stream to that machine,
+/// and the withdrawal is worth nothing if that stream survives it. So this
+/// opens one, revokes, and then asks the runtime what it is still holding.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_revoking_a_machine_closes_the_stream_its_conversation_held() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let host = net.daemon("workstation");
+    let (_, token) = net.user_credentials("owner");
+    let root = tempfile::tempdir().unwrap();
+    let config = config(
+        root.path(),
+        format!("http://{}", net.relay_addr()),
+        json!({"Static":token}),
+    );
+    let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
+    let (requests, _tokens) = mpsc::channel(1);
+    let mut seed = MobileRuntime::open(
+        &parsed,
+        Arc::new(Credentials {
+            source: parsed.relay.token.clone(),
+            requests,
+            next_id: AtomicU64::new(1),
+        }),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while *seed.relay.borrow_and_update() != RelayConnection::Connected {
+            seed.relay.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
+    let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
+        panic!("QR expected")
+    };
+    seed.embedded
+        .admin()
+        .pair_qr_cloud_peer(host.host_id(), secret)
+        .await
+        .unwrap();
+    // A Claude agent, because only an agent whose kind names a structured
+    // layer has a session stream for a revocation to close.
+    let agent = uuid::Uuid::from_u128(401);
+    host.register_scripted_claude_agent(agent, "fix-login", root.path())
+        .await;
+    seed.embedded.shutdown().await;
+
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(&config, &events),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    let dispatch = |json: String| {
+        let json = CString::new(json).unwrap();
+        let id = unsafe { amux_mobile_dispatch(running.handle, json.as_ptr()) };
+        assert!(!id.is_null(), "nothing was dispatched");
+        unsafe { amux_mobile_free(id) };
+    };
+    let settled = async |predicate: &dyn Fn(&Value) -> bool, why: &str| -> Value {
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                let snapshot = owned_json(unsafe { amux_mobile_snapshot(running.handle) });
+                if predicate(&snapshot) {
+                    return snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "{why}: {}",
+                owned_json(unsafe { amux_mobile_snapshot(running.handle) })
+            )
+        })
+    };
+    let open = |snapshot: &Value| -> bool { !snapshot["streams"][agent.to_string()].is_null() };
+
+    // What the screen reads before anybody decides anything: this phone's own
+    // identity, and the one machine holding a key to it.
+    let roster = until(&mut receive, running.handle, &token, |e| {
+        e["Devices"]["devices"]
+            .as_array()
+            .is_some_and(|devices| devices.len() == 1)
+    })
+    .await;
+    assert_eq!(roster["Devices"]["devices"][0]["name"], "workstation");
+    assert_eq!(
+        roster["Devices"]["devices"][0]["host"],
+        host.host_id().to_string()
+    );
+    assert!(
+        roster["Devices"]["devices"][0]["fingerprint"]
+            .as_str()
+            .is_some_and(|print| print.len() >= 32),
+        "a paired machine arrived without a fingerprint to compare: {roster}"
+    );
+    assert!(
+        roster["Devices"]["identity"]["fingerprint"]
+            .as_str()
+            .is_some_and(|print| !print.is_empty()),
+        "this phone did not say what key it is known by: {roster}"
+    );
+
+    until(&mut receive, running.handle, &token, |e| {
+        e["Fleet"]["reconciled"] == true
+            && e["Fleet"]["agents"].as_array().is_some_and(|a| a.len() == 1)
+    })
+    .await;
+    dispatch(format!(r#"{{"command":"subscribe","agent":"{agent}"}}"#));
+    settled(&open, "the conversation never opened a stream").await;
+
+    dispatch(format!(
+        r#"{{"command":"revoke","host":"{}"}}"#,
+        host.host_id()
+    ));
+    let answered = until(&mut receive, running.handle, &token, |e| {
+        e["OpResult"]["outcome"]["outcome"] == "revoked"
+    })
+    .await;
+    assert_eq!(answered["OpResult"]["outcome"]["name"], "workstation");
+
+    // The access that existed before the revocation is what has to end.
+    let after = settled(
+        &|s| !open(s),
+        "the revoked machine's conversation kept its stream",
+    )
+    .await;
+    println!("after revocation: {after}");
+    // And the trust store says so, which is what the screen redraws from.
+    let emptied = until(&mut receive, running.handle, &token, |e| {
+        e["Devices"]["devices"]
+            .as_array()
+            .is_some_and(|devices| devices.is_empty())
+    })
+    .await;
+    println!("roster: {roster}, after revoking: {emptied}");
+
+    // A second tap on a row that is already gone withdraws nothing and says so.
+    dispatch(format!(
+        r#"{{"command":"revoke","host":"{}"}}"#,
+        host.host_id()
+    ));
+    let again = until(&mut receive, running.handle, &token, |e| {
+        e["OpResult"]["outcome"]["outcome"] == "revoke_refused"
+    })
+    .await;
+    println!("revoking twice: {again}");
 
     drop(running);
     net.shutdown().await;

@@ -15,7 +15,22 @@ final class SchemaTests: XCTestCase {
 
     func testEveryPinnedEventDecodes() throws {
         let events = try pinnedEvents()
-        XCTAssertEqual(events.count, 16)
+        XCTAssertEqual(events.count, 17)
+    }
+
+    /// The keys the phone holds arrive whole: a screen that showed half a
+    /// fingerprint because the DTO lost a field would look right and be wrong.
+    func testThisPhoneAndItsPairedDevicesCarryTheirFingerprints() throws {
+        let events = try pinnedEvents()
+        guard case .devices(let roster) = try XCTUnwrap(events.last) else {
+            return XCTFail("expected a device roster last, got \(String(describing: events.last))")
+        }
+        XCTAssertEqual(roster.identity.name, "iPhone")
+        XCTAssertEqual(roster.identity.fingerprint.count, 64)
+        let device = try XCTUnwrap(roster.devices.first)
+        XCTAssertEqual(device.name, "studio")
+        XCTAssertEqual(device.fingerprint.count, 64)
+        XCTAssertEqual(device.pairedAt, Date(timeIntervalSince1970: 1_700_000_000))
     }
 
     func testTheFleetCarriesItsAgentsHostsAndReconciliation() throws {

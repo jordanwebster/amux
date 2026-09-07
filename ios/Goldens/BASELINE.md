@@ -925,10 +925,44 @@ under the group rather than implied on every row.
   about what it does. The plus on a screen adds one of the things the screen
   lists, and this screen lists machines; New Agent is the plus on the Agents
   home, which is what that screen lists.
-- **No "This phone" section yet.** The reference ends with the phone's own
-  identity and its paired devices. Both are about identity and revocation
-  rather than about machines, and they are established with the `devices`
-  capture; this baseline will be retaken when they land.
+- **"This Phone" says the fingerprint in short.** The reference reads "iPhone ·
+  4f2a…9c1". A key is sixty-four hex characters and this row has one line for a
+  name and a key together, so it is elided in code — the same four and four at
+  every width and type size — rather than left to the layout, which would cut a
+  different number of characters on a larger type size. Ends alone are not
+  something anybody should compare a key by, which is why the whole of it, in
+  fours, is behind the row below.
+- **"Paired Devices" counts the trust store, not the fleet.** `air` is away and
+  still in it: the key it holds is still good and it will be let straight back
+  in when it answers. That is exactly the thing somebody comes to this section
+  to end, so a count that dropped machines while they were offline would hide
+  the ones most worth revoking.
+
+## devices
+
+The keys read rather than counted: this phone's own, whole, and one row per
+machine that holds one, over the machines themselves. The design left no
+reference for it — the reference stops at a count with a chevron.
+
+- **Over the Hosts screen, not away from it.** The keys on this list are keys
+  to the machines on the list behind, and somebody who came to revoke one came
+  from reading that list. A page that replaced it would ask them to remember
+  which machine they meant.
+- **This phone's own key is first, and whole.** It is the fingerprint a machine
+  shows while it waits to be told whether to trust this device, so the place
+  somebody comes to compare keys is the one place it has to be readable in
+  full.
+- **Every fingerprint is in fours**, the way the pairing confirmation sets one,
+  and for the same reason: sixty-four unbroken characters is where an eye loses
+  its place. The characters and their order are untouched.
+- **`air` is on the list although it is offline.** The list is the trust store.
+  A machine that is away still holds a good key, and revoking it is exactly the
+  thing that cannot wait for it to come back.
+- **Revoke is an outline, and asks nothing first.** The sentence under the list
+  says what it does — access ends immediately — and it is said before the tap
+  rather than in a dialog after it. There is no undo offered anywhere: getting
+  the machine back means pairing again, which is a code typed on the machine
+  itself, and that is the honest description.
 
 ## pin
 

@@ -10,6 +10,9 @@ public enum HostsAction: Equatable, Sendable {
     /// has been pointed at — with whichever one is on offer.
     case pair(HostId?)
     case newAgent
+    /// Stop trusting a machine. Destructive and immediate: what it ends is
+    /// the access this phone granted, not a preference.
+    case revoke(HostId)
 }
 
 /// The machines agents run on.
@@ -42,6 +45,14 @@ public struct HostsTab: View {
                 list
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Read over the machines rather than instead of them. The keys
+            // being read are the keys to the machines on the list behind, and
+            // a page that replaced them would ask somebody to remember which
+            // machine they came to revoke.
+            if model.readingDevices {
+                DevicesSheet(model: model, actions: actions)
+                    .transition(.move(edge: .bottom))
+            }
         }
         .identified("hosts", value: subtitle)
     }
@@ -97,6 +108,7 @@ public struct HostsTab: View {
                 }
                 if !model.discovered.isEmpty { offers }
                 if model.hosts.isEmpty && model.discovered.isEmpty { empty }
+                if let roster = model.roster { thisPhone(roster) }
             }
             .padding(.horizontal, design.metrics.gutter)
             .padding(.top, 6)
@@ -164,6 +176,53 @@ public struct HostsTab: View {
         if let platform = host.platform { parts.append(platform) }
         parts.append("not paired")
         return parts.joined(separator: ", ")
+    }
+
+    // MARK: - This phone
+
+    /// What this phone is, and how many machines hold a key to it.
+    ///
+    /// Last on the screen and not among the machines, because it is not one of
+    /// them: the rows above are places agents run, and this is the identity
+    /// this device presents to all of them. The count is a way in rather than
+    /// the answer — deciding to revoke means reading a fingerprint, and a
+    /// fingerprint on every row would bury the machines.
+    private func thisPhone(_ roster: DeviceRoster) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHead(title: "This Phone")
+            RowGroup(items: facts(roster), prominence: .subject) { fact in
+                if fact.opensDevices {
+                    Button { model.readDevices() } label: { FactRow(fact: fact) }
+                        .buttonStyle(.plain)
+                } else {
+                    FactRow(fact: fact)
+                }
+            }
+            Explain("Revoking a device ends its access immediately.")
+                .identified("hosts.caption.devices")
+        }
+    }
+
+    private func facts(_ roster: DeviceRoster) -> [Fact] {
+        [
+            Fact(
+                label: "Identity", value: identity(roster.identity), mono: true,
+                opensDevices: false),
+            Fact(
+                label: "Paired Devices", value: "\(roster.devices.count)", mono: false,
+                opensDevices: true),
+        ]
+    }
+
+    /// "iPhone · 4bb0…94e0": what this phone calls itself and enough of its
+    /// key to recognise, on a row that has one line for both.
+    ///
+    /// Elided rather than truncated by the layout, so it elides the same way
+    /// at every width and type size. The whole fingerprint is one tap away, in
+    /// the same place the machines' are, because ends alone are not what
+    /// anybody should compare a key by.
+    private func identity(_ identity: DeviceIdentity) -> String {
+        "\(identity.name) · \(Fingerprint.short(identity.fingerprint))"
     }
 
     private func group(title: String, hosts: [HostEntry], caption: String?) -> some View {
@@ -284,3 +343,184 @@ public struct HostsTab: View {
         return parts.joined(separator: ", ")
     }
 }
+
+/// One stated fact about this phone: a label on the left and the answer on the
+/// right, with a chevron only where there is somewhere to go.
+private struct Fact: Identifiable, Equatable {
+    var label: String
+    var value: String
+    /// Identities and fingerprints are compared character by character against
+    /// something printed elsewhere, so they are set in the mono face the rest
+    /// of the app spells identifiers in.
+    var mono: Bool
+    var opensDevices: Bool
+
+    var id: String { label }
+}
+
+private struct FactRow: View {
+    @Environment(\.design) private var design
+    let fact: Fact
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(fact.label)
+                .designFont(.body, design)
+                .foregroundStyle(design.ink.color)
+            Spacer(minLength: 8)
+            Text(fact.value)
+                .designFont(fact.mono ? .mono : .body, design)
+                .foregroundStyle(fact.mono ? design.inkMuted.color : design.ink.color)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if fact.opensDevices {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(design.inkFaint.color)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .identified(
+            "hosts.fact.\(fact.label.lowercased().replacingOccurrences(of: " ", with: "-"))",
+            label: "\(fact.label), \(fact.value)", value: fact.value)
+    }
+}
+
+/// The machines this phone holds a key to, and the one thing there is to do
+/// about one.
+///
+/// A fingerprint per row, because that is the whole reason to open this: the
+/// count on the screen behind answers "how many", and the only question left
+/// is which key belongs to what, which is answered by reading the fingerprint
+/// against the one the machine itself prints.
+private struct DevicesSheet: View {
+    @Environment(\.design) private var design
+    let model: HostsStore
+    let actions: @MainActor (HostsAction) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            panel
+        }
+        .background(alignment: .top) {
+            // A tap outside closes it. Nothing has been withdrawn by opening
+            // the list, so leaving costs nothing and does not ask.
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .onTapGesture { model.stopReadingDevices() }
+        }
+    }
+
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Capsule()
+                .fill(design.hairline.color)
+                .frame(width: 40, height: 5)
+                .frame(maxWidth: .infinity)
+            HStack(alignment: .firstTextBaseline) {
+                Text("This Phone")
+                    .designFont(.bodyEmphasis, design)
+                    .foregroundStyle(design.ink.color)
+                Spacer(minLength: 8)
+                Button { model.stopReadingDevices() } label: {
+                    ActionLabel("Done", kind: .plain)
+                }
+                .buttonStyle(.plain)
+                .identified("hosts.devices.done", label: "Done")
+            }
+            // Long enough to overflow on a phone paired with many machines,
+            // and a whole fingerprint is what makes it long. It scrolls only
+            // when it has to, so the ordinary case is a panel the size of what
+            // is in it rather than one that always reaches for the screen.
+            ViewThatFits(in: .vertical) {
+                keys
+                ScrollView { keys }.scrollIndicators(.hidden)
+            }
+            Explain("Revoking a device ends its access immediately.")
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background {
+            UnevenRoundedRectangle(
+                topLeadingRadius: design.metrics.cardRadius,
+                topTrailingRadius: design.metrics.cardRadius, style: .continuous)
+                .fill(design.raised.color)
+                .ignoresSafeArea(edges: .bottom)
+        }
+        .accessibilityElement(children: .contain)
+        .identified("hosts.devices.sheet", value: "\(model.devices.count)")
+    }
+
+    /// This phone's own key and every machine's, whole.
+    private var keys: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // This phone's own key, whole. It is the one a machine shows while
+            // it waits to be told to trust this device, so the place somebody
+            // comes to compare keys is the place it has to be readable.
+            if let identity = model.roster?.identity {
+                Surface(prominence: .subject) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(identity.name)
+                            .designFont(.identifier, design)
+                            .foregroundStyle(design.ink.color)
+                        Text(Fingerprint.grouped(identity.fingerprint))
+                            .designFont(.monoSmall, design)
+                            .foregroundStyle(design.inkFaint.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .accessibilityElement(children: .combine)
+                    .identified(
+                        "hosts.devices.identity", label: identity.name,
+                        value: identity.fingerprint)
+                }
+            }
+            SectionHead(title: "Paired Devices")
+            if model.devices.isEmpty {
+                Explain("No machine holds a key to this phone.")
+                    .identified("hosts.devices.none")
+            } else {
+                RowGroup(items: model.devices, prominence: .subject) { device in
+                    row(device)
+                }
+            }
+        }
+    }
+
+    private func row(_ device: PairedDevice) -> some View {
+        HStack(spacing: 11) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(device.name)
+                    .designFont(.identifier, design)
+                    .foregroundStyle(design.ink.color)
+                Text(Fingerprint.grouped(device.fingerprint))
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 6)
+            Button { actions(.revoke(device.host)) } label: {
+                ActionLabel("Revoke", kind: .outline)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Revoke \(device.name)")
+            .identified("hosts.revoke.\(device.host)", label: "Revoke \(device.name)")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .contain)
+        .identified(
+            "hosts.device.\(device.host)", label: "\(device.name), \(device.fingerprint)",
+            value: device.fingerprint)
+    }
+}
+
+

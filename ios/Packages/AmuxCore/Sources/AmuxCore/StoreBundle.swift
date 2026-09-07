@@ -78,7 +78,7 @@ public final class StoreBundle {
         // Nothing here names an agent, so every open conversation is offered
         // the event and decides for itself. A result is claimed only by the
         // conversation that dispatched the operation it answers.
-        case .opResult, .fleet, .discovered, .connection, .tokenRequest, .invariant:
+        case .opResult, .fleet, .discovered, .connection, .tokenRequest, .invariant, .devices:
             for store in conversations.values { store.apply(event) }
         }
     }
@@ -142,6 +142,19 @@ public final class StoreBundle {
     @discardableResult
     public func retryNow() -> Bool {
         dispatch?(.retryNow) != nil
+    }
+
+    /// Stops trusting a machine.
+    ///
+    /// The one destructive thing this screen does, and it is not a request the
+    /// machine can decline: this phone drops the key and closes every link it
+    /// holds to it before the answer comes back. A machine that is away is
+    /// revoked anyway — what ends immediately is the access through this phone.
+    ///
+    /// False means there was nothing to ask: no account, no runtime.
+    @discardableResult
+    public func revoke(_ host: HostId) -> Bool {
+        dispatch?(.revoke(host: host)) != nil
     }
 
     // MARK: - Pairing

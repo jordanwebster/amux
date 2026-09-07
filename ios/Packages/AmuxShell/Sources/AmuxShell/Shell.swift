@@ -388,6 +388,9 @@ private struct HostsTabRoot: View {
             case .open(let host): router.open(.host(host))
             case .pair(let host): router.open(.pairByCode(host))
             case .newAgent: router.open(.newAgent)
+            // Revoking goes nowhere: the list it happens on is the list it
+            // changes, and the machine leaves it when the runtime says so.
+            case .revoke(let host): stores.revoke(host)
             }
         }
         // The screen draws its own header, so the bar would be a second one.

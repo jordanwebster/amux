@@ -82,6 +82,7 @@ public enum Fixtures {
         Built(.firstRun, "first-run"),
         Built(.firstRunPaid, "first-run-paid"),
         Built(.hosts, "hosts"),
+        Built(.hosts, "devices"),
         Built(.pin, "pin"),
         Built(.pairConfirm, "pair-confirm"),
         Built(.offline, "offline"),
@@ -260,6 +261,16 @@ public enum Fixtures {
         Fixture(id: "hosts", screen: .hosts) { bundle in
             States.open(bundle, hosts: Scenario.reachableHosts)
             States.lostHost(bundle, Scenario.air, minutesAgo: 8)
+            States.trusted(bundle)
+        },
+        // The same screen with the keys read rather than counted: whole
+        // fingerprints, this phone's first, and the one thing there is to do
+        // about a machine that should not have one any more.
+        Fixture(id: "devices", screen: .hosts) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.lostHost(bundle, Scenario.air, minutesAgo: 8)
+            States.trusted(bundle)
+            bundle.hosts.readDevices()
         },
         // Half a code typed against the machine that printed it. The next box
         // is outlined and nothing blinks: there is no keyboard coming, so a

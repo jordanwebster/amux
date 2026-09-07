@@ -82,6 +82,12 @@ public enum States {
         Scenario.reading = Scenario.now
     }
 
+    /// What the runtime says this phone is and whose keys it holds.
+    @MainActor
+    public static func trusted(_ bundle: StoreBundle, _ roster: DeviceRoster = Scenario.roster) {
+        bundle.apply([.devices(roster)])
+    }
+
     /// A machine on the network this phone has not paired with.
     @MainActor
     public static func offering(_ bundle: StoreBundle, _ hosts: [HostEntry] = [Scenario.unpaired]) {

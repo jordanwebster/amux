@@ -177,7 +177,7 @@ public final class ConversationStore {
             }
         case .invariant(let detail):
             invariants.append(detail)
-        case .feed, .session, .diff, .fleet, .discovered, .connection, .tokenRequest:
+        case .feed, .session, .diff, .fleet, .discovered, .connection, .tokenRequest, .devices:
             break
         }
     }

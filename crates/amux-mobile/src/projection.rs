@@ -157,6 +157,22 @@ pub enum OpOutcomeDto {
     Subscription(SubscriptionOutcome),
     Pairing(PairingOutcome),
     Connection(ConnectionOutcome),
+    Devices(DevicesOutcome),
+}
+
+/// How withdrawing trust from a machine ended.
+///
+/// Revoking is not a request the machine can decline: this device stops
+/// trusting its key and closes every link it holds to it, and it is told so it
+/// can drop its own side. A machine that is away is revoked anyway — the
+/// access that ends immediately is the access through this phone.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum DevicesOutcome {
+    Revoked { host: amux::HostId, name: String },
+    /// The machine is not one this device trusts, so there was nothing to
+    /// withdraw — a second tap on the same row, or a stale screen.
+    RevokeRefused,
 }
 
 /// How something asked of the phone's own link to the relay ended.
@@ -266,6 +282,36 @@ pub enum Event {
     Invariant {
         detail: String,
     },
+    /// This phone's own identity and every machine it trusts.
+    ///
+    /// Apart from the fleet because it answers a different question. The fleet
+    /// says which machines are answering and what runs on them; this says
+    /// which keys this device has granted access to, including machines that
+    /// are away and would still be trusted the moment they came back. It is
+    /// what a person reads before revoking one.
+    Devices {
+        identity: DeviceIdentityDto,
+        devices: Vec<PairedDeviceDto>,
+    },
+}
+
+/// What this phone is, as the machines it pairs with see it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeviceIdentityDto {
+    pub host: amux::HostId,
+    pub name: String,
+    /// The fingerprint of this device's public key, in the same spelling the
+    /// pairing confirmation shows on the other side of the exchange.
+    pub fingerprint: String,
+}
+
+/// One machine this phone trusts, as the This-phone section lists it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PairedDeviceDto {
+    pub host: amux::HostId,
+    pub name: String,
+    pub fingerprint: String,
+    pub paired_at: DateTime<Utc>,
 }
 
 impl Event {

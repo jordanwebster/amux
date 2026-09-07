@@ -4,7 +4,7 @@ mod cache;
 pub mod projection;
 mod runtime;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
@@ -15,8 +15,8 @@ use std::time::{Duration, SystemTime};
 use amux::{AccessToken, AuthError, CredentialProvider, RelayConnection};
 use amux_ui::{AgentId, Command, OpError, OpId, OpOutcome};
 use projection::{
-    Cadence, ConnectionOutcome, Event, OpOutcomeDto, PairingOutcome, Projection,
-    SubscriptionOutcome,
+    Cadence, ConnectionOutcome, DeviceIdentityDto, DevicesOutcome, Event, OpOutcomeDto,
+    PairedDeviceDto, PairingOutcome, Projection, SubscriptionOutcome,
 };
 use runtime::{MobileRuntime, StartConfig, TokenSource};
 use serde::{Deserialize, Serialize};
@@ -241,7 +241,18 @@ enum CommandDto {
     Subscription(SubscriptionCommand),
     Pairing(PairingCommand),
     Connection(ConnectionCommand),
+    Devices(DevicesCommand),
     Shared(Command),
+}
+
+/// Something asked of this device's own trust store.
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+enum DevicesCommand {
+    /// Stop trusting a machine. Every link this device holds to it is closed
+    /// before the answer comes back, so nothing that was already open outlives
+    /// the revocation.
+    Revoke { host: amux::HostId },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -286,6 +297,13 @@ struct PairingDone {
     /// the machine issued stays in this process; what crosses the boundary is
     /// the key to this map.
     hold: Option<(String, amux::PendingPeer)>,
+}
+
+/// This device's identity and the machines it trusts, read off the runtime on
+/// a task of its own because both are round trips.
+struct DevicesRead {
+    identity: DeviceIdentityDto,
+    devices: Vec<PairedDeviceDto>,
 }
 
 /// Enqueues a shared UI command or {"command":"subscribe","agent":"UUID"}
@@ -824,6 +842,15 @@ async fn run(
     // what commits trust, so it never crosses the boundary.
     let mut pending_peers: HashMap<String, amux::PendingPeer> = HashMap::new();
     let (pairings, mut pairing_results) = mpsc::unbounded_channel::<PairingDone>();
+    // This device's identity and its trusted machines, read off the runtime
+    // rather than derived from the fleet: a machine that is away is still
+    // trusted, and the fingerprint a person compares before revoking is not
+    // something the inventory carries.
+    let (devices_reads, mut devices_results) = mpsc::unbounded_channel::<DevicesRead>();
+    let (revocations, mut revoked) = mpsc::unbounded_channel::<(OpId, DevicesOutcome)>();
+    let mut devices: Option<DevicesRead> = None;
+    let mut trusted: BTreeSet<amux::HostId> = BTreeSet::new();
+    read_devices(&runtime, devices_reads.clone());
     let mut projection = Projection::default();
     let mut last_connection = RelayConnection::Connecting;
     let mut events = vec![Event::connection(&last_connection)];
@@ -910,6 +937,9 @@ async fn run(
                         Ok(CommandDto::Pairing(command)) => {
                             pair(op, command, &runtime, &mut pending_peers, pairings.clone());
                         }
+                        Ok(CommandDto::Devices(DevicesCommand::Revoke { host })) => {
+                            revoke(op, host, &runtime, revocations.clone(), devices_reads.clone());
+                        }
                         Ok(CommandDto::Connection(ConnectionCommand::RetryNow)) => {
                             // The connection is a loop of its own; this only
                             // interrupts the wait it is in. Whether that wait
@@ -942,6 +972,20 @@ async fn run(
                     last_connection = connection.clone();
                 }
                 projection.collect(runtime.ui.model(), &connection, &mut events);
+                // Trust changed, so what This Phone lists did too. Pairing and
+                // revocation both land here, and so does a machine trusted
+                // from somewhere else entirely.
+                let now_trusted: BTreeSet<_> = runtime
+                    .ui
+                    .model()
+                    .hosts()
+                    .filter(|host| host.entry.trust_status == amux::HostTrustStatus::Trusted)
+                    .map(|host| host.entry.id)
+                    .collect();
+                if now_trusted != trusted {
+                    trusted = now_trusted;
+                    read_devices(&runtime, devices_reads.clone());
+                }
                 let mut cache_errors = Vec::new();
                 for event in &mut events {
                     if let Err(error) = cache.update(event, runtime.ui.model()) {
@@ -955,6 +999,22 @@ async fn run(
                     events.clear();
                 }
                 dirty = false;
+            },
+            Some((op, outcome)) = revoked.recv() => {
+                events.push(Event::OpResult { op, outcome: OpOutcomeDto::Devices(outcome) });
+                dirty = true;
+            },
+            Some(read) = devices_results.recv() => {
+                if devices.as_ref().is_none_or(|held| {
+                    held.identity != read.identity || held.devices != read.devices
+                }) {
+                    events.push(Event::Devices {
+                        identity: read.identity.clone(),
+                        devices: read.devices.clone(),
+                    });
+                    devices = Some(read);
+                    dirty = true;
+                }
             },
             Some(done) = pairing_results.recv() => {
                 if let Some((id, peer)) = done.hold { pending_peers.insert(id, peer); }
@@ -982,6 +1042,77 @@ async fn run(
     // transport tasks, including in-flight connection and token work.
     let _ = tokio::time::timeout(Duration::from_secs(1), runtime.embedded.shutdown()).await;
     Ok(())
+}
+
+/// Reads this device's identity and the machines it trusts, off the loop.
+///
+/// A read that fails says nothing rather than emptying the list: the trust
+/// store is on this device and a momentary failure to read it is not a person
+/// losing their machines, and a section that blanked itself would invite
+/// pairing again with everything still paired.
+fn read_devices(runtime: &MobileRuntime, reads: mpsc::UnboundedSender<DevicesRead>) {
+    let admin = runtime.embedded.admin();
+    tokio::spawn(async move {
+        if let Some(read) = current_devices(&admin).await {
+            let _ = reads.send(read);
+        }
+    });
+}
+
+/// What the trust store holds right now, or nothing where it could not be read.
+async fn current_devices(admin: &amux::ProfileAdmin) -> Option<DevicesRead> {
+    let identity = admin.device_identity().await.ok()?;
+    let mut devices: Vec<_> = admin
+        .list_peers()
+        .await
+        .ok()?
+        .into_iter()
+        .map(|peer| PairedDeviceDto {
+            host: peer.host_id,
+            name: peer.name,
+            fingerprint: peer.fingerprint,
+            paired_at: peer.paired_at,
+        })
+        .collect();
+    // The store's order is its own; the list a person reads is theirs.
+    devices.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Some(DevicesRead {
+        identity: DeviceIdentityDto {
+            host: identity.host_id,
+            name: identity.name,
+            fingerprint: identity.fingerprint,
+        },
+        devices,
+    })
+}
+
+/// Withdraws trust from one machine, off the loop, and re-reads what is left.
+///
+/// The re-read is not an optimisation. Revoking closes the links to that
+/// machine, which takes it out of the inventory as well, but the list this
+/// screen shows is the trust store rather than the inventory, and only the
+/// store knows the moment it stopped holding a key.
+fn revoke(
+    op: OpId,
+    host: amux::HostId,
+    runtime: &MobileRuntime,
+    results: mpsc::UnboundedSender<(OpId, DevicesOutcome)>,
+    reads: mpsc::UnboundedSender<DevicesRead>,
+) {
+    let admin = runtime.embedded.admin();
+    tokio::spawn(async move {
+        let outcome = match admin.unpair(host, "revoked from the phone").await {
+            Ok(peer) => DevicesOutcome::Revoked {
+                host: peer.host_id,
+                name: peer.name,
+            },
+            Err(_) => DevicesOutcome::RevokeRefused,
+        };
+        let _ = results.send((op, outcome));
+        if let Some(read) = current_devices(&admin).await {
+            let _ = reads.send(read);
+        }
+    });
 }
 
 /// Runs one pairing step off the event loop and reports it back.

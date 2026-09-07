@@ -18,6 +18,11 @@ public enum Event: Sendable, Equatable, Codable {
     case connection(ConnectionUpdate)
     case tokenRequest(requestId: UInt64)
     case invariant(detail: String)
+    /// This phone's own identity and every machine it trusts. Apart from the
+    /// fleet because it answers a different question: the fleet says what is
+    /// answering, this says whose key has been granted access — including a
+    /// machine that is away and would be trusted again the moment it returned.
+    case devices(DeviceRoster)
 
     private enum Key: String, CodingKey {
         case fleet = "Fleet"
@@ -29,6 +34,7 @@ public enum Event: Sendable, Equatable, Codable {
         case connection = "Connection"
         case tokenRequest = "TokenRequest"
         case invariant = "Invariant"
+        case devices = "Devices"
     }
 
     private struct RequestId: Codable, Sendable, Equatable {
@@ -63,6 +69,7 @@ public enum Event: Sendable, Equatable, Codable {
             self = .tokenRequest(requestId: try container.decode(RequestId.self, forKey: key).request_id)
         case .invariant:
             self = .invariant(detail: try container.decode(Detail.self, forKey: key).detail)
+        case .devices: self = .devices(try container.decode(DeviceRoster.self, forKey: key))
         }
     }
 
@@ -81,6 +88,7 @@ public enum Event: Sendable, Equatable, Codable {
             try container.encode(RequestId(request_id: id), forKey: .tokenRequest)
         case .invariant(let detail):
             try container.encode(Detail(detail: detail), forKey: .invariant)
+        case .devices(let roster): try container.encode(roster, forKey: .devices)
         }
     }
 }
@@ -1152,6 +1160,12 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     /// anything is the connection's to decide; whether the relay answers
     /// arrives as a connection state rather than as an answer to this.
     case retryRequested
+    /// Trust withdrawn from a machine: this phone stopped holding its key and
+    /// closed every link it had to it.
+    case revoked(host: HostId, name: String)
+    /// The machine named is not one this phone trusts, so there was nothing to
+    /// withdraw — a second tap, or a screen that had gone stale.
+    case revokeRefused
     case failed(OpFailure)
     case other(outcome: String, body: JSONValue)
 
@@ -1181,6 +1195,11 @@ public enum OpOutcome: Sendable, Equatable, Codable {
         case "pairing_refused": self = .pairingRefused
         case "pairing_lost": self = .pairingLost
         case "retry_requested": self = .retryRequested
+        case "revoked":
+            self = .revoked(
+                host: try container.decode(HostId.self, forKey: .host),
+                name: try container.decode(String.self, forKey: .name))
+        case "revoke_refused": self = .revokeRefused
         case "error": self = .failed(try container.decode(OpFailure.self, forKey: .error))
         default: self = .other(outcome: outcome, body: try JSONValue(from: decoder))
         }
@@ -1223,6 +1242,11 @@ public enum OpOutcome: Sendable, Equatable, Codable {
             case .pairingRefused: try container.encode("pairing_refused", forKey: .outcome)
             case .pairingLost: try container.encode("pairing_lost", forKey: .outcome)
             case .retryRequested: try container.encode("retry_requested", forKey: .outcome)
+            case .revoked(let host, let name):
+                try container.encode("revoked", forKey: .outcome)
+                try container.encode(host, forKey: .host)
+                try container.encode(name, forKey: .name)
+            case .revokeRefused: try container.encode("revoke_refused", forKey: .outcome)
             case .pairingPending: break
             case .failed(let failure):
                 try container.encode("error", forKey: .outcome)
@@ -1230,6 +1254,59 @@ public enum OpOutcome: Sendable, Equatable, Codable {
             case .other: break
             }
         }
+    }
+}
+
+/// What this phone is and which machines it trusts.
+///
+/// The list is the trust store, not the inventory: a machine that is away is
+/// still in it, because the key it was granted is still good and the moment it
+/// answers again it will be let in. That is exactly why the list exists — it
+/// is what somebody reads before withdrawing one.
+public struct DeviceRoster: Codable, Sendable, Equatable {
+    public var identity: DeviceIdentity
+    public var devices: [PairedDevice]
+
+    public init(identity: DeviceIdentity, devices: [PairedDevice]) {
+        self.identity = identity
+        self.devices = devices
+    }
+}
+
+/// This phone, as the machines it pairs with see it.
+public struct DeviceIdentity: Codable, Sendable, Equatable {
+    public var host: HostId
+    public var name: String
+    /// The fingerprint of this phone's key, in the spelling the machine on the
+    /// other side of a pairing shows for its own.
+    public var fingerprint: String
+
+    public init(host: HostId, name: String, fingerprint: String) {
+        self.host = host
+        self.name = name
+        self.fingerprint = fingerprint
+    }
+}
+
+/// One machine this phone holds a key for.
+public struct PairedDevice: Codable, Sendable, Equatable, Identifiable {
+    public var host: HostId
+    public var name: String
+    public var fingerprint: String
+    public var pairedAt: Date
+
+    public var id: HostId { host }
+
+    private enum CodingKeys: String, CodingKey {
+        case host, name, fingerprint
+        case pairedAt = "paired_at"
+    }
+
+    public init(host: HostId, name: String, fingerprint: String, pairedAt: Date) {
+        self.host = host
+        self.name = name
+        self.fingerprint = fingerprint
+        self.pairedAt = pairedAt
     }
 }
 

@@ -10950,3 +10950,31 @@ nothing outside the process can start one. A press-and-drag was tried and left
 the sentence untouched. What the journey claims is therefore the draft's
 behaviour — the token travels whole, as the one character it is in the
 sentence — and the claim says so plainly rather than implying a driven gesture.
+
+2026-09-07 — **This phone, the keys it holds, and revoking one.** The Hosts
+screen now ends where the design says it does: what this phone calls itself,
+how many machines hold a key to it, and the sentence that revoking one ends its
+access immediately. Tapping the count opens the keys themselves — this phone's
+own first, whole and in fours, then one row per machine with its whole
+fingerprint and the one thing there is to do about it.
+
+The list is the trust store rather than the fleet, which is the load-bearing
+choice. A machine that is away still holds a good key and will be let straight
+back in the moment it answers, so a list drawn from what is reachable would
+hide exactly the machines worth revoking. The runtime reads its own identity
+and peers off the profile and re-reads them whenever the set of trusted
+machines changes, and a read that fails leaves the last answer standing rather
+than blanking a section, which would invite pairing again with everything still
+paired.
+
+Revoking goes to the runtime, not to the machine: this device drops the key and
+closes every link it holds before the answer comes back. A host-target test
+against a real testnet proves the "immediately" — it opens a conversation on
+the paired machine, revokes, and finds the stream that conversation held gone
+rather than left to expire, with the trust store empty behind it and a second
+revoke of the same machine withdrawing nothing and saying so.
+
+Two repairs came with it. A door reply gained the relay's attempt counters last
+commit and the test that round-trips every reply was never rebuilt, so it had
+been failing to compile since; and the test that asserts a state can be
+declared unbuilt was using `devices` as its example, which is now built.

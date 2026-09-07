@@ -16,6 +16,18 @@ public final class HostsStore {
     /// takes the digits learns which.
     public private(set) var discovered: [HostEntry] = []
     public private(set) var connection = ConnectionUpdate(state: .connecting)
+    /// This phone and the machines it holds keys for.
+    ///
+    /// Nothing until the runtime has read its own trust store, and never
+    /// emptied by a failed read: a section that blanked itself would invite
+    /// pairing again with everything still paired.
+    public private(set) var roster: DeviceRoster?
+    /// Whether the paired devices are being read rather than counted.
+    ///
+    /// A screen state rather than a route, because the list is the same
+    /// machines the screen behind it is already about — going somewhere else
+    /// to read a fingerprint would lose them.
+    public var readingDevices = false
 
     /// The moment this phone saw a machine stop being reachable.
     ///
@@ -64,10 +76,22 @@ public final class HostsStore {
             discovered = offers.sorted { $0.name.lowercased() < $1.name.lowercased() }
         case .connection(let update):
             connection = update
+        case .devices(let roster):
+            self.roster = roster
         case .feed, .session, .opResult, .diff, .tokenRequest, .invariant:
             break
         }
     }
+
+    /// The machines this phone trusts, or nothing where the trust store has
+    /// not been read yet. Not derived from the fleet: a machine that is away
+    /// is still trusted, and the fingerprint a person compares before revoking
+    /// one is not something the inventory carries.
+    public var devices: [PairedDevice] { roster?.devices ?? [] }
+
+    /// Open and close the paired devices.
+    public func readDevices() { readingDevices = true }
+    public func stopReadingDevices() { readingDevices = false }
 
     public func host(_ id: HostId) -> HostEntry? { hosts.first { $0.id == id } }
 
