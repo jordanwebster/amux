@@ -32,7 +32,11 @@ class JourneyCase: XCTestCase {
         let relay: String
         let token: String
         let user: String
-        let pairing: String
+        /// A machine's own pairing offer, for a launch that is told to trust
+        /// one before anything else happens. A journey that pairs some other
+        /// way — by the code a machine printed, through the door — passes
+        /// none, and the launch trusts nobody.
+        let pairing: String?
         let control: String
         let doorPort: String
         let agent: String
@@ -46,7 +50,7 @@ class JourneyCase: XCTestCase {
             relay = try required("AMUX_RELAY")
             token = try required("AMUX_TOKEN")
             user = try required("AMUX_USER")
-            pairing = try required("AMUX_PAIR")
+            pairing = environment["AMUX_PAIR"]
             control = try required("AMUX_CONTROL")
             doorPort = try required("AMUX_DOOR_PORT")
             agent = try required("AMUX_AGENT")
@@ -63,8 +67,7 @@ class JourneyCase: XCTestCase {
             "-amux-relay", runner.relay,
             "-amux-token", runner.token,
             "-amux-user", runner.user,
-            "-amux-pair", runner.pairing,
-        ]
+        ] + (runner.pairing.map { ["-amux-pair", $0] } ?? [])
         app.launch()
         return app
     }
@@ -188,6 +191,8 @@ class JourneyCase: XCTestCase {
         var seconds: Double?
         var path: String?
         var identifier: String?
+        var host: String?
+        var pin: String?
         var attachment: String?
         var name: String?
         var mime: String?
@@ -204,6 +209,8 @@ class JourneyCase: XCTestCase {
             if let seconds { fields["seconds"] = seconds }
             if let path { fields["path"] = path }
             if let identifier { fields["identifier"] = identifier }
+            if let host { fields["host"] = host }
+            if let pin { fields["pin"] = pin }
             if let attachment { fields["attachment"] = attachment }
             if let name { fields["name"] = name }
             if let mime { fields["mime"] = mime }

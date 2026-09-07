@@ -35,6 +35,12 @@
       "stage": 8,
       "topology": "e2e-tests/topologies/writing.json",
       "claim": "Writing to two agents the runner is really running. A paragraph typed over two lines; a long paste, a stored photograph, a stored file and a patch the machine computed each standing in that sentence as one token at the caret; one backspace taking a whole token entire, and one token taken from between two others and put in front of both \u2014 whole, as the one character it is in the sentence. That move goes through the field's own draft rather than a finger: the gesture that performs it on a device is the text view's own text drag, which the system begins from drawn text and no driver outside the process can start. One message sent, drawn before the machine answered for it and still one row once it had. One message held while a turn ran, replaced by a second, taken back into the field, and a third that survived the turn being stopped and was delivered when the turn ended \u2014 the machine's own account says it received exactly those two and nothing that was replaced or withdrawn. The cross empties the field and leaves the turn running; Stop is offered only where there is nothing to send, so no press does both. The address copied, a rename cancelled and then kept by the machine, a deletion cancelled and later confirmed. And on the session that offers them: a command raised by a slash, sent as a token and answered, and a model and an effort changed and read back off the chip the machine's own facts relabel."
+    },
+    {
+      "id": "hosts-lifecycle",
+      "stage": 9,
+      "topology": "e2e-tests/topologies/home-fleet.json",
+      "claim": "What this phone's link to two machines the runner is running does over time: a relay taken away and put back is recovered from with nobody pressing anything; each machine holds one connection however many conversations are open, and nothing is asked of them while the phone sits idle; pressing Retry Now reaches the link before the relay is back, which is the only thing that could have; putting the phone away releases the link so the machines see it leave, and bringing it back confirms the fleet again; and the conversation closed before any of it holds no stream after all of it."
     }
   ]
 }

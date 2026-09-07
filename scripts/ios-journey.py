@@ -934,7 +934,8 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_RELAY": relay,
             "AMUX_TOKEN": token,
             "AMUX_USER": "journey-phone",
-            "AMUX_PAIR": pairing,
+            "AMUX_PIN": pin,
+            "AMUX_HOST_ID": machine["host_id"],
             "AMUX_CONTROL": control_address,
             "AMUX_DOOR_PORT": str(port),
             "AMUX_AGENT": running["carry-on"]["agent_id"],
@@ -1171,7 +1172,8 @@ def asks(journey: Journey, udid: str, ready: dict) -> None:
                 "AMUX_RELAY": f"http://{ready['relay']}",
                 "AMUX_TOKEN": token,
                 "AMUX_USER": "journey-phone",
-                "AMUX_PAIR": pairing,
+                "AMUX_PIN": pin,
+            "AMUX_HOST_ID": machine["host_id"],
                 "AMUX_CONTROL": control_address,
                 "AMUX_DOOR_PORT": str(free_port()),
                 "AMUX_AGENT": running["mind-the-gap"]["agent_id"],
@@ -1300,7 +1302,8 @@ def review(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_RELAY": f"http://{ready['relay']}",
             "AMUX_TOKEN": token,
             "AMUX_USER": "journey-phone",
-            "AMUX_PAIR": pairing,
+            "AMUX_PIN": pin,
+            "AMUX_HOST_ID": machine["host_id"],
             "AMUX_CONTROL": control_address,
             "AMUX_DOOR_PORT": str(free_port()),
             "AMUX_AGENT": running["tidy-the-parser"]["agent_id"],
@@ -1416,7 +1419,8 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_RELAY": f"http://{ready['relay']}",
             "AMUX_TOKEN": token,
             "AMUX_USER": "journey-phone",
-            "AMUX_PAIR": pairing,
+            "AMUX_PIN": pin,
+            "AMUX_HOST_ID": machine["host_id"],
             "AMUX_CONTROL": control_address,
             "AMUX_DOOR_PORT": str(free_port()),
             "AMUX_AGENT": running["talk-me-through-it"]["agent_id"],
@@ -1529,6 +1533,127 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
     forget_cache(udid)
 
 
+def hosts_lifecycle(journey: Journey, udid: str, ready: dict) -> None:
+    """What this phone's link to its machines does over time.
+
+    Nothing here is about a screen. It is about the connection behind every
+    screen: that an outage is recovered from without anybody pressing
+    anything, that a phone holds one connection per machine however many
+    conversations are open and asks for nothing while it is idle, that being
+    put away releases the link rather than leaving the far side holding one
+    nobody is reading, and that none of it quietly reopens a conversation
+    somebody closed.
+
+    Two of those are things only a finger can do — pressing the offer to try
+    again, and putting the app away — so the run itself is a UI test. What it
+    read is written out and asserted here, against what the machines
+    themselves reported through the runner's control channel.
+    """
+    daemons = [daemon["name"] for daemon in ready["daemons"]]
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+    relay = f"http://{ready['relay']}"
+    control_address = ready["control"]
+
+    install(udid)
+    forget_cache(udid)
+    forget_pairings(udid)
+    # Two agents on one machine, so a second conversation open at the same
+    # time cannot be confused with a second machine. The phone pairs with that
+    # machine and with nothing else: the other one is the control, and what it
+    # holds must not move at any point in this.
+    host = running["release-notes"]["daemon"]
+    first, second = [agent for agent in ready["agents"] if agent["daemon"] == host][:2]
+    machine, = [daemon for daemon in ready["daemons"] if daemon["name"] == host]
+    pin = answer(control_address, {"StartPinPairing": {"daemon": host, "ttl_secs": 600}})["pin"]
+    journey.say(f"{host} printed a pairing code and holds {first['name']} and {second['name']}; "
+                f"the phone trusts it by that code and everything after is about the link "
+                f"that becomes, with {', '.join(n for n in daemons if n != host)} left "
+                f"unpaired as the control")
+
+    port = free_port()
+    read = journey.directory / "hosts-lifecycle.json"
+    perform(
+        journey, udid, "AmuxUITests/HostsLifecycleTests",
+        {"hosts-lifecycle.json": read},
+        telling={
+            "AMUX_RELAY": relay,
+            "AMUX_TOKEN": token,
+            "AMUX_USER": "journey-phone",
+            "AMUX_PIN": pin,
+            "AMUX_HOST_ID": machine["host_id"],
+            "AMUX_CONTROL": control_address,
+            "AMUX_DOOR_PORT": str(port),
+            "AMUX_AGENT": first["agent_id"],
+            "AMUX_SECOND_AGENT": second["agent_id"],
+            "AMUX_HOST": first["daemon"],
+            "AMUX_ACCOUNT": "personal",
+            "AMUX_HOST_IDS": ",".join(daemon["host_id"] for daemon in ready["daemons"]),
+        })
+    seen = json.loads(read.read_text())
+
+    # One connection per host, whatever is open over it.
+    reached = seen.get("connectionsWhenReached") or []
+    journey.expect(len(reached) == len(daemons) + 1,
+                   f"the relay holds {reached} for an account of {len(daemons)} machines and "
+                   f"one phone")
+    journey.expect(all(entry.endswith(": 1") for entry in reached),
+                   f"something holds more than one connection to the relay: {reached}")
+    open_two = seen.get("connectionsWithTwoConversationsOpen") or []
+    journey.expect(reached and open_two == reached,
+                   f"opening two conversations changed what the relay holds: "
+                   f"{reached} became {open_two}")
+    idle = seen.get("connectionsAfterIdle") or []
+    journey.expect(idle == reached,
+                   f"sitting idle changed what the relay holds: {reached} became {idle}")
+    journey.expect(seen.get("dialsAfterIdle") == seen.get("dialsBeforeIdle"),
+                   f"the phone dialled the relay while nobody was doing anything: "
+                   f"{seen.get('dialsBeforeIdle')} became {seen.get('dialsAfterIdle')}")
+    journey.say(f"the relay holds one connection for each of {len(reached)} hosts — the "
+                f"{len(daemons)} machines and this phone — with two conversations open, the "
+                f"same as with none, unchanged by sitting idle, and after "
+                f"{seen.get('dialsAfterIdle')} dials in all")
+
+    # An outage recovered from by nobody.
+    journey.expect(seen.get("offline") == "disconnected",
+                   f"taking the relay away did not reach the phone: {seen.get('offline')!r}")
+    journey.expect(seen.get("reconciledWithoutAnyoneAsking") is True,
+                   "the relay came back and the phone did not")
+    journey.say("the relay was taken away and put back and the phone reconnected and confirmed "
+                "the fleet again with nobody pressing anything")
+
+    # And an outage where somebody did press, observed before it was over.
+    journey.expect((seen.get("askedAfterPress") or 0) > (seen.get("askedBeforePress") or 0),
+                   f"Retry Now never reached the connection: "
+                   f"{seen.get('askedBeforePress')} → {seen.get('askedAfterPress')}")
+    journey.say(f"Retry Now was pressed while the relay was still down and the connection "
+                f"dialled early because it was asked "
+                f"({seen.get('askedBeforePress')} → {seen.get('askedAfterPress')})")
+
+    # Put away and brought back.
+    away = seen.get("connectionsWhilePutAway") or []
+    journey.expect(len(away) == len(reached) - 1,
+                   f"the relay held every link while the phone was put away: {away} against "
+                   f"{reached}")
+    journey.expect(seen.get("connectionsAfterComingBack") == reached,
+                   f"coming back did not restore what the machines hold: "
+                   f"{seen.get('connectionsAfterComingBack')} against {reached}")
+    journey.expect(seen.get("reconciledAfterComingBack") is True,
+                   "coming back never confirmed the fleet again")
+    journey.say(f"put away, the machines saw the phone leave ({away}); brought back, they hold "
+                f"what they held before and the fleet is confirmed again")
+
+    # The conversation closed at the start, still closed at the end.
+    journey.expect(first["agent_id"] not in (seen.get("watchingAtTheEnd") or []),
+                   f"a conversation closed before the outage was reopened by it: "
+                   f"{seen.get('watchingAtTheEnd')}")
+    journey.expect(second["agent_id"] in (seen.get("watchingAtTheEnd") or []),
+                   f"the conversation still open lost its stream: "
+                   f"{seen.get('watchingAtTheEnd')}")
+    journey.say(f"the conversation closed before any of it holds no stream after all of it; "
+                f"the phone is streaming {seen.get('watchingAtTheEnd')}")
+
+
 def prepare_asks() -> None:
     scratch_repository(
         "asks-repository",
@@ -1554,7 +1679,7 @@ def prepare_writing() -> None:
 
 JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
             "conversation": conversation, "asks": asks, "review": review,
-            "writing": writing}
+            "writing": writing, "hosts-lifecycle": hosts_lifecycle}
 # What has to exist before the daemons start: the runner resolves an
 # agent's working directory when it loads the topology.
 PREPARE = {"asks": prepare_asks, "review": prepare_review, "writing": prepare_writing}

@@ -255,11 +255,16 @@ public struct BridgeState: Codable, Sendable, Equatable {
     /// a phone that reopened everything it once watched would be reading a
     /// machine on behalf of nobody.
     public let watching: [String]
+    /// The conversations this app has asked the runtime to stop streaming, in
+    /// the order it asked. Where `watching` is the runtime's own account,
+    /// this is the app's: together they say whether a stream still open is
+    /// one nobody let go of or one the runtime kept anyway.
+    public let releasedStreams: [String]
 
     public init(
         build: String, started: Bool, connection: String, reconciled: Bool,
         hosts: [String], agents: [String], relayAttempts: UInt64, relayRetries: UInt64,
-        discovered: [String], watching: [String] = []
+        discovered: [String], watching: [String] = [], releasedStreams: [String] = []
     ) {
         self.build = build
         self.started = started
@@ -271,6 +276,7 @@ public struct BridgeState: Codable, Sendable, Equatable {
         self.relayRetries = relayRetries
         self.discovered = discovered
         self.watching = watching
+        self.releasedStreams = releasedStreams
     }
 }
 

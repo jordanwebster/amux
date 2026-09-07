@@ -36,6 +36,7 @@
 		8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */; };
 		9A0DED937618A8CC258CEFDF /* WritingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE1CD31C989C5DC52354A7AE /* WritingTests.swift */; };
 		9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */; };
+		A27D9A47B7ED93DE56F742AB /* HostsLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */; };
 		A3C2080DEA1ECDCA5A1BA441 /* PerformanceSuite.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */; };
 		A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A10C4D43E54FEABB391277E /* PerfRun.swift */; };
 		AEE5ABB7E7D74D75A3DF45A5 /* DoorHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CBBB924EED36840518D0268 /* DoorHost.swift */; };
@@ -92,6 +93,7 @@
 		7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scenario.swift; sourceTree = "<group>"; };
 		8959E3A72299B8152BE86967 /* AmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8A10C4D43E54FEABB391277E /* PerfRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfRun.swift; sourceTree = "<group>"; };
+		8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsLifecycleTests.swift; sourceTree = "<group>"; };
 		8ED8247A9E0214AD28831928 /* Amux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Amux.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		979C7C4DC969977B66A65802 /* DoorScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorScreens.swift; sourceTree = "<group>"; };
 		A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColdStartProbe.swift; sourceTree = "<group>"; };
@@ -191,6 +193,7 @@
 				DCD0B049D76F4DAF62A8B46E /* AskTests.swift */,
 				B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */,
 				7BF809F88F54D264E26E1F0B /* DrawerTests.swift */,
+				8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */,
 				0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */,
 				31777DF351ACE50870B1C6A5 /* LaunchTests.swift */,
 				BC486A7A07178E55789AE94C /* ReviewTests.swift */,
@@ -472,6 +475,7 @@
 				71EF8392260DD101E76C1D32 /* AskTests.swift in Sources */,
 				37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */,
 				6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */,
+				A27D9A47B7ED93DE56F742AB /* HostsLifecycleTests.swift in Sources */,
 				8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */,
 				0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */,
 				7D4CF562DADA4EB7723324CD /* ReviewTests.swift in Sources */,

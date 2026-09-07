@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **What the phone's link does over time is now a journey.**
+
+`wt run ios-journey -- hosts-lifecycle` drives one phone against two machines
+the runner is running and claims things about the connection rather than about
+a screen. The relay is taken away and put back and the phone recovers with
+nobody pressing anything; the relay's own inventory shows one connection per
+host — the two machines and the phone — with two conversations open, the same
+as with none, and unchanged by sitting idle with no dial in between; pressing
+Retry Now while the relay is still down is seen as a dial the connection made
+early because it was asked, so the recovery after it cannot be credited to the
+backoff coming round; putting the phone away makes it disappear from the
+relay's inventory and bringing it back restores it and confirms the fleet
+again; and the conversation left at the start holds no stream after all of it,
+while the one nobody left still does.
+
+Two things had to exist for it. A phone can only have one conversation on
+screen, so a second stream is opened through the driving door — which is what
+that door is for — and the door now also reports which streams the runtime
+holds and which ones the app has released, so a stream still open can be told
+apart from one nobody let go of.
+
+---
+
 2026-09-07 — **Leaving a conversation stops the machine streaming it, and the
 relay can be asked what it is holding.**
 

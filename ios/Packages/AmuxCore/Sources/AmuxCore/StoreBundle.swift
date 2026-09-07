@@ -106,20 +106,28 @@ public final class StoreBundle {
     /// means a subscription there.
     @discardableResult
     public func conversation(_ agent: AgentId) -> ConversationStore {
-        if let existing = conversations[agent] {
-            // Reading it again after it was left asks the machine for it
-            // again: what is kept between visits is what was read, not the
-            // stream that read it.
-            if !streaming.contains(agent) {
-                streaming.insert(agent)
-                watch?(agent)
-            }
-            return existing
-        }
+        if let existing = conversations[agent] { return existing }
         let store = ConversationStore(agent: agent)
         conversations[agent] = store
         streaming.insert(agent)
         watch?(agent)
+        return store
+    }
+
+    /// The conversation somebody is about to read, streaming again if it was
+    /// left.
+    ///
+    /// Apart from `conversation(_:)` because being mentioned is not being
+    /// read: an event arriving for an agent whose conversation somebody left
+    /// must not put the stream back, or leaving one would last exactly until
+    /// the next thing that named it.
+    @discardableResult
+    public func openConversation(_ agent: AgentId) -> ConversationStore {
+        let store = conversation(agent)
+        if !streaming.contains(agent) {
+            streaming.insert(agent)
+            watch?(agent)
+        }
         return store
     }
 

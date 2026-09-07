@@ -64,7 +64,7 @@ extension Composition: RouteLoader {
     func load(_ route: Route) {
         switch route {
         case .conversation(let agent), .changes(let agent):
-            stores.conversation(agent)
+            stores.openConversation(agent)
         case .newAgent, .pairByCode, .pairConfirmation, .host, .accounts, .appearance, .help:
             break
         }

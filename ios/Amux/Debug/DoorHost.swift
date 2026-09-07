@@ -57,6 +57,11 @@ final class DoorHost {
     let cloud = ScriptedCloudService()
 
     @ObservationIgnored private var bridge: BridgeClient?
+    /// Every conversation this app has told the runtime to stop streaming, in
+    /// the order it said so. A driver asking whether leaving a conversation
+    /// reached the runtime reads this: the runtime's own account says which
+    /// streams are open, and this says who asked for that.
+    @ObservationIgnored private var unsubscribed: [AgentId] = []
     @ObservationIgnored private var pump: Task<Void, Never>?
     /// What this device called itself when it connected. The shared model
     /// lists this device alongside the ones it found, and a driver asking
@@ -126,7 +131,7 @@ final class DoorHost {
         case .sendDraft(let agent, let prose): return sendDraft(prose, to: agent)
         case .watch(let agent):
             guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
-            stores.conversation(identity)
+            stores.openConversation(identity)
             return .ack
         case .awaitSendable(let agent, let seconds):
             return await awaitSendable(of: agent, within: seconds)
@@ -259,7 +264,10 @@ final class DoorHost {
         // somebody opened would never be projected, and the screen would sit
         // empty beside a live connection.
         stores.watch = { [weak client] agent in client?.dispatch(.subscribe(agent: agent)) }
-        stores.unwatch = { [weak client] agent in client?.dispatch(.unsubscribe(agent: agent)) }
+        stores.unwatch = { [weak client, weak self] agent in
+            self?.unsubscribed.append(agent)
+            client?.dispatch(.unsubscribe(agent: agent))
+        }
         // What a screen decides reaches the machine through the same runtime
         // the feed arrives on. Answering an ask is a tap, so the connection
         // has to be reachable from the shell and not only from here.
@@ -554,7 +562,8 @@ final class DoorHost {
             relayAttempts: relay().attempts,
             relayRetries: relay().shortened,
             discovered: discovered(),
-            watching: watching())
+            watching: watching(),
+            releasedStreams: unsubscribed.map(\.description).sorted())
     }
 
     /// The agents the runtime is holding a stream for, read off its own model
