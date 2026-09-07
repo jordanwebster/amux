@@ -129,6 +129,21 @@ public final class StoreBundle {
         return true
     }
 
+    /// Asks the phone's own link to the relay to stop waiting and dial now.
+    ///
+    /// It goes to the runtime rather than to a machine: nothing on the far side
+    /// of a connection that is down can be asked anything, and the one thing
+    /// that can be shortened is the wait this phone is in. It never resets the
+    /// backoff — pressing it ten times is one attempt — so the offer stays
+    /// honest under a thumb that has been pressing it since the lift doors
+    /// closed.
+    ///
+    /// False means there was nothing to ask: no account, no runtime.
+    @discardableResult
+    public func retryNow() -> Bool {
+        dispatch?(.retryNow) != nil
+    }
+
     // MARK: - Pairing
 
     /// Takes the digits somebody has typed, and sends the code the moment it

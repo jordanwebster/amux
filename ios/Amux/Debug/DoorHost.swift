@@ -471,7 +471,29 @@ final class DoorHost {
             reconciled: stores.fleet.reconciled,
             hosts: stores.hosts.hosts.map(\.name).sorted(),
             agents: stores.fleet.rows.map(\.name).sorted(),
+            relayAttempts: relay().attempts,
+            relayRetries: relay().shortened,
             discovered: discovered())
+    }
+
+    /// What the runtime's link to the relay has done: every dial, and how many
+    /// of those were early because somebody asked.
+    ///
+    /// A dial at a relay that is not there leaves no trace on the far side —
+    /// nothing arrived to be counted — so this is where a driver reads it.
+    /// Both are zero for a launch with no runtime behind it, which is every
+    /// capture.
+    private func relay() -> (attempts: UInt64, shortened: UInt64) {
+        guard let bridge else { return (0, 0) }
+        let json = bridge.withRuntime { handle -> String? in
+            guard let owned = amux_mobile_relay_attempts(handle) else { return nil }
+            defer { amux_mobile_free(owned) }
+            return String(cString: owned)
+        } ?? nil
+        guard let json, let data = json.data(using: .utf8),
+            let read = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return (0, 0) }
+        return (read["attempts"] as? UInt64 ?? 0, read["shortened"] as? UInt64 ?? 0)
     }
 
     /// The machines the runtime has seen on the other side, this device
@@ -479,8 +501,9 @@ final class DoorHost {
     ///
     /// Read from the shared model rather than from the stores, because the
     /// projected fleet deliberately carries only hosts this device is paired
-    /// with — and this app cannot pair yet. A machine here is proof the
-    /// connection reached the relay and the relay reached a host.
+    /// with, and a driver often wants to know what is out there before pairing
+    /// with it. A machine here is proof the connection reached the relay and
+    /// the relay reached a host.
     private func discovered() -> [String] {
         guard let json = bridge?.snapshot(),
             let model = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],

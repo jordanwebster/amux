@@ -156,6 +156,17 @@ pub enum OpOutcomeDto {
     Shared(Box<OpOutcome>),
     Subscription(SubscriptionOutcome),
     Pairing(PairingOutcome),
+    Connection(ConnectionOutcome),
+}
+
+/// How something asked of the phone's own link to the relay ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ConnectionOutcome {
+    /// The connection has been asked to dial now. Whether that shortened
+    /// anything is the connection's to decide, and whether the relay answers
+    /// arrives as a connection state rather than as an answer to this.
+    RetryRequested,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

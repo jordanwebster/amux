@@ -1148,6 +1148,10 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     /// The attempt an answer names is not one the runtime is holding: it was
     /// answered already, or the app has been restarted since.
     case pairingLost
+    /// The connection has been asked to dial now. Whether that shortened
+    /// anything is the connection's to decide; whether the relay answers
+    /// arrives as a connection state rather than as an answer to this.
+    case retryRequested
     case failed(OpFailure)
     case other(outcome: String, body: JSONValue)
 
@@ -1176,6 +1180,7 @@ public enum OpOutcome: Sendable, Equatable, Codable {
         case "pairing_abandoned": self = .pairingAbandoned
         case "pairing_refused": self = .pairingRefused
         case "pairing_lost": self = .pairingLost
+        case "retry_requested": self = .retryRequested
         case "error": self = .failed(try container.decode(OpFailure.self, forKey: .error))
         default: self = .other(outcome: outcome, body: try JSONValue(from: decoder))
         }
@@ -1217,6 +1222,7 @@ public enum OpOutcome: Sendable, Equatable, Codable {
             case .pairingAbandoned: try container.encode("pairing_abandoned", forKey: .outcome)
             case .pairingRefused: try container.encode("pairing_refused", forKey: .outcome)
             case .pairingLost: try container.encode("pairing_lost", forKey: .outcome)
+            case .retryRequested: try container.encode("retry_requested", forKey: .outcome)
             case .pairingPending: break
             case .failed(let failure):
                 try container.encode("error", forKey: .outcome)

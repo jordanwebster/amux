@@ -148,12 +148,12 @@ private struct ConversationPage: View {
                 // The overflow opens over the conversation, which is the
                 // conversation's own doing; nothing is pushed.
                 case .overflow: break
-                // Asking the machine again means asking the runtime, and the
-                // shell has no runtime to ask yet. Reconnecting on its own
-                // schedule is what is already happening, which is what the
-                // panel says; the button is here so the offer is on the screen
-                // it belongs to rather than arriving with the wiring.
-                case .retry: break
+                // Asking again means asking this phone's own link to the
+                // relay, not the machine: nothing on the far side of a
+                // connection that is down can be asked anything. It shortens
+                // the wait the connection is already in and nothing more, so
+                // pressing it repeatedly is one attempt.
+                case .retry: stores.retryNow()
                 // Answering is the one thing on this screen that leaves the
                 // phone. The panel spells the command, because only it knows
                 // which ask this is and which layer raised it; the bundle

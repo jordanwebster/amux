@@ -218,6 +218,19 @@ public struct BridgeState: Codable, Sendable, Equatable {
     public let hosts: [String]
     /// The agents the fleet names, by name.
     public let agents: [String]
+    /// How many times this phone has dialled the relay since it started.
+    ///
+    /// It is the only place a dial at a relay that is not there leaves a
+    /// trace: nothing on the far side can count a connection that never
+    /// arrived.
+    public let relayAttempts: UInt64
+    /// How many of those dials happened early because somebody asked.
+    ///
+    /// This is what a driver pressing Retry Now reads, rather than the count
+    /// above: the connection dials on its own schedule anyway, so an attempt
+    /// alone cannot tell a press that reached the runtime from the backoff
+    /// coming round. Only a press moves this.
+    public let relayRetries: UInt64
     /// The machines the connection has seen on the other side, by name,
     /// whether or not this device is paired with them. Where the fleet is
     /// what the user may open, this is what the runtime found — the one thing
@@ -227,7 +240,8 @@ public struct BridgeState: Codable, Sendable, Equatable {
 
     public init(
         build: String, started: Bool, connection: String, reconciled: Bool,
-        hosts: [String], agents: [String], discovered: [String]
+        hosts: [String], agents: [String], relayAttempts: UInt64, relayRetries: UInt64,
+        discovered: [String]
     ) {
         self.build = build
         self.started = started
@@ -235,6 +249,8 @@ public struct BridgeState: Codable, Sendable, Equatable {
         self.reconciled = reconciled
         self.hosts = hosts
         self.agents = agents
+        self.relayAttempts = relayAttempts
+        self.relayRetries = relayRetries
         self.discovered = discovered
     }
 }

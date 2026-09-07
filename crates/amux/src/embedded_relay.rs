@@ -84,6 +84,90 @@ pub struct EmbeddedRelay {
     /// Supplies routing tokens, not account access tokens.
     pub credentials: Arc<dyn CredentialProvider>,
     pub connection: watch::Sender<RelayConnection>,
+    /// Shared with whoever can ask for an immediate attempt. An embedder that
+    /// has no such control leaves it at its default and the loop waits out
+    /// every backoff.
+    pub retry: Arc<RelayRetry>,
+}
+
+/// How long an honoured retry keeps the next one waiting.
+///
+/// A second, because that is roughly how fast a control can be tapped by
+/// somebody who thinks nothing happened.
+const RETRY_COOLDOWN: Duration = Duration::from_secs(1);
+
+/// Asking the relay connection to stop waiting and try now.
+///
+/// The connection retries on a backoff after every failure, which is right
+/// while nobody is watching and wrong the moment somebody is: a person who has
+/// just walked back into signal is looking at the screen, and the honest answer
+/// to "try again" is to try again rather than to finish a four-second wait.
+///
+/// What a request does is shorten one wait. It never resets the schedule and
+/// never starts a second connection: a control that can be pressed ten times in
+/// a second would otherwise turn an unreachable relay into a tight reconnect
+/// loop, which is the thing the backoff exists to prevent. So a request inside
+/// `RETRY_COOLDOWN` of an honoured one is dropped, and the wait after the early
+/// attempt is the one the backoff had already chosen.
+#[derive(Default)]
+pub struct RelayRetry {
+    asked: tokio::sync::Notify,
+    honoured: std::sync::Mutex<Option<tokio::time::Instant>>,
+    attempts: std::sync::atomic::AtomicU64,
+    shortened: std::sync::atomic::AtomicU64,
+}
+
+impl RelayRetry {
+    /// Stop waiting and dial the relay now. Returns immediately; whether the
+    /// request shortened anything depends on how recently one already did.
+    pub fn now(&self) {
+        self.asked.notify_one();
+    }
+
+    /// How many times this connection has dialled the relay. It counts every
+    /// attempt, whether a wait was shortened for it or it came round on the
+    /// backoff, so a reader can tell one attempt from none.
+    pub fn attempts(&self) -> u64 {
+        self.attempts.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How many of those attempts happened early because somebody asked.
+    ///
+    /// The only unambiguous evidence that a request reached this connection: a
+    /// dial at a relay that is not there arrives nowhere, and the connection
+    /// dials on its own schedule anyway, so "an attempt happened" cannot tell
+    /// a request apart from the backoff coming round. This can.
+    pub fn shortened(&self) -> u64 {
+        self.shortened.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn attempted(&self) {
+        self.attempts
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Waits out the backoff, or less if somebody asks and is not asking again
+    /// too soon after the last time this listened to them.
+    async fn wait(&self, backoff: Duration) {
+        let sleep = tokio::time::sleep(backoff);
+        tokio::pin!(sleep);
+        loop {
+            tokio::select! {
+                _ = &mut sleep => return,
+                _ = self.asked.notified() => {
+                    let mut honoured = self.honoured.lock().unwrap();
+                    let now = tokio::time::Instant::now();
+                    if honoured.is_some_and(|last| now.duration_since(last) < RETRY_COOLDOWN) {
+                        continue;
+                    }
+                    *honoured = Some(now);
+                    self.shortened
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 struct AbortOnDrop(tokio::task::AbortHandle);
@@ -116,6 +200,7 @@ impl EmbeddedRelay {
         tokio::spawn(async move {
             let mut backoff = Duration::from_millis(250);
             loop {
+                self.retry.attempted();
                 let result = self.connect(context.clone()).await;
                 let reason = match result {
                     Ok(()) => {
@@ -126,7 +211,7 @@ impl EmbeddedRelay {
                 };
                 self.connection
                     .send_replace(RelayConnection::Disconnected { reason });
-                tokio::time::sleep(backoff).await;
+                self.retry.wait(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(4));
             }
         })

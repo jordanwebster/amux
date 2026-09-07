@@ -91,6 +91,11 @@ impl StartConfig {
 pub struct MobileRuntime {
     pub ui: Runtime,
     pub relay: watch::Receiver<RelayConnection>,
+    /// The way to ask the relay connection to stop waiting out its backoff and
+    /// dial now. Held here rather than reached through the embedded runtime
+    /// because this is the side of the app that owns the relay: the embedded
+    /// runtime is the machine, and this is the phone's link to everything else.
+    pub retry: std::sync::Arc<amux::RelayRetry>,
     // Keep the server alive until the reducer and its tasks are dropped.
     pub embedded: amux::EmbeddedRuntime,
 }
@@ -102,6 +107,7 @@ impl MobileRuntime {
     ) -> Result<Self, String> {
         let endpoint = config.endpoint()?;
         let (connection, relay) = watch::channel(RelayConnection::Connecting);
+        let retry = std::sync::Arc::new(amux::RelayRetry::default());
         let embedded = amux::Server::builder()
             .config(config.server_config())
             .embedded()
@@ -109,6 +115,7 @@ impl MobileRuntime {
                 endpoint,
                 credentials,
                 connection,
+                retry: retry.clone(),
             })
             .open()
             .await
@@ -126,6 +133,7 @@ impl MobileRuntime {
         Ok(Self {
             ui,
             relay,
+            retry,
             embedded,
         })
     }

@@ -14,7 +14,10 @@ use std::time::{Duration, SystemTime};
 
 use amux::{AccessToken, AuthError, CredentialProvider, RelayConnection};
 use amux_ui::{AgentId, Command, OpError, OpId, OpOutcome};
-use projection::{Cadence, Event, OpOutcomeDto, PairingOutcome, Projection, SubscriptionOutcome};
+use projection::{
+    Cadence, ConnectionOutcome, Event, OpOutcomeDto, PairingOutcome, Projection,
+    SubscriptionOutcome,
+};
 use runtime::{MobileRuntime, StartConfig, TokenSource};
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
@@ -52,6 +55,8 @@ impl Callback {
 enum Control {
     Stop,
     Snapshot(std::sync::mpsc::SyncSender<Option<String>>),
+    #[cfg(feature = "debug-tools")]
+    RelayAttempts(std::sync::mpsc::SyncSender<Option<String>>),
     #[cfg(feature = "debug-tools")]
     ReportSnapshot(std::sync::mpsc::SyncSender<Option<String>>),
     #[cfg(feature = "debug-tools")]
@@ -235,6 +240,7 @@ pub unsafe extern "C" fn amux_mobile_stop(handle: *mut Handle) {
 enum CommandDto {
     Subscription(SubscriptionCommand),
     Pairing(PairingCommand),
+    Connection(ConnectionCommand),
     Shared(Command),
 }
 
@@ -243,6 +249,15 @@ enum CommandDto {
 enum SubscriptionCommand {
     Subscribe { agent: AgentId },
     Unsubscribe { agent: AgentId },
+}
+
+/// Something asked of the phone's own link to the relay, rather than of a
+/// machine on the other side of it.
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+enum ConnectionCommand {
+    /// Stop waiting out the backoff and dial the relay now.
+    RetryNow,
 }
 
 /// One step of pairing this device with a machine.
@@ -344,6 +359,27 @@ pub unsafe extern "C" fn amux_mobile_snapshot(handle: *mut Handle) -> *mut c_cha
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amux_mobile_report_snapshot(handle: *mut Handle) -> *mut c_char {
     unsafe { snapshot(handle, Control::ReportSnapshot) }
+}
+
+/// What this phone's link to the relay has done, as owned JSON
+/// `{"attempts":N,"shortened":M}`; free it with amux_mobile_free. NULL means
+/// the handle or the worker was unavailable.
+///
+/// `attempts` is every dial since the runtime started. `shortened` is how many
+/// of them happened early because somebody asked, which is the only
+/// unambiguous evidence a Retry Now reached the connection: a dial at a relay
+/// that is not there arrives nowhere to be counted, and the connection dials
+/// on its own schedule anyway, so an attempt alone cannot tell a press apart
+/// from the backoff coming round.
+///
+/// Debug-tools builds only.
+///
+/// # Safety
+/// handle must be live and may not race stop. Never call from an event callback.
+#[cfg(feature = "debug-tools")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_relay_attempts(handle: *mut Handle) -> *mut c_char {
+    unsafe { snapshot(handle, Control::RelayAttempts) }
 }
 
 /// Pairs this device with the host a QR pairing payload names, over the relay
@@ -802,6 +838,16 @@ async fn run(
                     let _ = reply.send(serde_json::to_string(runtime.ui.model()).ok());
                 }
                 #[cfg(feature = "debug-tools")]
+                Some(Control::RelayAttempts(reply)) => {
+                    let _ = reply.send(
+                        serde_json::to_string(&serde_json::json!({
+                            "attempts": runtime.retry.attempts(),
+                            "shortened": runtime.retry.shortened(),
+                        }))
+                        .ok(),
+                    );
+                }
+                #[cfg(feature = "debug-tools")]
                 Some(Control::PairQr { payload, reply }) => {
                     let admin = runtime.embedded.admin();
                     tokio::spawn(async move {
@@ -863,6 +909,19 @@ async fn run(
                         }
                         Ok(CommandDto::Pairing(command)) => {
                             pair(op, command, &runtime, &mut pending_peers, pairings.clone());
+                        }
+                        Ok(CommandDto::Connection(ConnectionCommand::RetryNow)) => {
+                            // The connection is a loop of its own; this only
+                            // interrupts the wait it is in. Whether that wait
+                            // was actually shortened is the connection's to
+                            // decide — asking twice in a second is one ask —
+                            // so what comes back says the request was made,
+                            // not that a relay answered.
+                            runtime.retry.now();
+                            events.push(Event::OpResult {
+                                op,
+                                outcome: OpOutcomeDto::Connection(ConnectionOutcome::RetryRequested),
+                            });
                         }
                         Err(message) => events.push(Event::OpResult { op, outcome: OpOutcomeDto::Shared(Box::new(OpOutcome::Error {
                             error: OpError::general(message),

@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **Retry Now asks the connection to dial now.**
+
+The offer on an unreachable machine's conversation reached nothing. It drew a
+button, the button did nothing, and the reconnection that eventually happened
+was the one the backoff was already coming round to — so a person pressing it
+was being told a lie about what pressing it did.
+
+It now goes to this phone's own link to the relay, which is the only thing
+that can be shortened when the connection is down: nothing on the far side of
+a connection that is not there can be asked anything. A press interrupts the
+wait the connection is in and nothing more. It never resets the backoff and
+never starts a second dial, so pressing it ten times in a second is one
+attempt — a control that reset the schedule would turn an unreachable relay
+into a tight reconnect loop, which is what the backoff exists to prevent.
+
+Proving it needed something new, because a dial at a relay that is not there
+arrives nowhere and can be counted nowhere except in the runtime that made it.
+The connection now counts its own attempts, and the driving door reports the
+count. The conversation journey reads it before pressing and again after,
+before the relay is allowed back — so the recovery below it can no longer be
+credited to a press that did nothing.
+
+---
+
 2026-09-07 — **Pairing a phone with a machine, in the two phases it has.**
 
 The phone can now add a machine. Typing the six-digit code the machine

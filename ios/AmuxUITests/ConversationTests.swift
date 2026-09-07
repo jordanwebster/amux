@@ -351,7 +351,23 @@ final class ConversationTests: XCTestCase {
         ]]])
         XCTAssertFalse(app.staticTexts[Self.replayed].exists,
                        "a disconnected phone already shows the host's new transcript")
+        // Retry Now, and the proof it reached something — read before the
+        // relay is allowed back, so the recovery below cannot be credited to a
+        // press that did nothing.
+        //
+        // What is counted is dials the connection made *early because it was
+        // asked*, not dials. The connection reconnects on its own schedule
+        // anyway, so an attempt alone would have been satisfied by the
+        // backoff coming round, which is exactly the mistake this step used to
+        // make. Only a press moves this number.
+        let asked = try relayRetries(runner)
         press(app, "conversation.retry")
+        let reached = waitUntil { (try? self.relayRetries(runner)).map { $0 > asked } ?? false }
+        record["relayRetriesBeforePress"] = asked
+        record["relayRetriesAfterPress"] = try relayRetries(runner)
+        XCTAssertTrue(reached,
+                      "Retry Now was pressed and the connection was never asked to dial; the "
+                      + "recovery below would be the reconnect that was already coming")
         try control.ask("CloudOnline")
         XCTAssertTrue(waitUntil { !gone.exists },
                       "the machine came back and the conversation still says it is gone")
@@ -691,6 +707,21 @@ final class ConversationTests: XCTestCase {
             if let path { fields["path"] = path }
             return fields
         }
+    }
+
+    /// How many times the app's connection has dialled the relay early
+    /// because something asked it to.
+    ///
+    /// The one observation that survives the relay being away and is not also
+    /// produced by the backoff: nothing on the far side can count a connection
+    /// that never arrived, and every phone dials on its own anyway.
+    private func relayRetries(_ runner: Runner) throws -> Int {
+        let door = try Lines(address: "127.0.0.1:\(runner.doorPort)")
+        let answer = try door.ask(["kind": "bridge"])
+        guard let state = answer["bridge"] as? [String: Any],
+            let asked = state["relayRetries"] as? Int
+        else { throw Lines.Failure("the door did not say how often a retry had been asked for") }
+        return asked
     }
 
     /// Opens the door, says one thing, and closes it. One connection at a

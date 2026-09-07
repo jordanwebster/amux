@@ -337,6 +337,8 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
     case confirmPair(pending: String)
     /// Turn it away. Nothing is written on either side.
     case abandonPair(pending: String)
+    /// Stop waiting out the reconnect backoff and dial the relay now.
+    case retryNow
     /// A shared UI command, exactly as the core spells it.
     case shared(JSONValue)
 
@@ -364,6 +366,9 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
                 return
             case "abandon":
                 self = .abandonPair(pending: try container.decode(String.self, forKey: .pending))
+                return
+            case "retry_now":
+                self = .retryNow
                 return
             default: break
             }
@@ -398,6 +403,9 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("abandon", forKey: .command)
             try container.encode(pending, forKey: .pending)
+        case .retryNow:
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("retry_now", forKey: .command)
         case .shared(let body):
             try body.encode(to: encoder)
         }

@@ -241,6 +241,7 @@ fn the_phones_agent_writes_decode_as_the_commands_they_name() {
         CommandDto::Shared(command) => command,
         CommandDto::Subscription(_) => panic!("an agent write decoded as a subscription"),
         CommandDto::Pairing(_) => panic!("an agent write decoded as a pairing step"),
+        CommandDto::Connection(_) => panic!("an agent write decoded as a connection command"),
     };
 
     assert_eq!(
@@ -1680,6 +1681,193 @@ async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
     })
     .await;
     println!("pending: {pending}, confirmed: {confirmed}, fleet: {fleet}");
+
+    drop(running);
+    net.shutdown().await;
+}
+
+/// A phone that always has the same token. The relay's own credentials, not an
+/// account's.
+struct StaticToken(String);
+#[async_trait::async_trait]
+impl amux::CredentialProvider for StaticToken {
+    async fn access_token(&self) -> Result<amux::AccessToken, amux::AuthError> {
+        Ok(amux::AccessToken {
+            bearer: self.0.clone(),
+            expires_at: None,
+        })
+    }
+    fn invalidate(&self, _token: &amux::AccessToken) {}
+}
+
+/// Retry Now shortens the wait to the next attempt, and pressing it ten times
+/// in a second is one attempt.
+///
+/// Both halves matter and they pull against each other. Without the first, the
+/// control is a lie: it draws a button that does nothing while the connection
+/// finishes a four-second sleep. Without the second, the control is a way to
+/// turn an unreachable relay into a tight reconnect loop, which is the whole
+/// reason the backoff exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let (_, token) = net.user_credentials("owner");
+    let root = tempfile::tempdir().unwrap();
+    let config: crate::runtime::StartConfig = serde_json::from_value(config(
+        root.path(),
+        format!("http://{}", net.relay_addr()),
+        json!({ "Static": token }),
+    ))
+    .unwrap();
+    let runtime = crate::runtime::MobileRuntime::open(&config, Arc::new(StaticToken(token)))
+        .await
+        .unwrap();
+    let mut relay = runtime.relay.clone();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while *relay.borrow_and_update() != amux::RelayConnection::Connected {
+            relay.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("the phone never reached the relay");
+
+    // Take the relay away and let the backoff climb to its four-second cap:
+    // 250ms, 500ms, 1s and 2s of waiting, plus four failed dials.
+    net.cloud_offline().await;
+    tokio::time::sleep(Duration::from_millis(4500)).await;
+    let settled = runtime.retry.attempts();
+
+    assert_eq!(
+        runtime.retry.shortened(),
+        0,
+        "a wait was cut short before anything had asked"
+    );
+
+    // One press. The connection was four seconds into a wait; it dials inside
+    // one, which is the difference the control exists to make.
+    runtime.retry.now();
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    let after_one = runtime.retry.attempts();
+    assert_eq!(
+        after_one,
+        settled + 1,
+        "one press produced {} attempts, not one",
+        after_one - settled
+    );
+    assert_eq!(
+        runtime.retry.shortened(),
+        1,
+        "the attempt after a press was the backoff coming round, not the press"
+    );
+
+    // Ten presses in a second, once the cooldown from the first has passed.
+    // Exactly one of them is listened to; the rest are somebody pressing again
+    // because nothing looked like it happened.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let before_ten = runtime.retry.attempts();
+    for _ in 0..10 {
+        runtime.retry.now();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after_ten = runtime.retry.attempts();
+    assert_eq!(
+        after_ten,
+        before_ten + 1,
+        "ten presses produced {} attempts, not one",
+        after_ten - before_ten
+    );
+    assert_eq!(
+        runtime.retry.shortened(),
+        2,
+        "ten presses cut short more than one wait"
+    );
+
+    // And the connection is still what recovers: with the relay back, the
+    // phone reconnects on its own schedule.
+    net.cloud_online().await;
+    runtime.retry.now();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while *relay.borrow_and_update() != amux::RelayConnection::Connected {
+            relay.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("the phone never came back");
+
+    drop(runtime);
+    net.shutdown().await;
+}
+
+/// The press reaches the connection through the same door every other command
+/// goes through, and is answered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_retry_now_reaches_the_connection_through_the_bridge() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let (_, token) = net.user_credentials("owner");
+    let root = tempfile::tempdir().unwrap();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &config(
+                root.path(),
+                format!("http://{}", net.relay_addr()),
+                json!({ "Static": token }),
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    until(&mut receive, running.handle, &token, |e| {
+        e["Connection"]["state"] == "connected"
+    })
+    .await;
+
+    net.cloud_offline().await;
+    until(&mut receive, running.handle, &token, |e| {
+        e["Connection"]["state"] == "disconnected"
+    })
+    .await;
+
+    let command = CString::new(r#"{"command":"retry_now"}"#).unwrap();
+    let id = unsafe { amux_mobile_dispatch(running.handle, command.as_ptr()) };
+    assert!(!id.is_null(), "retry_now was not dispatched");
+    let op = unsafe { CStr::from_ptr(id) }.to_str().unwrap().to_owned();
+    unsafe { amux_mobile_free(id) };
+
+    let answered = until(&mut receive, running.handle, &token, |e| {
+        e["OpResult"]["op"] == op.as_str()
+    })
+    .await;
+    assert_eq!(
+        answered["OpResult"]["outcome"],
+        json!({"outcome": "retry_requested"}),
+        "{answered}"
+    );
+
+    net.cloud_online().await;
+    until(&mut receive, running.handle, &token, |e| {
+        e["Connection"]["state"] == "connected"
+    })
+    .await;
 
     drop(running);
     net.shutdown().await;
