@@ -23,6 +23,10 @@ public final class StoreBundle {
     public private(set) var conversations: [AgentId: ConversationStore] = [:]
     /// One review per agent, opened the first time its changes are read.
     private var reviews: [AgentId: ReviewStore] = [:]
+    /// The conversations a stream was asked for. Apart from the stores
+    /// themselves because the two outlive each other: a transcript is kept
+    /// after somebody leaves and the stream that filled it is not.
+    private var streaming: Set<AgentId> = []
     /// Batches applied, in the order they arrived.
     public private(set) var applied = 0
 
@@ -102,11 +106,34 @@ public final class StoreBundle {
     /// means a subscription there.
     @discardableResult
     public func conversation(_ agent: AgentId) -> ConversationStore {
-        if let existing = conversations[agent] { return existing }
+        if let existing = conversations[agent] {
+            // Reading it again after it was left asks the machine for it
+            // again: what is kept between visits is what was read, not the
+            // stream that read it.
+            if !streaming.contains(agent) {
+                streaming.insert(agent)
+                watch?(agent)
+            }
+            return existing
+        }
         let store = ConversationStore(agent: agent)
         conversations[agent] = store
+        streaming.insert(agent)
         watch?(agent)
         return store
+    }
+
+    /// Leaves a conversation: the machine stops being asked to stream it, and
+    /// what it has already said stays readable.
+    ///
+    /// A phone that kept a stream for every conversation somebody had ever
+    /// opened would be reading its machines on behalf of nobody — for the rest
+    /// of the launch, across every outage in it. The transcript stays because
+    /// coming back to a conversation should find it where it was left; the
+    /// stream does not, because nothing is looking at it.
+    public func releaseStream(_ agent: AgentId) {
+        guard streaming.remove(agent) != nil else { return }
+        unwatch?(agent)
     }
 
     /// The review of one agent's frozen changes, or nothing where that agent
@@ -434,6 +461,7 @@ public final class StoreBundle {
     public func closeConversation(_ agent: AgentId) {
         reviews.removeValue(forKey: agent)
         guard conversations.removeValue(forKey: agent) != nil else { return }
+        streaming.remove(agent)
         unwatch?(agent)
     }
 }

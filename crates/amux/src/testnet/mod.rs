@@ -163,6 +163,18 @@ impl TestNet {
     }
 
     /// Registers a cloud user, including users with no daemon yet.
+    /// Every host connected to the relay under this account, and how many
+    /// links each of them holds.
+    ///
+    /// A phone is one of them: this is where a client that multiplexes its
+    /// whole conversation over one connection is told apart from one that
+    /// opens a connection per thing it is watching, and where a client that
+    /// has gone away stops appearing at all.
+    pub async fn cloud_links(&self, label: &str) -> Vec<(crate::HostId, usize)> {
+        let (user_id, _) = self.user_credentials(label);
+        self.cloud().links_for(user_id).await
+    }
+
     pub fn user_credentials(&self, label: &str) -> (uuid::Uuid, String) {
         self.cloud().credentials_for_user(label)
     }

@@ -236,6 +236,23 @@ impl CloudLinkService {
         }
     }
 
+    /// Which hosts this account is connected to the relay by, and how many
+    /// links each of them holds. One per host is what a client multiplexing
+    /// its work over a single connection looks like from here.
+    pub(crate) async fn user_links(&self, user_id: Uuid) -> Vec<(HostId, usize)> {
+        let tunnels = self
+            .inner
+            .users
+            .read()
+            .await
+            .get(&user_id)
+            .map(|services| services.tunnels.clone());
+        match tunnels {
+            Some(tunnels) => tunnels.link_registry().links_per_peer().await,
+            None => Vec::new(),
+        }
+    }
+
     pub(crate) async fn send_link_close_to_all(&self, reason: wire::pb::LinkCloseReason) {
         let tunnels = {
             let users = self.inner.users.read().await;

@@ -12,6 +12,9 @@ import Observation
 @MainActor
 public protocol RouteLoader: AnyObject {
     func load(_ route: Route)
+    /// A page that is no longer anywhere in its tab's stack. Whatever it held
+    /// open while somebody was reading it is let go here.
+    func left(_ route: Route)
 }
 
 /// Where the app is, and the only thing that changes it.
@@ -29,9 +32,15 @@ public final class Router {
     /// One stack per tab, written to by the shell's navigation as well as
     /// read: the back gesture and the tab bar are the system's to drive, and
     /// what they did has to land somewhere the app can see.
-    public var agentsPath: [Route] = []
-    public var hostsPath: [Route] = []
-    public var youPath: [Route] = []
+    ///
+    /// Leaving is noticed on the stacks themselves rather than at any one call
+    /// that changes them: the system pops these directly — a back gesture, and
+    /// reaching for the tab already on show — so a page that holds something
+    /// open while somebody is reading it would otherwise go on holding it
+    /// whenever the app was not the one doing the navigating.
+    public var agentsPath: [Route] = [] { didSet { departed(oldValue, agentsPath) } }
+    public var hostsPath: [Route] = [] { didSet { departed(oldValue, hostsPath) } }
+    public var youPath: [Route] = [] { didSet { departed(oldValue, youPath) } }
 
     /// A link that is not navigation, kept until whatever it answers comes
     /// for it. A sign-in callback can arrive before the sign-in that started
@@ -90,7 +99,9 @@ public final class Router {
     /// been looked at, and going back would walk it.
     public func show(_ route: Route) {
         guard route.tab == tab, let last = path.indices.last else { return open(route) }
-        self[keyPath: Self.stack(of: tab)][last] = route
+        var replacing = path
+        replacing[last] = route
+        setPath(replacing, for: tab)
         loader?.load(route)
     }
 
@@ -100,9 +111,15 @@ public final class Router {
         self[keyPath: Self.stack(of: tab)] = routes
     }
 
+    /// Tells whoever loads pages about every page that is no longer in the
+    /// stack it was in.
+    private func departed(_ before: [Route], _ now: [Route]) {
+        for route in before where !now.contains(route) { loader?.left(route) }
+    }
+
     public func pop() {
         guard !path.isEmpty else { return }
-        self[keyPath: Self.stack(of: tab)].removeLast()
+        setPath(Array(path.dropLast()), for: tab)
     }
 
     public func popToRoot() {

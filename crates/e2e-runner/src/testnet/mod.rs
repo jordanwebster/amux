@@ -173,8 +173,19 @@ pub enum Control {
     AgentObserve {
         agent: String,
     },
+    /// What is connected to what, as the far side sees it.
+    ///
+    /// A machine, by name, answers with the links it is holding. A cloud user,
+    /// by label, answers with the relay's own view of that account: one entry
+    /// per host connected to it, and how many links each one holds — which is
+    /// where a client multiplexing everything over one connection is told
+    /// apart from one opening a connection per thing it watches, and where a
+    /// client that has gone away stops appearing.
     Connections {
-        daemon: String,
+        #[serde(default)]
+        daemon: Option<String>,
+        #[serde(default)]
+        user: Option<String>,
     },
     Shutdown,
 }
@@ -186,6 +197,9 @@ pub enum Reply {
         qr: Option<String>,
         observed: Vec<ObservedInput>,
         connections: Option<u32>,
+        /// One entry per host, as `"<host id>: <links>"`, sorted. Present for
+        /// a `Connections` about a cloud user.
+        links: Vec<String>,
     },
     Error {
         message: String,
@@ -199,6 +213,7 @@ impl Reply {
             qr: None,
             observed: Vec::new(),
             connections: None,
+            links: Vec::new(),
         }
     }
 }
@@ -606,14 +621,31 @@ async fn apply(
                 },
             );
         }
-        Control::Connections { daemon: name } => {
-            let dump = daemon(&name)?.debug_dump(false).await;
-            let count = dump["links"]
-                .as_array()
-                .context("daemon diagnostics omitted links")?
-                .len();
-            if let Reply::Ack { connections, .. } = &mut reply {
-                *connections = Some(count.try_into()?);
+        Control::Connections {
+            daemon: name,
+            user: label,
+        } => {
+            let mut counted = 0usize;
+            let mut per_host = Vec::new();
+            if let Some(name) = name {
+                let dump = daemon(&name)?.debug_dump(false).await;
+                counted += dump["links"]
+                    .as_array()
+                    .context("daemon diagnostics omitted links")?
+                    .len();
+            }
+            if let Some(label) = label {
+                for (host, links) in net.cloud_links(&label).await {
+                    counted += links;
+                    per_host.push(format!("{host}: {links}"));
+                }
+            }
+            if let Reply::Ack {
+                connections, links, ..
+            } = &mut reply
+            {
+                *connections = Some(counted.try_into()?);
+                *links = per_host;
             }
         }
         Control::Shutdown => unreachable!("shutdown is handled by the server loop"),

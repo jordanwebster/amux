@@ -230,6 +230,19 @@ impl CloudRelay {
         }
     }
 
+    /// Which hosts this account is connected to the relay by, and how many
+    /// links each holds.
+    pub(crate) async fn links_for(&self, user_id: Uuid) -> Vec<(HostId, usize)> {
+        let service = {
+            let guard = self.server.lock().await;
+            guard.as_ref().map(|running| running.service.clone())
+        };
+        match service {
+            Some(service) => service.user_links(user_id).await,
+            None => Vec::new(),
+        }
+    }
+
     /// Takes the relay down hard: stops accepting and severs every accepted
     /// socket, so daemons observe a genuine outage (links fail, routes drop).
     pub(crate) async fn go_offline(&self) {

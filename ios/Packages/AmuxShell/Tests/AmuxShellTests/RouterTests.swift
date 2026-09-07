@@ -15,16 +15,51 @@ private final class RecordingLoader: RouteLoader {
     /// fetch from a host.
     private(set) var outstanding = 0
 
+    /// Every page the router said had been left, in the order it said so.
+    private(set) var abandoned: [Route] = []
+
     func load(_ route: Route) {
         loaded.append(route)
         pathWhenAsked.append(router?.path ?? [])
         outstanding += 1
     }
+
+    func left(_ route: Route) { abandoned.append(route) }
 }
 
 @MainActor
 final class RouterTests: XCTestCase {
     private func agent() -> AgentId { AgentId(UUID()) }
+
+    /// Leaving a page is said once, however it was left: by the app popping,
+    /// by the system writing the stack back after a back gesture, or by one
+    /// page replacing another.
+    func testLeavingAPageIsSaidHoweverItWasLeft() {
+        let loader = RecordingLoader()
+        let router = Router(loader: loader)
+        let first = agent()
+        let second = agent()
+
+        router.open(.conversation(first))
+        router.pop()
+        XCTAssertEqual(loader.abandoned, [.conversation(first)])
+
+        // The system's own back: the stack is written back with the page gone.
+        router.open(.conversation(second))
+        router.setPath([], for: .agents)
+        XCTAssertEqual(loader.abandoned, [.conversation(first), .conversation(second)])
+
+        // And one conversation shown in place of another leaves the first.
+        router.open(.conversation(first))
+        router.show(.conversation(second))
+        XCTAssertEqual(
+            loader.abandoned,
+            [.conversation(first), .conversation(second), .conversation(first)])
+
+        // Nothing is left by opening, and a page still in the stack is not.
+        router.open(.changes(second))
+        XCTAssertEqual(loader.abandoned.count, 3)
+    }
 
     func testOpeningPushesOnTheSameTurnOfTheRunLoop() {
         let router = Router()

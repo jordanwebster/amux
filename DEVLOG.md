@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **Leaving a conversation stops the machine streaming it, and the
+relay can be asked what it is holding.**
+
+A phone asked its machine for a stream when somebody opened a conversation and
+never let go of it: every conversation opened in a launch was still being
+streamed at the end of it, for nobody, across every outage in between. Leaving
+now releases the stream and keeps the transcript, so coming back finds the
+conversation where it was left and asks for it again.
+
+Leaving is noticed on the navigation stacks themselves rather than at any one
+call that changes them. The system drives those stacks as well as the app —
+the back gesture, and reaching for the tab already on show, which is the way
+out of a conversation — so a page that holds something open while it is being
+read has to be told to let go wherever it was left from.
+
+Proving any of this needs a view of the connections from outside the phone.
+The runner's Connections verb now also answers about a cloud account: one entry
+per host connected to the relay and how many links each holds. That is where a
+client multiplexing everything over one connection is told apart from one
+opening a connection per thing it watches, and where a phone that has been put
+away stops appearing at all.
+
+---
+
 2026-09-07 — **A phone put away holds no connection.**
 
 Backgrounding used to leave the link to the relay exactly where it was, for

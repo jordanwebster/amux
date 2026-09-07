@@ -69,6 +69,23 @@ extension Composition: RouteLoader {
             break
         }
     }
+
+    /// Leaving a conversation stops the machine streaming it.
+    ///
+    /// What was read stays read — coming back finds the transcript where it
+    /// was left — but a phone that went on streaming every conversation
+    /// somebody had ever opened would be reading its machines on behalf of
+    /// nobody. The changes page is the same conversation seen differently, so
+    /// leaving it for the conversation above it changes nothing.
+    func left(_ route: Route) {
+        switch route {
+        case .conversation(let agent):
+            stores.releaseStream(agent)
+        case .changes, .newAgent, .pairByCode, .pairConfirmation, .host, .accounts,
+             .appearance, .help:
+            break
+        }
+    }
 }
 
 /// Where this app keeps things between launches.

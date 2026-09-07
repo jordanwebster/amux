@@ -174,6 +174,18 @@ impl LinkRegistry {
         snapshot
     }
 
+    /// Every peer this registry holds a link to, and how many links each one
+    /// is holding. A second link to the same host is a peer that opened a
+    /// connection where it should have multiplexed the one it had.
+    pub(crate) async fn links_per_peer(&self) -> Vec<(HostId, usize)> {
+        let state = self.state.read().await;
+        let mut counted: std::collections::BTreeMap<HostId, usize> = Default::default();
+        for writer in state.writers.values() {
+            *counted.entry(writer.host.id).or_default() += 1;
+        }
+        counted.into_iter().collect()
+    }
+
     /// Requests closure of every link to `host_id` and waits until they are
     /// gone from the registry.
     pub(crate) async fn close_host(&self, host_id: HostId) -> Vec<LinkId> {
