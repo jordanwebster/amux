@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-07 — **`wt test` compiles under the build task, not under its own
+timeout.**
+
+The recipe caps the workspace run at fifteen minutes so a hung suite is caught
+rather than waited on. It did not depend on `build`, so a cold checkout spent
+that budget compiling and then ran as many suites as the remainder allowed:
+the last run reached fifty-eight of fifty-nine green and was killed part-way
+into the last one, which reads as a slow test suite and is nothing of the
+kind. `test` now names `build` among its needs, the way the comment above
+those tasks always said it did, so the compile happens under the build task
+and the timeout measures the tests.
+
+---
+
 2026-09-07 — **What the phone's link does over time is now a journey.**
 
 `wt run ios-journey -- hosts-lifecycle` drives one phone against two machines

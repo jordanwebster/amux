@@ -33,7 +33,11 @@ needs = ["profile-config"]
 
 [task.test]
 run = 'scripts/workspace-test.sh "$@"'
-needs = ["test-recipes"]
+# `build` is a dependency so the workspace compile happens under the build
+# task's own budget: the recipe's timeout is there to catch a hung suite, and
+# a cold compile inside it turns that into a race between the compiler and the
+# tests rather than a statement about the tests.
+needs = ["test-recipes", "build"]
 
 [task.test-recipes]
 run = "timeout 30 python3 scripts/tests/workspace_test.py"
