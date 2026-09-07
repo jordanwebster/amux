@@ -192,6 +192,8 @@ class JourneyCase: XCTestCase {
         var name: String?
         var mime: String?
         var base64: String?
+        var from: Int?
+        var to: Int?
 
         var body: [String: Any] {
             var fields: [String: Any] = ["kind": kind]
@@ -206,6 +208,8 @@ class JourneyCase: XCTestCase {
             if let name { fields["name"] = name }
             if let mime { fields["mime"] = mime }
             if let base64 { fields["base64"] = base64 }
+            if let from { fields["from"] = from }
+            if let to { fields["to"] = to }
             return fields
         }
     }

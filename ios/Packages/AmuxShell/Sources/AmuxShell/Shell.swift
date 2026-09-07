@@ -283,7 +283,7 @@ private struct ConversationPage: View {
             switch action {
             case .open(let other):
                 stores.fleet.opened(other)
-                router.open(.conversation(other))
+                router.show(.conversation(other))
             case .newAgent: router.open(.newAgent)
             case .hosts: router.select(.hosts)
             case .you: router.select(.you)

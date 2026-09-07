@@ -10710,3 +10710,36 @@ UITextView's own drag moves it on a device, but no accessibility client can
 synthesise that drag: the one tried here crossed the keyboard and typed four
 letters into the message. What the model does when a token moves is covered
 where it is decided, in the draft's own tests.
+
+---
+
+2026-09-07 — **Writing to an agent from the phone, end to end.** The UI
+journey that exercises everything the composer is for now passes: a paragraph
+typed over two lines, a long paste, a stored photograph, a stored file and a
+patch each standing in that sentence as one token, one backspace taking a whole
+token, one token moved whole from between two others to the front of both, a
+message sent and reconciled to a single row, one held while a turn ran and
+replaced and taken back, one that survived the turn being stopped and was
+delivered when it ended, the address copied, a rename and a deletion each
+cancelled and then made, and — on the session that offers them — a command
+raised by a slash and sent as a token, and a model and an effort changed and
+read back off the chip the session's own facts relabel.
+
+Two real faults were behind the last of the failures. The drawer *pushed* the
+conversation it switched to rather than showing it in place, so going back from
+the second agent led to the first and the stack grew with every agent somebody
+looked at; both conversations were also in the window at once, and a driver
+reading a screen by name got the one being left. The router now has a word for
+a sideways move and the drawer uses it. And a control request is acknowledged
+rather than answered flatly, so the journey's reading of what a machine says it
+was given had been looking one level too high and quietly reporting an
+unreadable answer as "the machine was given nothing" — it now unwraps the
+acknowledgement and fails loudly when the answer is not the shape it expects.
+
+Moving a token is driven through the field's own draft rather than by a finger.
+The gesture is a long press on the chip and a drag, which is the text view's
+own text drag: the system begins that session itself from drawn text, and
+nothing outside the process can start one. A press-and-drag was tried and left
+the sentence untouched. What the journey claims is therefore the draft's
+behaviour — the token travels whole, as the one character it is in the
+sentence — and the claim says so plainly rather than implying a driven gesture.

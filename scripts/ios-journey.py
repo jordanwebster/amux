@@ -1394,6 +1394,14 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect("[Review" in seen.get("afterReview", ""),
                    f"the attached review is not in the message: {seen.get('afterReview')!r}")
     journey.say(f"four kinds of token stand in one sentence: {seen['afterReview']!r}")
+    journey.expect(seen.get("afterMove", "").endswith(
+        "[parser.rs][Pasted text \u00b7 14 lines][Review \u00b7 1 comment]"),
+        f"moving one token left {seen.get('afterMove')!r}")
+    journey.say(f"the file token moved in front of the paste whole, as the one character it "
+                f"is in the sentence, leaving the paragraph and the other two tokens as they "
+                f"were; the move went through the field's own draft, because the gesture "
+                f"that performs it on a device is the text view's own text drag and no "
+                f"driver outside the process can begin one")
 
     # Held, replaced, taken back, and the one that was delivered.
     journey.expect(seen.get("queued") == "And then look at the wire format.",
@@ -1439,7 +1447,9 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
                 f"confirmed one closed it")
 
     # The Codex session, which is the one that offers these.
-    journey.expect(seen.get("commandOffered") == "codex",
+    # Where the row says the command came from: the session itself, and not a
+    # plugin somebody installed into it. Two sessions can both offer /compact.
+    journey.expect(seen.get("commandOffered") == "Codex",
                    f"the command the slash raised came from {seen.get('commandOffered')!r}")
     journey.expect("[plan]" in seen.get("command", ""),
                    f"picking a command left {seen.get('command')!r} in the field")
@@ -1449,7 +1459,8 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
                    f"choosing a model left the chip reading {seen.get('model')!r}")
     journey.expect(seen.get("effort") == "Model B \u00b7 high",
                    f"choosing an effort left the chip reading {seen.get('effort')!r}")
-    journey.say(f"a command was raised by a slash, sent as a token and answered; the chip "
+    journey.say(f"the slash raised the session's own commands, and one was sent as a token "
+                f"and answered; the chip "
                 f"went from {seen['modelBefore']!r} to {seen['model']!r} — the model's own "
                 f"default effort, which the machine chose — and then to {seen['effort']!r}")
 

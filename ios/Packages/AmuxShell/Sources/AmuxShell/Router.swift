@@ -81,6 +81,19 @@ public final class Router {
         loader?.load(route)
     }
 
+    /// Shows a page in place of the one on show, for a move that is sideways
+    /// rather than deeper.
+    ///
+    /// Switching between two conversations is the case: they are peers, so
+    /// going back from the second has to lead where going back from the first
+    /// would have. Pushing instead would build a trail of every agent that had
+    /// been looked at, and going back would walk it.
+    public func show(_ route: Route) {
+        guard route.tab == tab, let last = path.indices.last else { return open(route) }
+        self[keyPath: Self.stack(of: tab)][last] = route
+        loader?.load(route)
+    }
+
     /// Replaces a tab's stack. The back gesture and the tab bar write through
     /// here, which is why the stack is settable at all.
     public func setPath(_ routes: [Route], for tab: Tab) {

@@ -121,6 +121,35 @@ final class WritingTests: JourneyCase {
             runner, containing: "[Review", "the attached review is not in the message")
         photograph(app, "writing-tokens")
 
+        // MARK: One token, picked up and put down earlier in the sentence.
+        //
+        // A token is one character where the sentence is written, so moving
+        // one is moving a character: what is around it closes up behind it and
+        // it lands somewhere else entire. The three tokens stand at the end,
+        // after the paragraph, and the file is taken from between the paste
+        // and the review and put in front of both.
+        //
+        // Through the field's own draft, and not by a finger. On a device the
+        // gesture is a long press on the chip and a drag, which is the text
+        // view's own text drag: the system begins that drag session itself
+        // from drawn text, and nothing outside the process — not this driver,
+        // and not VoiceOver — can start one. A press-and-drag on the chip was
+        // tried and left the sentence exactly as it was. So the move is the
+        // edit that drag would end up making, made where the drag would make
+        // it, and what is claimed here is the draft's behaviour and not the
+        // gesture's.
+        let prose = Self.firstLine.count + 1 + Self.secondLine.count
+        try door(runner, .init(
+            kind: "move", identifier: "composer.field", from: prose + 1, to: prose))
+        let moved = try waitForSpoken(
+            runner, containing: "[parser.rs][Pasted text",
+            "the file token did not move in front of the paste")
+        XCTAssertTrue(moved.hasSuffix("[Review \u{00B7} 1 comment]"),
+                      "moving one token disturbed the others: \(moved)")
+        XCTAssertTrue(moved.hasPrefix(Self.firstLine),
+                      "moving a token disturbed the words around it: \(moved)")
+        record["afterMove"] = moved
+
         // MARK: Nothing kept, and the field is empty again.
         press(app, "composer.clear")
         try waitUntil(runner, "clearing left something in the field") {
@@ -141,7 +170,8 @@ final class WritingTests: JourneyCase {
         XCTAssertEqual(try spoken(runner), "", "sending left the message in the field")
         XCTAssertTrue(
             waitUntil { self.received(control, saying: Self.sent) },
-            "the machine never reported the message it was sent")
+            "the machine never reported the message it was sent; it says it was given "
+            + "\(account(control))")
         // One row, not two: the row drawn before the machine answered and the
         // one the machine sent back are the same message, and the feed has to
         // end up holding it once.
@@ -217,7 +247,8 @@ final class WritingTests: JourneyCase {
         waitForNo(app, "facts.queued", "the turn ended and the held message stayed held")
         XCTAssertTrue(
             waitUntil { self.received(control, saying: Self.delivered) },
-            "the turn ended and the machine was never given the message it was holding")
+            "the turn ended and the machine was never given the message it was holding; it "
+            + "says it was given \(account(control))")
 
         // MARK: The address, on the clipboard.
         press(app, "conversation.overflow")
@@ -440,10 +471,27 @@ final class WritingTests: JourneyCase {
     }
 
     /// Every message the machine says it has been given, in its own words.
+    ///
+    /// The runner acknowledges a request rather than answering it flatly, so
+    /// its account of an agent is inside the acknowledgement. Reading past
+    /// that envelope is a failure and not an empty account: a machine that
+    /// has been given nothing and a request that was never understood must
+    /// not look the same.
     private func received(_ control: Lines) throws -> [String] {
         let answer = try control.ask(["AgentObserve": ["agent": Self.host]])
-        let observed = answer["observed"] as? [[String: Any]] ?? []
+        guard let acknowledged = answer["Ack"] as? [String: Any],
+              let observed = acknowledged["observed"] as? [[String: Any]]
+        else {
+            throw Lines.Failure(
+                "the runner's answer holds no account of \(Self.host): \(answer)")
+        }
         return observed.compactMap { $0["text"] as? String }
+    }
+
+    /// What the machine says it has been given, or why it could not say — a
+    /// refused request and an empty account read the same otherwise.
+    private func account(_ control: Lines) -> String {
+        do { return "\(try received(control))" } catch { return "it could not say: \(error)" }
     }
 
     /// Whether the machine says it has been given a message saying this.

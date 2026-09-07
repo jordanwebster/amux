@@ -39,6 +39,32 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(router.top, .conversation(agent))
     }
 
+    func testSwitchingConversationsLeavesOneToGoBackFrom() {
+        let router = Router()
+        let first = agent()
+        let second = agent()
+        router.open(.conversation(first))
+
+        router.show(.conversation(second))
+
+        // One conversation deep, not two: going back leads to the list both
+        // were opened from, and never to the one that was left.
+        XCTAssertEqual(router.path, [.conversation(second)])
+        router.pop()
+        XCTAssertEqual(router.path, [])
+    }
+
+    func testShowingFromARootPushes() {
+        let router = Router()
+        let agent = agent()
+
+        // Nothing is on show to be replaced, so the page has to arrive the
+        // ordinary way.
+        router.show(.conversation(agent))
+
+        XCTAssertEqual(router.path, [.conversation(agent)])
+    }
+
     func testThePageIsUpBeforeAnythingIsAskedToLoadIt() {
         let loader = RecordingLoader()
         let router = Router(loader: loader)

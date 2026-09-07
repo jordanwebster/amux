@@ -31,6 +31,9 @@ struct TokenTextField: UIViewRepresentable {
         view.pasted = { [weak coordinator = context.coordinator] text in
             coordinator?.paste(text) ?? false
         }
+        view.moved = { [weak coordinator = context.coordinator] from, to in
+            coordinator?.move(from: from, to: to)
+        }
         view.backgroundColor = .clear
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
@@ -169,6 +172,15 @@ struct TokenTextField: UIViewRepresentable {
             draft.paste(text)
             parent.draft = draft
             return true
+        }
+
+        /// Takes the character at `from` and puts it down before what is at
+        /// `to`. A token is one character, so this moves a whole token and
+        /// leaves the rest of the sentence as it was.
+        func move(from: Int, to: Int) {
+            var draft = parent.draft
+            draft.move(from: from, to: to)
+            parent.draft = draft
         }
 
         func textViewDidChange(_ view: UITextView) {
@@ -316,11 +328,21 @@ enum TokenChipImage {
 /// anything else, so this is the only place the difference can be made. It is
 /// the whole of the subclass: everything else about the field is the
 /// platform's.
-final class PastingTextView: UITextView {
+public final class PastingTextView: UITextView {
     /// Answers whether the paste was taken. False leaves it to the platform.
     var pasted: ((String) -> Bool)?
 
-    override func paste(_ sender: Any?) {
+    /// Moves one character of what is written, which is how a token moves.
+    ///
+    /// A finger does this by dragging the chip, and that drag is the text
+    /// view's own: the system starts it from a long press on drawn text and
+    /// carries the character across in its own drag session. Nothing outside
+    /// the process can begin one, so a driver proving that a token travels
+    /// whole reaches the edit here instead, through the same draft the drag
+    /// would end up writing to.
+    public var moved: ((Int, Int) -> Void)?
+
+    override public func paste(_ sender: Any?) {
         guard let text = UIPasteboard.general.string, pasted?(text) == true else {
             super.paste(sender)
             return

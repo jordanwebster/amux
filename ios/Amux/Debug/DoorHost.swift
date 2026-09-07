@@ -112,6 +112,8 @@ final class DoorHost {
         case .tap(let identifier): return tap(identifier)
         case .type(let identifier, let text): return type(text, into: identifier)
         case .paste(let identifier, let text): return paste(text, into: identifier)
+        case .move(let identifier, let from, let to):
+            return move(from: from, to: to, in: identifier)
         case .attach(let agent, let kind, let name, let mime, let base64):
             return attach(to: agent, kind: kind, name: name, mime: mime, base64: base64)
         case .pair(let qr): return await pair(with: qr)
@@ -719,6 +721,22 @@ final class DoorHost {
         if !input.isFirstResponder { _ = input.becomeFirstResponder() }
         UIPasteboard.general.string = text
         input.paste(nil)
+        return .ack
+    }
+
+    /// Moves one character of what a named field is holding.
+    ///
+    /// A token is one character in the sentence, so this is how a token is
+    /// moved whole. The edit is the field's own — it goes through the same
+    /// draft a dragged chip ends up written into — because the drag itself is
+    /// the text view's private interaction and cannot be started from outside
+    /// the process.
+    private func move(from: Int, to: Int, in identifier: String) -> DoorReply {
+        guard let window = DoorWindow.current else { return .error("no window on screen") }
+        guard let field = writable(named: identifier, in: window) as? PastingTextView,
+              let moved = field.moved
+        else { return .error("\(identifier) holds nothing that can be moved") }
+        moved(from, to)
         return .ack
     }
 

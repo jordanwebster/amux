@@ -55,6 +55,15 @@ public enum DoorRequest: Sendable, Equatable {
     /// only by hitting a floating bar nobody can name; the paste it performs
     /// is the field's own, and that is what this is.
     case paste(identifier: String, text: String)
+    /// Pick the character at `from` up and put it down before what is at
+    /// `to`, through the named field's own draft.
+    ///
+    /// This is how a token moves, because in the sentence a token is one
+    /// character. A finger does it by dragging the chip, which is a text
+    /// view's own drag interaction — the system starts it from a long press
+    /// on drawn text and no accessibility client can synthesize one, so a
+    /// driver reaches the same edit the drag would make.
+    case move(identifier: String, from: Int, to: Int)
     /// Store an attachment for an agent as though a picker had just handed it
     /// back: the kind, the name, the type and the bytes, base64 for the wire.
     ///
@@ -268,7 +277,7 @@ public struct VisibleFrame: Codable, Sendable, Equatable {
 extension DoorRequest: Codable {
     private enum Key: String, CodingKey {
         case kind, screen, fixture, cloud, relay, token, user, appearance, size, path
-        case identifier, text, seconds, qr, agent, base, prose
+        case identifier, text, seconds, qr, agent, base, prose, from, to
         case attachment, name, mime, base64
     }
 
@@ -313,6 +322,11 @@ extension DoorRequest: Codable {
             self = .paste(
                 identifier: try fields.decode(String.self, forKey: .identifier),
                 text: try fields.decode(String.self, forKey: .text))
+        case "move":
+            self = .move(
+                identifier: try fields.decode(String.self, forKey: .identifier),
+                from: try fields.decode(Int.self, forKey: .from),
+                to: try fields.decode(Int.self, forKey: .to))
         case "attach":
             self = .attach(
                 agent: try fields.decode(String.self, forKey: .agent),
@@ -403,6 +417,11 @@ extension DoorRequest: Codable {
             try fields.encode("paste", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)
             try fields.encode(text, forKey: .text)
+        case .move(let identifier, let from, let to):
+            try fields.encode("move", forKey: .kind)
+            try fields.encode(identifier, forKey: .identifier)
+            try fields.encode(from, forKey: .from)
+            try fields.encode(to, forKey: .to)
         case .attach(let agent, let kind, let name, let mime, let base64):
             try fields.encode("attach", forKey: .kind)
             try fields.encode(agent, forKey: .agent)
