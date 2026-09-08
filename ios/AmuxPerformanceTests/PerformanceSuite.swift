@@ -66,6 +66,21 @@ final class PerformanceSuite: XCTestCase {
             }
         }
 
+        if inputs.measures(.lifecycle) {
+            // The only numbers in a run the app does not take about itself.
+            // How many connections a host is holding is a fact about the far
+            // end of the network, and being put away and picked up is done to
+            // an app rather than by it, so the Mac takes these against a relay
+            // and machines it is really running and leaves them here. They are
+            // judged with the rest, against the same table.
+            let cycles = PerfRun.lifecycleSamples()
+            XCTAssertGreaterThanOrEqual(
+                cycles.count, samples * 3,
+                "the recipe left \(cycles.count) lifecycle samples, not \(samples) of each of "
+                + "the three the table judges")
+            for sample in cycles { run.record(sample) }
+        }
+
         let cadence = FrameCadence.current()
         let verdict = try run.finish(cadence: cadence)
 

@@ -18,6 +18,9 @@ public enum Workload: String, Codable, Sendable, CaseIterable {
     case latency0
     /// The fleet arriving behind a hundred milliseconds of network.
     case latency100
+    /// The phone reached, put away for thirty seconds and picked up again,
+    /// against machines a runner is really running behind a real relay.
+    case putAwayAndPickedUp
 
     /// How long the runner holds each delivery back, for the workloads that
     /// are about the network rather than about the data.

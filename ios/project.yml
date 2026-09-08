@@ -153,17 +153,18 @@ targets:
     platform: iOS
     sources:
       - AmuxPerformanceTests
+    # The suite names the packages' types but must not depend on their
+    # products. A test bundle that lists a package product turns that package
+    # into a dynamic framework for every target in the configuration, and each
+    # of those frameworks carries its own copy of the Rust bridge — so the
+    # app's `-force_load` of the driving bridge above stops answering and the
+    # measured app silently loses the door's network. Taking the types from the
+    # host instead keeps the packages static and the bridge single: the modules
+    # are already built into `BUILT_PRODUCTS_DIR` for the host, so `import
+    # AmuxCore` still resolves, and `BUNDLE_LOADER` resolves the symbols
+    # against the app executable that already links them.
     dependencies:
       - target: Amux
-      # The suite reads the app's own harness through the host it is loaded
-      # into; the core's types are its own import because a test bundle does
-      # not inherit its host's.
-      - package: AmuxCore
-        product: AmuxCore
-      - package: AmuxDesign
-        product: AmuxDesign
-      - package: AmuxFeatures
-        product: AmuxFeatures
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: sh.amux.AmuxPerformanceTests

@@ -22,6 +22,16 @@ public enum PerfFiles {
     /// marked. The samples say how long a launch took; these say where the
     /// time went inside it.
     public static var coldMarks: URL { directory.appendingPathComponent("cold-marks.jsonl") }
+    /// One line of JSON per lifecycle sample, left by the Mac.
+    ///
+    /// These are the only numbers in a run the app cannot take about itself:
+    /// how many connections a host is holding is a fact about the far end of
+    /// the network, and being put away and picked up is done to an app rather
+    /// than by it. The Mac reads the first from the relay and does the second
+    /// to the phone, and leaves the samples here with the rest.
+    public static var lifecycleSamples: URL {
+        directory.appendingPathComponent("lifecycle-samples.jsonl")
+    }
     public static var samples: URL { directory.appendingPathComponent("samples.json") }
     public static var verdict: URL { directory.appendingPathComponent("verdict.json") }
     public static var cadence: URL { directory.appendingPathComponent("cadence.json") }
@@ -50,6 +60,9 @@ public enum PerfSection: String, Codable, Sendable, CaseIterable {
     /// The transcript: a thousand rows with fifty a second arriving on top of
     /// them, and the same thousand rows left alone.
     case streaming
+    /// What the relay holds for this phone while it is being used, put away
+    /// and picked up again.
+    case lifecycle
 }
 
 /// The facts only the Mac knows: which machine this is, which simulator is
@@ -120,10 +133,18 @@ public struct PerfRun: Sendable {
     public var samples: [MetricSample] { taken }
 
     /// Every cold-start sample the app left behind, oldest first.
-    public static func coldSamples() -> [MetricSample] {
-        guard let text = try? String(contentsOf: PerfFiles.coldSamples, encoding: .utf8) else {
-            return []
-        }
+    public static func coldSamples() -> [MetricSample] { lines(of: PerfFiles.coldSamples) }
+
+    /// Every lifecycle sample the Mac left behind, oldest first.
+    public static func lifecycleSamples() -> [MetricSample] {
+        lines(of: PerfFiles.lifecycleSamples)
+    }
+
+    /// One sample per line, skipping anything that will not decode: a file
+    /// half-written by a run that died is not a reason to report the samples
+    /// before it as this run's.
+    private static func lines(of file: URL) -> [MetricSample] {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
         let decoder = JSONDecoder()
         return text.split(separator: "\n").compactMap {
             try? decoder.decode(MetricSample.self, from: Data($0.utf8))

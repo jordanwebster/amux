@@ -19,6 +19,7 @@ import time
 sys.path.insert(0, str(Path(__file__).parent))
 import ios_project
 import ios_simulators
+from ios_testnet import Door, answer, free_port, runner
 
 DOCUMENT = Path("docs/IOS_PERFORMANCE.md")
 BASELINES = Path("ios/Perf/baselines")
@@ -49,7 +50,26 @@ REPORT = "report.md"
 ARCHITECTURE = ["ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES"]
 # The groups of measurements a run can be asked for one of, named as the app
 # names them. A whole run takes all of them and is what CI does.
-SECTIONS = ["cold", "reconciliation", "echo", "streaming"]
+SECTIONS = ["cold", "reconciliation", "echo", "streaming", "lifecycle"]
+# The machines a lifecycle audit is taken against. How many connections a host
+# is holding is a fact about the far end of the network, so it is read off a
+# relay and daemons that are really running rather than off the phone.
+TOPOLOGY = "e2e-tests/topologies/home-fleet.json"
+# What the phone is put behind when it is put away. Settings is on every
+# simulator and is not this app, which is the whole requirement.
+ELSEWHERE = "com.apple.Preferences"
+# The two waits the definitions pin: thirty seconds away, sixty sitting idle.
+AWAY_SECONDS = 30
+IDLE_SECONDS = 60
+# Five cycles, because every metric here rests on five samples.
+CYCLES = 5
+# How long to wait on one door request that waits on the network. The
+# door's own waits are a minute each and pairing does two of them.
+PATIENCE = 300
+# What the Mac leaves in the app's container for the suite to judge, and the
+# audit it writes beside the verdict for a person to read.
+LIFECYCLE_SAMPLES = "lifecycle-samples.jsonl"
+LIFECYCLE = "lifecycle.json"
 # What a run records beside the verdict, from the build rather than from the
 # suite: what a shipped build weighs.
 SIZES = "size.md"
@@ -141,9 +161,61 @@ def build(udid: str) -> None:
         "-quiet",
         *ARCHITECTURE,
     ], check=True, timeout=1800)
+    # Uninstalled first, so every run starts against an app that has never
+    # been signed in or paired. Installing over the last run leaves its
+    # account and its trust behind, and a machine this phone has already been
+    # through is not offered for pairing a second time — so the lifecycle
+    # audit, which pairs with a machine the runner has only just started,
+    # waits for an offer that never comes and the run dies after the numbers
+    # it already took. It also keeps a cold start cold in the sense that
+    # matters: the same empty app every time.
+    subprocess.run(
+        ["xcrun", "simctl", "uninstall", udid, BUNDLE_ID], capture_output=True, timeout=600)
     subprocess.run(
         ["xcrun", "simctl", "install", udid, str(PRODUCTS / "Amux.app")],
         check=True, timeout=600)
+    driving(udid)
+
+
+# The marker the bridge built with its driving tools reports itself under. A
+# build without it is the shipping bridge, which refuses a plaintext relay.
+DRIVING = "+debug-tools"
+
+
+def driving(udid: str) -> None:
+    """Refuse a measured app whose bridge is the shipping one.
+
+    The app force-loads the bridge built with its driving tools, and that flag
+    is easy to lose without anything failing to build: a test bundle that
+    depends on a package product turns every package into its own framework,
+    each carrying its own copy of the shipping bridge, and the force-load stops
+    answering. The app then runs, measures and passes — and quietly cannot
+    reach a plaintext test relay, so every measurement that needs a network
+    disappears from the verdict rather than failing in it. Asking the running
+    app which bridge it has is the only way to see that from outside.
+    """
+    port = free_port()
+    subprocess.run(
+        ["xcrun", "simctl", "terminate", udid, BUNDLE_ID], capture_output=True, timeout=300)
+    subprocess.run(
+        ["xcrun", "simctl", "launch", udid, BUNDLE_ID, "-amux-door-port", str(port)],
+        check=True, text=True, capture_output=True, timeout=300)
+    door = Door(port)
+    try:
+        opened(door)
+        build_marker = door.ask({"kind": "bridge"})["bridge"]["build"]
+    finally:
+        subprocess.run(
+            ["xcrun", "simctl", "terminate", udid, BUNDLE_ID], capture_output=True, timeout=300)
+    if DRIVING not in build_marker:
+        raise SystemExit(
+            f"the {CONFIGURATION} app reports bridge {build_marker!r}, which is the shipping "
+            f"bridge rather than the one built with its driving tools ({DRIVING}). Its "
+            "force-load of the driving archive is not answering — check that nothing has "
+            "given the packages a second, dynamic copy of the bridge, such as a test bundle "
+            "depending on a package product. Measuring against this build would silently "
+            "drop every measurement that needs a relay.")
+    print(f"the {CONFIGURATION} app runs bridge {build_marker}", flush=True)
 
 
 def clear_previous(perf: Path, output: Path) -> None:
@@ -157,7 +229,7 @@ def clear_previous(perf: Path, output: Path) -> None:
     for folder in [perf, output]:
         for name in PRODUCED:
             (folder / name).unlink(missing_ok=True)
-    for name in [REPORT, SIZES]:
+    for name in [REPORT, LIFECYCLE, SIZES]:
         (output / name).unlink(missing_ok=True)
 
 
@@ -176,7 +248,7 @@ def inputs(udid: str, row: dict, only: str | None) -> Path:
         "only": only,
         "configuration": CONFIGURATION,
     }, indent=2))
-    for name in ["cold-samples.jsonl", "cold-marks.jsonl"]:
+    for name in ["cold-samples.jsonl", "cold-marks.jsonl", LIFECYCLE_SAMPLES]:
         (perf / name).unlink(missing_ok=True)
     return perf
 
@@ -208,6 +280,192 @@ def cold_starts(udid: str, perf: Path) -> None:
         "cold first frame: "
         + ", ".join(f"{value:.0f} ms" for value in values), flush=True)
     print(split(perf / "cold-marks.jsonl"), flush=True)
+
+
+def launch(udid: str, *arguments: str) -> int:
+    """Bring the app to the front, and say which process that is.
+
+    `simctl launch` starts an app that is not running and brings a running one
+    forward without restarting it, answering with the same process either way.
+    That is the difference between a phone picked up out of a pocket and a
+    phone switched on, and the audit below reads the number back to be sure it
+    got the first one.
+    """
+    reply = subprocess.run(
+        ["xcrun", "simctl", "launch", udid, BUNDLE_ID, *arguments],
+        check=True, text=True, capture_output=True, timeout=300).stdout
+    return int(reply.strip().rsplit(":", 1)[1])
+
+
+def lifecycle(udid: str, perf: Path, output: Path) -> None:
+    """What the relay holds for this phone, used, put away and picked up.
+
+    Every other number in a run is taken inside the app, and these cannot be.
+    How many connections a machine is holding is a fact about the far end of
+    the network, and being put away is something done to an app rather than by
+    it. So the Mac starts a relay and two machines the runner really runs,
+    points the app at them, reads the inventory the relay itself keeps, and
+    puts the phone behind another app and brings it back — five times over.
+    The samples land beside the app's own and are judged against the same
+    table; the audit they came out of is written out whole, because a count
+    that met its budget still has to be readable as what was actually held.
+    """
+    written = perf / LIFECYCLE_SAMPLES
+    written.unlink(missing_ok=True)
+    samples: list[dict] = []
+    # The machines go into the audit because every count in it is only
+    # readable once the phone can be told apart from the fleet, and the
+    # relay names all of them the same way.
+    audit: dict = {"away": AWAY_SECONDS, "idle": IDLE_SECONDS, "cycles": []}
+
+    def sample(metric: str, value: float, unit: str) -> None:
+        samples.append({
+            "metric": metric, "value": value, "unit": unit,
+            "proxy": False, "workload": "putAwayAndPickedUp",
+        })
+
+    with runner(TOPOLOGY) as ready:
+        control = ready["control"]
+        account = "personal"
+        token, = [user["token"] for user in ready["users"] if user["label"] == account]
+        # The relay keeps its inventory under host ids, not under the names
+        # the topology gives its machines, so the machines are held by id
+        # here too. Matching on names would put every machine on the
+        # phone's side of the split and report the fleet's own links as
+        # connections the phone was holding while it was put away.
+        machines = [daemon["host_id"] for daemon in ready["daemons"]]
+        trusted = ready["daemons"][0]
+        code = answer(control, {
+            "StartPinPairing": {"daemon": trusted["name"], "ttl_secs": 900}})["pin"]
+
+        def holding() -> dict[str, int]:
+            """What the relay is holding for this account: one entry per party
+            connected to it, and how many links each of them holds."""
+            counted = {}
+            for entry in answer(control, {"Connections": {"user": account}})["links"]:
+                host, links = entry.rsplit(":", 1)
+                counted[host.strip()] = int(links)
+            return counted
+
+        def phone(inventory: dict[str, int]) -> int:
+            """How many links this phone holds. Everything in the inventory
+            that is not one of the runner's machines is the phone."""
+            return sum(links for name, links in inventory.items() if name not in machines)
+
+        port = free_port()
+        door = Door(port)
+        running = launch(
+            udid, "-amux-door-port", str(port),
+            "-amux-relay", f"http://{ready['relay']}",
+            "-amux-token", token, "-amux-user", "perf-phone")
+        try:
+            opened(door)
+            # Both of these are one request the app answers only when the
+            # thing has happened: pairing waits on the machine twice over and
+            # reconciling waits on the fleet, each with its own patience of a
+            # minute. The socket has to outlast all of it, or a run that paired
+            # perfectly well is reported as a read that timed out.
+            door.ask(
+                {"kind": "pairByCode", "host": trusted["host_id"], "pin": code},
+                timeout=PATIENCE)
+            door.ask({"kind": "awaitReconciled", "seconds": 60}, timeout=PATIENCE)
+            reached = holding()
+            # Everything below splits this inventory into the phone and the
+            # fleet by name. If the relay stopped naming its machines the way
+            # the runner does, that split would silently put the fleet's own
+            # links on the phone's side and the counts would still look like
+            # counts, so it is checked once, here, before any of them is taken.
+            if not set(machines) <= set(reached):
+                raise SystemExit(
+                    f"the relay's inventory {sorted(reached)} does not name the machines "
+                    f"{sorted(machines)} the runner started, so nothing here can tell the "
+                    "phone's connections apart from the fleet's")
+            audit["machines"] = machines
+            audit["whenReached"] = reached
+            print(f"the relay holds {reached} with the app in front", flush=True)
+
+            # Nothing periodic while nobody is doing anything. There is no
+            # budget row for this one and there does not need to be: a phone
+            # that dialled while it was sitting still would be a fact, not a
+            # number, and the run stops rather than reporting the rest.
+            before = door.ask({"kind": "bridge"})["bridge"]["relayAttempts"]
+            time.sleep(IDLE_SECONDS)
+            after = door.ask({"kind": "bridge"})["bridge"]["relayAttempts"]
+            settled = holding()
+            audit["whenIdle"] = {"holding": settled, "dialsBefore": before, "dialsAfter": after}
+            if after != before or settled != reached:
+                raise SystemExit(
+                    f"sitting idle for {IDLE_SECONDS}s changed something: the relay held "
+                    f"{reached} and now holds {settled}, after {before} dials and now {after}")
+            print(
+                f"nothing moved over {IDLE_SECONDS}s idle: still {settled}, still {after} dials",
+                flush=True)
+
+            for cycle in range(CYCLES):
+                subprocess.run(
+                    ["xcrun", "simctl", "launch", udid, ELSEWHERE],
+                    check=True, text=True, capture_output=True, timeout=300)
+                time.sleep(AWAY_SECONDS)
+                away = holding()
+                sample("backgroundConnections", float(phone(away)), "count")
+
+                picked = time.monotonic()
+                again = launch(udid)
+                if again != running:
+                    raise SystemExit(
+                        f"bringing the app back started process {again} where {running} was "
+                        "running: that is a phone switched on, not a phone picked up, and "
+                        "the recovery it would time is a cold start")
+                back = holding()
+                while phone(back) < 1 and time.monotonic() - picked < 30:
+                    time.sleep(0.05)
+                    back = holding()
+                recovery = (time.monotonic() - picked) * 1_000
+                sample("foregroundRecoveryMs", recovery, "ms")
+                # Over the machines alone: the phone is in this inventory too,
+                # and what the row is about is a machine not being asked for a
+                # second link by whatever the phone has open.
+                sample("connectionsPerHost", float(max(
+                    (links for name, links in back.items() if name in machines),
+                    default=0)), "count")
+                state = door.ask({"kind": "bridge"})["bridge"]
+                audit["cycles"].append({
+                    "whileAway": away, "whenBack": back,
+                    "recoveryMs": round(recovery, 1),
+                    "connection": state["connection"], "reconciled": state["reconciled"],
+                })
+                print(
+                    f"cycle {cycle + 1}: away the relay held {away}, back it holds {back} "
+                    f"after {recovery:.0f} ms, {state['connection']}",
+                    flush=True)
+        finally:
+            for identifier in (BUNDLE_ID, ELSEWHERE):
+                subprocess.run(
+                    ["xcrun", "simctl", "terminate", udid, identifier],
+                    text=True, capture_output=True, timeout=300)
+
+    written.write_text("".join(json.dumps(one) + "\n" for one in samples))
+    output.mkdir(parents=True, exist_ok=True)
+    (output / LIFECYCLE).write_text(json.dumps(audit, indent=2) + "\n")
+
+
+def opened(door: Door, seconds: float = 60) -> None:
+    """Wait for the app to have opened its door.
+
+    A launch answers as soon as the process exists, which is before the app has
+    bound anything. Everything after this talks to the door, so a run that did
+    not wait would fail on connecting rather than on what it came to measure.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            door.ask({"kind": "bridge"}, timeout=5)
+            return
+        except (OSError, ValueError):
+            if time.monotonic() > deadline:
+                raise SystemExit(
+                    f"the app never opened its door on 127.0.0.1:{door.port} within {seconds}s")
+            time.sleep(0.2)
 
 
 def sizes(output: Path) -> None:
@@ -335,7 +593,7 @@ def collect(
             "The suite did not reach the end, so this run has no result; anything "
             f"under {output} belongs to an earlier run and is not it.")
     output.mkdir(parents=True, exist_ok=True)
-    for name in [*PRODUCED, "cold-samples.jsonl", "cold-marks.jsonl"]:
+    for name in [*PRODUCED, "cold-samples.jsonl", "cold-marks.jsonl", LIFECYCLE_SAMPLES]:
         source = perf / name
         if source.is_file():
             (output / name).write_text(source.read_text())
@@ -405,6 +663,8 @@ def report(verdict: dict, output: Path, minutes: float) -> None:
         "reports 60 Hz and a ProMotion phone reports 120, so this is the claim "
         "that the app caps nothing rather than the claim that it reaches 120.",
         "",
+        f"What the relay saw: {lifecycle_line(output)}.",
+        "",
         f"What a shipped build weighs is recorded beside this, in `{SIZES}`.",
         "",
         "A row marked `proxy` is a number about this simulator standing in for "
@@ -432,6 +692,37 @@ def cadence(output: Path) -> str:
         f"{str(seen['disableMinimumFrameDurationOnPhone']).lower()}, "
         f"a preferred range up to {seen['preferredRangeUpperBound']:.0f} Hz against "
         f"a display maximum of {seen['maximumFramesPerSecond']} Hz")
+
+
+def lifecycle_line(output: Path) -> str:
+    """The lifecycle audit in one sentence, with the whole of it beside it."""
+    read = output / LIFECYCLE
+    if not read.is_file():
+        return f"nothing; this run did not take the lifecycle group ({LIFECYCLE} is absent)"
+    seen = json.loads(read.read_text())
+    cycles = seen.get("cycles") or []
+    if not cycles:
+        return f"an audit with no cycles in it; see `{LIFECYCLE}`"
+    machines = set(seen.get("machines") or [])
+
+    def phone(inventory: dict[str, int]) -> int:
+        """This phone's own links. Everything the runner did not start is it."""
+        return sum(links for host, links in inventory.items() if host not in machines)
+
+    reached = seen["whenReached"]
+    away = max(phone(one["whileAway"]) for one in cycles)
+    back = min(phone(one["whenBack"]) for one in cycles)
+    recovery = max(one["recoveryMs"] for one in cycles)
+    dials = seen["whenIdle"]["dialsAfter"]
+    return (
+        f"{len(machines)} machines holding at most "
+        f"{max((links for host, links in reached.items() if host in machines), default=0)} "
+        f"link each and this phone holding "
+        f"{phone(reached)} with the app in front, unchanged over {seen['idle']}s idle "
+        f"and after {dials} dial{'' if dials == 1 else 's'} in all; put away for "
+        f"{seen['away']}s the phone held {away}, and picked up again it held {back} "
+        f"within {recovery:.0f} ms, worst of {len(cycles)} cycles (the whole audit, "
+        f"host by host, is in `{LIFECYCLE}`)")
 
 
 def describe() -> None:
@@ -534,10 +825,12 @@ def main() -> None:
         print(f"only the {only} measurements were asked for", flush=True)
     if only in [None, "cold"]:
         cold_starts(udid, perf)
-    if only is None:
-        # Before the suite: a size taken after it would be a size nobody could
-        # read whenever the suite failed, which is when it is most wanted.
+    if only in [None, "lifecycle"]:
+        # Both before the suite: the suite judges the lifecycle samples with
+        # the rest, and a size taken after it would be a size nobody could
+        # read if the suite failed.
         sizes(OUTPUT)
+        lifecycle(udid, perf, OUTPUT)
     measure(udid)
     # The container is asked for again rather than remembered: installing the
     # test build can give the app a new one, and copying out of the old one

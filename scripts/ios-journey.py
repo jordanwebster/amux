@@ -28,7 +28,6 @@ was shortcut. Fix the act, then run the journey with no `--act` to prove it.
 """
 
 import base64
-import contextlib
 import copy
 from datetime import datetime, timedelta, timezone
 import json
@@ -36,20 +35,19 @@ import os
 from pathlib import Path
 import shutil
 import signal
-import socket
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path("ios/Tools").resolve()))
 import ios_simulators
-# The relay and its daemons are started and torn down exactly as the door
-# smoke starts and tears them down; sharing the helpers keeps one description
-# of what a clean shutdown means.
-from loopback_smoke import control, read_ready, released
+# The relay, its daemons and the two sockets a phone is driven through live
+# next door, because the performance run reads connections off the same relay
+# and one description of a testnet is better than two that drift.
+from ios_testnet import answer, free_port, runner
+from loopback_smoke import control
 
 MANIFEST = Path("ios/Journeys/manifest.json")
 DERIVED_DATA = Path("target/ios/DerivedData")
@@ -256,35 +254,6 @@ def speak(journey: Journey, launch: str, requests: list[dict]) -> list[dict]:
 UI_TESTS = "sh.amux.AmuxUITests.xctrunner"
 
 
-def answer(address: str, request: object) -> dict:
-    """One control request and the Ack it came back with.
-
-    `control` is enough where a verb only has to have happened. Pairing and
-    observing come back with something the journey then uses, so their answers
-    are read rather than only checked.
-    """
-    host, port = address.rsplit(":", 1)
-    with socket.create_connection((host, int(port)), timeout=30) as connection:
-        connection.sendall((json.dumps(request) + "\n").encode())
-        with connection.makefile("rb") as stream:
-            reply = json.loads(stream.readline())
-    if "Ack" not in reply:
-        raise RuntimeError(f"the runner refused {request}: {reply}")
-    return reply["Ack"]
-
-
-def free_port() -> int:
-    """A port nothing is listening on, for the door a UI test will talk to.
-
-    A UI test cannot read the readiness file the app writes: that file is in
-    the app's container on the device and the test has a container of its own.
-    So the port is chosen here, where both sides can be told about it.
-    """
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
-
-
 def test_container(udid: str) -> Path:
     """Where the UI test runner's own files land, which is a real directory on
     this Mac: it is how a test hands a photograph, a tree or a word back."""
@@ -407,36 +376,6 @@ def perform(
 def install(udid: str) -> None:
     """Puts the build under test on the simulator, once per journey."""
     ios_simulators.run("xcrun", "simctl", "install", udid, str(APPLICATION), timeout=300)
-
-
-@contextlib.contextmanager
-def runner(topology: str):
-    """The test relay and its daemons, started from a committed topology and
-    torn down completely: no listener left bound, no state left behind."""
-    with tempfile.TemporaryDirectory(prefix="amux-journey-") as temporary:
-        root = Path(temporary)
-        environment = os.environ | {key: str(root) for key in ("TMPDIR", "TMP", "TEMP")}
-        process = subprocess.Popen(
-            ["e2e-runner", "testnet", "serve", "--topology", topology],
-            env=environment, stdout=subprocess.PIPE, text=True)
-        try:
-            ready = read_ready(process)
-            print(f"testnet: relay {ready['relay']}, control {ready['control']}", flush=True)
-            yield ready
-            control(ready["control"], "Shutdown")
-            if process.wait(timeout=30) != 0:
-                raise SystemExit("the test relay failed during shutdown")
-            released(ready["relay"])
-            released(ready["control"])
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-            process.stdout.close()
 
 
 # MARK: - Reading a screen

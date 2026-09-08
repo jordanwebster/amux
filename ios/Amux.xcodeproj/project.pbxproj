@@ -20,7 +20,6 @@
 		344D301838279573239BD80D /* Judge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7316CFA811C55B9CEEB041C5 /* Judge.swift */; };
 		37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */; };
 		3E12136749508940FA54BC5F /* Fixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DE7599AB005A8225918A3EF /* Fixture.swift */; };
-		40764CA1E1F2F8A2C244A3FF /* AmuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7A185CA200BF122E708201F8 /* AmuxCore */; };
 		48C852D18B47B3DA431FDA05 /* Door.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DA38C20C8560FEE2BB88D9F /* Door.swift */; };
 		526D112B4DCB651C254E5F9F /* ReportsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */; };
 		53E854553FBEB2A633CAF420 /* AccessibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DE352A112572D9D86D0590 /* AccessibilityTests.swift */; };
@@ -32,7 +31,6 @@
 		6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BF809F88F54D264E26E1F0B /* DrawerTests.swift */; };
 		71EF8392260DD101E76C1D32 /* AskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD0B049D76F4DAF62A8B46E /* AskTests.swift */; };
 		7D4CF562DADA4EB7723324CD /* ReviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC486A7A07178E55789AE94C /* ReviewTests.swift */; };
-		7E37AF5A01DF31494E49948C /* AmuxDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 518CACD385E201BC13A07DD6 /* AmuxDesign */; };
 		82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */; };
 		85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBADB0CC914373F8BD52E715 /* AmuxApp.swift */; };
 		894FA032EAF19BFC5E92664F /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4FC885DCA537FD2ABD0FD /* Trace.swift */; };
@@ -48,7 +46,6 @@
 		BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 7841E9EA7855115C8262F599 /* Localizable.xcstrings */; };
 		C09FEF55EDD6530C94D3E862 /* Instruments.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E1FE40B447768ED3E301C2 /* Instruments.swift */; };
 		CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */ = {isa = PBXBuildFile; fileRef = 6DC1FF3D962A7B46549AF24A /* frozen-frame.png */; };
-		CC47E088696AFFB5355CC755 /* AmuxFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = 5DAB04E1049B001BF097770B /* AmuxFeatures */; };
 		CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */; };
 		D1A7249247B147B6A897D074 /* HostsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71AECE15627BD11A3278E26C /* HostsTests.swift */; };
 		D6110EDBF7C482ED12425744 /* Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11108752C34ADBDF5089E372 /* Fixtures.swift */; };
@@ -144,16 +141,6 @@
 				6805234D9DC817A50B5F83BD /* AmuxDesign in Frameworks */,
 				E4DF9C7A152AFAF210FB4241 /* AmuxFeatures in Frameworks */,
 				EF9507B8D384D5EAE754EFB4 /* AmuxShell in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		6F4087E2626EF91854B08A3B /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				40764CA1E1F2F8A2C244A3FF /* AmuxCore in Frameworks */,
-				7E37AF5A01DF31494E49948C /* AmuxDesign in Frameworks */,
-				CC47E088696AFFB5355CC755 /* AmuxFeatures in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -348,7 +335,6 @@
 			buildConfigurationList = 72CE7FB944009A38D87A9371 /* Build configuration list for PBXNativeTarget "AmuxPerformanceTests" */;
 			buildPhases = (
 				114CCBA2C817D62D398FF5B0 /* Sources */,
-				6F4087E2626EF91854B08A3B /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -357,9 +343,6 @@
 			);
 			name = AmuxPerformanceTests;
 			packageProductDependencies = (
-				7A185CA200BF122E708201F8 /* AmuxCore */,
-				518CACD385E201BC13A07DD6 /* AmuxDesign */,
-				5DAB04E1049B001BF097770B /* AmuxFeatures */,
 			);
 			productName = AmuxPerformanceTests;
 			productReference = DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */;
@@ -951,21 +934,9 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		518CACD385E201BC13A07DD6 /* AmuxDesign */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = AmuxDesign;
-		};
-		5DAB04E1049B001BF097770B /* AmuxFeatures */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = AmuxFeatures;
-		};
 		62675EA602BEE702494C2D3C /* AmuxShell */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AmuxShell;
-		};
-		7A185CA200BF122E708201F8 /* AmuxCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = AmuxCore;
 		};
 		848B7908370DBF226D9CCEF9 /* AmuxCore */ = {
 			isa = XCSwiftPackageProductDependency;

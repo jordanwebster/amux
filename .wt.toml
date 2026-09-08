@@ -145,7 +145,7 @@ run = 'timeout 900 cargo run -q -p xtask -- golden reference'
 # docs/IOS_PERFORMANCE.md, on a machine that document has a row for.
 [task.ios-perf]
 run = 'timeout 2700 python3 -B scripts/ios-perf.py "$@"'
-needs = ["ios-rust"]
+needs = ["ios-rust", "build"]
 
 [task.ios-loopback-smoke]
 run = "timeout 1800 python3 -B ios/Tools/loopback_smoke.py"

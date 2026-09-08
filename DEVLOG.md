@@ -4,6 +4,52 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **The measured build gets its driving bridge back, and the relay says what the phone holds.**
+
+A `Measured` build could not reach a plaintext test relay, and nothing said so:
+it built, ran, measured and passed, and every measurement that needed a network
+simply was not in the verdict. The cause was in the project file. The
+performance bundle listed `AmuxCore`, `AmuxDesign` and `AmuxFeatures` as its own
+package dependencies while also being hosted in the app, and a test bundle that
+depends on a package product turns that package into a dynamic framework for
+every target in the configuration. Each of those frameworks carried its own copy
+of the shipping bridge out of AmuxCore's manifest, so the app's `-force_load` of
+the bridge built with its driving tools stopped answering. The bundle now takes
+those types from the host it is loaded into instead: the packages are static,
+there is one bridge in the app, and it is the driving one. `Debug` never had the
+problem because it has no such bundle and stays a single image.
+
+Because that is a defect nothing failed on, the recipe now asks the running app
+which bridge it has before it measures anything and refuses a build that answers
+with the shipping one.
+
+With the network back, a run takes the third record that was missing: what the
+relay holds for this phone. It starts a relay and two machines for real, pairs
+the app with one of them, and reads the relay's own inventory — with the app in
+front, after a minute of nobody touching it, and over five rounds of putting the
+phone behind another app for thirty seconds and picking it back up. Picking it
+up is checked to be the same process that was put away, because a phone switched
+on is not a phone picked up and the recovery that would time is a cold start.
+Two machines hold one link each, the phone holds one in front and none while it
+is away, nothing dials while it sits idle, and the link is back within about
+250 ms of picking it up. Those samples are judged against the same table as the
+app's own.
+
+Two things had to be fixed to make that audit true rather than merely green. It
+split the phone from the fleet by the names the topology gives its machines,
+while the relay keeps its inventory under host ids — so on the first run every
+machine landed on the phone's side and the phone appeared to hold two
+connections while it was put away. And a run now erases the app's container
+before installing: a machine this phone has already paired with is not offered
+for pairing again, so a second run on the same simulator sat waiting for an
+offer that never came.
+
+Collapsing the packages to a static link moved the cold first frame from 438 ms
+to 428 ms against its 460 ms gate. The whole run: cold 428, reconciliation 9 and
+117, echo 6.5 of 17, hitch 0.0 of 5, CPU 42% of 60, footprint 67 MB of 250, no
+idle commits, and the three lifecycle rows. Seven and a half minutes on the
+pinned Mac.
+
 2026-09-09 — **Write down what the app weighs and what it asks the display for.**
 
 A whole performance run now records two things that are not budgets. It builds

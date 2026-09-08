@@ -32,12 +32,12 @@ recipe measures and which the physical-phone checklist holds.
 | Mac | MacBook Pro Mac14,6, Apple M2 Max, 32 GB, macOS 26.5.2, Xcode 26.6 (17F113); the perf recipe refuses an unknown machine |
 | Simulator | amux-golden: iPhone 17 Pro, iOS 26.5, 3× scale, en_US, 9:41 status bar, full battery; reports 60 Hz, so every frame-rate figure from it is a proxy |
 | CI runner | GitHub-hosted `macos-26` (Xcode 26.6 default, iOS 26.5 simulator runtime, iPhone 17 Pro device type), Xcode selected explicitly in the workflow |
-| Build | The `Measured` configuration: optimised the way a shipped build is, with the driving door, the fixtures and the workload generator still compiled in and testability on, and coverage and sanitizers off. Every verdict names the configuration and says whether the code that took the numbers was optimised |
+| Build | The `Measured` configuration: optimised the way a shipped build is, with the driving door, the fixtures and the workload generator still compiled in and testability on, and coverage and sanitizers off. One image: the packages are linked statically into the app, as they are in a shipped build, and the bridge inside it is the single copy built with the driving tools — the recipe asks the running app which bridge it has and refuses a build that answers with the shipping one. Every verdict names the configuration and says whether the code that took the numbers was optimised |
 | Fleet workload | 40 cached agents over 3 hosts: 6 needing you, 4 finished, 3 unknown, 5 day-old, the rest running or idle; seed 1 |
 | Conversation workload | 1,000 rows: 55% prose with markdown, 20% tool rows, 10% folded reads, 5% command output over 200 lines, 5% edits, 5% rules and unknown rows; seed 1 |
 | Stream | 50 rows per second for 20 s appended to the conversation workload while the list auto-scrolls to the tail; the arriving rows carry identities that continue the transcript's, as a real feed's do |
 | Network | Runner latency 0 ms and 100 ms; reconciliation measured at both, budget applies at both |
-| Cold first frame | Kernel process start to the first presented frame containing the cached fleet rows themselves, shimmer running — not a launch image and not an empty list; 5 cold launches of a Debug build with the app terminated between; on the pinned simulator median ≤ 460 ms, worst ≤ 600 ms; the 400 ms this stands for on a phone is on the physical-phone checklist |
+| Cold first frame | Kernel process start to the first presented frame containing the cached fleet rows themselves, shimmer running — not a launch image and not an empty list; 5 cold launches of a `Measured` build with the app terminated between; on the pinned simulator median ≤ 460 ms, worst ≤ 600 ms; the 400 ms this stands for on a phone is on the physical-phone checklist |
 | Reconciliation | `streamConnected` to the last row's shimmer ending; median ≤ 1,000 ms at either latency |
 | Optimistic echo | `sendTapped` to the first presented frame containing the row, taken over the conversation workload on the shipped page with the composer there; ≤ 1 frame interval, measured on the simulator as ≤ 17 ms and labelled a proxy for 8.3 ms on ProMotion |
 | Streaming scroll | Hitch time ratio ≤ 5 ms per second (display-link missed-frame accounting, labelled a proxy for `XCTHitchMetric` on a device); main-thread CPU ≤ 60% of one core averaged over the stream; footprint ≤ 250 MB |
@@ -88,27 +88,34 @@ nothing — but the strip, the foot and the composer are laid out on every frame
 those arrivals cause, and a number taken with the feed alone would be a number
 about a screen nobody uses.
 
-A whole run also records two things that are not budgets. What a shipped build
-weighs: a `Release` build for a phone, unsigned, laid out on disk, with the
-bridge's own static archives and the profile they were built under beside it —
-the size requirement is a policy about where size comes from rather than a
-ceiling, so there is nothing to pass or fail. And what the app asks the display
-for: `capped`, `disableMinimumFrameDurationOnPhone` and the preferred range
-against the display's maximum, which on a simulator reporting 60 Hz is the
-claim that the app caps nothing and never the claim that it reaches 120.
+The lifecycle numbers are the only ones in a run not taken inside the app, and
+they could not be: how many connections a machine is holding is a fact about
+the far end of the network, and being put away is something done to an app
+rather than by it. So the recipe starts a relay and two machines and runs them
+for real, points the app at them, pairs it, and reads the inventory the relay
+itself keeps — while the app is in front, after a minute of nobody touching it,
+and over five rounds of putting the phone behind another app for thirty seconds
+and bringing it back. Bringing it back is checked to be the same process it put
+away, because a phone switched on is not a phone picked up and the recovery it
+would time is a cold start. Those samples land beside the app's own and are
+judged against the same table.
 
-The lifecycle row has nothing measuring it yet. What it asks for — one
-connection per machine, none while the phone is away, one back within two
-seconds — can only be read from the far end of a real relay, and the
-`Measured` build cannot reach the test relay: its packages are built as
-separate frameworks, each linking the shipping bridge, so the driving bridge
-the app force-loads never answers and a plaintext loopback relay is refused.
-The `Debug` build links everything into one image and does reach it, which is
-why `wt run ios-journey -- hosts-lifecycle` can make the same claims today.
+Every run installs the app over a container it has erased first, so it starts
+having never been signed in or paired. That is not tidiness: a machine this
+phone has already been through is not offered for pairing again, and a run that
+inherited the last one's trust would sit waiting for an offer of a machine the
+runner had only just started.
+
+A run also records what a shipped build weighs — a `Release` build for a phone,
+unsigned, laid out on disk, with the bridge's own archives and the profile they
+were built under beside it — and what the app asks the display for. Neither is
+a budget: the size requirement is a policy about where size comes from, and the
+cadence facts are about the app capping nothing, which on a simulator reporting
+60 Hz cannot be the claim about 120.
 
 A run can be asked for one group of measurements — `wt run ios-perf -- --only
-streaming`, or `cold`, `reconciliation` or `echo` — which is for working on
-that group rather than for reporting. The verdict then carries only the rows this
+streaming`, or `cold`, `reconciliation`, `echo` or `lifecycle` — which is for
+working on that group rather than for reporting. The verdict then carries only the rows this
 run measured, so a partial run cannot report a pass on a metric it never took;
 recording a baseline needs a whole run, and asking for both is refused.
 
@@ -117,10 +124,11 @@ samples, and the median is what a budget is applied to. One suite runs at a
 time: two measurements sharing a machine measure each other.
 
 What it costs to run, because a person deciding whether to start one should
-not have to find out by starting one: on the pinned Mac, about six minutes once
-the app is built — five cold launches, a suite of about two and a half minutes
-and a release build for a phone to weigh — and about eighteen from a cold tree,
-where building the Rust bridge is the longer half and `wt run ios-rust` does it
+not have to find out by starting one: on the pinned Mac, about seven and a half
+minutes once the app is built — five cold launches, a suite of about two and a
+half minutes, a release build for a phone to weigh, and a lifecycle audit whose
+waits alone are three and a half — and about twenty from a cold tree, where
+building the Rust bridge is the longest part and `wt run ios-rust` does it
 before this recipe is reached. Every run prints its own figure and `report.md` carries it. The
 recipe's own timeout is a hang guard and says nothing about how long a run
 takes.
