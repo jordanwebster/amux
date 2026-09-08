@@ -239,6 +239,12 @@ struct DrivenRoot<Content: View>: View {
         // neither appearance.
         .id(host.appearances)
         .dynamicTypeSize(host.typeSize)
+        // A state may turn the assistive settings on and never off: the
+        // device's own answer is already in the environment by the time this
+        // runs, and a driven screen has no business telling a reader who asked
+        // for less motion that they did not.
+        .transformEnvironment(\.reducesMotion) { $0 = $0 || host.reduceMotion }
+        .transformEnvironment(\.reducesTransparency) { $0 = $0 || host.reduceTransparency }
         .onPreferenceChange(IdentifiedElements.self) { declared in
             Task { @MainActor in DoorHost.shared.declared = declared }
         }

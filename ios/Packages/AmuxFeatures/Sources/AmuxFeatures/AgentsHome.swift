@@ -30,6 +30,7 @@ public enum HomeAction: Equatable, Sendable {
 /// without fighting it on every scroll.
 public struct AgentsHome: View {
     @Environment(\.design) private var design
+    @Environment(\.dynamicTypeSize) private var typeSize
     private let model: FleetStore
     private let accounts: AccountRegistry
     private let actions: @MainActor (HomeAction) -> Void
@@ -355,10 +356,16 @@ public struct AgentsHome: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(design.inkMuted.color)
                         .frame(width: 18)
+                    // One row when it fits, which is what an exceptions line
+                    // is for. At an accessibility size the sentence does not
+                    // fit on one, and a sentence about the one thing that is
+                    // wrong is worth more than the row it was promised, so it
+                    // wraps.
                     Text(text)
                         .designFont(.detail, design)
                         .foregroundStyle(design.ink.color)
-                        .lineLimit(1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 4 : 1)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))

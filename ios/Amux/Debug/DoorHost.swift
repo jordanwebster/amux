@@ -32,6 +32,12 @@ final class DoorHost {
     /// driver has asked for one token to be moved.
     private(set) var design: Design = .app
     private(set) var typeSize: DynamicTypeSize = .large
+    /// Whether to draw as the system does for a reader who has asked for less
+    /// motion, and for one who has asked for less transparency. Both are the
+    /// device's own settings in a shipping build; here they are the state's,
+    /// so a screen can be photographed with either on.
+    private(set) var reduceMotion = false
+    private(set) var reduceTransparency = false
     /// What the conversation on show has opened over itself, where the state
     /// asked for one the screen name does not imply.
     private(set) var overlay: ConversationOverlay?
@@ -172,6 +178,14 @@ final class DoorHost {
             typeSize = size
             trace.append(.dynamicType(name))
             return .ack
+        case .states:
+            return .states(Fixtures.drawn.map {
+                DrawnState(screen: $0.screen.rawValue, state: $0.id, typeSize: $0.typeSize)
+            })
+        case .assist(let motion, let transparency):
+            reduceMotion = motion
+            reduceTransparency = transparency
+            return .ack
         case .report(let path, let note, let marks):
             return report(to: path, note: note, marks: marks)
         case .screenshot:
@@ -263,6 +277,8 @@ final class DoorHost {
         // whatever the last fixture left behind: one screen captured at an
         // accessibility size must not silently resize every screen after it.
         typeSize = fixture.typeSize.flatMap(DynamicTypeSize.init(doorName:)) ?? .large
+        reduceMotion = fixture.reduceMotion
+        reduceTransparency = fixture.reduceTransparency
         overlay = fixture.overlay
         show(screen)
         return .ack

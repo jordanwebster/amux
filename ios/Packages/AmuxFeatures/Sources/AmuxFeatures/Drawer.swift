@@ -261,7 +261,7 @@ public struct DrawerOverlay<Content: View>: View {
     public static var width: CGFloat { 302 }
 
     @Environment(\.design) private var design
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesMotion) private var reduceMotion
     @Binding private var open: Bool
     private let drawer: AgentsDrawer
     private let content: Content

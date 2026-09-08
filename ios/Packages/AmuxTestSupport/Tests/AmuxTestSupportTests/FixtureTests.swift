@@ -55,7 +55,24 @@ final class FixtureTests: XCTestCase {
                          "send-refused", "upload-failed", "home-accessibility"] {
             XCTAssertTrue(names.contains(expected), "no fixture named \(expected)")
         }
-        XCTAssertEqual(Fixtures.named("home-accessibility")?.typeSize, "accessibility3")
+        XCTAssertEqual(Fixtures.named("home-accessibility")?.typeSize, "accessibility5")
+    }
+
+    /// What a sweep over the whole app gets asked to cover: every state that is
+    /// drawn today and nothing that is not, so a screen nobody has written
+    /// cannot make such a sweep fail on work that has not started.
+    func testTheDrawnStatesAreExactlyTheBuiltOnes() {
+        let drawn = Fixtures.drawn
+        XCTAssertFalse(drawn.isEmpty)
+        for fixture in drawn {
+            XCTAssertTrue(Fixtures.isBuilt(fixture.screen, state: fixture.id),
+                          "\(fixture.id) is drawn but not declared built")
+        }
+        XCTAssertFalse(drawn.contains { $0.id == "home-empty" },
+                       "a state nobody has drawn is offered as one that is")
+        XCTAssertEqual(drawn.count, Fixtures.all.filter {
+            Fixtures.isBuilt($0.screen, state: $0.id)
+        }.count)
     }
 
     func testTheHomeFixtureShowsTheMorningTheDesignDescribes() {

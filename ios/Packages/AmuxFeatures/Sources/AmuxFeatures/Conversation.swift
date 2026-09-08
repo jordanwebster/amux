@@ -190,6 +190,7 @@ public struct ConversationSubject: Equatable, Sendable {
 /// under the chrome, and two glass controls float over it. The left one is the
 /// drawer, which is how you leave.
 public struct Conversation: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.design) private var design
     private let model: ConversationStore
     private let subject: ConversationSubject
@@ -215,6 +216,17 @@ public struct Conversation: View {
 
     /// What this conversation has opened over itself, if anything.
     @State private var showing: ConversationOverlay?
+    /// How tall the page is, and how tall what is standing at the bottom of it
+    /// wants to be. Both are measured rather than assumed because the answer
+    /// is the reader's: at the largest accessibility size an unanswered ask is
+    /// taller than the display, and a bottom inset that asks for more room
+    /// than there is does not overflow — SwiftUI squeezes every inset on the
+    /// view instead, so the pill at the top loses two thirds of its height and
+    /// draws its name straight through the glass, and every line on the card
+    /// below collapses to one truncated line. Measuring is what lets the card
+    /// scroll inside what there is instead.
+    @State private var pageHeight: CGFloat = 0
+    @State private var footHeight: CGFloat = 0
 
 
     public init(
@@ -326,6 +338,14 @@ public struct Conversation: View {
         .overlay { if showing != nil { Scrim { showing = nil } } }
         .safeAreaInset(edge: .top, spacing: 0) { chrome }
         .safeAreaInset(edge: .bottom, spacing: 0) { foot }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
+    }
+
+    /// The most of the page the foot may take. The rest belongs to the pill
+    /// and to whatever the agent last said, and a conversation whose whole
+    /// screen is the answer buttons is not a conversation.
+    private var footCap: CGFloat {
+        pageHeight > 0 ? pageHeight * 0.66 : .infinity
     }
 
     /// What occupies the composer's place when a message would not go.
@@ -337,6 +357,39 @@ public struct Conversation: View {
     /// screen to say nothing.
     @ViewBuilder
     private var foot: some View {
+        // At every ordinary text size what stands at the bottom is drawn
+        // exactly as it is written, and the branch below is not taken.
+        //
+        // At an accessibility size it can be taller than the display — an
+        // unanswered ask is a headline, a command, a reason and three buttons,
+        // all set at the reader's size — and a bottom inset that asks for more
+        // room than there is does not overflow. SwiftUI squeezes every inset
+        // on the view instead: the pill at the top loses two thirds of its
+        // height and draws its name straight through the glass, and every line
+        // on the card collapses to one truncated line. So the card is given
+        // what there is and scrolls inside it, which is the one arrangement in
+        // which nothing on it is cut off.
+        if typeSize.isAccessibilitySize {
+            ScrollView {
+                standing
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                        footHeight = $0
+                    }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollDisabled(footHeight <= footCap)
+            .frame(height: footHeight > 0 ? min(footHeight, footCap) : nil)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+        } else {
+            standing
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+        }
+    }
+
+    @ViewBuilder
+    private var standing: some View {
         Group {
             // Being asked whether to delete the agent outranks even an ask:
             // nothing down here is worth offering while the question is
@@ -400,8 +453,6 @@ public struct Conversation: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 10)
     }
 
     /// Goes somewhere else, keyboard first.
@@ -506,6 +557,11 @@ public struct Conversation: View {
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.vertical, 6)
+        // Glass over a sliver of transcript says "this floats". Glass over a
+        // third of the display says nothing and leaves half-read words behind
+        // every letter of the name, so at an accessibility size the chrome
+        // stands on the ground instead and the feed begins under it.
+        .background { if typeSize.isAccessibilitySize { design.ground.color } }
     }
 
     /// What this agent started, and where each one can be answered.
@@ -575,16 +631,31 @@ public struct Conversation: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Agents")
             .identified("conversation.drawer", label: "Agents")
+            // One line each at ordinary sizes, where the pill is a label and
+            // a name shortened to "refacto…" would still be recognisable
+            // beside the conversation it names.
+            //
+            // At an accessibility size it would not be — three letters and an
+            // ellipsis name nothing — so the name wraps and the pill grows to
+            // hold it, which is why the capsule states a minimum height and
+            // not a height. The machine and the directory are dropped there:
+            // four wrapped lines of chrome is most of the display, and of the
+            // two the name is the one that says which conversation this is.
+            // Where you are running is still on the overflow and in the
+            // drawer, one press away.
             VStack(alignment: .leading, spacing: 0) {
                 Text(subject.name)
                     .designFont(.identifier, design)
                     .foregroundStyle(design.ink.color)
-                    .lineLimit(1)
-                Text(subject.place)
-                    .designFont(.monoSmall, design)
-                    .foregroundStyle(design.inkFaint.color)
-                    .lineLimit(1)
+                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                if !typeSize.isAccessibilitySize {
+                    Text(subject.place)
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkFaint.color)
+                        .lineLimit(1)
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.trailing, 14)
         }
         .padding(.leading, 2)

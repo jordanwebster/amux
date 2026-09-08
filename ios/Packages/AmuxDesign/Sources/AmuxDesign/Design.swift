@@ -188,3 +188,51 @@ extension EnvironmentValues {
         set { self[PhotographedKey.self] = newValue }
     }
 }
+
+/// What the reader has asked the system to do less of.
+///
+/// SwiftUI publishes both of these already, but publishes them read-only: they
+/// are the device's settings and nothing inside an app may write them. So the
+/// app reads its own copy, planted from the device's answer by
+/// `readingAssistiveSettings` at the root and overridable above it. A screen
+/// being photographed with one of them on is the only thing that ever
+/// overrides them, and without that there would be no way to see what this app
+/// looks like for a reader who has turned them on.
+private struct ReducesMotionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private struct ReducesTransparencyKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    public var reducesMotion: Bool {
+        get { self[ReducesMotionKey.self] }
+        set { self[ReducesMotionKey.self] = newValue }
+    }
+
+    public var reducesTransparency: Bool {
+        get { self[ReducesTransparencyKey.self] }
+        set { self[ReducesTransparencyKey.self] = newValue }
+    }
+}
+
+private struct AssistiveSettings: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var motion
+    @Environment(\.accessibilityReduceTransparency) private var transparency
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.reducesMotion, motion)
+            .environment(\.reducesTransparency, transparency)
+    }
+}
+
+extension View {
+    /// Puts the device's own reduce-motion and reduce-transparency settings
+    /// where the app reads them. Applied once, at the root of everything drawn.
+    public func readingAssistiveSettings() -> some View {
+        modifier(AssistiveSettings())
+    }
+}

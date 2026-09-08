@@ -63,6 +63,19 @@ public enum DoorRequest: Sendable, Equatable {
     case signposts
     case appearance(Appearance)
     case dynamicType(String)
+    /// Draw as the system does for a reader who has asked for less motion or
+    /// less transparency.
+    ///
+    /// Both are system-wide settings a driver cannot change from inside a
+    /// running app, and both change what a screen looks like rather than what
+    /// it says — so a state that wants to be photographed with them on has to
+    /// declare them, exactly as it declares a text size.
+    case assist(motion: Bool, transparency: Bool)
+    /// Every state this build draws, as screen-and-state pairs. What lets a
+    /// sweep over the whole app — the accessibility audit is one — cover
+    /// whatever has been built today without a second list of it to keep in
+    /// step.
+    case states
     /// Move one named colour token, or put it back when nothing is named.
     /// The one thing a driver can ask for that makes the app draw something
     /// its baseline does not show.
@@ -217,6 +230,9 @@ public enum DoorReply: Sendable, Equatable {
     case calls(cloud: [String], store: [String])
     /// The accounts this phone knows.
     case accounts(AccountsState)
+    /// Every state this build draws: the screen to open and the state to fill
+    /// it from, in the order the catalogue describes them.
+    case states([DrawnState])
     /// What became of an attempted send: whether it left the phone, and the
     /// sentence on screen when it did not.
     case sendAttempt(delivered: Bool, reason: String?)
@@ -224,6 +240,22 @@ public enum DoorReply: Sendable, Equatable {
     /// Why the request could not be answered, in one line. The door never
     /// half-answers: a request either happened or is reported here.
     case error(String)
+}
+
+/// One state this build draws: the screen to open, and the state to fill it
+/// from.
+public struct DrawnState: Codable, Sendable, Equatable {
+    public let screen: String
+    public let state: String
+    /// The text size this state is drawn at, in the door's own words, where it
+    /// names one.
+    public let typeSize: String?
+
+    public init(screen: String, state: String, typeSize: String?) {
+        self.screen = screen
+        self.state = state
+        self.typeSize = typeSize
+    }
 }
 
 /// What a bundle rebuilt: the fleet the recording held, the conversations it
@@ -456,6 +488,7 @@ extension DoorRequest: Codable {
         case identifier, text, seconds, qr, agent, base, prose, from, to
         case attachment, name, mime, base64, host, pin
         case note, marks
+        case motion, transparency
     }
 
     public init(from decoder: any Decoder) throws {
@@ -493,6 +526,11 @@ extension DoorRequest: Codable {
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
         case "dynamicType":
             self = .dynamicType(try fields.decode(String.self, forKey: .size))
+        case "states": self = .states
+        case "assist":
+            self = .assist(
+                motion: try fields.decode(Bool.self, forKey: .motion),
+                transparency: try fields.decode(Bool.self, forKey: .transparency))
         case "perturb":
             self = .perturb(token: try fields.decodeIfPresent(String.self, forKey: .token))
         case "settle": self = .settle
@@ -611,6 +649,12 @@ extension DoorRequest: Codable {
         case .dynamicType(let size):
             try fields.encode("dynamicType", forKey: .kind)
             try fields.encode(size, forKey: .size)
+        case .states:
+            try fields.encode("states", forKey: .kind)
+        case .assist(let motion, let transparency):
+            try fields.encode("assist", forKey: .kind)
+            try fields.encode(motion, forKey: .motion)
+            try fields.encode(transparency, forKey: .transparency)
         case .perturb(let token):
             try fields.encode("perturb", forKey: .kind)
             try fields.encodeIfPresent(token, forKey: .token)
@@ -698,7 +742,7 @@ extension DoorRequest: Codable {
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
         case kind, state, bridge, path, width, height, scale, message, parts, replayed, marks
-        case host, delivered, reason, cloud, store, known
+        case host, delivered, reason, cloud, store, known, states
     }
 
     public init(from decoder: any Decoder) throws {
@@ -730,6 +774,8 @@ extension DoorReply: Codable {
                 store: try fields.decode([String].self, forKey: .store))
         case "accounts":
             self = .accounts(try fields.decode(AccountsState.self, forKey: .known))
+        case "states":
+            self = .states(try fields.decode([DrawnState].self, forKey: .states))
         case "sendAttempt":
             self = .sendAttempt(
                 delivered: try fields.decode(Bool.self, forKey: .delivered),
@@ -778,6 +824,9 @@ extension DoorReply: Codable {
         case .accounts(let known):
             try fields.encode("accounts", forKey: .kind)
             try fields.encode(known, forKey: .known)
+        case .states(let drawn):
+            try fields.encode("states", forKey: .kind)
+            try fields.encode(drawn, forKey: .states)
         case .sendAttempt(let delivered, let reason):
             try fields.encode("sendAttempt", forKey: .kind)
             try fields.encode(delivered, forKey: .delivered)

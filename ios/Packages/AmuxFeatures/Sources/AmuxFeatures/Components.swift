@@ -313,7 +313,7 @@ public struct Explain: View {
 /// and the sweep does not run.
 public struct Shimmer: ViewModifier {
     @Environment(\.design) private var design
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesMotion) private var reduceMotion
     /// The row is still only remembered.
     private let active: Bool
     @State private var swept = false

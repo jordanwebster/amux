@@ -29,15 +29,31 @@ public struct Ground: View {
 /// leaving the rim and the edge lensing, which are the part of the material
 /// that says "this floats". Everything that floats over content uses this;
 /// nothing uses bare glass.
+///
+/// A reader who has asked the system to reduce transparency gets none of it:
+/// the surface fills solid and states that it floats with a hairline rim
+/// instead of with a sampled backdrop. The rim is what carries the meaning
+/// once the lensing is gone — without it a solid panel over a solid ground is
+/// two flat areas with no edge between them.
 private struct Frosted<S: Shape>: ViewModifier {
     @Environment(\.design) private var design
+    @Environment(\.reducesTransparency) private var reduceTransparency
     let shape: S
     let wash: Double
 
     func body(content: Content) -> some View {
-        content
-            .background { shape.fill(design.ground.color.opacity(wash)) }
-            .glassEffect(.regular, in: shape)
+        if reduceTransparency {
+            content
+                .background { shape.fill(design.raised.color) }
+                .overlay {
+                    shape.stroke(design.hairline.color,
+                                 lineWidth: design.metrics.hairline)
+                }
+        } else {
+            content
+                .background { shape.fill(design.ground.color.opacity(wash)) }
+                .glassEffect(.regular, in: shape)
+        }
     }
 }
 

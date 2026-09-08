@@ -4,6 +4,52 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **The app at the largest text size, and glass that gets out of the way.**
+
+Turned up to the largest accessibility text size, a conversation drew its own
+name straight through the glass capsule that was supposed to hold it, and every
+line of an unanswered permission ask collapsed to one truncated line. Neither
+the pill nor the card was at fault. The chrome at the top and whatever stands
+at the bottom are both safe-area insets on the same view, and when their
+demands together exceed the display SwiftUI does not overflow — it squeezes
+them. An ask set at that size is taller than a phone, so the pill was cut to a
+third of its height and drew its two lines through a capsule that had no room
+for them.
+
+What stands at the bottom is now given two thirds of the page and scrolls
+inside it, but only when the reader is at an accessibility size, so every
+screen at every ordinary size is drawn exactly as before — proved by
+re-photographing the conversation, the composer, the ask, the working strip and
+the narrow display and finding every one unchanged. The pill drops the machine
+and the directory at those sizes and keeps the agent's name, wrapped rather
+than shortened to four letters and an ellipsis; where it is running is still on
+the overflow and in the drawer. The home's exceptions line wraps rather than
+losing its leading words.
+
+Reduce Transparency was honoured nowhere. SwiftUI publishes it, and Reduce
+Motion, read-only — they are the device's settings and nothing in an app may
+write them — so the app now carries its own pair, planted from the device at
+the root and raisable from a state that wants to be photographed with them on.
+Glass fills solid with a hairline rim when transparency is reduced: the rim is
+what says "this floats" once the lensing is gone.
+
+The message being written scales with the reader too. The one UIKit view in the
+app scaled its type against the device's own setting, which SwiftUI's
+`dynamicTypeSize` never reaches, so the draft stayed small while every label
+around it grew; the size is now handed across the boundary with the design.
+
+The home, the conversation and the composer have baselines at that size in both
+appearances. `wt run ios-accessibility` sweeps every state the build draws and
+fails on any control without a name VoiceOver can read or under 44 pt; it is a
+UI test because it has to be, since SwiftUI builds an accessibility tree only
+for an attached client and an app asking itself sees traits for nothing. The
+door answers a new `states` request with every state the build draws, so the
+sweep covers whatever landed today without a second list to keep in step. Its
+first run names 147 complaints across 452 controls — round icons two points
+short of a thumb, rows whose label element is what the tree reports, one
+control with no name at all — and every one of them is still to be read and
+answered. The audit is red on purpose until they are.
+
 2026-09-08 — **A report says which screen it is of, and says why it cannot go.**
 
 A report captured by a person carried an empty view-state recording and

@@ -36,6 +36,13 @@ public enum Fixtures {
         }
     }
 
+    /// Every state this build draws, in the order the catalogue describes
+    /// them, so a sweep over the whole app reads the same list the door
+    /// answers `open` from rather than a copy of it.
+    public static var drawn: [Fixture] {
+        all.filter { isBuilt($0.screen, state: $0.id) }
+    }
+
     /// Whether this build draws that state.
     ///
     /// Built-ness belongs to the pair, not to the screen. The conversation
@@ -59,6 +66,8 @@ public enum Fixtures {
         Built(.probe, "probe"),
         Built(.home, "home"),
         Built(.home, "home-accessibility"),
+        Built(.run, "run-accessibility"),
+        Built(.typing, "composer-accessibility"),
         Built(.home, "home-unreadable"),
         Built(.homeQuiet, "home-quiet"),
         Built(.drawer, "drawer"),
@@ -554,14 +563,24 @@ public enum Fixtures {
         Fixture(id: "home-cached", screen: .home) { bundle in
             States.open(bundle, agents: Scenario.remembered, reconciled: false)
         },
-        // The same screens for a reader who needs larger type. Nothing is
-        // dropped at this size; it wraps.
-        Fixture(id: "home-accessibility", screen: .home, typeSize: "accessibility3") { bundle in
+        // The same screens at the largest text size the system offers, which
+        // is the one worth locking: anything that survives it survives every
+        // size below it. Nothing is dropped here; it wraps, and where a line
+        // cannot wrap it is allowed to shorten rather than be cut off.
+        Fixture(id: "home-accessibility", screen: .home, typeSize: "accessibility5") { bundle in
             States.open(bundle)
         },
-        Fixture(id: "run-accessibility", screen: .run, typeSize: "accessibility3") { bundle in
+        Fixture(id: "run-accessibility", screen: .run, typeSize: "accessibility5") { bundle in
             States.open(bundle, entries: Transcript.pairingCopy,
                         session: Sessions.claude(gate: .needsYou, asks: [Sessions.claudePermission]))
+        },
+        // The box with a message half-written in it, at the same size: the
+        // composer is the one surface that grows under the reader's thumb, so
+        // it is photographed separately from the conversation behind it.
+        Fixture(id: "composer-accessibility", screen: .typing, typeSize: "accessibility5") { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            bundle.conversation(Scenario.focus).draft.body =
+                "Check the reconnect path before you squash it."
         },
     ]
 

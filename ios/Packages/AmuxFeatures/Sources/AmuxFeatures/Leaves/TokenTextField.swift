@@ -25,6 +25,15 @@ struct TokenTextField: UIViewRepresentable {
     let photographed: Bool
     /// How far the field grows before it scrolls inside itself.
     let lines: Int
+    /// The size the reader has asked for.
+    ///
+    /// Handed in rather than read off the view. UIKit scales type against the
+    /// device's own content size category, and SwiftUI's `dynamicTypeSize`
+    /// does not reach a trait collection — so a field left to scale itself
+    /// stays at the device's size while every label around it grows, and a
+    /// screen photographed at an accessibility size shows the message being
+    /// written in small type.
+    let typeSize: DynamicTypeSize
     func makeUIView(context: Context) -> UITextView {
         let view = PastingTextView()
         view.delegate = context.coordinator
@@ -51,7 +60,8 @@ struct TokenTextField: UIViewRepresentable {
         // A token is one character and it is not a link, an address or a date;
         // letting the system find things inside the text would draw over it.
         view.dataDetectorTypes = []
-        context.coordinator.apply(draft, to: view, design: design, photographed: photographed)
+        context.coordinator.apply(
+            draft, to: view, design: design, typeSize: typeSize, photographed: photographed)
         // The chips are drawn once against the appearance they will be read
         // in, so the appearance changing has to draw them again.
         view.registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
@@ -63,7 +73,8 @@ struct TokenTextField: UIViewRepresentable {
 
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.apply(draft, to: view, design: design, photographed: photographed)
+        context.coordinator.apply(
+            draft, to: view, design: design, typeSize: typeSize, photographed: photographed)
     }
 
     /// The height the written text asks for, capped.
@@ -78,7 +89,7 @@ struct TokenTextField: UIViewRepresentable {
         guard width > 0 else { return nil }
         let asked = uiView.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        let line = TokenTextField.font(design).lineHeight
+        let line = TokenTextField.font(design, typeSize).lineHeight
         return CGSize(width: width, height: min(max(asked, line), line * CGFloat(lines)))
     }
 
@@ -86,12 +97,14 @@ struct TokenTextField: UIViewRepresentable {
 
     /// The face the field is set in: the design's body role, resolved to a
     /// concrete font because UIKit has no notion of a role.
-    static func font(_ design: Design) -> UIFont {
+    static func font(_ design: Design, _ size: DynamicTypeSize) -> UIFont {
         BundledFonts.register()
         let spec = design.spec(.body)
         let face = UIFont(name: spec.family, size: spec.size)
             ?? .systemFont(ofSize: spec.size)
-        return UIFontMetrics(forTextStyle: .callout).scaledFont(for: face)
+        return UIFontMetrics(forTextStyle: .callout).scaledFont(
+            for: face,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: size.category))
     }
 
     @MainActor
@@ -101,6 +114,7 @@ struct TokenTextField: UIViewRepresentable {
         /// new does not reset the caret out from under a finger.
         private var shown: MessageDraft?
         private var design: Design
+        private var typeSize: DynamicTypeSize
         private var photographed = false
         /// True while this coordinator is the one changing the view. Setting
         /// the attributed text moves the selection to the start and back, and
@@ -111,14 +125,18 @@ struct TokenTextField: UIViewRepresentable {
         init(_ parent: TokenTextField) {
             self.parent = parent
             self.design = parent.design
+            self.typeSize = parent.typeSize
             super.init()
         }
 
         func apply(
-            _ draft: MessageDraft, to view: UITextView, design: Design, photographed: Bool
+            _ draft: MessageDraft, to view: UITextView, design: Design,
+            typeSize: DynamicTypeSize, photographed: Bool
         ) {
-            let restyled = self.design != design || self.photographed != photographed
+            let restyled = self.design != design || self.typeSize != typeSize
+                || self.photographed != photographed
             self.design = design
+            self.typeSize = typeSize
             self.photographed = photographed
             view.tintColor = photographed
                 ? .clear : design.accent.uiColor(view.appearance)
@@ -136,7 +154,7 @@ struct TokenTextField: UIViewRepresentable {
             let selection = view.selectedRange
             applying = true
             view.attributedText = attributed(draft, in: view)
-            view.typingAttributes = Self.plain(design, view)
+            view.typingAttributes = Self.plain(design, typeSize, view)
             let caret = min(draft.caret, view.text.utf16.count)
             // A token put into the sentence from outside leaves the caret after
             // it, and the caret a person can see has to be the one the next
@@ -156,7 +174,7 @@ struct TokenTextField: UIViewRepresentable {
             let selection = view.selectedRange
             applying = true
             view.attributedText = attributed(draft, in: view)
-            view.typingAttributes = Self.plain(design, view)
+            view.typingAttributes = Self.plain(design, typeSize, view)
             view.tintColor = photographed
                 ? .clear : design.accent.uiColor(view.appearance)
             view.selectedRange = selection
@@ -198,7 +216,7 @@ struct TokenTextField: UIViewRepresentable {
             // Typing after a token must not inherit the token: an attachment
             // left in the typing attributes puts a second chip in the sentence
             // for every letter typed after the first.
-            view.typingAttributes = Self.plain(design, view)
+            view.typingAttributes = Self.plain(design, typeSize, view)
             var draft = parent.draft
             let (body, caret) = read(view)
             guard body == draft.body else { return }
@@ -250,7 +268,7 @@ struct TokenTextField: UIViewRepresentable {
         }
 
         private func attributed(_ draft: MessageDraft, in view: UITextView) -> NSAttributedString {
-            let plain = Self.plain(design, view)
+            let plain = Self.plain(design, typeSize, view)
             let built = NSMutableAttributedString()
             for character in draft.body {
                 guard let token = draft.tokens[character] else {
@@ -261,7 +279,7 @@ struct TokenTextField: UIViewRepresentable {
                 guard let chip = TokenChipImage.draw(
                     token, design: design, appearance: view.appearance,
                     scale: view.traitCollection.displayScale,
-                    font: TokenTextField.font(design))
+                    font: TokenTextField.font(design, typeSize))
                 else { continue }
                 attachment.image = chip.image
                 attachment.bounds = chip.bounds
@@ -274,10 +292,10 @@ struct TokenTextField: UIViewRepresentable {
             return built
         }
 
-        private static func plain(_ design: Design, _ view: UITextView)
-            -> [NSAttributedString.Key: Any]
-        {
-            [.font: TokenTextField.font(design),
+        private static func plain(
+            _ design: Design, _ size: DynamicTypeSize, _ view: UITextView
+        ) -> [NSAttributedString.Key: Any] {
+            [.font: TokenTextField.font(design, size),
              .foregroundColor: design.ink.uiColor(view.appearance)]
         }
     }
@@ -371,5 +389,26 @@ enum Keyboard {
     static func putDown() {
         UIApplication.shared.sendAction(
             #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+extension DynamicTypeSize {
+    /// The same size in UIKit's words, which is what scales a `UIFont`.
+    var category: UIContentSizeCategory {
+        switch self {
+        case .xSmall: .extraSmall
+        case .small: .small
+        case .medium: .medium
+        case .large: .large
+        case .xLarge: .extraLarge
+        case .xxLarge: .extraExtraLarge
+        case .xxxLarge: .extraExtraExtraLarge
+        case .accessibility1: .accessibilityMedium
+        case .accessibility2: .accessibilityLarge
+        case .accessibility3: .accessibilityExtraLarge
+        case .accessibility4: .accessibilityExtraExtraLarge
+        case .accessibility5: .accessibilityExtraExtraExtraLarge
+        @unknown default: .large
+        }
     }
 }

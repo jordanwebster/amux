@@ -770,9 +770,11 @@ The design has no preserved capture of this either.
 
 ## ax-home
 
-The same Agents home at an accessibility text size. There is no design
-reference at this size, so there is nothing to depart from; what the capture is
-for is that the screen still says what it says when someone turns the text up.
+The same Agents home at the largest accessibility text size the system offers.
+The largest and not a middling one: a screen that survives this survives every
+size below it. There is no design reference at this size, so there is nothing
+to depart from; what the capture is for is that the screen still says what it
+says when someone turns the text up.
 
 - **The state line stacks instead of sharing a line.** At ordinary sizes
   "Finished · 1 file · +21 −6" and the machine's name sit on one line with the
@@ -782,6 +784,43 @@ for is that the screen still says what it says when someone turns the text up.
 - **A headline is still two lines.** Long headlines end in an ellipsis here as
   they do at every size: a row promises the first two lines of what an agent is
   doing, not all of it, and one tap opens the rest.
+- **The exceptions line wraps instead of taking one row.** One row is what an
+  exceptions line is for, and at every ordinary size it keeps it. At this size
+  the sentence does not fit on one, and the sentence about the one thing that
+  is actually wrong is worth more than the row it was promised.
+
+## ax-conversation
+
+A conversation at the largest accessibility text size, with an unanswered
+permission ask standing at the bottom of it. There is no design reference at
+this size.
+
+- **The chrome pill drops the machine and the directory.** At every ordinary
+  size it says the agent's name with where it is running under it. Here the
+  name alone wraps to two lines, and the two of them together would be most of
+  the display; of the two the name is the one that says which conversation this
+  is, and where it runs is still one press away on the overflow and in the
+  drawer.
+- **The name wraps rather than shortening.** "refacto…" is a recognisable label
+  beside a conversation at an ordinary size and names nothing at this one, so
+  the pill grows to hold both lines.
+- **The ask scrolls inside the bottom two thirds of the screen.** A headline, a
+  command, a reason and three buttons set at this size are taller than the
+  display. Left to ask for the room it wants, it takes the room the chrome
+  needs with it — SwiftUI squeezes every safe-area inset on a view when their
+  demands exceed it, which cut the pill to a third of its height and collapsed
+  every line on the card to one truncated line. Given two thirds and told to
+  scroll, nothing on it is cut off; the answer buttons are below the fold and
+  reached by scrolling the card.
+
+## ax-composer
+
+The composer with a message half-written in it, at the largest accessibility
+text size, so what the box does under the reader's thumb is photographed apart
+from the conversation behind it. There is no design reference at this size.
+
+- **The transcript above it keeps every word.** Prose wraps and the feed
+  scrolls; nothing on it is shortened to fit.
 
 ## unreadable-agent
 

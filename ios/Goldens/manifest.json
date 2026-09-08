@@ -651,6 +651,19 @@
       ]
     },
     {
+      "id": "ax-composer",
+      "stage": 12,
+      "screen": "typing",
+      "fixture": "composer-accessibility",
+      "origin": "added_state",
+      "reason": "the composer with a message half-written in it, at an accessibility text size",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "ax-home",
       "stage": 12,
       "screen": "home",

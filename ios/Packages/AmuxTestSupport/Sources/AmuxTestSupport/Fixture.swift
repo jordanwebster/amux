@@ -33,6 +33,12 @@ public struct Fixture: Identifiable, Sendable {
     /// The type size to render at, in the door's own words. Absent means the
     /// device's own setting.
     public let typeSize: String?
+    /// Whether this state is drawn for a reader who has asked the system for
+    /// less motion, and for one who has asked for less transparency. Declared
+    /// rather than read off the device, because both are settings outside the
+    /// app that no test can change from inside it.
+    public let reduceMotion: Bool
+    public let reduceTransparency: Bool
     /// What the conversation has opened over itself in this state, where the
     /// screen name does not say. Two states are the settings screen — the
     /// model sheet and the permissions sheet — so which one is a fact about
@@ -57,6 +63,8 @@ public struct Fixture: Identifiable, Sendable {
         paywall: PaywallStore.Phase = .ready,
         deletion: Deleting? = nil,
         typeSize: String? = nil,
+        reduceMotion: Bool = false,
+        reduceTransparency: Bool = false,
         overlay: ConversationOverlay? = nil,
         report: Reporting? = nil,
         apply: @escaping @Sendable @MainActor (StoreBundle) -> Void = { _ in }
@@ -70,6 +78,8 @@ public struct Fixture: Identifiable, Sendable {
         self.paywall = paywall
         self.deletion = deletion
         self.typeSize = typeSize
+        self.reduceMotion = reduceMotion
+        self.reduceTransparency = reduceTransparency
         self.overlay = overlay
         self.report = report
         self.apply = apply

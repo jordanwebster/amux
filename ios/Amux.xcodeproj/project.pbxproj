@@ -15,6 +15,7 @@
 		0F3AC52183DBFF753C52B8CF /* States.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66609895E99B406673EEADA3 /* States.swift */; };
 		1A2A6C51813425F3286B3CB6 /* DoorScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979C7C4DC969977B66A65802 /* DoorScreens.swift */; };
 		1EB380BBF813E1A744D85210 /* Workloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B661BE2402BC7D004818A5 /* Workloads.swift */; };
+		1F71DC755174214F60A5E1B2 /* AccessibilityAuditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */; };
 		2F0347A6EA4A7731721003EE /* Budgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001566356B6645AB41CE39B /* Budgets.swift */; };
 		344D301838279573239BD80D /* Judge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7316CFA811C55B9CEEB041C5 /* Judge.swift */; };
 		37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */; };
@@ -89,6 +90,7 @@
 		31777DF351ACE50870B1C6A5 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
 		33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorRecording.swift; sourceTree = "<group>"; };
 		35ED0CE4A533E8878FBD1675 /* AmuxFeatures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxFeatures; path = Packages/AmuxFeatures; sourceTree = SOURCE_ROOT; };
+		456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityAuditTests.swift; sourceTree = "<group>"; };
 		57E50ACE0C6E84D336B13332 /* Harness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Harness.swift; sourceTree = "<group>"; };
 		590B62F0B4C074AA2233FC70 /* DoorServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorServer.swift; sourceTree = "<group>"; };
 		5CBBB924EED36840518D0268 /* DoorHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorHost.swift; sourceTree = "<group>"; };
@@ -203,6 +205,7 @@
 		5445FBC267DE6D42E3D857C1 /* AmuxUITests */ = {
 			isa = PBXGroup;
 			children = (
+				456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */,
 				6AF7C50B96593352DB0BC307 /* AccountsTests.swift */,
 				DCD0B049D76F4DAF62A8B46E /* AskTests.swift */,
 				B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */,
@@ -503,6 +506,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1F71DC755174214F60A5E1B2 /* AccessibilityAuditTests.swift in Sources */,
 				DDFD9CD189F0B140F851F65D /* AccountsTests.swift in Sources */,
 				71EF8392260DD101E76C1D32 /* AskTests.swift in Sources */,
 				37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */,

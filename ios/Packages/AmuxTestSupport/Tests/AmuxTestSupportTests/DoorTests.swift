@@ -34,6 +34,8 @@ final class DoorTests: XCTestCase {
             .bridge,
             .appearance(.dark),
             .dynamicType("accessibility3"),
+            .assist(motion: true, transparency: true),
+            .states,
             .perturb(token: "accent"),
             .perturb(token: nil),
             .settle,
@@ -112,6 +114,10 @@ final class DoorTests: XCTestCase {
 
         XCTAssertEqual(try wire(.appearance(.dark))["appearance"] as? String, "dark")
         XCTAssertEqual(try wire(.dynamicType("accessibility3"))["size"] as? String, "accessibility3")
+        let assist = try wire(.assist(motion: true, transparency: false))
+        XCTAssertEqual(assist["motion"] as? Bool, true)
+        XCTAssertEqual(assist["transparency"] as? Bool, false)
+        XCTAssertEqual(try wire(.states)["kind"] as? String, "states")
         XCTAssertEqual(try wire(.capture(path: "/tmp/x.png"))["path"] as? String, "/tmp/x.png")
         XCTAssertEqual(try wire(.settle)["kind"] as? String, "settle")
         XCTAssertEqual(try wire(.awaitReconciled(seconds: 90))["seconds"] as? Double, 90)
@@ -183,6 +189,11 @@ final class DoorTests: XCTestCase {
                 entries: ["6f1c1f8e-0000-4000-8000-000000000001": 12],
                 reconciled: true, trace: 3, screen: "probe")),
             .paired(host: "workstation"),
+            .states([
+                DrawnState(screen: "home", state: "home", typeSize: nil),
+                DrawnState(screen: "home", state: "home-accessibility",
+                           typeSize: "accessibility5"),
+            ]),
             .sendAttempt(delivered: true, reason: nil),
             .sendAttempt(delivered: false, reason: "This session is replaying what it missed."),
             .error("unimplemented: home"),
@@ -195,14 +206,15 @@ final class DoorTests: XCTestCase {
 
     func testAScreenIsBuiltOneStateAtATime() {
         // The conversation screen draws its ordinary state and the one whose
-        // host was lost, but not the one stripped to its rows or the one at an
-        // accessibility type size: each has its own baseline and is written on
-        // its own. Declared per screen, all four became openable together and a
-        // check of what is built so far started failing on work nobody had
-        // started.
+        // host was lost, and the one at an accessibility type size, but not the
+        // one the design catalogue describes and nobody has drawn: each has
+        // its own baseline and is written on its own. Declared per screen, all
+        // four became openable together and a check of what is built so far
+        // started failing on work nobody had started.
         XCTAssertTrue(Fixtures.isBuilt(.run, state: "run"))
         XCTAssertTrue(Fixtures.isBuilt(.run, state: "host-lost"))
-        XCTAssertFalse(Fixtures.isBuilt(.run, state: "run-accessibility"))
+        XCTAssertTrue(Fixtures.isBuilt(.run, state: "run-accessibility"))
+        XCTAssertFalse(Fixtures.isBuilt(.home, state: "home-empty"))
         // A state with no fixture behind it is unbuilt rather than unknown, so
         // asking for it names work still to come. The permission ask expects a
         // picture of a Codex approval and nothing fills one yet.

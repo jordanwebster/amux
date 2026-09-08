@@ -166,7 +166,7 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
 
     states = [reply["state"] for reply in replies if reply["kind"] == "state"]
     enlarged, ordinary = states[0], states[1]
-    if enlarged["typeSize"] != "accessibility3":
+    if enlarged["typeSize"] != "accessibility5":
         raise SystemExit(
             "the accessibility home was drawn at "
             f"{enlarged['typeSize']}, not the size its state names")

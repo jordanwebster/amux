@@ -17,6 +17,7 @@ import SwiftUI
 struct ComposerBox: View {
     @Environment(\.design) private var design
     @Environment(\.photographed) private var photographed
+    @Environment(\.dynamicTypeSize) private var typeSize
     let state: ComposerState
     /// Whose box this is, which is what the empty field says.
     let agent: String
@@ -96,7 +97,8 @@ struct ComposerBox: View {
                     .allowsHitTesting(false)
             }
             TokenTextField(
-                draft: $draft, design: design, photographed: photographed, lines: Self.lines)
+                draft: $draft, design: design, photographed: photographed, lines: Self.lines,
+                typeSize: typeSize)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .identified("composer.field", label: placeholder, value: spoken)
         }
@@ -239,7 +241,7 @@ private struct WorkingLine: View {
 private struct MovingSegment: View {
     @Environment(\.design) private var design
     @Environment(\.photographed) private var photographed
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesMotion) private var reduceMotion
     @State private var travelled = false
 
     private static let width = 0.42
