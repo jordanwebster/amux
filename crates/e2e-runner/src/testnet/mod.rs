@@ -491,7 +491,11 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
                 daemon: decl.daemon.clone(),
                 agent,
                 provider,
-                script: topology.scripts.get(&decl.name).cloned().unwrap_or_default(),
+                script: topology
+                    .scripts
+                    .get(&decl.name)
+                    .cloned()
+                    .unwrap_or_default(),
             },
         );
     }

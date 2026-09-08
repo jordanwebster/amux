@@ -242,7 +242,10 @@ impl MobileRuntime {
             .profiles()
             .into_iter()
             .filter_map(|profile| {
-                Some((profile.record.label.override_name.clone()?, profile.record.id))
+                Some((
+                    profile.record.label.override_name.clone()?,
+                    profile.record.id,
+                ))
             })
             .collect();
         let mut seats = Vec::with_capacity(config.accounts.len());
@@ -259,7 +262,9 @@ impl MobileRuntime {
                         return Err(format!(
                             "create {}: {}",
                             account.id,
-                            profile.startup_error.unwrap_or_else(|| "unavailable".into())
+                            profile
+                                .startup_error
+                                .unwrap_or_else(|| "unavailable".into())
                         ));
                     }
                     profile.record.id
@@ -444,7 +449,6 @@ impl MobileRuntime {
             installation.shutdown(ShutdownReason::UserRequested).await;
         }
     }
-
 }
 
 impl Places {
@@ -463,8 +467,11 @@ impl Places {
             local_host_id: Some(seat.host),
             report_dir: on_screen.then(|| self.report_dir.clone()),
             log_path: on_screen.then(|| self.log_path.clone()),
-            artifact_cache: on_screen
-                .then(|| self.cache_dir.join("artifacts").join(seat.profile.to_string())),
+            artifact_cache: on_screen.then(|| {
+                self.cache_dir
+                    .join("artifacts")
+                    .join(seat.profile.to_string())
+            }),
             ..Default::default()
         }
     }

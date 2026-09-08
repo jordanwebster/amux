@@ -240,7 +240,10 @@ pub struct ProjectDto {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum DevicesOutcome {
-    Revoked { host: amux::HostId, name: String },
+    Revoked {
+        host: amux::HostId,
+        name: String,
+    },
     /// The machine is not one this device trusts, so there was nothing to
     /// withdraw — a second tap on the same row, or a stale screen.
     RevokeRefused,

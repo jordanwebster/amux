@@ -289,9 +289,9 @@ impl Composer {
                 self.insert_str(&body);
                 None
             }
-            amux_ui::Pasted::Text { body, lines } => Some(
-                self.insert_token(String::new(), TokenAttachment::Text { body, lines }),
-            ),
+            amux_ui::Pasted::Text { body, lines } => {
+                Some(self.insert_token(String::new(), TokenAttachment::Text { body, lines }))
+            }
         }
     }
 

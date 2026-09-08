@@ -188,13 +188,17 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             "tool":"Bash", "invocation":{"command":"ls"}, "scoped_directories":["/workspace"]
         }}}})).await;
         let answered = ask.session_ask_id.clone();
-        wait_for(&mut runtime, "the first ask to close and a second to arrive", |model| {
-            let layer = model.claude(agent).unwrap();
-            layer.ask_count() == 1
-                && layer.ask_head().is_some_and(|head| {
-                    head.session_ask_id != answered && head.tool_use_id.is_some()
-                })
-        })
+        wait_for(
+            &mut runtime,
+            "the first ask to close and a second to arrive",
+            |model| {
+                let layer = model.claude(agent).unwrap();
+                layer.ask_count() == 1
+                    && layer.ask_head().is_some_and(|head| {
+                        head.session_ask_id != answered && head.tool_use_id.is_some()
+                    })
+            },
+        )
         .await;
         let second = runtime
             .model()

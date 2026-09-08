@@ -6,8 +6,8 @@ mod runtime;
 
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::{CStr, CString, c_char, c_void};
-use std::path::PathBuf;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::JoinHandle;
@@ -16,8 +16,8 @@ use std::time::{Duration, SystemTime};
 use amux::{AccessToken, AuthError, CredentialProvider, RelayConnection};
 use amux_ui::{AgentId, Command, OpError, OpId, OpOutcome};
 use projection::{
-    AccountsOutcome, Cadence, ConnectionOutcome, CreationOutcome, DeviceIdentityDto, DevicesOutcome,
-    Event, OpOutcomeDto, PairedDeviceDto, PairingOutcome, ProjectDto, Projection,
+    AccountsOutcome, Cadence, ConnectionOutcome, CreationOutcome, DeviceIdentityDto,
+    DevicesOutcome, Event, OpOutcomeDto, PairedDeviceDto, PairingOutcome, ProjectDto, Projection,
     SubscriptionOutcome,
 };
 use runtime::{MobileRuntime, StartConfig, TokenSource};
@@ -402,11 +402,20 @@ enum ConnectionCommand {
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum PairingCommand {
     /// A six-digit code, against the one machine that issued it.
-    BeginPairPin { host: amux::HostId, pin: String },
+    BeginPairPin {
+        host: amux::HostId,
+        pin: String,
+    },
     /// The payload an `amux://pair` link carries, which names its own machine.
-    BeginPairLink { payload: String },
-    Confirm { pending: String },
-    Abandon { pending: String },
+    BeginPairLink {
+        payload: String,
+    },
+    Confirm {
+        pending: String,
+    },
+    Abandon {
+        pending: String,
+    },
 }
 
 /// A pairing step that finished on a task of its own, on its way back to the
@@ -721,11 +730,8 @@ pub unsafe extern "C" fn amux_mobile_review_element(review_json: *const c_char) 
     catch_unwind(AssertUnwindSafe(|| {
         let json = unsafe { read_string(review_json) }?;
         let token: ReviewToken = serde_json::from_str(json).ok()?;
-        let review = amux_ui::review::Review::with_comments(
-            token.document,
-            token.diff,
-            token.comments,
-        );
+        let review =
+            amux_ui::review::Review::with_comments(token.document, token.diff, token.comments);
         let (mention, attachment) = amux_ui::review_mention(&review);
         let reply = serde_json::json!({
             "element": amux_ui::format_mention(&mention),

@@ -221,8 +221,7 @@ async fn testnet_codex_recording_unrecorded_answer_fails_without_hanging() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client() {
     let topology = Topology::load(
-        &Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../e2e-tests/topologies/codex-offers.json"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e-tests/topologies/codex-offers.json"),
     )
     .unwrap();
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -273,7 +272,11 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
         .await;
         let facts = amux_ui::provider::facts(runtime.model(), agent);
         assert_eq!(
-            facts.models.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            facts
+                .models
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
             ["model-a", "model-b"]
         );
         assert_eq!(facts.model.as_deref(), Some("model-a"));
@@ -331,14 +334,18 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
             },
         )
         .await;
-        wait_for(&mut runtime, "the recorded answer to the command", |model| {
-            model.codex(agent).is_some_and(|layer| {
-                layer.entries().any(|entry| {
-                    matches!(&entry.kind, FeedEntryKind::Message(message)
+        wait_for(
+            &mut runtime,
+            "the recorded answer to the command",
+            |model| {
+                model.codex(agent).is_some_and(|layer| {
+                    layer.entries().any(|entry| {
+                        matches!(&entry.kind, FeedEntryKind::Message(message)
                         if message.text == "Planning the parser before the wire format.")
+                    })
                 })
-            })
-        })
+            },
+        )
         .await;
 
         // Model and effort after the turn, not before: they are kept for the

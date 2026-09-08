@@ -11949,3 +11949,14 @@ a diff row shortens its path from the left, which is what the leading ellipsis
 on that row is for.
 
 Green: `wt run ios-goldens -- small-home small-conversation`.
+
+## The Rust tree is rustfmt-clean again
+
+Fourteen files across amux-mobile, amux-tui, amux-ui, claude, e2e-runner and
+replay-support had drifted from what the current toolchain's rustfmt produces,
+so every `wt fmt` reformatted files the person running it had never touched and
+either dragged that churn into their commit or cost them a revert. This is that
+reformatting on its own, with nothing else in it: whitespace and line breaking,
+no behaviour.
+
+Green: `wt fmt`, `wt build`.

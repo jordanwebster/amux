@@ -330,7 +330,11 @@ fn a_closed_conversation_lets_go_of_the_stream_it_asked_for() {
         let mut model = fold(seq([base(), vec![host_up(&a_host("hetzner"))]]));
 
         let inventory = update(&mut model, agent_up(&agent));
-        assert_eq!(inventory.len(), usize::from(eager), "{on} readonly={readonly}");
+        assert_eq!(
+            inventory.len(),
+            usize::from(eager),
+            "{on} readonly={readonly}"
+        );
         update(&mut model, Msg::UserAttached { agent: agent.id });
         assert!(model.is_attached(agent.id));
         assert!(model.stream(agent.id).is_some(), "{on} readonly={readonly}");

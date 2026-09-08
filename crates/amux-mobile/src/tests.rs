@@ -353,8 +353,10 @@ fn the_phones_agent_writes_decode_as_the_commands_they_name() {
         }
     );
     assert_eq!(
-        decoded(json!({"command":"claude_sdk","claude_sdk_command":"set_permission_mode",
-                       "agent":agent,"mode":"plan"})),
+        decoded(
+            json!({"command":"claude_sdk","claude_sdk_command":"set_permission_mode",
+                       "agent":agent,"mode":"plan"})
+        ),
         Command::ClaudeSdk(amux_ui::ClaudeSdkCommand::SetPermissionMode {
             agent: id,
             mode: "plan".into()
@@ -414,12 +416,15 @@ fn a_picked_file_becomes_a_store_of_exactly_the_bytes_that_were_picked() {
     );
 
     let trace = b"{\"relay\":\"unreachable\"}".to_vec();
-    let Some(Command::PutAttachment { attachment: file, .. }) = crate::picked_command(
+    let Some(Command::PutAttachment {
+        attachment: file, ..
+    }) = crate::picked_command(
         &json!({"agent":agent.to_string(),"kind":"file","name":"relay-trace.json",
                 "mime":"application/json"})
         .to_string(),
         trace.clone(),
-    ) else {
+    )
+    else {
         panic!("a picked file is a store")
     };
     assert_eq!(file.kind, amux_ui::ArtifactKind::File);
@@ -762,9 +767,10 @@ async fn mobile_unpaired_relay_hosts_are_discovered_without_entering_the_fleet()
             assert_eq!(fleet["agents"], json!([]), "{fleet}");
         }
     }
-    let cache: Value =
-        serde_json::from_slice(&std::fs::read(cache_path(&root.path().join("cache"), "personal")).unwrap())
-            .unwrap();
+    let cache: Value = serde_json::from_slice(
+        &std::fs::read(cache_path(&root.path().join("cache"), "personal")).unwrap(),
+    )
+    .unwrap();
     for host in cache["Fleet"]["hosts"].as_array().unwrap() {
         assert_eq!(host["entry"]["name"], "phone", "{cache}");
     }
@@ -790,12 +796,9 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     );
     let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
     let (requests, _receive) = mpsc::channel(1);
-    let mut seed = MobileRuntime::open(
-        &parsed,
-        test_credentials(requests),
-    )
-    .await
-    .unwrap();
+    let mut seed = MobileRuntime::open(&parsed, test_credentials(requests))
+        .await
+        .unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
         while *seed.relay.borrow_and_update() != RelayConnection::Connected {
             seed.relay.changed().await.unwrap();
@@ -1055,10 +1058,7 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
         let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
         let open_runtime = || {
             let (requests, _receive) = mpsc::channel(1);
-            MobileRuntime::open(
-                &parsed,
-                test_credentials(requests),
-            )
+            MobileRuntime::open(&parsed, test_credentials(requests))
         };
         let mut seed = open_runtime().await.unwrap();
         tokio::time::timeout(Duration::from_secs(10), async {
@@ -1417,12 +1417,9 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
     );
     let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
     let (requests, _tokens) = mpsc::channel(1);
-    let mut seed = MobileRuntime::open(
-        &parsed,
-        test_credentials(requests),
-    )
-    .await
-    .unwrap();
+    let mut seed = MobileRuntime::open(&parsed, test_credentials(requests))
+        .await
+        .unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
         while *seed.relay.borrow_and_update() != RelayConnection::Connected {
             seed.relay.changed().await.unwrap();
@@ -1493,7 +1490,9 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
 
     until(&mut receive, running.handle, &token, |e| {
         e["Fleet"]["reconciled"] == true
-            && e["Fleet"]["agents"].as_array().is_some_and(|a| a.len() == 2)
+            && e["Fleet"]["agents"]
+                .as_array()
+                .is_some_and(|a| a.len() == 2)
     })
     .await;
     for agent in [kept, closed] {
@@ -1551,7 +1550,10 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
         !open(&later, closed) && !attached(&later, closed),
         "a later inventory re-opened a closed conversation: {later}"
     );
-    assert!(open(&later, kept), "the open conversation was lost: {later}");
+    assert!(
+        open(&later, kept),
+        "the open conversation was lost: {later}"
+    );
 
     let report = owned_json(unsafe { amux_mobile_report_snapshot(running.handle) });
     assert!(
@@ -1564,9 +1566,9 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
             .as_array()
             .unwrap()
             .iter()
-            .any(|msg| msg.as_str().is_some_and(|line| line
-                .contains("user_detached")
-                && line.contains(&closed.to_string()))),
+            .any(|msg| msg.as_str().is_some_and(
+                |line| line.contains("user_detached") && line.contains(&closed.to_string())
+            )),
         "the recorder never saw the conversation close"
     );
 
@@ -1699,7 +1701,9 @@ async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
     assert_eq!(pending["outcome"], "pairing_pending", "{pending}");
     assert_eq!(pending["name"], "workstation", "{pending}");
     assert!(
-        pending["fingerprint"].as_str().is_some_and(|f| !f.is_empty()),
+        pending["fingerprint"]
+            .as_str()
+            .is_some_and(|f| !f.is_empty()),
         "a pending peer arrived without the fingerprint to look at: {pending}"
     );
     assert!(pending["expires_at"].is_string(), "{pending}");
@@ -1743,9 +1747,11 @@ async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
     assert_eq!(confirmed["name"], "workstation", "{confirmed}");
     assert_eq!(paired_peers().await, 1, "confirming wrote no trust");
     let fleet = until(&mut receive, running.handle, &token, |e| {
-        e["Fleet"]["hosts"]
-            .as_array()
-            .is_some_and(|hosts| hosts.iter().any(|host| host["entry"]["name"] == "workstation"))
+        e["Fleet"]["hosts"].as_array().is_some_and(|hosts| {
+            hosts
+                .iter()
+                .any(|host| host["entry"]["name"] == "workstation")
+        })
     })
     .await;
     println!("pending: {pending}, confirmed: {confirmed}, fleet: {fleet}");
@@ -2081,12 +2087,9 @@ async fn mobile_revoking_a_machine_closes_the_stream_its_conversation_held() {
     );
     let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
     let (requests, _tokens) = mpsc::channel(1);
-    let mut seed = MobileRuntime::open(
-        &parsed,
-        test_credentials(requests),
-    )
-    .await
-    .unwrap();
+    let mut seed = MobileRuntime::open(&parsed, test_credentials(requests))
+        .await
+        .unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
         while *seed.relay.borrow_and_update() != RelayConnection::Connected {
             seed.relay.changed().await.unwrap();
@@ -2174,7 +2177,9 @@ async fn mobile_revoking_a_machine_closes_the_stream_its_conversation_held() {
 
     until(&mut receive, running.handle, &token, |e| {
         e["Fleet"]["reconciled"] == true
-            && e["Fleet"]["agents"].as_array().is_some_and(|a| a.len() == 1)
+            && e["Fleet"]["agents"]
+                .as_array()
+                .is_some_and(|a| a.len() == 1)
     })
     .await;
     dispatch(format!(r#"{{"command":"subscribe","agent":"{agent}"}}"#));
@@ -2239,7 +2244,10 @@ fn mobile_creating_a_claude_agent_names_the_sdk_driver() {
     });
     let command = match serde_json::from_value::<CommandDto>(json).unwrap() {
         CommandDto::Creation(command) => creation(command).expect("a create is a shared command"),
-        other => panic!("a create decoded as something else: {:?}", serde_json::to_value(other)),
+        other => panic!(
+            "a create decoded as something else: {:?}",
+            serde_json::to_value(other)
+        ),
     };
     let Command::CreateAgent {
         host,
@@ -2442,7 +2450,10 @@ async fn mobile_going_away_releases_the_link_and_coming_back_reconciles() {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let hosts = admin.list_hosts().await.unwrap();
-            if !hosts.iter().any(|entry| entry.name == "phone" && entry.online) {
+            if !hosts
+                .iter()
+                .any(|entry| entry.name == "phone" && entry.online)
+            {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -2594,7 +2605,10 @@ async fn mobile_profiles_give_each_account_its_own_device_identity_and_trust() {
     .await;
     // An unpaired account reaches nothing: the machines are there, and this
     // device is not admitted to any of them.
-    let empty = until(&mut receive, handle, "", |e| e["Fleet"]["reconciled"] == true).await;
+    let empty = until(&mut receive, handle, "", |e| {
+        e["Fleet"]["reconciled"] == true
+    })
+    .await;
     assert_eq!(agent_names(&empty), Vec::<String>::new(), "{empty}");
 
     let personal_from = mark(&events);

@@ -305,7 +305,11 @@ mod tests {
                 "cached rows stay outside the reducer"
             );
         }
-        check(&FleetCache::open(root.path(), "owner").initial(), &[], false);
+        check(
+            &FleetCache::open(root.path(), "owner").initial(),
+            &[],
+            false,
+        );
         let mut events = vec![];
         projection.collect(&model, &connection, &mut events);
         assert!(

@@ -67,8 +67,7 @@ pub use runtime::{
     AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ConnectFailure,
     ConnectFuture, Connector, Generation, LateResult, MsgTap, ProfileDirectory, ProfileEntry,
     ReportExtras, ReportExtrasProvider, Runtime, RuntimeOptions, execute_put,
-    execute_put_then_send,
-    write_panic_report,
+    execute_put_then_send, write_panic_report,
 };
 #[cfg(debug_assertions)]
 pub use runtime::{RuntimeGone, ShellEdge};

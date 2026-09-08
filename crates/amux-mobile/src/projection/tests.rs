@@ -212,14 +212,12 @@ fn mobile_projection_schema_snapshot() {
         identity: DeviceIdentityDto {
             host: PHONE,
             name: "iPhone".into(),
-            fingerprint: "4f2a91c05b7e8d3a6c14f0928be5d7a3419c60fe2d8b7a05c31e94f2ab7d69c1"
-                .into(),
+            fingerprint: "4f2a91c05b7e8d3a6c14f0928be5d7a3419c60fe2d8b7a05c31e94f2ab7d69c1".into(),
         },
         devices: vec![PairedDeviceDto {
             host: uuid::Uuid::from_u128(1),
             name: "studio".into(),
-            fingerprint: "e04a7b12c98d3f5601ae72b4d8c05913f6a2e7dbc4051829f3b6ad70e91c58d2"
-                .into(),
+            fingerprint: "e04a7b12c98d3f5601ae72b4d8c05913f6a2e7dbc4051829f3b6ad70e91c58d2".into(),
             paired_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
         }],
     });

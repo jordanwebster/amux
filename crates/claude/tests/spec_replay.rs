@@ -267,7 +267,10 @@ fn sdk_corpus_is_inventoried_current_and_unorphaned() {
                 )
             }
             SourceKind::Scripted { .. } => {
-                panic!("{} is scripted; the spec corpus holds captures only", entry.name)
+                panic!(
+                    "{} is scripted; the spec corpus holds captures only",
+                    entry.name
+                )
             }
         }
         assert!(recording.manifest.content.contains_key("io.jsonl"));

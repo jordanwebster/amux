@@ -60,11 +60,15 @@ pub struct Verification {
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     LiveCapture,
-    Migrated { from: String },
+    Migrated {
+        from: String,
+    },
     /// Wire traffic written by hand to state a protocol shape the live corpus
     /// does not contain. `note` says what it stands in for and why, so a reader
     /// never mistakes it for something a provider actually said.
-    Scripted { note: String },
+    Scripted {
+        note: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
