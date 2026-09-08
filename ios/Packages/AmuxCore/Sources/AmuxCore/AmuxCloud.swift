@@ -293,10 +293,14 @@ public actor AmuxCloudService: CloudService {
             body.append(bytes)
             body.append(Data("\r\n".utf8))
         }
-        part("note", filename: nil, type: "text/plain", bytes: Data(bundle.note.utf8))
+        // One section per file, each named after the file it carries. The
+        // account service reads the sections by those names and refuses a
+        // bundle whose files and whose declarations disagree, so a part that
+        // is absent is left out here rather than sent empty — `report.json`
+        // has already said why it is not coming.
         for piece in bundle.parts {
             guard let bytes = piece.data else { continue }
-            part(piece.name, filename: piece.name, type: "application/octet-stream", bytes: bytes)
+            part(piece.name, filename: piece.name, type: contentType(of: piece.name), bytes: bytes)
         }
         body.append(Data("--\(boundary)--\r\n".utf8))
         var request = URLRequest(url: endpoint.reports)
@@ -306,6 +310,18 @@ public actor AmuxCloudService: CloudService {
         request.httpBody = body
         let receipt: Receipt = try await ask(request, as: Receipt.self, for: id)
         return ReportReceipt(id: receipt.id, receivedAt: receipt.receivedAt ?? now())
+    }
+
+    /// What each part is, said plainly, so a bundle read back by a person is
+    /// readable rather than five downloads.
+    private func contentType(of name: String) -> String {
+        switch name {
+        case ReportAssembly.reportFile, ReportAssembly.daemonFile: "application/json"
+        case ReportAssembly.frameFile: "image/png"
+        case ReportAssembly.traceFile, ReportAssembly.messagesFile: "application/x-ndjson"
+        case ReportAssembly.logFile: "text/plain"
+        default: "application/octet-stream"
+        }
     }
 
     // MARK: - Tokens

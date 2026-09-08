@@ -48,6 +48,10 @@ public enum ShellAction: Equatable, Sendable {
     case cancelDeletion
     /// Light, dark, or whatever the phone is set to.
     case wear(Appearance?)
+    /// Send the report that is open. It assembles a bundle out of what was
+    /// frozen and what has been written on it, and hands it to the account
+    /// service; a failure leaves the draft alone so Retry is one press.
+    case sendReport
 }
 
 /// Leaves the app for a page somewhere else: a billing portal, the App Store's
@@ -162,8 +166,17 @@ public struct Shell: View {
         // behind it and pushing a page would have navigated away from what the
         // report is of.
         .overlay {
-            if let reports, reports.open, let capture = reports.capture {
-                ReportScreen(capture: capture) { reports.dismiss() }
+            if let reports, reports.open {
+                ReportScreen(model: reports) { asked in
+                    switch asked {
+                    case .cancel: reports.dismiss()
+                    // Sending is the one thing on this screen that leaves the
+                    // phone, so it leaves the shell too: the account service
+                    // and the log the bundle carries are both the app's, not
+                    // this screen's.
+                    case .send: actions(.sendReport)
+                    }
+                }
             }
         }
         .modifier(FreezeOnScreenshot(freeze: freezeFromScreenshot))

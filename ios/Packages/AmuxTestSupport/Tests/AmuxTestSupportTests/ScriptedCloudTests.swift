@@ -23,8 +23,8 @@ final class ScriptedCloudTests: XCTestCase {
         let deletion = try await cloud.requestDeletion(ada, confirmedEmail: "ada@example.com")
         XCTAssertEqual(deletion, .deleted)
         let receipt = try await cloud.uploadReport(ada, bundle: ReportBundle(
-            note: "the pill drew over the composer",
-            parts: [ReportPart(name: "frame.png", data: Data([0x89])),
+            parts: [ReportPart(name: "report.json", data: Data("{}".utf8)),
+                    ReportPart(name: "frame.png", data: Data([0x89])),
                     ReportPart(name: "trace.jsonl", absenceReason: "tracing was off")]))
         XCTAssertEqual(receipt.id, "report-7")
 
@@ -34,7 +34,7 @@ final class ScriptedCloudTests: XCTestCase {
             .connectToken(ada),
             .account(ada),
             .requestDeletion(ada, confirmedEmail: "ada@example.com"),
-            .uploadReport(ada, parts: ["frame.png", "trace.jsonl"]),
+            .uploadReport(ada, parts: ["report.json", "frame.png", "trace.jsonl"]),
         ])
     }
 
@@ -53,7 +53,7 @@ final class ScriptedCloudTests: XCTestCase {
 
         let unreachable = ScriptedCloudService(state: ScriptedCloudState(upload: .offline))
         await assert(CloudError.network("offline")) {
-            try await unreachable.uploadReport(ada, bundle: ReportBundle(note: "", parts: []))
+            try await unreachable.uploadReport(ada, bundle: ReportBundle(parts: []))
         }
     }
 

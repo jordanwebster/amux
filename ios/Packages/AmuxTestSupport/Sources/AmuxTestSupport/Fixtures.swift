@@ -108,6 +108,8 @@ public enum Fixtures {
         Built(.newAgent, "new-agent"),
         Built(.offline, "offline"),
         Built(.shake, "shake"),
+        Built(.dump, "dump"),
+        Built(.dump, "upload-failed"),
     ]
 
     /// The screens the design catalogue describes, in its own order.
@@ -383,7 +385,23 @@ public enum Fixtures {
         Fixture(id: "shake", screen: .shake) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
-        Fixture(id: "dump", screen: .dump) { bundle in
+        // The report, on the frame the screenshot froze: one box drawn around
+        // the row that is wrong, its own note under the picture, and one note
+        // about the whole thing. The rectangle is in the frame's own points,
+        // which is what a reader on a Mac puts back.
+        Fixture(id: "dump", screen: .dump, report: Fixture.Reporting(
+            // The note is written on two lines rather than left to wrap.
+            // A vertical text field settles a few points wider or narrower
+            // depending on how much of the page is scrollable, and this state
+            // is almost exactly one screen tall, so a note left to find its
+            // own wrap point broke on a different word on about one run in
+            // two. Where a person's note wraps is the field's business; where
+            // this one wraps is the fixture's.
+            note: "Queued message stays on screen\nafter sending",
+            marks: [ReportMark(
+                x: 24, y: 236, width: 354, height: 30,
+                note: "this row never leaves once the\nmessage has gone")])
+        ) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
     ]
@@ -485,7 +503,20 @@ public enum Fixtures {
         },
         // The report could not be sent. The draft is not lost.
         Fixture(id: "upload-failed", screen: .dump,
-                cloud: ScriptedCloudState(upload: .offline)) { bundle in
+                cloud: ScriptedCloudState(upload: .offline),
+                report: Fixture.Reporting(
+                    // The note is written on two lines rather than left to wrap.
+            // A vertical text field settles a few points wider or narrower
+            // depending on how much of the page is scrollable, and this state
+            // is almost exactly one screen tall, so a note left to find its
+            // own wrap point broke on a different word on about one run in
+            // two. Where a person's note wraps is the field's business; where
+            // this one wraps is the fixture's.
+            note: "Queued message stays on screen\nafter sending",
+                    marks: [ReportMark(
+                        x: 24, y: 236, width: 354, height: 30,
+                        note: "this row never leaves once the\nmessage has gone")],
+                    sending: .failed("offline"))) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
         // Signing in, having pressed the button once and been turned away.

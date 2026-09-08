@@ -52,6 +52,10 @@ final class DoorHost {
     /// it is asked over, and a blocked deletion sends somebody out of the app
     /// and back again.
     private(set) var deletion = DeletionStore()
+    /// The report a driven screen is in the middle of writing. Its own store
+    /// for the same reason the app's is: what was frozen outlives the screen
+    /// that froze it.
+    private(set) var reports = ReportStore()
 
     /// What the App Store answers while the door is driving. The paywall is
     /// handed this rather than the real store, so no capture and no journey
@@ -247,6 +251,7 @@ final class DoorHost {
         deletion = DeletionStore(
             asking: fixture.deletion?.account, typed: fixture.deletion?.typed ?? "",
             phase: fixture.deletion?.phase ?? .asking)
+        reports = Self.reporting(fixture.report)
         fixture.apply(stores)
         cloud.scripted = fixture.cloud
         cloud.reset()
@@ -257,6 +262,25 @@ final class DoorHost {
         overlay = fixture.overlay
         show(screen)
         return .ack
+    }
+
+    /// The report a state declares, frozen on the fixture's own picture.
+    ///
+    /// The picture is committed beside the fixtures rather than photographed
+    /// here: the door can only photograph the screen it is showing, and the
+    /// screen it is showing is the report.
+    private static func reporting(_ declared: Fixture.Reporting?) -> ReportStore {
+        guard let declared, let capture = FrozenFixture.capture() else { return ReportStore() }
+        return ReportStore(
+            capture: capture,
+            draft: ReportDraft(note: declared.note, marks: declared.marks),
+            sending: {
+                switch declared.sending {
+                case .ready: .ready
+                case .failed(let why): .failed(why)
+                }
+            }(),
+            open: true)
     }
 
     /// Puts the app into an appearance.

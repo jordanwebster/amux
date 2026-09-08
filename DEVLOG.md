@@ -4,6 +4,54 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **The report screen, and the bundle it sends.**
+
+The frozen frame now has a screen to sit on. The picture is drawn small enough
+that the writing fits under it: drag a box round anything wrong, each box takes
+a note of its own, one note covers the whole thing, and Send is the only
+control that leaves the phone. Nothing on the picture can be pressed — it is a
+photograph of a moment that is over.
+
+A rectangle is held in the frame's own points, not in the points the picture
+happens to be drawn at, so the same report describes the same place whether it
+is read on the phone that wrote it or on a Mac. The conversion is one scale
+factor and it happens in the one view that knows both sizes.
+
+Send assembles the layout `amux debug report` already writes and replays.
+`report.json` declares every part present or absent-with-a-reason and carries
+the note, the rectangles and the frame's geometry; `frame.png`, `trace.jsonl`,
+`msgs.jsonl`, `daemon.json` and `log.txt` sit beside it under those names. The
+runtime hands back one object holding a checkpoint, the messages it folded and
+the daemon's dump, and that is split into the two files a bundle carries. The
+log is declared absent, with the reason: this app logs through the system,
+which keeps no file an app may read back. The header is written by hand rather
+than through `Codable`, because the reader is a Rust type whose field names and
+enum spellings are the contract and a synthesised encoding would follow this
+app's property names instead.
+
+The upload is one multipart request with one section per file, each named after
+the file it carries, which is what the account service reads. It refuses a
+bundle whose declarations and whose files disagree, so a part declared absent
+is left out rather than sent empty.
+
+A refusal keeps everything. The draft, the rectangles and the frozen frame are
+all still there afterwards and Send reads Retry, because somebody who wrote
+three notes about a bug on a train must not lose them to a tunnel.
+
+Two fixture notes are written on two lines rather than left to wrap. A vertical
+text field settles a few points wider or narrower depending on how much of the
+page is scrollable, and the report state is almost exactly one screen tall, so
+a note left to find its own wrap point broke on a different word about one run
+in two.
+
+Green: `wt run ios-goldens -- dump` and `-- upload-failed` (stable over three
+runs), `wt run ios-goldens -- --built` (106 captures; only the known
+status-bar flake on `devices.light`, which passes on its own),
+`wt run ios-unit` (5 schemes, including 8 new report-bundle tests),
+`wt run ios-lint`.
+
+---
+
 2026-09-08 — **A screenshot on the phone freezes what was on screen.**
 
 The report flow on the phone now starts where the design said it should: you

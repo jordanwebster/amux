@@ -49,6 +49,14 @@ targets:
       # fixture in the shipped binary; compiling its sources lets the release
       # configuration leave them out entirely.
       - path: Packages/AmuxTestSupport/Sources/AmuxTestSupport
+        excludes:
+          - "Resources/**"
+      # The picture a report fixture is frozen on, bundled rather than
+      # compiled: a report screen is a photograph of another screen, so a
+      # declared report state has to carry one. Release leaves it out with the
+      # rest of the fixtures.
+      - path: Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources
+        buildPhase: resources
       # The performance harness, for the same reason: the workloads it
       # generates are forty invented agents and a thousand invented rows, and
       # none of that belongs in a build a person installs.
@@ -102,7 +110,7 @@ targets:
           # are not compiled at all, so a door symbol or a fixture cannot
           # reach a shipped binary by way of a stray reference outside a
           # conditional. `wt run ios-door-smoke` checks the built binary.
-          EXCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*"
+          EXCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*"
     dependencies:
       - package: AmuxCore
         product: AmuxCore

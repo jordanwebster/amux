@@ -1253,3 +1253,49 @@ what was wrong.
 
 Everything else is the reference: one glass pill, a ladybug and the word
 Report, floating over the transcript just clear of the composer.
+
+## dump
+
+The report, on the frame a screenshot froze: the picture, one box drawn round
+the row that is wrong with its own note under it, one note about the whole
+thing, and Send. Cancel goes back to what was being looked at and throws the
+report away; Send is the only thing on this screen that leaves the phone.
+
+The picture is a photograph and not a live screen. Nothing on it can be
+pressed, scrolled or opened, because none of it is there any more.
+
+- **The report opens on the frozen frame with no Share step and no Photos
+  access.** The system's screenshot is the system's; this is the app's own
+  picture of its own window, taken when the report started.
+- **The status bar inside the picture is the app's, not the system's.** An app
+  can photograph its own window and nothing outside it, so what the picture
+  carries is whatever the app drew — the clock and the battery in the inner
+  frame are the simulator's status bar as it appeared in the capture this
+  fixture was taken from, not a live one.
+- **The rectangle's number sits on the box, and the same number is on its
+  note.** The reference draws the note's first words in a filled pill hanging
+  off the box instead. A note can be a sentence long and a pill carrying one
+  would cover the thing it points at, so the box carries a number and the
+  words live under the picture where there is room for them.
+- **The box's own note and the note about the whole report are both fields,
+  drawn as filled cards.** The reference draws only the second one as a card
+  and puts the box's words on the picture; both are typed into, so both are
+  drawn as the same kind of thing.
+- **The two mono lines are the reference's**, word for word: what to do with
+  the picture, and what is being sent.
+
+The fixture states both notes on two lines rather than letting them wrap. A
+vertical text field settles a few points wider or narrower depending on how
+much of the page is scrollable, and this state is almost exactly one screen
+tall, so a note left to find its own wrap point broke on a different word on
+about one run in two. Where a person's note wraps is the field's business;
+where these wrap is the fixture's.
+
+## upload-failed
+
+The same report, after the account service would not take it. Send reads
+Retry, what the cloud said is under the report, and everything written is still
+there — the picture, the box, its note and the note about the whole thing.
+There is no preserved reference for this state; it is the designed failure the
+flow needs, because a report written on a train and lost to a tunnel is a
+report nobody writes twice.

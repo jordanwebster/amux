@@ -38,6 +38,11 @@ public struct Fixture: Identifiable, Sendable {
     /// model sheet and the permissions sheet — so which one is a fact about
     /// the state rather than about the screen.
     public let overlay: ConversationOverlay?
+    /// The report this state is in the middle of writing, if any. Declared
+    /// rather than reached, for the same reason a purchase is: a report starts
+    /// from a screenshot the system takes, and nothing inside the app can make
+    /// one happen.
+    public let report: Reporting?
     /// Fills stores directly. A fixture never speaks a protocol: a journey
     /// that claims protocol coverage drives the real relay instead.
     public let apply: @Sendable @MainActor (StoreBundle) -> Void
@@ -53,6 +58,7 @@ public struct Fixture: Identifiable, Sendable {
         deletion: Deleting? = nil,
         typeSize: String? = nil,
         overlay: ConversationOverlay? = nil,
+        report: Reporting? = nil,
         apply: @escaping @Sendable @MainActor (StoreBundle) -> Void = { _ in }
     ) {
         self.id = id
@@ -65,7 +71,30 @@ public struct Fixture: Identifiable, Sendable {
         self.deletion = deletion
         self.typeSize = typeSize
         self.overlay = overlay
+        self.report = report
         self.apply = apply
+    }
+
+    /// A report in progress, as a state declares it: the note, the rectangles
+    /// somebody drew, and where the send stands.
+    public struct Reporting: Sendable, Equatable {
+        public var note: String
+        public var marks: [ReportMark]
+        public var sending: Sending
+
+        /// Where the send has got to. Spelled here rather than reusing the
+        /// store's own phase, because a fixture declares a resting state and
+        /// the store's phase carries a receipt nobody would want to write out.
+        public enum Sending: Sendable, Equatable {
+            case ready
+            case failed(String)
+        }
+
+        public init(note: String, marks: [ReportMark] = [], sending: Sending = .ready) {
+            self.note = note
+            self.marks = marks
+            self.sending = sending
+        }
     }
 
     /// A deletion in progress, as a state declares it: whose account, what has
@@ -115,4 +144,42 @@ public struct Fixture: Identifiable, Sendable {
                 id: AccountId("side"), email: "side@example.com", displayName: "Side project"),
             signedIn: false),
     ]
+}
+
+/// The picture a report fixture is frozen on.
+///
+/// A report screen is mostly a photograph of another screen, so a state that
+/// declared one without a picture would be a baseline of a grey rectangle. The
+/// picture is a real capture of the conversation, committed beside this file
+/// at one pixel per point so it is a fixture rather than a copy of a golden.
+public enum FrozenFixture {
+    /// The conversation, as this phone would have photographed it.
+    ///
+    /// Nothing here reaches a window: the point of a fixture is that the state
+    /// it declares exists without the events that would have produced it.
+    public static func capture() -> ReportCapture? {
+        // The app's own bundle, not a package's. These sources are compiled
+        // into the debug app rather than linked as a package — Xcode
+        // force-loads a package's static library whether or not anything
+        // references it, which would put every fixture in the shipped binary
+        // — so there is no package bundle to ask and the picture is an app
+        // resource that release leaves out with the rest of them.
+        guard
+            let url = Bundle.main.url(forResource: "frozen-frame", withExtension: "png"),
+            let png = try? Data(contentsOf: url)
+        else { return nil }
+        return ReportCapture(
+            frame: FrozenFrame(png: png, width: 402, height: 874, scale: 3),
+            snapshot: snapshot,
+            trace: "{\"kind\":\"route\",\"screen\":\"run\"}\n",
+            route: "run")
+    }
+
+    /// What the runtime would have answered: a checkpoint, one folded message
+    /// and the embedded daemon's dump. Small on purpose — what a bundle test
+    /// checks is that each part is declared and carried, not what is in it.
+    private static let snapshot = """
+        {"msgs":{"format_version":1,"checkpoint":{"agents":[]},\
+        "msgs":["{\\"kind\\":\\"fleet\\"}"]},"daemon":"{\\"hosts\\":[]}"}
+        """
 }

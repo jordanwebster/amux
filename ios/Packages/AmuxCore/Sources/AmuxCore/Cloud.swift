@@ -104,12 +104,19 @@ public enum DeletionOutcome: Sendable, Equatable, Codable {
 /// states why it is missing, so a report with a hole in it is still readable
 /// as a report rather than as a bug in the reporter.
 public struct ReportBundle: Sendable, Equatable, Codable {
-    public var note: String
+    /// Every part, `report.json` first. What somebody wrote about the report
+    /// is inside that file rather than beside it: the header is what declares
+    /// the note, the rectangles and which other parts are here at all, and a
+    /// note carried separately would be a second place for it to live.
     public var parts: [ReportPart]
 
-    public init(note: String, parts: [ReportPart]) {
-        self.note = note
+    public init(parts: [ReportPart]) {
         self.parts = parts
+    }
+
+    /// One part by the name it is filed under.
+    public func part(_ name: String) -> ReportPart? {
+        parts.first { $0.name == name }
     }
 }
 

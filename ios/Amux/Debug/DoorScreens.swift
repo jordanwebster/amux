@@ -184,6 +184,13 @@ enum DoorScreens {
                     agent: Scenario.focus, in: host.stores.fleet),
                 naming: { host.stores.fleet.name(of: $0) }) { _ in }
                 .reportOffer(true, take: {}, dismiss: {})
+        // The report, on the frame a screenshot froze. Captured on its own
+        // rather than over the screen it is about: the frame is inside the
+        // report as a photograph, so the screen underneath is already in the
+        // picture and drawing it twice would say something untrue about what
+        // this screen covers.
+        case .dump:
+            ReportScreen(model: host.reports) { _ in }
         // Starting an agent. The chooser over it is a state of this screen
         // rather than a screen beside it, so the fixture decides whether it is
         // open and this is the one arm either way.

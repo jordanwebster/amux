@@ -98,6 +98,52 @@ public struct ReportCapture: Sendable, Equatable {
     }
 }
 
+/// One rectangle somebody drew on the frozen frame, with what they said about
+/// it.
+///
+/// Measured in the frame's own unit — points on a phone, cells in a terminal —
+/// so a reader on a Mac puts it back where it was drawn without knowing what
+/// scale the phone rendered at. Fractional, because a finger rarely lands on a
+/// whole point.
+public struct ReportMark: Sendable, Equatable, Codable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+    public var note: String
+
+    public init(x: Double, y: Double, width: Double, height: Double, note: String = "") {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.note = note
+    }
+}
+
+/// What somebody has written about the frame so far: one note about the whole
+/// thing, and a note on each rectangle they drew.
+public struct ReportDraft: Sendable, Equatable {
+    public var note: String
+    public var marks: [ReportMark]
+
+    public init(note: String = "", marks: [ReportMark] = []) {
+        self.note = note
+        self.marks = marks
+    }
+}
+
+/// Where a report stands with the cloud.
+public enum ReportSending: Sendable, Equatable {
+    case ready
+    case sending
+    /// It did not go. What the cloud said is kept, because the person has to
+    /// decide whether to try again and the answer is the only thing that tells
+    /// them whether it is worth doing.
+    case failed(String)
+    case sent(ReportReceipt)
+}
+
 /// Why a part of a report is not there.
 ///
 /// A part that is missing carries the reason it is missing rather than
@@ -144,8 +190,28 @@ public final class ReportStore {
     public private(set) var offering = false
     /// Whether the report is open over the app.
     public private(set) var open = false
+    /// What has been written about the frame: one note, and a note per
+    /// rectangle. Public to set, because the screen's fields bind to it.
+    public var draft = ReportDraft()
+    /// Where the report stands with the cloud.
+    public private(set) var sending: ReportSending = .ready
 
     public init() {}
+
+    /// A report already in progress, as a declared state has it.
+    ///
+    /// A state is written rather than reached here, for the reason every
+    /// declared state exists: a report starts from a screenshot the system
+    /// takes, and nothing inside the app can make one of those happen.
+    public init(
+        capture: ReportCapture?, draft: ReportDraft = ReportDraft(),
+        sending: ReportSending = .ready, open: Bool = false
+    ) {
+        self.capture = capture
+        self.draft = draft
+        self.sending = sending
+        self.open = open && capture != nil
+    }
 
     /// Freezes the screen and offers to report it.
     ///
@@ -182,10 +248,85 @@ public final class ReportStore {
         open = true
     }
 
-    /// Turned the offer down, or closed the report. The capture goes with it.
+    /// Turned the offer down, or closed the report. The capture goes with it,
+    /// and so does anything written about it: the report is abandoned.
     public func dismiss() {
         offering = false
         open = false
         capture = nil
+        draft = ReportDraft()
+        sending = .ready
+    }
+
+    // MARK: - Writing it
+
+    /// Draws a rectangle around something wrong. It arrives with no note; the
+    /// screen then asks for one, which is why an empty note is a legal state
+    /// and not a validation failure.
+    public func mark(_ mark: ReportMark) {
+        draft.marks.append(mark)
+    }
+
+    /// What somebody typed about a rectangle they had already drawn.
+    public func note(_ text: String, on index: Int) {
+        guard draft.marks.indices.contains(index) else { return }
+        draft.marks[index].note = text
+    }
+
+    /// Takes a rectangle back off the frame, with whatever was said about it.
+    public func unmark(_ index: Int) {
+        guard draft.marks.indices.contains(index) else { return }
+        draft.marks.remove(at: index)
+    }
+
+    // MARK: - Sending it
+
+    /// Assembles the bundle and hands it to the account service.
+    ///
+    /// A failure keeps everything. The draft, the rectangles and the frozen
+    /// frame are all still here afterwards, so Retry is one press and not a
+    /// second report: somebody who wrote three notes about a bug on a train
+    /// must not lose them to a tunnel.
+    public func send(
+        with cloud: any CloudService, as account: AccountId,
+        build: String, gitSHA: String = "", log: Result<String, PartAbsent>,
+        now: Date = Date()
+    ) async {
+        guard let capture, sending != .sending else { return }
+        sending = .sending
+        let bundle = ReportAssembly.bundle(
+            from: capture, draft: draft, build: build, gitSHA: gitSHA,
+            createdAt: now, log: log)
+        do {
+            let receipt = try await cloud.uploadReport(account, bundle: bundle)
+            sending = .sent(receipt)
+        } catch {
+            sending = .failed(Self.sentence(for: error))
+        }
+    }
+
+    /// What the person is told when the cloud would not take it. Said in the
+    /// cloud's own words where it gave any, because "something went wrong"
+    /// tells nobody whether pressing Retry is worth it.
+    static func sentence(for error: CloudError) -> String {
+        switch error {
+        case .cancelled: "the upload was stopped"
+        case .unauthenticated: "amux.sh no longer recognises this account"
+        case .refused(let reason): reason
+        case .network(let what): what
+        case .timeout: "amux.sh did not answer"
+        }
+    }
+
+    /// What would be sent right now. The screen shows what a report declares
+    /// before anybody presses anything, and a test reads the same thing.
+    public func assembled(
+        build: String, gitSHA: String = "", log: Result<String, PartAbsent>,
+        now: Date = Date()
+    ) -> ReportBundle? {
+        guard let capture else { return nil }
+        return ReportAssembly.bundle(
+            from: capture, draft: draft, build: build, gitSHA: gitSHA,
+            createdAt: now, log: log)
     }
 }

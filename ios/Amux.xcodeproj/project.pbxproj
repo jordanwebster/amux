@@ -44,6 +44,7 @@
 		B37C5282B90F7083711687FC /* ColdStartProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */; };
 		BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 7841E9EA7855115C8262F599 /* Localizable.xcstrings */; };
 		C09FEF55EDD6530C94D3E862 /* Instruments.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E1FE40B447768ED3E301C2 /* Instruments.swift */; };
+		CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */ = {isa = PBXBuildFile; fileRef = 6DC1FF3D962A7B46549AF24A /* frozen-frame.png */; };
 		CC47E088696AFFB5355CC755 /* AmuxFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = 5DAB04E1049B001BF097770B /* AmuxFeatures */; };
 		CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */; };
 		D1A7249247B147B6A897D074 /* HostsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71AECE15627BD11A3278E26C /* HostsTests.swift */; };
@@ -93,6 +94,7 @@
 		66609895E99B406673EEADA3 /* States.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = States.swift; sourceTree = "<group>"; };
 		6AF7C50B96593352DB0BC307 /* AccountsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsTests.swift; sourceTree = "<group>"; };
 		6BAD30E79F5FE66C97691B57 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		6DC1FF3D962A7B46549AF24A /* frozen-frame.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "frozen-frame.png"; sourceTree = "<group>"; };
 		71AECE15627BD11A3278E26C /* HostsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsTests.swift; sourceTree = "<group>"; };
 		7316CFA811C55B9CEEB041C5 /* Judge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Judge.swift; sourceTree = "<group>"; };
 		7841E9EA7855115C8262F599 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
@@ -260,6 +262,14 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		93E975D8BBA6A4EE577D8738 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6DC1FF3D962A7B46549AF24A /* frozen-frame.png */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		A93C129C195D63A10C55EBFC /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -302,6 +312,7 @@
 				66609895E99B406673EEADA3 /* States.swift */,
 				21A4FC885DCA537FD2ABD0FD /* Trace.swift */,
 				D0E455E43044DD55EB8662D4 /* Transcript.swift */,
+				93E975D8BBA6A4EE577D8738 /* Resources */,
 			);
 			path = AmuxTestSupport;
 			sourceTree = "<group>";
@@ -434,6 +445,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */,
+				CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -624,7 +636,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				EXCLUDED_SOURCE_FILE_NAMES = "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*";
+				EXCLUDED_SOURCE_FILE_NAMES = "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*";
 				INFOPLIST_FILE = Amux/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
