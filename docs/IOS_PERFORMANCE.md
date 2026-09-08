@@ -88,6 +88,24 @@ nothing — but the strip, the foot and the composer are laid out on every frame
 those arrivals cause, and a number taken with the feed alone would be a number
 about a screen nobody uses.
 
+A whole run also records two things that are not budgets. What a shipped build
+weighs: a `Release` build for a phone, unsigned, laid out on disk, with the
+bridge's own static archives and the profile they were built under beside it —
+the size requirement is a policy about where size comes from rather than a
+ceiling, so there is nothing to pass or fail. And what the app asks the display
+for: `capped`, `disableMinimumFrameDurationOnPhone` and the preferred range
+against the display's maximum, which on a simulator reporting 60 Hz is the
+claim that the app caps nothing and never the claim that it reaches 120.
+
+The lifecycle row has nothing measuring it yet. What it asks for — one
+connection per machine, none while the phone is away, one back within two
+seconds — can only be read from the far end of a real relay, and the
+`Measured` build cannot reach the test relay: its packages are built as
+separate frameworks, each linking the shipping bridge, so the driving bridge
+the app force-loads never answers and a plaintext loopback relay is refused.
+The `Debug` build links everything into one image and does reach it, which is
+why `wt run ios-journey -- hosts-lifecycle` can make the same claims today.
+
 A run can be asked for one group of measurements — `wt run ios-perf -- --only
 streaming`, or `cold`, `reconciliation` or `echo` — which is for working on
 that group rather than for reporting. The verdict then carries only the rows this
@@ -99,11 +117,11 @@ samples, and the median is what a budget is applied to. One suite runs at a
 time: two measurements sharing a machine measure each other.
 
 What it costs to run, because a person deciding whether to start one should
-not have to find out by starting one: on the pinned Mac, about three and a half
-minutes once the app is built — five cold launches and a suite of about two and
-a half minutes — and about sixteen from a cold tree, where building the Rust
-bridge is the longer half and `wt run ios-rust` does it before this recipe is
-reached. Every run prints its own figure and `report.md` carries it. The
+not have to find out by starting one: on the pinned Mac, about six minutes once
+the app is built — five cold launches, a suite of about two and a half minutes
+and a release build for a phone to weigh — and about eighteen from a cold tree,
+where building the Rust bridge is the longer half and `wt run ios-rust` does it
+before this recipe is reached. Every run prints its own figure and `report.md` carries it. The
 recipe's own timeout is a hang guard and says nothing about how long a run
 takes.
 

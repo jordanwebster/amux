@@ -4,6 +4,34 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Write down what the app weighs and what it asks the display for.**
+
+A whole performance run now records two things that are not budgets. It builds
+the app for a phone in `Release`, unsigned, and weighs the bundle on disk —
+31.1 MB, almost all of it the executable — with the bridge's own static
+archives and the `profile.mobile` flags they were built under beside it, since
+the size requirement is a policy about where size comes from rather than a
+ceiling. And report.md now states what the app asks the display for: `capped`
+false, `disableMinimumFrameDurationOnPhone` true, a preferred range up to the
+display's own maximum, labelled for what it is — a simulator reporting 60 Hz,
+so it is the claim that the app caps nothing and never the claim that it
+reaches 120.
+
+The third record that belongs beside them, the relay's account of what this
+phone holds while it is used, put away and picked up, is not here yet, and the
+reason is worth writing down. The `Measured` configuration cannot reach a
+plaintext test relay. It builds each package as its own framework, and every
+one of those links the shipping bridge out of AmuxCore's package manifest, so
+the driving bridge the app target force-loads never answers: a Measured build
+reports `Bridge.build` as `0.1.0` and refuses `http://`. `Debug` links
+everything into one image, where the force-load wins, reports
+`0.1.0+debug-tools` and connects — which is why the journeys can make these
+claims today and the measured run cannot. Fixing that changes the shape of the
+binary the cold-start numbers were taken in, so it is not a change to make on
+the way past.
+
+---
+
 2026-09-09 — **Measure how long the phone takes to show you your own words.**
 
 The optimistic echo now has a number behind it. The performance suite sends a

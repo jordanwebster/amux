@@ -50,6 +50,12 @@ ARCHITECTURE = ["ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES"]
 # The groups of measurements a run can be asked for one of, named as the app
 # names them. A whole run takes all of them and is what CI does.
 SECTIONS = ["cold", "reconciliation", "echo", "streaming"]
+# What a run records beside the verdict, from the build rather than from the
+# suite: what a shipped build weighs.
+SIZES = "size.md"
+# Where the bridge's own archives and the profile they were built with are
+# already recorded, by the recipe that builds them.
+BRIDGE_SIZES = Path("target/ios/size.txt")
 
 
 def machines() -> list[dict]:
@@ -151,7 +157,8 @@ def clear_previous(perf: Path, output: Path) -> None:
     for folder in [perf, output]:
         for name in PRODUCED:
             (folder / name).unlink(missing_ok=True)
-    (output / REPORT).unlink(missing_ok=True)
+    for name in [REPORT, SIZES]:
+        (output / name).unlink(missing_ok=True)
 
 
 def inputs(udid: str, row: dict, only: str | None) -> Path:
@@ -169,8 +176,8 @@ def inputs(udid: str, row: dict, only: str | None) -> Path:
         "only": only,
         "configuration": CONFIGURATION,
     }, indent=2))
-    (perf / "cold-samples.jsonl").unlink(missing_ok=True)
-    (perf / "cold-marks.jsonl").unlink(missing_ok=True)
+    for name in ["cold-samples.jsonl", "cold-marks.jsonl"]:
+        (perf / name).unlink(missing_ok=True)
     return perf
 
 
@@ -201,6 +208,58 @@ def cold_starts(udid: str, perf: Path) -> None:
         "cold first frame: "
         + ", ".join(f"{value:.0f} ms" for value in values), flush=True)
     print(split(perf / "cold-marks.jsonl"), flush=True)
+
+
+def sizes(output: Path) -> None:
+    """What a shipped build of this app weighs, and what the bridge in it does.
+
+    Built for a phone rather than for the simulator: the simulator slice is a
+    different binary and its size is a claim about nothing anybody installs.
+    Signing is off because nothing is being installed either, and a bundle does
+    not change size for whose key is on it. What is reported is the bundle laid
+    out on disk, which is what a build produces — not the App Store's thinned
+    and compressed download, which no recipe here can produce.
+    """
+    subprocess.run([
+        "xcodebuild", "build",
+        "-project", "ios/Amux.xcodeproj",
+        "-scheme", "Amux",
+        "-configuration", "Release",
+        "-destination", "generic/platform=iOS",
+        "-derivedDataPath", str(DERIVED_DATA),
+        "-quiet",
+        "CODE_SIGNING_ALLOWED=NO",
+    ], check=True, timeout=1800)
+    application = DERIVED_DATA / "Build/Products/Release-iphoneos/Amux.app"
+    if not application.is_dir():
+        raise SystemExit(f"the release build left no application at {application}")
+    files = [path for path in application.rglob("*") if path.is_file()]
+    total = sum(path.stat().st_size for path in files)
+    binary = (application / "Amux").stat().st_size
+    lines = [
+        "# What this app weighs",
+        "",
+        "A `Release` build for a phone, unsigned, laid out on disk. Not the "
+        "thinned and compressed download the App Store makes of it, which no "
+        "recipe here can produce.",
+        "",
+        f"- `{application.name}`: {total:,} bytes ({total / 1_048_576:.1f} MB) "
+        f"over {len(files)} files",
+        f"- Its executable: {binary:,} bytes ({binary / 1_048_576:.1f} MB)",
+        "",
+        "The bridge inside it, as the recipe that builds it recorded them — "
+        "static archives before the linker has taken what it needs, so they "
+        "are much larger than what they contribute:",
+        "",
+        "```",
+        BRIDGE_SIZES.read_text().rstrip("\n") if BRIDGE_SIZES.is_file()
+        else f"{BRIDGE_SIZES} is missing; run wt run ios-rust",
+        "```",
+        "",
+    ]
+    output.mkdir(parents=True, exist_ok=True)
+    (output / SIZES).write_text("\n".join(lines))
+    print(f"the release build weighs {total / 1_048_576:.1f} MB laid out on disk", flush=True)
 
 
 def split(marks: Path) -> str:
@@ -342,6 +401,12 @@ def report(verdict: dict, output: Path, minutes: float) -> None:
         "",
         f"Where a cold launch's time went: {split_line}.",
         "",
+        f"What the app asks the display for: {cadence(output)}. This simulator "
+        "reports 60 Hz and a ProMotion phone reports 120, so this is the claim "
+        "that the app caps nothing rather than the claim that it reaches 120.",
+        "",
+        f"What a shipped build weighs is recorded beside this, in `{SIZES}`.",
+        "",
         "A row marked `proxy` is a number about this simulator standing in for "
         "a number about a phone. The simulator reports 60 Hz and composites "
         "through the Mac's display, so hitch time is display-link missed-frame "
@@ -353,6 +418,20 @@ def report(verdict: dict, output: Path, minutes: float) -> None:
     ]
     (output / REPORT).write_text("\n".join(lines))
     print(f"{output / REPORT}: written", flush=True)
+
+
+def cadence(output: Path) -> str:
+    """What the app asked the display for, as the app read it back."""
+    read = output / "cadence.json"
+    if not read.is_file():
+        return "nothing was recorded; the suite did not reach the end"
+    seen = json.loads(read.read_text())
+    return (
+        f"`capped` {str(seen['capped']).lower()}, "
+        f"`disableMinimumFrameDurationOnPhone` "
+        f"{str(seen['disableMinimumFrameDurationOnPhone']).lower()}, "
+        f"a preferred range up to {seen['preferredRangeUpperBound']:.0f} Hz against "
+        f"a display maximum of {seen['maximumFramesPerSecond']} Hz")
 
 
 def describe() -> None:
@@ -455,6 +534,10 @@ def main() -> None:
         print(f"only the {only} measurements were asked for", flush=True)
     if only in [None, "cold"]:
         cold_starts(udid, perf)
+    if only is None:
+        # Before the suite: a size taken after it would be a size nobody could
+        # read whenever the suite failed, which is when it is most wanted.
+        sizes(OUTPUT)
     measure(udid)
     # The container is asked for again rather than remembered: installing the
     # test build can give the app a new one, and copying out of the old one
