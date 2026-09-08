@@ -122,3 +122,48 @@ public final class ScriptedStoreFront: StoreFront, @unchecked Sendable {
         }
     }
 }
+
+/// What the scripted App Store will answer, in the door's own words. The same
+/// spelling as the cloud's script, for the same reason.
+public struct StoreScript: Codable, Sendable, Equatable {
+    /// Whether there is anything on sale at all. A store with nothing to sell
+    /// is a build the App Store has never heard of, or no network.
+    public var selling = true
+    /// What pressing Subscribe comes to: `bought`, `pending`, `cancelled`,
+    /// `nothingToRestore` or `fails`.
+    public var purchase = "bought"
+    /// What Restore Purchases comes to, in the same words.
+    public var restore = "nothingToRestore"
+    /// What the store said when it failed.
+    public var reason = "the App Store could not complete this purchase"
+    public var latencyMillis = 0
+
+    public init() {}
+
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        selling = try fields.decodeIfPresent(Bool.self, forKey: .selling) ?? selling
+        purchase = try fields.decodeIfPresent(String.self, forKey: .purchase) ?? purchase
+        restore = try fields.decodeIfPresent(String.self, forKey: .restore) ?? restore
+        reason = try fields.decodeIfPresent(String.self, forKey: .reason) ?? reason
+        latencyMillis = try fields.decodeIfPresent(Int.self, forKey: .latencyMillis)
+            ?? latencyMillis
+    }
+
+    public var state: ScriptedStoreState {
+        ScriptedStoreState(
+            plans: selling ? ScriptedStoreState.offered : [],
+            purchase: outcome(purchase), restore: outcome(restore),
+            latency: .milliseconds(latencyMillis))
+    }
+
+    private func outcome(_ said: String) -> ScriptedStoreState.Outcome {
+        switch said {
+        case "pending": .pending
+        case "cancelled": .cancelled
+        case "nothingToRestore": .nothingToRestore
+        case "fails": .fails(reason)
+        default: .bought
+        }
+    }
+}

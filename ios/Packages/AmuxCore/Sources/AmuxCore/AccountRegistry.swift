@@ -75,6 +75,16 @@ public final class AccountRegistry {
     public private(set) var stores: StoreBundle?
     /// Late results refused because they answered for a deselected account.
     public private(set) var dropped = 0
+    /// What to tell whoever holds the runtime when the account on screen
+    /// changes.
+    ///
+    /// The registry is what a screen presses; the runtime is somewhere else
+    /// entirely, and a phone that changed the list without re-pointing the
+    /// connection would draw one account's name over another account's
+    /// machines. Nothing is assumed about how long that takes: the switch here
+    /// is immediate, and results still arriving for the account just left are
+    /// refused by `deliver` as the late answers they are.
+    public var switching: (@MainActor (AccountId) -> Void)?
 
     public init() {}
 
@@ -142,6 +152,7 @@ public final class AccountRegistry {
         guard selected != id else { return }
         selected = id
         stores = StoreBundle(account: id)
+        switching?(id)
     }
 
     public func entitlement(_ entitlement: Entitlement, for id: AccountId) {

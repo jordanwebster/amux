@@ -21,8 +21,13 @@ final class DoorTests: XCTestCase {
         let requests: [DoorRequest] = [
             .open(screen: "home", fixture: nil),
             .open(screen: "home", fixture: "home-quiet"),
-            .cloud(.firstRun),
+            .cloud(CloudScript()),
+            .store(StoreScript()),
+            .calls,
+            .accounts,
+            .late(account: "work"),
             .connect(relay: "http://127.0.0.1:8080", token: "bearer", user: "ada"),
+            .addAccount(user: "work", token: "another-bearer"),
             .awaitReconciled(seconds: 90),
             .awaitOffline(seconds: 30),
             .bridge,
@@ -55,6 +60,39 @@ final class DoorTests: XCTestCase {
             let round = try decoder.decode(DoorRequest.self, from: encoder.encode(request))
             XCTAssertEqual(round, request)
         }
+    }
+
+    /// What the account service and the App Store will answer is written by
+    /// hand, by somebody driving the app from another language. So a request
+    /// says only what it is changing, everything else keeps the answer most
+    /// states want, and none of it is spelled in Swift's own encoding of a
+    /// nested enum.
+    func testAScriptSaysOnlyWhatItChanges() throws {
+        let refusing = Data(
+            #"{"kind":"cloud","cloud":{"signIn":"refused","reason":"no such account"}}"#.utf8)
+        guard case .cloud(let script) = try decoder.decode(DoorRequest.self, from: refusing) else {
+            return XCTFail("that was not a cloud request")
+        }
+        XCTAssertEqual(script.state.signIn, .refused("no such account"))
+        XCTAssertEqual(script.state.entitlement, .active(source: .web, renews: nil))
+        XCTAssertEqual(script.state.token, "scripted-connect-token")
+
+        // An account with nothing bought is refused a relay credential, which
+        // is said by naming the token as nothing rather than by leaving it out.
+        let gated = Data(
+            #"{"kind":"cloud","cloud":{"entitlement":"none","token":null}}"#.utf8)
+        guard case .cloud(let closed) = try decoder.decode(DoorRequest.self, from: gated) else {
+            return XCTFail("that was not a cloud request")
+        }
+        XCTAssertEqual(closed.state.entitlement, .none)
+        XCTAssertNil(closed.state.token)
+
+        let pending = Data(#"{"kind":"store","store":{"purchase":"pending"}}"#.utf8)
+        guard case .store(let store) = try decoder.decode(DoorRequest.self, from: pending) else {
+            return XCTFail("that was not a store request")
+        }
+        XCTAssertEqual(store.state.purchase, .pending)
+        XCTAssertEqual(store.state.plans, ScriptedStoreState.offered)
     }
 
     func testRequestsAreTaggedAndFlat() throws {

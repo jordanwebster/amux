@@ -1964,6 +1964,305 @@ def hosts(journey: Journey, udid: str, ready: dict) -> None:
     forget_pairings(udid)
 
 
+def accounts(journey: Journey, udid: str, ready: dict) -> None:
+    """Signing in, paying, switching between two accounts and giving one up.
+
+    The account service and the App Store are the scripted ones, handed to the
+    app by its own launch: a browser at amux.sh has somebody's password in it,
+    a purchase sheet belongs to another process and a deletion is not a thing
+    to try against a real account service. Every outcome those two can produce
+    is stated by the test and reached by a finger, which is the only way a
+    refused purchase, a purchase left waiting for approval and a deletion
+    refused by billing are states anybody can see.
+
+    The relay underneath is real, and so are the two machines and the agent
+    that asks for something. What an account that is not on screen has waiting
+    cannot be invented anywhere: it arrives on the phone from that account's
+    own live subscription, which is what the second half of this journey is
+    about.
+    """
+    daemons = {daemon["name"]: daemon for daemon in ready["daemons"]}
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    tokens = {user["label"]: user["token"] for user in ready["users"]}
+
+    install(udid)
+    forget_cache(udid)
+    forget_pairings(udid)
+    journey.say("two machines on one relay, one for each account, and nobody signed in on "
+                "the phone")
+
+    pictures = {"unsigned-launch": ("first-run",), "subscribe": ("paywall",),
+                "switching": ("profiles",), "delete": ("delete",),
+                "help-and-appearance": ("appearance-dark", "appearance-light")}
+    driving = journey.acts
+    port = free_port()
+    read = journey.directory / "accounts.json"
+    photographs = {name: journey.directory / f"{name}.png"
+                   for act in driving for name in pictures.get(act, ())}
+    perform(
+        journey, udid, "AmuxUITests/AccountsTests",
+        {"accounts.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_ACTS": ",".join(driving) if journey.filtered else "",
+            "AMUX_RELAY": f"http://{ready['relay']}",
+            "AMUX_TOKEN": tokens["personal"],
+            "AMUX_WORK_TOKEN": tokens["work"],
+            "AMUX_USER": "personal",
+            "AMUX_CONTROL": ready["control"],
+            "AMUX_DOOR_PORT": str(port),
+            "AMUX_AGENT": running["fix-login"]["agent_id"],
+            "AMUX_WORK_AGENT": running["ship-the-release"]["agent_id"],
+            "AMUX_HOST": "laptop",
+            "AMUX_LAPTOP": daemons["laptop"]["host_id"],
+            "AMUX_STUDIO": daemons["studio"]["host_id"],
+        })
+    seen = json.loads(read.read_text())
+
+    # What the phone says it did, read before anything else it says. A run that
+    # took shortcuts names them here, so its findings can never be read back as
+    # the journey.
+    shortcut = seen.get("actsShortcut") or []
+    journey.expect(seen.get("actsPerformed") == driving,
+                   f"this run asked for {driving} and the phone drove "
+                   f"{seen.get('actsPerformed')}")
+    journey.expect(not set(shortcut) & set(driving),
+                   f"the phone both drove and shortcut {sorted(set(shortcut) & set(driving))}")
+    if journey.filtered:
+        journey.say(f"shortcut without a finger: {', '.join(shortcut) or 'nothing'}; "
+                    f"driven through the screen: {', '.join(driving)}")
+    else:
+        journey.expect(not shortcut, f"the whole journey shortcut {shortcut}")
+
+    def unsigned_launch() -> None:
+        """A phone nobody has signed in on."""
+        journey.expect(seen.get("gateAtLaunch") == "signed-out",
+                       f"a phone nobody had signed in on drew {seen.get('gateAtLaunch')!r}")
+        journey.expect(seen.get("homeSaysAtLaunch") == "No hosts yet"
+                       and seen.get("homeOffersAtLaunch") == "Sign In",
+                       f"the first launch says {seen.get('homeSaysAtLaunch')!r} and offers "
+                       f"{seen.get('homeOffersAtLaunch')!r}")
+        journey.expect(seen.get("accountsAtLaunch") == []
+                       and seen.get("accountRowsAtLaunch") == [],
+                       f"a phone with no account listed {seen.get('accountsAtLaunch')} and "
+                       f"{seen.get('accountRowsAtLaunch')}")
+        journey.say("the first launch is the real home, empty, with one thing to do: no "
+                    "splash, no account, and nothing to subscribe to or sign out of")
+
+    def sign_in() -> None:
+        """Signing in, and the two ways it does not finish."""
+        journey.expect(seen.get("signInOpens") == "amux.sh"
+                       and seen.get("signInOffers") == "Continue on amux.sh",
+                       f"the sign-in page offers {seen.get('signInOffers')!r} and says it opens "
+                       f"{seen.get('signInOpens')!r}")
+        journey.expect(seen.get("refusalSaid") == "amux.sh has no account for this sign-in",
+                       f"a refused sign-in said {seen.get('refusalSaid')!r}")
+        journey.expect(seen.get("afterCancelling") == "ready",
+                       f"cancelling left the page at {seen.get('afterCancelling')!r}")
+        journey.expect(seen.get("gateAfterSigningIn") == "unsubscribed"
+                       and seen.get("homeOffersAfterSigningIn") == "Subscribe",
+                       f"an account with nothing bought drew {seen.get('gateAfterSigningIn')!r} "
+                       f"offering {seen.get('homeOffersAfterSigningIn')!r}")
+        journey.expect(seen.get("accountsAfterSigningIn")
+                       == ["ada@example.com: signed in, None"],
+                       f"this phone knows {seen.get('accountsAfterSigningIn')}")
+        journey.say(f"the hand-off names where it is sending you and never asks for a password: "
+                    f"refused it says the account service's own words "
+                    f"({seen.get('refusalSaid')!r}), cancelled it leaves nothing to dismiss, and "
+                    f"finished it puts the account on the phone with nothing bought — the same "
+                    f"empty home with the other thing to do")
+
+    def subscribe() -> None:
+        """Buying it, and the three ways it does not go through."""
+        journey.expect(len(seen.get("paywallOffers") or []) == 2
+                       and any("Yearly" in offer and "chosen" in offer
+                               for offer in seen["paywallOffers"]),
+                       f"the paywall offers {seen.get('paywallOffers')}")
+        journey.expect(seen.get("afterCancellingThePurchase") == "yearly"
+                       and (seen.get("stillOffersAfterCancelling") or "").startswith("Subscribe"),
+                       f"a cancelled purchase left the screen at "
+                       f"{seen.get('afterCancellingThePurchase')!r} offering "
+                       f"{seen.get('stillOffersAfterCancelling')!r}")
+        journey.expect(seen.get("purchaseRefusalSaid") == "your payment method was declined",
+                       f"a refused purchase said {seen.get('purchaseRefusalSaid')!r}")
+        journey.expect(seen.get("pendingSaid") == "pending"
+                       and seen.get("offersWhilePending") == "Waiting for approval",
+                       f"a purchase left waiting said {seen.get('pendingSaid')!r} with the "
+                       f"button reading {seen.get('offersWhilePending')!r}")
+        journey.expect(
+            seen.get("restoreSaid") == "there is nothing on this Apple Account to restore",
+            f"restoring with nothing to restore said {seen.get('restoreSaid')!r}")
+        journey.expect(seen.get("subscribedSource") == "App Store"
+                       and seen.get("offersAfterBuying") == "Done",
+                       f"a purchase that went through said {seen.get('subscribedSource')!r}")
+        journey.expect(seen.get("gateAfterBuying") == "ready",
+                       f"a subscribed phone drew {seen.get('gateAfterBuying')!r}")
+        journey.expect(seen.get("entitlementAfterBuying")
+                       == ["ada@example.com: signed in, Active · App Store"],
+                       f"after buying, this phone knows {seen.get('entitlementAfterBuying')}")
+        bought = [call for call in seen.get("storeCalls") or [] if call.startswith("buy")]
+        journey.expect("buy amux_pro_yearly" in bought and "buy amux_pro_monthly" in bought,
+                       f"the paywall asked the store for {bought}")
+        journey.expect("entitlement personal" in (seen.get("cloudCalls") or []),
+                       f"the phone believed the store rather than the account service: "
+                       f"{seen.get('cloudCalls')}")
+        journey.say(f"both subscriptions are pressed at the App Store — {', '.join(bought)} — and "
+                    f"every answer it can give is on screen: a sheet closed without buying leaves "
+                    f"the same plan chosen, a refusal says what the store said, one left waiting "
+                    f"for approval says nothing has been charged and stops offering to buy, and "
+                    f"restoring nothing says so. The one that goes through is read back from the "
+                    f"account service rather than believed — the phone asks it what this account "
+                    f"may do — and the home opens")
+
+    def second_account() -> None:
+        """A second account, subscribed somewhere else."""
+        journey.expect(seen.get("accountsAfterAdding") == [
+            "ada@example.com: signed in, Active · App Store",
+            "team@acme.example: signed in, Active · amux.sh"],
+            f"this phone knows {seen.get('accountsAfterAdding')}")
+        journey.expect(seen.get("selectedAfterAdding") == "personal",
+                       f"signing a second account in moved the phone to "
+                       f"{seen.get('selectedAfterAdding')!r}")
+        journey.expect(seen.get("workSubscriptionRow") == "Active · amux.sh",
+                       f"the second account's subscription reads "
+                       f"{seen.get('workSubscriptionRow')!r}")
+        journey.expect(seen.get("workPaywallSource") == "amux.sh"
+                       and seen.get("sellsToTheWebSubscriber") is False,
+                       f"the paywall says {seen.get('workPaywallSource')!r} to somebody who "
+                       f"already subscribes and offers to restore: "
+                       f"{seen.get('sellsToTheWebSubscriber')}")
+        journey.say("a second account is added from the same page the first one signed in on, "
+                    "and the phone stays where it was rather than moving somebody who has just "
+                    "signed in somewhere else. Its subscription was bought on the web through "
+                    "the CLI and is honoured here: the row says where it came from and the "
+                    "paywall says so too, instead of selling a second one for the same thing")
+
+    def switching() -> None:
+        """Two accounts with machines under them."""
+        journey.expect(seen.get("workFleet") == ["ship-the-release"],
+                       f"the work account reaches {seen.get('workFleet')}")
+        journey.expect(seen.get("personalFleet") == ["fix-login"],
+                       f"the first account reaches {seen.get('personalFleet')}")
+        journey.expect(seen.get("inactiveAccountWaiting") == "1 need you",
+                       f"the account off screen has {seen.get('inactiveAccountWaiting')!r} "
+                       f"waiting beside {seen.get('inactiveAccountRow')!r}")
+        journey.expect((seen.get("droppedLateResults") or 0) >= 1,
+                       f"an answer for the account nobody is looking at was not refused: "
+                       f"{seen.get('droppedLateResults')} dropped")
+        journey.expect(seen.get("fleetAfterTheLateResult") == seen.get("fleetBeforeTheLateResult"),
+                       f"a refused answer still reached the screen: "
+                       f"{seen.get('fleetBeforeTheLateResult')} became "
+                       f"{seen.get('fleetAfterTheLateResult')}")
+        holdings = {label: answer(ready["control"], {"Connections": {"user": label}})["links"]
+                    for label in ("personal", "work")}
+        (journey.directory / "connections.json").write_text(
+            json.dumps(holdings, indent=2, sort_keys=True) + "\n")
+        journey.say(f"each account pairs with its own machine under an identity of its own and "
+                    f"sees only its own agents: {seen.get('workFleet')} against "
+                    f"{seen.get('personalFleet')}. With the first account on screen, the other "
+                    f"one still says what it has waiting — {seen.get('inactiveAccountWaiting')!r} — "
+                    f"from its own live subscription to its own machine, which is a number "
+                    f"nothing on this phone could have invented. An answer that account's "
+                    f"connection had already produced, arriving after the switch, is refused and "
+                    f"changes nothing on screen")
+
+    def signed_out_account() -> None:
+        """An account left and come back to."""
+        journey.expect(seen.get("signedOutRowSays") == "signed out"
+                       and len(seen.get("accountsAfterSigningOut") or []) == 2,
+                       f"after signing out this phone knows "
+                       f"{seen.get('accountsAfterSigningOut')}")
+        journey.expect("team@acme.example: signed out, None"
+                       in (seen.get("accountsAfterSigningOut") or []),
+                       f"the account signed out of reads "
+                       f"{seen.get('accountsAfterSigningOut')}")
+        journey.expect(seen.get("lapsedSubscriptionRow") == "Ended · amux.sh",
+                       f"a subscription that has run out reads "
+                       f"{seen.get('lapsedSubscriptionRow')!r}")
+        journey.say("signing out of one account leaves it listed with Sign In beside it — the "
+                    "address is the one thing anybody recognises, and forgetting it would make "
+                    "signing back in look like adding a stranger. Signing back in finds a "
+                    "subscription that has since ended, and the row says when it ended rather "
+                    "than that there never was one")
+
+    def delete() -> None:
+        """An account given up for good."""
+        journey.expect(seen.get("deleteBeforeTyping") is False
+                       and seen.get("deleteAfterTheWrongAddress") is False
+                       and seen.get("deleteAfterTheRightAddress") is True,
+                       f"Delete was available before the address was typed: "
+                       f"{seen.get('deleteBeforeTyping')}, after the wrong one: "
+                       f"{seen.get('deleteAfterTheWrongAddress')}, after the right one: "
+                       f"{seen.get('deleteAfterTheRightAddress')}")
+        journey.expect(seen.get("blockedBy") == "App Store"
+                       and seen.get("blockedLeadsTo") == "Cancel Renewal in the App Store",
+                       f"a deletion the billing refused said {seen.get('blockedBy')!r} and led "
+                       f"to {seen.get('blockedLeadsTo')!r}")
+        journey.expect(seen.get("typedAfterComingBack") == "team@acme.example",
+                       f"coming back from the billing found {seen.get('typedAfterComingBack')!r} "
+                       f"typed")
+        journey.expect(seen.get("accountsAfterDeleting")
+                       == ["ada@example.com: signed in, Active · App Store"],
+                       f"after the deletion this phone knows "
+                       f"{seen.get('accountsAfterDeleting')}")
+        journey.expect(seen.get("selectedAfterDeleting") == "personal",
+                       f"the phone was left on {seen.get('selectedAfterDeleting')!r}")
+        deletions = [call for call in seen.get("cloudCalls") or []
+                     if call.startswith("requestDeletion")]
+        journey.expect(len(deletions) == 2
+                       and all("as team@acme.example" in call for call in deletions),
+                       f"the account service was asked to delete {deletions}")
+        journey.say("Delete Account is in the app, states what goes and what stays, and stays "
+                    "unavailable until the account's own address is typed — the wrong one does "
+                    "not unlock it. Refused while the subscription is still set to renew, it "
+                    "says so, names the only place that can be stopped and offers to go there; "
+                    "coming back finds the same question with the address still typed. Deleted, "
+                    "the account leaves the phone and the other one is what is left")
+
+    def help_and_appearance() -> None:
+        """What belongs to the phone rather than to an account."""
+        journey.expect(seen.get("appearances") == ["dark", "light", "system"],
+                       f"the three appearances read {seen.get('appearances')}")
+        journey.expect(seen.get("appearanceRedrewTheScreen") is True,
+                       "the same page in Light and in Dark photographed identically, so nothing "
+                       "was applied")
+        journey.expect(seen.get("supportLeftTheApp") is True,
+                       "Contact Support did not leave the app")
+        journey.say(f"Light, Dark and System are one row and each is applied to the whole app "
+                    f"under the thumb that pressed it — the same page photographs differently in "
+                    f"two of them. Contact Support leaves for the web, where the people are: "
+                    f"{seen.get('supportOpened') or 'the address it opened'}")
+
+    checks = {
+        "unsigned-launch": unsigned_launch,
+        "sign-in": sign_in,
+        "subscribe": subscribe,
+        "second-account": second_account,
+        "switching": switching,
+        "signed-out-account": signed_out_account,
+        "delete": delete,
+        "help-and-appearance": help_and_appearance,
+    }
+    journey.expect(journey.filtered or list(checks) == driving,
+                   f"the manifest declares {driving} and this driver asserts {list(checks)}")
+    for act in driving:
+        checks[act]()
+
+    # What the two doubles were asked, in the order they were asked it. It is
+    # the evidence that nothing here reached a network or the App Store, and
+    # that the screens asked what they claim to have asked.
+    (journey.directory / "scripted-calls.json").write_text(
+        json.dumps({"cloud": seen.get("cloudCalls") or [],
+                    "store": seen.get("storeCalls") or []}, indent=2) + "\n")
+
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    if photographs:
+        journey.say("photographed " + ", ".join(sorted(photographs)))
+    forget_cache(udid)
+    forget_pairings(udid)
+
+
 def prepare_hosts() -> None:
     """Three repositories for the machines to offer, so what a person picks on
     New Agent is a directory that really exists on the far side.
@@ -2003,7 +2302,8 @@ def prepare_writing() -> None:
 
 JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
             "conversation": conversation, "asks": asks, "review": review,
-            "writing": writing, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts}
+            "writing": writing, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts,
+            "accounts": accounts}
 # What has to exist before the daemons start: the runner resolves an
 # agent's working directory when it loads the topology.
 PREPARE = {"asks": prepare_asks, "review": prepare_review, "writing": prepare_writing,

@@ -4,6 +4,47 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **The phone runs against a scripted account service, and the
+switcher re-points the runtime.**
+
+Signing in, buying a subscription and deleting an account are now things a test
+can drive on the real screens. A launch carrying `-amux-scripted-cloud` hands
+the app the scripted account service, the scripted App Store and a sign-in
+presenter that answers with the callback instead of opening a browser; without
+it the app is itself and holds the real three. That is the whole seam — no
+screen and no store knows which side of it it is on — and it is what makes a
+refused purchase, a purchase the store has taken and cannot finish, and a
+deletion the billing refuses states a finger can reach rather than states only
+a fixture can draw.
+
+What the two doubles will answer is now said to the door in plain words rather
+than in Swift's own encoding of a nested enum: `{"kind":"cloud","cloud":
+{"signIn":"refused","reason":"…"}}` changes one outcome and leaves the rest,
+and the same for the store. A driver in another language can write one by hand,
+and a transcript of a failing run can be read.
+
+Three holes the accounts screens had are closed. Add Account opens the sign-in
+page, which is the only place an account can come from; it was doing nothing at
+all. Switching account empties every navigation stack, because a page pushed
+under the account just left is about that account's machines and would
+otherwise still be standing when you came back to that tab. And the switcher's
+waiting badge is named in its own right, so what an account off screen has
+waiting can be read by anybody driving the app — the row's own name carries
+what the row says, and the number is a fact about somewhere else.
+
+The door grew what an accounts journey needs and nothing more: a second account
+with a credential of its own (the runtime takes its accounts when it starts, so
+this restarts it with both), the accounts the registry holds, what the two
+doubles were asked, and one more delivery of the last batch an account produced
+— tagged for that account — which is the only way a result arriving after
+somebody switched away can be played on purpose. The switch itself now reaches
+the runtime: pressing an account in the switcher dispatches `select`, and every
+batch is credited to the account the runtime is actually reading rather than to
+the one on screen, so what the previous profile was still producing is refused
+by the registry as the late answer it is.
+
+---
+
 2026-09-08 — **Deleting an account, and where the two Help rows lead.**
 
 Delete Account now asks its question over the page it was asked from, dimmed as

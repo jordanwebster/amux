@@ -378,6 +378,10 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
     case confirmPair(pending: String)
     /// Turn it away. Nothing is written on either side.
     case abandonPair(pending: String)
+    /// Read a different account. The runtime re-points itself at that
+    /// account's profile — its own machines, its own device identity — and
+    /// nothing the previous one showed is carried across.
+    case selectAccount(String)
     /// Stop waiting out the reconnect backoff and dial the relay now.
     case retryNow
     /// Stop trusting a machine, closing every link this phone holds to it.
@@ -391,7 +395,7 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
     case shared(JSONValue)
 
     private enum Key: String, CodingKey {
-        case command, agent, host, pin, payload, pending
+        case command, agent, host, pin, payload, pending, account
         case query, limit, directory, name
     }
 
@@ -417,6 +421,9 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
                 return
             case "abandon":
                 self = .abandonPair(pending: try container.decode(String.self, forKey: .pending))
+                return
+            case "select":
+                self = .selectAccount(try container.decode(String.self, forKey: .account))
                 return
             case "retry_now":
                 self = .retryNow
@@ -470,6 +477,10 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("abandon", forKey: .command)
             try container.encode(pending, forKey: .pending)
+        case .selectAccount(let account):
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("select", forKey: .command)
+            try container.encode(account, forKey: .account)
         case .retryNow:
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("retry_now", forKey: .command)

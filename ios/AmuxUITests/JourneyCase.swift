@@ -68,9 +68,14 @@ class JourneyCase: XCTestCase {
     ///     first frame exactly as the system hands one over.
     ///   - user: which account the credential belongs to, where a test signs
     ///     in as more than one.
+    ///   - scripted: whether the account service and the App Store the app
+    ///     itself holds are the scripted ones. A launch that signs somebody in
+    ///     by pressing the button needs them: a browser at amux.sh has a
+    ///     password in it and the App Store's sheet belongs to another
+    ///     process, and neither can be driven from here.
     func launch(
         _ runner: Runner, signedIn: Bool = true, link: String? = nil,
-        as user: String? = nil, token: String? = nil
+        as user: String? = nil, token: String? = nil, scripted: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
         let credential = signedIn ? [
@@ -80,6 +85,7 @@ class JourneyCase: XCTestCase {
         ] : []
         app.launchArguments = ["-amux-door-port", runner.doorPort]
             + credential
+            + (scripted ? ["-amux-scripted-cloud"] : [])
             + (link.map { ["-amux-link", $0] } ?? [])
         app.launch()
         return app
@@ -235,6 +241,13 @@ class JourneyCase: XCTestCase {
         var base64: String?
         var from: Int?
         var to: Int?
+        /// What the scripted account service and the scripted App Store will
+        /// answer from here on, in the door's own words. A request says only
+        /// what it is changing.
+        var cloud: [String: Any]?
+        var store: [String: Any]?
+        /// Which account a request is about, where more than one is signed in.
+        var account: String?
 
         var body: [String: Any] {
             var fields: [String: Any] = ["kind": kind]
@@ -257,6 +270,9 @@ class JourneyCase: XCTestCase {
             if let base64 { fields["base64"] = base64 }
             if let from { fields["from"] = from }
             if let to { fields["to"] = to }
+            if let cloud { fields["cloud"] = cloud }
+            if let store { fields["store"] = store }
+            if let account { fields["account"] = account }
             return fields
         }
     }

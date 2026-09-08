@@ -1,0 +1,12 @@
+{
+  "users": ["personal", "work"],
+  "daemons": [
+    {"name": "laptop", "user": "personal", "repository_roots": ["../.."]},
+    {"name": "studio", "user": "work", "repository_roots": ["../.."]}
+  ],
+  "paired": [],
+  "agents": [
+    {"name": "fix-login", "daemon": "laptop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}},
+    {"name": "ship-the-release", "daemon": "studio", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}}
+  ]
+}

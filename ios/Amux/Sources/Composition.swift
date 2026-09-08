@@ -29,12 +29,15 @@ final class Composition {
     /// What the app is wearing. Nothing means whatever the phone is set to,
     /// which is what most people want and what the app starts as.
     var appearance: Appearance?
-    /// The real account service. Every screen sees it as `CloudService` and
-    /// none of them knows there is HTTP behind it.
-    private let cloud: any CloudService = AmuxCloudService()
-    /// The real App Store. The paywall sees it as `StoreFront` and does not
-    /// know StoreKit is behind it.
-    private let store: any StoreFront = AppStoreFront()
+    /// The account service. Every screen sees it as `CloudService` and none of
+    /// them knows there is HTTP behind it.
+    private let cloud: any CloudService
+    /// The App Store. The paywall sees it as `StoreFront` and does not know
+    /// StoreKit is behind it.
+    private let store: any StoreFront
+    /// Where signing in happens: the system's own browser, which this app
+    /// hands a URL and is told what came back from.
+    private let webAuth: any WebAuthPresenter
 
     /// Where a fleet goes before anybody has signed in. The app runs signed
     /// out — it shows an empty home rather than a login wall — so there has to
@@ -44,6 +47,22 @@ final class Composition {
     var stores: StoreBundle { accounts.stores ?? signedOut }
 
     init() {
+        // The real services, unless the launch says otherwise. A launch driven
+        // by a test says otherwise: signing in must not open a browser at
+        // amux.sh, buying must not reach the App Store, and deleting must not
+        // delete anybody's account. The doubles are the same shape, so
+        // everything above this line is the app either way.
+        #if AMUX_DEBUG_TOOLS
+        let scripted = ProcessInfo.processInfo.arguments
+            .contains("-\(Door.scriptedCloudArgument)")
+        cloud = scripted ? DoorHost.shared.cloud : AmuxCloudService()
+        store = scripted ? DoorHost.shared.store : AppStoreFront()
+        webAuth = scripted ? DoorHost.shared.webAuth : WebSignIn()
+        #else
+        cloud = AmuxCloudService()
+        store = AppStoreFront()
+        webAuth = WebSignIn()
+        #endif
         router.loads(with: self)
         rememberedFleet()
     }
@@ -64,17 +83,32 @@ final class Composition {
     /// What the shell asks for that it cannot do itself.
     func handle(_ action: ShellAction) {
         switch action {
+        // Changing which account is on screen empties every stack behind it.
+        // A page pushed under the account just left is about that account's
+        // machines and that account's agents, and coming back to a tab must
+        // not find one of them still standing under another account's name.
         case .selectAccount(let id):
+            guard accounts.selected != id else { break }
             accounts.select(id)
+            for tab in Tab.allCases { router.setPath([], for: tab) }
         // Signing in is a page, pushed onto whichever stack asked for it so
-        // going back leads where the person came from.
-        case .signIn:
+        // going back leads where the person came from. Adding an account is
+        // the same page: this app has no idea who is about to sign in, and
+        // whoever comes back is either an account this phone already knows or
+        // a new one.
+        case .signIn, .addAccount:
+            // Opened afresh, it asks afresh. What came back last time was
+            // about whoever signed in then, and leaving it on screen would
+            // offer somebody a Done button for an account they are not
+            // signing in as. A browser still up is the exception: that
+            // attempt is this page's and is still running.
+            if !signIn.working { signIn.again() }
             router.open(.signIn(router.tab))
         // The hand-off itself. It leaves for a browser this app cannot read
         // and comes back with an account or with what went wrong; the store
         // holds which, and the screen draws it.
         case .handOffSignIn:
-            Task { await signIn.signIn(with: cloud, presenting: WebSignIn(), into: accounts) }
+            Task { await signIn.signIn(with: cloud, presenting: webAuth, into: accounts) }
         // Subscribing is a page too, and it asks the store what it has on the
         // way: the screen is useful before the answer arrives and nothing
         // waits on it.
@@ -115,12 +149,6 @@ final class Composition {
         // the account off this phone with it.
         case .confirmDeletion:
             Task { await deletion.delete(with: cloud, from: accounts) }
-        // Adding an account leaves the app for the web. Until that journey is
-        // built there is nowhere to send somebody, and inventing a local one
-        // the real one would have to undo would be worse than the button
-        // doing nothing.
-        case .addAccount:
-            break
         }
     }
     /// Reads what the account service says this account may do, after

@@ -187,3 +187,103 @@ public struct ScriptedWebAuth: WebAuthPresenter {
         }
     }
 }
+
+/// What the scripted account service will answer, in the door's own words.
+///
+/// The double's own Swift shape reaches a wire as Swift's synthesised encoding
+/// of nested enums — `{"succeeds":{"_0":…}}` — which nothing outside this
+/// language would write and nobody could read in a transcript of a failing
+/// run. These are the same outcomes, spelled, and every field has the answer
+/// most states want so a driver says only what it is changing.
+public struct CloudScript: Codable, Sendable, Equatable {
+    /// `succeeds`, `cancelled`, `refused` or `offline`.
+    public var signIn = "succeeds"
+    /// Who signing in comes back as. The identifier is the app's own and is
+    /// what a relay credential is later asked for by name.
+    public var account = "ada"
+    public var email = "ada@example.com"
+    public var displayName: String?
+    /// Why the cloud refused, where it refused.
+    public var reason = "amux.sh could not sign this account in"
+    /// `none`, `active` or `lapsed`.
+    public var entitlement = "active"
+    /// Where the subscription was bought: `appStore` or `web`.
+    public var source = "web"
+    /// The relay credential to hand back. Nothing refuses to issue one, which
+    /// is what an account with no subscription is answered with.
+    public var token: String? = "scripted-connect-token"
+    /// `deleted` or `blockedByRenewal`.
+    public var deletion = "deleted"
+    /// Where a blocked deletion says the billing can be stopped.
+    public var manageURL = "https://apps.apple.com/account/subscriptions"
+    /// How long every answer takes, so a screen that is only on show while a
+    /// request is in flight can be reached.
+    public var latencyMillis = 0
+
+    public init() {}
+
+    /// Everything unsaid keeps the answer above, so a driver changing one
+    /// outcome writes one field.
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        func said(_ key: CodingKeys, _ fallback: String) throws -> String {
+            try fields.decodeIfPresent(String.self, forKey: key) ?? fallback
+        }
+        signIn = try said(.signIn, signIn)
+        account = try said(.account, account)
+        email = try said(.email, email)
+        displayName = try fields.decodeIfPresent(String.self, forKey: .displayName)
+        reason = try said(.reason, reason)
+        entitlement = try said(.entitlement, entitlement)
+        source = try said(.source, source)
+        // Present and null is a cloud that will not issue a credential;
+        // absent is a cloud nobody asked about.
+        token = fields.contains(.token)
+            ? try fields.decodeIfPresent(String.self, forKey: .token) : token
+        deletion = try said(.deletion, deletion)
+        manageURL = try said(.manageURL, manageURL)
+        latencyMillis = try fields.decodeIfPresent(Int.self, forKey: .latencyMillis)
+            ?? latencyMillis
+    }
+
+    /// The state the double reads, which is the one thing this describes.
+    public var state: ScriptedCloudState {
+        ScriptedCloudState(
+            signIn: outcome, entitlement: entitled, token: token, deletion: deleting,
+            latency: .milliseconds(latencyMillis))
+    }
+
+    private var who: SignedInAccount {
+        SignedInAccount(id: AccountId(account), email: email, displayName: displayName)
+    }
+
+    private var outcome: ScriptedCloudState.SignInOutcome {
+        switch signIn {
+        case "cancelled": .cancelled
+        case "refused": .refused(reason)
+        case "offline": .offline
+        default: .succeeds(who)
+        }
+    }
+
+    private var bought: EntitlementSource {
+        source == "appStore" ? .appStore : .web
+    }
+
+    private var entitled: Entitlement {
+        switch entitlement {
+        case "none": .none
+        // A subscription that ran out says when, because a screen that only
+        // said "ended" would be telling somebody less than they knew.
+        case "lapsed": .lapsed(source: bought, endedAt: Scenario.now.addingTimeInterval(-86_400))
+        default: .active(source: bought, renews: nil)
+        }
+    }
+
+    private var deleting: DeletionOutcome {
+        guard deletion == "blockedByRenewal", let url = URL(string: manageURL) else {
+            return .deleted
+        }
+        return .blockedByRenewal(source: bought, manageURL: url)
+    }
+}

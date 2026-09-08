@@ -1175,6 +1175,10 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     /// The attempt an answer names is not one the runtime is holding: it was
     /// answered already, or the app has been restarted since.
     case pairingLost
+    /// The runtime is reading this account now. It arrives after the switch
+    /// on screen, and everything projected before it answered for the account
+    /// that was on screen until then.
+    case selected(account: String)
     /// The connection has been asked to dial now. Whether that shortened
     /// anything is the connection's to decide; whether the relay answers
     /// arrives as a connection state rather than as an answer to this.
@@ -1198,7 +1202,7 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     case other(outcome: String, body: JSONValue)
 
     private enum Key: String, CodingKey {
-        case outcome, agent, error, attachment, host, name
+        case outcome, agent, error, attachment, host, name, account
         case recent, repositories, roots
     }
 
@@ -1223,6 +1227,8 @@ public enum OpOutcome: Sendable, Equatable, Codable {
         case "pairing_abandoned": self = .pairingAbandoned
         case "pairing_refused": self = .pairingRefused
         case "pairing_lost": self = .pairingLost
+        case "selected":
+            self = .selected(account: try container.decode(String.self, forKey: .account))
         case "retry_requested": self = .retryRequested
         case "revoked":
             self = .revoked(
@@ -1278,6 +1284,9 @@ public enum OpOutcome: Sendable, Equatable, Codable {
             case .pairingAbandoned: try container.encode("pairing_abandoned", forKey: .outcome)
             case .pairingRefused: try container.encode("pairing_refused", forKey: .outcome)
             case .pairingLost: try container.encode("pairing_lost", forKey: .outcome)
+            case .selected(let account):
+                try container.encode("selected", forKey: .outcome)
+                try container.encode(account, forKey: .account)
             case .retryRequested: try container.encode("retry_requested", forKey: .outcome)
             case .revoked(let host, let name):
                 try container.encode("revoked", forKey: .outcome)

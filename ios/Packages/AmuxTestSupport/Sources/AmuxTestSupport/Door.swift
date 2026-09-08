@@ -13,8 +13,37 @@ public enum DoorRequest: Sendable, Equatable {
     /// Show a named screen, filled from a named state. Absent means the state
     /// whose name matches the screen.
     case open(screen: String, fixture: String?)
-    /// Rewrite what the cloud will answer from here on.
-    case cloud(ScriptedCloudState)
+    /// Rewrite what the account service will answer from here on.
+    case cloud(CloudScript)
+    /// Rewrite what the App Store will answer from here on. A purchase sheet
+    /// belongs to another process and cannot be pressed from a test, so what
+    /// it comes to is said here and the screen is driven by a finger as
+    /// usual.
+    case store(StoreScript)
+    /// Everything the scripted cloud and the scripted store were asked, in
+    /// order. What a screen did behind the words on it — that it asked the
+    /// account service what this account may do rather than believing the
+    /// purchase — is only readable here.
+    case calls
+    /// The accounts this phone knows, as the registry every screen reads has
+    /// them, and how many answers it has refused for an account no longer on
+    /// screen.
+    case accounts
+    /// Sign another account in on this phone, with a relay credential of its
+    /// own, and give it a profile of its own.
+    ///
+    /// The runtime takes its accounts when it starts, so this restarts it with
+    /// every account this phone has been given and leaves the same one on
+    /// screen. Which account is read is then the switcher's to change.
+    case addAccount(user: String, token: String)
+    /// Deliver again, under the name of the account it answered for, the last
+    /// thing that account's connection produced.
+    ///
+    /// A result that arrives after somebody has switched away cannot be asked
+    /// for: it is a race with a network. This is that result, played at the
+    /// moment the race would have lost — the same batch, from the same
+    /// connection, still answering for the account it was about.
+    case late(account: String)
     /// Start the shared runtime against a relay with a credential.
     case connect(relay: String, token: String, user: String)
     /// Wait until the fleet has been confirmed by a host, or give up after
@@ -160,6 +189,10 @@ public enum DoorReply: Sendable, Equatable {
     case bundle(path: String, parts: [String])
     /// This phone now trusts the machine of this name.
     case paired(host: String)
+    /// What the scripted cloud and the scripted store were asked, in order.
+    case calls(cloud: [String], store: [String])
+    /// The accounts this phone knows.
+    case accounts(AccountsState)
     /// What became of an attempted send: whether it left the phone, and the
     /// sentence on screen when it did not.
     case sendAttempt(delivered: Bool, reason: String?)
@@ -203,6 +236,54 @@ public struct ReplayedState: Codable, Sendable, Equatable {
         self.reconciled = reconciled
         self.trace = trace
         self.screen = screen
+    }
+}
+
+/// The accounts this phone knows, as the registry the screens read has them.
+///
+/// A driver could read most of this off the screen, and where it can it
+/// should. What it cannot read anywhere is the last line: a result refused
+/// because it answered for an account nobody is looking at leaves nothing on
+/// screen, which is the whole point of refusing it.
+public struct AccountsState: Codable, Sendable, Equatable {
+    public let selected: String?
+    public let accounts: [Known]
+    /// Answers refused because they were about an account that is no longer on
+    /// screen.
+    public let dropped: Int
+
+    public init(selected: String?, accounts: [Known], dropped: Int) {
+        self.selected = selected
+        self.accounts = accounts
+        self.dropped = dropped
+    }
+
+    /// One account, as its row is drawn from.
+    public struct Known: Codable, Sendable, Equatable {
+        public let id: String
+        public let email: String
+        public let signedIn: Bool
+        /// What this account may do and where that came from, in the words the
+        /// subscription row says it: *Active · App Store*, *Ended · amux.sh*,
+        /// *None*.
+        public let entitlement: String
+        /// How many machines this account reached, where a connection has
+        /// counted them.
+        public let hosts: Int?
+        /// How many agents are waiting on it, where something has reported it.
+        public let attention: Int?
+
+        public init(
+            id: String, email: String, signedIn: Bool, entitlement: String,
+            hosts: Int?, attention: Int?
+        ) {
+            self.id = id
+            self.email = email
+            self.signedIn = signedIn
+            self.entitlement = entitlement
+            self.hosts = hosts
+            self.attention = attention
+        }
     }
 }
 
@@ -333,7 +414,8 @@ public struct VisibleFrame: Codable, Sendable, Equatable {
 
 extension DoorRequest: Codable {
     private enum Key: String, CodingKey {
-        case kind, screen, fixture, cloud, relay, token, user, appearance, size, path
+        case kind, screen, fixture, cloud, store, relay, token, user, appearance, size, path
+        case account
         case identifier, text, seconds, qr, agent, base, prose, from, to
         case attachment, name, mime, base64, host, pin
     }
@@ -347,7 +429,17 @@ extension DoorRequest: Codable {
                 screen: try fields.decode(String.self, forKey: .screen),
                 fixture: try fields.decodeIfPresent(String.self, forKey: .fixture))
         case "cloud":
-            self = .cloud(try fields.decode(ScriptedCloudState.self, forKey: .cloud))
+            self = .cloud(try fields.decode(CloudScript.self, forKey: .cloud))
+        case "store":
+            self = .store(try fields.decode(StoreScript.self, forKey: .store))
+        case "calls": self = .calls
+        case "accounts": self = .accounts
+        case "addAccount":
+            self = .addAccount(
+                user: try fields.decode(String.self, forKey: .user),
+                token: try fields.decode(String.self, forKey: .token))
+        case "late":
+            self = .late(account: try fields.decode(String.self, forKey: .account))
         case "connect":
             self = .connect(
                 relay: try fields.decode(String.self, forKey: .relay),
@@ -440,6 +532,20 @@ extension DoorRequest: Codable {
         case .cloud(let state):
             try fields.encode("cloud", forKey: .kind)
             try fields.encode(state, forKey: .cloud)
+        case .store(let state):
+            try fields.encode("store", forKey: .kind)
+            try fields.encode(state, forKey: .store)
+        case .calls:
+            try fields.encode("calls", forKey: .kind)
+        case .accounts:
+            try fields.encode("accounts", forKey: .kind)
+        case .addAccount(let user, let token):
+            try fields.encode("addAccount", forKey: .kind)
+            try fields.encode(user, forKey: .user)
+            try fields.encode(token, forKey: .token)
+        case .late(let account):
+            try fields.encode("late", forKey: .kind)
+            try fields.encode(account, forKey: .account)
         case .connect(let relay, let token, let user):
             try fields.encode("connect", forKey: .kind)
             try fields.encode(relay, forKey: .relay)
@@ -541,7 +647,7 @@ extension DoorRequest: Codable {
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
         case kind, state, bridge, path, width, height, scale, message, parts, replayed, marks
-        case host, delivered, reason
+        case host, delivered, reason, cloud, store, known
     }
 
     public init(from decoder: any Decoder) throws {
@@ -567,6 +673,12 @@ extension DoorReply: Codable {
                 parts: try fields.decode([String].self, forKey: .parts))
         case "paired":
             self = .paired(host: try fields.decode(String.self, forKey: .host))
+        case "calls":
+            self = .calls(
+                cloud: try fields.decode([String].self, forKey: .cloud),
+                store: try fields.decode([String].self, forKey: .store))
+        case "accounts":
+            self = .accounts(try fields.decode(AccountsState.self, forKey: .known))
         case "sendAttempt":
             self = .sendAttempt(
                 delivered: try fields.decode(Bool.self, forKey: .delivered),
@@ -608,6 +720,13 @@ extension DoorReply: Codable {
         case .paired(let host):
             try fields.encode("paired", forKey: .kind)
             try fields.encode(host, forKey: .host)
+        case .calls(let cloud, let store):
+            try fields.encode("calls", forKey: .kind)
+            try fields.encode(cloud, forKey: .cloud)
+            try fields.encode(store, forKey: .store)
+        case .accounts(let known):
+            try fields.encode("accounts", forKey: .kind)
+            try fields.encode(known, forKey: .known)
         case .sendAttempt(let delivered, let reason):
             try fields.encode("sendAttempt", forKey: .kind)
             try fields.encode(delivered, forKey: .delivered)
@@ -651,6 +770,17 @@ public enum Door {
     public static let tokenArgument = "amux-token"
     public static let userArgument = "amux-user"
     public static let pairArgument = "amux-pair"
+
+    /// `-amux-scripted-cloud`: the app runs as itself, against the scripted
+    /// account service and the scripted App Store instead of the real ones.
+    ///
+    /// Every other launch argument says what to reach. This one says what not
+    /// to: signing in must not open a browser at amux.sh, buying must not
+    /// reach StoreKit, and deleting must not delete anybody's real account.
+    /// What the screens do with what comes back is the app's own — the two
+    /// doubles are the same shape as the adapters they stand in for, and no
+    /// screen can tell which it is holding.
+    public static let scriptedCloudArgument = "amux-scripted-cloud"
 
     /// `-amux-link URL`: a link the launch was opened with, handed to the app
     /// before its first frame exactly as the system hands one over.

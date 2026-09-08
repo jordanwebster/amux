@@ -81,6 +81,12 @@ struct AccountRow: View {
                 .frame(minWidth: 24, minHeight: 24)
                 .background(Circle().fill(design.accent.color))
                 .accessibilityLabel("\(waiting) need you")
+                // Named in its own right: the row's own name carries what the
+                // row says about the account, and the number is a fact about
+                // somewhere else that changes while the row does not.
+                .identified(
+                    "account.\(entry.account.email).waiting",
+                    label: "\(waiting) need you", value: "\(waiting)")
         }
     }
 }
