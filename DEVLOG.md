@@ -4,6 +4,43 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **The cloud takes a report bundle.**
+
+A phone can capture a bug report but had nowhere to send one. `POST
+/api/reports` on amux.sh now accepts a whole bundle as multipart form data,
+one section per file, each section named after the file it carries:
+`report.json`, and any of `frame.png`, `trace.jsonl`, `msgs.jsonl`,
+`daemon.json` and `log.txt`. The caller is whoever the bearer token says they
+are; no entitlement is required, because a person who cannot connect is
+exactly the person with a bug to report.
+
+The header is read before anything is stored, and it has to be true: the
+layout version must be the one this server reads, every part must be declared
+present or absent, and the declaration must match the files that actually
+arrived. A trace has to name the recorder that made it. A bundle that fails
+any of these gets 422 and a sentence saying which part is wrong — a header a
+reader trusts but cannot rely on is worse than no bundle. An oversized bundle
+gets 413, refused from its declared length before any of it is buffered, and
+an unauthenticated one gets 401. A stored bundle answers 201 with its
+identifier, the time it arrived and the parts the server understood it to
+carry.
+
+Bundles hold prompts, paths, screenshots and daemon state, so they do not
+live forever and they do not outlive their owner. The files go to storage
+under a key beginning with the user who sent them, one row records what was
+written, and that row carries an expiry ninety days out; a daily maintenance
+job deletes expired rows with their files, and the reports side of the server
+does the same the moment it hears an account was deleted. That last one is
+why the row deliberately has no cascading foreign key to the user: the row is
+the only record of which files belong to a bundle, so letting the database
+drop it first would leave the files behind with nothing able to find them.
+
+Deployed to amux.sh as revision `370fa7d`; `ssh nova svc amuxcloud status`
+reports it active and healthy, and an unauthenticated post to the live
+endpoint answers 401 rather than 404.
+
+---
+
 2026-09-08 — **A report can be a picture of a phone screen.**
 
 A report bundle assumed the screen it froze was made of terminal cells: two
