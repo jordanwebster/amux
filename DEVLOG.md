@@ -11934,3 +11934,18 @@ point of it. The expectation follows the product: the trailing route names the
 screen, and the appearance is the change before it.
 
 Green: `wt run ios-unit` (5 schemes), `wt run ios-door-smoke`.
+
+## A conversation on the narrowest display
+
+The narrow-width check had the home and nothing else, so the screen with the
+most competing for a line — the chrome pill's name over its machine and
+directory, a transcript of prose, diffs and command output, and the composer —
+was never photographed at that width. It is now, from the same fixture the
+ordinary capture uses, so every difference between the two images is the layout
+answering a narrower display.
+
+Nothing is dropped there: the pill keeps both its lines, prose wraps sooner and
+a diff row shortens its path from the left, which is what the leading ellipsis
+on that row is for.
+
+Green: `wt run ios-goldens -- small-home small-conversation`.

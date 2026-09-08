@@ -688,6 +688,19 @@
         "light",
         "dark"
       ]
+    },
+    {
+      "id": "small-conversation",
+      "stage": 12,
+      "screen": "run",
+      "fixture": "run",
+      "origin": "added_state",
+      "reason": "a conversation on the narrowest supported display",
+      "simulator": "amux-small",
+      "appearances": [
+        "light",
+        "dark"
+      ]
     }
   ]
 }

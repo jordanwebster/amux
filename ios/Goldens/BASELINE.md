@@ -809,6 +809,19 @@ The same Agents home on the narrowest display the app supports. The same
 content as `home`, so every difference between the two captures is the layout
 answering a narrower width. There is no design reference at this width either.
 
+## small-conversation
+
+The same conversation on the narrowest display, from the same fixture as `run`,
+so every difference between the two captures is the layout answering a narrower
+width. There is no design reference at this width.
+
+- **The chrome pill keeps both its lines.** The name and the machine and
+  directory under it fit at this width; the directory is the part that would
+  give first, and here it does not have to.
+- **The transcript keeps its shape.** Prose wraps sooner and a diff line
+  shortens its path from the left, which is what the leading ellipsis on that
+  row is for; nothing is dropped and no row scrolls sideways.
+
 ## probe
 
 Not a screen of the app. The capture harness's own target: the ground, a glass
