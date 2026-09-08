@@ -330,6 +330,12 @@ final class DoorHost {
                         displayName: credential.user),
                     entitlement: .active(source: .appStore, renews: nil))
             }
+            // The account this connection is for is the account on screen:
+            // a driver that connected as somebody else and left the screen on
+            // the last one would be showing one account's name over another
+            // account's machines. Selected before the seam below is installed,
+            // so this is not mistaken for somebody pressing the switcher.
+            composed.select(AccountId(user))
             // Signing in is what gives an account its own stores, so the ones
             // this connection fills are the ones the screens are now reading.
             if let signedIn = composed.stores { stores = signedIn }
