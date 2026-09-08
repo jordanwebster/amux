@@ -71,6 +71,16 @@ def exchange(relay: str, token: str) -> list[tuple[dict, str]]:
         # Nothing has been connected yet, so waiting for a connection is a
         # refusal rather than a wait that would eventually time out.
         ({"kind": "awaitReconciled", "seconds": 1}, "error"),
+        # A state that names an accessibility text size, then an ordinary one.
+        # The size is read back after each, because a capture taken at an
+        # accessibility size must not be able to resize every capture after
+        # it: nothing about the picture would say which size it was taken at,
+        # so a leak would produce baselines nobody could tell from correct
+        # ones. Opening a state puts the size back to the default it names.
+        ({"kind": "open", "screen": "home", "fixture": "home-accessibility"}, "ack"),
+        ({"kind": "query"}, "state"),
+        ({"kind": "open", "screen": "home", "fixture": "home"}, "ack"),
+        ({"kind": "query"}, "state"),
         ({"kind": "open", "screen": "probe", "fixture": "probe"}, "ack"),
         ({"kind": "appearance", "appearance": "light"}, "ack"),
         ({"kind": "dynamicType", "size": "large"}, "ack"),
@@ -154,7 +164,23 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
     if not any("unimplemented: home-empty" == message for message in refusals):
         raise SystemExit(f"a state nobody has built was not named unimplemented: {refusals}")
 
-    visible = next(reply for reply in replies if reply["kind"] == "state")["state"]
+    states = [reply["state"] for reply in replies if reply["kind"] == "state"]
+    enlarged, ordinary = states[0], states[1]
+    if enlarged["typeSize"] != "accessibility3":
+        raise SystemExit(
+            "the accessibility home was drawn at "
+            f"{enlarged['typeSize']}, not the size its state names")
+    if ordinary["typeSize"] != "large":
+        raise SystemExit(
+            f"a state that names no text size was drawn at {ordinary['typeSize']}: the "
+            "accessibility size before it leaked into it, and every capture after it "
+            "would be taken at the wrong size with nothing in the picture to say so")
+    print(
+        f"text size: {enlarged['typeSize']} for the state that asks for it, "
+        f"{ordinary['typeSize']} for the one after it",
+        flush=True)
+
+    visible = states[-1]
     if visible["screen"] != "probe":
         raise SystemExit(f"the door was showing {visible['screen']}, not probe")
     identifiers = [element["identifier"] for element in visible["elements"]]
@@ -241,8 +267,16 @@ def check_bundle(written: dict) -> None:
     for expected in ("route", "appearance", "dynamicType"):
         if expected not in kinds:
             raise SystemExit(f"the trace beside msgs.jsonl recorded no {expected}: {trace}")
-    if trace[-1] != {"kind": "appearance", "appearance": "dark"}:
-        raise SystemExit(f"the trace does not end where the door left the view: {trace[-1]}")
+    # A report says which screen it was taken on, in the trace, as its last
+    # entry — so whoever opens the bundle knows what the picture is of before
+    # they open it. The appearance the door left the view in is the change
+    # before that one.
+    if trace[-1] != {"kind": "route", "screen": "probe"}:
+        raise SystemExit(
+            f"the trace does not end on the screen the report was taken on: {trace[-1]}")
+    if trace[-2] != {"kind": "appearance", "appearance": "dark"}:
+        raise SystemExit(
+            f"the trace does not record where the door left the view: {trace[-2]}")
     print(
         f"{BUNDLE}: {', '.join(written['parts'])}; "
         f"{len(messages)} recorded messages, {len(trace)} view-state events ({', '.join(kinds)})",

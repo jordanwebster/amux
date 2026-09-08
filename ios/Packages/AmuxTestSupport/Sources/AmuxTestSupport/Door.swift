@@ -316,14 +316,27 @@ public struct AccountsState: Codable, Sendable, Equatable {
 public struct VisibleState: Codable, Sendable, Equatable {
     /// The screen the door was last asked to open, or `none`.
     public let screen: String
+    /// The reader's type size this screen is drawn at, in the door's own
+    /// spelling.
+    ///
+    /// Reported rather than assumed, because a state that names an
+    /// accessibility size sets one and every state after it would keep it if
+    /// opening a screen ever stopped putting it back. Nothing about the
+    /// picture says which size it was taken at, so a run that leaked one
+    /// would produce baselines nobody could tell apart from correct ones.
+    public let typeSize: String
     public let elements: [VisibleElement]
     /// Whether the fleet on screen has been confirmed by a host.
     public let reconciled: Bool
     /// How many rows are still drawn as unconfirmed.
     public let shimmering: Int
 
-    public init(screen: String, elements: [VisibleElement], reconciled: Bool, shimmering: Int) {
+    public init(
+        screen: String, typeSize: String, elements: [VisibleElement],
+        reconciled: Bool, shimmering: Int
+    ) {
         self.screen = screen
+        self.typeSize = typeSize
         self.elements = elements
         self.reconciled = reconciled
         self.shimmering = shimmering
@@ -844,24 +857,26 @@ public enum Door {
 }
 
 extension SwiftUI.DynamicTypeSize {
+    /// What the door calls this size, in the spelling a request and a fixture
+    /// use. Derived from the same table as the parsing below, so a size the
+    /// door can be asked for is a size it can name back.
+    public var doorName: String {
+        Self.doorNames.first { $0.value == self }?.key ?? "unknown"
+    }
+
+    private static let doorNames: [String: SwiftUI.DynamicTypeSize] = [
+        "xSmall": .xSmall, "small": .small, "medium": .medium, "large": .large,
+        "xLarge": .xLarge, "xxLarge": .xxLarge, "xxxLarge": .xxxLarge,
+        "accessibility1": .accessibility1, "accessibility2": .accessibility2,
+        "accessibility3": .accessibility3, "accessibility4": .accessibility4,
+        "accessibility5": .accessibility5,
+    ]
+
     /// The door's names for the reader's type sizes. They are the plain
     /// spellings a person would write in a request or a fixture, and a fixture
     /// and a door request that name the same size get the same size.
     public init?(doorName: String) {
-        switch doorName {
-        case "xSmall": self = .xSmall
-        case "small": self = .small
-        case "medium": self = .medium
-        case "large": self = .large
-        case "xLarge": self = .xLarge
-        case "xxLarge": self = .xxLarge
-        case "xxxLarge": self = .xxxLarge
-        case "accessibility1": self = .accessibility1
-        case "accessibility2": self = .accessibility2
-        case "accessibility3": self = .accessibility3
-        case "accessibility4": self = .accessibility4
-        case "accessibility5": self = .accessibility5
-        default: return nil
-        }
+        guard let size = Self.doorNames[doorName] else { return nil }
+        self = size
     }
 }

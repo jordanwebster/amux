@@ -11914,3 +11914,23 @@ module in the shared products directory.
 
 Green: `wt run ios-perf` for every budget except the cold first frame, which is
 over at 437 ms against 400 and is being triaged on its own.
+
+## A capture at an accessibility text size cannot leak into the next one
+
+Opening a state that names no text size puts the size back to the default, so
+a screen photographed at an accessibility size does not silently resize every
+screen photographed after it. Nothing about a picture says which size it was
+taken at, so a leak would produce baselines nobody could tell from correct
+ones — which is why it now has a test rather than a comment.
+
+The door answers with the size it is drawing at, in the same spelling a request
+and a fixture use, and the door smoke opens the accessibility home, then the
+ordinary one, and reads the size back after each.
+
+Running it turned up a red nobody had named: the smoke still demanded the
+report's view-state trace end with the appearance the door left the view in,
+and that trace now ends with the screen the report was taken on — which is the
+point of it. The expectation follows the product: the trailing route names the
+screen, and the appearance is the change before it.
+
+Green: `wt run ios-unit` (5 schemes), `wt run ios-door-smoke`.

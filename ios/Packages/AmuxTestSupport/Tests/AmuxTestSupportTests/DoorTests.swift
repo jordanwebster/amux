@@ -163,6 +163,7 @@ final class DoorTests: XCTestCase {
     func testEveryReplySurvivesTheWire() throws {
         let state = VisibleState(
             screen: "home",
+            typeSize: "large",
             elements: [VisibleElement(
                 identifier: "home.title", label: "Agents", value: nil,
                 frame: VisibleFrame(x: 16, y: 64, width: 200, height: 32), enabled: true)],

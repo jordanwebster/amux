@@ -1060,6 +1060,7 @@ final class DoorHost {
         let leaves = VisibleTree.elements(of: window).filter { !named.contains($0.identifier) }
         return .state(VisibleState(
             screen: screen?.rawValue ?? "none",
+            typeSize: typeSize.doorName,
             elements: declared + leaves,
             reconciled: stores.fleet.reconciled,
             shimmering: stores.fleet.rows.filter { !$0.confirmed }.count))
